@@ -291,22 +291,18 @@ class InMemoryRecordStore:
                 0.0,
                 min(1.0, existing_feedback + feedback_delta_value),
             )
-            if outcome == "success":
-                meta["outcome_success_count"] = (
-                    int(meta.get("outcome_success_count", 0) or 0) + 1
-                )
-                meta.setdefault(
-                    "outcome_failure_count",
-                    int(meta.get("outcome_failure_count", 0) or 0),
-                )
-            else:
-                meta["outcome_failure_count"] = (
-                    int(meta.get("outcome_failure_count", 0) or 0) + 1
-                )
-                meta.setdefault(
-                    "outcome_success_count",
-                    int(meta.get("outcome_success_count", 0) or 0),
-                )
+            count_key = (
+                "outcome_success_count"
+                if outcome == "success"
+                else "outcome_failure_count"
+            )
+            other_key = (
+                "outcome_failure_count"
+                if outcome == "success"
+                else "outcome_success_count"
+            )
+            meta[count_key] = int(meta.get(count_key, 0) or 0) + 1
+            meta.setdefault(other_key, int(meta.get(other_key, 0) or 0))
             meta["last_outcome_at"] = now_iso
             meta["last_outcome_status"] = outcome
             meta["last_outcome_command_id"] = str(command_id or "").strip()
@@ -375,8 +371,7 @@ class InMemoryRecordStore:
                 continue
             seen.add(related_id)
             related_ids.append(related_id)
-        rows = [self._records[item] for item in related_ids]
-        return _apply_limit(rows, limit)
+        return _apply_limit([self._records[item] for item in related_ids], limit)
 
     def candidate_put(self, candidate: MemoryCandidate) -> str:
         now = _utc_now_iso()

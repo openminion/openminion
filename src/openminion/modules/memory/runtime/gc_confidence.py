@@ -78,11 +78,10 @@ def _effective_decay(
     if disuse_threshold_days is None or disuse_decay_multiplier <= 1.0:
         return effective_decay
     disuse_cutoff = now - datetime.timedelta(days=max(1, int(disuse_threshold_days)))
-    if sqlite_disuse_rule:
-        if last_hit_at is not None and last_hit_at < disuse_cutoff:
-            return effective_decay * float(disuse_decay_multiplier)
-        return effective_decay
-    if last_hit_at is None or last_hit_at < disuse_cutoff:
+    disused = (last_hit_at is None and not sqlite_disuse_rule) or (
+        last_hit_at is not None and last_hit_at < disuse_cutoff
+    )
+    if disused:
         return effective_decay * float(disuse_decay_multiplier)
     return effective_decay
 

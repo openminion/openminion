@@ -10,6 +10,11 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
 PYTHON = ROOT / ".venv" / "bin" / "python3.11"
 TIMEOUT_ENV = "OPENMINION_CLI_E2E_GATE_TIMEOUT_SECONDS"
 DEFAULT_LIVE_TIMEOUT_SECONDS = 1800
@@ -102,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     env.setdefault("PYTHONPATH", str(ROOT / "src"))
+    isolate_runtime_roots(env, prefix="openminion-cli-e2e-gate-")
     if args.mode in {"local", "all"}:
         result = _run_local(env)
         if result:

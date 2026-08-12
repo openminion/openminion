@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.brain.constants import (
@@ -15,9 +13,6 @@ from openminion.modules.brain.execution.intent_state import (
 )
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
-from openminion.modules.llm.providers.tool_calling.contracts import (
-    canonicalize_tool_name_for_runtime,
-)
 
 from ..contracts import (
     AdaptiveToolLoopContext,
@@ -36,8 +31,6 @@ if TYPE_CHECKING:
     from typing import Callable
 
 
-QUERY_YEAR_RE = re.compile(r"\b(20\d{2})\b")
-QUERY_WHITESPACE_RE = re.compile(r"\s+")
 _ANSWER_ONLY_FINALIZATION_KEYS = frozenset(
     {
         "budget_answer_only_finalization_forced",
@@ -58,88 +51,6 @@ _MUTATING_FILE_TOOLS = frozenset(
     }
 )
 _SYNTHESIS_TOOL_PREFIXES = ("web.", "browser.", "research.")
-
-
-def _explicit_calendar_years(text: Any) -> set[int]:
-    return {int(year) for year in QUERY_YEAR_RE.findall(str(text or ""))}
-
-
-def _stale_exact_date_search_context(
-    *,
-    user_input: str,
-    require_exact_date: bool,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    current_year: int | None = None,
-) -> tuple[str, set[int], int] | None:
-    if not require_exact_date:
-        return None
-    if canonicalize_tool_name_for_runtime(tool_name) != "web.search":
-        return None
-    query = str((tool_args or {}).get("query", "") or "").strip()
-    if not query:
-        return None
-    query_years = _explicit_calendar_years(query)
-    if not query_years or _explicit_calendar_years(user_input):
-        return None
-    active_year = int(current_year or datetime.now(timezone.utc).year)
-    if active_year in query_years:
-        return None
-    return query, query_years, active_year
-
-
-def _stale_exact_date_query_reason(
-    *,
-    user_input: str,
-    require_exact_date: bool,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    current_year: int | None = None,
-) -> str | None:
-    context = _stale_exact_date_search_context(
-        user_input=user_input,
-        require_exact_date=require_exact_date,
-        tool_name=tool_name,
-        tool_args=tool_args,
-        current_year=current_year,
-    )
-    if context is None:
-        return None
-    _query, query_years, active_year = context
-    rendered = ", ".join(str(year) for year in sorted(query_years))
-    return (
-        "This freshness-sensitive search query hard-codes calendar year "
-        f"{rendered}, which excludes the current typed year {active_year}. "
-        "Use current_datetime for exact-date framing unless the user explicitly "
-        "requested a historical year."
-    )
-
-
-def _repair_stale_exact_date_search_args(
-    *,
-    user_input: str,
-    require_exact_date: bool,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    current_year: int | None = None,
-) -> dict[str, Any] | None:
-    context = _stale_exact_date_search_context(
-        user_input=user_input,
-        require_exact_date=require_exact_date,
-        tool_name=tool_name,
-        tool_args=tool_args,
-        current_year=current_year,
-    )
-    if context is None:
-        return None
-    query, _query_years, _active_year = context
-    repaired_query = QUERY_YEAR_RE.sub(" ", query)
-    repaired_query = QUERY_WHITESPACE_RE.sub(" ", repaired_query).strip(" ,;:-")
-    if not repaired_query or repaired_query == query:
-        return None
-    repaired_args = dict(tool_args or {})
-    repaired_args["query"] = repaired_query
-    return repaired_args
 
 
 def _requires_typed_finalization_contract(
@@ -336,6 +247,71 @@ def _build_enrichment_message(
     )
 
 
+def _file_write_argument_shape_guidance(
+    *,
+    tool_name: str,
+    error_code: str,
+    lowered_failure_text: str,
+) -> str:
+    if tool_name not in {"file.write", "file_write"}:
+        return ""
+    if not (
+        error_code.strip().upper() in {"INVALID_ARGUMENT", "TOOL_ARG_VALIDATION_FAILED"}
+        or "invalid tool arguments" in lowered_failure_text
+        or "validation error" in lowered_failure_text
+    ):
+        return ""
+    return (
+        "For file.write, pass supported arguments only: path and content "
+        "as strings. Do not pass nested objects, file arrays, or prose-only snippets."
+    )
+
+
+def _is_exec_argument_shape_error(
+    *,
+    tool_name: str,
+    error_code: str,
+    lowered_failure_text: str,
+) -> bool:
+    if tool_name != "exec.run":
+        return False
+    normalized_code = error_code.strip().upper()
+    if normalized_code == "INVALID_ARGUMENT":
+        return any(
+            marker in lowered_failure_text
+            for marker in (
+                "validation error for execrunargs",
+                "extra inputs are not permitted",
+                "environment_variables",
+                "\ndesc\n",
+            )
+        )
+    return normalized_code == "POLICY_DENIED" and any(
+        marker in lowered_failure_text for marker in ('["python"', "[python,")
+    )
+
+
+def _is_exec_verifier_failure(
+    *,
+    tool_name: str,
+    error_code: str,
+    lowered_failure_text: str,
+) -> bool:
+    return (
+        tool_name == "exec.run"
+        and error_code.strip().upper() == "EXEC_ERROR"
+        and any(
+            marker in lowered_failure_text
+            for marker in (
+                "python -m pytest",
+                "short test summary info",
+                "assertionerror",
+                "failed tests/",
+            )
+        )
+    )
+
+
 def _build_tool_failure_recovery_message(
     *,
     tool_name: str,
@@ -388,38 +364,15 @@ def _build_tool_failure_recovery_message(
         and error_code.strip().upper() == "INVALID_ARGUMENT"
         and "working_dir" in lowered_failure_text
     )
-    is_exec_argument_shape_error = tool_name == "exec.run" and (
-        (
-            error_code.strip().upper() == "INVALID_ARGUMENT"
-            and any(
-                marker in lowered_failure_text
-                for marker in (
-                    "validation error for execrunargs",
-                    "extra inputs are not permitted",
-                    "environment_variables",
-                    "\ndesc\n",
-                )
-            )
-        )
-        or (
-            error_code.strip().upper() == "POLICY_DENIED"
-            and any(
-                marker in lowered_failure_text for marker in ('["python"', "[python,")
-            )
-        )
+    is_exec_argument_shape_error = _is_exec_argument_shape_error(
+        tool_name=tool_name,
+        error_code=error_code,
+        lowered_failure_text=lowered_failure_text,
     )
-    is_exec_verifier_failure = (
-        tool_name == "exec.run"
-        and error_code.strip().upper() == "EXEC_ERROR"
-        and any(
-            marker in lowered_failure_text
-            for marker in (
-                "python -m pytest",
-                "short test summary info",
-                "assertionerror",
-                "failed tests/",
-            )
-        )
+    is_exec_verifier_failure = _is_exec_verifier_failure(
+        tool_name=tool_name,
+        error_code=error_code,
+        lowered_failure_text=lowered_failure_text,
     )
     if status not in {BRAIN_ACTION_STATUS_FAILED, BRAIN_ACTION_STATUS_TIMEOUT} and not (
         status == BRAIN_ACTION_STATUS_BLOCKED
@@ -478,6 +431,13 @@ def _build_tool_failure_recovery_message(
             "verifier again, and reuse the same verification command only after "
             "the patch is in place."
         ).strip()
+    file_write_guidance = _file_write_argument_shape_guidance(
+        tool_name=tool_name,
+        error_code=error_code,
+        lowered_failure_text=lowered_failure_text,
+    )
+    if file_write_guidance:
+        recovery_suffix = f"{recovery_suffix} {file_write_guidance}".strip()
     return Message(
         role="system",
         content=(

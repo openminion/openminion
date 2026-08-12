@@ -14,9 +14,11 @@ from tests.helpers.flagship_differentiation_proof import (  # noqa: E402
     DEFAULT_FLAGSHIP_INPUT,
     run_flagship_differentiation_proof,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def main() -> int:
+    isolate_runtime_roots(prefix="openminion-flagship-proof-")
     parser = argparse.ArgumentParser(
         description="Run the flagship differentiation proof and write an evidence packet."
     )

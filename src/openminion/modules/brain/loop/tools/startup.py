@@ -10,7 +10,6 @@ from .memory_templates import LoopTemplate, build_template_hint, match_templates
 from .prefetch import PrefetchPredictor
 from .profiler import LoopProfiler
 from .snapshot import LoopSnapshot
-from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .contracts import (
@@ -33,16 +32,13 @@ class AdaptiveLoopRuntimeState:
 
 
 def _loop_template_match_tags(loop_ctx: "AdaptiveToolLoopContext") -> tuple[str, ...]:
-    state = getattr(loop_ctx, "state", None)
-    if state is None:
-        return ()
     tags: list[str] = []
-    for raw in list(getattr(state, "decision_sub_intents", []) or []):
-        tag = str(raw or "").strip()
+    for raw in loop_ctx.state.decision_sub_intents:
+        tag = raw.strip()
         if tag and tag not in tags:
             tags.append(tag)
-    for item in list(getattr(state, "intent_execution_states", []) or []):
-        tag = str(getattr(item, "intent_id", "") or "").strip()
+    for item in loop_ctx.state.intent_execution_states:
+        tag = item.intent_id.strip()
         if tag and tag not in tags:
             tags.append(tag)
     return tuple(tags)
@@ -56,16 +52,12 @@ def _restore_loop_snapshot(
     model: str,
     turn_scope_id: str | None,
 ) -> tuple[bool, int | None]:
-    resumed = False
-    resume_iteration: int | None = None
-    module_state = getattr(
-        getattr(loop_ctx, "state", None), STATE_KEY_MODULE_STATE, None
-    )
-    if not isinstance(module_state, dict):
-        return resumed, resume_iteration
+    module_state = loop_ctx.state.module_state
     existing = module_state.get("adaptive_loop")
     if not isinstance(existing, dict):
-        return resumed, resume_iteration
+        return False, None
+    resumed = False
+    resume_iteration: int | None = None
     try:
         snapshot = LoopSnapshot.from_dict(existing)
         if (
@@ -109,15 +101,6 @@ def initialize_loop_runtime_state(
         profile.max_macro_corrections or 0
     )
 
-    loop_cache = LoopCache()
-    budget_hint_injected = False
-    iteration_tool_sequences: list[tuple[str, ...]] = []
-    loop_profiler = LoopProfiler()
-    prefetch_predictor: PrefetchPredictor | None = (
-        PrefetchPredictor() if profile.speculative_prefetch else None
-    )
-    prefetch_pending: str | None = None
-
     if profile.use_memory_templates:
         existing_templates_raw = loop_state.scratchpad.get("loop_templates", [])
         if isinstance(existing_templates_raw, list) and existing_templates_raw:
@@ -137,10 +120,12 @@ def initialize_loop_runtime_state(
     return AdaptiveLoopRuntimeState(
         resumed=resumed,
         resume_iteration=resume_iteration,
-        loop_cache=loop_cache,
-        budget_hint_injected=budget_hint_injected,
-        iteration_tool_sequences=iteration_tool_sequences,
-        loop_profiler=loop_profiler,
-        prefetch_predictor=prefetch_predictor,
-        prefetch_pending=prefetch_pending,
+        loop_cache=LoopCache(),
+        budget_hint_injected=False,
+        iteration_tool_sequences=[],
+        loop_profiler=LoopProfiler(),
+        prefetch_predictor=(
+            PrefetchPredictor() if profile.speculative_prefetch else None
+        ),
+        prefetch_pending=None,
     )

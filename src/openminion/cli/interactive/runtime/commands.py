@@ -24,9 +24,7 @@ class RuntimeCommandMixin:
                     rows = list(lister() or [])
                 except Exception:
                     rows = []
-            lines = [
-                f"current    {provider}/{model}" if model else f"current    {provider}"
-            ]
+            lines = [f"current    {provider}/{model}"]
             if rows:
                 lines.extend(("", "configured providers:"))
                 for name, configured_model, is_active in rows:

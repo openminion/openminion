@@ -12,7 +12,6 @@ from openminion.modules.tool.runtime.argument_repair import (
 )
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_RUN,
-    MODEL_WEATHER,
     MODEL_WEB_FETCH,
     MODEL_WEB_SEARCH,
 )
@@ -36,6 +35,7 @@ from ..schemas import (
     ArtifactRef,
     Command,
     JobHandle,
+    ToolCommand,
 )
 from ..tools.parser import normalize_tool_name_for_brain
 
@@ -81,31 +81,22 @@ def validate_tool_args(
     state=None,
 ) -> dict[str, Any] | None:
     del runner
-    if command.kind != BRAIN_COMMAND_KIND_TOOL:
+    if not isinstance(command, ToolCommand):
         return None
 
-    family = tool_family_for_argument_repair(getattr(command, "tool_name", ""))
+    family = tool_family_for_argument_repair(command.tool_name)
     if family is None:
         return None
 
     missing = list(
         missing_simple_required_fields(
-            tool_name=str(getattr(command, "tool_name", "") or ""),
-            arguments=getattr(command, "args", {}) or {},
+            tool_name=command.tool_name,
+            arguments=command.args,
         )
     )
     if not missing:
         return None
 
-    missing_csv = ", ".join(missing)
-    if family == MODEL_WEATHER:
-        return {
-            "message": "Which location should I check weather for?",
-            "missing": missing,
-            "reason_code": "weather_location_required",
-            "suggestion": "Provide a city or location name.",
-            "source": "bounded_argument_repair",
-        }
     if family == MODEL_WEB_SEARCH:
         return {
             "message": (
@@ -117,7 +108,7 @@ def validate_tool_args(
             "source": "bounded_argument_repair",
         }
     return {
-        "message": f"Missing required tool arguments: {missing_csv}",
+        "message": f"Missing required tool arguments: {', '.join(missing)}",
         "missing": missing,
         "reason_code": "tool_arg_validation_failed",
         "suggestion": "",
@@ -127,13 +118,6 @@ def validate_tool_args(
 
 def _build_forced_tool_guard(*, tool_name: str) -> ForcedToolGuard | None:
     normalized_tool_name = normalize_tool_name_for_brain(tool_name) or str(tool_name)
-    family = tool_family_for_argument_repair(normalized_tool_name)
-    if family == MODEL_WEATHER:
-        return ForcedToolGuard(
-            reason_code="weather_location_required",
-            question="Which location should I check weather for?",
-            missing_fields=("location",),
-        )
     if normalized_tool_name == MODEL_WEB_FETCH:
         return ForcedToolGuard(
             reason_code="web_fetch_url_required",
@@ -167,8 +151,11 @@ def normalize_execution_result(
 
     artifacts = _normalize_artifact_refs(raw.get("artifact_refs"))
     error_obj = _normalize_action_error(raw_error=raw.get("error"), provider=provider)
-    metrics = _normalize_action_metrics(
-        raw_metrics=raw.get("metrics"), provider=provider
+    metrics = _validate_optional_payload(
+        raw.get("metrics"),
+        model=ActionMetrics,
+        provider=provider,
+        channel_name="action_metrics",
     )
 
     action_result = ActionResult(
@@ -225,9 +212,9 @@ def _normalize_artifact_refs(raw_artifacts: Any) -> list[ArtifactRef]:
         if isinstance(item, str):
             artifacts.append(ArtifactRef(ref=item))
             continue
-        if not isinstance(item, dict) or not item.get("ref"):
+        if not isinstance(item, dict):
             continue
-        ref = str(item.get("ref", "")).strip()
+        ref = str(item.get("ref") or "").strip()
         if not ref:
             continue
         label = item.get("label")
@@ -256,17 +243,6 @@ def _normalize_action_error(*, raw_error: Any, provider: str) -> ActionError | N
         model=ActionError,
         provider=provider,
         channel_name="action_error",
-    )
-
-
-def _normalize_action_metrics(
-    *, raw_metrics: Any, provider: str
-) -> ActionMetrics | None:
-    return _validate_optional_payload(
-        raw_metrics,
-        model=ActionMetrics,
-        provider=provider,
-        channel_name="action_metrics",
     )
 
 

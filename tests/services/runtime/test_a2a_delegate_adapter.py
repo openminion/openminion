@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import uuid
 
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILED,
@@ -8,6 +9,7 @@ from openminion.modules.brain.constants import (
     BRAIN_JOB_STATUS_RUNNING,
 )
 from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
+from openminion.modules.a2a.models import is_valid_traceparent
 
 
 class _RecordingCall:
@@ -22,6 +24,23 @@ class _RecordingCall:
         self.session_id = session_id
         self.trace_id = trace_id
         return self.response
+
+
+class _RecordingTelemetry:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit_canonical_event(
+        self,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        **_kwargs: Any,
+    ) -> None:
+        assert session_id == "session-1"
+        assert turn_id == "turn-1"
+        self.events.append((event_type, dict(payload)))
 
 
 def test_success_status_maps_to_ok_result() -> None:
@@ -68,6 +87,39 @@ def test_command_shape_carries_model_named_target_and_instruction() -> None:
     assert call.command["timeout_ms"] == 30_000
     # Deterministic idempotency key (replay-safe across identical retries).
     assert call.command["idempotency_key"].startswith("task-delegate:")
+
+
+def test_delegate_sends_typed_observability_and_emits_handoff_lifecycle() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(
+        agent_id="researcher",
+        instruction="find X",
+        timeout_seconds=30,
+    )
+
+    assert call.command is not None
+    observability = call.command["observability"]
+    assert observability["schema_version"] == "openminion.a2a_observability.v1"
+    assert observability["invocation_id"] == "11111111-1111-4111-8111-111111111111"
+    assert observability["execution_id"] == "21111111-1111-4111-8111-111111111111"
+    uuid.UUID(observability["handoff_id"])
+    assert is_valid_traceparent(observability["traceparent"])
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.completed",
+    ]
 
 
 def test_idempotency_key_is_stable_for_same_inputs() -> None:

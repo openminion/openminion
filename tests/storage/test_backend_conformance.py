@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from typing import Any
 
 import pytest
@@ -151,6 +153,41 @@ def test_backend_transaction_context_manager(record_store_case: BackendCase) -> 
             store.insert("items", {"id": 12, "name": "rollback", "value": 2})
             raise RuntimeError("rollback")
     assert store.query_rows("items", where={"id": 12}) == []
+
+
+def test_sqlite_transaction_serializes_concurrent_owners(tmp_path) -> None:
+    store = RecordStoreSQLite(tmp_path / "serialized-transactions.db")
+    _bootstrap_items_table(store)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    second_entered = threading.Event()
+
+    def write_first() -> None:
+        with store.transaction():
+            store.insert("items", {"id": 13, "name": "first", "value": 1})
+            first_entered.set()
+            assert release_first.wait(timeout=2)
+
+    def write_second() -> None:
+        assert first_entered.wait(timeout=2)
+        with store.transaction():
+            second_entered.set()
+            store.insert("items", {"id": 14, "name": "second", "value": 2})
+
+    first = threading.Thread(target=write_first)
+    second = threading.Thread(target=write_second)
+    first.start()
+    second.start()
+    assert first_entered.wait(timeout=2)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_entered.is_set()
+    assert [row["id"] for row in store.query_rows("items", order="id")] == [13, 14]
 
 
 def test_backend_neutral_crud_methods(record_store_case: BackendCase) -> None:

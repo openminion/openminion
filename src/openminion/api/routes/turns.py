@@ -54,7 +54,7 @@ def _handle_cancel_turn(
                 details={"trace_id": trace_id},
                 retryable=False,
             )
-        if cancelled and isinstance(body, dict):
+        if isinstance(body, dict):
             session_id = str(body.get("session_id", "")).strip()
             if session_id:
                 event_payload = {
@@ -98,13 +98,11 @@ def _handle_legacy_turn_request(
             runtime=ctx.runtime,
             request_id=ctx.request_id,
         )
-        status = HTTPStatus.OK
-        payload = {"ok": True, "turn": turn_payload}
         session_id = str(turn_payload.get("session_id", "")).strip() or None
         run_id = str(turn_payload.get("run_id", "")).strip() or None
         return RouteResult(
-            status=status,
-            payload=payload,
+            status=HTTPStatus.OK,
+            payload={"ok": True, "turn": turn_payload},
             session_id=session_id,
             run_id=run_id,
         )

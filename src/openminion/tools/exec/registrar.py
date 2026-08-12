@@ -86,8 +86,9 @@ def _exec_runtime_bindings() -> tuple[Any, ...]:
 
 
 _EXEC_RUN_DESCRIPTION = (
-    "Run one allowlisted direct shell command for verification or existing-file "
-    "workflows; do not use pipes, redirections, chaining, or fallback operators. "
+    "Run one allowlisted direct shell command, including commands through the "
+    "system SSH client; do not use pipes, redirections, chaining, or fallback "
+    "operators. "
     "For toolchain checks, use direct discovery such as `command -v nasm`, then "
     "a separate direct version check such as `nasm --version`. Prefer "
     "host.metrics for disk, memory, and OS status; prefer structured file/web "

@@ -186,11 +186,12 @@ class ContextBuildersMixin:
             )
         except Exception:
             pass
+        summary_scope = f"agent:{self._agent_id}"
         if len(query_text) >= 10:
             recent_summaries = self._service.search(
                 SearchQueryOptions(
                     query=query_text,
-                    scopes=[f"agent:{self._agent_id}"],
+                    scopes=[summary_scope],
                     types=["session_summary"],
                     limit=self._session_handoff_max_summaries,
                 )
@@ -198,12 +199,20 @@ class ContextBuildersMixin:
         else:
             recent_summaries = self._service.list(
                 ListQueryOptions(
-                    scopes=[f"agent:{self._agent_id}"],
+                    scopes=[summary_scope],
                     types=["session_summary"],
                     limit=self._session_handoff_max_summaries,
                     order_by=RecordOrder.UPDATED_AT_DESC,
                 )
             )
+        recent_summaries = [
+            record
+            for record in recent_summaries
+            if not self._is_current_session_summary_record(
+                record,
+                session_id=session_id,
+            )
+        ]
         self._preamble_shown[session_id] = True
         return first_turn, recent_summaries
 
@@ -515,7 +524,6 @@ class ContextBuildersMixin:
                 )
                 else "false"
             )
-            # the query-prose `_record_candidate_retrieval_hits`
             self._touch_records(
                 recent_summaries
                 + agent_records

@@ -435,6 +435,27 @@ def _normalize_delegation_result_summary_response(response: LLMResponse) -> LLMR
     )
 
 
+def _normalize_runtime_response(response: LLMResponse) -> LLMResponse:
+    normalizers = (
+        _normalize_confident_complete_response,
+        _normalize_finalization_status_response,
+        _normalize_pending_turn_context_response,
+        _normalize_memory_consolidation_response,
+        _normalize_watch_outcome_response,
+        _normalize_session_work_summary_response,
+        _normalize_goal_declaration_response,
+        _normalize_goal_revision_response,
+        _normalize_delegation_context_response,
+        _normalize_delegation_result_summary_response,
+        _normalize_meta_rule_preference_response,
+        normalize_task_plan_trailer_response,
+        _normalize_submit_output_final_answer_response,
+    )
+    for normalize in normalizers:
+        response = normalize(response)
+    return response
+
+
 class DefaultAdaptiveToolLoopLLMRuntime:
     def __init__(self, llm_client: Any) -> None:
         self._client = llm_client
@@ -479,20 +500,7 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 tools=list(tools),
                 response=response,
             )
-            response = _normalize_confident_complete_response(response)
-            response = _normalize_finalization_status_response(response)
-            response = _normalize_pending_turn_context_response(response)
-            response = _normalize_memory_consolidation_response(response)
-            response = _normalize_watch_outcome_response(response)
-            response = _normalize_session_work_summary_response(response)
-            response = _normalize_goal_declaration_response(response)
-            response = _normalize_goal_revision_response(response)
-            response = _normalize_delegation_context_response(response)
-            response = _normalize_delegation_result_summary_response(response)
-            response = _normalize_meta_rule_preference_response(response)
-            response = normalize_task_plan_trailer_response(response)
-            response = _normalize_submit_output_final_answer_response(response)
-            return response
+            return _normalize_runtime_response(response)
 
         overrides: dict[str, Any] = {
             "model": model,
@@ -511,20 +519,7 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             tools=list(tools),
             response=response,
         )
-        response = _normalize_confident_complete_response(response)
-        response = _normalize_finalization_status_response(response)
-        response = _normalize_pending_turn_context_response(response)
-        response = _normalize_memory_consolidation_response(response)
-        response = _normalize_watch_outcome_response(response)
-        response = _normalize_session_work_summary_response(response)
-        response = _normalize_goal_declaration_response(response)
-        response = _normalize_goal_revision_response(response)
-        response = _normalize_delegation_context_response(response)
-        response = _normalize_delegation_result_summary_response(response)
-        response = _normalize_meta_rule_preference_response(response)
-        response = normalize_task_plan_trailer_response(response)
-        response = _normalize_submit_output_final_answer_response(response)
-        return response
+        return _normalize_runtime_response(response)
 
 
 def resolve_loop_model(ctx: Any) -> str:
@@ -623,7 +618,10 @@ def build_runtime_tool_specs(
         "exec.kill": "Kill a running process by ID.",
         "web.search": "Search the web for current information.",
         "web.fetch": "Fetch and summarize web content from a URL.",
-        "weather": "Get current weather for a location.",
+        "weather": (
+            "Get current weather for a named place, or omit location to use the "
+            "current approximate location."
+        ),
         "time": "Get the current time for a timezone or locale.",
         "location": "Resolve or infer a geographic location.",
         "host.metrics": "Get local host platform, disk usage, and memory metrics.",

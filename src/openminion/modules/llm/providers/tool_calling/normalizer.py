@@ -95,17 +95,15 @@ class ToolCallNormalizer:
                 ]
             return result
 
-        errors: list[ToolCallParseError] = []
-        if unknown_native is not None:
-            errors.append(unknown_native)
-
-        unknown_fallback = _detect_unknown_fallback_tool_name(fallback_result.metadata)
-        if unknown_fallback is not None:
-            errors.append(unknown_fallback)
-
-        invalid_args = _detect_invalid_tool_arguments(fallback_result.metadata)
-        if invalid_args is not None:
-            errors.append(invalid_args)
+        errors = [
+            error
+            for error in (
+                unknown_native,
+                _detect_unknown_fallback_tool_name(fallback_result.metadata),
+                _detect_invalid_tool_arguments(fallback_result.metadata),
+            )
+            if error is not None
+        ]
 
         unparseable = _detect_unparseable_envelope(
             text,
@@ -186,9 +184,7 @@ def _detect_unknown_native_tool_name(
     *,
     allowed_tool_names: Sequence[str] | None,
 ) -> ToolCallParseError | None:
-    if not isinstance(message_payload, dict):
-        return None
-    if allowed_tool_names is None:
+    if not isinstance(message_payload, dict) or allowed_tool_names is None:
         return None
 
     raw_calls = message_payload.get("tool_calls")
@@ -214,9 +210,7 @@ def _detect_unknown_native_tool_name(
     if not candidate_name:
         return None
 
-    allowed_set = {
-        str(name).strip() for name in allowed_tool_names if str(name).strip()
-    }
+    allowed_set = {name.strip() for name in allowed_tool_names if name.strip()}
     resolved = _resolve_allowed_tool_name(
         candidate_name,
         allowed_tool_names=allowed_set or None,
@@ -247,10 +241,8 @@ def _detect_unknown_fallback_tool_name(
     candidate_name = str(
         metadata.get("envelope_target_raw")
         or metadata.get("fallback_tool_name_raw")
-        or ""
+        or "<unknown>"
     ).strip()
-    if not candidate_name:
-        candidate_name = "<unknown>"
     return ToolCallParseError(
         code=ERROR_UNKNOWN_TOOL_NAME,
         message=(

@@ -8,7 +8,6 @@ import pytest
 
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_ALLOWED_TOOLS,
-    CODING_TERM_APPROVAL_NEEDED,
     CODING_TERM_BUDGET_EXHAUSTED,
     CODING_TERM_DISALLOWED_TOOL,
     CODING_TERM_FINAL_TEXT,
@@ -18,7 +17,6 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_NEEDS_USER,
     CODING_TERM_TOOL_FAILURE,
     CODING_V1_ALLOWED_TOOLS,
-    CodingDisallowedToolError,
     CodingLLMRuntime,
     CodingModeError,
     CodingRuntimeUnavailableError,
@@ -86,7 +84,6 @@ def test_default_tool_policy_allows_tool_catalog_prefix() -> None:
 
 def test_termination_reason_constants() -> None:
     assert CODING_TERM_FINAL_TEXT == "final_text"
-    assert CODING_TERM_APPROVAL_NEEDED == "approval_needed"
     assert CODING_TERM_NEEDS_USER == "needs_user"
     assert CODING_TERM_JOB_PENDING == "job_pending"
     assert CODING_TERM_BUDGET_EXHAUSTED == "budget_exhausted"
@@ -127,13 +124,6 @@ def test_non_runtime_is_not_coding_llm_runtime() -> None:
 
 def test_coding_mode_error_hierarchy() -> None:
     assert issubclass(CodingRuntimeUnavailableError, CodingModeError)
-    assert issubclass(CodingDisallowedToolError, CodingModeError)
-
-
-def test_coding_disallowed_tool_error_captures_name() -> None:
-    err = CodingDisallowedToolError("browser")
-    assert err.tool_name == "browser"
-    assert "browser" in str(err)
 
 
 # CodingLoopState

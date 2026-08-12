@@ -29,7 +29,6 @@ from openminion.modules.brain.checkpoint.contracts import (
 from openminion.modules.brain.schemas import (
     ActionResult,
     BudgetCounters,
-    Plan,
     WorkingState,
 )
 from openminion.modules.brain.schemas.agent import ModeProfileConfig
@@ -126,10 +125,8 @@ class _FakeServices:
         return ""
 
     def plan(self, *, state, user_input, logger, decision=None):
-        del state, logger, decision
-        text = str(user_input or "")
-        self.plan_calls.append(text)
-        return Plan(objective="mock plan result.", steps=[])
+        del state, user_input, logger, decision
+        raise AssertionError("research synthesis must not call ctx.plan()")
 
     def approve_command(self, *, state, command, logger):
         del state, logger
@@ -285,10 +282,26 @@ def _ctx(
     research_query: str = "Research the adoption of WebAssembly",
     objective: str | None = None,
     convergence_queue: list[str] | None = None,
+    synthesis_payload: dict[str, Any] | None = None,
 ):
     working_state = state or _state()
+    synthesis_llm = _StructuredLLM(
+        payload=synthesis_payload
+        or {
+            "answer": "mock research synthesis.",
+            "status": "complete",
+            "remaining_work": "",
+        }
+    )
     services = _FakeServices(
-        runner=_FakeRunner(task_manager=task_manager),
+        runner=_FakeRunner(
+            task_manager=task_manager,
+            llm_api=synthesis_llm,
+            profile=SimpleNamespace(
+                agent_id="router-agent",
+                llm_profiles=SimpleNamespace(summarize_model="mock-summarizer"),
+            ),
+        ),
         statuses=[],
         plan_calls=[],
         convergence_queue=list(convergence_queue or []),
@@ -529,7 +542,6 @@ def test_iteration_goal_includes_typed_current_datetime_and_evidence_dates(
         query="Check latest Iran news",
         scope="focus on current developments",
         findings=findings,
-        convergence_hint="shipping and oil effects",
         iteration=1,
     )
 
@@ -556,7 +568,7 @@ def test_convergence_no_longer_builds_an_llm_prompt(
     )
 
 
-def test_synthesis_text_passes_typed_temporal_facts_to_plan(
+def test_synthesis_passes_typed_temporal_facts_to_structured_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -578,15 +590,17 @@ def test_synthesis_text_passes_typed_temporal_facts_to_plan(
             ).model_dump(mode="python")
         ]
 
-        mode._build_synthesis_text(
+        synthesis = mode._build_synthesis(
             ctx,
             query="Check latest Iran news",
             findings=findings,
-            allow_llm_synthesis=True,
         )
 
-        assert services.plan_calls
-        prompt = services.plan_calls[-1]
+        assert synthesis is not None
+        assert synthesis.answer == "mock research synthesis."
+        calls = services.runner.llm_api.calls
+        assert calls
+        prompt = calls[-1]["context"]["user_input"]
         assert "current_datetime=2026-05-08T12:34:56+00:00" in prompt
         assert "evidence_date=2026-05-07T09:00:00Z" in prompt
         assert "always use the current date when reasoning" not in prompt
@@ -660,65 +674,16 @@ def test_query_from_new_research_query_field() -> None:
         )
 
 
-def test_query_falls_back_to_legacy_objective_field() -> None:
+def test_query_does_not_infer_from_legacy_context_fields() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, _ = _ctx(tm, research_query="")
-        # Clear research_query, set objective
         ctx.decision.research_query = ""
         ctx.decision.objective = "Legacy objective text"
-        mode = _make_mode(max_iterations=1)
-        assert mode._query_from_context(ctx) == "Legacy objective text"
-
-
-def test_query_falls_back_to_state_goal() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
-        ctx, _ = _ctx(tm, research_query="")
-        ctx.decision.research_query = ""
-        ctx.decision.objective = ""
         ctx.state.goal = "Goal from state"
+        ctx.user_input = "fallback user input"
         mode = _make_mode(max_iterations=1)
-        assert mode._query_from_context(ctx) == "Goal from state"
-
-
-def test_query_falls_back_to_user_input() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
-        # Build ctx with empty research_query but non-empty user_input.
-        working_state = _state()
-        working_state.goal = ""
-        services = _FakeServices(
-            runner=_FakeRunner(task_manager=tm),
-            statuses=[],
-            plan_calls=[],
-        )
-        decision = SimpleNamespace(
-            mode=RESEARCH_MODE,
-            confidence=0.9,
-            reason_code="research_request",
-            research_query="",
-            research_scope="",
-            objective="",
-            sub_intents=[],
-            rationale="",
-            question=None,
-            answer=None,
-        )
-        logger = SimpleNamespace(events=[], emit=lambda *args, **kwargs: None)
-        ctx = ExecutionContext(
-            state=working_state,
-            decision=decision,
-            user_input="fallback user input",
-            logger=logger,
-            options=SimpleNamespace(),
-            llm_adapter=None,
-            command_executor=SimpleNamespace(),
-            _services=services,
-        )
-        mode = _make_mode(max_iterations=1)
-        result = mode._query_from_context(ctx)
-        assert result == "fallback user input"
+        assert mode._query_from_context(ctx) == ""
 
 
 def test_missing_query_returns_waiting_user() -> None:
@@ -750,7 +715,7 @@ def test_missing_query_returns_waiting_user() -> None:
 # Child execution — iteration building, isolation, recursion block
 
 
-def test_execute_search_iteration_returns_research_finding() -> None:
+def test_execute_search_iteration_fails_closed_without_child_output() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, _ = _ctx(tm)
@@ -761,12 +726,11 @@ def test_execute_search_iteration_returns_research_finding() -> None:
             iteration=0,
             query="Test query",
             findings_so_far=[],
-            convergence_hint="",
         )
 
         assert isinstance(finding, ResearchFinding)
         assert finding.iteration == 0
-        assert finding.content
+        assert finding.content == ""
 
 
 def test_child_state_is_isolated_from_parent() -> None:
@@ -848,7 +812,6 @@ def test_child_iteration_dispatches_general_act_directly(
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
         assert finding.content == "child-result"
@@ -859,7 +822,7 @@ def test_child_iteration_dispatches_general_act_directly(
         assert ctx._services.runner.profile.default_act_profile == "research"
 
 
-def test_child_iteration_falls_back_to_plan_when_act_result_is_not_done(
+def test_child_iteration_does_not_repair_waiting_user_prose_with_a_plan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -884,15 +847,14 @@ def test_child_iteration_falls_back_to_plan_when_act_result_is_not_done(
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
-        assert finding.source_tool == "plan"
-        assert finding.content == "mock plan result."
-        assert services.plan_calls
+        assert finding.source_tool == "act"
+        assert finding.content == ""
+        assert not services.plan_calls
 
 
-def test_child_iteration_falls_back_to_plan_on_canonical_internal_failure_answer(
+def test_child_iteration_does_not_phrase_police_done_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -917,15 +879,14 @@ def test_child_iteration_falls_back_to_plan_on_canonical_internal_failure_answer
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
-        assert finding.source_tool == "plan"
-        assert finding.content == "mock plan result."
-        assert services.plan_calls
+        assert finding.source_tool == "act"
+        assert "internal decision error" in finding.content
+        assert not services.plan_calls
 
 
-def test_child_iteration_accepts_waiting_user_result_with_meaningful_content(
+def test_child_iteration_does_not_infer_a_finding_from_waiting_user_prose(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -951,16 +912,17 @@ def test_child_iteration_accepts_waiting_user_result_with_meaningful_content(
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
         assert finding.source_tool == "act"
-        assert "2026 Iran developments" in finding.content
+        assert finding.content == ""
         assert not services.plan_calls
 
 
+@pytest.mark.parametrize("child_status", ["waiting_user", "error"])
 def test_child_iteration_salvages_tool_backed_content_from_budget_blocked_action_result(
     monkeypatch: pytest.MonkeyPatch,
+    child_status: str,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
@@ -970,7 +932,7 @@ def test_child_iteration_salvages_tool_backed_content_from_budget_blocked_action
         def _fake_invoke_decision_direct(*args, **kwargs):
             del args, kwargs
             return SimpleNamespace(
-                status="waiting_user",
+                status=child_status,
                 message="[act] budget exhausted before a final answer. Continue in a new turn or narrow the scope.",
                 action_result=ActionResult(
                     command_id="budget-blocked-child",
@@ -1003,7 +965,6 @@ def test_child_iteration_salvages_tool_backed_content_from_budget_blocked_action
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
         assert finding.source_tool == "act"
@@ -1057,13 +1018,12 @@ def test_child_iteration_preserves_evidence_dates_from_tool_backed_action_result
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
         assert finding.evidence_dates == ["2026-05-08T10:00:00Z"]
 
 
-def test_child_iteration_ignores_failed_tool_results_when_salvaging_partials(
+def test_child_iteration_fails_closed_when_only_tool_results_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -1102,12 +1062,11 @@ def test_child_iteration_ignores_failed_tool_results_when_salvaging_partials(
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
-        assert finding.source_tool == "plan"
-        assert finding.content == "mock plan result."
-        assert services.plan_calls
+        assert finding.source_tool == "act"
+        assert finding.content == ""
+        assert not services.plan_calls
 
 
 def test_child_iteration_salvages_tool_backed_content_from_working_state_scratchpad(
@@ -1153,7 +1112,6 @@ def test_child_iteration_salvages_tool_backed_content_from_working_state_scratch
             iteration=0,
             query="Test",
             findings_so_far=[],
-            convergence_hint="",
         )
 
         assert finding.source_tool == "act"
@@ -1287,14 +1245,13 @@ def test_synthesize_and_finalize_uses_accumulated_findings() -> None:
 
         assert result.status == "done"
         assert ctx.state.task_backed_resume_state == {}
-        # Plan call was made (synthesis prompt)
-        assert services.plan_calls
+        assert services.runner.llm_api.calls
 
 
 # Full execute loop
 
 
-def test_execute_runs_to_convergence_before_cap() -> None:
+def test_empty_iterations_do_not_count_as_convergence_evidence() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, services = _ctx(tm)
@@ -1309,11 +1266,10 @@ def test_execute_runs_to_convergence_before_cap() -> None:
 
         result = mode.execute(ctx)
 
-        assert result.status == "done"
+        assert result.status == "waiting_user"
         task_id = str(ctx.state.task_backed_task_id)
         checkpoints = tm.list_checkpoints(task_id)
-        # Two iteration checkpoints saved.
-        assert len(checkpoints) == 2
+        assert len(checkpoints) == 5
         # No LLM-judge consumption.
         assert services.convergence_queue == []
 
@@ -1326,7 +1282,7 @@ def test_execute_runs_to_cap_when_never_converged() -> None:
 
         result = mode.execute(ctx)
 
-        assert result.status == "done"
+        assert result.status == "waiting_user"
         task_id = str(ctx.state.task_backed_task_id)
         checkpoints = tm.list_checkpoints(task_id)
         assert len(checkpoints) == 3
@@ -1358,7 +1314,7 @@ def test_execute_pauses_when_budget_exhausted() -> None:
         result = mode.execute(ctx)
 
         assert result.status == "waiting_user"
-        assert "Research paused after iteration 1." in str(result.message or "")
+        assert "usable partial answer" in str(result.message or "")
         assert (
             "Research complete for 'Research the adoption of WebAssembly'"
             not in str(result.message or "")
@@ -1391,7 +1347,7 @@ def test_build_pause_response_message_preserves_partial_findings() -> None:
     assert "Research paused after iteration 1." in message
 
 
-def test_build_pause_response_message_filters_runtime_placeholder_findings() -> None:
+def test_build_pause_response_message_does_not_phrase_police_findings() -> None:
     mode = _make_mode(max_iterations=3)
     findings = [
         ResearchFinding(
@@ -1414,52 +1370,44 @@ def test_build_pause_response_message_filters_runtime_placeholder_findings() -> 
         iteration=1,
     )
 
-    assert "Research iteration 1 for 'What is WebAssembly?'." not in message
+    assert "Research iteration 1 for 'What is WebAssembly?'." in message
     assert "Finding B." in message
     assert "Research complete for 'What is WebAssembly?'" not in message
 
 
-def test_build_pause_response_message_omits_budget_only_placeholder_synthesis() -> None:
-    mode = _make_mode(max_iterations=3)
-    findings = [
-        ResearchFinding(
-            iteration=0,
-            source_tool="act",
-            source_query="q1",
-            content="[act] budget exhausted before a final answer. Continue in a new turn or narrow the scope.",
-        ).model_dump(mode="python")
-    ]
+def test_synthesize_and_finalize_pauses_without_model_synthesis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
+        ctx, _ = _ctx(tm)
+        mode = _make_mode(max_iterations=3)
+        record = tm.create_task(
+            session_id="s-research",
+            mode_name=RESEARCH_MODE,
+            goal="test synthesis",
+            agent_id="router-agent",
+        )
+        ctx.state.task_backed_task_id = record.task_id
+        monkeypatch.setattr(mode, "_build_synthesis", lambda *args, **kwargs: None)
 
-    message = mode._build_pause_response_message(
-        query="What is WebAssembly?",
-        findings=findings,
-        iteration=0,
-    )
+        result = mode._synthesize_and_finalize(
+            ctx,
+            task_id=record.task_id,
+            query="What is WebAssembly?",
+            findings=[
+                ResearchFinding(
+                    iteration=0,
+                    source_tool="act",
+                    source_query="q1",
+                    content="Collected raw finding.",
+                ).model_dump(mode="python")
+            ],
+        )
 
-    assert "Research complete for 'What is WebAssembly?'" not in message
-    assert "usable partial answer" in message
-
-
-def test_build_synthesis_text_falls_back_when_findings_are_placeholders() -> None:
-    mode = _make_mode(max_iterations=3)
-    findings = [
-        ResearchFinding(
-            iteration=0,
-            source_tool="act",
-            source_query="q1",
-            content="[act] repeated the same tool pattern without reaching a final answer.",
-        ).model_dump(mode="python")
-    ]
-
-    message = mode._build_synthesis_text(
-        None,
-        query="What is WebAssembly?",
-        findings=findings,
-        allow_llm_synthesis=False,
-    )
-
-    assert "did not produce a usable synthesized answer" in message
-    assert "Next steps:" in message
+        assert result.status == "waiting_user"
+        assert "did not produce a usable synthesized answer" in str(result.message)
+        assert tm.get_task(record.task_id).state == TaskLifecycleState.PAUSED
 
 
 def test_execute_records_findings_in_checkpoint_state() -> None:
@@ -1475,7 +1423,7 @@ def test_execute_records_findings_in_checkpoint_state() -> None:
         assert latest is not None
         ckpt_state = latest[1]
         assert ckpt_state["owner"] == RESEARCH_MODE
-        assert len(ckpt_state["payload"]["findings"]) == 2
+        assert ckpt_state["payload"]["findings"] == []
         assert ckpt_state["payload"]["next_iteration"] == 2
 
 
@@ -1508,10 +1456,10 @@ def test_resume_continues_from_canonical_checkpoint() -> None:
 
         resumed_result = mode.execute(resumed_ctx)
 
-        assert resumed_result.status == "done"
+        assert resumed_result.status == "waiting_user"
         loaded = tm.get_task(str(ctx.state.task_backed_task_id))
         assert loaded is not None
-        assert loaded.state == TaskLifecycleState.DONE
+        assert loaded.state == TaskLifecycleState.PAUSED
         assert int(loaded.metadata["progress"]["resume_count"]) == 1
 
 
@@ -1579,7 +1527,7 @@ def test_resume_from_wrong_checkpoint_id_fails_closed() -> None:
 # Task-backed affordances
 
 
-def test_cancel_preserves_findings_in_message() -> None:
+def test_cancel_does_not_fabricate_partial_findings() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, _ = _ctx(tm, state=_state(ticks=1))
@@ -1589,7 +1537,7 @@ def test_cancel_preserves_findings_in_message() -> None:
         cancelled = mode.cancel(ctx, "User cancelled.")
 
         assert cancelled.status == "stopped"
-        assert "Partial findings" in str(cancelled.message or "")
+        assert cancelled.message == "User cancelled."
 
 
 def test_cancel_transitions_task_to_cancelled() -> None:
@@ -1655,11 +1603,23 @@ def test_pause_schedules_resume_when_budget_exhausted() -> None:
         assert ckpts[-1].startswith(f"{RESEARCH_MODE}-")
 
 
-def test_execute_transitions_task_to_done_on_completion() -> None:
+def test_execute_transitions_task_to_done_on_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, _ = _ctx(tm)
         mode = _make_mode(max_iterations=2)
+        monkeypatch.setattr(
+            mode,
+            "_execute_search_iteration",
+            lambda *args, **kwargs: ResearchFinding(
+                iteration=int(kwargs["iteration"]),
+                source_tool="web.search",
+                source_query="test query",
+                content="Verified source-backed finding.",
+            ),
+        )
 
         result = mode.execute(ctx)
 

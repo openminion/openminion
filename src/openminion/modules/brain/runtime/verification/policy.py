@@ -19,6 +19,10 @@ from ...schemas import (
     VerifierFamily,
     WorkingState,
 )
+from openminion.modules.tool.contracts import (
+    ALL_MODEL_TOOL_IDS_SET,
+    normalize_raw_model_tool_name,
+)
 
 VerifierVerdict = Literal["pass", "fail"]
 _VERIFICATION_MODE_RANK = {
@@ -183,6 +187,45 @@ def _has_structured_evidence(action_result: ActionResult | None) -> bool:
     )
 
 
+def _successful_tool_result_names(
+    action_result: ActionResult | None,
+) -> tuple[str, ...]:
+    if action_result is None:
+        return ()
+    raw_results = (action_result.outputs or {}).get("tool_results", [])
+    if not isinstance(raw_results, list):
+        return ()
+    names: list[str] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status", "") or "").strip().lower()
+        if item.get("ok") is False or status in {"error", "failed", "blocked"}:
+            continue
+        name = str(item.get("tool_name", "") or "").strip()
+        if name:
+            names.append(name)
+    return tuple(names)
+
+
+def _freshness_domain_has_canonical_tool(domain: str) -> bool:
+    return domain in ALL_MODEL_TOOL_IDS_SET
+
+
+def _has_freshness_domain_evidence(
+    *,
+    contract: FreshnessContract,
+    action_result: ActionResult | None,
+) -> bool:
+    domain = contract.domain.value
+    if not _freshness_domain_has_canonical_tool(domain):
+        return True
+    for tool_name in _successful_tool_result_names(action_result):
+        if normalize_raw_model_tool_name(tool_name) == domain:
+            return True
+    return False
+
+
 _DATED_EVIDENCE_KEYS = frozenset(
     {
         "current_datetime",
@@ -236,8 +279,19 @@ def verify_freshness_answer(
         return []
     del answer
     reasons: list[str] = []
-    if obligations.require_live_data and not _has_structured_evidence(action_result):
-        reasons.append("Missing live-data evidence for a freshness-sensitive answer.")
+    if obligations.require_live_data:
+        if not _has_structured_evidence(action_result):
+            reasons.append(
+                "Missing live-data evidence for a freshness-sensitive answer."
+            )
+        elif not _has_freshness_domain_evidence(
+            contract=contract,
+            action_result=action_result,
+        ):
+            reasons.append(
+                f"Missing {contract.domain.value}-domain live-data evidence for "
+                "a freshness-sensitive answer."
+            )
     if obligations.require_exact_date and not _has_dated_evidence(action_result):
         reasons.append(
             "Missing exact-date evidence for an exact-date freshness answer."

@@ -1,4 +1,10 @@
 from __future__ import annotations
+
+from openminion.modules.llm.providers.base import ProviderToolSpec
+from openminion.services.agent.context.grounding import (
+    append_grounding_blocks,
+    build_grounding_facts,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -46,6 +52,38 @@ def _runtime_grounding_keys(prompt: str) -> set[str]:
 
 
 class AgentServiceLifecycleTests(AgentServiceTestCase):
+    def test_runtime_grounding_lists_enabled_model_tools(self) -> None:
+        class _Tools:
+            @staticmethod
+            def model_provider_specs() -> list[ProviderToolSpec]:
+                return [
+                    ProviderToolSpec(
+                        name="file.read",
+                        description="Read a file",
+                        parameters={},
+                    ),
+                    ProviderToolSpec(
+                        name="exec.run",
+                        description="Run a command",
+                        parameters={},
+                    ),
+                ]
+
+        prompt = append_grounding_blocks(
+            system_prompt="BASE",
+            facts=build_grounding_facts(
+                runtime_env=None,
+                home_root=None,
+                workspace_root="/workspace",
+                inbound_metadata={},
+                tools=_Tools(),
+                include_session_working_state=False,
+            ),
+        )
+
+        self.assertIn("- enabled_tools: exec.run, file.read", prompt)
+        self.assertIn("enabled_tools list above is authoritative", prompt)
+
     def test_plugins_transform_message(self) -> None:
         config = OpenMinionConfig()
         _csc_install_default_agent(config)
@@ -128,6 +166,7 @@ class AgentServiceLifecycleTests(AgentServiceTestCase):
                 {
                     "cwd",
                     "workspace_root",
+                    "enabled_tools",
                     "current_session_history_available",
                     "prior_session_history_available",
                     "prior_context_present",
@@ -164,6 +203,7 @@ class AgentServiceLifecycleTests(AgentServiceTestCase):
             {
                 "cwd",
                 "workspace_root",
+                "enabled_tools",
                 "current_session_history_available",
                 "prior_session_history_available",
                 "prior_context_present",

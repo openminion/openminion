@@ -101,17 +101,15 @@ def search(store: Any, options: SearchQueryOptions) -> list[MemoryRecord]:
     if not options.query or not options.scopes:
         return []
     scopes_sql, scopes_params = _named_params("scope", list(options.scopes))
-    query_suffix = [
-        f"AND scope IN ({scopes_sql})",
-        (
-            "AND (is_deleted = FALSE OR superseded_by_id IS NOT NULL)"
-            if options.include_invalidated
-            else "AND is_deleted = FALSE"
-        ),
-    ]
+    query_suffix = [f"AND scope IN ({scopes_sql})"]
+    query_suffix.extend(
+        f"AND {clause}"
+        for clause in _active_record_clause(
+            include_invalidated=options.include_invalidated
+        )
+    )
     params: dict[str, Any] = dict(scopes_params)
     if not options.include_invalidated:
-        query_suffix.append("AND (valid_to IS NULL OR valid_to > :query_now)")
         params["query_now"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     if options.types:
         types_sql, types_params = _named_params("type", list(options.types))

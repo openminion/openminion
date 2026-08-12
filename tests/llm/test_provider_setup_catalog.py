@@ -76,11 +76,11 @@ def test_setup_catalog_rejects_unsupported_provider_ids() -> None:
         get_setup_preset("made-up-provider")
 
 
-def test_hosted_provider_menus_exclude_local_ollama() -> None:
+def test_primary_provider_menu_includes_local_ollama() -> None:
     first_ids = {preset.preset_id for preset in first_screen_presets()}
     more_ids = {preset.preset_id for preset in more_screen_presets()}
 
-    assert first_ids == {"openai", "anthropic", "openrouter", "minimax"}
+    assert first_ids == {"openai", "anthropic", "openrouter", "minimax", "ollama"}
     assert "ollama" not in more_ids
     assert {
         "kimi",

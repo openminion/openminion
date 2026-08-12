@@ -18,10 +18,8 @@ def estimate_usage_cost_usd(*, usage: UsageInfo, cost_hint: Any) -> float | None
     if input_rate is None and output_rate is None:
         return None
 
-    input_tokens, output_tokens = (
-        float(usage.input_tokens or 0),
-        float(usage.output_tokens or 0),
-    )
+    input_tokens = usage.input_tokens or 0
+    output_tokens = usage.output_tokens or 0
     estimated = 0.0
     if input_rate is not None:
         estimated += (input_tokens / 1000.0) * input_rate

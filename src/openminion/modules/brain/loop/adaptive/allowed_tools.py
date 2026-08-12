@@ -2,7 +2,6 @@ from typing import Any
 
 from openminion.modules.brain.constants import (
     MEMORY_CONSOLIDATION_MODULE_STATE_KEY,
-    STATE_KEY_MODULE_STATE,
     WATCH_MODULE_STATE_KEY,
 )
 from openminion.modules.brain.execution.loop_contracts import (
@@ -59,14 +58,14 @@ from openminion.modules.tool.contracts.model_ids import (
 def _with_decompose_tool_spec(tool_specs: list[Any]) -> list[Any]:
     names = {
         str(getattr(spec, "name", "") or "").strip()
-        for spec in list(tool_specs or [])
+        for spec in tool_specs
         if str(getattr(spec, "name", "") or "").strip()
     }
     if "decompose" in names:
-        return list(tool_specs or [])
+        return tool_specs
     from ..entry import decompose_tool_spec  # noqa: PLC0415
 
-    return [*list(tool_specs or []), decompose_tool_spec()]
+    return [*tool_specs, decompose_tool_spec()]
 
 
 def _with_general_decompose_allowed_tools(
@@ -143,11 +142,8 @@ WATCH_ADAPTIVE_ALLOWED_TOOLS = frozenset(
 
 
 def _watch_profile_overrides(ctx: ExecutionContext) -> dict[str, Any] | None:
-    module_state = getattr(getattr(ctx, "state", None), STATE_KEY_MODULE_STATE, None)
-    if not isinstance(module_state, dict):
-        return None
-    raw = module_state.get(WATCH_MODULE_STATE_KEY)
-    if not isinstance(raw, dict) or not bool(raw.get("enabled", False)):
+    raw = ctx.state.module_state.get(WATCH_MODULE_STATE_KEY)
+    if not raw or not bool(raw.get("enabled", False)):
         return None
     turn_kind = str(raw.get("turn_kind", "") or "").strip().lower() or "check"
     action_turn = turn_kind == "action"
@@ -172,11 +168,8 @@ def _watch_profile_overrides(ctx: ExecutionContext) -> dict[str, Any] | None:
 def _memory_consolidation_profile_overrides(
     ctx: ExecutionContext,
 ) -> dict[str, Any] | None:
-    module_state = getattr(getattr(ctx, "state", None), STATE_KEY_MODULE_STATE, None)
-    if not isinstance(module_state, dict):
-        return None
-    raw = module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
-    if not isinstance(raw, dict) or not bool(raw.get("enabled", False)):
+    raw = ctx.state.module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
+    if not raw or not bool(raw.get("enabled", False)):
         return None
     return {
         "allowed_tools": frozenset(),

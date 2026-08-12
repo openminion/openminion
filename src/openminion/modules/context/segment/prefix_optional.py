@@ -16,11 +16,7 @@ from .self_awareness import render_self_awareness_block
 
 
 def render_budget_telemetry_block(request: BuildPackRequest) -> str:
-    payload = (
-        dict(request.budget_telemetry)
-        if isinstance(request.budget_telemetry, dict)
-        else {}
-    )
+    payload = request.budget_telemetry
     if not payload:
         return ""
     return "[BUDGET TELEMETRY]\n" + json.dumps(
@@ -88,7 +84,6 @@ def append_task_digest(
     task_digest = session_slice.task_digest
     if (
         request.purpose == CONTEXT_PURPOSE_DECIDE
-        and isinstance(task_digest, dict)
         and task_digest
         and runtime.budgets.task_digest_tokens > 0
     ):
@@ -142,7 +137,6 @@ def append_trailer_feedback(
     pending_feedback = session_slice.pending_trailer_feedback
     if (
         request.purpose == CONTEXT_PURPOSE_DECIDE
-        and isinstance(pending_feedback, dict)
         and pending_feedback
         and runtime.budgets.trailer_feedback_tokens > 0
     ):

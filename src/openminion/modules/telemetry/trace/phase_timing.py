@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -16,6 +17,7 @@ ChatPhase = Literal[
     "context_pack_build",
     "gateway_routing",
     "gateway_session_context",
+    "session_compaction",
     "brain_state_load",
     "brain_pre_dispatch",
     "brain_budget_check",
@@ -30,6 +32,9 @@ ChatPhase = Literal[
     "response_normalization",
     "response_persistence",
     "memory_write",
+    "memory_followup_flush",
+    "memory_summary_checkpoint",
+    "memory_summary_structure",
     "run_record_finish",
     "response_delivery",
     "response_delivered_event",
@@ -46,6 +51,7 @@ CHAT_PHASES: tuple[str, ...] = (
     "context_pack_build",
     "gateway_routing",
     "gateway_session_context",
+    "session_compaction",
     "brain_state_load",
     "brain_pre_dispatch",
     "brain_budget_check",
@@ -60,6 +66,9 @@ CHAT_PHASES: tuple[str, ...] = (
     "response_normalization",
     "response_persistence",
     "memory_write",
+    "memory_followup_flush",
+    "memory_summary_checkpoint",
+    "memory_summary_structure",
     "run_record_finish",
     "response_delivery",
     "response_delivered_event",
@@ -89,6 +98,7 @@ class ChatPhaseTimingPayload:
     context_pack_build_ms: int = 0
     gateway_routing_ms: int = 0
     gateway_session_context_ms: int = 0
+    session_compaction_ms: int = 0
     brain_state_load_ms: int = 0
     brain_pre_dispatch_ms: int = 0
     brain_budget_check_ms: int = 0
@@ -103,6 +113,9 @@ class ChatPhaseTimingPayload:
     response_normalization_ms: int = 0
     response_persistence_ms: int = 0
     memory_write_ms: int = 0
+    memory_followup_flush_ms: int = 0
+    memory_summary_checkpoint_ms: int = 0
+    memory_summary_structure_ms: int = 0
     run_record_finish_ms: int = 0
     response_delivery_ms: int = 0
     response_delivered_event_ms: int = 0
@@ -118,6 +131,7 @@ class ChatPhaseTimingPayload:
     provider_calls_total: int = 0
     provider_call_purposes: tuple[str, ...] = field(default_factory=tuple)
     provider_call_latency_ms: tuple[int, ...] = field(default_factory=tuple)
+    provider_attempts: tuple[dict[str, object], ...] = field(default_factory=tuple)
     provider_request_bytes: int | None = None
     provider_response_bytes: int | None = None
     provider_input_tokens: int | None = None
@@ -144,6 +158,13 @@ class ChatPhaseTimingPayload:
             raise ValueError(
                 "provider_call_latency_ms must align with provider_call_purposes"
             )
+        for attempt in self.provider_attempts:
+            attempt_number = attempt.get("attempt")
+            if isinstance(attempt_number, int) and attempt_number < 1:
+                raise ValueError("provider_attempts attempt must be >= 1")
+            latency_ms = attempt.get("latency_ms")
+            if isinstance(latency_ms, int) and latency_ms < 0:
+                raise ValueError("provider_attempts latency_ms must be >= 0")
 
     def as_dict(self) -> dict[str, object]:
         """Render as a JSON-friendly dict for `emit_canonical_event`."""
@@ -166,6 +187,7 @@ class ChatPhaseTimingPayload:
             "provider_calls_total": int(self.provider_calls_total),
             "provider_call_purposes": list(self.provider_call_purposes),
             "provider_call_latency_ms": list(self.provider_call_latency_ms),
+            "provider_attempts": [dict(item) for item in self.provider_attempts],
             "provider_request_bytes": self.provider_request_bytes,
             "provider_response_bytes": self.provider_response_bytes,
             "provider_input_tokens": self.provider_input_tokens,
@@ -190,6 +212,7 @@ class ChatPhaseTimer:
     _first_provider_token_ns: int | None = None
     _provider_call_purposes: list[str] = field(default_factory=list)
     _provider_call_latency_ms: list[int] = field(default_factory=list)
+    _provider_attempts: list[dict[str, object]] = field(default_factory=list)
     _provider_request_bytes: int = 0
     _provider_response_bytes: int = 0
     _provider_input_tokens: int = 0
@@ -201,6 +224,7 @@ class ChatPhaseTimer:
     _has_provider_input_tokens: bool = False
     _has_provider_output_tokens: bool = False
     _has_tool_schema_metrics: bool = False
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:
@@ -209,12 +233,16 @@ class ChatPhaseTimer:
                 f"Unknown chat phase: {name!r}. Allowed: {sorted(CHAT_PHASES)}"
             )
         start = time.perf_counter_ns()
-        self._instrumented.add(name)
+        with self._lock:
+            self._instrumented.add(name)
         try:
             yield
         finally:
             elapsed = time.perf_counter_ns() - start
-            self._phase_elapsed_ns[name] = self._phase_elapsed_ns.get(name, 0) + elapsed
+            with self._lock:
+                self._phase_elapsed_ns[name] = (
+                    self._phase_elapsed_ns.get(name, 0) + elapsed
+                )
 
     def mark_first_text(self) -> None:
         """Record the wall-clock moment the first text byte became visible.
@@ -223,16 +251,18 @@ class ChatPhaseTimer:
         Idempotent — the first call wins; subsequent calls are no-ops.
         """
 
-        if self._first_text_ns is None:
-            self._first_text_ns = time.perf_counter_ns() - int(
-                self._turn_start * 1_000_000_000
-            )
+        with self._lock:
+            if self._first_text_ns is None:
+                self._first_text_ns = time.perf_counter_ns() - int(
+                    self._turn_start * 1_000_000_000
+                )
 
     def mark_provider_token(self) -> None:
-        if self._first_provider_token_ns is None:
-            self._first_provider_token_ns = time.perf_counter_ns() - int(
-                self._turn_start * 1_000_000_000
-            )
+        with self._lock:
+            if self._first_provider_token_ns is None:
+                self._first_provider_token_ns = time.perf_counter_ns() - int(
+                    self._turn_start * 1_000_000_000
+                )
 
     def record_provider_call(
         self,
@@ -243,39 +273,73 @@ class ChatPhaseTimer:
         response: object,
     ) -> None:
         normalized_purpose = str(purpose or "unknown").strip() or "unknown"
-        self._provider_call_purposes.append(normalized_purpose)
-        self._provider_call_latency_ms.append(
-            max(0, int(getattr(response, "latency_ms", 0) or 0))
-        )
         message_payload = [_jsonable(item) for item in messages]
         tool_payload = [_jsonable(item) for item in tools]
-        self._provider_request_bytes += _json_bytes(
-            {"messages": message_payload, "tools": tool_payload}
-        )
-        self._has_provider_request_bytes = True
-        self._provider_response_bytes += _json_bytes(
-            {
-                "output_text": str(getattr(response, "output_text", "") or ""),
-                "tool_calls": [
-                    _jsonable(item)
-                    for item in list(getattr(response, "tool_calls", []) or [])
-                ],
-                "finish_reason": str(getattr(response, "finish_reason", "") or ""),
-            }
-        )
-        self._has_provider_response_bytes = True
+        with self._lock:
+            self._provider_call_purposes.append(normalized_purpose)
+            self._provider_call_latency_ms.append(
+                max(0, int(getattr(response, "latency_ms", 0) or 0))
+            )
+            self._provider_request_bytes += _json_bytes(
+                {"messages": message_payload, "tools": tool_payload}
+            )
+            self._has_provider_request_bytes = True
+            self._provider_response_bytes += _json_bytes(
+                {
+                    "output_text": str(getattr(response, "output_text", "") or ""),
+                    "tool_calls": [
+                        _jsonable(item)
+                        for item in list(getattr(response, "tool_calls", []) or [])
+                    ],
+                    "finish_reason": str(getattr(response, "finish_reason", "") or ""),
+                }
+            )
+            self._has_provider_response_bytes = True
         usage = getattr(response, "usage", None)
         input_tokens = getattr(usage, "input_tokens", None)
         output_tokens = getattr(usage, "output_tokens", None)
-        if input_tokens is not None:
-            self._provider_input_tokens += max(0, int(input_tokens))
-            self._has_provider_input_tokens = True
-        if output_tokens is not None:
-            self._provider_output_tokens += max(0, int(output_tokens))
-            self._has_provider_output_tokens = True
-        self._tool_schema_count_max = max(self._tool_schema_count_max, len(tools))
-        self._tool_schema_bytes_total += _json_bytes(tool_payload)
-        self._has_tool_schema_metrics = True
+        with self._lock:
+            if input_tokens is not None:
+                self._provider_input_tokens += max(0, int(input_tokens))
+                self._has_provider_input_tokens = True
+            if output_tokens is not None:
+                self._provider_output_tokens += max(0, int(output_tokens))
+                self._has_provider_output_tokens = True
+            self._tool_schema_count_max = max(self._tool_schema_count_max, len(tools))
+            self._tool_schema_bytes_total += _json_bytes(tool_payload)
+            self._has_tool_schema_metrics = True
+
+    def record_provider_attempt(
+        self,
+        *,
+        logical_call_id: str,
+        semantic_purpose: str,
+        attempt: int,
+        provider: str,
+        model: str,
+        route_posture: str,
+        attempt_posture: str,
+        latency_ms: int,
+        outcome: str,
+        error_code: str = "",
+    ) -> None:
+        payload: dict[str, object] = {
+            "logical_call_id": str(logical_call_id or "unavailable").strip()
+            or "unavailable",
+            "semantic_purpose": str(semantic_purpose or "unknown").strip() or "unknown",
+            "attempt": max(1, int(attempt or 1)),
+            "provider": str(provider or "unavailable").strip() or "unavailable",
+            "model": str(model or "unavailable").strip() or "unavailable",
+            "route_posture": str(route_posture or "primary").strip() or "primary",
+            "attempt_posture": str(attempt_posture or "initial").strip() or "initial",
+            "latency_ms": max(0, int(latency_ms or 0)),
+            "outcome": str(outcome or "unknown").strip() or "unknown",
+        }
+        normalized_error = str(error_code or "").strip().upper()
+        if normalized_error:
+            payload["error_code"] = normalized_error
+        with self._lock:
+            self._provider_attempts.append(payload)
 
     def stop(self) -> int:
         """Return total wall-clock ms since timer construction."""
@@ -294,57 +358,68 @@ class ChatPhaseTimer:
         """Assemble the typed payload from accumulated checkpoints."""
 
         total_ms = self.stop()
-        per_phase_ms: dict[str, int] = {
-            phase: int(self._phase_elapsed_ns.get(phase, 0) // 1_000_000)
-            for phase in CHAT_PHASES
-        }
-        ttft = (
-            None
-            if self._first_text_ns is None
-            else int(self._first_text_ns // 1_000_000)
-        )
-        provider_ttft = (
-            None
-            if self._first_provider_token_ns is None
-            else int(self._first_provider_token_ns // 1_000_000)
-        )
+        with self._lock:
+            per_phase_ms: dict[str, int] = {
+                phase: int(self._phase_elapsed_ns.get(phase, 0) // 1_000_000)
+                for phase in CHAT_PHASES
+            }
+            ttft = (
+                None
+                if self._first_text_ns is None
+                else int(self._first_text_ns // 1_000_000)
+            )
+            provider_ttft = (
+                None
+                if self._first_provider_token_ns is None
+                else int(self._first_provider_token_ns // 1_000_000)
+            )
+            instrumented = tuple(sorted(self._instrumented))
+            provider_call_purposes = tuple(self._provider_call_purposes)
+            provider_call_latency_ms = tuple(self._provider_call_latency_ms)
+            provider_attempts = tuple(dict(item) for item in self._provider_attempts)
+            provider_request_bytes = self._provider_request_bytes
+            has_provider_request_bytes = self._has_provider_request_bytes
+            provider_response_bytes = self._provider_response_bytes
+            has_provider_response_bytes = self._has_provider_response_bytes
+            provider_input_tokens = self._provider_input_tokens
+            has_provider_input_tokens = self._has_provider_input_tokens
+            provider_output_tokens = self._provider_output_tokens
+            has_provider_output_tokens = self._has_provider_output_tokens
+            tool_schema_count_max = self._tool_schema_count_max
+            tool_schema_bytes_total = self._tool_schema_bytes_total
+            has_tool_schema_metrics = self._has_tool_schema_metrics
         return ChatPhaseTimingPayload(
             cold_start=self.cold_start,
             total_turn_ms=total_ms,
             time_to_first_text_ms=ttft,
             provider_token_ttft_ms=provider_ttft,
-            phases_instrumented=tuple(sorted(self._instrumented)),
+            phases_instrumented=instrumented,
             turn_id=turn_id,
             session_id=session_id,
             agent_id=agent_id,
             process_mode=process_mode,
             transport=transport,
-            provider_calls_total=len(self._provider_call_purposes),
-            provider_call_purposes=tuple(self._provider_call_purposes),
-            provider_call_latency_ms=tuple(self._provider_call_latency_ms),
+            provider_calls_total=len(provider_call_purposes),
+            provider_call_purposes=provider_call_purposes,
+            provider_call_latency_ms=provider_call_latency_ms,
+            provider_attempts=provider_attempts,
             provider_request_bytes=(
-                self._provider_request_bytes
-                if self._has_provider_request_bytes
-                else None
+                provider_request_bytes if has_provider_request_bytes else None
             ),
             provider_response_bytes=(
-                self._provider_response_bytes
-                if self._has_provider_response_bytes
-                else None
+                provider_response_bytes if has_provider_response_bytes else None
             ),
             provider_input_tokens=(
-                self._provider_input_tokens if self._has_provider_input_tokens else None
+                provider_input_tokens if has_provider_input_tokens else None
             ),
             provider_output_tokens=(
-                self._provider_output_tokens
-                if self._has_provider_output_tokens
-                else None
+                provider_output_tokens if has_provider_output_tokens else None
             ),
             tool_schema_count_max=(
-                self._tool_schema_count_max if self._has_tool_schema_metrics else None
+                tool_schema_count_max if has_tool_schema_metrics else None
             ),
             tool_schema_bytes_total=(
-                self._tool_schema_bytes_total if self._has_tool_schema_metrics else None
+                tool_schema_bytes_total if has_tool_schema_metrics else None
             ),
             **{f"{phase}_ms": ms for phase, ms in per_phase_ms.items()},
         )
@@ -359,6 +434,7 @@ __all__ = [
     "mark_active_chat_first_text",
     "mark_active_chat_provider_token",
     "record_active_chat_provider_call",
+    "record_active_chat_provider_attempt",
     "record_chat_phase_timing_payload",
     "use_chat_phase_timer",
 ]
@@ -417,6 +493,35 @@ def record_active_chat_provider_call(
             messages=messages,
             tools=tools,
             response=response,
+        )
+
+
+def record_active_chat_provider_attempt(
+    *,
+    logical_call_id: str,
+    semantic_purpose: str,
+    attempt: int,
+    provider: str,
+    model: str,
+    route_posture: str,
+    attempt_posture: str,
+    latency_ms: int,
+    outcome: str,
+    error_code: str = "",
+) -> None:
+    timer = _ACTIVE_CHAT_PHASE_TIMER.get()
+    if timer is not None:
+        timer.record_provider_attempt(
+            logical_call_id=logical_call_id,
+            semantic_purpose=semantic_purpose,
+            attempt=attempt,
+            provider=provider,
+            model=model,
+            route_posture=route_posture,
+            attempt_posture=attempt_posture,
+            latency_ms=latency_ms,
+            outcome=outcome,
+            error_code=error_code,
         )
 
 

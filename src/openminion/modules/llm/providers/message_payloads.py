@@ -164,40 +164,6 @@ def _extract_ollama_thinking_blocks(message_payload: Any) -> list[dict[str, Any]
     return [block] if block else []
 
 
-def _extract_anthropic_thinking_blocks(response_payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(response_payload, Mapping):
-        return []
-    raw_content = response_payload.get("content")
-    if not isinstance(raw_content, list):
-        return []
-
-    blocks: list[dict[str, Any]] = []
-    for item in raw_content:
-        if not isinstance(item, Mapping):
-            continue
-        block_type = str(item.get("type", "") or "").strip().lower()
-        if block_type not in {"thinking", "redacted_thinking"}:
-            continue
-        content = _extract_message_text(
-            item.get("thinking") or item.get("text") or item.get("content")
-        )
-        block = _build_thinking_block(
-            content=content,
-            signature=str(item.get("signature", "") or "").strip() or None,
-            redacted=(
-                block_type == "redacted_thinking"
-                or bool(item.get("redacted", False))
-                or (
-                    not str(content or "").strip()
-                    and bool(str(item.get("signature", "") or "").strip())
-                )
-            ),
-        )
-        if block is not None:
-            blocks.append(block)
-    return blocks
-
-
 def _extract_openai_like_primary_text(
     *,
     response_payload: Dict[str, Any],
@@ -352,66 +318,6 @@ def _openai_like_content(
                     "image_url": {
                         "url": f"data:{mime};base64,{data}",
                         "detail": str(item.detail_level or "auto"),
-                    },
-                }
-            )
-    if not parts:
-        raise LLMCtlError(
-            "INVALID_ARGUMENT",
-            "Structured content did not produce any provider payload parts",
-        )
-    return parts
-
-
-def _anthropic_content(
-    message: Message,
-    *,
-    enable_vision_input: bool,
-    supports_vision_input: bool,
-) -> str | list[dict[str, Any]]:
-    if not message.content_parts:
-        return str(message.content or "").strip()
-
-    parts: list[dict[str, Any]] = []
-    for item in message.content_parts:
-        if isinstance(item, TextContentPart):
-            text = str(item.text or "").strip()
-            if text:
-                parts.append({"type": "text", "text": text})
-            continue
-        if isinstance(item, ImageContentPart):
-            if not enable_vision_input:
-                raise LLMCtlError(
-                    "INVALID_ARGUMENT",
-                    "Vision input is disabled for this provider configuration",
-                )
-            if not supports_vision_input:
-                raise LLMCtlError(
-                    "INVALID_ARGUMENT",
-                    "This provider does not support image input on the current path",
-                )
-            if item.source == "url":
-                url = str(item.url or "").strip()
-                if not url:
-                    raise LLMCtlError(
-                        "INVALID_ARGUMENT",
-                        "Image url source requires a non-empty url",
-                    )
-                parts.append(
-                    {
-                        "type": "image",
-                        "source": {"type": "url", "url": url},
-                    }
-                )
-                continue
-            mime, data = _image_part_bytes(item)
-            parts.append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": mime,
-                        "data": data,
                     },
                 }
             )
@@ -602,102 +508,6 @@ def _messages_openai_like(
     return _ensure_openai_like_non_system_turn(messages)
 
 
-def _messages_anthropic(
-    request: LLMRequest,
-    include_fallback_instruction: bool,
-    *,
-    tool_name_overrides: Mapping[str, str] | None = None,
-    enable_prompt_cache: bool = False,
-    cache_system_prompt: bool = True,
-    enable_vision_input: bool = False,
-    supports_vision_input: bool = False,
-) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
-    system_chunks: list[str] = []
-    system_blocks: list[dict[str, Any]] = []
-    fallback_instruction = ""
-    schema_only = False
-    if include_fallback_instruction and request.tools:
-        schema_only = is_schema_only_submit_output_tools(request.tools)
-        fallback_instruction = build_fallback_tool_call_instruction(
-            request.tools,
-            schema_only=schema_only,
-            canonical_to_external=tool_name_overrides,
-        )
-
-    chat_messages: list[dict[str, Any]] = []
-    for msg in request.messages:
-        content = _anthropic_content(
-            msg,
-            enable_vision_input=enable_vision_input,
-            supports_vision_input=supports_vision_input,
-        )
-        if isinstance(content, str) and not content:
-            continue
-
-        if msg.role == "system":
-            if enable_prompt_cache:
-                if isinstance(content, str):
-                    system_text_blocks = [{"type": "text", "text": content}]
-                elif all(
-                    isinstance(item, dict) and item.get("type") == "text"
-                    for item in content
-                ):
-                    system_text_blocks = [dict(item) for item in content]
-                else:
-                    raise LLMCtlError(
-                        "INVALID_ARGUMENT",
-                        "Anthropic system prompts must remain text-only",
-                    )
-                for block in system_text_blocks:
-                    if cache_system_prompt and isinstance(msg.cache_control, dict):
-                        cache_control = dict(msg.cache_control)
-                        if cache_control:
-                            block["cache_control"] = cache_control
-                    system_blocks.append(block)
-            else:
-                if isinstance(content, str):
-                    system_chunks.append(content)
-                elif all(
-                    isinstance(item, dict) and item.get("type") == "text"
-                    for item in content
-                ):
-                    rendered = [
-                        str(item.get("text", "")).strip()
-                        for item in content
-                        if str(item.get("text", "")).strip()
-                    ]
-                    if rendered:
-                        system_chunks.append("\n\n".join(rendered))
-                else:
-                    raise LLMCtlError(
-                        "INVALID_ARGUMENT",
-                        "Anthropic system prompts must remain text-only",
-                    )
-            continue
-
-        role = msg.role if msg.role in {"user", "assistant"} else "user"
-        chat_messages.append({"role": role, "content": content})
-
-    if fallback_instruction:
-        if enable_prompt_cache:
-            block = {"type": "text", "text": fallback_instruction}
-            if schema_only:
-                system_blocks.append(block)
-            else:
-                system_blocks.insert(0, block)
-        elif schema_only:
-            system_chunks.append(fallback_instruction)
-        else:
-            system_chunks.insert(0, fallback_instruction)
-
-    if not chat_messages:
-        chat_messages.append({"role": "user", "content": ""})
-
-    if enable_prompt_cache:
-        return system_blocks, chat_messages
-    return "\n\n".join(system_chunks).strip(), chat_messages
-
-
 def _usage_from_openai_like(payload: Any) -> UsageInfo:
     if not isinstance(payload, dict):
         return UsageInfo()
@@ -740,33 +550,6 @@ def _usage_from_ollama(payload: Dict[str, Any]) -> UsageInfo:
         output_tokens=eval_count if isinstance(eval_count, int) else None,
         total_tokens=total,
         total_source="derived" if total is not None else None,
-    )
-
-
-def _usage_from_anthropic(payload: Any) -> UsageInfo:
-    if not isinstance(payload, dict):
-        return UsageInfo()
-
-    input_tokens = payload.get("input_tokens")
-    output_tokens = payload.get("output_tokens")
-    total: int | None = None
-    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-        total = input_tokens + output_tokens
-
-    raw_cache_read = payload.get("cache_read_input_tokens")
-    cached_tokens = raw_cache_read if isinstance(raw_cache_read, int) else None
-    raw_cache_creation = payload.get("cache_creation_input_tokens")
-    cache_creation_tokens = (
-        raw_cache_creation if isinstance(raw_cache_creation, int) else None
-    )
-
-    return UsageInfo(
-        input_tokens=input_tokens if isinstance(input_tokens, int) else None,
-        output_tokens=output_tokens if isinstance(output_tokens, int) else None,
-        total_tokens=total,
-        total_source="derived" if total is not None else None,
-        cached_tokens=cached_tokens,
-        cache_creation_tokens=cache_creation_tokens,
     )
 
 
@@ -835,7 +618,7 @@ def _resolve_model(
 
 
 def _resolve_tool_names(request: LLMRequest) -> List[str]:
-    return [tool.name for tool in (request.tools or []) if str(tool.name).strip()]
+    return [tool.name for tool in request.tools or [] if tool.name.strip()]
 
 
 def _decode_nested_json_object(raw_value: Any) -> dict[str, Any] | None:
@@ -886,11 +669,9 @@ _DECISION_ALLOWED_KEYS = {
 
 
 def _sanitize_decision_like_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    args = _decode_json_like(dict(arguments or {}))
-    if not isinstance(args, dict):
-        return dict(arguments or {})
+    args = {key: _decode_json_like(value) for key, value in arguments.items()}
     if not ("mode" in args and "reason_code" in args and "confidence" in args):
-        return dict(args)
+        return args
 
     cleaned: dict[str, Any] = {
         key: args[key] for key in _DECISION_ALLOWED_KEYS if key in args
@@ -899,9 +680,6 @@ def _sanitize_decision_like_arguments(arguments: dict[str, Any]) -> dict[str, An
         cleaned["sub_intents"] = []
     if "rationale" not in cleaned:
         cleaned["rationale"] = ""
-    decoded_cleaned = _decode_json_like(cleaned)
-    if isinstance(decoded_cleaned, dict):
-        return decoded_cleaned
     return cleaned
 
 
@@ -932,7 +710,7 @@ def _normalize_submit_output_arguments(
 
 def _coerce_tool_calls(raw_calls: list[Any]) -> list[ToolCall]:
     normalized: list[ToolCall] = []
-    for call in raw_calls or []:
+    for call in raw_calls:
         if isinstance(call, ToolCall):
             normalized_args = _normalize_submit_output_arguments(
                 str(call.name or "").strip(),
@@ -972,7 +750,7 @@ def _coerce_tool_calls(raw_calls: list[Any]) -> list[ToolCall]:
 def _last_user_text(messages: List[Message]) -> str:
     for msg in reversed(messages):
         if msg.role == "user":
-            return str(msg.content or "")
+            return msg.content
     return ""
 
 

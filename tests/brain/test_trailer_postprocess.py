@@ -15,6 +15,9 @@ from openminion.modules.brain.trailers import (
     TRAILER_LANE_SWSC,
     TrailerPostprocessService,
 )
+from openminion.modules.brain.loop.tools.postprocess.rules import (
+    _looks_like_unexecutable_tool_payload_text,
+)
 
 
 class _FakeSessionAPI:
@@ -49,6 +52,14 @@ class _FakeSessionAPI:
 
 
 class TrailerPostprocessMeasurementTests(unittest.TestCase):
+    def test_postprocess_raw_tool_payload_uses_generic_markup_detector(self) -> None:
+        self.assertTrue(
+            _looks_like_unexecutable_tool_payload_text(
+                '<minimax:tool_call><invoke name="web.search"></invoke></minimax:tool_call>'
+            )
+        )
+        self.assertFalse(_looks_like_unexecutable_tool_payload_text("plain answer"))
+
     def test_expected_and_emitted_events_both_fire_for_apd_trailer(self) -> None:
         session_api = _FakeSessionAPI()
         response = SimpleNamespace(

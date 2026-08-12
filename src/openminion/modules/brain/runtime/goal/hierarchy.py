@@ -56,7 +56,7 @@ def project_records_to_nodes(records: Iterable[Any]) -> list[GoalHierarchyNode]:
     """Project typed memory records into hierarchy nodes."""
     seen: set[str] = set()
     nodes: list[GoalHierarchyNode] = []
-    for record in records or []:
+    for record in records:
         content: Mapping[str, Any] | None
         if isinstance(record, Mapping):
             inner = record.get("content")
@@ -65,9 +65,7 @@ def project_records_to_nodes(records: Iterable[Any]) -> list[GoalHierarchyNode]:
             inner = getattr(record, "content", None)
             content = inner if isinstance(inner, Mapping) else None
         node = GoalHierarchyNode.from_record_content(content)
-        if node is None:
-            continue
-        if node.goal_id in seen:
+        if node is None or node.goal_id in seen:
             continue
         seen.add(node.goal_id)
         nodes.append(node)

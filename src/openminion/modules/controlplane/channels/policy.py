@@ -145,5 +145,4 @@ def _normalize_id(value: str) -> str:
 
 
 def _normalize_id_set(values: Iterable[str]) -> tuple[str, ...]:
-    normalized = {_normalize_id(value) for value in values if _normalize_id(value)}
-    return tuple(sorted(normalized))
+    return tuple(sorted({_normalize_id(value) for value in values} - {""}))

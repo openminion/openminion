@@ -29,12 +29,14 @@ class BridgeArtifactClient:
         )
 
     def _build_artifact_ctl(self, imported: tuple[Any, Any]) -> Any | None:
-        artifact_ctl_cls, sqlite_artifact_store_cls = imported
+        artifact_ctl_cls, config_cls = imported
         db_path = _resolve_database_path(self._store)
         if db_path is None:
             return None
-        artifact_db = db_path.parent / "artifact.db"
-        return artifact_ctl_cls(store=sqlite_artifact_store_cls(artifact_db))
+        config = config_cls()
+        config.blob_store.root_dir = str(db_path.parent / "artifacts")
+        config.index.sqlite_path = str(db_path.parent / "artifact.db")
+        return artifact_ctl_cls(config)
 
     def query_digests(
         self,
@@ -54,22 +56,16 @@ class BridgeArtifactClient:
                 query=query,
                 filters={"owner_type": "session", "owner_id": session_id},
             )
-            return (
-                [
-                    ArtifactDigest(
-                        ref=_extract_text_from_record(
-                            meta, attr_keys=("sha256", "ref")
-                        ),
-                        view_id=getattr(meta, "view_id", None),
-                        digest_hash=_extract_text_from_record(
-                            meta, attr_keys=("sha256", "digest_hash")
-                        ),
-                    )
-                    for meta in results[:limit]
-                ]
-                if results
-                else []
-            )
+            return [
+                ArtifactDigest(
+                    ref=_extract_text_from_record(meta, attr_keys=("sha256", "ref")),
+                    view_id=getattr(meta, "view_id", None),
+                    digest_hash=_extract_text_from_record(
+                        meta, attr_keys=("sha256", "digest_hash")
+                    ),
+                )
+                for meta in results[:limit]
+            ]
         except Exception as exc:
             logger.warning("artifact query_digests failed: %s", exc)
             return []
@@ -77,11 +73,11 @@ class BridgeArtifactClient:
 
 def _import_artifact_dependencies() -> tuple[Any, Any] | None:
     try:
+        from openminion.modules.artifact.config import ArtifactCtlConfig
         from openminion.modules.artifact.control import ArtifactCtl
-        from openminion.modules.artifact.storage.store import SQLiteArtifactStore
-    except Exception:
+    except ImportError:
         return None
-    return ArtifactCtl, SQLiteArtifactStore
+    return ArtifactCtl, ArtifactCtlConfig
 
 
 __all__ = ["BridgeArtifactClient"]

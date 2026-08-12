@@ -237,6 +237,8 @@ def _ctx(task_manager: TaskManager, *, ticks: int = 4, session_id: str = "s-rese
         mode="research",
         confidence=0.91,
         reason_code="task_backed_research",
+        research_query="Investigate the cron-backed resume design.",
+        research_scope="",
         objective="Investigate the cron-backed resume design.",
         sub_intents=[],
         rationale="",

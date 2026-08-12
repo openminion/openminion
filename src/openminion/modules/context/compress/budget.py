@@ -41,8 +41,6 @@ class BudgetState:
 
 
 class BudgetPlanner:
-    """Creates deterministic budget envelopes and allocation state."""
-
     def plan(self, budgets: CompressionBudgets) -> BudgetEnvelope:
         if budgets.max_output_tokens_total <= 0:
             raise BudgetError("total token budget must be positive")
@@ -51,11 +49,10 @@ class BudgetPlanner:
         if total_cap <= 0:
             raise BudgetError("reserve consumes entire budget")
 
-        per_type_caps = {}
+        per_type_caps = dict(budgets.max_output_tokens_by_type)
         for key, value in budgets.max_output_tokens_by_type.items():
             if value <= 0:
                 raise BudgetError(f"invalid per-type cap for {key}")
-            per_type_caps[key] = value
 
         return BudgetEnvelope(
             total_cap=total_cap,

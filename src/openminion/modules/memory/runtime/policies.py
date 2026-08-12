@@ -70,15 +70,16 @@ class DefaultPromotionPolicyEngine:
 
     def evaluate(self, candidate: MemoryCandidate, target_scope: str) -> PolicyDecision:
         result = self._policy.evaluate(candidate, target_scope)
+        metadata = {
+            "source": str(candidate.source or ""),
+            "target_scope": str(target_scope or ""),
+        }
         if result.allowed:
             return PolicyDecision(
                 allowed=True,
                 reason_code="promotion_allowed",
                 reason=str(result.reason or ""),
-                metadata={
-                    "source": str(candidate.source or ""),
-                    "target_scope": str(target_scope or ""),
-                },
+                metadata=metadata,
             )
         if str(target_scope or "").startswith("global:"):
             reason_code = "promotion_denied_global_scope_requires_approval"
@@ -90,10 +91,7 @@ class DefaultPromotionPolicyEngine:
             allowed=False,
             reason_code=reason_code,
             reason=str(result.reason or "Promotion denied by policy"),
-            metadata={
-                "source": str(candidate.source or ""),
-                "target_scope": str(target_scope or ""),
-            },
+            metadata=metadata,
         )
 
 
@@ -104,44 +102,23 @@ class DefaultRetrievalPolicyEngine:
         self._max_results = max(0, int(max_results))
 
     def resolve_limit(self, *, requested_limit: int | None) -> RetrievalDecision:
-        if requested_limit is not None:
-            resolved = max(1, int(requested_limit))
-        else:
-            resolved = None
+        resolved = max(1, int(requested_limit)) if requested_limit is not None else None
+        metadata = {
+            "requested_limit": requested_limit,
+            "max_results": self._max_results,
+        }
         if self._max_results <= 0:
-            return RetrievalDecision(
-                limit=resolved,
-                reason_code="retrieval_limit_passthrough",
-                metadata={
-                    "requested_limit": requested_limit,
-                    "max_results": self._max_results,
-                },
-            )
-        if resolved is None:
-            return RetrievalDecision(
-                limit=self._max_results,
-                reason_code="retrieval_limit_defaulted",
-                metadata={
-                    "requested_limit": requested_limit,
-                    "max_results": self._max_results,
-                },
-            )
-        if resolved > self._max_results:
-            return RetrievalDecision(
-                limit=self._max_results,
-                reason_code="retrieval_limit_capped",
-                metadata={
-                    "requested_limit": requested_limit,
-                    "max_results": self._max_results,
-                },
-            )
+            reason_code = "retrieval_limit_passthrough"
+        elif resolved is None:
+            resolved, reason_code = self._max_results, "retrieval_limit_defaulted"
+        elif resolved > self._max_results:
+            resolved, reason_code = self._max_results, "retrieval_limit_capped"
+        else:
+            reason_code = "retrieval_limit_passthrough"
         return RetrievalDecision(
             limit=resolved,
-            reason_code="retrieval_limit_passthrough",
-            metadata={
-                "requested_limit": requested_limit,
-                "max_results": self._max_results,
-            },
+            reason_code=reason_code,
+            metadata=metadata,
         )
 
 
@@ -267,13 +244,10 @@ def build_default_policy_engine_bundle(config: Any | None = None) -> PolicyEngin
                 )
             }
 
-    max_results_raw = retrieval_cfg.get("max_results")
-    max_results = 0
-    if max_results_raw is not None:
-        try:
-            max_results = max(0, int(max_results_raw))
-        except (TypeError, ValueError):
-            max_results = 0
+    try:
+        max_results = max(0, int(retrieval_cfg.get("max_results") or 0))
+    except (TypeError, ValueError):
+        max_results = 0
 
     auto_promote_sources = {"system", "validated"}
     if bool(promotion_cfg.get("auto_promote_agent_procedures", False)):

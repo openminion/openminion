@@ -183,17 +183,12 @@ def resume_transition_for(
     from_phase: CanonicalLifecyclePhase,
 ) -> ResumeTransition:
     """Compute the transition that firing ``channel`` would cause."""
-    if from_phase in ("completed", "cancelled", "failed"):
+    if from_phase in {"completed", "cancelled", "failed"} or channel in {
+        "none",
+        "unknown",
+    }:
         return ResumeTransition(
             channel=channel, from_phase=from_phase, to_phase=from_phase
-        )
-    if channel == "none" or channel == "unknown":
-        return ResumeTransition(
-            channel=channel, from_phase=from_phase, to_phase=from_phase
-        )
-    if channel == "direct":
-        return ResumeTransition(
-            channel=channel, from_phase=from_phase, to_phase="active"
         )
     return ResumeTransition(channel=channel, from_phase=from_phase, to_phase="active")
 
@@ -212,9 +207,9 @@ def build_unified_projection(
         phase=source_projection.phase,
         source_projection=source_projection,
         resume_channel=resume_channel,
-        checkpoint_present=bool(checkpoint_present),
-        task_id=str(task_id or "").strip(),
-        mission_id=str(mission_id or "").strip(),
+        checkpoint_present=checkpoint_present,
+        task_id=task_id,
+        mission_id=mission_id,
         source_refs=dict(source_refs or {}),
     )
 

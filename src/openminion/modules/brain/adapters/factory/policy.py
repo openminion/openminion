@@ -20,11 +20,8 @@ def create_policy_adapter(
     if mode_is_local(mode):
         return LocalPolicyAdapter()
     try:
-        resolved_path = (
-            Path(db_path) if db_path else default_data_root() / "policy" / "policy.db"
-        )
         return create_policy_runtime_adapter(
-            db_path=resolved_path,
+            db_path=Path(db_path or default_data_root() / "policy" / "policy.db"),
             policy_service=policy_service,
             action_policy_config=action_policy_config,
         )

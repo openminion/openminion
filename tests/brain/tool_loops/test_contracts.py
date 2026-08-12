@@ -213,12 +213,12 @@ def test_semantic_sig_whitespace_stripped_in_values() -> None:
     assert sig1 == sig2
 
 
-def test_semantic_sig_treats_null_like_placeholders_as_missing() -> None:
+def test_semantic_sig_preserves_literal_none_argument() -> None:
     sig1 = semantic_batch_signature([{"name": "weather", "arguments": {}}])
     sig2 = semantic_batch_signature(
         [{"name": "weather", "arguments": {"location": "None", "query": "  "}}]
     )
-    assert sig1 == sig2
+    assert sig1 != sig2
 
 
 def test_semantic_sig_different_path_produces_different_signature() -> None:

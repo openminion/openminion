@@ -86,6 +86,34 @@ def test_registry_rejects_missing_method() -> None:
         registry.add(_MissingListModelsProvider())
 
 
+class _CompleteOnlyProvider:
+    name = "complete_only"
+    contract_version = LLM_RESPONSE_INTERFACE_VERSION
+    provider_interface_version = PROVIDER_INTERFACE_VERSION
+
+    def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
+        del request, config
+        return LLMResponse(
+            ok=True,
+            provider=self.name,
+            model="complete-only-v1",
+            output_text="ok",
+            usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    def list_models(self, config: Dict[str, Any]) -> list[str]:
+        del config
+        return ["complete-only-v1"]
+
+    def healthcheck(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        del config
+        return {"ok": True}
+
+
+def test_contract_validator_accepts_provider_without_native_stream() -> None:
+    ensure_provider(_CompleteOnlyProvider())
+
+
 # provider_interface_version validation
 
 

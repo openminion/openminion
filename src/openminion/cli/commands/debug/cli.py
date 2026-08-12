@@ -42,44 +42,45 @@ def run_debug(args) -> int:
         return 1
     action = str(getattr(args, "debug_command", "")).strip().lower()
     if action == "modules":
-        return _debug_modules(args)
+        return _debug_modules(args, config)
     if action == "module":
-        return _debug_module(args)
+        return _debug_module(args, config)
     if action == "timeline":
-        return _debug_timeline(args, config)
+        return _debug_timeline(args)
     if action == "trace":
         return _debug_trace(args)
     raise RuntimeError("Unknown debug command")
 
 
-def _debug_modules(args) -> int:
-    registry = get_debug_registry()
-    _configure_debug_context(args)
-    register_core_providers(registry)
-
-    config = _load_debug_config(args)
-    auto_start = bool(getattr(config.runtime, "daemon_auto_start", False))
-
-    daemon_payload = None
+def _daemon_debug_payload(args: object, config: Any, *, path: str, key: str) -> Any:
     try:
         from openminion.cli.commands.daemon import ensure_daemon_running
 
         endpoint = ensure_daemon_running(
-            args.config,
-            auto_start=auto_start,
+            getattr(args, "config", None),
+            auto_start=bool(getattr(config.runtime, "daemon_auto_start", False)),
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),
         )
         status, payload = daemon_request(
             endpoint=endpoint,
             method="GET",
-            path="/v1/debug/modules",
+            path=path,
             timeout_s=10,
         )
-        if status < 400 and payload.get("ok"):
-            daemon_payload = payload.get("modules", [])
     except Exception:
-        pass
+        return None
+    return payload.get(key) if status < 400 and payload.get("ok") else None
+
+
+def _debug_modules(args, config: Any) -> int:
+    registry = get_debug_registry()
+    _configure_debug_context(args)
+    register_core_providers(registry)
+
+    daemon_payload = _daemon_debug_payload(
+        args, config, path="/v1/debug/modules", key="modules"
+    )
 
     if daemon_payload:
         modules = daemon_payload
@@ -105,7 +106,7 @@ def _debug_modules(args) -> int:
     return 0
 
 
-def _debug_module(args) -> int:
+def _debug_module(args, config: Any) -> int:
     module_name = str(getattr(args, "module_name", "")).strip()
     if not module_name:
         print("Error: --name is required", file=sys.stderr)
@@ -115,29 +116,12 @@ def _debug_module(args) -> int:
     _configure_debug_context(args)
     register_core_providers(registry)
 
-    config = _load_debug_config(args)
-    auto_start = bool(getattr(config.runtime, "daemon_auto_start", False))
-
-    daemon_payload = None
-    try:
-        from openminion.cli.commands.daemon import ensure_daemon_running
-
-        endpoint = ensure_daemon_running(
-            args.config,
-            auto_start=auto_start,
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
-        status, payload = daemon_request(
-            endpoint=endpoint,
-            method="GET",
-            path=f"/v1/debug/modules/{module_name}",
-            timeout_s=10,
-        )
-        if status < 400 and payload.get("ok"):
-            daemon_payload = payload.get("module")
-    except Exception:
-        pass
+    daemon_payload = _daemon_debug_payload(
+        args,
+        config,
+        path=f"/v1/debug/modules/{module_name}",
+        key="module",
+    )
 
     if daemon_payload:
         module = daemon_payload
@@ -228,7 +212,7 @@ def _classify_layer(event_type: str) -> str:
     return "other"
 
 
-def _resolve_session_db_path(config: Any) -> Path:
+def _resolve_session_db_path() -> Path:
     roots = resolve_cli_roots()
     data_root = roots.data_root
     brain_db = (data_root / "state" / "brain" / "sessions.db").resolve()
@@ -240,11 +224,11 @@ def _resolve_session_db_path(config: Any) -> Path:
     return brain_db
 
 
-def _resolve_timeline_db_path(args: Any, config: Any) -> Path:
+def _resolve_timeline_db_path(args: Any) -> Path:
     explicit_db = str(getattr(args, "db_path", "") or "").strip()
     if explicit_db:
         return Path(explicit_db).expanduser().resolve()
-    return _resolve_session_db_path(config)
+    return _resolve_session_db_path()
 
 
 def _filter_events_by_run_id(events: list, run_id_filter: str) -> list:
@@ -305,7 +289,7 @@ def _render_timeline_text(
     print("-" * 100)
 
 
-def _debug_timeline(args: Any, config: Any) -> int:
+def _debug_timeline(args: Any) -> int:
     session_id = str(getattr(args, "session_id", "")).strip()
     if not session_id:
         print("Error: --session is required", file=sys.stderr)
@@ -315,7 +299,7 @@ def _debug_timeline(args: Any, config: Any) -> int:
     limit = max(1, min(int(getattr(args, "limit", 500)), 5000))
     as_json = bool(getattr(args, "json", False))
 
-    db_path = _resolve_timeline_db_path(args, config)
+    db_path = _resolve_timeline_db_path(args)
     if not db_path.exists():
         print(f"Error: Session database not found at {db_path}", file=sys.stderr)
         return 1
@@ -389,6 +373,39 @@ def _extract_details(
     if tool_name:
         parts.append(f"tool={tool_name}")
 
+    argument_count = payload.get("argument_count")
+    argument_bytes = payload.get("argument_bytes")
+    if argument_count is not None:
+        argument_detail = f"args={argument_count}"
+        if argument_bytes is not None:
+            argument_detail += f"/{argument_bytes}B"
+        parts.append(argument_detail)
+
+    decision = str(payload.get("decision", payload.get("action", "")) or "").strip()
+    if decision:
+        parts.append(f"decision={decision}")
+
+    exit_code = payload.get("exit_code")
+    if exit_code is not None:
+        parts.append(f"exit={exit_code}")
+
+    verified = payload.get("verified")
+    if verified is not None:
+        parts.append(f"verified={str(bool(verified)).lower()}")
+
+    duration_ms = payload.get("duration_ms")
+    if duration_ms is not None:
+        parts.append(f"duration={duration_ms}ms")
+
+    reason = str(
+        payload.get("reason_code")
+        or payload.get("tool_loop_termination_reason")
+        or payload.get("termination_reason")
+        or ""
+    ).strip()
+    if reason:
+        parts.append(f"reason={reason}")
+
     title = str(payload.get("title", "")).strip()
     if title and not tool_name:
         parts.append(title)
@@ -401,7 +418,11 @@ def _extract_details(
     if note and not summary:
         parts.append(note[:80])
 
-    error = str(ev.get("error", payload.get("error", "") or "") or "").strip()
+    raw_error = ev.get("error", payload.get("error", "") or "")
+    if isinstance(raw_error, dict):
+        error = str(raw_error.get("code") or raw_error.get("type") or raw_error).strip()
+    else:
+        error = str(raw_error or "").strip()
     if error and error.lower() != "none":
         parts.append(f"error={error[:80]}")
 

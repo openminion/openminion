@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../helpers/runtime_roots.sh"
+isolate_openminion_test_roots openminion-memory-e2e-matrix
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 DEFAULT_EVAL_ROOT="${REPO_ROOT}/.deps/openminion-eval"
 if [[ ! -d "${DEFAULT_EVAL_ROOT}" ]]; then

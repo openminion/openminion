@@ -34,21 +34,9 @@ def compose_self_improvement_readout(
 ) -> SelfImprovementReadout:
     """Merge existing runtime aggregates without reinterpreting user prose."""
 
-    attribution_obj = (
-        attribution
-        if isinstance(attribution, AttributionReadout)
-        else AttributionReadout.model_validate(attribution or {})
-    )
-    failure_obj = (
-        failure_patterns
-        if isinstance(failure_patterns, FailurePatternReadout)
-        else FailurePatternReadout.model_validate(failure_patterns or {})
-    )
-    performance_obj = (
-        performance
-        if isinstance(performance, PerformanceRegistry)
-        else PerformanceRegistry.model_validate(performance or {})
-    )
+    attribution_obj = AttributionReadout.model_validate(attribution or {})
+    failure_obj = FailurePatternReadout.model_validate(failure_patterns or {})
+    performance_obj = PerformanceRegistry.model_validate(performance or {})
     return SelfImprovementReadout(
         attribution=attribution_obj,
         failure_patterns=failure_obj,
@@ -61,8 +49,8 @@ def compose_self_improvement_readout(
 def _candidate_usefulness_rows(readout: AttributionReadout) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in readout.rows:
-        success = int(row.by_outcome_status.get("success", 0) or 0)
-        failure = int(row.by_outcome_status.get("failure", 0) or 0)
+        success = row.by_outcome_status.get("success", 0)
+        failure = row.by_outcome_status.get("failure", 0)
         rows.append(
             {
                 "candidate_ref": row.retrieved_record_id,

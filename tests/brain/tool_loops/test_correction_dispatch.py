@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from openminion.modules.brain.loop.tools.contracts import (
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_NEEDS_USER,
@@ -362,32 +360,6 @@ class TestDispatchCorrectionPlan:
         assert record["iteration_index"] == 7
         assert record["applied"] is True
         assert "Something went wrong" in record["diagnosis_summary"]
-
-    def test_retry_different_empty_args_raises(self):
-        # CorrectionPlan validator requires corrected_args for retry_different,
-        # that guards against empty corrected_args at dispatch time.
-        # We bypass the validator by building the plan with valid args then clearing them.
-        plan = CorrectionPlan(
-            diagnosis="trying different args",
-            correction_type="retry_different",
-            corrected_args={"x": 1},  # valid construction
-            confidence=0.5,
-        )
-        # Now directly test the internal branch by temporarily clearing corrected_args.
-        # Since CorrectionPlan is frozen only by pydantic validation, we use model_copy.
-        plan_empty = plan.model_copy(update={"corrected_args": None})
-        loop_state = self._make_state()
-        messages: list[Message] = []
-
-        with pytest.raises(ValueError, match="corrected_args"):
-            dispatch_correction_plan(
-                plan=plan_empty,
-                loop_ctx=MagicMock(),
-                loop_state=loop_state,
-                messages=messages,
-                profile=MagicMock(),
-            )
-        assert len(messages) == 0
 
     def test_dispatch_records_history_on_multiple_calls(self):
         loop_state = self._make_state(iteration=1)

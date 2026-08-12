@@ -51,7 +51,9 @@ class SequentialStrategy(ExecutionStrategy):
         total = len(subtasks)
         if total != len(budgets):
             raise ValueError("subtasks and budgets must have the same length")
-        for index, (subtask, budget) in enumerate(zip(subtasks, budgets), start=1):
+        for index, (subtask, budget) in enumerate(
+            zip(subtasks, budgets, strict=True), start=1
+        ):
             if cancellation_policy.should_cancel(
                 ctx=ctx,
                 results=list(results),
@@ -94,17 +96,17 @@ class EqualSplitAllocator(BudgetAllocator):
             return []
 
         def _split(value: int) -> list[int]:
-            base = int(value // subtask_count)
-            remainder = int(value % subtask_count)
-            values = [base for _ in range(subtask_count)]
+            base = value // subtask_count
+            remainder = value % subtask_count
+            values = [base] * subtask_count
             values[-1] += remainder
             return values
 
-        ticks = _split(int(budget.ticks))
-        tool_calls = _split(int(budget.tool_calls))
-        a2a_calls = _split(int(budget.a2a_calls))
-        tokens = _split(int(budget.tokens))
-        time_ms = _split(int(budget.time_ms))
+        ticks = _split(budget.ticks)
+        tool_calls = _split(budget.tool_calls)
+        a2a_calls = _split(budget.a2a_calls)
+        tokens = _split(budget.tokens)
+        time_ms = _split(budget.time_ms)
         return [
             BudgetCounters(
                 ticks=ticks[idx],
@@ -133,8 +135,7 @@ class AcceptOrPlanResolver(SubtaskModeResolver):
             for mode_name in available_routes
         }
         if (
-            public_suggested
-            and public_suggested in visible_modes
+            public_suggested in visible_modes
             and suggested != BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE
         ):
             return suggested
@@ -157,19 +158,14 @@ class AllInlinePromoter(ChildTaskPromoter):
 
 
 class HeuristicPromoter(ChildTaskPromoter):
-    def __init__(self, *, goal_length_threshold: int = 200) -> None:
-        self._goal_length_threshold = int(goal_length_threshold)
-
     def should_promote(self, subtask: SubtaskSpec) -> bool:
         suggested = str(subtask.suggested_mode or "").strip().lower()
-        if suggested in {
+        return suggested in {
             BRAIN_INTERNAL_MODE_ACT_RESEARCH,
             BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
             "delegate",
             "research",
-        }:
-            return True
-        return len(str(subtask.goal or "").strip()) > self._goal_length_threshold
+        }
 
     def promote(
         self,
@@ -235,21 +231,16 @@ class LLMSynthesizer(ResultSynthesizer):
                 )
             },
         }
-        if llm_api is not None and callable(getattr(llm_api, "call_structured", None)):
-            raw = call_structured_with_retry(
-                llm_api,
-                model=model,
-                purpose="summarize",
-                context=context,
-                schema=_SynthesisResponse,
-            )
-            answer = _SynthesisResponse.model_validate(raw).answer
-        else:
-            lines = []
-            for item in results:
-                payload = item.output or item.error or item.status
-                lines.append(f"{item.goal}: {payload}")
-            answer = "\n".join(lines).strip() or "No subtask results were produced."
+        if llm_api is None or not callable(getattr(llm_api, "call_structured", None)):
+            raise RuntimeError("Orchestration synthesis requires an LLM service")
+        raw = call_structured_with_retry(
+            llm_api,
+            model=model,
+            purpose="summarize",
+            context=context,
+            schema=_SynthesisResponse,
+        )
+        answer = _SynthesisResponse.model_validate(raw).answer
         return ExecutionResult(
             status="done",
             working_state=ctx.state,

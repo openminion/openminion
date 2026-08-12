@@ -23,6 +23,7 @@ from openminion.modules.brain.loop.tools.confirmation import (
     attach_confirmation_replay_queue,
     confirmation_required_user_message,
 )
+from openminion.modules.brain.loop.tools.contracts import PreparedToolDispatch
 from openminion.modules.brain.loop.strategies.coding.verification import (
     coerce_coding_verifier_verdict,
     serialize_verifier_candidate,
@@ -130,6 +131,24 @@ class _FakeCommandExecutor:
     context_calls: list[Any] = field(default_factory=list)
     _index: int = 0
     include_reflect_values: list[bool] = field(default_factory=list)
+
+    def prepare_tool_dispatch(
+        self, *, state, command, logger, include_reflect=True
+    ) -> PreparedToolDispatch:
+        del logger, include_reflect
+        return PreparedToolDispatch(
+            approved_command=command,
+            original_command=command,
+            command_id=command.command_id,
+            tool_name=command.tool_name,
+            validated_args=dict(command.args),
+            session_id=state.session_id,
+            trace_id=state.trace_id,
+            agent_id=state.agent_id,
+            lineage={},
+            permission_mode=state.permission_mode,
+            payload={},
+        )
 
     def execute_command(
         self,
@@ -281,38 +300,6 @@ class _TimedCommandExecutor(_FakeCommandExecutor):
         with self._lock:
             self.call_windows.append((path, started, finished))
         return result
-
-
-@dataclass
-class _RepoIndexFallbackExecutor(_FakeCommandExecutor):
-    def execute_command(
-        self,
-        *,
-        state: WorkingState,
-        command: Any,
-        logger: Any,
-        preapproved: bool = False,
-        approve_only: bool = False,
-        include_reflect: bool = True,
-    ) -> CommandExecutionOutcome:
-        tool_name = str(getattr(command, "tool_name", "") or "").strip()
-        if tool_name == "code.repo_index":
-            return CommandExecutionOutcome(
-                approved_command=command,
-                action_result=ActionResult(
-                    command_id=new_uuid(),
-                    status="failed",
-                    summary="repo index unavailable",
-                ),
-            )
-        return super().execute_command(
-            state=state,
-            command=command,
-            logger=logger,
-            preapproved=preapproved,
-            approve_only=approve_only,
-            include_reflect=include_reflect,
-        )
 
 
 @dataclass
@@ -867,30 +854,23 @@ def test_coding_loop_executes_all_plan_phases_in_order() -> None:
     assert "[act:coding] phase: verify" in phase_updates
 
 
-def test_coding_loop_falls_back_to_implement_plan_when_plan_json_is_invalid() -> None:
+def test_coding_loop_fails_closed_when_plan_json_is_invalid() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
             _plan_response("{not valid json"),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="fallback complete",
-                finish_reason="stop",
-            ),
         ]
     )
 
     result = CodingMode().execute(_ctx(llm_client, executor))
 
-    assert result.status == "done"
-    assert result.message == "fallback complete"
+    assert result.status == "error"
     assert result.action_result is not None
-    assert result.action_result.outputs["coding.plan_phases_executed"] == ["implement"]
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
 
 
-def test_coding_loop_rejects_phase_skip_plan_and_falls_back() -> None:
+def test_coding_loop_fails_closed_on_invalid_phase_order() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
@@ -904,27 +884,21 @@ def test_coding_loop_rejects_phase_skip_plan_and_falls_back() -> None:
                   ],
                   "current_phase": "explore",
                   "scratchpad": [],
-                  "completed_steps": [],
-                  "open_issues": [],
-                  "subtasks": []
+                      "completed_steps": [],
+                      "open_issues": [],
+                      "subtasks": []
                 }
                 """
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="fallback complete",
-                finish_reason="stop",
             ),
         ]
     )
 
     result = CodingMode().execute(_ctx(llm_client, executor))
 
-    assert result.status == "done"
+    assert result.status == "error"
     assert result.action_result is not None
-    assert result.action_result.outputs["coding.plan_phases_executed"] == ["implement"]
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
 
 
 def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
@@ -1016,7 +990,7 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
     )
 
 
-def test_coding_plan_prompt_prefers_repo_index_over_repo_map() -> None:
+def test_coding_planner_does_not_preexecute_repo_context() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             _plan_response(
@@ -1044,64 +1018,16 @@ def test_coding_plan_prompt_prefers_repo_index_over_repo_map() -> None:
         ]
     )
 
+    executor = _FakeCommandExecutor()
     result = CodingMode().execute(
-        _ctx(
-            llm_client,
-            _FakeCommandExecutor(),
-            user_input="Update AuthService to support retries",
-        )
-    )
-
-    assert result.status == "done"
-    system_prompt = llm_client.calls[0]["messages"][0].content
-    assert "[REPO INDEX]" in system_prompt
-    assert "src/auth.py" in system_prompt
-    assert "AuthService" in system_prompt
-    assert "[REPO MAP]" not in system_prompt
-    assert "[SYMBOL FINDINGS]" not in system_prompt
-
-
-def test_coding_plan_prompt_uses_repo_map_only_as_fallback() -> None:
-    llm_client = _FakeLLMClient(
-        responses=[
-            _plan_response(
-                """
-                {
-                  "goal": "Update AuthService",
-                  "phases": [
-                    {"name": "implement", "status": "active", "steps": ["patch AuthService"], "output": ""}
-                  ],
-                  "current_phase": "implement",
-                  "scratchpad": [],
-                  "completed_steps": [],
-                  "open_issues": [],
-                  "subtasks": []
-                }
-                """
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="done",
-                finish_reason="stop",
-            ),
-        ]
-    )
-
-    result = CodingMode().execute(
-        _ctx(
-            llm_client,
-            _RepoIndexFallbackExecutor(),
-            user_input="Update AuthService to support retries",
-        )
+        _ctx(llm_client, executor, user_input="Update AuthService to support retries")
     )
 
     assert result.status == "done"
     system_prompt = llm_client.calls[0]["messages"][0].content
     assert "[REPO INDEX]" not in system_prompt
-    assert "[REPO MAP - FALLBACK]" in system_prompt
-    assert "auth.py :: AuthService" in system_prompt
+    assert "[REPO MAP" not in system_prompt
+    assert executor.context_calls == []
 
 
 def test_coding_plan_skips_repo_context_when_user_says_not_to_inspect_first() -> None:
@@ -1118,6 +1044,7 @@ def test_coding_plan_skips_repo_context_when_user_says_not_to_inspect_first() ->
                   "scratchpad": [],
                   "completed_steps": [],
                   "open_issues": [],
+                  "requires_file_change": true,
                   "subtasks": []
                 }
                 """
@@ -1144,7 +1071,10 @@ def test_coding_plan_skips_repo_context_when_user_says_not_to_inspect_first() ->
         )
     )
 
-    assert result.status in {"done", "continue"}
+    assert result.status == "waiting_user"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "verify_cap_exceeded"
     system_prompt = llm_client.calls[0]["messages"][0].content
     assert "[REPO INDEX]" not in system_prompt
     assert "[REPO MAP" not in system_prompt
@@ -1780,6 +1710,22 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
         outcomes=[
             CommandExecutionOutcome(
                 approved_command=ToolCommand(
+                    title="Write auth implementation",
+                    tool_name="file.write",
+                    args={
+                        "path": "src/auth.py",
+                        "content": "class AuthService: pass\n",
+                    },
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="auth implementation written",
+                    outputs={"path": "src/auth.py"},
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=ToolCommand(
                     title="Run tests",
                     tool_name="exec.run",
                     args={"argv": ["pytest", "-q"]},
@@ -1791,7 +1737,7 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
                     outputs={"report": "ok"},
                     artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
                 ),
-            )
+            ),
         ]
     )
     llm_client = _FakeLLMClient(
@@ -3116,12 +3062,21 @@ def test_coding_loop_emits_telemetry_on_done() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _plan_response(
+                json.dumps(
+                    {
+                        "goal": "finish task",
+                        "phases": [{"name": "implement", "status": "active"}],
+                        "current_phase": "implement",
+                    }
+                )
+            ),
             LLMResponse(
                 ok=True,
                 provider="fake",
                 model="fake-model",
                 output_text="all done",
-            )
+            ),
         ]
     )
     services = _FakeServices()

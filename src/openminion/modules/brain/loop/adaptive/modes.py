@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
@@ -79,14 +79,11 @@ from .context import (
     _direct_tool_turn_context,
 )
 from .tool_scope import (
-    _CONTROL_TOOL_OPT_OUT_TOKENS,
     _adaptive_public_attr,
-    _explicit_tool_opt_out_tokens,
     _public_act_label,
     _public_act_tag,
     _with_requested_allowed_tools,
     _without_control_tool_names,
-    _without_explicit_tool_opt_outs,
 )
 from .termination import (
     _build_error_result,
@@ -154,7 +151,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         outcome: AdaptiveToolLoopOutcome,
     ) -> ExecutionResult:
         message = (
-            str(getattr(ctx.state, "post_action_user_message", "") or "").strip()
+            ctx.state.post_action_user_message.strip()
             or getattr(outcome.action_result, "summary", "")
             or "Approval required."
         )
@@ -163,8 +160,8 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         # prompts audit-visible without turning them into assistant history.
         needs_user_kind = RESPOND_KIND_ASSISTANT
         if (
-            getattr(ctx.state, "pending_confirmation_command", None) is not None
-            and str(getattr(ctx.state, "post_action_user_message", "") or "").strip()
+            ctx.state.pending_confirmation_command is not None
+            and ctx.state.post_action_user_message.strip()
         ):
             needs_user_kind = RESPOND_KIND_POLICY_CONFIRMATION_PROMPT
         return ExecutionResult(
@@ -179,9 +176,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         self._max_iterations = ADAPTIVE_MAX_ITERATIONS
         self._max_tool_calls_per_loop = ADAPTIVE_MAX_TOOL_CALLS
         self._tool_schema_shortlisting_enabled = TOOL_SCHEMA_SHORTLISTING_ENABLED
-        self._reflection_policy: str = "never"
+        self._reflection_policy: Literal["never", "always", "anomaly"] = "never"
 
-    def apply_mode_config(self, *, config, runner, profile) -> None:
+    def apply_mode_config(self, *, config: Any, runner: Any, profile: Any) -> None:
         del profile
         max_iterations = getattr(config, "max_adaptive_iterations", None)
         max_tool_calls = getattr(config, "max_adaptive_tool_calls_per_loop", None)
@@ -230,7 +227,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 ctx,
                 emit_status_updates=emit_status_updates,
             )
-        if getattr(ctx.decision, "_seeded_commands", None):
+        if seeded_commands := self._seeded_commands(ctx):
             ctx.emit_status(
                 source_phase="act_adaptive.prepare",
                 detail_text=f"{_public_act_tag()} started",
@@ -238,9 +235,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 mode_state="prepare",
                 payload={
                     "act.profile": BRAIN_ACT_PROFILE_GENERAL,
-                    "act.seeded_command_count": len(
-                        list(getattr(ctx.decision, "_seeded_commands", []) or [])
-                    ),
+                    "act.seeded_command_count": len(seeded_commands),
                 },
             )
             return ModePreparation(
@@ -298,7 +293,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 "execute_coding_profile", execute_coding_profile
             )
             return execute_coding(ctx)
-        if getattr(ctx.decision, "_seeded_commands", None):
+        if self._seeded_commands(ctx):
             return self._execute_seeded_commands(ctx)
         try:
             runtime = DefaultAdaptiveToolLoopLLMRuntime.from_adapter(ctx.llm_adapter)
@@ -311,11 +306,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                     str(exc), "act_adaptive_runtime_unavailable"
                 ),
             )
-        if not getattr(ctx.state, "intent_execution_states", []) and getattr(
-            ctx.state, "decision_sub_intent_refs", []
-        ):
+        if not ctx.state.intent_execution_states and ctx.state.decision_sub_intent_refs:
             ctx.state.intent_execution_states = build_intent_execution_states(
-                list(getattr(ctx.state, "decision_sub_intent_refs", []) or []),
+                ctx.state.decision_sub_intent_refs,
                 existing=[],
             )
 
@@ -338,18 +331,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         decision_reason_code = str(
             getattr(ctx.decision, "reason_code", "") or ""
         ).strip()
-        explicit_tool_opt_outs = _explicit_tool_opt_out_tokens(ctx)
-        control_tool_opt_out = bool(
-            explicit_tool_opt_outs & _CONTROL_TOOL_OPT_OUT_TOKENS
-        )
         if decision_reason_code in _CONTROL_RESTRICTED_REASON_CODES:
             effective_allowed_tools = _without_control_tool_names(
                 frozenset(effective_allowed_tools)
-            )
-        if explicit_tool_opt_outs:
-            effective_allowed_tools = _without_explicit_tool_opt_outs(
-                frozenset(effective_allowed_tools),
-                opt_out_tokens=explicit_tool_opt_outs,
             )
         model = resolve_loop_model(ctx)
         messages = []
@@ -359,7 +343,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         )
         if ctx.user_input:
             messages.append(Message(role="user", content=ctx.user_input))
-        elif getattr(ctx.state, "goal", "") and not seeded_replay_without_new_input:
+        elif ctx.state.goal and not seeded_replay_without_new_input:
             messages.append(Message(role="user", content=str(ctx.state.goal or "")))
         seed_response = getattr(ctx.decision, "_entry_response", None)
         direct_tool_turn = _direct_tool_turn_context(
@@ -427,20 +411,12 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             profile_name=profile_name,
             decision_reason_code=decision_reason_code,
         )
-        if explicit_tool_opt_outs:
-            effective_allowed_tools = _without_explicit_tool_opt_outs(
-                frozenset(effective_allowed_tools),
-                opt_out_tokens=explicit_tool_opt_outs,
-            )
 
         profile = AdaptiveToolLoopProfile(
             profile_name=profile_name,
             mode_name=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
             allowed_tools=effective_allowed_tools,
-            allow_plan_tool=(
-                decision_reason_code != "research_iteration_fallback"
-                and not control_tool_opt_out
-            ),
+            allow_plan_tool=(decision_reason_code != "research_iteration_fallback"),
             provider_parallel_tool_capacity=(
                 0
                 if consolidation_overrides is not None
@@ -448,7 +424,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             ),
             max_iterations=_effective_max_iterations,
             max_tool_calls_per_loop=self._max_tool_calls_per_loop,
-            reflection_policy=self._reflection_policy,  # type: ignore[arg-type]
+            reflection_policy=self._reflection_policy,
             max_macro_corrections=2,
             macro_correction_cooldown=1,
             allow_llm_recovery_after_tool_failure=True,
@@ -510,7 +486,6 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         if (
             str(profile.profile_name or "").strip() == "general_adaptive_v1"
             and decision_reason_code != "research_iteration_fallback"
-            and not control_tool_opt_out
         ):
             tool_specs = _with_decompose_tool_spec(list(tool_specs))
         if direct_tool_turn is not None and requestable_tool_specs is not None:

@@ -168,8 +168,6 @@ _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 def sanitize_fts_query(raw_query: str) -> str:
     """Convert punctuation-heavy freeform text into a safe FTS token query."""
     tokens = _FTS_TOKEN_RE.findall(str(raw_query or ""))
-    if not tokens:
-        return ""
     return " OR ".join(f'"{token}"' for token in tokens[:16])
 
 

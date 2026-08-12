@@ -49,18 +49,15 @@ def _state_hash(candidate_ids: Sequence[str]) -> str:
 
 
 def _latest_activity(candidates: Sequence[Any]) -> str | None:
-    timestamps = []
+    latest: tuple[datetime, str] | None = None
     for item in candidates:
         updated_at = str(getattr(item, "updated_at", "") or "").strip()
         created_at = str(getattr(item, "created_at", "") or "").strip()
         candidate = updated_at or created_at
         parsed = parse_iso_utc(candidate)
-        if parsed is not None:
-            timestamps.append((parsed, candidate))
-    if not timestamps:
-        return None
-    timestamps.sort(key=lambda item: item[0], reverse=True)
-    return timestamps[0][1]
+        if parsed is not None and (latest is None or parsed > latest[0]):
+            latest = (parsed, candidate)
+    return latest[1] if latest else None
 
 
 class ConsolidationEligibilityChecker:

@@ -85,10 +85,7 @@ class SessionPickerModal(ModalScreen[str | None]):
     def _highlight(self) -> None:
         rows = list(self.query(_PickerRow))
         for row in rows:
-            if row.index == self._selected_index:
-                row.add_class("picker-selected")
-            else:
-                row.remove_class("picker-selected")
+            row.set_class(row.index == self._selected_index, "picker-selected")
 
     def action_move_up(self) -> None:
         self._move_selection(-1)

@@ -29,6 +29,10 @@ from openminion.modules.telemetry.storage.store import (
     PostgresTelemetryStore,
     SQLiteTelemetryStore,
 )
+from openminion.modules.telemetry.schemas import (
+    TelemetryEvent,
+    normalize_telemetry_event,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -297,27 +301,26 @@ def _session_timings(backend: str, tmp_path: Path) -> dict[str, float]:
 
 
 def _telemetry_timings(backend: str, tmp_path: Path) -> dict[str, float]:
+    def event(idx: int) -> TelemetryEvent:
+        return normalize_telemetry_event(
+            TelemetryEvent(
+                session_id=f"session-{idx}",
+                turn_id=f"turn-{idx}",
+                event_type="bench",
+                timestamp=float(idx),
+                data={"index": idx},
+            )
+        )
+
     def create_run() -> None:
         with _open_telemetry_store(backend, tmp_path) as store:
             for idx in range(ROWS_PER_MODULE):
-                store.insert_event(
-                    session_id=f"session-{idx}",
-                    turn_id=f"turn-{idx}",
-                    event_type="bench",
-                    timestamp=float(idx),
-                    data={"index": idx},
-                )
+                store.insert_event(event(idx))
 
     def read_run() -> None:
         with _open_telemetry_store(backend, tmp_path) as store:
             for idx in range(ROWS_PER_MODULE):
-                store.insert_event(
-                    session_id=f"session-{idx}",
-                    turn_id=f"turn-{idx}",
-                    event_type="bench",
-                    timestamp=float(idx),
-                    data={"index": idx},
-                )
+                store.insert_event(event(idx))
             for idx in range(ROWS_PER_MODULE):
                 rows = store.fetch_session_events(f"session-{idx}")
                 assert len(rows) == 1
@@ -326,13 +329,7 @@ def _telemetry_timings(backend: str, tmp_path: Path) -> dict[str, float]:
         with _open_telemetry_store(backend, tmp_path) as store:
             record_store = store._record_store  # noqa: SLF001
             for idx in range(ROWS_PER_MODULE):
-                store.insert_event(
-                    session_id=f"session-{idx}",
-                    turn_id=f"turn-{idx}",
-                    event_type="bench",
-                    timestamp=float(idx),
-                    data={"index": idx},
-                )
+                store.insert_event(event(idx))
             for idx in range(ROWS_PER_MODULE):
                 record_store.update_rows(
                     "events",
@@ -344,13 +341,7 @@ def _telemetry_timings(backend: str, tmp_path: Path) -> dict[str, float]:
         with _open_telemetry_store(backend, tmp_path) as store:
             record_store = store._record_store  # noqa: SLF001
             for idx in range(ROWS_PER_MODULE):
-                store.insert_event(
-                    session_id=f"session-{idx}",
-                    turn_id=f"turn-{idx}",
-                    event_type="bench",
-                    timestamp=float(idx),
-                    data={"index": idx},
-                )
+                store.insert_event(event(idx))
             for idx in range(ROWS_PER_MODULE):
                 record_store.delete_rows(
                     "events",

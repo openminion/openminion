@@ -60,12 +60,7 @@ def _record_meta_and_id(record: Any) -> tuple[Mapping[str, Any] | None, str]:
 def _coerce_str_list(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple, set)):
         return []
-    out: list[str] = []
-    for item in value:
-        token = str(item or "").strip()
-        if token:
-            out.append(token)
-    return out
+    return [token for item in value if (token := str(item or "").strip())]
 
 
 def project_records_to_learning_events(
@@ -102,11 +97,7 @@ def project_records_to_learning_events(
 
 def _outcome_status_bucket(status: str) -> str:
     """Map a raw outcome status to one of the bucket keys."""
-    if status == "success":
-        return "success"
-    if status == "failure":
-        return "failure"
-    return "other"
+    return status if status in {"success", "failure"} else "other"
 
 
 def aggregate_attribution_readout(

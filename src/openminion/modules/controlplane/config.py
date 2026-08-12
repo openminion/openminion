@@ -94,10 +94,8 @@ def load_config(
         else None
     )
     path_mode = (
-        "module_standalone"
-        if standalone_mode
-        else "integrated_runtime"
-        if resolved_home_root
+        "integrated_runtime"
+        if not standalone_mode and resolved_home_root
         else "module_standalone"
     )
     default_source = (
@@ -318,6 +316,4 @@ def _resolve_secret(value: Any, *, env_map: Mapping[str, str]) -> str:
     if not raw:
         return ""
     match = _ENV_PATTERN.match(raw)
-    if not match:
-        return raw
-    return str(env_map.get(match.group(1), "") or "")
+    return str(env_map.get(match.group(1), "") or "") if match else raw

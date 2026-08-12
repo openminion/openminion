@@ -297,6 +297,45 @@ class RetrievalPipeline:
             selected.append(remaining.pop(best_idx))
         return selected
 
+    def _retrieve_lane(
+        self,
+        retrieve_ctl: Any,
+        *,
+        lane: str,
+        query: str,
+        session_id: str,
+        agent_id: str,
+        k: int,
+        strategy: str,
+        filters: "RetrievalFilters",
+    ) -> list[dict[str, Any]]:
+        try:
+            raw = retrieve_ctl.retrieve(
+                query=query,
+                purpose="act",
+                scope={"session_id": session_id, "agent_id": agent_id},
+                k=max(1, int(k)),
+                strategy=strategy,
+                filters=filters.model_dump(mode="python", exclude_none=True),
+            )
+            return (
+                [item for item in raw if isinstance(item, dict)]
+                if isinstance(raw, list)
+                else []
+            )
+        except Exception as exc:
+            self._logger.warning(
+                "memory.retrieval.retrieve_split %s failed session_id=%s error=%s",
+                lane,
+                session_id,
+                exc,
+            )
+            self._trace(
+                "memory.retrieval.retrieve_ctl_error",
+                {"session_id": session_id, "lane": lane, "error": str(exc)},
+            )
+            return []
+
     def _retrieve_split(
         self,
         retrieve_ctl: Any,
@@ -323,66 +362,26 @@ class RetrievalPipeline:
             time_window_hours=None,
         )
 
-        conversational_hits: list[dict[str, Any]] = []
-        knowledge_hits: list[dict[str, Any]] = []
-
-        try:
-            raw = retrieve_ctl.retrieve(
-                query=query,
-                purpose="act",
-                scope={"session_id": session_id, "agent_id": agent_id},
-                k=max(1, int(k_conversational)),
-                strategy="contextual",
-                filters=conversational_filters.model_dump(
-                    mode="python",
-                    exclude_none=True,
-                ),
-            )
-            if isinstance(raw, list):
-                conversational_hits = [item for item in raw if isinstance(item, dict)]
-        except Exception as exc:
-            self._logger.warning(
-                "memory.retrieval.retrieve_split conversational failed session_id=%s error=%s",
-                session_id,
-                exc,
-            )
-            self._trace(
-                "memory.retrieval.retrieve_ctl_error",
-                {
-                    "session_id": session_id,
-                    "lane": "conversational",
-                    "error": str(exc),
-                },
-            )
-
-        try:
-            raw = retrieve_ctl.retrieve(
-                query=query,
-                purpose="act",
-                scope={"session_id": session_id, "agent_id": agent_id},
-                k=max(1, int(k_knowledge)),
-                strategy="auto",
-                filters=knowledge_filters.model_dump(
-                    mode="python",
-                    exclude_none=True,
-                ),
-            )
-            if isinstance(raw, list):
-                knowledge_hits = [item for item in raw if isinstance(item, dict)]
-        except Exception as exc:
-            self._logger.warning(
-                "memory.retrieval.retrieve_split knowledge failed session_id=%s error=%s",
-                session_id,
-                exc,
-            )
-            self._trace(
-                "memory.retrieval.retrieve_ctl_error",
-                {
-                    "session_id": session_id,
-                    "lane": "knowledge",
-                    "error": str(exc),
-                },
-            )
+        conversational_hits = self._retrieve_lane(
+            retrieve_ctl,
+            lane="conversational",
+            query=query,
+            session_id=session_id,
+            agent_id=agent_id,
+            k=k_conversational,
+            strategy="contextual",
+            filters=conversational_filters,
+        )
+        knowledge_hits = self._retrieve_lane(
+            retrieve_ctl,
+            lane="knowledge",
+            query=query,
+            session_id=session_id,
+            agent_id=agent_id,
+            k=k_knowledge,
+            strategy="auto",
+            filters=knowledge_filters,
+        )
 
         merged = self._merge_and_dedup(conversational_hits, knowledge_hits)
         return merged, {

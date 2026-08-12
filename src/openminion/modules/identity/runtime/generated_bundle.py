@@ -24,27 +24,25 @@ def materialize_generated_identity_bundle(
     bundle_root: str | Path,
     profile_version: str,
 ) -> None:
-    profile_obj = AgentProfile.model_validate(profile)
     root = Path(bundle_root).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
 
-    export_result = export_profile_to_markdown_bundle(profile_obj)
+    export_result = export_profile_to_markdown_bundle(profile)
     tracked_paths: list[str] = []
     for document in export_result.documents:
         destination = root / document.relative_path
         _write_text_if_changed(destination, document.content)
         tracked_paths.append(document.relative_path)
 
-    readme_path = root / GENERATED_IDENTITY_README_NAME
     _write_text_if_changed(
-        readme_path,
-        render_generated_identity_readme(agent_id=profile_obj.agent_id),
+        root / GENERATED_IDENTITY_README_NAME,
+        render_generated_identity_readme(agent_id=profile.agent_id),
     )
     tracked_paths.append(GENERATED_IDENTITY_README_NAME)
 
     entries = _build_manifest_for_paths(root=root, relative_paths=tracked_paths)
     lockfile = IdentityLockfile(
-        generated_from_profile_version=str(profile_version),
+        generated_from_profile_version=profile_version,
         generated_at=datetime.now(timezone.utc).isoformat(),
         files=entries,
         tree_sha256=compute_tree_sha256(entries),

@@ -60,13 +60,16 @@ def apply_turn_progress_status(
     status_line: TerminalStatusLine | None,
     invalidate_prompt: Callable[[], None] | None,
     label: str,
+    status_key: str = "working",
 ) -> None:
     if handle is not None:
         setter = getattr(handle, "set_status_label", None)
         if callable(setter):
             setter(label)
     if status_line is not None:
-        status_line.set_state(state="responding", turn_status=label)
+        status_line.set_state(
+            state="responding", turn_status=label, status_key=status_key
+        )
         if callable(invalidate_prompt):
             invalidate_prompt()
 

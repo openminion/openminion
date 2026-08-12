@@ -44,8 +44,7 @@ def compute_compression_hash(
     request: CompressionRequest,
     result: CompressionResult,
 ) -> str:
-    payload = build_canonical_payload(request, result)
-    return canonical_hash(payload)
+    return canonical_hash(build_canonical_payload(request, result))
 
 
 def canonical_hash(payload: dict[str, Any]) -> str:
@@ -128,9 +127,7 @@ def _block_summary(block: CompressedBlock) -> dict[str, Any]:
 
 
 def _blocks_summary(blocks: list[CompressedBlock]) -> list[dict[str, Any]]:
-    summaries = [_block_summary(block) for block in blocks]
-    summaries.sort(key=lambda block: block["block_id"])
-    return summaries
+    return sorted(map(_block_summary, blocks), key=lambda block: block["block_id"])
 
 
 def _report_summary(report: CompressionReport) -> dict[str, Any]:

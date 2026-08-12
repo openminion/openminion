@@ -43,6 +43,7 @@ from tests.helpers.live_skill_targets import (  # noqa: E402
     representative_skill_dense_targets,
     validate_skill_live_target,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,14 +92,16 @@ def _runner_env(*, data_root: Path, trace_root: Path | None = None) -> dict[str,
     for key in (
         "OPENMINION_CONFIG",
         "OPENMINION_DATA_ROOT",
+        "OPENMINION_GENERATED_ROOT",
         "OPENMINION_IDENTITY_DB",
         "OPENMINION_IDENTITY_ROOT",
         "OPENMINION_TRACE_REQUESTS_DIR",
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(openminion_root())
+    env["OPENMINION_HOME"] = str(data_root.parent / "home-roots" / data_root.name)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     if trace_root is not None:
         env["OPENMINION_TRACE_REQUESTS"] = "1"
         env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)
@@ -233,6 +236,7 @@ def _load_session_events(*, data_root: Path, event_session_id: str) -> list[dict
 
 
 def main() -> int:
+    isolate_runtime_roots(prefix="openminion-nl-skill-baseline-")
     args = parse_args()
     manifest_version, scenarios = load_nl_named_skill_manifest()
     prompt_variant_version, prompt_variants = load_nl_named_skill_prompt_variants()

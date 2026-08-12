@@ -27,15 +27,10 @@ class FocusLabelsMixin:
             return
         elapsed = self._status_controller.elapsed_seconds() or 0.0
         snapshot_getter = getattr(self._runtime, "token_usage_snapshot", None)
-        usage_summary = ""
-        if callable(snapshot_getter):
-            try:
-                usage_summary = format_token_usage_summary(snapshot_getter())
-            except (AttributeError, TypeError, ValueError):
-                usage_summary = ""
-        token_segment = self._tokens_segment(snapshot_getter)
-        cost_segment = self._cost_segment(snapshot_getter)
-        tokens_severity = self._tokens_severity(snapshot_getter)
+        snapshot = self._usage_snapshot(snapshot_getter)
+        usage_summary = (
+            format_token_usage_summary(snapshot) if snapshot is not None else ""
+        )
         status_line.set_state(
             state=state,
             elapsed_seconds=elapsed,
@@ -44,8 +39,8 @@ class FocusLabelsMixin:
             model=self._runtime_label(),
             cwd=self._cwd_label(),
             branch=self._branch_label(),
-            tokens=token_segment,
-            cost=cost_segment,
+            tokens=self._tokens_segment(snapshot),
+            cost=self._cost_segment(snapshot),
             permission_mode=str(
                 getattr(self._runtime, "permission_mode", "default") or "default"
             ),
@@ -57,7 +52,7 @@ class FocusLabelsMixin:
             queued_count=self._queued_count()
             if callable(getattr(self, "_queued_count", None))
             else len(getattr(self, "_queued_turns", []) or []),
-            tokens_severity=tokens_severity,
+            tokens_severity=self._tokens_severity(snapshot),
         )
 
     def _statusline_custom_label(self) -> str:
@@ -79,23 +74,26 @@ class FocusLabelsMixin:
             return ""
 
     @staticmethod
-    def _tokens_severity(snapshot_getter) -> str:
+    def _usage_snapshot(snapshot_getter: Any) -> Any:
+        if not callable(snapshot_getter):
+            return None
+        try:
+            return snapshot_getter()
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _tokens_severity(snapshot: Any) -> str:
         """Classify token usage severity from the current snapshot."""
         from openminion.cli.interactive.widgets.status_line import (
             TOKENS_SEVERITY_NORMAL,
             classify_context_severity,
         )
 
-        if not callable(snapshot_getter):
+        if snapshot is None:
             return TOKENS_SEVERITY_NORMAL
-        try:
-            snap = snapshot_getter()
-        except Exception:
-            return TOKENS_SEVERITY_NORMAL
-        if snap is None:
-            return TOKENS_SEVERITY_NORMAL
-        used = getattr(snap, "context_used_tokens", None)
-        limit = getattr(snap, "context_limit_tokens", None)
+        used = getattr(snapshot, "context_used_tokens", None)
+        limit = getattr(snapshot, "context_limit_tokens", None)
         return classify_context_severity(used, limit)
 
     def _cwd_label(self) -> str:
@@ -118,26 +116,20 @@ class FocusLabelsMixin:
         return result
 
     @staticmethod
-    def _tokens_segment(snapshot_getter) -> str:
-        if not callable(snapshot_getter):
-            return ""
-        try:
-            snap = snapshot_getter()
-        except (AttributeError, TypeError, ValueError):
-            return ""
-        if snap is None:
+    def _tokens_segment(snapshot: Any) -> str:
+        if snapshot is None:
             return ""
         used = (
-            getattr(snap, "session_total_tokens", None)
-            or getattr(snap, "turn_total_tokens", None)
-            or getattr(snap, "context_used_tokens", None)
+            getattr(snapshot, "session_total_tokens", None)
+            or getattr(snapshot, "turn_total_tokens", None)
+            or getattr(snapshot, "context_used_tokens", None)
             or 0
         )
         try:
             used_int = int(used)
         except (TypeError, ValueError):
             return ""
-        budget = getattr(snap, "context_limit_tokens", None)
+        budget = getattr(snapshot, "context_limit_tokens", None)
         if budget:
             try:
                 return f"{used_int}/{int(budget)}"
@@ -148,16 +140,10 @@ class FocusLabelsMixin:
         return f"{used_int}"
 
     @staticmethod
-    def _cost_segment(snapshot_getter) -> str:
-        if not callable(snapshot_getter):
+    def _cost_segment(snapshot: Any) -> str:
+        if snapshot is None:
             return ""
-        try:
-            snap = snapshot_getter()
-        except (AttributeError, TypeError, ValueError):
-            return ""
-        if snap is None:
-            return ""
-        cost = getattr(snap, "cost_usd", None)
+        cost = getattr(snapshot, "cost_usd", None)
         if cost is None:
             return ""
         try:

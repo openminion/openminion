@@ -306,6 +306,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         config_manager: ConfigManager | None = None,
         retrieve_service: Any | None = None,
         action_policy_service: Any | None = None,
+        telemetryctl: TelemetryCtl | None = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -316,6 +317,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             tools=tools,
             security_policy=security_policy,
             self_improvement=self_improvement,
+            telemetryctl=telemetryctl,
         )
         self._init_bridge_state(
             config=config,
@@ -329,7 +331,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             retrieve_service=retrieve_service,
             action_policy_service=action_policy_service,
         )
-        self._init_bridge_telemetry(config=config)
+        self._init_bridge_telemetry(config=config, telemetryctl=telemetryctl)
         self._context = BrainBridgeContext(
             home_paths=self._home_paths,
             workspace_root=self.workspace_root,
@@ -386,10 +388,19 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runtime_handle: Any | None = None
         self._llm_wrapper: Any | None = None
 
-    def _init_bridge_telemetry(self, *, config: OpenMinionConfig) -> None:
-        self._telemetryctl: TelemetryCtl | None = None
+    def _init_bridge_telemetry(
+        self,
+        *,
+        config: OpenMinionConfig,
+        telemetryctl: TelemetryCtl | None,
+    ) -> None:
+        self._telemetryctl = telemetryctl
         self._telemetry_enabled = getattr(config.runtime, "telemetry_enabled", False)
-        if self._telemetry_enabled and TELEMETRY_AVAILABLE:
+        if (
+            self._telemetryctl is None
+            and self._telemetry_enabled
+            and TELEMETRY_AVAILABLE
+        ):
             telemetry_path = self._resolve_telemetry_db_path(config)
             self._telemetryctl = create_telemetry_adapter(
                 db_path=telemetry_path,

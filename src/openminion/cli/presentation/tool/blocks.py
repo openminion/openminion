@@ -133,20 +133,16 @@ class ToolBlockWidget(Widget):
         self._refresh_widgets()
 
     def _default_collapsed_for_state(self) -> bool:
-        if self._pending:
-            return False
+        return not self._pending and not self._failed()
+
+    def _failed(self) -> bool:
         exit_code = self._tool_event.exit_code
-        if exit_code is not None and exit_code != 0:
-            return False
-        return True
+        return exit_code is not None and exit_code != 0
 
     def _exit_glyph(self) -> str:
         if self._pending:
             return self._pending_glyph()
-        exit_code = self._tool_event.exit_code
-        if exit_code is not None and exit_code != 0:
-            return self.EXIT_GLYPH_FAIL
-        return self.EXIT_GLYPH_OK
+        return self.EXIT_GLYPH_FAIL if self._failed() else self.EXIT_GLYPH_OK
 
     def _pending_glyph(self) -> str:
         if self._progress == "off":
@@ -181,8 +177,7 @@ class ToolBlockWidget(Widget):
                 return
             self.display = True
             self.set_class(self._pending, "--pending")
-            exit_code = self._tool_event.exit_code
-            failed = exit_code is not None and exit_code != 0
+            failed = self._failed()
             self.set_class((not self._pending) and not failed, "--ok")
             self.set_class(failed, "--fail")
             self.query_one(".focus-tool-block-title", Label).update(self._header_text())
@@ -198,10 +193,7 @@ class ToolBlockWidget(Widget):
         verb = present if self._pending else past
         raw_hint = tool_context_hint(self._tool_event.tool_name, self._tool_event.args)
         hint = self._truncate_hint(raw_hint)
-        if hint:
-            head = f"{glyph} {verb} {hint}"
-        else:
-            head = f"{glyph} {verb} {self._tool_event.tool_name}"
+        head = f"{glyph} {verb} {hint or self._tool_event.tool_name}"
         provenance_suffix = self._provenance_suffix()
         fallback_suffix = format_tool_fallback_marker(
             runtime_fallback_used=self._tool_event.runtime_fallback_used,
@@ -211,10 +203,8 @@ class ToolBlockWidget(Widget):
         duration = self._duration_suffix()
         if duration:
             return f"{head} · {duration}"
-        if not self._pending:
-            exit_code = self._tool_event.exit_code
-            if exit_code is not None and exit_code != 0:
-                return f"{head} · exit {exit_code}"
+        if not self._pending and self._failed():
+            return f"{head} · exit {self._tool_event.exit_code}"
         return head
 
     def _provenance_suffix(self) -> str:
@@ -237,9 +227,7 @@ class ToolBlockWidget(Widget):
         except (TypeError, ValueError):
             return ""
         seconds = ms_int / 1000.0
-        if seconds < 1.0:
-            return "<1s"
-        return f"{int(seconds)}s"
+        return "<1s" if seconds < 1.0 else f"{int(seconds)}s"
 
     @staticmethod
     def _truncate_hint(hint: str, *, limit: int = 60) -> str:
@@ -329,14 +317,11 @@ class ToolBlockWidget(Widget):
         lines = str(content or "").splitlines()
 
         def style_for_line(line: str) -> str:
-            style = ""
             if line.startswith("+"):
-                style = added_color
-            elif line.startswith("-"):
-                style = removed_color
-            elif line.startswith("@@"):
-                style = "bold"
-            return style
+                return added_color
+            if line.startswith("-"):
+                return removed_color
+            return "bold" if line.startswith("@@") else ""
 
         self._append_capped_lines(
             text,

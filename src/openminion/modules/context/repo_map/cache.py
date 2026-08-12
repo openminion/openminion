@@ -8,6 +8,7 @@ from pathlib import Path
 from openminion.modules.context.repo_map.constants import (
     RMP_PARSER_VERSION_AST_V1,
 )
+from openminion.modules.context.repo_map.interfaces import RepoMapBuilder
 from openminion.modules.context.repo_map.schemas import RepoMap, RepoSymbol
 
 
@@ -46,11 +47,8 @@ class RepoMapCache:
         self.entries[key] = _hash_file(path)
         self.cached_symbols[key] = list(symbols)
 
-    def refresh(
-        self, root: Path, *, builder
-    ) -> RepoMap:  # `builder` is RepoMapBuilder duck-typed
-        """Re-parse only files whose hash changed; reuse cached symbols
-        for unchanged files."""
+    def refresh(self, root: Path, *, builder: RepoMapBuilder) -> RepoMap:
+        """Re-parse changed files and reuse cached symbols for the rest."""
 
         root = Path(root)
         all_symbols: list[RepoSymbol] = []
@@ -68,10 +66,7 @@ class RepoMapCache:
                 else builder.parse(root)
             )
             # Filter symbols whose path matches this file (relative to root)
-            try:
-                relpath = str(file.relative_to(root))
-            except ValueError:
-                relpath = str(file)
+            relpath = str(file.relative_to(root))
             new_for_file = [s for s in single_map.symbols if s.path == relpath]
             self.record(file, new_for_file)
             all_symbols.extend(new_for_file)

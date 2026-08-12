@@ -109,11 +109,10 @@ def export_to_files(
         ("global:system", "global_records.json"),
     ]:
         records: list = []
-        if store is not None and hasattr(store, "list"):
-            try:
-                records = _list_store_records(store, [scope_key], limit=1000)
-            except Exception:
-                pass
+        try:
+            records = _list_store_records(store, [scope_key], limit=1000)
+        except Exception:
+            pass
         (out / filename).write_text(
             json.dumps(_serialize_records(records), indent=2, default=str)
         )
@@ -139,51 +138,46 @@ def build_memory_snapshot(
         return snapshot
 
     try:
-        if hasattr(store, "list"):
-            try:
-                session_records = len(
-                    _list_store_records(store, [f"session:{session_id}"], limit=1000)
-                )
-                agent_records = len(
-                    _list_store_records(store, [f"agent:{agent_id}"], limit=1000)
-                )
-                global_records = len(_list_store_records(store, ["global"], limit=1000))
-                snapshot.session_records = session_records
-                snapshot.agent_records = agent_records
-                snapshot.global_records = global_records
-                snapshot.total_records = (
-                    session_records + agent_records + global_records
-                )
-            except Exception:
-                pass
+        try:
+            session_records = len(
+                _list_store_records(store, [f"session:{session_id}"], limit=1000)
+            )
+            agent_records = len(
+                _list_store_records(store, [f"agent:{agent_id}"], limit=1000)
+            )
+            global_records = len(_list_store_records(store, ["global"], limit=1000))
+            snapshot.session_records = session_records
+            snapshot.agent_records = agent_records
+            snapshot.global_records = global_records
+            snapshot.total_records = session_records + agent_records + global_records
+        except Exception:
+            pass
 
-        if hasattr(store, "_vector_adapter") and store._vector_adapter is not None:
+        if getattr(store, "_vector_adapter", None) is not None:
             snapshot.vector_search_available = True
 
-        if hasattr(store, "candidate_list"):
-            try:
-                from openminion.modules.memory.storage.base import CandidateListOptions
+        try:
+            from openminion.modules.memory.storage.base import CandidateListOptions
 
-                cand_opts = CandidateListOptions(limit=1000)
-                candidates = store.candidate_list(cand_opts)
-                snapshot.candidate_count = len(candidates)
-            except Exception:
-                pass
+            cand_opts = CandidateListOptions(limit=1000)
+            candidates = store.candidate_list(cand_opts)
+            snapshot.candidate_count = len(candidates)
+        except Exception:
+            pass
 
         snapshot.memory_available = True
         snapshot.degraded = False
 
         try:
-            if hasattr(store, "list"):
-                recent_records = _list_store_records(
-                    store,
-                    [f"session:{session_id}", f"agent:{agent_id}"],
-                    limit=max_highlights,
-                )
-                for record in recent_records:
-                    highlight = _record_highlight(record)
-                    if highlight:
-                        snapshot.recent_highlights.append(highlight)
+            recent_records = _list_store_records(
+                store,
+                [f"session:{session_id}", f"agent:{agent_id}"],
+                limit=max_highlights,
+            )
+            for record in recent_records:
+                highlight = _record_highlight(record)
+                if highlight:
+                    snapshot.recent_highlights.append(highlight)
         except Exception:
             pass
 

@@ -51,6 +51,7 @@ THREAD_DECISION_REJECT = "reject"
 
 RunTerminalState = Literal[
     "completed",
+    "cancelled",
     "failed",
     "blocked",
     "needs_human",
@@ -59,6 +60,7 @@ RunTerminalState = Literal[
 
 RUN_TERMINAL_COMPLETED: RunTerminalState = "completed"
 RUN_TERMINAL_FAILED: RunTerminalState = "failed"
+RUN_TERMINAL_CANCELLED: RunTerminalState = "cancelled"
 RUN_TERMINAL_BLOCKED: RunTerminalState = "blocked"
 RUN_TERMINAL_NEEDS_HUMAN: RunTerminalState = "needs_human"
 RUN_TERMINAL_BUDGET_EXHAUSTED: RunTerminalState = "budget_exhausted"
@@ -69,6 +71,7 @@ RUN_CHECKPOINT_EVENT_TYPE = "run.checkpoint"
 _RUN_TERMINAL_STATES: frozenset[str] = frozenset(
     {
         RUN_TERMINAL_COMPLETED,
+        RUN_TERMINAL_CANCELLED,
         RUN_TERMINAL_FAILED,
         RUN_TERMINAL_BLOCKED,
         RUN_TERMINAL_NEEDS_HUMAN,
@@ -97,6 +100,8 @@ def resolve_run_terminal_persistence(terminal: str) -> str:
         )
     if terminal == RUN_TERMINAL_COMPLETED:
         return RUN_STATE_COMPLETED
+    if terminal == RUN_TERMINAL_CANCELLED:
+        return RUN_STATE_CANCELLED
     return RUN_STATE_FAILED
 
 
@@ -209,6 +214,9 @@ class ThreadLifecycleProjection:
     writer_attach_id: str
     latest_run_id: str
     latest_run_state: str
+    invocation_id: str
+    invocation_source_event_id: int
+    invocation_started_at: str
     latest_event_id: int
     latest_message_id: str
     latest_message_role: str
@@ -225,6 +233,9 @@ class ThreadLifecycleProjection:
             "writer_attach_id": self.writer_attach_id,
             "latest_run_id": self.latest_run_id,
             "latest_run_state": self.latest_run_state,
+            "invocation_id": self.invocation_id,
+            "invocation_source_event_id": self.invocation_source_event_id,
+            "invocation_started_at": self.invocation_started_at,
             "latest_event_id": self.latest_event_id,
             "latest_message_id": self.latest_message_id,
             "latest_message_role": self.latest_message_role,
@@ -248,6 +259,17 @@ class ThreadRoutingDecision:
             "thread_id": self.thread_id,
             "should_replay_pending": str(self.should_replay_pending).lower(),
         }
+
+
+@dataclass(frozen=True)
+class InvocationTerminalProjection:
+    invocation_id: str
+    resolved_state: str
+    source_event_id: int
+    source_event_type: str
+    source_timestamp: str
+    run_id: str
+    thread_id: str
 
 
 def append_run_state_event(
@@ -617,6 +639,15 @@ def resolve_thread_lifecycle(
     ]
     run_events = [event for event in run_events if event is not None]
     latest_run_event = run_events[-1] if run_events else None
+    invocation_start = _resolve_invocation_start(
+        sessions,
+        session_id=session_id,
+        conversation_id=conversation_value,
+        thread_id=thread_value,
+    )
+    invocation_id, invocation_source_event_id, invocation_started_at = (
+        _invocation_start_fields(invocation_start)
+    )
 
     delivery_state = _resolve_delivery_state(filtered_events)
     attach_id = _resolve_writer_attach_id(
@@ -647,6 +678,9 @@ def resolve_thread_lifecycle(
         writer_attach_id=attach_id,
         latest_run_id=latest_run_event.run_id if latest_run_event else "",
         latest_run_state=latest_run_event.state if latest_run_event else "",
+        invocation_id=invocation_id,
+        invocation_source_event_id=invocation_source_event_id,
+        invocation_started_at=invocation_started_at,
         latest_event_id=latest_event_id,
         latest_message_id=latest_message_id,
         latest_message_role=latest_message_role,
@@ -654,6 +688,138 @@ def resolve_thread_lifecycle(
         pending_response_id=pending_response_id,
         updated_at=updated_at,
     )
+
+
+def resolve_invocation_terminal(
+    sessions: SessionStore,
+    *,
+    session_id: str,
+    trigger_event: EventRecord,
+    conversation_id: str = "",
+    thread_id: str = "",
+) -> InvocationTerminalProjection | None:
+    run_id = str(trigger_event.payload.get("run_id", "")).strip()
+    if not run_id:
+        return None
+    matching: list[EventRecord] = []
+    start: EventRecord | None = None
+    before_id = int(trigger_event.id) + 1
+    while start is None:
+        page = sessions.list_events_before_id(
+            session_id=session_id,
+            before_id=before_id,
+            limit=RUN_STATUS_DEFAULT_SCAN_LIMIT,
+        )
+        if not page:
+            break
+        for event in page:
+            if not _event_matches_thread(
+                event,
+                conversation_id=conversation_id,
+                thread_id=thread_id,
+                session_id=session_id,
+            ):
+                continue
+            matching.append(event)
+            if (
+                event.event_type == "run.queued"
+                and str(event.payload.get("run_id", "")).strip() == run_id
+                and str(event.payload.get("invocation_id", "")).strip()
+            ):
+                start = event
+                break
+        before_id = int(page[-1].id)
+    if start is None:
+        return None
+
+    completed = persisted = delivered = False
+    for event in reversed(matching):
+        if str(event.payload.get("run_id", "")).strip() != run_id:
+            continue
+        run_event = (
+            _to_run_event(event) if event.event_type.startswith("run.") else None
+        )
+        if run_event is not None:
+            if run_event.state == RUN_STATE_FAILED:
+                return _invocation_terminal_projection(start, event, "failed", run_id)
+            if run_event.state == RUN_STATE_CANCELLED:
+                return _invocation_terminal_projection(
+                    start, event, "cancelled", run_id
+                )
+            completed = completed or run_event.state == RUN_STATE_COMPLETED
+        persisted = persisted or event.event_type == "response.persisted"
+        delivered = delivered or event.event_type in {
+            "response.delivered",
+            "response.acked",
+        }
+        if completed and persisted and delivered:
+            return _invocation_terminal_projection(start, event, "settled", run_id)
+    return None
+
+
+def _invocation_terminal_projection(
+    start: EventRecord,
+    source: EventRecord,
+    state: str,
+    run_id: str,
+) -> InvocationTerminalProjection:
+    return InvocationTerminalProjection(
+        invocation_id=str(start.payload["invocation_id"]),
+        resolved_state=state,
+        source_event_id=int(source.id),
+        source_event_type=source.event_type,
+        source_timestamp=source.created_at,
+        run_id=run_id,
+        thread_id=str(start.payload.get("thread_id", "")),
+    )
+
+
+def _invocation_start_fields(event: EventRecord | None) -> tuple[str, int, str]:
+    if event is None:
+        return "", 0, ""
+    return (
+        str(event.payload.get("invocation_id", "")).strip(),
+        int(event.id),
+        event.created_at,
+    )
+
+
+def _resolve_invocation_start(
+    sessions: SessionStore,
+    *,
+    session_id: str,
+    conversation_id: str,
+    thread_id: str,
+) -> EventRecord | None:
+    latest = sessions.list_events(
+        session_id=session_id,
+        limit=1,
+        newest_first=True,
+    )
+    if not latest:
+        return None
+    before_id = int(latest[0].id) + 1
+    while True:
+        page = sessions.list_events_before_id(
+            session_id=session_id,
+            before_id=before_id,
+            limit=RUN_STATUS_DEFAULT_SCAN_LIMIT,
+        )
+        if not page:
+            return None
+        for event in page:
+            if event.event_type != "run.queued":
+                continue
+            if not _event_matches_thread(
+                event,
+                conversation_id=conversation_id,
+                thread_id=thread_id,
+                session_id=session_id,
+            ):
+                continue
+            if str(event.payload.get("invocation_id", "")).strip():
+                return event
+        before_id = int(page[-1].id)
 
 
 def _infer_thread_id(

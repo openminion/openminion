@@ -80,11 +80,9 @@ class KnowledgeGraphService:
         provider_names: Iterable[str] | None = None,
         layer: str | None = None,
     ) -> tuple[KnowledgeGraphSource, ...]:
-        selected = (
-            tuple(self.get_source(name) for name in provider_names)
-            if provider_names is not None
-            else self.list_sources(layer=layer)
-        )
+        if provider_names is None:
+            return self.list_sources(layer=layer)
+        selected = tuple(self.get_source(name) for name in provider_names)
         if layer is None:
             return selected
         return tuple(source for source in selected if source.layer == layer)

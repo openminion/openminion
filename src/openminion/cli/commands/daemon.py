@@ -81,11 +81,7 @@ def ensure_daemon_running(
     if probe_status == "ok":
         return endpoint
     if probe_status == _PROBE_STATUS_MISMATCH:
-        remote_config_path = str(
-            ((payload.get("daemon") or {}) if isinstance(payload, dict) else {}).get(
-                "config_path", ""
-            )
-        ).strip()
+        remote_config_path = _remote_config_path_from_probe_payload(payload)
         raise RuntimeError(
             "openminion daemon endpoint is occupied by a different config "
             f"(expected {endpoint.config_path}, got {remote_config_path or 'unknown'}). "
@@ -114,11 +110,8 @@ def daemon_start(
         data_root=data_root,
     )
     result = _start_daemon(endpoint)
-    if result["ok"]:
-        print(result["message"])
-        return 0
     print(result["message"])
-    return 1
+    return 0 if result["ok"] else 1
 
 
 def daemon_stop(
@@ -357,7 +350,7 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
             "ok": False,
             "message": f"PID file exists for running process {existing_pid}, but daemon is unreachable.",
         }
-    if existing_pid and not process_alive(existing_pid):
+    if existing_pid:
         _safe_unlink(pid_file)
 
     command = [

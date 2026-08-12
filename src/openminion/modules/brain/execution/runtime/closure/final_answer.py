@@ -105,10 +105,6 @@ def _repair_missing_final_answer(
             },
             hints={
                 "_llm_call_id": repair_call_id,
-                "current_datetime": state.last_result.created_at
-                if getattr(state, "last_result", None) is not None
-                and getattr(state.last_result, "created_at", None)
-                else "",
                 "user_input": closure_goal,
                 "closure_candidate_reason": completion_reason,
                 "closure_action_summary": str(

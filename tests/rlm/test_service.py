@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pytest
+
 from openminion.modules.brain.loop.recursive.schemas import (
     MetaDirective,
     RetrievalFilters,
@@ -378,7 +380,7 @@ def test_generate_runs_recursive_ticks_and_writes_back() -> None:
     assert isinstance(latest.get("state_inline", {}).get("wm_state"), dict)
 
 
-def test_refresh_working_memory_uses_recent_turns_and_tools() -> None:
+def test_refresh_working_memory_uses_structured_state_and_tools() -> None:
     session = FakeSession()
     session.slice_payload = {
         "recent_turns": [
@@ -401,9 +403,35 @@ def test_refresh_working_memory_uses_recent_turns_and_tools() -> None:
 
     assert wm.current_step == "PLAN"
     assert wm.step_cursor == "2"
-    assert "Plan deployment?" in wm.open_questions
+    assert wm.open_questions == []
+    assert wm.key_decisions == []
     assert any("kubectl dry-run success" in item for item in wm.tool_summaries)
     assert any(event["type"] == "wm.updated" for event in session.events)
+
+
+def test_tick_output_requires_structured_model_decision() -> None:
+    service = RLMService(
+        sessctl=FakeSession(),
+        contextctl=FakeCtx(),
+        llmctl=FakeLLM(payloads=[{"final": True, "answer": "ok"}]),
+    )
+
+    with pytest.raises(ValueError, match="structured tick output"):
+        service._parse_tick_output(llm_result={"status": "success", "text": "done"})
+
+
+def test_ensemble_requires_explicit_winner_selection() -> None:
+    service = RLMService(
+        sessctl=FakeSession(),
+        contextctl=FakeCtx(),
+        llmctl=FakeLLM(payloads=[{"final": True, "answer": "ok"}]),
+    )
+    result = service._pick_ensemble_candidate(
+        {"candidates": [{"candidate_id": "c1", "status": "success"}]}
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "ENSEMBLE_SELECTION_MISSING"
 
 
 def test_retrieve_combines_semantic_and_episodic_with_filters() -> None:

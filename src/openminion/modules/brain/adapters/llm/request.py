@@ -69,10 +69,6 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
                     content_parts=content_parts,
                 )
             )
-        elif content:
-            turn_messages.append(
-                Message(role=cast(_MessageRole, role), content=content)
-            )
 
     pack_messages = context.get("messages", [])
     normalized_pack_messages: list[Any] = []
@@ -159,7 +155,7 @@ def _serialize_context_fallback(context: dict[str, Any]) -> str:
         return ""
     try:
         return json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
-    except Exception:
+    except (TypeError, ValueError, RecursionError):
         return str(payload)
 
 
@@ -252,6 +248,11 @@ def _request_metadata(
         _maybe_set_string_metadata(metadata, key=key, value=manifest.get(key))
     if mode_name:
         metadata["mode_name"] = mode_name
+    _maybe_set_string_metadata(
+        metadata,
+        key="llm_call_id",
+        value=hints.get("_llm_call_id") or context.get("llm_call_id"),
+    )
 
     for metadata_key, hint_key in (
         ("thinking_requested_profile", "thinking_requested_profile"),
@@ -357,8 +358,6 @@ def _build_pending_conversational_clarification_followup_guidance_message(
     schema: type,
     hints: dict[str, Any] | None,
 ) -> str:
-    """Build pending conversational clarification followup guidance message helper."""
-
     if purpose != "decide":
         return ""
     if str(getattr(schema, "__name__", "")).strip() != "Decision":
@@ -382,7 +381,6 @@ def _build_pending_conversational_clarification_followup_guidance_message(
 def _build_task_plan_guidance_message_verbose_weak_model(
     *, purpose: str, schema: type
 ) -> str:
-    """PTCH Phase 4: variant for weak models (MiniMax, etc.)."""
     if purpose != "decide":
         return ""
     if str(getattr(schema, "__name__", "")).strip() != "Decision":
@@ -414,10 +412,6 @@ def _select_task_plan_guidance(
     schema: type,
     variant_map: dict[str, str] | None,
 ) -> str:
-    """PTCH Phase 4: select base or variant APD guidance.
-
-    Unknown variants fall back to base with a logged warning.
-    """
     if isinstance(variant_map, dict):
         variant_name = str(variant_map.get("apd") or "").strip()
     else:

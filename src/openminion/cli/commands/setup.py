@@ -43,6 +43,10 @@ class SetupSelection:
     value: str
 
 
+class SetupCancelledError(ProviderSetupError):
+    pass
+
+
 def _prompt_choice(prompt: str, options: dict[str, SetupSelection]) -> SetupSelection:
     while True:
         print(prompt)
@@ -100,62 +104,37 @@ def _run_wizard(
         saved_path = save_provider_setup(result)
         return result.config, saved_path, None
 
-    selection = _prompt_choice(
-        "Choose your setup path:",
-        {
-            "1": SetupSelection(
-                label=(
-                    "Hosted provider (OpenAI, Anthropic, OpenRouter, MiniMax, and more)"
-                ),
-                value="hosted",
-            ),
-            "2": SetupSelection(label="Local provider (Ollama)", value="ollama"),
-            "3": SetupSelection(
-                label="Import an existing OpenMinion config",
-                value="import",
-            ),
-        },
-    )
-
-    if selection.value == "import":
+    preset = _prompt_setup_preset()
+    if preset is None:
         config, saved_path = _run_import_wizard(args, roots=roots)
         return config, saved_path, None
-    if selection.value == "ollama":
-        preset = get_setup_preset("ollama")
-        model = _prompt_model(preset)
+    model = _prompt_model(preset)
+    if preset.is_local:
         base_url = _prompt_text(
             "Ollama base URL",
             default=preset.default_base_url,
         )
-        result = _build_interactive_setup(
-            args,
-            roots=roots,
-            agent_name=agent_name,
-            preset=preset,
-            model=model,
-            base_url=base_url,
-        )
+    elif preset.requires_base_url:
+        base_url = _prompt_required_text("Base URL")
     else:
-        preset = _prompt_provider_preset()
-        model = _prompt_model(preset)
-        base_url = _prompt_required_text("Base URL") if preset.requires_base_url else ""
-        result = _build_interactive_setup(
-            args,
-            roots=roots,
-            agent_name=agent_name,
-            preset=preset,
-            model=model,
-            base_url=base_url,
-        )
+        base_url = ""
+    result = _build_interactive_setup(
+        args,
+        roots=roots,
+        agent_name=agent_name,
+        preset=preset,
+        model=model,
+        base_url=base_url,
+    )
 
     _print_preview(result)
-    if not _prompt_confirm("Create or repair this config?", default=True):
-        raise ProviderSetupError("Setup cancelled before writing config.")
+    if not _prompt_confirm("Save this configuration?", default=True):
+        raise SetupCancelledError("Setup cancelled before writing config.")
     saved_path = save_provider_setup(result)
     return result.config, saved_path, result.preset
 
 
-def _prompt_provider_preset() -> ProviderSetupPreset:
+def _prompt_setup_preset() -> ProviderSetupPreset | None:
     while True:
         presets = first_screen_presets()
         options = {
@@ -169,7 +148,13 @@ def _prompt_provider_preset() -> ProviderSetupPreset:
             label="More providers or a custom endpoint",
             value="more",
         )
-        selection = _prompt_choice("Choose your model service:", options)
+        options[str(len(options) + 1)] = SetupSelection(
+            label="Import an existing OpenMinion config",
+            value="import",
+        )
+        selection = _prompt_choice("Choose your model provider:", options)
+        if selection.value == "import":
+            return None
         if selection.value != "more":
             return get_setup_preset(selection.value)
 
@@ -184,13 +169,13 @@ def _prompt_provider_preset() -> ProviderSetupPreset:
         more_options["b"] = SetupSelection(label="Back", value="back")
         more_options["c"] = SetupSelection(label="Cancel setup", value="cancel")
         more_selection = _prompt_choice(
-            "Choose another service or custom endpoint:",
+            "Choose another provider or custom endpoint:",
             more_options,
         )
         if more_selection.value == "back":
             continue
         if more_selection.value == "cancel":
-            raise ProviderSetupError("Setup cancelled before choosing provider.")
+            raise SetupCancelledError("Setup cancelled before choosing provider.")
         return get_setup_preset(more_selection.value)
 
 
@@ -213,10 +198,7 @@ def _prompt_model(preset: ProviderSetupPreset) -> str:
         if selection.value == "custom":
             return _prompt_required_text("Model id")
         return selection.value
-    recommended = preset.recommended_models[0]
-    return _prompt_text(
-        f"Model (press Enter for the recommended default: {recommended})"
-    )
+    return _prompt_text("Model", default=preset.recommended_models[0])
 
 
 def _run_import_wizard(args, *, roots) -> tuple[OpenMinionConfig, Path]:
@@ -245,7 +227,7 @@ def _run_import_wizard(args, *, roots) -> tuple[OpenMinionConfig, Path]:
     print(f"  default agent: {config.default_agent}")
     print("  existing config: unrelated settings are preserved")
     if not _prompt_confirm("Import this config?", default=True):
-        raise ProviderSetupError("Setup cancelled before importing config.")
+        raise SetupCancelledError("Setup cancelled before importing config.")
     return config, atomic_save_setup_config(config, target_path)
 
 
@@ -353,12 +335,12 @@ def _build_non_interactive_setup(
 def _print_preview(result: ProviderSetupResult) -> None:
     print("Setup preview:")
     preview = result.preview
+    print(f"  provider: {preview.display_label}")
+    print(f"  model: {preview.model} [{preview.model_source}]")
+    print(f"  API adapter: {preview.api_format_label}")
+    print(f"  credential: {preview.credential}")
     print(f"  config target: {preview.config_path}")
     print(f"  default agent: {preview.agent_id}")
-    print(f"  service: {preview.display_label}")
-    print(f"  API format: {preview.api_format_label}")
-    print(f"  model: {preview.model} [{preview.model_source}]")
-    print(f"  credential: {preview.credential}")
     if result.preset.requires_base_url:
         print(f"  base URL: {preview.base_url}")
     if preview.shared_adapter_isolated:
@@ -394,12 +376,11 @@ def _print_provider_listing() -> None:
 def _prompt_provider_check(preset: ProviderSetupPreset) -> bool:
     if preset.is_local:
         print(
-            "Optional local provider check: contacts Ollama and may load the "
-            "selected model."
+            "Optional connection test: contacts Ollama and may load the selected model."
         )
-        return _prompt_confirm("Run local Ollama check after doctor?", default=True)
-    print("Optional provider check: sends one low-token request and may consume quota.")
-    return _prompt_confirm("Run provider check after doctor?", default=False)
+        return _prompt_confirm("Test Ollama now?", default=True)
+    print("Optional connection test: sends one short request and may consume quota.")
+    return _prompt_confirm("Test this provider now?", default=False)
 
 
 def _run_setup_doctor(*, config_path: Path) -> int:
@@ -492,6 +473,9 @@ def run_setup(args) -> int:
         config, saved_path, interactive_preset = _resolve_runtime_helper("_run_wizard")(
             args
         )
+    except SetupCancelledError:
+        print("Setup cancelled; configuration not written.")
+        return 130
     except ProviderSetupError as exc:
         print(f"Setup failed: {exc}")
         return 2
@@ -508,14 +492,14 @@ def run_setup(args) -> int:
             mode = config.agents[_default_agent_id].provider
         if mode in {"demo", "echo"}:
             connection_state = "not applicable"
-        service_label = mode
+        provider_label = mode
         if interactive_preset is not None:
-            service_label = interactive_preset.display_label
+            provider_label = interactive_preset.display_label
         else:
             preset_id = str(getattr(args, "provider", "") or "").strip()
             if preset_id:
-                service_label = get_setup_preset(preset_id).display_label
-        print(f"Configuration saved at {saved_path} (service: {service_label})")
+                provider_label = get_setup_preset(preset_id).display_label
+        print(f"Configuration saved at {saved_path} (provider: {provider_label})")
 
         doctor_code = _resolve_runtime_helper("_run_setup_doctor")(
             config_path=saved_path

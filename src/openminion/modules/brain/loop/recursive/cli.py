@@ -151,11 +151,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    home_root = str(getattr(args, "home_root", "") or "").strip()
-    data_root = str(getattr(args, "data_root", "") or "").strip()
+    home_root = str(args.home_root or "").strip()
+    data_root = str(args.data_root or "").strip()
     apply_home_data_root_env(home_root=home_root, data_root=data_root)
 
-    sessctl_db_raw = str(getattr(args, "sessctl_db", "") or "").strip()
+    sessctl_db_raw = str(args.sessctl_db or "").strip()
     if not sessctl_db_raw:
         env_map = os.environ
         standalone_mode = is_module_standalone_mode(env_map)
@@ -232,14 +232,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         parser.error(f"unsupported command: {args.command}")
-        return 2
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     finally:
-        close = getattr(sessctl, "close", None)
-        if callable(close):
-            close()
+        sessctl.close()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import threading
 from typing import Any
 
 from openminion.modules.a2a import A2ARuntime
-from openminion.modules.a2a.models import Envelope
+from openminion.modules.a2a.models import Envelope, is_valid_traceparent
 from openminion.modules.a2a.storage import (
     build_a2a_audit_store,
     MemoryAuditStore,
@@ -125,6 +125,21 @@ def _inbound_metadata(
         "a2a_msg_id": envelope.msg_id,
         "a2a_trace_id": envelope.trace_id,
     }
+    if envelope.observability is not None:
+        inbound.update(
+            {
+                "invocation_id": envelope.observability.invocation_id,
+                "a2a_source_execution_id": envelope.observability.execution_id,
+                "a2a_handoff_id": envelope.observability.handoff_id,
+                "traceparent": envelope.observability.traceparent,
+                "tracestate": envelope.observability.tracestate or "",
+                "trace_context_status": (
+                    "valid"
+                    if is_valid_traceparent(envelope.observability.traceparent)
+                    else "invalid"
+                ),
+            }
+        )
     for key in ("workspace_root", "cwd", "source_client"):
         value = str(metadata.get(key) or "").strip()
         if value:

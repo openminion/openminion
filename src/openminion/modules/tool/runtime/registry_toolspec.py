@@ -148,6 +148,12 @@ def _build_tool_runtime_context(
         authored_tools_api=context.authored_tools_api,
         a2a_delegate_api=context.a2a_delegate_api,
         agent_query=context.agent_query,
+        telemetryctl=context.telemetryctl,
+        telemetry_session_id=str(context.session_id or "").strip() or None,
+        telemetry_turn_id=str(
+            metadata.get("turn_id") or metadata.get("trace_id") or ""
+        ).strip()
+        or None,
     )
     runtime_ctx.session_id = str(context.session_id or "").strip() or None
     runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()

@@ -97,23 +97,21 @@ class SQLiteMemoryAuditSink:
             ORDER BY timestamp ASC, event_id ASC
             """
         ).fetchall()
-        events: list[dict[str, Any]] = []
-        for row in rows:
-            events.append(
-                {
-                    "event_id": row["event_id"],
-                    "timestamp": row["timestamp"],
-                    "event_type": row["event_type"],
-                    "target_kind": row["target_kind"],
-                    "target_id": row["target_id"],
-                    "scope": row["scope"],
-                    "record_type": row["record_type"],
-                    "record_key": row["record_key"],
-                    "session_id": row["session_id"],
-                    "details": json.loads(row["details_json"] or "{}"),
-                }
-            )
-        return events
+        return [
+            {
+                "event_id": row["event_id"],
+                "timestamp": row["timestamp"],
+                "event_type": row["event_type"],
+                "target_kind": row["target_kind"],
+                "target_id": row["target_id"],
+                "scope": row["scope"],
+                "record_type": row["record_type"],
+                "record_key": row["record_key"],
+                "session_id": row["session_id"],
+                "details": json.loads(row["details_json"] or "{}"),
+            }
+            for row in rows
+        ]
 
 
 def default_memory_audit_db_path(db_path: str | Path) -> Path:

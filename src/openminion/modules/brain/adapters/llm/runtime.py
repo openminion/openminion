@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.brain.adapters.llm.model_profiles import (
     RetryStrategy,
@@ -14,7 +14,7 @@ from openminion.modules.brain.retry import (
     STRUCTURED_HAS_TOOL_CALLS_KEY,
     STRUCTURED_RETRYABLE_KEY,
 )
-from openminion.modules.llm.errors import LLMCtlError
+from openminion.modules.llm.errors import ErrorCode, LLMCtlError
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.telemetry.trace.phase_timing import (
     record_active_chat_provider_call,
@@ -26,13 +26,13 @@ from .normalize import _normalize_plan_submit_output_payload
 from .request import _build_request
 
 
-def _validated_structured_payload(schema: type, payload: Any) -> Any:
+def _validated_structured_payload(schema: Any, payload: Any) -> Any:
     if callable(getattr(schema, "validate_python", None)):
         return schema.validate_python(payload)
     return schema.model_validate(payload)
 
 
-def _serialize_validation_error(exc: Exception) -> list[dict[str, Any]]:
+def _serialize_validation_error(exc: Any) -> list[dict[str, Any]]:
     if callable(getattr(exc, "errors", None)):
         try:
             errors = exc.errors()
@@ -151,7 +151,7 @@ def _extract_structured_output(
             if isinstance(raw_arguments, str):
                 try:
                     raw_arguments = json.loads(raw_arguments)
-                except Exception:
+                except json.JSONDecodeError:
                     pass
             normalized_payload, normalization_debug = (
                 _normalize_structured_submit_output_payload(
@@ -201,7 +201,7 @@ def _extract_structured_output(
                 continue
             try:
                 payload = json.loads(output_text)
-            except Exception as exc:
+            except json.JSONDecodeError as exc:
                 attempts.append(
                     {
                         "strategy": "json_body",
@@ -302,9 +302,7 @@ def _requires_progressive_retry_for_empty_decide_answer(
     answer = parsed.get("answer")
     if answer is None:
         return True
-    if isinstance(answer, str):
-        return not answer.strip()
-    return False
+    return isinstance(answer, str) and not answer.strip()
 
 
 class LlmctlAdapter(LLMAPI):
@@ -319,8 +317,7 @@ class LlmctlAdapter(LLMAPI):
 
     def estimate_tokens(self, *, model: str, context: dict[str, Any]) -> int:
         del model
-        serialized = str(context or "")
-        return max(1, len(serialized) // 4)
+        return max(1, len(str(context or "")) // 4)
 
     def call_structured(
         self,
@@ -353,7 +350,7 @@ class LlmctlAdapter(LLMAPI):
                     "LLM call failed without provider error details",
                 )
             raise LLMCtlError(
-                str(getattr(error, "code", "") or "PROVIDER_ERROR"),
+                cast(ErrorCode, str(getattr(error, "code", "") or "PROVIDER_ERROR")),
                 str(getattr(error, "message", "") or "LLM call failed"),
                 dict(getattr(error, "details", {}) or {}),
             )

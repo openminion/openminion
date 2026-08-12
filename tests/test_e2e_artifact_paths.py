@@ -99,7 +99,7 @@ def _load_cortensor_e2e_suite_module():
     )
 
 
-def test_live_cli_chat_helper_artifacts_use_openminion_package_home(
+def test_live_cli_chat_helper_artifacts_use_isolated_generated_root(
     monkeypatch, tmp_path: Path
 ) -> None:
     framework_root = tmp_path / "framework"
@@ -111,10 +111,13 @@ def test_live_cli_chat_helper_artifacts_use_openminion_package_home(
     monkeypatch.setattr(
         live_cli_chat_alibaba, "runtime_home_root", lambda: openminion_root
     )
+    data_root = tmp_path / "isolated-data"
+    monkeypatch.setenv(OPENMINION_DATA_ROOT_ENV, str(data_root))
+    monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
 
     artifact_dir = live_cli_chat_alibaba.artifact_dir()
 
-    assert artifact_dir == openminion_root / ".openminion" / "runtime" / "cli-chat-e2e"
+    assert artifact_dir == data_root / "runtime" / "cli-chat-e2e"
     assert artifact_dir.exists()
 
 
@@ -381,7 +384,7 @@ def test_live_cli_chat_helper_reads_session_outbound_debug_payloads(
     assert bodies == ["first", "second"]
 
 
-def test_identity_yaml_matrix_artifacts_use_openminion_package_home(
+def test_identity_yaml_matrix_artifacts_use_isolated_generated_root(
     monkeypatch, tmp_path: Path
 ) -> None:
     framework_root = tmp_path / "framework"
@@ -391,10 +394,13 @@ def test_identity_yaml_matrix_artifacts_use_openminion_package_home(
 
     monkeypatch.setattr(identity_matrix, "_framework_root", lambda: framework_root)
     monkeypatch.setattr(identity_matrix, "_runtime_home_root", lambda: openminion_root)
+    data_root = tmp_path / "isolated-data"
+    monkeypatch.setenv(OPENMINION_DATA_ROOT_ENV, str(data_root))
+    monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
 
     artifact_dir = identity_matrix._artifact_dir()
 
-    assert artifact_dir == openminion_root / ".openminion" / "runtime" / "cli-chat-e2e"
+    assert artifact_dir == data_root / "runtime" / "cli-chat-e2e"
     assert artifact_dir.exists()
 
 
@@ -440,7 +446,7 @@ def test_cli_gate_live_mode_delegates_to_focus_runner(monkeypatch) -> None:
     assert captured["timeout_seconds"] == 12
 
 
-def test_cli_chat_probe_defaults_home_and_data_root_to_openminion_package_root(
+def test_cli_chat_probe_defaults_home_and_data_root_to_system_temp(
     monkeypatch, tmp_path: Path
 ) -> None:
     probe = _load_cli_chat_probe_module()
@@ -453,8 +459,9 @@ def test_cli_chat_probe_defaults_home_and_data_root_to_openminion_package_root(
     monkeypatch.setattr(probe, "OPENMINION_ROOT", openminion_root)
     monkeypatch.delenv("OPENMINION_HOME", raising=False)
 
-    assert probe._resolve_home_root() == openminion_root
-    assert probe._resolve_data_root(openminion_root) == openminion_root / ".openminion"
+    home_root = probe._resolve_home_root()
+    assert home_root != openminion_root
+    assert probe._resolve_data_root(home_root) == (home_root / ".openminion").resolve()
 
 
 def test_cli_chat_probe_passes_data_root_to_child_cli(
@@ -503,6 +510,7 @@ def test_cli_chat_probe_passes_data_root_to_child_cli(
     assert isinstance(env, dict)
     assert command[command.index("--data-root") + 1] == str(data_root.resolve())
     assert env["OPENMINION_DATA_ROOT"] == str(data_root.resolve())
+    assert env["OPENMINION_GENERATED_ROOT"] == str(data_root.resolve() / "runtime")
 
 
 @pytest.mark.parametrize(
@@ -637,6 +645,18 @@ def test_cli_gate_main_sets_runtime_env_and_runs_local(
 
     monkeypatch.delenv("PYTHONPATH", raising=False)
     monkeypatch.setattr(gate, "PYTHON", python_path)
+    generated_root = tmp_path / "runtime-home" / ".openminion" / "runtime"
+    monkeypatch.setattr(
+        gate,
+        "isolate_runtime_roots",
+        lambda env, **_: env.update(
+            {
+                "OPENMINION_HOME": str(generated_root.parents[1]),
+                "OPENMINION_DATA_ROOT": str(generated_root.parent),
+                "OPENMINION_GENERATED_ROOT": str(generated_root),
+            }
+        ),
+    )
     monkeypatch.setattr(
         gate,
         "_run_local",
@@ -646,6 +666,9 @@ def test_cli_gate_main_sets_runtime_env_and_runs_local(
     assert gate.main(["local"]) == 0
     assert captured["PYTHONDONTWRITEBYTECODE"] == "1"
     assert captured["PYTHONPATH"] == str(gate.ROOT / "src")
+    assert captured["OPENMINION_HOME"] == str(generated_root.parents[1])
+    assert captured["OPENMINION_DATA_ROOT"] == str(generated_root.parent)
+    assert captured["OPENMINION_GENERATED_ROOT"] == str(generated_root)
 
 
 def test_chat_permutations_runner_artifacts_use_generated_root(
@@ -659,13 +682,13 @@ def test_chat_permutations_runner_artifacts_use_generated_root(
 
     monkeypatch.setattr(runner, "REPO_ROOT", framework_root)
     monkeypatch.setattr(runner, "OPENMINION_DIR", openminion_home)
-    monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
-    monkeypatch.delenv(OPENMINION_DATA_ROOT_ENV, raising=False)
+    data_root = tmp_path / "isolated-data"
+    monkeypatch.setenv(OPENMINION_DATA_ROOT_ENV, str(data_root))
     monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
 
     artifacts_root = runner._default_artifacts_root()
 
-    assert artifacts_root == openminion_home / ".openminion" / "runtime" / "e2e"
+    assert artifacts_root == data_root / "runtime" / "e2e"
     assert runner._default_log_root() == artifacts_root / "chat-logs"
     assert runner._default_config_root() == artifacts_root / "chat-configs"
 
@@ -681,15 +704,13 @@ def test_live_skill_dense_probe_runner_artifacts_use_generated_root(
 
     monkeypatch.setattr(runner, "REPO_ROOT", framework_root)
     monkeypatch.setattr(runner, "OPENMINION_DIR", openminion_home)
-    monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
-    monkeypatch.delenv(OPENMINION_DATA_ROOT_ENV, raising=False)
+    data_root = tmp_path / "isolated-data"
+    monkeypatch.setenv(OPENMINION_DATA_ROOT_ENV, str(data_root))
     monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
 
     artifacts_root = runner._artifact_root()
 
-    assert artifacts_root == (
-        openminion_home / ".openminion" / "runtime" / "skill-complex-official-matrix"
-    )
+    assert artifacts_root == (data_root / "runtime" / "skill-complex-official-matrix")
 
 
 def test_ci_script_defaults_use_generated_runtime_tree(monkeypatch) -> None:
@@ -748,38 +769,14 @@ def test_ci_script_defaults_use_generated_runtime_tree(monkeypatch) -> None:
         assert Path(getattr(args, attr_name)) == expected
 
 
-def test_shell_e2e_runners_default_home_to_openminion_package_root() -> None:
-    repo_root = _repo_root()
-    shell_paths = [
-        repo_root
-        / "openminion"
-        / "tests"
-        / "e2e"
-        / "runners"
-        / "run_crdh_e2e_smoke_guard.sh",
-        repo_root
-        / "openminion"
-        / "tests"
-        / "e2e"
-        / "runners"
-        / "run_skill_fixture_scenarios.sh",
-        repo_root
-        / "openminion"
-        / "tests"
-        / "e2e"
-        / "runners"
-        / "run_chat_provider_smoke.sh",
-    ]
+def test_shell_test_runners_use_shared_isolated_roots() -> None:
+    tests_root = _repo_root() / "openminion" / "tests"
+    shell_paths = sorted(tests_root.glob("**/runners/run_*.sh"))
+    assert shell_paths
     for path in shell_paths:
         text = path.read_text(encoding="utf-8")
-        assert (
-            'OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"' in text
-            or 'OPENMINION_HOME="${OPENMINION_HOME:-$ROOT}"' in text
-        )
-        assert (
-            'OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"'
-            in text
-        )
+        assert "helpers/runtime_roots.sh" in text
+        assert "isolate_openminion_test_roots " in text
 
 
 def test_artifact_create_read_integration():

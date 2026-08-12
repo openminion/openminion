@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, cast
+from typing import Any, Callable
 
 from openminion.cli.commands.daemon import ensure_daemon_running
 from openminion.cli.transport.daemon_client import daemon_request
@@ -63,14 +63,13 @@ def call_daemon_or_inproc(
 def daemon_get(
     endpoint: Any, *, path: str, timeout_s: float = 10
 ) -> tuple[int, dict[str, Any]]:
-    return cast(
-        tuple[int, dict[str, Any]],
-        daemon_request(endpoint=endpoint, method="GET", path=path, timeout_s=timeout_s),
+    return daemon_request(
+        endpoint=endpoint, method="GET", path=path, timeout_s=timeout_s
     )
 
 
 def _format_daemon_status_error(payload: dict[str, Any], status: int) -> str:
-    error = payload.get("error") if isinstance(payload, dict) else None
+    error = payload.get("error")
     if isinstance(error, dict):
         message = str(error.get("message", "") or "").strip()
         if message:

@@ -276,6 +276,8 @@ class RecordStorePostgres(RecordStore):
                 return count
 
     def insert(self, table: str, row: dict[str, Any]) -> int:
+        from sqlalchemy import text
+
         columns = list(row.keys())
         if not columns:
             raise ValueError("row must contain at least one column")
@@ -286,9 +288,18 @@ class RecordStorePostgres(RecordStore):
             f"VALUES ({', '.join(f':{name}' for name in bind_names)})"
         )
         params = {name: row[column] for name, column in zip(bind_names, columns)}
-        self.execute_count(sql, params)
-        explicit_id = row.get("id")
-        return int(explicit_id) if explicit_id is not None else 0
+        statement = text(f"{sql} RETURNING id")
+        with self._instrument_query(sql, params), self._lock:
+            if self._connection is not None:
+                result = self._connection.execute(statement, params)
+                rows = [dict(item) for item in result.mappings().all()]
+            else:
+                with self._engine.begin() as connection:
+                    result = connection.execute(statement, params)
+                    rows = [dict(item) for item in result.mappings().all()]
+        if not rows:
+            raise RuntimeError(f"insert did not return a row ID for {table}")
+        return int(rows[0]["id"])
 
     def insert_many(self, table: str, rows: list[dict[str, Any]]) -> int:
         if not rows:

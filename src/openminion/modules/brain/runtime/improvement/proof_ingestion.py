@@ -130,19 +130,16 @@ class ProofPacketLearningStore:
     ) -> ProofPacketEvidenceBundle | None:
         if not submission.stageable:
             return None
-        matching = [
-            item
-            for item in self._load().get("observations", {}).values()
-            if _bundle_key(ProofPacketLearningSubmission.model_validate(item))
-            == _bundle_key(submission)
-        ]
-        if not matching:
-            return None
         submissions = [
             ProofPacketLearningSubmission.model_validate(item)
-            for item in sorted(matching, key=lambda item: item["submission_id"])
+            for item in self._load().get("observations", {}).values()
         ]
-        return _bundle_from_submissions(submissions)
+        bundle_key = _bundle_key(submission)
+        matching = [item for item in submissions if _bundle_key(item) == bundle_key]
+        if not matching:
+            return None
+        matching.sort(key=lambda item: item.submission_id)
+        return _bundle_from_submissions(matching)
 
     def _load(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -168,11 +165,7 @@ def ingest_proof_packet_learning_submission(
 ) -> ProofPacketIngestionResult:
     """Record one typed proof submission and stage a memory candidate if ready."""
 
-    submission_obj = (
-        submission
-        if isinstance(submission, ProofPacketLearningSubmission)
-        else ProofPacketLearningSubmission.model_validate(submission)
-    )
+    submission_obj = ProofPacketLearningSubmission.model_validate(submission)
     if not enabled:
         return ProofPacketIngestionResult(
             status="disabled",
@@ -180,29 +173,17 @@ def ingest_proof_packet_learning_submission(
             submission_id=submission_obj.submission_id,
         )
     if submission_obj.target_type is None:
-        return ProofPacketIngestionResult(
-            status="skipped",
-            reason_code="learning_target_required",
-            submission_id=submission_obj.submission_id,
-        )
+        return _skipped_ingestion_result(submission_obj, "learning_target_required")
     if submission_obj.semantic_author_source is None:
-        return ProofPacketIngestionResult(
-            status="skipped",
-            reason_code="semantic_author_source_required",
-            submission_id=submission_obj.submission_id,
+        return _skipped_ingestion_result(
+            submission_obj, "semantic_author_source_required"
         )
     if submission_obj.candidate_state != "staged":
-        return ProofPacketIngestionResult(
-            status="skipped",
-            reason_code="candidate_state_not_stageable",
-            submission_id=submission_obj.submission_id,
+        return _skipped_ingestion_result(
+            submission_obj, "candidate_state_not_stageable"
         )
     if submission_obj.target_type != "memory":
-        return ProofPacketIngestionResult(
-            status="skipped",
-            reason_code="unsupported_target_owner",
-            submission_id=submission_obj.submission_id,
-        )
+        return _skipped_ingestion_result(submission_obj, "unsupported_target_owner")
 
     recorded, bundle = store.record(submission_obj)
     if not recorded:
@@ -244,6 +225,17 @@ def ingest_proof_packet_learning_submission(
         submission_id=submission_obj.submission_id,
         bundle=bundle,
         stage_result=stage_result,
+    )
+
+
+def _skipped_ingestion_result(
+    submission: ProofPacketLearningSubmission,
+    reason_code: ProofLearningReason,
+) -> ProofPacketIngestionResult:
+    return ProofPacketIngestionResult(
+        status="skipped",
+        reason_code=reason_code,
+        submission_id=submission.submission_id,
     )
 
 

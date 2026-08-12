@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -189,6 +190,26 @@ class RecordStore(ABC):
         """
         raise NotImplementedError
 
+    def insert_if_absent(
+        self,
+        table: str,
+        row: dict[str, Any],
+        *,
+        conflict_columns: tuple[str, ...],
+    ) -> bool:
+        """Atomically insert one row, returning whether it was created."""
+        if not row or not conflict_columns:
+            raise ValueError("row and conflict_columns must be non-empty")
+        columns = list(row)
+        quoted_columns = [_quote_ident(column) for column in columns]
+        conflict = ", ".join(_quote_ident(column) for column in conflict_columns)
+        placeholders = ", ".join("?" for _ in columns)
+        sql = (
+            f"INSERT INTO {_quote_ident(table)} ({', '.join(quoted_columns)}) "
+            f"VALUES ({placeholders}) ON CONFLICT ({conflict}) DO NOTHING"
+        )
+        return self.execute_count(sql, tuple(row[column] for column in columns)) == 1
+
     @abstractmethod
     def query_rows(
         self,
@@ -277,11 +298,12 @@ class RecordStoreSQLite(RecordStore):
         autocheckpoint_pages: int = 1000,
         telemetry_hook: StorageTelemetryHook | None = None,
         slow_query_threshold_ms: int = 500,
+        read_only: bool = False,
     ) -> None:
         sqlite_target, resolved_path = _resolve_sqlite_target(sqlite_path)
         self.sqlite_path = resolved_path or Path(":memory:")
         self._is_memory = resolved_path is None
-        if resolved_path is not None:
+        if resolved_path is not None and not read_only:
             resolved_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._in_tx = False
@@ -291,15 +313,35 @@ class RecordStoreSQLite(RecordStore):
         # slow-query threshold (ms) consulted by `_instrument_query`
         self.slow_query_threshold_ms = int(slow_query_threshold_ms)
 
-        self._conn = sqlite3.connect(sqlite_target, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        configure_connection(
-            self._conn,
-            wal=wal,
-            synchronous=synchronous,
-            busy_timeout_ms=busy_timeout_ms,
-            autocheckpoint_pages=autocheckpoint_pages,
+        if read_only:
+            if resolved_path is None or not resolved_path.is_file():
+                raise FileNotFoundError(str(resolved_path or sqlite_path))
+            wal_path = Path(f"{resolved_path}-wal")
+            shm_path = Path(f"{resolved_path}-shm")
+            if wal_path.exists() != shm_path.exists():
+                raise RuntimeError("partial SQLite WAL sidecars")
+            for sidecar in (wal_path, shm_path):
+                if sidecar.exists() and not os.access(sidecar, os.R_OK):
+                    raise PermissionError(str(sidecar))
+            sqlite_target = f"file:{resolved_path}?mode=ro"
+        self._conn = sqlite3.connect(
+            sqlite_target,
+            check_same_thread=False,
+            uri=read_only,
         )
+        self._conn.row_factory = sqlite3.Row
+        if read_only:
+            self._conn.execute("PRAGMA query_only=ON")
+            self._conn.execute(f"PRAGMA busy_timeout={max(0, int(busy_timeout_ms))}")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+        else:
+            configure_connection(
+                self._conn,
+                wal=wal,
+                synchronous=synchronous,
+                busy_timeout_ms=busy_timeout_ms,
+                autocheckpoint_pages=autocheckpoint_pages,
+            )
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -308,6 +350,24 @@ class RecordStoreSQLite(RecordStore):
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Keep one SQLite transaction owned by one caller until it closes."""
+        with self._instrument_query("BEGIN", None), self._lock:
+            outermost = not self._in_tx
+            if outermost:
+                self.begin()
+            completed = False
+            try:
+                yield
+                completed = True
+            finally:
+                if outermost:
+                    if completed:
+                        self.commit()
+                    else:
+                        self.rollback()
 
     def begin(self) -> None:
         with self._lock:

@@ -54,13 +54,12 @@ class OpenMinionDelegationMemoryGrantResolver:
         context: MemoryAccessContext,
         operation: MemoryAccessOperation,
     ) -> DelegationMemoryGrant | None:
-        if self._run_context.memory_posture == "none":
-            return None
-        if grant_id != self._run_context.memory_grant_id:
-            return None
-        if operation != "read":
-            return None
-        if self._run_context.cancelled:
+        if (
+            self._run_context.memory_posture == "none"
+            or grant_id != self._run_context.memory_grant_id
+            or operation != "read"
+            or self._run_context.cancelled
+        ):
             return None
         grant = self._policy.resolve_active_grant_for_use(
             grant_id,

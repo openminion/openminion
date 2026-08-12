@@ -167,8 +167,10 @@ class _BusyCommandComposer:
             await type(self).runtime.first_chunk_sent.wait()
             return "/status"
         if self._calls == 3:
-            return "!pwd"
+            return "/memory"
         if self._calls == 4:
+            return "!pwd"
+        if self._calls == 5:
             type(self).runtime.release_turn.set()
             raise EOFError
         raise EOFError
@@ -377,6 +379,7 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
         msg.kind == MessageKind.USER and msg.body == "second"
         for msg in transcript._messages
     )
+    assert "\n> second\n" in output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -445,7 +448,7 @@ async def test_terminal_focus_drains_multiple_queued_inputs_fifo(
 
 
 @pytest.mark.asyncio
-async def test_terminal_focus_busy_commands_are_not_queued_or_dispatched(
+async def test_terminal_focus_runs_safe_busy_commands_and_blocks_shell_escape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = _BusyCommandRuntime()
@@ -479,11 +482,16 @@ async def test_terminal_focus_busy_commands_are_not_queued_or_dispatched(
     transcript = _CapturedTranscript.last_instance
     assert transcript is not None
     assert not any(
-        msg.kind == MessageKind.USER and msg.body in {"/status", "!pwd"}
+        msg.kind == MessageKind.SYSTEM and "Queued message" in msg.body
         for msg in transcript._messages
     )
-    assert not any(
-        msg.kind == MessageKind.SYSTEM and "Queued message" in msg.body
+    assert any(
+        msg.kind == MessageKind.SYSTEM and "Status:" in msg.body
+        for msg in transcript._messages
+    )
+    assert any(
+        msg.kind == MessageKind.SYSTEM
+        and "No persisted memory for this session or agent." in msg.body
         for msg in transcript._messages
     )
     blocked_messages = [
@@ -492,7 +500,7 @@ async def test_terminal_focus_busy_commands_are_not_queued_or_dispatched(
         if msg.kind == MessageKind.SYSTEM
         and "Commands are unavailable while a turn is running" in msg.body
     ]
-    assert len(blocked_messages) == 2
+    assert len(blocked_messages) == 1
 
 
 @pytest.mark.asyncio

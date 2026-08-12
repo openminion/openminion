@@ -78,7 +78,6 @@ def envelope_from_event_callback(
             return None
     else:
         return None
-    normalized_text = normalize_command_text(text)
     blocks = tuple(
         block for block in (event.get("blocks") or ()) if isinstance(block, dict)
     )
@@ -86,7 +85,7 @@ def envelope_from_event_callback(
         team_id=callback.team_id,
         channel_id=channel_id,
         user_id=user_id,
-        text=normalized_text,
+        text=normalize_command_text(text),
         ts=ts,
         event_id=callback.event_id,
         event_type=event_type,
@@ -101,9 +100,6 @@ def envelope_from_event_callback(
 
 
 def inbound_from_envelope(envelope: SlackInboundEnvelope) -> InboundMessage:
-    chat_key = slack_session_scope_key(
-        envelope.team_id, envelope.channel_id, envelope.thread_ts
-    )
     metadata = {
         "team_id": envelope.team_id,
         "channel_id": envelope.channel_id,
@@ -114,7 +110,9 @@ def inbound_from_envelope(envelope: SlackInboundEnvelope) -> InboundMessage:
     }
     inbound = InboundMessage(
         user_key=f"slack:{envelope.team_id}:user:{envelope.user_id}",
-        chat_key=chat_key,
+        chat_key=slack_session_scope_key(
+            envelope.team_id, envelope.channel_id, envelope.thread_ts
+        ),
         text=envelope.text,
         channel=CHANNEL_ID,
         thread_key=envelope.thread_ts,

@@ -48,10 +48,6 @@ def make_segment(
     )
 
 
-def _candidate_label(count: int) -> str:
-    return "candidate" if count == 1 else "candidates"
-
-
 def render_context_drop_visibility_note(drop_counts: dict[str, int]) -> str:
     items = [
         (CONTEXT_DROP_VISIBILITY_BUCKET_LABELS.get(bucket, bucket), count)
@@ -62,7 +58,8 @@ def render_context_drop_visibility_note(drop_counts: dict[str, int]) -> str:
         return ""
 
     parts = [
-        f"{count} {label} {_candidate_label(count)}" for label, count in sorted(items)
+        f"{count} {label} {'candidate' if count == 1 else 'candidates'}"
+        for label, count in sorted(items)
     ]
     if len(parts) == 1:
         counts_text = parts[0]

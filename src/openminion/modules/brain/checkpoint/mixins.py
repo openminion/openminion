@@ -76,6 +76,11 @@ class _CheckpointMixinBase:
         self._checkpoint_manager = CheckpointManager(task_service=task_manager)
         return self._checkpoint_manager
 
+    def _checkpoint_task_id_for(self, ctx: ExecutionContext) -> str:
+        return _normalized_text(
+            getattr(ctx.state, "task_backed_task_id", "") or self._checkpoint_task_id
+        )
+
     def _set_resume_state(
         self,
         ctx: ExecutionContext,
@@ -83,17 +88,13 @@ class _CheckpointMixinBase:
         payload: dict[str, Any],
         cursor: int,
     ) -> dict[str, Any]:
-        resume_state = dict(payload or {})
+        resume_state = dict(payload)
         resume_state["_checkpoint_cursor"] = max(0, int(cursor))
         ctx.state.task_backed_resume_state = resume_state
         return resume_state
 
     def _init_checkpoint(self, ctx: ExecutionContext) -> str | None:
-        current_task_id = _normalized_text(
-            getattr(ctx.state, "task_backed_task_id", "")
-            or self._checkpoint_task_id
-            or ""
-        )
+        current_task_id = self._checkpoint_task_id_for(ctx)
         if current_task_id:
             self._checkpoint_task_id = current_task_id
             ctx.state.task_backed_task_id = current_task_id
@@ -155,11 +156,7 @@ class _CheckpointMixinBase:
         ctx: ExecutionContext,
         checkpoint_id: str,
     ) -> dict[str, Any] | None:
-        task_id = _normalized_text(
-            getattr(ctx.state, "task_backed_task_id", "")
-            or self._checkpoint_task_id
-            or ""
-        )
+        task_id = self._checkpoint_task_id_for(ctx)
         if not task_id:
             return {"_resume_error": "Missing task-backed task ID."}
         manager = self._checkpoint_manager_for(ctx)
@@ -196,11 +193,7 @@ class _CheckpointMixinBase:
         cursor: int = 0,
     ) -> str | None:
         checkpoint_id = self._save_current_checkpoint(ctx, cursor=max(0, int(cursor)))
-        task_id = _normalized_text(
-            getattr(ctx.state, "task_backed_task_id", "")
-            or self._checkpoint_task_id
-            or ""
-        )
+        task_id = self._checkpoint_task_id_for(ctx)
         manager = self._checkpoint_manager_for(ctx)
         if task_id and manager is not None:
             manager.transition_task(
@@ -210,7 +203,7 @@ class _CheckpointMixinBase:
         return checkpoint_id
 
     def checkpoint(self, ctx: ExecutionContext, state: dict[str, Any]) -> str:
-        payload = dict(state or {})
+        payload = dict(state)
         cursor = self._checkpoint_cursor_from_payload(
             payload,
             fallback=int(getattr(ctx.state, "cursor", 0) or 0),
@@ -218,11 +211,7 @@ class _CheckpointMixinBase:
         return self._save_payload(ctx, payload=payload, cursor=cursor) or ""
 
     def report_progress(self, ctx: ExecutionContext, progress: TaskProgress) -> None:
-        task_id = _normalized_text(
-            getattr(ctx.state, "task_backed_task_id", "")
-            or self._checkpoint_task_id
-            or ""
-        )
+        task_id = self._checkpoint_task_id_for(ctx)
         if not task_id:
             return
         payload = progress.model_dump(mode="json", exclude_none=True)
@@ -256,11 +245,7 @@ class _CheckpointMixinBase:
             terminal=False,
             cursor=int(getattr(ctx.state, "cursor", 0) or 0),
         )
-        task_id = _normalized_text(
-            getattr(ctx.state, "task_backed_task_id", "")
-            or self._checkpoint_task_id
-            or ""
-        )
+        task_id = self._checkpoint_task_id_for(ctx)
         manager = self._checkpoint_manager_for(ctx)
         if task_id and manager is not None:
             manager.transition_task(task_id=task_id, to_state="cancelled")
@@ -286,11 +271,7 @@ class CheckpointMixin(_CheckpointMixinBase):
     def _try_resume(self, ctx: ExecutionContext) -> WorkflowPlan | None:
         resume_state = dict(getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {})
         if not resume_state:
-            task_id = _normalized_text(
-                getattr(ctx.state, "task_backed_task_id", "")
-                or self._checkpoint_task_id
-                or ""
-            )
+            task_id = self._checkpoint_task_id_for(ctx)
             manager = self._checkpoint_manager_for(ctx)
             if task_id and manager is not None:
                 consumer = cast(CheckpointConsumer, self)

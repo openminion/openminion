@@ -18,15 +18,16 @@ from openminion.modules.storage.migrations.module_ids import (
 class BaseModuleStore(ABC):
     """Shared constructor for backend-neutral module stores."""
 
-    def __init__(self, *, record_store: RecordStore) -> None:
+    def __init__(self, *, record_store: RecordStore, initialize: bool = True) -> None:
         self._lock = getattr(self, "_lock", threading.RLock())
         self._record_store = record_store
-        self._init_schema()
-        ensure_module_metadata_via_store(
-            self._record_store,
-            module_id=module_id_from_package(self._module_package()),
-            schema_head=schema_head_from_migrations(self._list_migrations()),
-        )
+        if initialize:
+            self._init_schema()
+            ensure_module_metadata_via_store(
+                self._record_store,
+                module_id=module_id_from_package(self._module_package()),
+                schema_head=schema_head_from_migrations(self._list_migrations()),
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -53,6 +54,7 @@ class BaseModuleSQLiteStore(BaseModuleStore):
         *,
         wal: bool = True,
         record_store: RecordStore | None = None,
+        read_only: bool = False,
     ) -> None:
         self._lock = threading.RLock()
         if record_store is None:
@@ -67,8 +69,13 @@ class BaseModuleSQLiteStore(BaseModuleStore):
             else:
                 resolved = Path(sqlite_path).expanduser().resolve(strict=False)
                 self.sqlite_path = resolved
-                resolved.parent.mkdir(parents=True, exist_ok=True)
-                self._record_store = RecordStoreSQLite(resolved, wal=wal)
+                if not read_only:
+                    resolved.parent.mkdir(parents=True, exist_ok=True)
+                self._record_store = RecordStoreSQLite(
+                    resolved,
+                    wal=wal,
+                    read_only=read_only,
+                )
         else:
             self._record_store = record_store
             sqlite_path_value = getattr(
@@ -84,9 +91,10 @@ class BaseModuleSQLiteStore(BaseModuleStore):
         if self._conn is None:
             raise RuntimeError("record_store must expose sqlite connection")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        super().__init__(record_store=self._record_store)
-        ensure_module_metadata_for_package(
-            self._conn,
-            package=self._module_package(),
-            migrations=self._list_migrations(),
-        )
+        super().__init__(record_store=self._record_store, initialize=not read_only)
+        if not read_only:
+            ensure_module_metadata_for_package(
+                self._conn,
+                package=self._module_package(),
+                migrations=self._list_migrations(),
+            )

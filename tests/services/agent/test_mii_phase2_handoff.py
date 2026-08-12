@@ -13,6 +13,11 @@ from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
+from openminion.modules.telemetry.trace.phase_timing import (
+    ChatPhaseTimer,
+    record_active_chat_provider_attempt,
+    use_chat_phase_timer,
+)
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 from openminion.services.context.session import SessionContextService
 from tests._csc_fixtures import _csc_install_default_agent
@@ -135,8 +140,8 @@ def test_structure_rolling_summary_uses_structurer_when_available() -> None:
     (
         tempdir,
         connection,
-        store,
-        session_context,
+        _store,
+        _session_context,
         _memory_store,
         _memory_service,
         adapter,
@@ -172,8 +177,8 @@ def test_structure_rolling_summary_empty_input_returns_safe_empty_shape() -> Non
     (
         tempdir,
         connection,
-        store,
-        session_context,
+        _store,
+        _session_context,
         _memory_store,
         _memory_service,
         adapter,
@@ -207,8 +212,8 @@ def test_structure_rolling_summary_fails_open_when_structurer_times_out() -> Non
     (
         tempdir,
         connection,
-        store,
-        session_context,
+        _store,
+        _session_context,
         _memory_store,
         _memory_service,
         adapter,
@@ -230,6 +235,65 @@ def test_structure_rolling_summary_fails_open_when_structurer_times_out() -> Non
         )
         assert summary["decisions"] == []
         assert adapter._session_summary_structurer_disabled is True  # noqa: SLF001
+    finally:
+        connection.close()
+        tempdir.cleanup()
+
+
+def test_structure_rolling_summary_worker_preserves_active_timer_context() -> None:
+    def _timed_structurer(summary_text: str, turn_count: int) -> dict[str, object]:
+        record_active_chat_provider_attempt(
+            logical_call_id="summary-call-1",
+            semantic_purpose="summarize",
+            attempt=1,
+            provider="fixture",
+            model="fixture-summary-model",
+            route_posture="primary",
+            attempt_posture="initial",
+            latency_ms=3,
+            outcome="ok",
+        )
+        return {
+            "summary_text": summary_text,
+            "decisions": [f"turns:{turn_count}"],
+        }
+
+    (
+        tempdir,
+        connection,
+        store,
+        session_context,
+        _memory_store,
+        _memory_service,
+        adapter,
+    ) = _make_adapter(
+        session_summary_structurer=_timed_structurer,
+        session_summary_max_chars=200,
+        session_summary_structurer_timeout_seconds=1.0,
+    )
+    timer = ChatPhaseTimer()
+    try:
+        with use_chat_phase_timer(timer):
+            summary = adapter._structure_rolling_summary(  # noqa: SLF001
+                "This longer summary should invoke the worker-backed structurer.",
+                turn_count=4,
+            )
+        payload = timer.build_payload()
+        assert summary["decisions"] == ["turns:4"]
+        assert "memory_summary_structure" in payload.phases_instrumented
+        assert payload.provider_attempts == (
+            {
+                "logical_call_id": "summary-call-1",
+                "semantic_purpose": "summarize",
+                "attempt": 1,
+                "provider": "fixture",
+                "model": "fixture-summary-model",
+                "route_posture": "primary",
+                "attempt_posture": "initial",
+                "latency_ms": 3,
+                "outcome": "ok",
+            },
+        )
     finally:
         connection.close()
         tempdir.cleanup()

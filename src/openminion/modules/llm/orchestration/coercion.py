@@ -37,9 +37,7 @@ def _normalize_text(value: str) -> str:
 
 
 def _extract_json_dict(value: str) -> dict[str, Any] | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
+    text = value.strip()
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):

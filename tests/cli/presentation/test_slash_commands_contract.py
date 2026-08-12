@@ -3,6 +3,7 @@ from __future__ import annotations
 from openminion.cli.presentation.slash_commands import (
     SLASH_COMMANDS,
     rich_slash_command_registry,
+    slash_command_runs_while_busy,
     terminal_slash_commands,
 )
 
@@ -41,3 +42,10 @@ def test_rich_metadata_preserves_known_aliases() -> None:
     assert "/tool" in aliases_by_primary["/tools"]
     assert "/session" in aliases_by_primary["/sessions"]
     assert "/task" in aliases_by_primary["/tasks"]
+
+
+def test_busy_slash_policy_allows_reads_and_blocks_changes() -> None:
+    for command in ("/status", "/memory", "/skills", "/tasks task-1", "/model"):
+        assert slash_command_runs_while_busy(command)
+    for command in ("/new", "/undo", "/model openai/gpt-5", "/permissions bypass"):
+        assert not slash_command_runs_while_busy(command)

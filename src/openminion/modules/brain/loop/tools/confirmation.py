@@ -9,7 +9,7 @@ from openminion.modules.brain.constants import (
     CONFIRMATION_MESSAGE_ARG_LIMIT,
     CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT,
 )
-from openminion.modules.brain.schemas import Command
+from openminion.modules.brain.schemas import Command, WorkingState
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
 _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
@@ -33,10 +33,8 @@ def _bounded_confirmation_arg_value(value: Any) -> str:
     return f"{text[: CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT - 3].rstrip()}..."
 
 
-def _confirmation_arg_preview(command: Any) -> str:
-    raw_args = getattr(command, "args", {})
-    if not isinstance(raw_args, dict):
-        return ""
+def _confirmation_arg_preview(command: Command) -> str:
+    raw_args = command.args
     items: list[str] = []
     for key in _CONFIRMATION_MESSAGE_ARG_KEYS:
         if key not in raw_args:
@@ -49,12 +47,8 @@ def _confirmation_arg_preview(command: Any) -> str:
     return ", ".join(items)
 
 
-def _command_payload(command: Any) -> dict[str, Any] | None:
-    try:
-        payload = command.model_dump(mode="json")
-    except Exception:
-        return None
-    return payload if isinstance(payload, dict) else None
+def _command_payload(command: Command) -> dict[str, Any]:
+    return dict(command.model_dump(mode="json"))
 
 
 def _command_from_payload(payload: Any) -> Command | None:
@@ -66,8 +60,8 @@ def _command_from_payload(payload: Any) -> Command | None:
         return None
 
 
-def extract_confirmation_replay_queue(command: Any) -> list[Command]:
-    inputs = getattr(command, "inputs", None)
+def extract_confirmation_replay_queue(command: Command) -> list[Command]:
+    inputs = command.inputs
     if not isinstance(inputs, dict):
         return []
     raw_queue = inputs.get(_CONFIRMATION_REPLAY_QUEUE_KEY)
@@ -81,41 +75,29 @@ def extract_confirmation_replay_queue(command: Any) -> list[Command]:
     return commands
 
 
-def strip_confirmation_replay_queue(command: Any) -> Any:
+def strip_confirmation_replay_queue(command: Command) -> Command:
     cloned = command.model_copy(deep=True)
-    inputs = (
-        dict(getattr(cloned, "inputs", None))
-        if isinstance(getattr(cloned, "inputs", None), dict)
-        else {}
-    )
+    inputs = dict(cloned.inputs or {})
     inputs.pop(_CONFIRMATION_REPLAY_QUEUE_KEY, None)
     cloned.inputs = inputs
     return cloned
 
 
 def attach_confirmation_replay_queue(
-    command: Any,
-    queued_commands: Sequence[Any],
-) -> Any:
+    command: Command,
+    queued_commands: Sequence[Command],
+) -> Command:
     cloned = strip_confirmation_replay_queue(command)
-    payloads = [
-        payload
-        for queued_command in queued_commands
-        if (payload := _command_payload(queued_command)) is not None
-    ]
+    payloads = [_command_payload(queued_command) for queued_command in queued_commands]
     if not payloads:
         return cloned
-    inputs = (
-        dict(getattr(cloned, "inputs", None))
-        if isinstance(getattr(cloned, "inputs", None), dict)
-        else {}
-    )
+    inputs = dict(cloned.inputs or {})
     inputs[_CONFIRMATION_REPLAY_QUEUE_KEY] = payloads
     cloned.inputs = inputs
     return cloned
 
 
-def confirmation_replay_batch_size(command: Any) -> int:
+def confirmation_replay_batch_size(command: Command) -> int:
     return 1 + len(extract_confirmation_replay_queue(command))
 
 
@@ -124,15 +106,11 @@ def is_session_confirmation_response(text: str) -> bool:
     return token in _SESSION_CONFIRMATION_TOKENS
 
 
-def apply_session_confirmation_grant(state: Any, command: Any) -> bool:
-    tool_name = str(getattr(command, "tool_name", "") or "").strip().lower()
+def apply_session_confirmation_grant(state: WorkingState, command: Command) -> bool:
+    tool_name = str(command.tool_name or "").strip().lower()
     if not tool_name:
         return False
-    overrides = (
-        dict(getattr(state, "permission_overrides", {}) or {})
-        if isinstance(getattr(state, "permission_overrides", None), dict)
-        else {}
-    )
+    overrides = dict(state.permission_overrides)
     # "session" means future calls for this tool should stop re-prompting within
     # the current session, not merely widen to the narrower "auto" allowlist.
     overrides[tool_name] = "bypass"
@@ -140,9 +118,9 @@ def apply_session_confirmation_grant(state: Any, command: Any) -> bool:
     return True
 
 
-def confirmation_required_user_message(command: Any) -> str:
-    tool_name = str(getattr(command, "tool_name", "") or "tool").strip() or "tool"
-    title = str(getattr(command, "title", "") or "").strip()
+def confirmation_required_user_message(command: Command) -> str:
+    tool_name = str(command.tool_name or "tool").strip() or "tool"
+    title = str(command.title or "").strip()
     subject = tool_name
     if title and title != tool_name:
         subject = f"{tool_name}: {title}"

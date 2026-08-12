@@ -1,3 +1,4 @@
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from ...diagnostics.events import CanonicalEventLogger
@@ -35,6 +36,18 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...runner import BrainRunner
 
 
+def _emit_memory_event(
+    logger: CanonicalEventLogger | None,
+    state: WorkingState,
+    event: str,
+    payload: dict[str, Any],
+    *,
+    status: str = "info",
+) -> None:
+    if logger is not None:
+        logger.emit(event, payload, trace_id=state.trace_id, status=status)
+
+
 def write_decision_memory(
     runner: "BrainRunner",
     *,
@@ -42,19 +55,8 @@ def write_decision_memory(
     decision: Any,
     logger: CanonicalEventLogger | None = None,
 ) -> list[str]:
-    """Persist one typed decision-card memory record."""
-
     memory_api = getattr(runner, "memory_api", None)
-
-    def _emit(event: str, payload: dict[str, Any], *, status: str = "info") -> None:
-        if logger is None:
-            return
-        try:
-            logger.emit(
-                event, payload, trace_id=getattr(state, "trace_id", None), status=status
-            )
-        except Exception:
-            return
+    _emit = partial(_emit_memory_event, logger, state)
 
     write_record = getattr(memory_api, "write_record", None)
     put_record = getattr(memory_api, "put_record", None)
@@ -127,24 +129,13 @@ def write_post_completion_critique_memory(
     judgment: ClosureJudgment,
     logger: CanonicalEventLogger | None = None,
 ) -> list[str]:
-    """Persist one typed post-completion critique memory record."""
-
     critique = getattr(judgment, "post_completion_critique", None)
     if critique is None:
         return []
     memory_api = getattr(runner, "memory_api", None)
     write_record = getattr(memory_api, "write_record", None)
     put_record = getattr(memory_api, "put_record", None)
-
-    def _emit(event: str, payload: dict[str, Any], *, status: str = "info") -> None:
-        if logger is None:
-            return
-        try:
-            logger.emit(
-                event, payload, trace_id=getattr(state, "trace_id", None), status=status
-            )
-        except Exception:
-            return
+    _emit = partial(_emit_memory_event, logger, state)
 
     if memory_api is None or not (callable(write_record) or callable(put_record)):
         _emit(
@@ -302,7 +293,6 @@ def extract_failure_memories(
     )
 
 
-# AFE — Auto-Fact Extraction (per-turn, user-message driven)
 def extract_user_message_candidates(
     runner: "BrainRunner",
     *,
@@ -310,7 +300,6 @@ def extract_user_message_candidates(
     user_message: str,
     logger: CanonicalEventLogger,
 ) -> list[str]:
-    """AFE: Extract candidate facts/preferences/tasks from a user message."""
     return _memory_reflection_runtime.extract_user_message_candidates(
         runner,
         state=state,

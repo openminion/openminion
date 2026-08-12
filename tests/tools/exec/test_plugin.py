@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from typing import get_args
 
@@ -62,6 +63,8 @@ def _ctx(tmp_path, *, sandbox_runner=None, env=None):
                     "sleep",
                     "echo",
                     "cat",
+                    "ssh",
+                    "whoami",
                 ],
                 "deny_exact": [],
                 "deny_regex": [],
@@ -145,6 +148,17 @@ def test_exec_run_foreground_returns_ok_and_preview(tmp_path):
     assert result["status"] == "ok"
     assert result["exit_code"] == 0
     assert "hello" in str(result.get("stdout_preview") or "")
+
+
+def test_exec_run_invokes_system_ssh_client(tmp_path):
+    if shutil.which("ssh") is None:
+        pytest.skip("system SSH client is not installed")
+
+    result = _h_exec_run({"command": "ssh -V"}, _ctx(tmp_path))
+
+    assert result["status"] == "ok"
+    assert result["exit_code"] == 0
+    assert result["stdout_preview"] or result["stderr_preview"]
 
 
 def test_exec_run_missing_toolchain_discovery_result_stops_retry_loop(tmp_path):
@@ -752,6 +766,18 @@ def test_host_security_allowlist(tmp_path, monkeypatch):
     assert result2["status"] == "denied"
 
 
+def test_host_security_allowlist_accepts_default_identity_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
+
+    result = _h_exec_run(
+        {"command": "whoami", "host": "node", "security": "allowlist", "ask": "off"},
+        _ctx(tmp_path),
+    )
+
+    assert result["status"] == "ok"
+    assert result["exit_code"] == 0
+
+
 def test_validate_command_against_policy_accepts_windows_shell_family_path(
     tmp_path,
     monkeypatch,
@@ -768,6 +794,22 @@ def test_validate_command_against_policy_accepts_windows_shell_family_path(
     assert allowed
     assert message == ""
     assert details["checked"][0]["exec"] == "echo"
+
+
+def test_validate_command_against_policy_accepts_read_only_identity_probe(tmp_path):
+    allowed, message, details = _validate_command_against_policy(
+        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || "
+        "cat ~/.ssh/id_ed25519.pub",
+        _ctx(tmp_path),
+    )
+
+    assert allowed
+    assert message == ""
+    assert [item["exec"] for item in details["checked"]] == [
+        "whoami",
+        "cat",
+        "cat",
+    ]
 
 
 def test_validate_command_against_policy_windows_subset_denies_control_operators(

@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from openminion import __version__
-from openminion.cli.presentation.header import shorten_working_dir
+from openminion.cli.presentation.header import (
+    format_runtime_adapter,
+    format_runtime_label,
+    format_runtime_provider,
+    shorten_working_dir,
+)
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 
 
@@ -15,20 +20,18 @@ def build_welcome_message(
 ) -> ChatMessage:
     cwd_short = shorten_working_dir(str(working_dir or "")) or "."
     agent_name = str(getattr(runtime, "agent_id", "") or "").strip() or "(unbound)"
-    provider = str(getattr(runtime, "provider_name", "") or "").strip()
-    model = str(getattr(runtime, "model_name", "") or "").strip()
-    if provider and model:
-        runtime_label = f"{provider}/{model}"
-    elif model:
-        runtime_label = model
-    else:
+    runtime_label = format_runtime_label(runtime)
+    if runtime_label == "—":
         runtime_label = "(no model)"
+    provider = format_runtime_provider(runtime)
+    adapter = format_runtime_adapter(runtime)
     theme_label = str(theme_name or "").strip().lower() or "dark"
 
     lines = [
         f"OpenMinion CLI - single-agent interactive shell  v{__version__}",
         f"  cwd: {cwd_short}",
         f"  agent: {agent_name}   model: {runtime_label}   theme: {theme_label}",
+        f"  provider: {provider}" + (f"   API adapter: {adapter}" if adapter else ""),
         "",
         "Tips:",
         "  /help       show all slash commands and key bindings",

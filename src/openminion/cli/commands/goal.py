@@ -178,7 +178,7 @@ def _goal_create_response(
         return ("error", f"invalid /goal create syntax: {exc}")
     args = parts[2:]
     description = _goal_create_description(args)
-    goal_id = _first_option_value(args, "--id") or f"goal_{uuid4().hex[:12]}"
+    goal_id = _option_value(args, "--id") or f"goal_{uuid4().hex[:12]}"
     if not description:
         return ("error", "usage: /goal create <description> [--id <goal_id>]")
     if runtime.goal_store.get(goal_id) is not None:
@@ -189,16 +189,17 @@ def _goal_create_response(
         success_criteria=_goal_success_criteria(args, description),
         deliverables=_goal_deliverables(args, description),
     )
+    bind_to_session = "--no-bind" not in args
     try:
         created = runtime.goal_store.create(goal)
-        if not _flag_present(args, "--no-bind"):
+        if bind_to_session:
             created = runtime.bind_goal_to_session(
                 goal_id=created.goal_id,
                 session_id=session_id,
             )
     except (KeyError, ValueError) as exc:
         return ("error", str(exc))
-    bind_note = "" if _flag_present(args, "--no-bind") else " | bound=current-session"
+    bind_note = " | bound=current-session" if bind_to_session else ""
     return ("success", f"created {render_goal_summary(created)}{bind_note}")
 
 
@@ -481,11 +482,6 @@ def _option_value(args: list[str], name: str) -> str:
     return ""
 
 
-def _first_option_value(args: list[str], name: str) -> str:
-    values = _option_values(args, name)
-    return values[0] if values else ""
-
-
 def _option_values(args: list[str], name: str) -> tuple[str, ...]:
     values: list[str] = []
     for index, item in enumerate(args):
@@ -496,10 +492,6 @@ def _option_values(args: list[str], name: str) -> tuple[str, ...]:
             if item.startswith(prefix):
                 values.append(item.removeprefix(prefix).strip())
     return tuple(value for value in values if value)
-
-
-def _flag_present(args: list[str], name: str) -> bool:
-    return name in args
 
 
 def _scripted_goal_turn_runner(raw: str) -> Callable[[str], GoalTurnResult]:

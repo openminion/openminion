@@ -138,6 +138,12 @@ def _schema_only_request() -> SimpleNamespace:
     return SimpleNamespace(
         messages=[
             SimpleNamespace(role="system", content="sys with session summary"),
+            SimpleNamespace(
+                role="user", content="deploy project cedar in the west region"
+            ),
+            SimpleNamespace(
+                role="assistant", content="Which credentials should I use?"
+            ),
             SimpleNamespace(role="user", content="hi"),
             SimpleNamespace(
                 role="assistant", content="Hi there! How can I help you today?"
@@ -177,7 +183,7 @@ def test_llm_wrapper_keeps_decide_schema_only_without_runtime_tools() -> None:
     assert provider.last_request.tools == []
 
 
-def test_llm_wrapper_schema_only_submit_output_keeps_bounded_decide_history() -> None:
+def test_llm_wrapper_schema_only_submit_output_keeps_decide_history() -> None:
     provider = FakeProvider()
     wrapper = OpenMinionLLMClient(provider)
 
@@ -189,8 +195,12 @@ def test_llm_wrapper_schema_only_submit_output_keeps_bounded_decide_history() ->
     assert [item.role for item in provider.last_request.history] == [
         "user",
         "assistant",
+        "user",
+        "assistant",
     ]
     assert [item.content for item in provider.last_request.history] == [
+        "deploy project cedar in the west region",
+        "Which credentials should I use?",
         "hi",
         "Hi there! How can I help you today?",
     ]
@@ -459,7 +469,7 @@ def test_llm_wrapper_request_trace_preserves_structured_tool_choice(
     }
 
 
-def test_llm_wrapper_writes_thinking_blocks_into_traces(
+def test_llm_wrapper_omits_thinking_blocks_from_traces(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
@@ -485,11 +495,8 @@ def test_llm_wrapper_writes_thinking_blocks_into_traces(
     structured_trace = trace_root / "step01-call01-structured.json"
     response_payload = json.loads(response_trace.read_text(encoding="utf-8"))
     structured_payload = json.loads(structured_trace.read_text(encoding="utf-8"))
-    assert response_payload["thinking_blocks"][0]["content"] == "use the tool result"
-    assert (
-        structured_payload["response"]["thinking_blocks"][0]["content"]
-        == "use the tool result"
-    )
+    assert "thinking_blocks" not in response_payload
+    assert "thinking_blocks" not in structured_payload["response"]
 
 
 def test_llm_wrapper_emits_llm_call_mode_from_request_metadata() -> None:

@@ -5,6 +5,7 @@ from .interfaces import (
     ListQueryOptions,
     MemoryNamespaceQueryInterface,
     MemoryServiceInterface,
+    RecordOrder,
     SearchQueryOptions,
     ensure_memory_compatibility,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "MemoryNamespaceQueryInterface",
     "MemoryProvenanceRecorder",
     "ListQueryOptions",
+    "RecordOrder",
     "MEMORY_INTERFACE_VERSION",
     "SearchQueryOptions",
     "resolve_namespace_filter",

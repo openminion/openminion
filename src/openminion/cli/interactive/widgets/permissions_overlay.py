@@ -59,8 +59,7 @@ class PermissionsOverlay(ModalScreen[tuple[str, bool] | None]):
             return
         self.dismiss((choice.choice_id, False))
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        del event
+    def on_option_list_option_selected(self, _event: OptionList.OptionSelected) -> None:
         self.action_select_permission()
 
     def _set_note(self, text: str) -> None:

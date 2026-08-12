@@ -39,30 +39,11 @@ def build_time_sensitive_failure_response(
         "",
         f'I was unable to retrieve current {tool_type} data for your query: "{user_query[:100]}"',
         "",
-        "**Possible reasons:**",
-        "• The external service may be temporarily unavailable",
-        "• API rate limits may have been exceeded",
-        "• Network connectivity issues",
-        "",
         "**Retry options:**",
         "• Try again in a few moments",
-        "• Check your internet connection",
+        "",
+        f"_Error: Tool execution failed after exhausting retries. Stale or estimated {tool_type} data is unavailable._",
     ]
-
-    if is_weather:
-        lines.extend(
-            [
-                "• Verify the location name is spelled correctly",
-                "• Try using the full city name (e.g., 'san francisco' instead of 'sf')",
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            f"_Error: Tool execution failed after exhausting retries. Stale or estimated {tool_type} data is unavailable._",
-        ]
-    )
 
     return "\n".join(lines)
 

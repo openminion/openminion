@@ -15,17 +15,21 @@ from tests.context.test_memory_block_context_consumption import (
     _request,
     _service,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _default_output_path() -> Path:
     return (
-        resolve_generated_root()
+        resolve_generated_root(home_root=ROOT)
         / "session-context-reliability"
         / "memory-block-context-consumption-e2e.json"
     )
 
 
 def main(argv: list[str] | None = None) -> int:
+    isolate_runtime_roots(prefix="openminion-memory-block-e2e-")
     parser = argparse.ArgumentParser(
         description="Prove a pinned Sophiagraph block enters OpenMinion context."
     )

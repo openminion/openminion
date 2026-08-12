@@ -11,11 +11,7 @@ def _merged_overlay(
     request: BuildPackRequest,
     session_slice: SessionSlice,
 ) -> dict[str, Any]:
-    active_state = (
-        dict(session_slice.active_state)
-        if isinstance(session_slice.active_state, dict)
-        else {}
-    )
+    active_state = dict(session_slice.active_state or {})
     return {**active_state, **dict(request.live_state_overlay or {})}
 
 

@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import multiprocessing
+from queue import Empty
 import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+
+
+OPENMINION_ROOT = Path(__file__).resolve().parents[3]
+if str(OPENMINION_ROOT) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,7 +93,11 @@ async def run_e2e_test(
         # Load configuration and resolve the requested agent profile.
         config = load_config(config_path)
         agent_config = resolve_agent_config(config, agent_id=agent_id)
-        effective_config = replace(config, agent=agent_config)
+        effective_config = replace(
+            config,
+            agents={agent_id: agent_config},
+            default_agent=agent_id,
+        )
         provider_name = (
             (
                 effective_config.agents[
@@ -161,7 +174,73 @@ async def run_e2e_test(
     return result
 
 
+def _run_e2e_test_process(
+    result_queue,
+    config_path: str,
+    agent_id: str,
+    session_id: str,
+    prompt: str,
+    timeout_seconds: int,
+    verbose: bool,
+) -> None:
+    result_queue.put(
+        asyncio.run(
+            run_e2e_test(
+                config_path=config_path,
+                agent_id=agent_id,
+                session_id=session_id,
+                prompt=prompt,
+                timeout_seconds=timeout_seconds,
+                verbose=verbose,
+            )
+        )
+    )
+
+
+def _run_process_bounded_test(args: argparse.Namespace) -> dict:
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    process = context.Process(
+        target=_run_e2e_test_process,
+        args=(
+            result_queue,
+            args.config,
+            args.agent,
+            args.session,
+            args.prompt,
+            args.timeout,
+            args.verbose,
+        ),
+    )
+    process.start()
+    process.join(args.timeout + 2)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
+        result = {
+            "success": False,
+            "duration_seconds": float(args.timeout),
+            "response_text": "",
+            "error": f"Request timed out after {args.timeout}s",
+            "stage": "timeout",
+        }
+    else:
+        try:
+            result = result_queue.get_nowait()
+        except Empty:
+            result = {
+                "success": False,
+                "duration_seconds": 0.0,
+                "response_text": "",
+                "error": f"Probe process exited with status {process.exitcode}",
+                "stage": "error",
+            }
+    result_queue.close()
+    return result
+
+
 def main() -> int:
+    isolate_runtime_roots(prefix="openminion-crdh-smoke-")
     args = parse_args()
 
     print("=== CRDH-07 E2E Smoke Test ===")
@@ -173,16 +252,7 @@ def main() -> int:
     print()
 
     # Run test
-    result = asyncio.run(
-        run_e2e_test(
-            config_path=args.config,
-            agent_id=args.agent,
-            session_id=args.session,
-            prompt=args.prompt,
-            timeout_seconds=args.timeout,
-            verbose=args.verbose,
-        )
-    )
+    result = _run_process_bounded_test(args)
 
     # Report results
     print()
@@ -206,3 +276,7 @@ def main() -> int:
         print("  → Request may still be processing on Cortensor network")
 
     return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

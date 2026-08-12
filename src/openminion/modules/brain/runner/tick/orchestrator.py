@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
@@ -8,11 +7,15 @@ from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from ...constants import BRAIN_STATE_WAITING_USER
 from ...execution.entry import build_execution_entry_request, dispatch as dispatch_entry
 from ...diagnostics.events import CanonicalEventLogger
-from ...execution.mission import mission_enabled, resolve_mission_input_route
+from ...execution.mission import (
+    MissionInputRoute,
+    mission_enabled,
+    resolve_mission_input_route,
+)
 from ...loop.tools.confirmation import is_session_confirmation_response
 from ...runner.transitions import guard_waiting_state
 from ...runtime.mrdd.hook import maybe_run_mrdd_pre_dispatch_hook
-from ...schemas import new_uuid
+from ...schemas import BrainMode, new_uuid
 from . import (
     confirmation,
     input_processing,
@@ -31,28 +34,20 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 def _stamp_pending_run_context(runner: "BrainRunner", state) -> None:
-    pending_trigger = getattr(runner, "_pending_run_trigger", None)
+    pending_trigger = runner._pending_run_trigger
     if pending_trigger:
-        try:
-            state.run_trigger = str(pending_trigger)
-        except Exception:  # noqa: BLE001
-            pass
+        state.run_trigger = pending_trigger
         runner._pending_run_trigger = None
 
-    pending_gateway_context = str(
-        getattr(runner, "_pending_gateway_system_context", "") or ""
-    ).strip()
+    pending_gateway_context = str(runner._pending_gateway_system_context or "").strip()
     if pending_gateway_context:
-        try:
-            state.gateway_system_context = pending_gateway_context
-        except Exception:  # noqa: BLE001
-            pass
+        state.gateway_system_context = pending_gateway_context
         runner._pending_gateway_system_context = None
 
 
 def _mission_route_for_tick(runner: "BrainRunner", state, user_input: str | None):
     if not mission_enabled(runner):
-        return SimpleNamespace(action="ordinary", objective="", ordinary_input="")
+        return MissionInputRoute(action="ordinary")
     return resolve_mission_input_route(state=state, user_input=user_input)
 
 
@@ -60,7 +55,7 @@ def _capture_new_user_input(
     runner: "BrainRunner", state, *, user_input: str | None, trace_id: str | None
 ) -> None:
     state.trace_id = trace_id or new_uuid()
-    if getattr(state, "pending_confirmation_command", None) is not None:
+    if state.pending_confirmation_command is not None:
         reply = confirmation._parse_confirmation_response(runner, user_input)  # noqa: SLF001
         if reply in {"affirm", "deny"} or is_session_confirmation_response(
             str(user_input or "")
@@ -133,10 +128,8 @@ def _handle_budget_exhaustion(
         "brain.turn_budget.exhausted",
         {
             "reason": str(budget_stop_reason.value),
-            "ticks_remaining": int(getattr(state.budgets_remaining, "ticks", 0) or 0),
-            "time_ms_remaining": int(
-                getattr(state.budgets_remaining, "time_ms", 0) or 0
-            ),
+            "ticks_remaining": state.budgets_remaining.ticks,
+            "time_ms_remaining": state.budgets_remaining.time_ms,
         },
         trace_id=state.trace_id,
     )
@@ -157,12 +150,7 @@ def _maybe_run_autonomous_turn(
     logger: CanonicalEventLogger,
     user_input: str | None,
 ):
-    state_mode = getattr(state, "mode", "")
-    if hasattr(state_mode, "value"):
-        state_mode = getattr(state_mode, "value")
-    if not (
-        str(state_mode).strip().lower() == "autonomous" and runner.rlm_api is not None
-    ):
+    if state.mode != BrainMode.AUTONOMOUS or runner.rlm_api is None:
         return None
 
     if _runner_delegate("_autonomous_requires_confirmation", runner, state=state):

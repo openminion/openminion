@@ -1,10 +1,22 @@
 SELF_COMPACTION_EVENT_TYPE = "context.self_compaction"
 SELF_COMPACTION_MAX_CHARS = 800
+FINALIZATION_STATUS_TRAILER_GUIDANCE = (
+    "If the provider cannot return the structured signal out of band, append "
+    "exactly <finalization_status>{\"status\":\"final_answer\","
+    "\"reasoning\":\"...\"}</finalization_status> after the answer, using "
+    "status incomplete or blocked when appropriate."
+)
+FINALIZED_ANSWER_RECOVERY_GUIDANCE = (
+    "Use the successful tool results already in context to produce the full "
+    "user-facing answer and its truthful finalization status. Preserve the "
+    "user's exact requested labels, headings, and ordering."
+)
 BUDGET_FINALIZATION_STATUS_RETRY_PROMPT = (
     "You already produced the user-facing final answer above. Do not repeat or "
     "expand it. Return only the structured finalization_status signal now. Do "
     "not call tools. Set status=final_answer only if that prior answer fully "
-    "completed the request. Use status=incomplete or status=blocked otherwise."
+    "completed the request. Use status=incomplete or status=blocked otherwise. "
+    f"{FINALIZATION_STATUS_TRAILER_GUIDANCE}"
 )
 BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT = 8
 BUDGET_ANSWER_ONLY_NESTED_TEXT_LIMIT = 300

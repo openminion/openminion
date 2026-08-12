@@ -657,7 +657,7 @@ class TestRunnerClarify(unittest.TestCase):
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")
     @patch("openminion.modules.brain.runner.BrainRunner._decide")
-    def test_llm_clarify_question_without_sidecar_still_stores_minimal_context(
+    def test_llm_clarify_question_without_sidecar_preserves_structural_context(
         self, mock_decide, mock_save, mock_load
     ):
         state = WorkingState(
@@ -667,7 +667,10 @@ class TestRunnerClarify(unittest.TestCase):
         )
         mock_load.return_value = state
         question = "Which location's weather would you like to know about?"
-        mock_decide.return_value = self._clarify_decision(question=question)
+        mock_decide.side_effect = [
+            self._clarify_decision(question=question),
+            self._answer_decision(answer="Weather follow-up handled."),
+        ]
 
         first = self.runner.step(
             session_id="sess_123",
@@ -712,6 +715,24 @@ class TestRunnerClarify(unittest.TestCase):
                 "user_reply": "china",
             },
         )
+
+        second = self.runner.step(
+            session_id="sess_123",
+            user_input="china",
+        )
+
+        self.assertEqual(second.status, "done")
+        self.assertEqual(
+            state.goal,
+            "\n".join(
+                [
+                    "Original request: what's weather?",
+                    f"Clarification question: {question}",
+                    "Clarification answer: china",
+                ]
+            ),
+        )
+        self.assertIsNone(state.pending_llm_clarify_context)
 
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")

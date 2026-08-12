@@ -16,12 +16,6 @@ AUTONOMOUS_TURN_FIRED_EVENT = "autonomous_turn.fired"
 
 
 class AutonomousContinuationCapsExceeded(Exception):
-    """Raised when caller tries to schedule a continuation past the caps.
-
-    Callers should catch this and terminate the continuation cycle
-    cleanly — do not bypass.
-    """
-
     def __init__(self, *, reason: str, details: dict[str, Any]) -> None:
         super().__init__(reason)
         self.reason = reason
@@ -31,7 +25,6 @@ class AutonomousContinuationCapsExceeded(Exception):
 def _read_session_events_strict(
     *, session_api: Any, session_id: str
 ) -> list[dict[str, Any]]:
-    """Read the canonical event log or fail closed for cap enforcement."""
     if not session_api or not session_id:
         raise AutonomousContinuationCapsExceeded(
             reason="counter_unavailable",
@@ -99,7 +92,6 @@ def count_autonomous_turns(
     session_id: str,
     plan_id: str | None = None,
 ) -> int:
-    """Return an inspection-only count; safety-critical callers must not use it."""
     try:
         events = _read_session_events_strict(
             session_api=session_api, session_id=session_id
@@ -117,7 +109,6 @@ def check_autonomous_continuation_caps(
     max_per_plan: int = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN,
     max_per_session: int = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION,
 ) -> dict[str, Any]:
-    """Summarize per-plan and per-session continuation caps without raising."""
     plan_id_str = str(plan_id or "").strip()
     per_plan_cap = max(0, int(max_per_plan or 0))
     per_session_cap = max(0, int(max_per_session or 0))
@@ -170,7 +161,6 @@ def record_autonomous_turn(
     plan_id: str,
     trace_id: str | None,
 ) -> None:
-    """Emit the durable `autonomous_turn.fired` event."""
     if not session_api or not session_id:
         raise AutonomousContinuationCapsExceeded(
             reason="counter_unavailable",
@@ -226,7 +216,6 @@ def should_schedule_continuation(
     max_per_plan: int = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN,
     max_per_session: int = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION,
 ) -> dict[str, Any]:
-    """High-level decision used by CTGP-03: schedule a follow-up turn?"""
     if not signal_set:
         return {
             "allowed": False,
@@ -294,7 +283,6 @@ def peek_latest_continuation_signal(
     session_api: Any,
     session_id: str,
 ) -> dict[str, Any] | None:
-    """Inspect the event log for the most recent eligible plan event."""
     if not session_api or not session_id:
         return None
     lister = getattr(session_api, "list_events", None)
@@ -307,7 +295,6 @@ def peek_latest_continuation_signal(
     if not isinstance(events, list):
         return None
 
-    # Walk events in reverse to find the most recent plan-lifecycle event.
     terminal_event_types = {
         "task_plan.step_blocked",
         "task_plan.abandoned",
@@ -318,8 +305,6 @@ def peek_latest_continuation_signal(
             continue
         event_type = str(event.get("event_type") or "").strip()
         if event_type in terminal_event_types:
-            # Terminal event seen first (walking backwards) — it cancels
-            # any older continuation signal. Runtime stops.
             return None
         if event_type in _ELIGIBLE_PLAN_EVENT_TYPES:
             return _signal_from_event(event)
@@ -340,7 +325,6 @@ def run_with_autonomous_continuation(
     approval_callback: Any | None = None,
     initial_trigger: str = "user_input",
 ) -> Any:
-    """Run one initial turn, then auto-schedule follow-up turns while allowed."""
     result = runner.run(
         session_id=session_id,
         user_input=user_input,
@@ -362,6 +346,9 @@ def run_with_autonomous_continuation(
         if signal is None or not signal.get("continue_plan_autonomously"):
             break
         plan_id = str(signal.get("plan_id") or "").strip()
+        result_trace_id = getattr(
+            getattr(result, STATE_KEY_WORKING, None), "trace_id", None
+        )
         decision = should_schedule_continuation(
             runner=runner,
             session_id=session_id,
@@ -375,21 +362,16 @@ def run_with_autonomous_continuation(
                 runner=runner,
                 session_id=session_id,
                 decision=decision,
-                trace_id=getattr(
-                    getattr(result, STATE_KEY_WORKING, None), "trace_id", None
-                ),
+                trace_id=result_trace_id,
             )
             break
-        # Fail closed if the durable cap counter cannot be written.
         try:
             record_autonomous_turn(
                 session_api=session_api,
                 session_id=session_id,
                 agent_id=agent_id,
                 plan_id=plan_id,
-                trace_id=getattr(
-                    getattr(result, STATE_KEY_WORKING, None), "trace_id", None
-                ),
+                trace_id=result_trace_id,
             )
         except AutonomousContinuationCapsExceeded as exc:
             _emit_continuation_stopped(
@@ -404,9 +386,7 @@ def run_with_autonomous_continuation(
                     "plan_id": plan_id,
                     **exc.details,
                 },
-                trace_id=getattr(
-                    getattr(result, STATE_KEY_WORKING, None), "trace_id", None
-                ),
+                trace_id=result_trace_id,
             )
             break
         result = runner.run(
@@ -429,7 +409,6 @@ def _emit_continuation_stopped(
     decision: dict[str, Any],
     trace_id: str | None,
 ) -> None:
-    """Telemetry for cap-hit termination of the continuation loop."""
     try:
         from openminion.modules.brain.diagnostics.events import (
             CanonicalEventLogger,

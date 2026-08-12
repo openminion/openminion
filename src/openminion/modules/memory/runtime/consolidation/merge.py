@@ -9,8 +9,7 @@ from typing import Any
 
 from openminion.modules.llm import RuntimeLLMHandle
 from openminion.modules.llm.schemas import Message
-from openminion.modules.memory.errors import PromotionDeniedError
-from openminion.modules.memory.errors import NotFoundError
+from openminion.modules.memory.errors import NotFoundError, PromotionDeniedError
 from openminion.modules.memory.models import CandidateReview
 from openminion.modules.memory.runtime.consolidation.coordinator import (
     ConsolidationConfig,
@@ -65,17 +64,14 @@ def _get_lock(key: str) -> RLock:
 @contextmanager
 def acquire_consolidation_lock(session_id: str, agent_id: str):
     lock = _get_lock(consolidation_lock_key(session_id, agent_id))
-    lock.acquire()
-    try:
+    with lock:
         yield
-    finally:
-        lock.release()
 
 
 def _normalize_merge_decisions(payload: Any) -> list[MergeDecision]:
-    raw_items: list[Any] = []
-    if isinstance(payload, dict):
-        raw_items = list(payload.get("decisions") or [])
+    raw_items = (
+        list(payload.get("decisions") or []) if isinstance(payload, dict) else []
+    )
     decisions: list[MergeDecision] = []
     for item in raw_items:
         if not isinstance(item, dict):
@@ -206,6 +202,29 @@ def _consolidation_meta(
     return merged
 
 
+def _decision_patch(
+    *,
+    action: str,
+    review: CandidateReview,
+    reasoning: str,
+    decided_at: str,
+    existing_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    patch: dict[str, Any] = {
+        "review": review,
+        "meta": _consolidation_meta(
+            existing_meta,
+            action=action,
+            reasoning=reasoning,
+            decided_at=decided_at,
+        ),
+    }
+    status = {"promote": "approved", "discard": "rejected"}.get(action)
+    if status:
+        patch["status"] = status
+    return patch
+
+
 def apply_merge_decisions_via_service(
     memory_service: Any,
     *,
@@ -252,21 +271,25 @@ def apply_merge_decisions_via_service(
             note=reasoning or None,
         )
         try:
-            if action == "promote":
-                scope = str(decision.target_scope or target_scope or "").strip()
+            if action == "keep":
+                current_candidate = current_candidate or (
+                    candidate_get(candidate_id) if callable(candidate_get) else None
+                )
+                if current_candidate is None:
+                    raise NotFoundError(f"candidate not found: {candidate_id}")
+            else:
                 candidate_update(
                     candidate_id,
-                    {
-                        "status": "approved",
-                        "review": review,
-                        "meta": _consolidation_meta(
-                            getattr(current_candidate, "meta", {}) or {},
-                            action=action,
-                            reasoning=reasoning,
-                            decided_at=decided_at,
-                        ),
-                    },
+                    _decision_patch(
+                        action=action,
+                        review=review,
+                        reasoning=reasoning,
+                        decided_at=decided_at,
+                        existing_meta=getattr(current_candidate, "meta", {}) or {},
+                    ),
                 )
+            if action == "promote":
+                scope = str(decision.target_scope or target_scope or "").strip()
                 promoted = promote_candidate(candidate_id, scope)
                 promoted_record_ids.append(
                     str(getattr(promoted, "id", "") or "").strip()
@@ -281,39 +304,6 @@ def apply_merge_decisions_via_service(
                     superseded_record_ids.append(
                         str(getattr(superseded, "id", "") or "").strip()
                     )
-            elif action == "discard":
-                candidate_update(
-                    candidate_id,
-                    {
-                        "status": "rejected",
-                        "review": review,
-                        "meta": _consolidation_meta(
-                            getattr(current_candidate, "meta", {}) or {},
-                            action=action,
-                            reasoning=reasoning,
-                            decided_at=decided_at,
-                        ),
-                    },
-                )
-            elif action == "defer":
-                candidate_update(
-                    candidate_id,
-                    {
-                        "review": review,
-                        "meta": _consolidation_meta(
-                            getattr(current_candidate, "meta", {}) or {},
-                            action=action,
-                            reasoning=reasoning,
-                            decided_at=decided_at,
-                        ),
-                    },
-                )
-            else:
-                current_candidate = current_candidate or (
-                    candidate_get(candidate_id) if callable(candidate_get) else None
-                )
-                if current_candidate is None:
-                    raise NotFoundError(f"candidate not found: {candidate_id}")
         except PromotionDeniedError as exc:
             errors.append(f"{candidate_id}: {exc}")
             continue
@@ -371,45 +361,17 @@ def apply_memory_consolidation_decisions(
             note=reasoning or None,
         )
         try:
+            candidate_update(
+                candidate_id,
+                _decision_patch(
+                    action=action,
+                    review=review,
+                    reasoning=reasoning,
+                    decided_at=decided_at,
+                ),
+            )
             if action == "promote":
-                candidate_update(
-                    candidate_id,
-                    {
-                        "status": "approved",
-                        "review": review,
-                        "meta": {
-                            "consolidation_action": action,
-                            "consolidation_reasoning": reasoning,
-                            "consolidation_decided_at": decided_at,
-                        },
-                    },
-                )
                 promote_candidate(candidate_id, str(target_scope or "").strip())
-            elif action == "discard":
-                candidate_update(
-                    candidate_id,
-                    {
-                        "status": "rejected",
-                        "review": review,
-                        "meta": {
-                            "consolidation_action": action,
-                            "consolidation_reasoning": reasoning,
-                            "consolidation_decided_at": decided_at,
-                        },
-                    },
-                )
-            else:
-                candidate_update(
-                    candidate_id,
-                    {
-                        "review": review,
-                        "meta": {
-                            "consolidation_action": action,
-                            "consolidation_reasoning": reasoning,
-                            "consolidation_decided_at": decided_at,
-                        },
-                    },
-                )
         except Exception as exc:
             errors.append(f"{candidate_id}: {exc}")
             continue

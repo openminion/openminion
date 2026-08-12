@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from pydantic import ValidationError
+
 from ..schemas import Command, Decision, Plan, WorkingState, to_structured_sub_intents
 from ..tools.capabilities import (
     command_capabilities,
@@ -63,7 +65,7 @@ def validate_sub_intent_coverage(
     missing: set[str]
     try:
         structured_sub_intents = to_structured_sub_intents(decision.sub_intents)
-    except Exception:
+    except (ValueError, ValidationError):
         structured_sub_intents = []
     if structured_sub_intents:
         covered = covered_sub_intent_signals(command_list)
@@ -228,9 +230,7 @@ def validate_continuation_progress(
 ) -> DecisionValidationFailure | None:
     if str(user_input or "").strip():
         return None
-    prior_signature = str(
-        getattr(state, "continuation_guard_command_signature", "") or ""
-    ).strip()
+    prior_signature = str(state.continuation_guard_command_signature or "").strip()
     if not prior_signature:
         return None
     command_list = list(commands)
@@ -238,7 +238,7 @@ def validate_continuation_progress(
         return None
     if semantic_command_sequence_signature(command_list) != prior_signature:
         return None
-    reason = str(getattr(state, "continuation_guard_reason", "") or "").strip()
+    reason = state.continuation_guard_reason.strip()
     message = (
         "Continuation after a completed step must make forward progress instead of "
         "repeating the exact same command sequence."
@@ -250,10 +250,7 @@ def validate_continuation_progress(
         message=message + " Choose a distinct action or close the turn.",
         details={
             "command_count": len(command_list),
-            "command_titles": [
-                str(getattr(command, "title", "") or "").strip()
-                for command in command_list
-            ],
+            "command_titles": [command.title.strip() for command in command_list],
             "reason": reason,
         },
     )

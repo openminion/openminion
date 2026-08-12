@@ -224,12 +224,10 @@ class BuiltinKnowledgeBackend(KnowledgeBackend):
         )
 
     def iter_all_records(self) -> Iterable[MemoryRecordLike]:
-        if hasattr(self.store, "iter_all_records"):
-            yield from cast(Any, self.store).iter_all_records()
-            return
-        if hasattr(self.store, "list_all"):
-            yield from cast(Any, self.store).list_all()
-            return
+        for method in ("iter_all_records", "list_all"):
+            if callable(records := getattr(self.store, method, None)):
+                yield from cast(Any, records)()
+                return
         raise NotImplementedError("store does not expose iter_all_records or list_all")
 
     def list_all(self) -> list[MemoryRecordLike]:
@@ -239,7 +237,7 @@ class BuiltinKnowledgeBackend(KnowledgeBackend):
 
 
 class BackendMemoryStoreAdapter(MemoryStore):
-    """Backendmemorystoreadapter contract."""
+    """Adapt a knowledge backend to the legacy ``MemoryStore`` contract."""
 
     def __init__(self, backend: KnowledgeBackend) -> None:
         self._backend = backend

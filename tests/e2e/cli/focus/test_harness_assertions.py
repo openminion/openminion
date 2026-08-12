@@ -159,6 +159,32 @@ def test_expected_markers_accept_bounded_alternatives() -> None:
     assert_expected_markers(transcript, prompt, ("recommendation|recommended",))
 
 
+def test_expected_markers_reject_failed_research_fallback() -> None:
+    prompt = "Research this and finish with next steps."
+    transcript = (
+        f"❯ {prompt}\n"
+        "● Research finished, but the final synthesis step did not produce a "
+        "usable synthesized answer. Next steps: continue the task.\n"
+        "Done in 5m33s\n"
+    )
+
+    with pytest.raises(AssertionError, match="usable synthesized answer"):
+        assert_expected_markers(transcript, prompt, ("next steps",))
+
+
+def test_expected_markers_ignore_tool_output_before_final_answer() -> None:
+    prompt = "Research this and provide a recommendation."
+    transcript = (
+        f"❯ {prompt}\n"
+        "● web.search result: recommendation from an unverified snippet\n"
+        "⏺ I could not complete the requested comparison.\n"
+        "Done in 4m12s\n"
+    )
+
+    with pytest.raises(AssertionError, match="recommendation"):
+        assert_expected_markers(transcript, prompt, ("recommendation",))
+
+
 def test_turn_completion_rejects_unresolved_approval_prompt() -> None:
     transcript = (
         "Done in 4s\n"

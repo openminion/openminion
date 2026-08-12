@@ -189,8 +189,7 @@ def route_input(
         seam_id=seam_id,
         audit_log=audit_log,
     )
-    rendered = render_envelope_for_prompt(escaped)
-    return rendered, event
+    return render_envelope_for_prompt(escaped), event
 
 
 def _fence_block(content: str) -> str:

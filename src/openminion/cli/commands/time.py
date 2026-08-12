@@ -12,33 +12,22 @@ from openminion.cli.commands.tools import run_tools
 
 def run_time(args) -> int:
     action = str(getattr(args, "time_command", "") or "").strip().lower()
-    if action == "now":
-        return _dispatch(args, tool_name="time.now", payload=_payload_now(args))
-    if action == "in-zone":
-        return _dispatch(args, tool_name="time.in_zone", payload=_payload_in_zone(args))
-    if action == "convert":
-        return _dispatch(args, tool_name="time.convert", payload=_payload_convert(args))
-    if action == "parse-iso":
-        return _dispatch(
-            args, tool_name="time.parse_iso", payload=_payload_parse_iso(args)
-        )
-    if action == "diff":
-        return _dispatch(args, tool_name="time.diff", payload=_payload_diff(args))
-    if action == "format":
-        return _dispatch(args, tool_name="time.format", payload=_payload_format(args))
-    if action == "start-of-day":
-        return _dispatch(
-            args, tool_name="time.start_of_day", payload=_payload_day_boundary(args)
-        )
-    if action == "end-of-day":
-        return _dispatch(
-            args, tool_name="time.end_of_day", payload=_payload_day_boundary(args)
-        )
-    if action == "next-cron":
-        return _dispatch(
-            args, tool_name="time.next_cron", payload=_payload_next_cron(args)
-        )
-    raise RuntimeError("Unknown time command")
+    commands = {
+        "now": ("time.now", _payload_now),
+        "in-zone": ("time.in_zone", _payload_in_zone),
+        "convert": ("time.convert", _payload_convert),
+        "parse-iso": ("time.parse_iso", _payload_parse_iso),
+        "diff": ("time.diff", _payload_diff),
+        "format": ("time.format", _payload_format),
+        "start-of-day": ("time.start_of_day", _payload_day_boundary),
+        "end-of-day": ("time.end_of_day", _payload_day_boundary),
+        "next-cron": ("time.next_cron", _payload_next_cron),
+    }
+    try:
+        tool_name, payload_builder = commands[action]
+    except KeyError as exc:
+        raise RuntimeError("Unknown time command") from exc
+    return _dispatch(args, tool_name=tool_name, payload=payload_builder(args))
 
 
 def _dispatch(args, *, tool_name: str, payload: dict[str, Any]) -> int:
@@ -46,7 +35,9 @@ def _dispatch(args, *, tool_name: str, payload: dict[str, Any]) -> int:
     proxy.tools_command = "run"
     proxy.tool = tool_name
     proxy.json_payload = json.dumps(payload, sort_keys=True, ensure_ascii=True)
-    proxy.session = str(getattr(args, "session", "") or "").strip() or "time-cli"
+    proxy.session = (
+        str(getattr(args, "session", "") or "").strip() or CLI_DEFAULT_TIME_SESSION
+    )
     return run_tools(proxy)
 
 

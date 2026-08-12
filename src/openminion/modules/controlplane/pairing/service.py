@@ -76,15 +76,13 @@ class ControlPlanePairingService:
         scopes: list[str] | None = None,
         token: str | None = None,
     ) -> PairCreateResult:
-        ttl = token_ttl_seconds or self.policy.token_ttl_seconds
-        scoped = scopes or list(self.policy.default_scopes)
         issued = self.store.issue_token(
             channel=self.adapter.channel_id,
             expected_account_id=expected_account_id,
             expected_chat_key=expected_chat_key,
-            scopes=scoped,
+            scopes=scopes or list(self.policy.default_scopes),
             token=token,
-            ttl_seconds=ttl,
+            ttl_seconds=token_ttl_seconds or self.policy.token_ttl_seconds,
             hash_pepper=self.policy.hash_pepper,
         )
         self._audit(

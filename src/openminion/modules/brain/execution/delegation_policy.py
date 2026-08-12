@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from openminion.modules.brain.constants import (
-    STATE_KEY_MODULE_STATE,
-    STATE_KEY_TASK_BACKED_RESUME,
-)
 from openminion.modules.brain.execution.child_tasks import SubtaskResult
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.schemas import WorkingState
@@ -33,12 +29,9 @@ _MODULE_STATE_KEY = "delegation_policy"
 
 
 def _bucket(ctx: ExecutionContext) -> dict[str, Any]:
-    module_state = getattr(ctx.state, STATE_KEY_MODULE_STATE, None)
-    if not isinstance(module_state, dict):
-        module_state = {}
-        setattr(ctx.state, STATE_KEY_MODULE_STATE, module_state)
+    module_state = ctx.state.module_state
     bucket = module_state.get(_MODULE_STATE_KEY)
-    if not isinstance(bucket, dict):
+    if bucket is None:
         bucket = {"version": 1, "projections": [], "aggregations": []}
         module_state[_MODULE_STATE_KEY] = bucket
     bucket.setdefault("version", 1)
@@ -50,27 +43,20 @@ def _bucket(ctx: ExecutionContext) -> dict[str, Any]:
 def _parent_budget(ctx: ExecutionContext) -> ParentBudget:
     budget = ctx.state.budgets_remaining
     return ParentBudget(
-        ticks=int(getattr(budget, "ticks", 0) or 0),
-        tool_calls=int(getattr(budget, "tool_calls", 0) or 0),
-        a2a_calls=int(getattr(budget, "a2a_calls", 0) or 0),
-        tokens=int(getattr(budget, "tokens", 0) or 0),
-        time_ms=int(getattr(budget, "time_ms", 0) or 0),
+        ticks=budget.ticks,
+        tool_calls=budget.tool_calls,
+        a2a_calls=budget.a2a_calls,
+        tokens=budget.tokens,
+        time_ms=budget.time_ms,
     )
 
 
 def _parent_deadline(ctx: ExecutionContext) -> ParentDeadline:
-    for attr in ("deadline_iso", "deadline", "task_deadline_iso"):
-        value = str(getattr(ctx.state, attr, "") or "").strip()
-        if value:
-            return ParentDeadline(deadline_iso=value)
-    resume_state = getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {}
-    if isinstance(resume_state, dict):
-        value = str(
-            resume_state.get("deadline_iso") or resume_state.get("deadline") or ""
-        ).strip()
-        if value:
-            return ParentDeadline(deadline_iso=value)
-    return ParentDeadline()
+    resume_state = ctx.state.task_backed_resume_state
+    value = str(
+        resume_state.get("deadline_iso") or resume_state.get("deadline") or ""
+    ).strip()
+    return ParentDeadline(deadline_iso=value)
 
 
 def _parent_id(ctx: ExecutionContext, fallback: str) -> str:
@@ -103,8 +89,6 @@ def record_child_policy_projection(
     child_mode: str = "sync",
     parent_id: str = "",
 ) -> dict[str, Any]:
-    """Record structural budget/deadline/cancel facts for one child call."""
-
     defaults = flow_defaults(flow)
     denominator = max(1, int(child_count or 1))
     projected_budget = project_child_budget(
@@ -174,14 +158,11 @@ def record_child_policy_projection(
 
 
 def _record_status(status: str) -> str:
-    normalized = str(status or "").strip().lower()
-    if normalized in {"completed", "success", "done"}:
-        return "success"
-    if normalized in {"cancelled", "canceled", "stopped"}:
-        return "canceled"
-    if normalized == "skipped":
-        return "skipped"
-    return "failure"
+    return {
+        "completed": "success",
+        "cancelled": "canceled",
+        "skipped": "skipped",
+    }.get(status, "failure")
 
 
 def record_result_aggregation(
@@ -192,8 +173,6 @@ def record_result_aggregation(
     seam_id: str,
     results: list[SubtaskResult],
 ) -> dict[str, Any]:
-    """Record structural child-result aggregation facts."""
-
     defaults = flow_defaults(flow)
     records = [
         ChildResultRecord(
@@ -222,13 +201,8 @@ def record_result_aggregation(
 def merge_child_policy_facts(
     ctx: ExecutionContext, *, child_state: WorkingState
 ) -> None:
-    """Merge child-recorded structural delegation facts into the parent state."""
-
-    child_module_state = getattr(child_state, STATE_KEY_MODULE_STATE, {}) or {}
-    if not isinstance(child_module_state, dict):
-        return
-    child_bucket = child_module_state.get(_MODULE_STATE_KEY)
-    if not isinstance(child_bucket, dict):
+    child_bucket = child_state.module_state.get(_MODULE_STATE_KEY)
+    if child_bucket is None:
         return
     parent_bucket = _bucket(ctx)
     parent_bucket["projections"].extend(list(child_bucket.get("projections", []) or []))
@@ -238,11 +212,7 @@ def merge_child_policy_facts(
 
 
 def clear_policy_facts(state: WorkingState) -> None:
-    """Remove inherited delegation-policy facts from a child state copy."""
-
-    module_state = getattr(state, STATE_KEY_MODULE_STATE, None)
-    if isinstance(module_state, dict):
-        module_state.pop(_MODULE_STATE_KEY, None)
+    state.module_state.pop(_MODULE_STATE_KEY, None)
 
 
 __all__ = [

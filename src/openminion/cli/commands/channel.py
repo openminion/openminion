@@ -32,6 +32,12 @@ from openminion.cli.commands.channel_pairings import (
     register_pairings_subcommands,
     run_channel_pairings,
 )
+from openminion.cli.commands.telegram_pairing import (
+    print_candidate as _print_candidate,
+    print_pair_missing_ids_hint as _print_pair_missing_ids_hint,
+    print_pair_token_output,
+    telegram_command as _telegram_command,
+)
 from openminion.modules.controlplane.config import (
     ControlPlaneConfig,
     from_base_config as controlplane_from_base_config,
@@ -168,7 +174,7 @@ def telegram_setup(args: argparse.Namespace) -> int:
     if username:
         print(f"Bot: @{username}")
     print("Token: [redacted]")
-    print("Next: openminion channel telegram doctor --config " + str(config_path))
+    print("Next: " + _telegram_command("doctor", str(config_path)))
     return 0
 
 
@@ -181,7 +187,7 @@ def telegram_doctor(args: argparse.Namespace) -> int:
             status = "ok" if check["ok"] else "fail"
             detail = f" - {check['detail']}" if check.get("detail") else ""
             print(f"[{status}] {check['id']}{detail}")
-        print("Next: openminion channel telegram identify --config " + str(args.config))
+        print(_telegram_doctor_next_step(args, checks))
     return 0 if all(bool(check["ok"]) for check in checks if check["required"]) else 1
 
 
@@ -197,7 +203,7 @@ def telegram_identify(args: argparse.Namespace) -> int:
     if candidate is None:
         print("No Telegram messages found. Send a DM to the bot and retry.")
         return 1
-    _print_candidate(candidate)
+    _print_candidate(candidate, config_path=config_path)
     return 0
 
 
@@ -207,7 +213,7 @@ def telegram_pair(args: argparse.Namespace) -> int:
     user_id = getattr(args, "user_id", None)
     chat_id = getattr(args, "chat_id", None)
     if user_id is None and chat_id is None:
-        print("Usage: openminion channel telegram pair --user-id <id> --chat-id <id>")
+        _print_pair_missing_ids_hint(getattr(args, "config", None))
         return 2
     output = create_telegram_pair_token_for_cli(
         config_path=getattr(args, "config", None),
@@ -216,13 +222,13 @@ def telegram_pair(args: argparse.Namespace) -> int:
         ttl_seconds=getattr(args, "ttl_seconds", None),
         scopes=_parse_scopes(getattr(args, "scopes", None)),
     )
-    print_pair_token_output(output)
+    print_pair_token_output(output, config_path=getattr(args, "config", None))
     return 0
 
 
 def telegram_run(args: argparse.Namespace) -> int:
-    print(RUNNER_ONLINE_MESSAGE)
     foreground = _build_unified_telegram_runtime(getattr(args, "config", None))
+    print(RUNNER_ONLINE_MESSAGE)
     runner = foreground.runner
     if bool(getattr(args, "once", False)):
         try:
@@ -387,25 +393,6 @@ def create_telegram_pair_token_from_chat_line(
     )
 
 
-def print_pair_token_output(output: PairTokenOutput) -> None:
-    print("Pairing token created.")
-    print(f"PAIR_TOKEN={output.token}")
-    print(f"PAIR_TOKEN_HINT={output.token_hint}")
-    print(f"PAIR_TOKEN_HASH_PREFIX={output.token_hash_prefix}")
-    print(f"PAIR_EXPIRES_AT={output.expires_at_iso}")
-    print(f"PAIR_SCOPES={','.join(output.scopes)}")
-    if output.deep_link:
-        print(f"PAIR_DEEP_LINK={output.deep_link}")
-        print("Open this link:")
-        print(output.deep_link)
-    print("Or send this message to the bot:")
-    print(f"/start {output.token}")
-    print(
-        "Access: this paired Telegram chat receives broad non-admin controlplane "
-        "access until a future ACL system narrows it."
-    )
-
-
 def _telegram_pair_wait(args: argparse.Namespace) -> int:
     config_path = getattr(args, "config", None)
     if _daemon_reachable(config_path):
@@ -431,7 +418,7 @@ def _telegram_pair_wait(args: argparse.Namespace) -> int:
         ttl_seconds=getattr(args, "ttl_seconds", None),
         scopes=_parse_scopes(getattr(args, "scopes", None)),
     )
-    print_pair_token_output(output)
+    print_pair_token_output(output, config_path=config_path)
     return 0
 
 
@@ -543,6 +530,47 @@ def _append_telegram_status_checks(
             required=False,
         )
     )
+
+
+def _telegram_doctor_next_step(
+    args: argparse.Namespace, checks: list[dict[str, Any]]
+) -> str:
+    by_id = {str(check["id"]): check for check in checks}
+    config_path = getattr(args, "config", None)
+
+    if _check_failed(by_id, "config.parse"):
+        return "Next: " + _telegram_command("setup", config_path)
+    if (
+        _check_failed(by_id, "channel.enabled")
+        or _check_failed(by_id, "token.present")
+        or _check_failed(by_id, "bot.get_me")
+    ):
+        return "Next: " + _telegram_command("setup", config_path)
+
+    active_pairings = _check_detail_int(by_id.get("pairings.active"))
+    daemon_ok = bool(by_id.get("daemon.reachable", {}).get("ok"))
+    if active_pairings <= 0:
+        identify = _telegram_command("identify", config_path)
+        if daemon_ok:
+            return "Next: stop the Telegram runner, then " + identify
+        return "Next: " + identify
+    if not daemon_ok:
+        return "Next: " + _telegram_command("run", config_path)
+    return "Ready: send /status or a plain message to your Telegram bot."
+
+
+def _check_failed(checks_by_id: dict[str, dict[str, Any]], check_id: str) -> bool:
+    check = checks_by_id.get(check_id)
+    return check is not None and not bool(check.get("ok"))
+
+
+def _check_detail_int(check: dict[str, Any] | None) -> int:
+    if check is None:
+        return 0
+    try:
+        return int(str(check.get("detail") or "0").strip())
+    except ValueError:
+        return 0
 
 
 def _check(
@@ -660,17 +688,6 @@ def _candidate_from_update(update: dict[str, Any]) -> TelegramCandidate | None:
     )
 
 
-def _print_candidate(candidate: TelegramCandidate) -> None:
-    print("Telegram candidate found:")
-    print(f"  user_id: {candidate.user_id}")
-    print(f"  chat_id: {candidate.chat_id}")
-    print(f"  chat_type: {candidate.chat_type}")
-    if candidate.username:
-        print(f"  username: @{candidate.username}")
-    if candidate.display_name:
-        print(f"  display_name: {candidate.display_name}")
-
-
 def _confirm(prompt: str, *, default: bool) -> bool:
     suffix = " [Y/n]" if default else " [y/N]"
     if not sys.stdin.isatty():
@@ -709,12 +726,6 @@ def _load_controlplane_config(config_path: str | None) -> ControlPlaneConfig:
             data_root=roots.data_root,
         )
     return load_controlplane_config(config_path, env=_env_snapshot())
-
-
-def _build_unified_telegram_runner(
-    config_path: str | None,
-) -> Any:
-    return _build_unified_telegram_runtime(config_path).runner
 
 
 def _build_unified_telegram_runtime(

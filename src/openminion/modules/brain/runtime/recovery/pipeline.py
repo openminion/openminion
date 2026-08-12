@@ -309,7 +309,7 @@ def normalize_payload(
 
 def _typed_validation_errors(exc: ValidationError) -> tuple[TCRPValidationError, ...]:
     typed: list[TCRPValidationError] = []
-    for item in list(exc.errors() or []):
+    for item in exc.errors():
         loc = item.get("loc", ())
         field_path = ".".join(str(part) for part in loc) or "<root>"
         error_code = error_code_from_pydantic(str(item.get("type", "") or ""))
@@ -442,7 +442,7 @@ def validate_payload(
         all_events: list[TCRPStageEvent] = [*events, failure_event]
         _emit_event(logger, "brain.tcrp.validation_failed", failure_event)
         budget = retry_budget or TCRPRetryBudget(channel_name=ctx.channel_name)
-        if current_retries < int(budget.max_retries):
+        if current_retries < budget.max_retries:
             retry_reason = retry_reason_for_error(typed_errors[0].error_code)
             retry_event = TCRPRetryEmittedEvent(
                 **_base_event(ctx, stage=TCRPStage.RETRY_EMISSION, duration_ms=0),
@@ -454,7 +454,7 @@ def validate_payload(
             retry_message = (
                 build_retry_tool_message(
                     tool_call_id=tool_call_id,
-                    tool_name=str(tool_name or ctx.channel_name),
+                    tool_name=tool_name or ctx.channel_name,
                     validation_error=typed_errors[0],
                 )
                 if tool_name
@@ -504,7 +504,7 @@ def validate_payload(
 def aggregate_stage_events(
     events: list[TCRPStageEvent] | tuple[TCRPStageEvent, ...],
 ) -> TCRPAggregates:
-    event_list = list(events or [])
+    event_list = list(events)
     if not event_list:
         return TCRPAggregates()
     stage_counts: dict[str, int] = {}
@@ -513,10 +513,7 @@ def aggregate_stage_events(
     validation_failures = 0
     fail_closed = 0
     for event in event_list:
-        raw_stage = getattr(event, "stage", "") or ""
-        stage_name = (
-            raw_stage.value if isinstance(raw_stage, TCRPStage) else str(raw_stage)
-        )
+        stage_name = event.stage.value
         stage_counts[stage_name] = stage_counts.get(stage_name, 0) + 1
         if isinstance(event, TCRPRepairFiredEvent):
             repair_key = event.repair_type.value
@@ -524,7 +521,7 @@ def aggregate_stage_events(
         elif isinstance(event, TCRPValidationFailedEvent):
             validation_failures += 1
         elif isinstance(event, TCRPRetryEmittedEvent):
-            retries.append(int(event.retry_count))
+            retries.append(event.retry_count)
         elif isinstance(event, TCRPBudgetExhaustedEvent):
             fail_closed += 1
     raw_count = len(event_list)
@@ -532,7 +529,7 @@ def aggregate_stage_events(
     if retries_sorted:
         idx = max(
             0,
-            min(len(retries_sorted) - 1, int(round(0.95 * (len(retries_sorted) - 1)))),
+            min(len(retries_sorted) - 1, round(0.95 * (len(retries_sorted) - 1))),
         )
         retry_p95 = retries_sorted[idx]
     else:

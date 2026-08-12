@@ -5,6 +5,7 @@ from typing import Any
 from collections.abc import Callable, Mapping
 
 from .backend import RuntimeSessionStoreBackend
+from .constants import EVENT_PAGE_MAX
 from .keys import normalize_session_status, utc_now_iso
 from .models import EventRecord, SessionRecord
 from .rows import (
@@ -56,29 +57,29 @@ class RuntimeSessionStoreLifecycle:
                 session_id=session_id,
                 session_turn_fence_token=session_turn_fence_token,
             )
-            self._backend.execute_count(
-                """
-                INSERT INTO events(session_id, event_type, payload_json, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (session_id, event_type, metadata_json(payload), now),
+            event_id = self._backend.insert(
+                "events",
+                {
+                    "session_id": session_id,
+                    "event_type": event_type,
+                    "payload_json": metadata_json(payload),
+                    "created_at": now,
+                },
             )
+            row = self._backend.query_one(
+                """
+                SELECT id, session_id, event_type, payload_json, created_at
+                FROM events
+                WHERE id = ?
+                """,
+                (event_id,),
+            )
+            if row is None:
+                raise RuntimeError(f"Failed to read inserted event: {event_id}")
             self._backend.execute_count(
                 "UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?",
                 (now, now, session_id),
             )
-        row = self._backend.query_one(
-            """
-            SELECT id, session_id, event_type, payload_json, created_at
-            FROM events
-            WHERE session_id = ? AND event_type = ? AND created_at = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (session_id, event_type, now),
-        )
-        if row is None:
-            raise RuntimeError("Failed to read event after insert")
         return row_to_event(row)
 
     def list_events(
@@ -108,6 +109,28 @@ class RuntimeSessionStoreLifecycle:
         query += f"\nORDER BY created_at {direction}, id {direction}\nLIMIT ?"
         params.append(safe_limit)
         rows = self._backend.query_dicts(query, params)
+        return [row_to_event(row) for row in rows]
+
+    def list_events_before_id(
+        self,
+        *,
+        session_id: str,
+        before_id: int,
+        limit: int = 100,
+    ) -> list[EventRecord]:
+        safe_limit = max(0, min(int(limit), EVENT_PAGE_MAX))
+        if safe_limit == 0:
+            return []
+        rows = self._backend.query_dicts(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE session_id = ? AND id < ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (session_id, max(1, int(before_id)), safe_limit),
+        )
         return [row_to_event(row) for row in rows]
 
     def touch_session_activity(

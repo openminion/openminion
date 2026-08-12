@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from uuid import uuid4
 
 from openminion.modules.storage.record_store import RecordStore
@@ -18,7 +18,7 @@ def _first_row(
 
 
 def _meta_json(row: dict[str, Any]) -> dict[str, Any]:
-    return parse_json(str(row["meta_json"]), {})
+    return cast(dict[str, Any], parse_json(str(row["meta_json"]), {}))
 
 
 class ContextStore:
@@ -247,6 +247,8 @@ class RunStore:
         run_type: str = "llm",
         *,
         run_id: str | None = None,
+        invocation_id: str | None = None,
+        thread_id: str | None = None,
         prompt_context_id: str | None = None,
         model_id: str | None = None,
         meta: dict[str, Any] | None = None,
@@ -256,13 +258,15 @@ class RunStore:
         self._rs.execute_count(
             """
             INSERT INTO run_records
-              (run_id, session_id, prompt_context_id, run_type, status,
-               started_at, model_id, meta_json)
-            VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+              (run_id, session_id, invocation_id, thread_id, prompt_context_id,
+               run_type, status, started_at, model_id, meta_json)
+            VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
             """,
             (
                 run_id_value,
                 session_id,
+                invocation_id,
+                thread_id,
                 prompt_context_id,
                 run_type,
                 now,
@@ -325,6 +329,32 @@ class RunStore:
             ORDER BY started_at ASC, run_id ASC
             """,
             (session_id,),
+        )
+        return [self._normalize_run_record(dict(row)) for row in rows]
+
+    def list_run_records_by_thread(
+        self, session_id: str, thread_id: str
+    ) -> list[dict[str, Any]]:
+        rows = self._rs.query_dicts(
+            """
+            SELECT * FROM run_records
+            WHERE session_id = ? AND thread_id = ?
+            ORDER BY started_at DESC, run_id DESC
+            """,
+            (session_id, thread_id),
+        )
+        return [self._normalize_run_record(dict(row)) for row in rows]
+
+    def list_run_records_by_invocation(
+        self, invocation_id: str
+    ) -> list[dict[str, Any]]:
+        rows = self._rs.query_dicts(
+            """
+            SELECT * FROM run_records
+            WHERE invocation_id = ?
+            ORDER BY started_at ASC, run_id ASC
+            """,
+            (invocation_id,),
         )
         return [self._normalize_run_record(dict(row)) for row in rows]
 

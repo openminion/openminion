@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import time
-from types import SimpleNamespace
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.llm.schemas import Message
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
+from openminion.modules.llm.schemas import Message
 
 from .budget import _debit_llm_usage, _profile_budget_exhausted, _token_budget_exhausted
 from .contracts import (
@@ -27,27 +27,29 @@ from .status import emit_adaptive_status
 def _direct_tool_turn_requested_batch_signature(
     loop_state: AdaptiveToolLoopState,
 ) -> str:
-    direct_tool_turn = getattr(loop_state, "direct_tool_turn", None)
-    return str(getattr(direct_tool_turn, "requested_batch_signature", "") or "").strip()
+    direct_tool_turn = loop_state.direct_tool_turn
+    return (
+        direct_tool_turn.requested_batch_signature.strip() if direct_tool_turn else ""
+    )
 
 
 def _direct_tool_turn_requested_tool_names(
     loop_state: AdaptiveToolLoopState,
 ) -> tuple[str, ...]:
-    direct_tool_turn = getattr(loop_state, "direct_tool_turn", None)
-    return tuple(getattr(direct_tool_turn, "requested_tool_names", ()) or ())
+    direct_tool_turn = loop_state.direct_tool_turn
+    return direct_tool_turn.requested_tool_names if direct_tool_turn else ()
 
 
 def _direct_tool_turn_requested_calls(
     loop_state: AdaptiveToolLoopState,
 ) -> tuple[Any, ...]:
-    direct_tool_turn = getattr(loop_state, "direct_tool_turn", None)
-    return tuple(getattr(direct_tool_turn, "requested_calls", ()) or ())
+    direct_tool_turn = loop_state.direct_tool_turn
+    return direct_tool_turn.requested_calls if direct_tool_turn else ()
 
 
 def _direct_tool_turn_match_by_name_only(loop_state: AdaptiveToolLoopState) -> bool:
-    direct_tool_turn = getattr(loop_state, "direct_tool_turn", None)
-    return bool(getattr(direct_tool_turn, "match_by_name_only", False))
+    direct_tool_turn = loop_state.direct_tool_turn
+    return direct_tool_turn.match_by_name_only if direct_tool_turn else False
 
 
 def _direct_tool_completed_tool_names(
@@ -79,15 +81,9 @@ def _canonical_direct_tool_name(raw_name: Any) -> str:
     return token
 
 
-def _direct_tool_call_arguments(raw_arguments: Any) -> dict[str, Any]:
-    if isinstance(raw_arguments, dict):
-        return dict(raw_arguments)
-    return {}
-
-
-def _direct_tool_call_inputs(raw_inputs: Any) -> dict[str, Any]:
-    if isinstance(raw_inputs, dict):
-        return dict(raw_inputs)
+def _direct_tool_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
     return {}
 
 
@@ -141,7 +137,7 @@ def _allow_homogeneous_batch_for_single_requested_call(
     requested_name = _canonical_direct_tool_name(
         str(getattr(requested_call, "name", "") or "").strip()
     )
-    requested_arguments = _direct_tool_call_arguments(
+    requested_arguments = _direct_tool_mapping(
         getattr(requested_call, "arguments", None)
     )
     if not requested_name:
@@ -151,9 +147,7 @@ def _allow_homogeneous_batch_for_single_requested_call(
         executed_name = _canonical_direct_tool_name(
             str(getattr(tool_call, "name", "") or "").strip()
         )
-        executed_arguments = _direct_tool_call_arguments(
-            getattr(tool_call, "arguments", None)
-        )
+        executed_arguments = _direct_tool_mapping(getattr(tool_call, "arguments", None))
         if executed_name != requested_name:
             return False
         if _direct_tool_requested_call_matches(
@@ -202,7 +196,7 @@ def _visible_tool_specs_for_direct_tool_turn(
     tool_specs: list[Any],
 ) -> list[Any]:
     if not _direct_tool_turn_active(loop_state) or bool(
-        getattr(loop_state, "direct_tool_requested_batch_satisfied", False)
+        loop_state.direct_tool_requested_batch_satisfied
     ):
         return tool_specs
     requested_tool_names = _remaining_direct_tool_name_sequence(loop_state)
@@ -230,7 +224,7 @@ def _forced_tool_choice_for_direct_tool_turn(
     tool_specs: list[Any],
 ) -> str | None:
     if not _direct_tool_turn_active(loop_state) or bool(
-        getattr(loop_state, "direct_tool_requested_batch_satisfied", False)
+        loop_state.direct_tool_requested_batch_satisfied
     ):
         return None
     requested_tool_names = _remaining_direct_tool_name_sequence(loop_state)
@@ -288,8 +282,10 @@ def _restore_direct_tool_specs_after_shortlist(
 def _build_direct_tool_closure_message(
     loop_state: AdaptiveToolLoopState,
 ) -> Message:
-    direct_tool_turn = getattr(loop_state, "direct_tool_turn", None)
-    requested_tools = list(getattr(direct_tool_turn, "requested_tool_names", ()) or ())
+    direct_tool_turn = loop_state.direct_tool_turn
+    requested_tools = list(
+        direct_tool_turn.requested_tool_names if direct_tool_turn else ()
+    )
     rendered_tools = (
         ", ".join(requested_tools) if requested_tools else "the requested tool batch"
     )
@@ -308,7 +304,6 @@ def _direct_tool_batch_completed_successfully(
     loop_state: AdaptiveToolLoopState,
     signature: str,
     ordered_tool_results: list[tuple[Any, Any]],
-    profile: AdaptiveToolLoopProfile,
 ) -> bool:
     if not _direct_tool_turn_active(loop_state):
         return False
@@ -346,7 +341,7 @@ def _direct_tool_batch_completed_successfully(
         )
         if not ordered_tool_results or not requested_name:
             return False
-        requested_arguments = _direct_tool_call_arguments(
+        requested_arguments = _direct_tool_mapping(
             getattr(requested_call, "arguments", None)
         )
         matched_requested_call = False
@@ -361,7 +356,7 @@ def _direct_tool_batch_completed_successfully(
                 )
             executed_arguments = getattr(approved_command, "args", None)
             if not isinstance(executed_arguments, dict):
-                executed_arguments = _direct_tool_call_arguments(
+                executed_arguments = _direct_tool_mapping(
                     getattr(tool_call, "arguments", None)
                 )
             if executed_name != requested_name:
@@ -387,10 +382,6 @@ def _direct_tool_batch_completed_successfully(
         status = str(getattr(action_result, "status", "") or "").strip().lower()
         if status != "success":
             return False
-    if not profile.stop_on_job_pending and any(
-        getattr(item[1], "job", None) is not None for item in ordered_tool_results
-    ):
-        return False
     if _direct_tool_turn_match_by_name_only(loop_state):
         completed_tool_names = (
             _direct_tool_completed_tool_names(loop_state) + executed_tool_names
@@ -436,9 +427,9 @@ def _should_force_direct_tool_closure(
     requested_calls = _direct_tool_turn_requested_calls(loop_state)
     return (
         _direct_tool_turn_active(loop_state)
-        and bool(getattr(loop_state, "direct_tool_requested_batch_satisfied", False))
+        and loop_state.direct_tool_requested_batch_satisfied
         and len(requested_calls) <= 1
-        and not bool(getattr(loop_state, "direct_tool_closure_consumed", False))
+        and not loop_state.direct_tool_closure_consumed
     )
 
 
@@ -451,7 +442,7 @@ def _clamp_direct_tool_batch_to_requested_call(
     if (
         not requested_batch_signature
         and not _direct_tool_turn_match_by_name_only(loop_state)
-        or bool(getattr(loop_state, "direct_tool_requested_batch_satisfied", False))
+        or loop_state.direct_tool_requested_batch_satisfied
     ):
         return tool_calls
     if _direct_tool_turn_match_by_name_only(loop_state):
@@ -542,7 +533,7 @@ def _clamp_single_requested_direct_tool_call(
     requested_call: Any,
 ) -> list[Any] | None:
     requested_name = str(getattr(requested_call, "name", "") or "").strip()
-    requested_inputs = _direct_tool_call_inputs(getattr(requested_call, "inputs", None))
+    requested_inputs = _direct_tool_mapping(getattr(requested_call, "inputs", None))
     if _allow_homogeneous_batch_for_single_requested_call(
         requested_call=requested_call,
         tool_calls=tool_calls,
@@ -558,7 +549,7 @@ def _clamp_single_requested_direct_tool_call(
             _direct_tool_call_with_requested_contract(
                 tool_call=tool_call,
                 requested_name=requested_name,
-                requested_arguments=_direct_tool_call_arguments(
+                requested_arguments=_direct_tool_mapping(
                     getattr(requested_call, "arguments", None)
                 ),
                 requested_inputs=requested_inputs,
@@ -585,12 +576,10 @@ def _matched_requested_direct_tool_call(
     requested_calls: Sequence[Any],
 ) -> Any | None:
     executed_name = str(getattr(tool_call, "name", "") or "").strip()
-    executed_arguments = _direct_tool_call_arguments(
-        getattr(tool_call, "arguments", None)
-    )
+    executed_arguments = _direct_tool_mapping(getattr(tool_call, "arguments", None))
     for requested_call in requested_calls:
         requested_name = str(getattr(requested_call, "name", "") or "").strip()
-        requested_arguments = _direct_tool_call_arguments(
+        requested_arguments = _direct_tool_mapping(
             getattr(requested_call, "arguments", None)
         )
         if not _direct_tool_requested_call_matches(
@@ -604,7 +593,7 @@ def _matched_requested_direct_tool_call(
             tool_call=tool_call,
             requested_name=requested_name,
             requested_arguments=requested_arguments,
-            requested_inputs=_direct_tool_call_inputs(
+            requested_inputs=_direct_tool_mapping(
                 getattr(requested_call, "inputs", None)
             ),
         )

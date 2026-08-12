@@ -1,4 +1,4 @@
-"""Postprocess rules for adaptive loop heuristics and plan lookup."""
+"""Structural response checks and plan lookup helpers."""
 
 from __future__ import annotations
 
@@ -20,39 +20,6 @@ from ..iteration.helpers import _count_substantive_non_control_tool_results
 
 
 _HTTP_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
-_EXECUTION_PREFACE_RE = re.compile(
-    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|let me|now|next|continuing|"
-    r"proceeding to)\b.*\b"
-    r"(?:add|execute|run|call|fetch|write|read|verify|check|inspect|review|"
-    r"continue|finish|complete|understand|fix|repair|rerun|debug)\b",
-    re.IGNORECASE | re.DOTALL,
-)
-_PROGRESS_GERUND_RE = re.compile(
-    r"^(?:reading|writing|running|checking|verifying|fetching|updating|rewriting|"
-    r"inspecting|looking)\b",
-    re.IGNORECASE,
-)
-_UNFINISHED_CLOSEOUT_TAIL_RE = re.compile(
-    r"(?im)(?:^|\n)\s*(?:starting with|beginning with|next up|now creating|"
-    r"now writing|creating|writing|updating|adding)\b[^\n]{0,120}:\s*$"
-)
-_UNFULFILLED_FILE_PLAN_RE = re.compile(
-    r"\b(?:files?\s+to\s+(?:create|write)|(?:i['’]?ll|i will|we['’]?ll|we will)"
-    r"\s+(?:write|create|add)\s+(?:all\s+)?files?|(?:brief\s+)?plan\s*:\s*"
-    r"(?:create|write|add)\b.*\bfiles?\b)\b",
-    re.IGNORECASE,
-)
-_STEP_PLAN_TAG_RE = re.compile(
-    r"<step\d+>\s*(?:create|write|add|read|verify|check|run)\b",
-    re.IGNORECASE,
-)
-_CODE_SNIPPET_ARTIFACT_RE = re.compile(
-    r"(?im)^\s*(?:```|#!/usr/bin/env\s+\w+|import\s+\w+|from\s+\w+|"
-    r"def\s+\w+\(|class\s+\w+\(|if\s+__name__\s*==)"
-)
-_ARTIFACT_SECTION_RE = re.compile(
-    r"(?im)^\s*(?:implementation|code|files?)\s*:",
-)
 _PLAINTEXT_FILE_WRITE_TOOL_RE = re.compile(
     r"(?ims)^\s*file\.write\s*$.*^\s*path\s*:\s*\S+.*^\s*content\s*:",
 )
@@ -65,8 +32,8 @@ _PLAINTEXT_TOOL_FUNCTION_CALL_RE = re.compile(
     r"\.[A-Za-z0-9_]+\s*\(",
 )
 _PSEUDO_TOOL_TAG_RE = re.compile(
-    r"(?is)<\s*/?\s*(?:create_file|write_file|read_file|execute_command|"
-    r"file\.write|file_write|exec\.run|code\.patch)\b",
+    r"(?is)<\s*/?\s*(?:create_file|write_file|read_file|file_read|"
+    r"execute_command|file\.write|file_write|exec\.run|code\.patch)\b",
 )
 _PLAINTEXT_TOOL_CALLS_ARRAY_RE = re.compile(
     r"(?is)\btool_calls?\b\s*[:=]?\s*\[.*\b"
@@ -169,7 +136,6 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
         or _looks_like_file_write_argument_json(parsed)
         or lower_token.startswith("[system: unexecutable_tool_envelope]")
         or lower_token.startswith("<invoke")
-        or "minimax:tool_call" in lower_token
         or _looks_like_embedded_tool_payload_json(token)
         or (
             any(tool_key in lower_token for tool_key in ('"tool"', '"tool_name"'))
@@ -189,78 +155,6 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
                 '"path"' in lower_token
                 or '"query"' in lower_token
                 or '"command"' in lower_token
-            )
-        )
-    )
-
-
-def _looks_like_structured_final_answer(text: str) -> bool:
-    headings = 0
-    for raw_line in str(text or "").splitlines():
-        line = raw_line.strip().rstrip(":")
-        if not line or len(line) > 48:
-            continue
-        if any(char.isalpha() for char in line) and line.upper() == line:
-            headings += 1
-    return headings >= 2
-
-
-def _looks_like_pre_tool_draft_echo(
-    state: AdaptiveToolLoopState,
-    *,
-    text: str,
-) -> bool:
-    current = str(text or "").strip()
-    if not current:
-        return False
-    scratchpad = dict(getattr(state, "scratchpad", {}) or {})
-    prior = str(scratchpad.get("last_pre_tool_draft_text", "") or "").strip()
-    if not prior:
-        return False
-    return current == prior
-
-
-def _looks_like_execution_preface_draft(text: str) -> bool:
-    current = str(text or "").strip()
-    if not current:
-        return False
-    if _UNFULFILLED_FILE_PLAN_RE.search(current):
-        return True
-    if _STEP_PLAN_TAG_RE.search(current):
-        return True
-    if _UNFINISHED_CLOSEOUT_TAIL_RE.search(current):
-        return True
-    if len(current) > 280:
-        return False
-    lowered = current.lower()
-    if _looks_like_structured_final_answer(current):
-        return False
-    if lowered.startswith(
-        (
-            "based on the existing tool results",
-            "continuing from the confirmed tool batch results",
-            "looking at the existing tool results",
-        )
-    ):
-        return True
-    if _EXECUTION_PREFACE_RE.search(lowered):
-        return True
-    if _PROGRESS_GERUND_RE.search(lowered):
-        return True
-    return current.endswith(":")
-
-
-def _looks_like_snippet_only_file_artifact_answer(text: str) -> bool:
-    current = str(text or "").strip()
-    if not current:
-        return False
-    return bool(
-        _CODE_SNIPPET_ARTIFACT_RE.search(current)
-        or (
-            _ARTIFACT_SECTION_RE.search(current) is not None
-            and any(
-                token in current.lower()
-                for token in ("def ", "import ", "#!/", "python ", ".py")
             )
         )
     )
@@ -288,59 +182,6 @@ def _final_answer_references_unbacked_source_urls(
     if not supported_urls:
         return False
     return any(url not in supported_urls for url in cited_urls)
-
-
-def _final_text_parrots_policy_denial(
-    state: AdaptiveToolLoopState,
-    *,
-    text: str,
-) -> bool:
-    current = str(text or "").strip().lower()
-    if not current or "denied by policy" not in current:
-        return False
-    scratchpad = dict(getattr(state, "scratchpad", {}) or {})
-    for item in reversed(list(scratchpad.get("adaptive.tool_results", []) or [])):
-        if not isinstance(item, dict) or bool(item.get("ok")):
-            continue
-        if str(item.get("tool_name", "") or "").strip() != "exec.run":
-            continue
-        item_text = str(item.get("content", "") or "").strip().lower()
-        data = item.get("data")
-        error = data.get("error") if isinstance(data, dict) else None
-        details = error.get("details") if isinstance(error, dict) else None
-        if (
-            "denied by policy" in item_text
-            and isinstance(details, dict)
-            and bool(str(details.get("suggested_fix", "") or "").strip())
-        ):
-            return current == item_text
-    return False
-
-
-_STATUS_ONLY_PAYLOAD_KEYS = frozenset(
-    {
-        "active_form",
-        "confidence",
-        "reasoning",
-        "summary",
-        "status",
-    }
-)
-
-
-def _looks_like_structured_status_payload(text: str) -> bool:
-    token = str(text or "").strip()
-    if not token:
-        return False
-    try:
-        payload = json.loads(token)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    if "active_form" not in payload:
-        return False
-    return set(payload).issubset(_STATUS_ONLY_PAYLOAD_KEYS)
 
 
 def _raw_tool_payload_retry_allowed(

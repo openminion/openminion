@@ -61,13 +61,8 @@ def _build_search_text(
 
 
 def _named_params(prefix: str, values: list[Any]) -> tuple[str, dict[str, Any]]:
-    params: dict[str, Any] = {}
-    placeholders: list[str] = []
-    for idx, value in enumerate(values):
-        key = f"{prefix}_{idx}"
-        placeholders.append(f":{key}")
-        params[key] = value
-    return ", ".join(placeholders), params
+    params = {f"{prefix}_{idx}": value for idx, value in enumerate(values)}
+    return ", ".join(f":{key}" for key in params), params
 
 
 __all__ = [

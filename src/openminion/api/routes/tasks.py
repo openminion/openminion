@@ -103,7 +103,7 @@ def _show_task(
             session_id=options.session_id,
             limit=options.limit,
         )
-    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+    except (AttributeError, TypeError, RuntimeError) as exc:
         return _task_error(exc)
     if task is None:
         return exception_route_result(
@@ -153,7 +153,7 @@ def _apply_task_action(
             details={"task_id": task_id, "action": action},
             retryable=False,
         )
-    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+    except (AttributeError, TypeError, RuntimeError) as exc:
         return _task_error(exc)
 
 
@@ -201,8 +201,7 @@ def _task_error(exc: Exception) -> RouteResult:
 
 
 def _first_query_value(params: dict[str, list[str]], key: str) -> str:
-    values = params.get(key) or []
-    return str(values[0] if values else "").strip()
+    return str((params.get(key) or [""])[0]).strip()
 
 
 def _safe_int(value: str, *, default: int) -> int:

@@ -67,13 +67,11 @@ PROJECT_ROOT = PACKAGE_ROOT.parent.parent.parent.parent
 
 
 def resolve_config_path(filename: str | None = None) -> Path:
-    """Return the path to the default context.compress configuration file."""
-
     if filename is None:
         candidate = PROJECT_ROOT / DEFAULT_CONFIG_FILENAME
         if candidate.exists():
             return candidate
-        generated = Path(resolve_generated_config_path(DEFAULT_CONFIG_FILENAME))
+        generated = resolve_generated_config_path(DEFAULT_CONFIG_FILENAME)
         if generated.exists():
             return generated
         raise FileNotFoundError(f"config file not found: {candidate}")

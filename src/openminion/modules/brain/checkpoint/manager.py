@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import ValidationError
+
 from .contracts import CheckpointConsumer, CheckpointEnvelope
 
 
@@ -15,9 +17,6 @@ class CheckpointManager:
     def _owner_for(self, consumer: CheckpointConsumer) -> str:
         owner = _normalized_text(getattr(consumer, "mode_name", ""))
         return owner or consumer.__class__.__name__.lower()
-
-    def _checkpoint_id(self, *, owner: str, task_id: str, cursor: int) -> str:
-        return f"{owner}-{task_id}-cursor-{int(cursor)}"
 
     def latest_raw_checkpoint(
         self, *, task_id: str
@@ -34,7 +33,7 @@ class CheckpointManager:
         _, raw_state = latest
         try:
             return CheckpointEnvelope.model_validate(raw_state)
-        except Exception:
+        except ValidationError:
             return None
 
     def save(
@@ -67,15 +66,14 @@ class CheckpointManager:
             raise ValueError("owner is required")
         if not normalized_task_id:
             raise ValueError("task_id is required")
-        checkpoint_id = self._checkpoint_id(
-            owner=normalized_owner,
-            task_id=normalized_task_id,
-            cursor=max(0, int(cursor)),
+        normalized_cursor = max(0, int(cursor))
+        checkpoint_id = (
+            f"{normalized_owner}-{normalized_task_id}-cursor-{normalized_cursor}"
         )
         envelope = CheckpointEnvelope(
             version=max(1, int(version)),
             owner=normalized_owner,
-            cursor=max(0, int(cursor)),
+            cursor=normalized_cursor,
             timestamp_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
             payload=dict(payload or {}),
         )

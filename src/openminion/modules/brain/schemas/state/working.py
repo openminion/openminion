@@ -67,19 +67,8 @@ class StepOutputEntry(BaseModel):
 
     @field_validator("sub_intent_ids", mode="before")
     @classmethod
-    def _normalize_sub_intent_ids(cls, value: Any) -> Any:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, tuple):
-            return list(value)
-        return value
-
-    @model_validator(mode="after")
-    def _dedupe_sub_intent_ids(self) -> "StepOutputEntry":
-        self.sub_intent_ids = normalize_sub_intent_ids(self.sub_intent_ids)
-        return self
+    def _normalize_sub_intent_ids(cls, value: Any) -> list[str]:
+        return normalize_sub_intent_ids(value)
 
 
 class MetaDirectiveLogEntry(BaseModel):
@@ -251,11 +240,11 @@ class WorkingState(BaseModel):
         active_ids = _normalize_skill_ids(self.active_skill_ids)
         resolved_ids = _normalize_skill_ids(self.resolved_skill_ids)
         current_active = str(self.active_skill_id or "").strip()
-        active_id_lookup = {item.lower() for item in active_ids}
         if not active_ids:
             active_ids = list(resolved_ids)
-            active_id_lookup = {item.lower() for item in active_ids}
-        if current_active and current_active.lower() not in active_id_lookup:
+        if current_active and current_active.lower() not in {
+            item.lower() for item in active_ids
+        }:
             active_ids.insert(0, current_active)
         if not current_active and active_ids:
             self.active_skill_id = active_ids[0]
@@ -270,14 +259,11 @@ class WorkingState(BaseModel):
 
     def _sync_decision_sub_intents(self) -> None:
         if not self.decision_sub_intent_refs:
-            if self.decision_sub_intents:
-                self.decision_sub_intent_refs = to_structured_sub_intents(
-                    self.decision_sub_intents
-                )
-            elif self.plan is not None and self.plan.sub_intents:
-                self.decision_sub_intent_refs = to_structured_sub_intents(
-                    self.plan.sub_intents
-                )
+            source = self.decision_sub_intents or (
+                self.plan.sub_intents if self.plan is not None else []
+            )
+            if source:
+                self.decision_sub_intent_refs = to_structured_sub_intents(source)
         if not self.decision_sub_intents and self.decision_sub_intent_refs:
             self.decision_sub_intents = sub_intent_descriptions(
                 self.decision_sub_intent_refs
@@ -328,15 +314,11 @@ class WorkingState(BaseModel):
             return None
 
     def _sync_feasibility_reports(self) -> None:
-        if self.decision_feasibility_report is None and isinstance(
-            self.decision_feasibility_state, dict
-        ):
+        if self.decision_feasibility_report is None:
             self.decision_feasibility_report = self._feasibility_report_from_state(
                 self.decision_feasibility_state
             )
-        if self.pending_confirmation_feasibility_report is None and isinstance(
-            self.pending_confirmation_feasibility_state, dict
-        ):
+        if self.pending_confirmation_feasibility_report is None:
             self.pending_confirmation_feasibility_report = (
                 self._feasibility_report_from_state(
                     self.pending_confirmation_feasibility_state
@@ -360,18 +342,14 @@ class WorkingState(BaseModel):
             )
 
     def _sync_intent_execution_states(self) -> None:
-        source_sub_intents: list[SubIntent] = []
-        if self.decision_sub_intent_refs:
-            source_sub_intents = list(self.decision_sub_intent_refs)
-        elif self.plan is not None and self.plan.sub_intents:
-            source_sub_intents = list(self.plan.sub_intents)
-        if source_sub_intents:
-            self.intent_execution_states = build_intent_execution_states(
-                source_sub_intents,
-                existing=self.intent_execution_states,
-            )
-        elif self.intent_execution_states:
-            self.intent_execution_states = []
+        source = self.decision_sub_intent_refs or (
+            self.plan.sub_intents if self.plan is not None else []
+        )
+        self.intent_execution_states = (
+            build_intent_execution_states(source, existing=self.intent_execution_states)
+            if source
+            else []
+        )
 
     @model_validator(mode="after")
     def _sync_clarify_fields(self) -> "WorkingState":

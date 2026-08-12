@@ -1,6 +1,6 @@
 """Typed span records for memory observability."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 
@@ -61,16 +61,7 @@ def detect_stale_read(
 
 
 def span_telemetry_payload(span: MemorySpanRecord) -> dict[str, Any]:
-    return {
-        "span_id": span.span_id,
-        "record_id": span.record_id,
-        "relevance_score": span.relevance_score,
-        "freshness_at_read": span.freshness_at_read,
-        "read_at": span.read_at,
-        "scope": span.scope,
-        "session_id": span.session_id,
-        "outcome_tag": span.outcome_tag,
-    }
+    return asdict(span)
 
 
 __all__ = [

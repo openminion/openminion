@@ -1,4 +1,3 @@
-import importlib
 from pathlib import Path
 from typing import Any
 
@@ -34,9 +33,8 @@ def create_session_adapter(
         return LocalSessionStore(local_root)
     runtime_artifactctl = resolve_artifactctl(artifactctl=artifactctl)
     try:
-        importlib.import_module("openminion.modules.session")
         return SessctlAdapter(
-            db_path if db_path is not None else resolved_path,
+            resolved_path,
             artifactctl=runtime_artifactctl,
             telemetryctl=telemetryctl,
         )

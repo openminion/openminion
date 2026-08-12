@@ -44,6 +44,7 @@ _READ_ONLY_EXECUTABLES = frozenset(
         "wc",
         "stat",
         "tree",
+        "whoami",
     }
 )
 
@@ -91,6 +92,22 @@ def _segment_bounds(command: str) -> tuple[int, int]:
     while end > start and command[end - 1].isspace():
         end -= 1
     return start, end
+
+
+def _redirection_end(command: str, index: int, command_end: int) -> int | None:
+    if command[index] not in {"<", ">"}:
+        return None
+    if command.startswith(">/dev/null", index):
+        redirect_end = index + len(">/dev/null")
+        if redirect_end == command_end or command[redirect_end].isspace() or command[
+            redirect_end
+        ] in {";", "|", "&"}:
+            return redirect_end
+    raise CommandParseError(
+        code="unsupported_redirection",
+        message="unsupported command syntax: redirections are not supported",
+        position=index,
+    )
 
 
 def _parse_segment(
@@ -162,12 +179,9 @@ def _parse_command_posix(command: str) -> ParseResult:
                 open_quote_position = idx
                 idx += 1
                 continue
-            if ch in {"<", ">"}:
-                raise CommandParseError(
-                    code="unsupported_redirection",
-                    message="unsupported command syntax: redirections are not supported",
-                    position=idx,
-                )
+            if redirect_end := _redirection_end(raw, idx, command_end):
+                idx = redirect_end
+                continue
             if ch == "\n":
                 raise CommandParseError(
                     code="unsupported_syntax",

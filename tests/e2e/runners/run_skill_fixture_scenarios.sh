@@ -5,12 +5,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../helpers/runtime_roots.sh"
+isolate_openminion_test_roots openminion-skill-fixtures
 FRAMEWORK_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 OPENMINION_DIR="${FRAMEWORK_ROOT}/openminion"
 FIXTURES_DIR="${FRAMEWORK_ROOT}/openminion/examples/skills/cli-chat-smoke"
 INVALID_FIXTURES_DIR="${FRAMEWORK_ROOT}/openminion/examples/skills/cli-chat-smoke-invalid"
-export OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"
-export OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
 SKILL_CONFIG_PATH="${OPENMINION_DATA_ROOT}/skill-fixture-config.json"
 
 # Colors for output

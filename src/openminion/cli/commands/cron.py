@@ -33,24 +33,27 @@ def run_cron(args, app: APIRuntime) -> int:
         return _cron_show(app, args)
     if action == "status":
         return _cron_status(app)
-    elif action == "run":
+    if action == "run":
         job_id = getattr(args, "job_id", None)
         return _cron_run(app, job_id=job_id)
-    elif action == "tick":
+    if action == "tick":
         return _cron_tick(app)
-    else:
-        print(f"Unknown cron command: {action}")
-        return 1
+    print(f"Unknown cron command: {action}")
+    return 1
+
+
+def _open_cron_store(app: APIRuntime):
+    from openminion.modules.storage.runtime.sqlite import resolve_database_path
+    from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
+
+    storage_path = resolve_database_path(app.config.storage.path)
+    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    return SQLiteSessionStore(db_path)
 
 
 def _cron_status(app: APIRuntime) -> int:
     try:
-        from openminion.modules.storage.runtime.sqlite import resolve_database_path
-        from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
-
-        storage_path = resolve_database_path(app.config.storage.path)
-        db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-        store = SQLiteSessionStore(db_path)
+        store = _open_cron_store(app)
     except ImportError:
         print("openminion-session is required for cron state")
         return 1
@@ -99,7 +102,7 @@ def _build_schedule_payload(args) -> dict:
 
 
 def _tool_execution_metadata(app: APIRuntime, args) -> tuple[dict[str, object], str]:
-    runtime_config = getattr(app.config, "runtime", None)
+    runtime_config = app.config.runtime
     metadata: dict[str, object] = {
         "origin": "openminion.cron",
         "tool_call_origin": "cli",
@@ -144,7 +147,7 @@ def _execute_task_tool(
             ),
         ),
     )
-    result = batch.results[0] if getattr(batch, "results", None) else None
+    result = batch.results[0] if batch.results else None
     if result is None:
         return {
             "ok": False,
@@ -155,8 +158,8 @@ def _execute_task_tool(
     return {
         "ok": bool(result.ok),
         "tool": tool_name,
-        "error": str(getattr(result, "error", "") or ""),
-        "data": dict(getattr(result, "data", {}) or {}),
+        "error": str(result.error or ""),
+        "data": dict(result.data or {}),
     }
 
 
@@ -168,7 +171,7 @@ def _cron_create(app: APIRuntime, args) -> int:
 
     try:
         schedule = _build_schedule_payload(args)
-    except Exception as exc:
+    except (TypeError, ValueError) as exc:
         print(f"Error: {exc}")
         return 1
 
@@ -285,12 +288,7 @@ def _cron_run(app: APIRuntime, *, job_id: str | None) -> int:
         return 1
 
     try:
-        from openminion.modules.storage.runtime.sqlite import resolve_database_path
-        from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
-
-        storage_path = resolve_database_path(app.config.storage.path)
-        db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-        store = SQLiteSessionStore(db_path)
+        store = _open_cron_store(app)
     except ImportError:
         print("openminion-session is required for cron run")
         return 1

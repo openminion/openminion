@@ -1,5 +1,3 @@
-"""Coding strategy runtime wiring, tool specs, and budget helpers."""
-
 from typing import Any
 
 from openminion.modules.brain.constants import (
@@ -147,16 +145,14 @@ def _build_tool_specs(
         ),
     }
     runtime_schemas = _runtime_tool_schemas_by_name(ctx)
-    specs = []
-    for tool_id in sorted(allowed_tools):
-        specs.append(
-            ToolSpec(
-                name=tool_id,
-                description=descriptions.get(tool_id, tool_id),
-                input_schema=_input_schema_for_tool(tool_id, runtime_schemas),
-            )
+    return [
+        ToolSpec(
+            name=tool_id,
+            description=descriptions.get(tool_id, tool_id),
+            input_schema=_input_schema_for_tool(tool_id, runtime_schemas),
         )
-    return specs
+        for tool_id in sorted(allowed_tools)
+    ]
 
 
 def _is_budget_exhausted(ctx: ExecutionContext, loop: CodingLoopState) -> bool:

@@ -24,16 +24,13 @@ class PlainCliToolCommandParser:
         *,
         allowed_tool_names: Iterable[str] | None = None,
     ) -> ToolCallParseResult:
-        raw = str(text or "").strip()
-        if not raw:
-            return ToolCallParseResult()
-
+        raw = text.strip()
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
         match = _CLI_TOOL_COMMAND_RE.search(raw)
         if match is None:
             return ToolCallParseResult()
 
-        raw_name = str(match.group("name") or "").strip()
+        raw_name = match.group("name").strip()
         args = _coerce_tool_arguments(match.group("args"))
         resolved_name = _resolve_allowed_tool_name(
             raw_name,

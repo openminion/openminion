@@ -134,8 +134,6 @@ class ClarifyStateManager:
         except Exception as exc:  # noqa: BLE001 - degrade gracefully
             _LOG.warning("controlplane: failed to hydrate pending clarifies: %s", exc)
             return
-        if not rows:
-            return
         for row in rows:
             if not isinstance(row, dict):
                 continue

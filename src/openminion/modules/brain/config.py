@@ -56,6 +56,7 @@ ADAPTIVE_BUDGET_HARD_CAP: int = 128
 RESEARCH_CHECKPOINT_INTERVAL = 1
 RESEARCH_MAX_RESUME_COUNT = 10
 RESEARCH_MAX_ITERATIONS = 5
+RESEARCH_SYNTHESIS_MAX_TOKENS = 4000
 
 OBSERVE_POLL_INTERVAL_SECONDS = 30
 OBSERVE_TIMEOUT_SECONDS = 600
@@ -76,13 +77,13 @@ TOOL_OUTCOME_SUCCESS_ALLOWLIST = frozenset(
 
 def normalize_skill_selection_strategy(raw: Any) -> str:
     strategy = str(raw or "llm").strip().lower() or "llm"
-    if strategy != "llm":
+    if strategy not in {"auto", "entry", "llm"}:
         _LOGGER.warning(
             "Invalid skill_selection_strategy=%r; falling back to 'llm'",
             strategy,
         )
         return "llm"
-    return "llm"
+    return strategy
 
 
 class AdapterSubConfig(BaseModel):
@@ -268,36 +269,25 @@ class RunnerOptions:
     )
 
     def __post_init__(self) -> None:
-        self.plan_checkpoint_interval = max(
-            0, int(getattr(self, "plan_checkpoint_interval", 5) or 0)
-        )
-        self.plan_max_iterations = max(
-            1, int(getattr(self, "plan_max_iterations", 64) or 64)
-        )
+        self.plan_checkpoint_interval = max(0, int(self.plan_checkpoint_interval or 0))
+        self.plan_max_iterations = max(1, int(self.plan_max_iterations or 64))
         self.plan_consecutive_failure_limit = max(
-            1, int(getattr(self, "plan_consecutive_failure_limit", 3) or 3)
+            1, int(self.plan_consecutive_failure_limit or 3)
         )
-        self.adaptive_plan_revision_enabled = bool(
-            getattr(self, "adaptive_plan_revision_enabled", True)
-        )
+        self.adaptive_plan_revision_enabled = bool(self.adaptive_plan_revision_enabled)
         self.adaptive_replan_retained_step_outputs = max(
             0,
-            int(getattr(self, "adaptive_replan_retained_step_outputs", 2) or 0),
+            int(self.adaptive_replan_retained_step_outputs or 0),
         )
         self.continuous_feasibility_rechecks_enabled = bool(
-            getattr(self, "continuous_feasibility_rechecks_enabled", False)
+            self.continuous_feasibility_rechecks_enabled
         )
         self.continuous_feasibility_recheck_interval = max(
             1,
-            int(getattr(self, "continuous_feasibility_recheck_interval", 1) or 1),
+            int(self.continuous_feasibility_recheck_interval or 1),
         )
         raw_feasibility_trigger = (
-            str(
-                getattr(self, "continuous_feasibility_trigger", "tool_dependent")
-                or "tool_dependent"
-            )
-            .strip()
-            .lower()
+            str(self.continuous_feasibility_trigger or "tool_dependent").strip().lower()
         )
         if raw_feasibility_trigger not in {
             "tool_dependent",
@@ -308,29 +298,24 @@ class RunnerOptions:
             raw_feasibility_trigger = "tool_dependent"
         self.continuous_feasibility_trigger = raw_feasibility_trigger
         raw_hard_action = (
-            str(
-                getattr(self, "continuous_feasibility_hard_action", "replan")
-                or "replan"
-            )
-            .strip()
-            .lower()
+            str(self.continuous_feasibility_hard_action or "replan").strip().lower()
         )
         if raw_hard_action not in {"replan", "pause"}:
             raw_hard_action = "replan"
         self.continuous_feasibility_hard_action = raw_hard_action
         self.plan_auto_scale_max_llm_calls = max(
-            1, int(getattr(self, "plan_auto_scale_max_llm_calls", 128) or 128)
+            1, int(self.plan_auto_scale_max_llm_calls or 128)
         )
         self.plan_auto_scale_max_ticks = max(
-            1, int(getattr(self, "plan_auto_scale_max_ticks", 128) or 128)
+            1, int(self.plan_auto_scale_max_ticks or 128)
         )
         self.plan_auto_scale_max_tokens = max(
             1000,
-            int(getattr(self, "plan_auto_scale_max_tokens", 500_000) or 500_000),
+            int(self.plan_auto_scale_max_tokens or 500_000),
         )
-        raw_max_elapsed_ms = getattr(self, "plan_auto_scale_max_elapsed_ms", 300_000)
-        raw_base_overhead_ms = getattr(self, "plan_auto_scale_base_overhead_ms", 20_000)
-        raw_per_step_time_ms = getattr(self, "plan_auto_scale_per_step_time_ms", 15_000)
+        raw_max_elapsed_ms = self.plan_auto_scale_max_elapsed_ms
+        raw_base_overhead_ms = self.plan_auto_scale_base_overhead_ms
+        raw_per_step_time_ms = self.plan_auto_scale_per_step_time_ms
         self.plan_auto_scale_max_elapsed_ms = max(
             1000,
             int(300_000 if raw_max_elapsed_ms is None else raw_max_elapsed_ms),
@@ -344,91 +329,62 @@ class RunnerOptions:
             int(15_000 if raw_per_step_time_ms is None else raw_per_step_time_ms),
         )
         self.governance_progress_checkpoints_enabled = bool(
-            getattr(self, "governance_progress_checkpoints_enabled", True)
+            self.governance_progress_checkpoints_enabled
         )
         self.governance_step_risk_gate_enabled = bool(
-            getattr(self, "governance_step_risk_gate_enabled", True)
+            self.governance_step_risk_gate_enabled
         )
         self.reflection_reserved_llm_calls = max(
-            0, int(getattr(self, "reflection_reserved_llm_calls", 1) or 0)
+            0, int(self.reflection_reserved_llm_calls or 0)
         )
         self.metactl_config = _coerce_meta_runtime_config(self.metactl_config)
         self.skill_selection_strategy = normalize_skill_selection_strategy(
-            getattr(self, "skill_selection_strategy", "llm")
+            self.skill_selection_strategy
         )
         self.max_skills_per_session = max(
             1,
-            int(
-                getattr(self, "max_skills_per_session", MAX_SKILLS_PER_SESSION)
-                or MAX_SKILLS_PER_SESSION
-            ),
+            int(self.max_skills_per_session or MAX_SKILLS_PER_SESSION),
         )
-        raw_mission_config = getattr(self, "mission_config", MissionConfig())
+        raw_mission_config = self.mission_config
         if isinstance(raw_mission_config, MissionConfig):
             self.mission_config = raw_mission_config
         else:
             self.mission_config = MissionConfig.model_validate(raw_mission_config)
-        self.request_handoff_enabled = bool(
-            getattr(self, "request_handoff_enabled", False)
-        )
-        raw_outcome_attribution = getattr(
-            self,
-            "outcome_attribution_config",
-            OutcomeAttributionConfig(),
-        )
+        self.request_handoff_enabled = bool(self.request_handoff_enabled)
+        raw_outcome_attribution = self.outcome_attribution_config
         if isinstance(raw_outcome_attribution, OutcomeAttributionConfig):
             self.outcome_attribution_config = raw_outcome_attribution
         else:
             self.outcome_attribution_config = OutcomeAttributionConfig.model_validate(
                 raw_outcome_attribution
             )
-        raw_success_memory = getattr(
-            self,
-            "success_memory_config",
-            SuccessMemoryConfig(),
-        )
+        raw_success_memory = self.success_memory_config
         if isinstance(raw_success_memory, SuccessMemoryConfig):
             self.success_memory_config = raw_success_memory
         else:
             self.success_memory_config = SuccessMemoryConfig.model_validate(
                 raw_success_memory
             )
-        raw_afe = getattr(
-            self,
-            "auto_fact_extraction_config",
-            AutoFactExtractionConfig(),
-        )
+        raw_afe = self.auto_fact_extraction_config
         if isinstance(raw_afe, AutoFactExtractionConfig):
             self.auto_fact_extraction_config = raw_afe
         else:
             self.auto_fact_extraction_config = AutoFactExtractionConfig.model_validate(
                 raw_afe
             )
-        raw_aib = getattr(
-            self,
-            "adaptive_budget_config",
-            AdaptiveBudgetConfig(),
-        )
+        raw_aib = self.adaptive_budget_config
         if isinstance(raw_aib, AdaptiveBudgetConfig):
             self.adaptive_budget_config = raw_aib
         else:
             self.adaptive_budget_config = AdaptiveBudgetConfig.model_validate(raw_aib)
-        raw_budget_telemetry = getattr(
-            self,
-            "budget_telemetry_config",
-            BudgetTelemetryConfig(),
-        )
+        raw_budget_telemetry = self.budget_telemetry_config
         if isinstance(raw_budget_telemetry, BudgetTelemetryConfig):
             self.budget_telemetry_config = raw_budget_telemetry
         else:
             self.budget_telemetry_config = BudgetTelemetryConfig.model_validate(
                 raw_budget_telemetry
             )
-        raw_pae = getattr(
-            self,
-            "proactive_autonomous_entrypoint_config",
-            ProactiveAutonomousEntrypointConfig(),
-        )
+        raw_pae = self.proactive_autonomous_entrypoint_config
         if isinstance(raw_pae, ProactiveAutonomousEntrypointConfig):
             self.proactive_autonomous_entrypoint_config = raw_pae
         else:
@@ -436,21 +392,13 @@ class RunnerOptions:
                 ProactiveAutonomousEntrypointConfig.model_validate(raw_pae)
             )
         self.autonomous_continuation_enabled = bool(
-            getattr(self, "autonomous_continuation_enabled", True)
+            self.autonomous_continuation_enabled
         )
-        raw_per_plan = getattr(
-            self,
-            "autonomous_continuation_max_per_plan",
-            DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN,
-        )
+        raw_per_plan = self.autonomous_continuation_max_per_plan
         if raw_per_plan is None:
             raw_per_plan = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN
         self.autonomous_continuation_max_per_plan = max(1, int(raw_per_plan))
-        raw_per_session = getattr(
-            self,
-            "autonomous_continuation_max_per_session",
-            DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION,
-        )
+        raw_per_session = self.autonomous_continuation_max_per_session
         if raw_per_session is None:
             raw_per_session = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION
         self.autonomous_continuation_max_per_session = max(1, int(raw_per_session))

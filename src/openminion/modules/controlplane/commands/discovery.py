@@ -42,12 +42,10 @@ def discover_and_register_commands(
         logger.warning(f"Failed to discover entry points: {e}")
         return [], []
 
-    command_eps = _select_command_entry_points(eps)
-
     loaded_modules: list[str] = []
     error_modules: list[str] = []
 
-    for ep in command_eps:
+    for ep in _select_command_entry_points(eps):
         module_name = ep.name
         logger.debug(f"Discovered command module entry point: {module_name}")
 
@@ -115,10 +113,8 @@ def get_discovered_module_metadata() -> list[dict[str, str]]:
     except Exception:
         return []
 
-    command_eps = _select_command_entry_points(eps)
-
     modules: list[dict[str, str]] = []
-    for ep in command_eps:
+    for ep in _select_command_entry_points(eps):
         distribution = "unknown"
         version = "unknown"
         try:

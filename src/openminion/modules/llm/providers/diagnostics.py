@@ -42,10 +42,10 @@ def classify_provider_error_category(
         error=error,
         response_text=response_text,
     )
-    error_code = str(classification.error_code or "").strip().upper()
+    error_code = classification.error_code.strip().upper()
     if error_code in {"AUTH_ERROR", "RATE_LIMITED", "TIMEOUT", "INVALID_ARGUMENT"}:
         return error_code
-    reason_code = str(classification.reason_code or "").strip().lower()
+    reason_code = classification.reason_code.strip().lower()
     if reason_code == "quota_or_rate_limit":
         return "RATE_LIMITED"
     if reason_code in {
@@ -68,9 +68,9 @@ def provider_lane_descriptor(
     base_url: str,
 ) -> ProviderLaneDescriptor:
     return ProviderLaneDescriptor(
-        provider_name=str(provider_name or "").strip().lower(),
+        provider_name=provider_name.strip().lower(),
         endpoint_lane=provider_endpoint_lane(base_url),
-        model_name=str(model_name or "").strip(),
+        model_name=model_name.strip(),
     )
 
 
@@ -79,7 +79,7 @@ def provider_lane_descriptor_from_config(
     provider_name: str,
     provider_config: Mapping[str, Any] | None,
 ) -> ProviderLaneDescriptor:
-    payload = dict(provider_config or {})
+    payload = provider_config or {}
     return provider_lane_descriptor(
         provider_name=provider_name,
         model_name=str(payload.get("model") or "").strip(),
@@ -88,12 +88,12 @@ def provider_lane_descriptor_from_config(
 
 
 def provider_endpoint_lane(base_url: str) -> str:
-    normalized = str(base_url or "").strip()
+    normalized = base_url.strip()
     if not normalized:
         return "default"
     parsed = urlparse(normalized)
-    host = str(parsed.netloc or parsed.path or "").strip().lower()
-    path = str(parsed.path or "").strip().lower()
+    host = (parsed.netloc or parsed.path).strip().lower()
+    path = parsed.path.strip().lower()
     if "coding-intl.dashscope.aliyuncs.com" in host:
         return "dashscope_coding_intl"
     if "dashscope.aliyuncs.com" in host and "/compatible-mode/" in path:
@@ -104,9 +104,7 @@ def provider_endpoint_lane(base_url: str) -> str:
         return "openai_default"
 
     host_token = host.replace(".", "_").replace("-", "_").strip("_")
-    path_tokens = [
-        part.replace("-", "_") for part in path.split("/") if str(part).strip()
-    ]
+    path_tokens = [part.replace("-", "_") for part in path.split("/") if part.strip()]
     if path_tokens:
         return "_".join([host_token, *path_tokens]).strip("_")
     return host_token or "default"
@@ -134,10 +132,8 @@ def classify_provider_lane_access(
         )
 
     llm_error = error if isinstance(error, LLMCtlError) else None
-    message = str(getattr(llm_error, "message", "") or error or body_text).strip()
-    error_code = str(
-        getattr(llm_error, "code", "") or ""
-    ).strip() or _embedded_error_code(message)
+    message = (llm_error.message if llm_error else str(error or body_text)).strip()
+    error_code = llm_error.code if llm_error else _embedded_error_code(message)
     lowered = message.lower()
 
     if error_code == "AUTH_ERROR":
@@ -293,7 +289,7 @@ def _embedded_error_code(message: str) -> str:
     match = re.search(r"(?:state machine error:\s*)?([A-Z_]+):", message)
     if match is None:
         return ""
-    return str(match.group(1) or "").strip().upper()
+    return match.group(1).strip().upper()
 
 
 def _looks_like_embedded_runtime_error(message: str) -> bool:

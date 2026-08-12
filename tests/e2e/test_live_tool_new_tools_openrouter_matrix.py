@@ -18,6 +18,7 @@ from tests.helpers.live_e2e_profiles import (
     parse_live_agent_targets_env,
     resolve_live_config_path,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots
 
 pytestmark = pytest.mark.e2e
 
@@ -270,9 +271,7 @@ def live_agent(request: pytest.FixtureRequest) -> dict:
         pytest.skip(f"missing config file: {config_path}")
     agent_id = profile.agent_id or _resolve_agent_id(config_path, framework_root)
 
-    runtime_home = _runtime_home_root()
-    os.environ.setdefault("OPENMINION_HOME", str(runtime_home))
-    os.environ["OPENMINION_DATA_ROOT"] = str(runtime_home / ".openminion")
+    isolate_runtime_roots(prefix="openminion-live-new-tools-")
 
     runtime = APIRuntime.from_config_path(str(config_path))
     yield {

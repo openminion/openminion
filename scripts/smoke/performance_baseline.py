@@ -43,6 +43,26 @@ DEFAULT_SCENARIOS = (
     "local_status_tool_turn",
     "context_heavy_turn",
     "deterministic_full_turn",
+    "instrumentation_overhead_aa",
+    "tcpl_selector_direct_route",
+    "tcpl_selector_retrieval_route",
+    "tcpl_selector_llm_route",
+    "tcpl_02_skill_llm_baseline",
+    "tcpl_02_skill_entry_candidate",
+    "tcpl_02_skill_entry_rollback",
+    "tcpl_01_streaming_safety_nochange",
+    "tcpl_03_memory_projection_defer",
+    "tcpl_04_compaction_defer",
+    "tcpl_05_delivery_fence_retain",
+    "tcpl_compaction_threshold_crossing",
+    "tcpl_memory_followup_pending",
+    "tcpl_memory_followup_active",
+    "tcpl_branch_direct_tool",
+    "tcpl_branch_seeded_multi_step",
+    "tcpl_branch_final_answer_repair",
+    "tcpl_branch_active_mission_finish",
+    "tcpl_provider_retry_fallback",
+    "tcpl_large_tool_surface",
     "provider_payload_serialization",
     "required_lane_branch_characterization",
     "typeadapter_validation_probe",
@@ -68,6 +88,7 @@ TCPL_SKILL_ENTRY_TOKEN_BUDGET = 1200
 TCPL_SKILL_ENTRY_CANDIDATE_BUDGET = 6
 TCPL_COMPACTION_DEFER_MS_THRESHOLD = 10
 TCPL_REQUIRED_COVERAGE: dict[str, tuple[tuple[str, ...], ...]] = {
+    "provider_attempts": (("provider_attempts",),),
     "selector": (("selector_latency_ms",), ("selector_token_count",)),
     "compaction": (("session_compaction_ms",), ("session_compaction_policy",)),
     "memory_followup": (
@@ -930,6 +951,25 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
                             "outcome": "ok",
                             "total_turn_ms": 0,
                             "time_to_first_text_ms": 0,
+                            "provider_call_purposes": ["entry"],
+                            "provider_call_latency_ms": [
+                                _ns_to_ms(phase_ns["provider_stub_round_trip_ns"])
+                            ],
+                            "provider_attempts": [
+                                {
+                                    "logical_call_id": "deterministic-full-turn-entry",
+                                    "semantic_purpose": "entry",
+                                    "attempt": 1,
+                                    "provider": "stub",
+                                    "model": "stub-model",
+                                    "route_posture": "primary",
+                                    "attempt_posture": "initial",
+                                    "latency_ms": _ns_to_ms(
+                                        phase_ns["provider_stub_round_trip_ns"]
+                                    ),
+                                    "outcome": "ok",
+                                }
+                            ],
                             "provider_round_trip_ms": _ns_to_ms(
                                 phase_ns["provider_stub_round_trip_ns"]
                             ),
@@ -1055,6 +1095,17 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
             key.removesuffix("_ns") + "_ms": _ns_to_ms(value)
             for key, value in phase_ns.items()
         }
+        phase_ms.setdefault("session_compaction_ms", 0)
+        phase_ms.setdefault("memory_followup_flush_ms", 0)
+        phase_ms.setdefault("memory_summary_checkpoint_ms", 0)
+        phase_ms.setdefault("memory_summary_structure_ms", 0)
+        phase_ms.setdefault("response_persistence_ms", 0)
+        phase_ms.setdefault("memory_write_ms", 0)
+        phase_ms.setdefault("run_record_finish_ms", 0)
+        phase_ms.setdefault("response_delivery_ms", phase_ms["terminal_delivery_ms"])
+        phase_ms.setdefault("response_delivered_event_ms", 0)
+        phase_ms.setdefault("terminal_event_ms", 0)
+        provider_latency_ms = phase_ms["provider_stub_round_trip_ms"]
         body = str(result.body or "")
         metrics["time_to_first_visible_text_ms"] = 0 if output_chunks else None
         metrics["phase_timings_ns"] = phase_ns
@@ -1062,6 +1113,32 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
         metrics["provider_profile_kind"] = "stub"
         metrics["model_call_count"] = int(result.metadata.get("model_call_count", 0))
         metrics["provider_round_trip_ms"] = phase_ms["provider_stub_round_trip_ms"]
+        metrics["provider_call_purposes"] = ["entry"]
+        metrics["provider_call_latency_ms"] = [provider_latency_ms]
+        metrics["provider_attempts"] = [
+            {
+                "logical_call_id": "deterministic-full-turn-entry",
+                "semantic_purpose": "entry",
+                "attempt": 1,
+                "provider": "stub",
+                "model": "stub-model",
+                "route_posture": "primary",
+                "attempt_posture": "initial",
+                "latency_ms": provider_latency_ms,
+                "outcome": "ok",
+            }
+        ]
+        metrics["selector_latency_ms"] = 0
+        metrics["selector_token_count"] = 0
+        metrics["selector_candidate_count"] = 0
+        metrics["skill_selection_route"] = "direct_no_catalog"
+        metrics["skill_selection_strategy"] = "llm"
+        metrics["session_compaction_ms"] = 0
+        metrics["session_compaction_policy"] = "noop"
+        metrics["memory_followup_flush_ms"] = 0
+        metrics["memory_followup_pending_count"] = 0
+        metrics["memory_summary_checkpoint_ms"] = 0
+        metrics["memory_summary_structure_ms"] = 0
         metrics["prompt_bytes"] = len(request.message.encode("utf-8"))
         metrics["prompt_tokens_estimated"] = _estimate_tokens(request.message)
         metrics["response_bytes"] = len(body.encode("utf-8"))
@@ -1094,6 +1171,606 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
             command="runtime_ingress_fixture:deterministic_full_turn",
             measured_boundary=SUT_BOUNDARY_IN_PROCESS,
             fixture_revision="deterministic-full-turn-v1",
+            options=options,
+        ),
+        action=action,
+    )
+
+
+def _measure_instrumentation_overhead_aa(options: RunOptions) -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.modules.telemetry.trace.phase_timing import ChatPhaseTimer
+
+        iterations = 20
+        disabled_samples_ns: list[int] = []
+        enabled_samples_ns: list[int] = []
+        for _ in range(iterations):
+            started_ns = time.perf_counter_ns()
+            for _index in range(25):
+                pass
+            disabled_samples_ns.append(_elapsed_ns(started_ns))
+
+            timer = ChatPhaseTimer()
+            started_ns = time.perf_counter_ns()
+            for _index in range(25):
+                with timer.phase("provider_request_build"):
+                    pass
+                with timer.phase("provider_round_trip"):
+                    pass
+                timer.record_provider_attempt(
+                    logical_call_id="aa-entry",
+                    semantic_purpose="entry",
+                    attempt=1,
+                    provider="stub",
+                    model="stub-model",
+                    route_posture="primary",
+                    attempt_posture="initial",
+                    latency_ms=0,
+                    outcome="ok",
+                )
+            timer.build_payload()
+            enabled_samples_ns.append(_elapsed_ns(started_ns))
+
+        disabled_median_ns = int(statistics.median(disabled_samples_ns))
+        enabled_median_ns = int(statistics.median(enabled_samples_ns))
+        overhead_ns = max(0, enabled_median_ns - disabled_median_ns)
+        metrics["phase_timings_ns"] = {
+            "instrumentation_disabled_median_ns": disabled_median_ns,
+            "instrumentation_enabled_median_ns": enabled_median_ns,
+            "instrumentation_overhead_median_ns": overhead_ns,
+        }
+        metrics["phase_timings_ms"] = {
+            key.removesuffix("_ns") + "_ms": _ns_to_ms(value)
+            for key, value in metrics["phase_timings_ns"].items()
+        }
+        metrics["instrumentation_aa_enabled_samples"] = iterations
+        metrics["instrumentation_aa_disabled_samples"] = iterations
+        metrics["instrumentation_overhead_median_ms"] = _ns_to_ms(overhead_ns)
+        metrics["provider_calls_allowed"] = False
+        metrics["storage_mutations_allowed"] = False
+        metrics["tool_call_count"] = 0
+        return [
+            "A/A instrumentation loop compares enabled timer/reporting work with a disabled no-op loop.",
+            "The fixture performs no provider calls and no storage mutations.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="instrumentation_overhead_aa",
+        command="local_fixture:instrumentation_overhead_aa",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="none",
+        measurement_identity=_measurement_identity(
+            scenario_id="instrumentation_overhead_aa",
+            command="local_fixture:instrumentation_overhead_aa",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="instrumentation-overhead-aa-v1",
+            options=options,
+        ),
+        action=action,
+    )
+
+
+def _tcpl_attempt(
+    *,
+    scenario_id: str,
+    purpose: str,
+    attempt: int = 1,
+    route_posture: str = "primary",
+    attempt_posture: str = "initial",
+    latency_ms: int = 0,
+    outcome: str = "ok",
+    provider: str = "stub",
+    model: str = "stub-model",
+    error_code: str | None = None,
+    logical_call_id: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "logical_call_id": logical_call_id or f"{scenario_id}-{purpose}",
+        "semantic_purpose": purpose,
+        "attempt": attempt,
+        "provider": provider,
+        "model": model,
+        "route_posture": route_posture,
+        "attempt_posture": attempt_posture,
+        "latency_ms": latency_ms,
+        "outcome": outcome,
+    }
+    if error_code:
+        payload["error_code"] = error_code
+    return payload
+
+
+def _tcpl_phase_ms(
+    *,
+    compaction_ms: int = 0,
+    memory_flush_ms: int = 0,
+    checkpoint_ms: int = 0,
+    structure_ms: int = 0,
+    provider_ms: int = 0,
+) -> dict[str, int]:
+    return {
+        "session_compaction_ms": compaction_ms,
+        "memory_followup_flush_ms": memory_flush_ms,
+        "memory_summary_checkpoint_ms": checkpoint_ms,
+        "memory_summary_structure_ms": structure_ms,
+        "provider_stub_round_trip_ms": provider_ms,
+        "provider_round_trip_ms": provider_ms,
+        "response_persistence_ms": 0,
+        "memory_write_ms": 0,
+        "run_record_finish_ms": 0,
+        "response_delivery_ms": 0,
+        "response_delivered_event_ms": 0,
+        "terminal_event_ms": 0,
+    }
+
+
+def _populate_tcpl_matrix_metrics(
+    metrics: dict[str, Any],
+    *,
+    scenario_id: str,
+    purposes: list[str],
+    selector_route: str,
+    selector_tokens: int,
+    selector_candidates: int,
+    compaction_policy: str,
+    compaction_ms: int,
+    memory_posture: str,
+    memory_pending_count: int,
+    memory_flush_ms: int = 0,
+    checkpoint_ms: int = 0,
+    structure_ms: int = 0,
+    attempts: list[dict[str, Any]] | None = None,
+    tool_call_count: int = 0,
+) -> None:
+    provider_ms = sum(int(item.get("latency_ms", 0) or 0) for item in attempts or [])
+    if attempts is None:
+        attempts = [
+            _tcpl_attempt(
+                scenario_id=scenario_id,
+                purpose=purpose,
+                logical_call_id=f"{scenario_id}-{index}-{purpose}",
+            )
+            for index, purpose in enumerate(purposes, start=1)
+        ]
+        provider_ms = 0
+    phase_ms = _tcpl_phase_ms(
+        compaction_ms=compaction_ms,
+        memory_flush_ms=memory_flush_ms,
+        checkpoint_ms=checkpoint_ms,
+        structure_ms=structure_ms,
+        provider_ms=provider_ms,
+    )
+    metrics["phase_timings_ms"] = phase_ms
+    metrics["phase_timings_ns"] = {
+        key.removesuffix("_ms") + "_ns": value * 1_000_000
+        for key, value in phase_ms.items()
+    }
+    metrics["time_to_first_visible_text_ms"] = 0
+    metrics["provider_profile_kind"] = "stub"
+    metrics["model_call_count"] = len(purposes)
+    metrics["provider_round_trip_ms"] = provider_ms
+    metrics["provider_call_purposes"] = purposes
+    metrics["provider_call_latency_ms"] = [0 for _ in purposes]
+    metrics["provider_attempts"] = attempts
+    metrics["selector_latency_ms"] = 0
+    metrics["selector_token_count"] = selector_tokens
+    metrics["selector_candidate_count"] = selector_candidates
+    metrics["skill_selection_route"] = selector_route
+    metrics["skill_selection_strategy"] = "llm"
+    metrics["session_compaction_ms"] = compaction_ms
+    metrics["session_compaction_policy"] = compaction_policy
+    metrics["memory_followup_flush_ms"] = memory_flush_ms
+    metrics["memory_followup_pending_count"] = memory_pending_count
+    metrics["memory_followup_active_count"] = 1 if memory_posture == "active" else 0
+    metrics["memory_projection_posture"] = memory_posture
+    metrics["memory_summary_checkpoint_ms"] = checkpoint_ms
+    metrics["memory_summary_structure_ms"] = structure_ms
+    metrics["tool_call_count"] = tool_call_count
+    metrics["storage_operation_count"] = 0
+    metrics["render_chunk_count"] = 1
+    metrics["retained_messages"] = 2
+    metrics["prompt_tokens_estimated"] = max(1, selector_tokens)
+    metrics["prompt_bytes"] = metrics["prompt_tokens_estimated"] * 4
+
+
+def _tcpl_set_quality_floor(metrics: dict[str, Any], *, replay: str = "pass") -> None:
+    metrics.update(
+        {
+            "skill_selection_quality": "pass",
+            "tool_order_quality": "pass",
+            "context_quality": "pass",
+            "transcript_quality": "pass",
+            "memory_quality": "pass",
+            "replay_quality": replay,
+            "policy_quality": "pass",
+            "approval_quality": "pass",
+        }
+    )
+
+
+def _measure_tcpl_matrix_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        if scenario_id == "tcpl_selector_direct_route":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+        elif scenario_id == "tcpl_selector_retrieval_route":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry"],
+                selector_route="retrieval",
+                selector_tokens=640,
+                selector_candidates=3,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+        elif scenario_id == "tcpl_selector_llm_route":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["skill_selection", "entry"],
+                selector_route="llm_preselect",
+                selector_tokens=4_800,
+                selector_candidates=24,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+        elif scenario_id == "tcpl_compaction_threshold_crossing":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["self_compaction", "entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="threshold_crossing",
+                compaction_ms=12,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+        elif scenario_id == "tcpl_memory_followup_pending":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["summarize", "entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="pending",
+                memory_pending_count=2,
+                memory_flush_ms=3,
+                checkpoint_ms=1,
+                structure_ms=1,
+            )
+        elif scenario_id == "tcpl_memory_followup_active":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["summarize", "entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="active",
+                memory_pending_count=1,
+                memory_flush_ms=5,
+                checkpoint_ms=1,
+                structure_ms=2,
+            )
+        elif scenario_id == "tcpl_branch_direct_tool":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry", "act", "judge"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+                tool_call_count=1,
+            )
+        elif scenario_id == "tcpl_branch_seeded_multi_step":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry", "judge", "judge", "judge"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+                tool_call_count=2,
+            )
+        elif scenario_id == "tcpl_branch_final_answer_repair":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry", "act", "judge", "judge"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+                tool_call_count=1,
+            )
+            metrics["closure_branch"] = "final_answer_repair"
+        elif scenario_id == "tcpl_branch_active_mission_finish":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry", "act", "judge", "judge"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+                tool_call_count=1,
+            )
+            metrics["closure_branch"] = "active_mission_finish"
+        elif scenario_id == "tcpl_provider_retry_fallback":
+            attempts = [
+                _tcpl_attempt(
+                    scenario_id=scenario_id,
+                    purpose="entry",
+                    attempt=1,
+                    latency_ms=1,
+                    outcome="error",
+                    error_code="TIMEOUT",
+                ),
+                _tcpl_attempt(
+                    scenario_id=scenario_id,
+                    purpose="entry",
+                    attempt=2,
+                    attempt_posture="retry",
+                    latency_ms=1,
+                    outcome="error",
+                    error_code="PROVIDER_ERROR",
+                ),
+                _tcpl_attempt(
+                    scenario_id=scenario_id,
+                    purpose="entry",
+                    attempt=3,
+                    route_posture="fallback",
+                    latency_ms=1,
+                    outcome="ok",
+                    provider="fallback-stub",
+                ),
+            ]
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+                attempts=attempts,
+            )
+        elif scenario_id == "tcpl_large_tool_surface":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["tool_shortlist", "entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+                tool_call_count=0,
+            )
+            metrics["tool_schema_bytes"] = 24_000
+        elif scenario_id == "tcpl_01_streaming_safety_nochange":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+            metrics["candidate_posture"] = "streaming_nochange"
+            metrics["rollback_posture"] = "final_only"
+            metrics["streaming_prefix_contract"] = "missing_structured_safe_prefix"
+            metrics["streaming_current_posture"] = "final_only"
+            metrics["streaming_candidate_disposition"] = "defer_nochange"
+            metrics["delivery_fence_posture"] = "unchanged"
+            _tcpl_set_quality_floor(metrics)
+        elif scenario_id == "tcpl_03_memory_projection_defer":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["summarize", "entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="pending",
+                memory_pending_count=2,
+                memory_flush_ms=5,
+                checkpoint_ms=1,
+                structure_ms=2,
+            )
+            metrics["candidate_posture"] = "memory_projection_defer_nochange"
+            metrics["rollback_posture"] = "synchronous_followup_flush"
+            metrics["memory_generation_contract"] = "not_implemented"
+            metrics["memory_candidate_disposition"] = "defer_nochange"
+            _tcpl_set_quality_floor(metrics)
+        elif scenario_id == "tcpl_04_compaction_defer":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["self_compaction", "entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="threshold_crossing",
+                compaction_ms=12,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+            metrics["candidate_posture"] = "compaction_projection_defer_nochange"
+            metrics["rollback_posture"] = "synchronous_compaction"
+            metrics["session_compaction_generation_contract"] = "not_implemented"
+            metrics["session_compaction_candidate_disposition"] = "defer_nochange"
+            _tcpl_set_quality_floor(metrics)
+        elif scenario_id == "tcpl_05_delivery_fence_retain":
+            _populate_tcpl_matrix_metrics(
+                metrics,
+                scenario_id=scenario_id,
+                purposes=["entry"],
+                selector_route="direct_no_catalog",
+                selector_tokens=0,
+                selector_candidates=0,
+                compaction_policy="noop",
+                compaction_ms=0,
+                memory_posture="none",
+                memory_pending_count=0,
+            )
+            metrics["candidate_posture"] = "delivery_fence_retain"
+            metrics["rollback_posture"] = "delivery_fence_retain"
+            metrics["delivery_fence_posture"] = (
+                "transcript_memory_terminal_before_final"
+            )
+            metrics["delivery_candidate_disposition"] = "retain_nochange"
+            metrics["post_delivery_allowed_work"] = ["derived_projection", "analytics"]
+            _tcpl_set_quality_floor(metrics)
+        else:
+            raise ValueError(f"unknown TCPL matrix scenario: {scenario_id}")
+        return [
+            "Provider-free TCPL route/branch matrix fixture.",
+            "Records structural owner inputs only; no runtime optimization is enabled.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command=f"tcpl_matrix_fixture:{scenario_id}",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="stub",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command=f"tcpl_matrix_fixture:{scenario_id}",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="tcpl-matrix-v1",
+            options=options,
+        ),
+        action=action,
+    )
+
+
+def _measure_tcpl02_skill_entry_scenario(
+    scenario_id: str,
+    options: RunOptions,
+) -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        selected_skill_ids = ["alpha_skill", "beta_skill"]
+        quality_assertions = {
+            "skill_selection_quality": "pass",
+            "tool_order_quality": "pass",
+            "context_quality": "pass",
+            "transcript_quality": "pass",
+            "memory_quality": "not_applicable",
+            "replay_quality": "pass",
+            "policy_quality": "pass",
+            "approval_quality": "not_applicable",
+        }
+        if scenario_id == "tcpl_02_skill_entry_candidate":
+            purposes = ["entry"]
+            selector_route = "entry_inline"
+            strategy = "entry"
+            candidate_posture = "entry_opt_in"
+        elif scenario_id == "tcpl_02_skill_entry_rollback":
+            purposes = ["skill_selection", "entry"]
+            selector_route = "llm_preselect"
+            strategy = "llm"
+            candidate_posture = "rollback_llm"
+        elif scenario_id == "tcpl_02_skill_llm_baseline":
+            purposes = ["skill_selection", "entry"]
+            selector_route = "llm_preselect"
+            strategy = "llm"
+            candidate_posture = "baseline_current"
+        else:
+            raise ValueError(f"unknown TCPL-02 skill entry scenario: {scenario_id}")
+        attempts = [
+            _tcpl_attempt(
+                scenario_id=scenario_id,
+                purpose=purpose,
+                logical_call_id=f"{scenario_id}-{index}-{purpose}",
+            )
+            for index, purpose in enumerate(purposes, start=1)
+        ]
+        _populate_tcpl_matrix_metrics(
+            metrics,
+            scenario_id=scenario_id,
+            purposes=purposes,
+            selector_route=selector_route,
+            selector_tokens=640,
+            selector_candidates=len(selected_skill_ids),
+            compaction_policy="noop",
+            compaction_ms=0,
+            memory_posture="none",
+            memory_pending_count=0,
+            attempts=attempts,
+        )
+        metrics["skill_selection_strategy"] = strategy
+        metrics["candidate_posture"] = candidate_posture
+        metrics["rollback_posture"] = "llm"
+        metrics["selected_skill_ids"] = selected_skill_ids
+        metrics["applied_skill_ids"] = selected_skill_ids
+        metrics["skill_catalog_hash"] = "tcpl-02-two-skill-catalog-v1"
+        metrics["skill_catalog_complete_rendered"] = True
+        metrics["entry_candidate_budget_tokens"] = TCPL_SKILL_ENTRY_TOKEN_BUDGET
+        metrics["entry_candidate_budget_count"] = TCPL_SKILL_ENTRY_CANDIDATE_BUDGET
+        metrics.update(quality_assertions)
+        return [
+            "Provider-free TCPL-02 skill-entry candidate fixture.",
+            "Baseline and rollback use llm preselection; entry candidate uses the same bounded rendered candidates inside entry.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command=f"tcpl_02_skill_entry_fixture:{scenario_id}",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="stub",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command=f"tcpl_02_skill_entry_fixture:{scenario_id}",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="tcpl-02-skill-entry-candidate-v1",
             options=options,
         ),
         action=action,
@@ -1794,6 +2471,12 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         return _measure_context_heavy_turn()
     if scenario_id == "deterministic_full_turn":
         return _measure_deterministic_full_turn(options)
+    if scenario_id == "instrumentation_overhead_aa":
+        return _measure_instrumentation_overhead_aa(options)
+    if scenario_id.startswith("tcpl_02_"):
+        return _measure_tcpl02_skill_entry_scenario(scenario_id, options)
+    if scenario_id.startswith("tcpl_"):
+        return _measure_tcpl_matrix_scenario(scenario_id, options)
     if scenario_id == "provider_payload_serialization":
         return _measure_provider_payload_serialization()
     if scenario_id == "required_lane_branch_characterization":
@@ -2204,6 +2887,17 @@ def _provider_call_latencies(metrics: dict[str, Any]) -> list[int]:
     return []
 
 
+def _provider_attempts(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = metrics.get("provider_attempts")
+    if not isinstance(raw, list):
+        return []
+    attempts: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, dict):
+            attempts.append(dict(item))
+    return attempts
+
+
 def _cold_warm_classification(scenario_id: str) -> str:
     if scenario_id.startswith("cold_"):
         return "cold"
@@ -2249,6 +2943,28 @@ def _validate_tcpl_sample(sample: dict[str, Any]) -> None:
             )
         if any(isinstance(value, int) and value < 0 for value in latencies):
             raise ValueError("TCPL provider call latencies must be >= 0")
+    attempts = sample.get("provider_attempts")
+    if isinstance(attempts, list):
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                raise ValueError("TCPL provider_attempts entries must be objects")
+            for key in (
+                "logical_call_id",
+                "semantic_purpose",
+                "attempt",
+                "provider",
+                "model",
+                "route_posture",
+                "attempt_posture",
+                "latency_ms",
+                "outcome",
+            ):
+                if key not in attempt:
+                    raise ValueError(f"TCPL provider_attempts missing {key}")
+            if int(attempt.get("attempt", 0) or 0) < 1:
+                raise ValueError("TCPL provider_attempts attempt must be >= 1")
+            if int(attempt.get("latency_ms", 0) or 0) < 0:
+                raise ValueError("TCPL provider_attempts latency_ms must be >= 0")
 
 
 def _tcpl_shadow_decisions(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -2279,6 +2995,12 @@ def _tcpl_shadow_decisions(metrics: dict[str, Any]) -> dict[str, Any]:
         else:
             skill_candidate_decision = "separate_selector_required"
             skill_reason = "candidate content exceeds approved entry budgets"
+    projected_skill_avoided_calls = (
+        1
+        if skill_candidate_decision == "entry_candidate_eligible"
+        and selector_current == "llm"
+        else 0
+    )
     compaction_candidate_decision = "insufficient_structural_input"
     compaction_reason = "compaction timing/policy unavailable in this scenario"
     if compaction_has_inputs:
@@ -2308,7 +3030,7 @@ def _tcpl_shadow_decisions(metrics: dict[str, Any]) -> dict[str, Any]:
             "selector_candidate_count": selector_candidates
             if isinstance(selector_candidates, int)
             else "unavailable",
-            "projected_avoided_provider_calls": 0,
+            "projected_avoided_provider_calls": projected_skill_avoided_calls,
             "reason": skill_reason,
         },
         "session_compaction": {
@@ -2330,12 +3052,13 @@ def _tcpl_has_field(samples: list[dict[str, Any]], field: str) -> bool:
         phase_value = (
             phase_timings.get(field) if isinstance(phase_timings, dict) else None
         )
-        if sample_value not in (None, "unavailable") or phase_value not in (
-            None,
-            "unavailable",
-        ):
+        if _tcpl_field_present(sample_value) or _tcpl_field_present(phase_value):
             return True
     return False
+
+
+def _tcpl_field_present(value: Any) -> bool:
+    return value not in (None, "unavailable", [], {})
 
 
 def _tcpl_missing_coverage(samples: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -2349,6 +3072,22 @@ def _tcpl_missing_coverage(samples: list[dict[str, Any]]) -> dict[str, list[str]
         if missing_groups:
             missing[coverage_name] = missing_groups
     return missing
+
+
+def _tcpl_quality_assertions(
+    *,
+    artifact: dict[str, Any],
+    metrics: dict[str, Any],
+    provider: str,
+) -> dict[str, Any]:
+    assertions: dict[str, Any] = {
+        "fixture_ok": bool(artifact.get("ok")),
+        "no_provider_call_for_local_fixture": provider in {"none", "stub"},
+    }
+    for invariant in TCPL_QUALITY_INVARIANTS:
+        if invariant in metrics:
+            assertions[invariant] = metrics[invariant]
+    return assertions
 
 
 def _tcpl_sample_from_artifact(
@@ -2399,8 +3138,10 @@ def _tcpl_sample_from_artifact(
                 "python": str(options.python),
             }
         ),
-        "candidate_posture": "baseline_current",
-        "rollback_posture": "baseline_current",
+        "candidate_posture": str(
+            metrics.get("candidate_posture") or "baseline_current"
+        ),
+        "rollback_posture": str(metrics.get("rollback_posture") or "baseline_current"),
     }
     sample = {
         "artifact_schema_version": TCPL_ARTIFACT_SCHEMA_VERSION,
@@ -2421,6 +3162,8 @@ def _tcpl_sample_from_artifact(
         "phase_timings_ns": metrics.get("phase_timings_ns", {}),
         "provider_call_purposes": _provider_call_purposes(metrics),
         "provider_call_latency_ms": _provider_call_latencies(metrics),
+        "provider_attempts": _provider_attempts(metrics),
+        "provider_attempt_count": len(_provider_attempts(metrics)),
         "provider_call_count": int(metrics.get("model_call_count", 0) or 0),
         "tool_call_count": int(metrics.get("tool_call_count", 0) or 0),
         "input_tokens": metrics.get("provider_input_tokens"),
@@ -2437,6 +3180,9 @@ def _tcpl_sample_from_artifact(
         "skill_selection_strategy": metrics.get(
             "skill_selection_strategy", "unavailable"
         ),
+        "selected_skill_ids": metrics.get("selected_skill_ids", []),
+        "applied_skill_ids": metrics.get("applied_skill_ids", []),
+        "skill_catalog_hash": metrics.get("skill_catalog_hash", "unavailable"),
         "session_compaction_ms": metrics.get("session_compaction_ms", "unavailable"),
         "session_compaction_policy": metrics.get(
             "session_compaction_policy", "unavailable"
@@ -2447,10 +3193,11 @@ def _tcpl_sample_from_artifact(
         "memory_followup_pending_count": metrics.get(
             "memory_followup_pending_count", "unavailable"
         ),
-        "quality_assertions": {
-            "fixture_ok": bool(artifact.get("ok")),
-            "no_provider_call_for_local_fixture": provider in {"none", "stub"},
-        },
+        "quality_assertions": _tcpl_quality_assertions(
+            artifact=artifact,
+            metrics=metrics,
+            provider=provider,
+        ),
         "shadow_decisions": _tcpl_shadow_decisions(metrics),
         "source_run_artifact": artifact.get("artifact_path"),
     }

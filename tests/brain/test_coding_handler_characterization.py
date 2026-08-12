@@ -287,7 +287,7 @@ class TestCodingVerificationReserve:
         assert "preferring" in runner._loop_state.messages[-1].content.lower()
         assert "`file.read`" in runner._loop_state.messages[-1].content
 
-    def test_final_answer_reserve_retries_after_verification_stub(self) -> None:
+    def test_final_answer_reserve_does_not_classify_model_prose(self) -> None:
         runner = CodingProfileRunner()
         runner._coding_plan = SimpleNamespace(
             current_phase="verify",
@@ -321,14 +321,12 @@ class TestCodingVerificationReserve:
             final_text="Verification step: read back loopcalc.py.",
         )
 
-        assert runner._maybe_continue_with_final_answer_reserve(ctx, outcome=outcome)
-        assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
-        assert "coding.pending_continue" not in runner._loop_state.scratchpad
-        assert len(runner._loop_state.messages) == 2
-        assert (
-            runner._loop_state.messages[0].content == "Use the exact label `result:`."
+        assert not runner._maybe_continue_with_final_answer_reserve(
+            ctx, outcome=outcome
         )
-        assert "Do not call any tools" in runner._loop_state.messages[-1].content
+        assert "coding.final_answer_reserve_used" not in runner._loop_state.scratchpad
+        assert runner._loop_state.scratchpad["coding.pending_continue"] is True
+        assert len(runner._loop_state.messages) == 2
 
     def test_final_answer_reserve_retries_after_verifier_incomplete_failure(
         self,
@@ -470,7 +468,7 @@ class TestCodingVerificationReserve:
         )
         assert "`file.read`" in runner._loop_state.messages[-1].content
 
-    def test_tool_choice_none_failure_after_write_queues_verification_reserve(
+    def test_verification_reserve_does_not_parse_llm_error_text(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -504,38 +502,10 @@ class TestCodingVerificationReserve:
             error_message="Model returned tool calls after tool_choice=none was enforced.",
         )
 
-        assert runner._maybe_continue_with_verification_reserve(ctx, outcome=outcome)
-        assert runner._loop_state.scratchpad["coding.verification_reserve_used"] is True
-        assert "reserved final tool step" in runner._loop_state.messages[-1].content
-
-    def test_tool_choice_none_recovery_does_not_require_budget_counters(
-        self,
-    ) -> None:
-        runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback(
-            "Build a tiny CLI.", include_verify=True
+        assert not runner._maybe_continue_with_verification_reserve(
+            ctx, outcome=outcome
         )
-        runner._coding_plan.current_phase = "verify"
-        runner._loop_state.scratchpad = {
-            "adaptive.tool_results": [
-                {"tool_name": "file.write", "ok": True},
-            ],
-        }
-        ctx = SimpleNamespace(
-            state=SimpleNamespace(task_backed_checkpoint_id=None),
-            emit_status=lambda **kwargs: None,
-        )
-        outcome = AdaptiveToolLoopOutcome(
-            profile_name="coding_v1",
-            mode_name="act_coding",
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-            state=runner._as_adaptive_state(runner._loop_state),
-            allowed_tools=frozenset(),
-            error_message="Model returned tool calls after tool_choice=none was enforced.",
-        )
-
-        assert runner._maybe_continue_with_verification_reserve(ctx, outcome=outcome)
-        assert runner._loop_state.scratchpad["coding.verification_reserve_used"] is True
+        assert "coding.verification_reserve_used" not in runner._loop_state.scratchpad
 
     def test_verify_disallowed_writer_becomes_read_only_verification_retry(
         self,
@@ -579,7 +549,7 @@ class TestCodingVerificationReserve:
         assert runner._loop_state.scratchpad["coding.verification_reserve_used"] is True
         assert "Verification is read-only" in runner._loop_state.messages[-1].content
 
-    def test_verify_disallowed_writer_does_not_requeue_final_answer_reserve(
+    def test_verify_disallowed_writer_fails_without_model_final_answer(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -618,12 +588,12 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "done"
+        assert result.status == "error"
         assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
         assert "coding.verification_reserve_used" not in runner._loop_state.scratchpad
-        assert "result: reserved final closeout was interrupted" in result.message
+        assert "reserved final closeout" not in result.message
 
-    def test_final_answer_reserve_disallowed_writer_salvages_final_summary(
+    def test_final_answer_reserve_disallowed_writer_does_not_invent_summary(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -674,9 +644,9 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "done"
-        assert "files changed: pkg/main.py" in result.message
-        assert "result: reserved final closeout was interrupted" in result.message
+        assert result.status == "error"
+        assert "files changed: pkg/main.py" not in result.message
+        assert "reserved final closeout" not in result.message
 
     def test_final_answer_reserve_budget_exhausted_salvages_final_summary(self) -> None:
         runner = CodingProfileRunner()
@@ -727,7 +697,7 @@ class TestCodingVerificationReserve:
 
         assert result.status == "done"
         assert "files changed: pkg/main.py" in result.message
-        assert "result: reserved final closeout was interrupted" in result.message
+        assert "reserved final closeout" not in result.message
 
     def test_final_answer_reserve_budget_exhausted_does_not_salvage_missing_validation(
         self,
@@ -784,7 +754,7 @@ class TestCodingVerificationReserve:
         assert result.status != "done"
         assert "successful file mutations" not in str(result.message or "")
 
-    def test_final_answer_reserve_blocked_cap_salvages_final_summary(self) -> None:
+    def test_final_answer_reserve_blocked_cap_remains_blocked(self) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 1
         runner._coding_plan = CodingPlan.fallback(
@@ -839,9 +809,9 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "done"
-        assert "files changed: pkg/main.py" in result.message
-        assert "result: reserved final closeout was interrupted" in result.message
+        assert result.status == "waiting_user"
+        assert "files changed: pkg/main.py" not in result.message
+        assert "reserved final closeout" not in result.message
 
     def test_advance_plan_after_phase_blocks_at_self_correction_cap(self) -> None:
         runner = CodingProfileRunner()
@@ -1293,7 +1263,7 @@ class TestCodingVerificationReserve:
             for status in emitted
         )
 
-    def test_final_text_retries_when_model_prints_file_payload(
+    def test_missing_write_retry_does_not_parse_model_final_text(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -1331,7 +1301,7 @@ class TestCodingVerificationReserve:
 
         assert result.status == "continue"
         retry = runner._loop_state.messages[-1].content
-        assert "Do not print JSON" in retry
+        assert "JSON" not in retry
         assert "file.write" in retry
         assert "code.patch" in retry
 
@@ -1468,7 +1438,7 @@ class TestCodingVerificationReserve:
             for status in emitted
         )
 
-    def test_circular_tool_stop_uses_user_file_write_request_as_write_gate(
+    def test_circular_tool_stop_does_not_infer_write_gate_from_prose(
         self,
     ) -> None:
         emitted: list[dict[str, object]] = []
@@ -1512,23 +1482,12 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "continue"
-        assert (
-            runner._loop_state.scratchpad["coding.verify_gate_reason"]
-            == "readonly_dead_end_missing_write"
-        )
-        assert "file.write" in runner._loop_state.messages[-1].content
-        assert runner._loop_state.direct_tool_turn is not None
-        assert runner._loop_state.direct_tool_turn.requested_tool_names == (
-            "file.write",
-        )
-        assert any(
-            status.get("payload", {}).get("coding.verify_gate_reason")
-            == "readonly_dead_end_missing_write"
-            for status in emitted
-        )
+        assert result.status == "waiting_user"
+        assert "coding.verify_gate_reason" not in runner._loop_state.scratchpad
+        assert runner._loop_state.direct_tool_turn is None
+        assert not emitted
 
-    def test_budget_exhausted_before_file_write_uses_user_request_write_gate(
+    def test_budget_exhausted_does_not_infer_write_gate_from_prose(
         self,
     ) -> None:
         emitted: list[dict[str, object]] = []
@@ -1572,21 +1531,10 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "continue"
-        assert (
-            runner._loop_state.scratchpad["coding.verify_gate_reason"]
-            == "missing_implementation_write"
-        )
-        assert "file.write" in runner._loop_state.messages[-1].content
-        assert runner._loop_state.direct_tool_turn is not None
-        assert runner._loop_state.direct_tool_turn.requested_tool_names == (
-            "file.write",
-        )
-        assert any(
-            status.get("payload", {}).get("coding.verify_gate_reason")
-            == "missing_implementation_write"
-            for status in emitted
-        )
+        assert result.status == "waiting_user"
+        assert "coding.verify_gate_reason" not in runner._loop_state.scratchpad
+        assert runner._loop_state.direct_tool_turn is None
+        assert not emitted
 
     def test_budget_exhausted_after_file_write_returns_labeled_evidence_closeout(
         self,
@@ -1683,23 +1631,3 @@ class TestCodingVerificationReserve:
         assert result.status == "done"
         assert result.message == "result: explanation"
         assert "coding.verify_gate_blocks" not in runner._loop_state.scratchpad
-
-    def test_final_answer_reserve_detects_missing_requested_markers(self) -> None:
-        runner = CodingProfileRunner()
-        runner._loop_state.messages = [
-            Message(
-                role="user",
-                content=(
-                    "Close with the exact labels `design:`, `validation:`, and "
-                    "`next steps:`."
-                ),
-            )
-        ]
-
-        assert runner._missing_requested_final_markers("design: done") is True
-        assert (
-            runner._missing_requested_final_markers(
-                "design: done\nvalidation: passed\nnext steps: none"
-            )
-            is False
-        )

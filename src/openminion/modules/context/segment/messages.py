@@ -15,15 +15,9 @@ from .cache import segment_render_cache_metadata
 
 def map_turn_role(role: str) -> str:
     normalized = role.strip().lower()
-    if normalized in {"user", "assistant", "system", "tool"}:
+    if normalized in {"assistant", "system", "tool"}:
         return normalized
-    return (
-        "user"
-        if normalized in {"inbound"}
-        else "assistant"
-        if normalized == "outbound"
-        else "user"
-    )
+    return "assistant" if normalized == "outbound" else "user"
 
 
 def protected_decide_recent_turn_indexes(
@@ -39,10 +33,9 @@ def protected_decide_recent_turn_indexes(
             return protected
         return set()
 
-    has_assistant = any(
+    if any(
         map_turn_role(turn.role) == "assistant" for turn in recent_turns
-    )
-    if has_assistant:
+    ):
         return set()
     user_indexes = [
         idx

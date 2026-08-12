@@ -35,8 +35,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 @dataclass(slots=True)
 class _SuccessReflectionData:
     command_ids: list[str]
-    tool_names: list[str]
-    artifact_refs: list[str]
     snapshot: dict[str, Any]
     snapshot_refs: list[str]
     llm_call_id: str
@@ -63,7 +61,6 @@ def extract_success_memories(
         judgment=judgment,
         logger=logger,
         config=config,
-        strategy_outcome_refs=strategy_outcome_refs,
     )
     if skipped is not None:
         return skipped
@@ -173,7 +170,6 @@ def _validate_success_preconditions(
     judgment: ClosureJudgment,
     logger: CanonicalEventLogger,
     config: Any,
-    strategy_outcome_refs: list[str],
 ) -> list[str] | None:
     if config is None or not bool(getattr(config, "enabled", False)):
         return emit_skipped(
@@ -181,7 +177,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="disabled",
-            refs=strategy_outcome_refs,
         )
     if (
         bool(getattr(config, "require_closure_satisfied", True))
@@ -192,7 +187,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="closure_not_satisfied",
-            refs=strategy_outcome_refs,
         )
     if str(getattr(judgment, "next_action", "") or "").strip().lower() != "close":
         return emit_skipped(
@@ -200,7 +194,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="non_close_disposition",
-            refs=strategy_outcome_refs,
         )
     if (
         action_result is None
@@ -211,7 +204,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="non_success_action_result",
-            refs=strategy_outcome_refs,
         )
     if bool(
         getattr(config, "require_all_steps_successful", False)
@@ -221,7 +213,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="all_steps_success_required",
-            refs=strategy_outcome_refs,
         )
     if runner.llm_api is None or runner.context_api is None:
         return emit_skipped(
@@ -229,7 +220,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="missing_llm_or_context",
-            refs=strategy_outcome_refs,
             status="warning",
         )
     if runner.memory_api is None:
@@ -238,7 +228,6 @@ def _validate_success_preconditions(
             event="brain.success_memory.skipped",
             state=state,
             reason="memory_api_unavailable",
-            refs=strategy_outcome_refs,
             status="warning",
         )
     return None
@@ -301,8 +290,6 @@ def _build_success_reflection(
     )
     return _SuccessReflectionData(
         command_ids=command_ids,
-        tool_names=tool_names,
-        artifact_refs=artifact_refs,
         snapshot=snapshot,
         snapshot_refs=snapshot_refs,
         llm_call_id=llm_call_id,

@@ -19,10 +19,7 @@ class SessionTimelineMirror:
         details: dict[str, Any],
         outcome: str = "ok",
     ) -> bool:
-        if self._store is None:
-            return False
-
-        if not session_id:
+        if self._store is None or not session_id:
             return False
 
         try:
@@ -68,9 +65,8 @@ class SessionTimelineMirror:
         if not session_id or not events:
             return 0
 
-        count = 0
-        for ev in events:
-            success = self.mirror_event(
+        return sum(
+            self.mirror_event(
                 event_type=ev.get("event_type", "unknown"),
                 session_id=session_id,
                 agent_id=ev.get("agent_id"),
@@ -78,6 +74,5 @@ class SessionTimelineMirror:
                 details=ev.get("details", {}),
                 outcome=ev.get("outcome", "ok"),
             )
-            if success:
-                count += 1
-        return count
+            for ev in events
+        )

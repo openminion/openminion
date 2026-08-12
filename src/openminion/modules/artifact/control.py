@@ -308,9 +308,7 @@ class ArtifactCtl:
         if rec is None:
             return None
         meta = self.index.get_artifact(rec.sha256, include_deleted=False)
-        if meta is None:
-            return None
-        return meta.to_ref()
+        return None if meta is None else meta.to_ref()
 
     def alias_list(self, prefix: str | None = None) -> list[dict[str, Any]]:
         return [
@@ -460,12 +458,9 @@ class ArtifactCtl:
         else:
             rows = [self.get(target)]
 
-        checked = 0
-        ok = 0
         issues: list[VerifyIssue] = []
 
         for row in rows:
-            checked += 1
             if not self.blob_store.exists(row.sha256):
                 issues.append(VerifyIssue(sha256=row.sha256, issue="missing_blob"))
                 continue
@@ -481,9 +476,13 @@ class ArtifactCtl:
                     )
                 )
                 continue
-            ok += 1
 
-        return VerifyReport(checked=checked, ok=ok, failed=len(issues), issues=issues)
+        return VerifyReport(
+            checked=len(rows),
+            ok=len(rows) - len(issues),
+            failed=len(issues),
+            issues=issues,
+        )
 
     def ref_add(self, owner_type: str, owner_id: str, ref_or_sha: str) -> None:
         self._validate_owner_type(owner_type)
@@ -570,7 +569,7 @@ class ArtifactCtl:
         if retrieve_ctl is None:
             return
 
-        payload_meta = meta if isinstance(meta, dict) else {}
+        payload_meta = meta or {}
         scope = str(payload_meta.get("scope") or "project")
         title = str(payload_meta.get("title") or fallback_title or artifact_ref.ref)
         raw_tags = payload_meta.get("tags")
@@ -588,7 +587,7 @@ class ArtifactCtl:
             "text": artifact_text,
             "scope": scope,
             "title": title,
-            "tags": tags or ["artifact"],
+            "tags": tags,
         }
         try:
             retrieve_ctl.ingest_event("artifact.created", payload)
@@ -822,19 +821,16 @@ def _determine_mime(provided: str | None, path: Path | None, sample: bytes) -> s
 
 
 def _decode_text(data: bytes) -> tuple[str, list[str]]:
-    warnings: list[str] = []
     if not data:
-        return "", warnings
+        return "", []
 
     if b"\x00" in data[:4096]:
-        warnings.append("binary_content")
-        return "", warnings
+        return "", ["binary_content"]
 
     try:
-        return data.decode("utf-8"), warnings
+        return data.decode("utf-8"), []
     except UnicodeDecodeError:
-        warnings.append("decode_errors_replaced")
-        return data.decode("utf-8", errors="replace"), warnings
+        return data.decode("utf-8", errors="replace"), ["decode_errors_replaced"]
 
 
 def _detect_encoding(data: bytes) -> str | None:
@@ -850,8 +846,6 @@ def _detect_encoding(data: bytes) -> str | None:
 
 def _extract_ingest_text_from_bytes(data: bytes, *, max_chars: int = 20000) -> str:
     text, _warnings = _decode_text(data)
-    if not text:
-        return ""
     return text[:max_chars].strip()
 
 
@@ -949,9 +943,7 @@ def _build_table_view(text: str, *, delimiter: str, max_rows: int) -> dict[str, 
         if len(sampled_rows) < max_rows:
             sampled_rows.append(row)
 
-    warnings: list[str] = []
-    if total_rows > max_rows:
-        warnings.append("rows_sampled")
+    warnings = ["rows_sampled"] if total_rows > max_rows else []
 
     return {
         "columns": header,

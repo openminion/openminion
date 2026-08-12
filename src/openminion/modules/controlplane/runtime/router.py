@@ -140,11 +140,8 @@ class Router:
         stripped = (text or "").strip()
         if not stripped.startswith("/session "):
             return None
-        parts = stripped.split()
-        if len(parts) < 2:
-            return None
-        candidate = parts[1].strip()
-        if not candidate or candidate.lower() in _SESSION_RESERVED:
+        candidate = stripped.split(maxsplit=1)[1]
+        if candidate.lower() in _SESSION_RESERVED:
             return None
         return candidate
 

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlencode
 
+from openminion.api.queries.runtime_reports import (
+    build_tool_inventory_report,
+    build_tool_schema_report,
+)
 from openminion.cli.config import load_cli_config_from_args
 from openminion.cli.parser.flags import add_runtime_source_flag, add_tool_session_arg
 from openminion.cli.presentation.json_output import print_json_payload
@@ -15,12 +23,14 @@ from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.refs import (
     tool_result_artifact_refs as _tool_result_artifact_refs,
 )
+from openminion.modules.tool.facade import build_default_tool_registry
 from openminion.modules.policy.adapters.composition import (
     SEAM_CLI_TOOLS,
     build_default_composition_boundary_adapter,
 )
 from openminion.modules.tool.selection import ToolSelectionService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
+from openminion.services.runtime.sidecars import ensure_sidecar_autostart
 
 
 def run_tools(args) -> int:
@@ -301,12 +311,29 @@ def _runtime_from_args(args_or_config_path: object) -> APIRuntime:
     )
 
 
-def _inproc_tool_specs(args_or_config_path: object) -> list[dict]:
-    runtime = _runtime_from_args(args_or_config_path)
+@contextmanager
+def _local_tool_runtime(args_or_config_path: object) -> Iterator[tuple[Any, Any]]:
+    config = load_cli_config_from_args(args_or_config_path)
+    configured_workspace = str(config.runtime.tool_workspace_root or "").strip()
+    workspace_root = (
+        Path(configured_workspace).expanduser() if configured_workspace else Path.cwd()
+    )
+    tools = build_default_tool_registry(
+        config=config.runtime,
+        workspace_root=workspace_root,
+        strict=False,
+    )
+    tools.bind_sidecar_autostart(ensure_sidecar_autostart)
     try:
-        return runtime.tool_inventory_report()
+        yield config, tools
     finally:
-        runtime.close()
+        if tools.mcp_manager is not None:
+            tools.mcp_manager.close()
+
+
+def _inproc_tool_specs(args_or_config_path: object) -> list[dict]:
+    with _local_tool_runtime(args_or_config_path) as (_config, tools):
+        return build_tool_inventory_report(SimpleNamespace(tools=tools))
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -396,9 +423,11 @@ def _add_exposure_scope_args(parser, *, include_profile: bool = True) -> None:
 
 
 def _inproc_tool_schema(args_or_config_path: object, *, tool_name: str) -> dict:
-    runtime = _runtime_from_args(args_or_config_path)
-    try:
-        schema = runtime.tool_schema_report(tool_name=tool_name)
+    with _local_tool_runtime(args_or_config_path) as (_config, tools):
+        schema = build_tool_schema_report(
+            SimpleNamespace(tools=tools),
+            tool_name=tool_name,
+        )
         if schema is None:
             return {
                 "ok": False,
@@ -411,8 +440,6 @@ def _inproc_tool_schema(args_or_config_path: object, *, tool_name: str) -> dict:
             "ok": True,
             "tool": schema,
         }
-    finally:
-        runtime.close()
 
 
 def _inproc_tool_run(
@@ -423,11 +450,8 @@ def _inproc_tool_run(
     session_id: str,
     confirm: bool = False,
 ) -> dict:
-    runtime = _runtime_from_args(args_or_config_path)
-    try:
-        provider_spec = None
-        if callable(getattr(runtime.tools, "provider_spec_for_name", None)):
-            provider_spec = runtime.tools.provider_spec_for_name(tool_name)
+    with _local_tool_runtime(args_or_config_path) as (config, tools):
+        provider_spec = tools.provider_spec_for_name(tool_name)
         if provider_spec is None:
             return {
                 "ok": False,
@@ -436,7 +460,7 @@ def _inproc_tool_run(
                     "message": f"Unknown tool: {tool_name}",
                 },
             }
-        batch = runtime.tools.execute_calls(
+        batch = tools.execute_calls(
             [
                 ProviderToolCall(
                     name=tool_name,
@@ -448,22 +472,14 @@ def _inproc_tool_run(
                 channel="console",
                 target="cli-tools",
                 session_id=session_id,
-                authored_tools_api=getattr(runtime, "authored_tools", None),
                 metadata={
                     "session_id": session_id,
                     "origin": "openminion.tools.inproc",
-                    "runtime_env": dict(
-                        getattr(
-                            getattr(runtime.config, "runtime", None),
-                            "env",
-                            {},
-                        )
-                        or {}
-                    ),
-                    **build_runtime_tool_routing_metadata(runtime.config.runtime.tools),
+                    "runtime_env": dict(config.runtime.env or {}),
+                    **build_runtime_tool_routing_metadata(config.runtime.tools),
                     **ToolSelectionService(
-                        runtime.config.runtime.tool_selection,
-                        runtime.tools,
+                        config.runtime.tool_selection,
+                        tools,
                     ).runtime_binding_policy_metadata(),
                 },
                 blast_radius_adapter=build_default_composition_boundary_adapter(
@@ -489,8 +505,6 @@ def _inproc_tool_run(
                 result=result,
             ),
         }
-    finally:
-        runtime.close()
 
 
 def _inproc_exposure_status(args_or_config_path: object, payload: dict) -> dict:

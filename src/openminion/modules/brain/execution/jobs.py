@@ -19,32 +19,21 @@ def poll_async_job(
     state: WorkingState,
     job: JobHandle,
 ) -> dict[str, Any] | None:
-    provider = str(getattr(job, "provider", "")).strip().lower()
-    adapter = None
-    if provider == BRAIN_COMMAND_KIND_TOOL:
-        adapter = runner.tool_api
-    elif provider in {"a2actl", "a2a"}:
-        adapter = runner.a2a_api
+    adapter = (
+        runner.tool_api if job.provider == BRAIN_COMMAND_KIND_TOOL else runner.a2a_api
+    )
     if adapter is None:
         return None
 
-    poll_task = getattr(adapter, "poll_task", None)
-    poll = getattr(adapter, "poll", None)
+    poll = getattr(adapter, "poll_task", None) or getattr(adapter, "poll", None)
+    if not callable(poll):
+        return None
     try:
-        if callable(poll_task):
-            result = poll_task(
-                task_id=job.task_id,
-                session_id=state.session_id,
-                trace_id=state.trace_id or "",
-            )
-        elif callable(poll):
-            result = poll(
-                task_id=job.task_id,
-                session_id=state.session_id,
-                trace_id=state.trace_id or "",
-            )
-        else:
-            return None
+        result = poll(
+            task_id=job.task_id,
+            session_id=state.session_id,
+            trace_id=state.trace_id or "",
+        )
     except Exception as exc:
         return {
             "status": BRAIN_JOB_STATUS_FAILED,
@@ -62,16 +51,15 @@ def remember_idempotency(
     command: Command,
     result: ActionResult,
 ) -> None:
-    if command.kind not in {BRAIN_COMMAND_KIND_TOOL, BRAIN_COMMAND_KIND_AGENT}:
-        return
-    if not runner.options.idempotency_enabled:
-        return
-    if not command.idempotency_key:
+    if (
+        command.kind not in {BRAIN_COMMAND_KIND_TOOL, BRAIN_COMMAND_KIND_AGENT}
+        or not runner.options.idempotency_enabled
+        or not command.idempotency_key
+    ):
         return
     state.idempotency_cache[command.idempotency_key] = result
     while len(state.idempotency_cache) > runner.options.idempotency_cache_size:
-        oldest_key = next(iter(state.idempotency_cache))
-        del state.idempotency_cache[oldest_key]
+        state.idempotency_cache.pop(next(iter(state.idempotency_cache)))
 
 
 def reconcile_pending_jobs(

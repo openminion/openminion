@@ -64,9 +64,6 @@ from .runtime import (
     _runner_and_profile_from_context,
 )
 from . import subtasks as _subtasks_module
-from .artifact_gates import (
-    user_explicitly_requested_file_artifact as _results_user_requested_file_artifact,
-)
 from .results import (
     _exit_autonomous_blocked as _results_exit_autonomous_blocked,
     _exit_budget_exhausted as _results_exit_budget_exhausted,
@@ -105,8 +102,7 @@ def execute_coding_profile(ctx: ExecutionContext) -> ExecutionResult:
 
 def _first_non_empty_string(*values: Any) -> str:
     for value in values:
-        text = str(value or "").strip()
-        if text:
+        if text := str(value or "").strip():
             return text
     return ""
 
@@ -395,7 +391,7 @@ class CodingProfileRunner(
     ) -> tuple[list[Any], Any | None] | ExecutionResult:
         tool_specs = _build_tool_specs(CODING_ALLOWED_TOOLS, ctx=ctx)
         self._init_checkpoint(ctx)
-        seed_response: Any | None = getattr(ctx.decision, "_entry_response", None)
+        seed_response: Any | None = None
         resume_state = {
             key: value
             for key, value in dict(
@@ -437,25 +433,14 @@ class CodingProfileRunner(
                 self._loop_state.messages.append(
                     Message(role="user", content=ctx.user_input)
                 )
-            if seed_response is not None:
-                goal = (
-                    str(
-                        ctx.user_input
-                        or ctx.state.goal
-                        or getattr(ctx.decision, "objective", "")
-                        or ""
-                    ).strip()
-                    or "Complete the coding task."
-                )
-                self._coding_plan = CodingPlan.fallback(goal)
-                self._apply_plan_to_scratchpad(self._coding_plan)
-                seed_response = None
-            else:
-                self._coding_plan, seed_response = self._initialize_plan(
-                    ctx,
-                    runtime=runtime,
-                    model=model,
-                )
+            initialized = self._initialize_plan(
+                ctx,
+                runtime=runtime,
+                model=model,
+            )
+            if isinstance(initialized, ExecutionResult):
+                return initialized
+            self._coding_plan, seed_response = initialized
             self._sync_coding_context(ctx)
             self._sync_coding_module_state(ctx)
         seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)
@@ -604,7 +589,7 @@ class CodingProfileRunner(
             return
         if self._has_successful_mutating_file_result():
             return
-        if not _results_user_requested_file_artifact(self._loop_state):
+        if not self._coding_plan.requires_file_change:
             return
         self._stage_required_write_direct_tool()
 
@@ -627,7 +612,7 @@ class CodingProfileRunner(
             "coding_plan": self._coding_plan.to_payload()
             if self._coding_plan is not None
             else None,
-            "resume_count": int(self._resume_count),
+            "resume_count": self._resume_count,
             "last_checkpoint_id": self._last_checkpoint_id,
         }
 
@@ -666,31 +651,27 @@ class CodingProfileRunner(
         )
 
     def _dispatch_subtasks_if_needed(self, ctx: ExecutionContext) -> None:
-        # that still monkeypatch coding.handler.invoke_decision_direct.
         _subtasks_module.invoke_decision_direct = invoke_decision_direct
         _subtasks_dispatch_if_needed(self, ctx)
 
     def _sync_coding_context(self, ctx: ExecutionContext) -> None:
         workspace_hint = _context_workspace_hint(ctx)
+        scratchpad = self._loop_state.scratchpad
         if workspace_hint:
-            self._loop_state.scratchpad["coding.cwd"] = workspace_hint
-        if self._coding_plan is not None:
-            self._loop_state.scratchpad["coding.requires_file_change"] = bool(
-                self._coding_plan.requires_file_change
-            )
+            scratchpad["coding.cwd"] = workspace_hint
+        if plan := self._coding_plan:
+            scratchpad["coding.requires_file_change"] = plan.requires_file_change
 
     def _as_adaptive_state(self, loop_state: CodingLoopState) -> AdaptiveToolLoopState:
         return AdaptiveToolLoopState(
             messages=list(loop_state.messages),
-            iteration=int(loop_state.iteration or 0),
-            llm_calls=int(loop_state.llm_calls or 0),
+            iteration=loop_state.iteration,
+            llm_calls=loop_state.llm_calls,
             tool_calls_made=list(loop_state.tool_calls_made),
-            total_tool_calls=int(loop_state.total_tool_calls or 0),
-            termination_reason=str(loop_state.termination_reason or ""),
+            total_tool_calls=loop_state.total_tool_calls,
+            termination_reason=loop_state.termination_reason,
             direct_tool_turn=loop_state.direct_tool_turn,
-            direct_tool_requested_batch_satisfied=bool(
-                loop_state.direct_tool_requested_batch_satisfied
-            ),
+            direct_tool_requested_batch_satisfied=loop_state.direct_tool_requested_batch_satisfied,
             scratchpad=dict(loop_state.scratchpad),
             seen_signatures=list(loop_state.seen_signatures),
         )
@@ -708,14 +689,14 @@ class CodingProfileRunner(
             )
         self._loop_state = CodingLoopState(
             messages=list(adaptive_state.messages),
-            iteration=int(adaptive_state.iteration or 0),
-            llm_calls=int(adaptive_state.llm_calls or 0),
+            iteration=adaptive_state.iteration,
+            llm_calls=adaptive_state.llm_calls,
             tool_calls_made=list(adaptive_state.tool_calls_made),
-            total_tool_calls=int(adaptive_state.total_tool_calls or 0),
-            termination_reason=str(adaptive_state.termination_reason or ""),
+            total_tool_calls=adaptive_state.total_tool_calls,
+            termination_reason=adaptive_state.termination_reason,
             direct_tool_turn=adaptive_state.direct_tool_turn,
-            direct_tool_requested_batch_satisfied=bool(
-                getattr(adaptive_state, "direct_tool_requested_batch_satisfied", False)
+            direct_tool_requested_batch_satisfied=(
+                adaptive_state.direct_tool_requested_batch_satisfied
             ),
             scratchpad=scratchpad,
             seen_signatures=list(adaptive_state.seen_signatures),

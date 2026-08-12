@@ -39,7 +39,6 @@ def _normalize_runtime_binding_selection_strategy(value: str) -> str:
 def _is_runtime_binding_id(value: str) -> bool:
     token = str(value or "").strip()
     return (
-        bool(token)
-        and token.startswith("runtime.")
+        token.startswith("runtime.")
         and len([part for part in token.split(".") if part]) >= 3
     )

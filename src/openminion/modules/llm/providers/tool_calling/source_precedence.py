@@ -54,11 +54,11 @@ def resolve_tool_call_source_precedence(
     normalized_allowed_tool_names = list(allowed_tool_names or [])
     normalized_fallback_sources = [
         ToolCallFallbackSource(
-            source=str(candidate.source or "").strip() or "fallback",
-            text=str(candidate.text or "").strip(),
+            source=candidate.source.strip() or "fallback",
+            text=candidate.text.strip(),
         )
         for candidate in fallback_sources
-        if str(candidate.text or "").strip()
+        if candidate.text.strip()
     ]
     native_result = parse_native_tool_calls(
         message_payload,
@@ -66,7 +66,6 @@ def resolve_tool_call_source_precedence(
         model_name=model_name,
         allowed_tool_names=normalized_allowed_tool_names,
     )
-    native_call_count = len(native_result.calls)
     if native_result.calls:
         return ToolCallSourceResolution(
             calls=list(native_result.calls),
@@ -74,16 +73,16 @@ def resolve_tool_call_source_precedence(
             skipped_fallback_sources=[
                 candidate.source for candidate in normalized_fallback_sources
             ],
-            native_call_count=native_call_count,
-            parse_metadata=dict(native_result.metadata or {}),
+            native_call_count=len(native_result.calls),
+            parse_metadata=dict(native_result.metadata),
         )
 
     collected_metadata: dict[str, Any] = {}
     attempted_fallback_sources: list[str] = []
     if fallback_enabled:
-        effective_fallback_mode = str(fallback_parser_policy or "").strip().lower()
+        effective_fallback_mode = fallback_parser_policy.strip().lower()
         if effective_fallback_mode not in {"structured", "full"}:
-            effective_fallback_mode = str(fallback_mode or "").strip().lower()
+            effective_fallback_mode = fallback_mode.strip().lower()
         for candidate in normalized_fallback_sources:
             attempted_fallback_sources.append(candidate.source)
             if effective_fallback_mode == "structured":
@@ -103,19 +102,17 @@ def resolve_tool_call_source_precedence(
                     parser_plugin_selection=parser_plugin_selection,
                 )
             if fallback_result.metadata:
-                collected_metadata.update(dict(fallback_result.metadata))
+                collected_metadata.update(fallback_result.metadata)
             if fallback_result.calls:
                 return ToolCallSourceResolution(
                     calls=list(fallback_result.calls),
                     selected_source=candidate.source,
                     attempted_fallback_sources=list(attempted_fallback_sources),
-                    native_call_count=native_call_count,
                     parse_metadata=dict(collected_metadata),
                 )
         return ToolCallSourceResolution(
             selected_source="none",
             attempted_fallback_sources=list(attempted_fallback_sources),
-            native_call_count=native_call_count,
             parse_metadata=dict(collected_metadata),
         )
 
@@ -124,6 +121,5 @@ def resolve_tool_call_source_precedence(
         skipped_fallback_sources=[
             candidate.source for candidate in normalized_fallback_sources
         ],
-        native_call_count=native_call_count,
         parse_metadata=dict(collected_metadata),
     )

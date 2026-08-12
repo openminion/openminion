@@ -11,13 +11,13 @@ from typing import Any, Sequence, cast
 
 from openminion.api.server import build_api_server
 from openminion.base.config import (
+    ConfigManager,
     OpenMinionConfig,
     resolve_data_root,
     resolve_home_root,
     EnvironmentConfig,
     OTELExporterConfig,
 )
-from openminion.base.config import ConfigManager
 from openminion.base.logging import (
     configure_logging,
     format_structured_event,
@@ -45,7 +45,7 @@ class _DaemonLifecycleEmitter:
         *,
         home_root: Path,
         env: dict[str, str] | None,
-        otel_exporter_config: object | None = None,
+        otel_exporter_config: OTELExporterConfig | None = None,
         pid: int,
         bind_host: str,
         bind_port: int,
@@ -77,9 +77,7 @@ class _DaemonLifecycleEmitter:
             self._telemetry = telemetry_service or TelemetryService(
                 home_root=home_root,
                 env=env,
-                otel_exporter_config=cast(
-                    OTELExporterConfig | None, otel_exporter_config
-                ),
+                otel_exporter_config=otel_exporter_config,
             )
         except Exception as exc:  # noqa: BLE001
             self._telemetry = None
@@ -258,7 +256,7 @@ def _resolve_daemon_file(
     if configured:
         return Path(configured).expanduser().resolve()
     env_config = EnvironmentConfig.from_sources(
-        runtime_env=getattr(config.runtime, "env", None),
+        runtime_env=config.runtime.env,
     )
     env_values = env_config.snapshot()
     home_root = resolve_home_root(env=env_values)
@@ -283,10 +281,7 @@ def resolve_daemon_log_file(config: OpenMinionConfig) -> Path:
 
 def resolve_ipc_bind(config: OpenMinionConfig) -> tuple[str, int]:
     host = str(config.runtime.ipc_host or config.gateway.host).strip() or "127.0.0.1"
-    try:
-        port = int(config.runtime.ipc_port or config.gateway.port)
-    except (TypeError, ValueError):
-        port = int(config.gateway.port)
+    port = int(config.runtime.ipc_port or config.gateway.port)
     return host, max(1, port)
 
 

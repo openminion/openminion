@@ -72,7 +72,7 @@ def test_sub_intent_skill_id_activates_only_explicit_single_binding() -> None:
     assert state.active_skill_id == "beta"
 
 
-def test_ambiguous_or_unknown_binding_falls_back_to_primary_skill() -> None:
+def test_ambiguous_or_unknown_binding_does_not_guess_a_skill() -> None:
     state = _state_with_skills()
     command = ToolCommand(
         title="run ambiguous intent",
@@ -83,9 +83,9 @@ def test_ambiguous_or_unknown_binding_falls_back_to_primary_skill() -> None:
         skill_id="missing",
     )
 
-    assert activate_skill_for_command(state, command) == "alpha"
-    assert state.active_skill_id == "alpha"
-    assert state.active_skill_version_hash == "a" * 64
+    assert activate_skill_for_command(state, command) is None
+    assert state.active_skill_id is None
+    assert state.active_skill_version_hash is None
 
 
 def test_intent_execution_state_block_carries_skill_id() -> None:

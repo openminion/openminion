@@ -147,6 +147,18 @@ def _add_checkpoint_arg(parser: argparse.ArgumentParser, *, required: bool) -> N
     parser.add_argument("--checkpoint-id", required=required, help="Checkpoint id")
 
 
+def _add_branch_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("task_id")
+    _add_checkpoint_arg(parser, required=True)
+    parser.add_argument("--branch-task-id")
+    parser.add_argument(
+        "--branch-mode",
+        default="from_checkpoint",
+        choices=("from_checkpoint", "before_checkpoint"),
+    )
+    _add_task_db(parser)
+
+
 def _register_subcommands(parser: argparse.ArgumentParser) -> None:
     subcommands = parser.add_subparsers(dest="replay_command")
 
@@ -177,15 +189,7 @@ def _register_subcommands(parser: argparse.ArgumentParser) -> None:
     _add_task_db(rewind)
 
     branch = subcommands.add_parser("branch", help="Create a branch from a checkpoint")
-    branch.add_argument("task_id")
-    _add_checkpoint_arg(branch, required=True)
-    branch.add_argument("--branch-task-id")
-    branch.add_argument(
-        "--branch-mode",
-        default="from_checkpoint",
-        choices=("from_checkpoint", "before_checkpoint"),
-    )
-    _add_task_db(branch)
+    _add_branch_args(branch)
 
     parser.set_defaults(handler=run_replay_command, replay_command="checkpoints")
 
@@ -207,13 +211,5 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     rewind.set_defaults(replay_command="rewind")
 
     branch = subparsers.add_parser("branch", help="Create a branch from a checkpoint")
-    branch.add_argument("task_id")
-    _add_checkpoint_arg(branch, required=True)
-    branch.add_argument("--branch-task-id")
-    branch.add_argument(
-        "--branch-mode",
-        default="from_checkpoint",
-        choices=("from_checkpoint", "before_checkpoint"),
-    )
-    _add_task_db(branch)
+    _add_branch_args(branch)
     branch.set_defaults(replay_command="branch")

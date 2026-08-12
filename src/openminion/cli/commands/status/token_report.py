@@ -280,13 +280,7 @@ def _format_recommendations(
     *,
     cost: TurnCostEnvelope | None = None,
 ) -> list[str]:
-    advisories = _summary_advisories(summary, cost=cost)
-    if not advisories:
-        return ["recommendations: no immediate token telemetry gaps detected"]
-    return [
-        "recommendations: "
-        + "; ".join(f"[{advisory.code}] {advisory.message}" for advisory in advisories)
-    ]
+    return _format_advisories(_summary_advisories(summary, cost=cost))
 
 
 def _format_coverage_health(summary: TokenUsageSummary) -> list[str]:
@@ -329,9 +323,7 @@ def _filter_warning_summaries(
 def _format_warning_sessions(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
     warning_parts = []
     for summary in summaries:
-        codes = [advisory.code for advisory in _summary_advisories(summary)]
-        if not summary.records:
-            codes.append("no_usage_events")
+        codes = _summary_advisory_codes(summary)
         if codes:
             warning_parts.append(f"{summary.session_id}=" + ",".join(codes))
     if not warning_parts:
@@ -745,19 +737,8 @@ def format_token_rollup(
                 "recommendations: no immediate token telemetry gaps detected"
             )
         return "no sessions found"
-    token_summaries = [summary for summary in summaries if summary.records]
-    total_provider = sum(summary.total_provider_tokens for summary in token_summaries)
-    total_derived = sum(summary.total_derived_tokens for summary in token_summaries)
-    total_context = sum(
-        summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0)
-        for summary in token_summaries
-    )
-    total_cache_read = sum(
-        summary.total_cache_read_tokens for summary in token_summaries
-    )
-    total_cache_write = sum(
-        summary.total_cache_write_tokens for summary in token_summaries
-    )
+    token_summaries = tuple(summary for summary in summaries if summary.records)
+    totals = _rollup_totals_payload(token_summaries)
     lines = [
         (
             "status tokens: "
@@ -771,11 +752,11 @@ def format_token_rollup(
             + f"complete={'yes' if all(summary.complete for summary in summaries) else 'no'}"
         ),
         "totals: "
-        f"provider={_format_token_count(total_provider)} "
-        f"derived={_format_token_count(total_derived)} "
-        f"context_estimated={_format_token_count(total_context)} "
-        f"cache_read={_format_token_count(total_cache_read)} "
-        f"cache_write={_format_token_count(total_cache_write)}",
+        f"provider={_format_token_count(totals['provider_tokens'])} "
+        f"derived={_format_token_count(totals['derived_tokens'])} "
+        f"context_estimated={_format_token_count(totals['context_estimated_tokens'])} "
+        f"cache_read={_format_token_count(totals['cache_read_tokens'])} "
+        f"cache_write={_format_token_count(totals['cache_write_tokens'])}",
     ]
     surface_totals: dict[str, int] = defaultdict(int)
     context_buckets: dict[str, int] = defaultdict(int)
@@ -795,8 +776,8 @@ def format_token_rollup(
     lines.append(_format_ranked_totals("by surface", surface_totals))
     if context_buckets:
         lines.append(_format_ranked_totals("context buckets", context_buckets))
-    lines.extend(_format_rollup_efficiency(tuple(token_summaries)))
-    lines.extend(_format_session_trends(tuple(token_summaries)))
+    lines.extend(_format_rollup_efficiency(token_summaries))
+    lines.extend(_format_session_trends(token_summaries))
     top_sessions = sorted(
         (
             (summary.session_id, _summary_visible_tokens(summary))
@@ -813,11 +794,11 @@ def format_token_rollup(
                 for session_id, tokens in top_sessions
             )
         )
-    lines.extend(_format_provider_coverage(tuple(token_summaries)))
+    lines.extend(_format_provider_coverage(token_summaries))
     lines.extend(_rollup_coverage_health(summaries))
     lines.extend(_format_warning_sessions(summaries))
     lines.extend(_format_advisories(_rollup_advisories(summaries)))
-    lines.extend(_format_drilldowns(tuple(token_summaries)))
+    lines.extend(_format_drilldowns(token_summaries))
     lines.append(
         "next: use `--session-id <session-id>` or `--run-id <run-id>` to drill in, "
         "or `--json` for raw session envelopes."

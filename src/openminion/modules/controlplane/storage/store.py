@@ -534,8 +534,6 @@ class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
         result: list[dict[str, Any]] = []
         for row in rows:
             payload = _json_load(row.get("payload_json"))
-            if not isinstance(payload, dict):
-                continue
             entry = dict(payload)
             entry.setdefault("session_id", str(row.get("session_id") or ""))
             result.append(entry)
@@ -785,10 +783,7 @@ class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
         }
 
     def put_audit(self, event: Any) -> None:
-        if hasattr(event, "to_dict"):
-            d = event.to_dict()
-        else:
-            d = dict(event)
+        d = event.to_dict() if hasattr(event, "to_dict") else dict(event)
         self._execute_count(
             """
             INSERT INTO cp_audit_events

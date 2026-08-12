@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from pydantic import ValidationError
+
 from openminion.modules.brain.execution.public_taxonomy import (
     public_mode_name_for_mode_name,
 )
 from openminion.modules.brain.schemas import DelegationContext
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import Message, ToolSpec
 
 from ..budget_control import (
     _adaptive_budget_config,
@@ -48,7 +50,6 @@ from ..shortlisting import (
 )
 from ..startup import initialize_loop_runtime_state
 from ..telemetry import _current_turn_scope_id, _public_loop_tag
-from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 
 
 def _enabled_module_state_payload(
@@ -56,26 +57,22 @@ def _enabled_module_state_payload(
     *,
     key: str,
 ) -> dict[str, Any] | None:
-    module_state = getattr(
-        getattr(loop_ctx, "state", None), STATE_KEY_MODULE_STATE, None
-    )
-    if not isinstance(module_state, dict):
-        return None
-    raw = module_state.get(key)
-    if not isinstance(raw, dict) or not bool(raw.get("enabled", False)):
+    raw = loop_ctx.state.module_state.get(key)
+    if not raw or not bool(raw.get("enabled", False)):
         return None
     return dict(raw)
 
 
-def _has_system_message(messages: list[Any], content: str) -> bool:
+def _has_system_message(messages: list[Message], content: str) -> bool:
     return any(
-        getattr(message, "role", "") == "system"
-        and str(getattr(message, "content", "") or "").strip() == content
+        message.role == "system" and message.content.strip() == content
         for message in messages
     )
 
 
-def _ensure_system_message(messages: list[Any], *, index: int, content: str) -> bool:
+def _ensure_system_message(
+    messages: list[Message], *, index: int, content: str
+) -> bool:
     if _has_system_message(messages, content):
         return False
     messages.insert(index, Message(role="system", content=content))
@@ -121,7 +118,7 @@ def _delegated_child_context_message(payload: dict[str, Any]) -> Message | None:
         return None
     try:
         context = DelegationContext.model_validate(raw_context)
-    except Exception:
+    except ValidationError:
         return None
     lines = ["[PARENT CONTEXT]"]
     if context.intent_id:
@@ -173,9 +170,9 @@ class LoopFrameSetup(NamedTuple):
     public_mode_name: str
     public_mode_tag: str
     tool_request_enabled: bool
-    requestable_specs: list[Any]
-    requestable_specs_by_name: dict[str, Any]
-    active_tool_specs: list[Any]
+    requestable_specs: list[ToolSpec]
+    requestable_specs_by_name: dict[str, ToolSpec]
+    active_tool_specs: list[ToolSpec]
     active_tool_names: set[str]
     allowed_tools: frozenset[str]
     seeded_queue: list[Any]
@@ -192,9 +189,9 @@ def prepare_loop_frame(
     *,
     profile: AdaptiveToolLoopProfile,
     model: str,
-    initial_messages: list[Any],
-    tool_specs: list[Any],
-    requestable_tool_specs: list[Any] | tuple[Any, ...] | None,
+    initial_messages: list[Message],
+    tool_specs: list[ToolSpec],
+    requestable_tool_specs: list[ToolSpec] | tuple[ToolSpec, ...] | None,
     initial_state: AdaptiveToolLoopState | None,
     seed_response: Any,
     seeded_commands: list[Any] | tuple[Any, ...] | None,
@@ -207,26 +204,20 @@ def prepare_loop_frame(
     requestable_specs = list(requestable_tool_specs or [])
     tool_request_enabled = bool(requestable_specs)
     requestable_specs_by_name = {
-        str(getattr(spec, "name", "") or "").strip(): spec
-        for spec in requestable_specs
-        if str(getattr(spec, "name", "") or "").strip()
+        spec.name.strip(): spec for spec in requestable_specs if spec.name.strip()
     }
     active_tool_specs = (
         with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
     )
     active_tool_specs = with_enabled_plan_tool_spec(profile, active_tool_specs)
     active_tool_names = {
-        str(getattr(spec, "name", "") or "").strip()
+        spec.name.strip()
         for spec in active_tool_specs
-        if str(getattr(spec, "name", "") or "").strip()
-        and str(getattr(spec, "name", "") or "").strip()
-        not in {TOOL_REQUEST_TOOL_NAME, PLAN_TOOL_NAME}
+        if spec.name.strip() not in {TOOL_REQUEST_TOOL_NAME, PLAN_TOOL_NAME}
     }
     allowed_tools = resolve_allowed_tools(
         profile=profile,
-        runtime_tool_names=[
-            str(getattr(spec, "name", "") or "").strip() for spec in active_tool_specs
-        ],
+        runtime_tool_names=[spec.name.strip() for spec in active_tool_specs],
     )
     if tool_request_enabled:
         allowed_tools = frozenset({*allowed_tools, TOOL_REQUEST_TOOL_NAME})
@@ -241,22 +232,12 @@ def prepare_loop_frame(
     loop_state = initial_state or AdaptiveToolLoopState(messages=list(initial_messages))
     if not loop_state.messages:
         loop_state.messages = list(initial_messages)
-    if not any(
-        getattr(message, "role", "") == "system"
-        and str(getattr(message, "content", "") or "").strip()
-        == _CONFIDENT_COMPLETE_GUIDANCE
-        for message in loop_state.messages
-    ):
+    if not _has_system_message(loop_state.messages, _CONFIDENT_COMPLETE_GUIDANCE):
         loop_state.messages.insert(
             0,
             Message(role="system", content=_CONFIDENT_COMPLETE_GUIDANCE),
         )
-    if not any(
-        getattr(message, "role", "") == "system"
-        and str(getattr(message, "content", "") or "").strip()
-        == _FINALIZATION_STATUS_GUIDANCE
-        for message in loop_state.messages
-    ):
+    if not _has_system_message(loop_state.messages, _FINALIZATION_STATUS_GUIDANCE):
         loop_state.messages.insert(
             1,
             Message(role="system", content=_FINALIZATION_STATUS_GUIDANCE),
@@ -332,22 +313,21 @@ def prepare_loop_frame(
             index=2,
             content=tool_efficiency_guidance,
         )
-    if str(profile.profile_name or "").strip() == "watch_check_v1":
+    if profile.profile_name == "watch_check_v1":
         _ensure_system_message(
             loop_state.messages,
             index=2,
             content=_WATCH_OUTCOME_GUIDANCE,
         )
-    if str(profile.profile_name or "").strip() == "watch_action_v1":
+    if profile.profile_name == "watch_action_v1":
         _ensure_system_message(
             loop_state.messages,
             index=2,
             content=_WATCH_ACTION_GUIDANCE,
         )
     if tool_request_enabled and not any(
-        getattr(message, "role", "") == "system"
-        and getattr(message, "meta", {}).get("tool_schema_shortlisting")
-        == "inactive_directory"
+        message.role == "system"
+        and message.meta.get("tool_schema_shortlisting") == "inactive_directory"
         for message in loop_state.messages
     ):
         inactive_directory_message = build_inactive_tool_directory_message(
@@ -389,8 +369,6 @@ def prepare_loop_frame(
             cap=_effective_cap(profile, loop_state),
         )
 
-    pending_response = seed_response
-
     return LoopFrameSetup(
         public_mode_name=public_mode_name,
         public_mode_tag=public_mode_tag,
@@ -406,5 +384,5 @@ def prepare_loop_frame(
         metadata=metadata,
         turn_scope_id=turn_scope_id,
         runtime_state=runtime_state,
-        pending_response=pending_response,
+        pending_response=seed_response,
     )

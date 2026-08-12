@@ -4,15 +4,19 @@ import argparse
 import sys
 
 
-def run_room_create(args) -> int:
+def _open_room_runtime(args):
     from openminion.api.runtime import APIRuntime
 
+    return APIRuntime.from_config_path(
+        getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
+
+
+def run_room_create(args) -> int:
     try:
-        runtime = APIRuntime.from_config_path(
-            getattr(args, "config", None),
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
+        runtime = _open_room_runtime(args)
     except Exception as exc:
         print(f"openminion room: startup error — {exc}", file=sys.stderr)
         return 1
@@ -63,8 +67,6 @@ def run_room_create(args) -> int:
 
 
 def run_room_invite(args) -> int:
-    from openminion.api.runtime import APIRuntime
-
     session_id = str(getattr(args, "session_id", "") or "").strip()
     if not session_id:
         print("openminion room: missing session id", file=sys.stderr)
@@ -76,11 +78,7 @@ def run_room_invite(args) -> int:
         return 2
 
     try:
-        runtime = APIRuntime.from_config_path(
-            getattr(args, "config", None),
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
+        runtime = _open_room_runtime(args)
     except Exception as exc:
         print(f"openminion room: startup error — {exc}", file=sys.stderr)
         return 1

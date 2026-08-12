@@ -15,42 +15,22 @@ from openminion.modules.llm.providers.tool_calling.providers import (
 )
 
 _NATIVE_HANDLERS = [OpenAINativeToolCallParser()]
-_MODEL_HANDLERS = {
-    "minimax": [
-        MinimaxXmlToolCallParser(),
-        MinimaxBracketToolCallParser(),
-        PlainCliToolCommandParser(),
-        PlainToolDirectiveParser(),
-        JsonFallbackToolCallParser(),
-    ],
-    "default": [
-        MinimaxXmlToolCallParser(),
-        MinimaxBracketToolCallParser(),
-        PlainCliToolCommandParser(),
-        PlainToolDirectiveParser(),
-        JsonFallbackToolCallParser(),
-    ],
-}
-_STRUCTURED_MODEL_HANDLERS = {
-    "minimax": [
-        MinimaxXmlToolCallParser(),
-        MinimaxBracketToolCallParser(),
-        PlainCliToolCommandParser(),
-        JsonFallbackToolCallParser(
-            allow_explicit_tool_envelopes=False,
-            name="json_schema",
-        ),
-    ],
-    "default": [
-        MinimaxXmlToolCallParser(),
-        MinimaxBracketToolCallParser(),
-        PlainCliToolCommandParser(),
-        JsonFallbackToolCallParser(
-            allow_explicit_tool_envelopes=False,
-            name="json_schema",
-        ),
-    ],
-}
+_MODEL_HANDLERS = [
+    MinimaxXmlToolCallParser(),
+    MinimaxBracketToolCallParser(),
+    PlainCliToolCommandParser(),
+    PlainToolDirectiveParser(),
+    JsonFallbackToolCallParser(),
+]
+_STRUCTURED_MODEL_HANDLERS = [
+    MinimaxXmlToolCallParser(),
+    MinimaxBracketToolCallParser(),
+    PlainCliToolCommandParser(),
+    JsonFallbackToolCallParser(
+        allow_explicit_tool_envelopes=False,
+        name="json_schema",
+    ),
+]
 _PROVIDER_ENVELOPE_HANDLERS = {
     "openrouter": [OpenRouterEnvelopeParser()],
 }
@@ -59,8 +39,8 @@ _PARSER_HANDLERS_BY_NAME = {
     handler.name: handler
     for handler in (
         *_NATIVE_HANDLERS,
-        *_MODEL_HANDLERS["default"],
-        *_STRUCTURED_MODEL_HANDLERS["default"],
+        *_MODEL_HANDLERS,
+        *_STRUCTURED_MODEL_HANDLERS,
         *_PROVIDER_ENVELOPE_HANDLERS["openrouter"],
     )
 }
@@ -74,19 +54,13 @@ def resolve_fallback_parser_plugins(
 ) -> tuple[str, ...]:
     plugin_names: list[str] = []
     provider = str(provider_name or "").strip().lower()
-    model = str(model_name or "").strip().lower()
     if provider in _PROVIDER_ENVELOPE_HANDLERS:
         plugin_names.extend(
             handler.name for handler in _PROVIDER_ENVELOPE_HANDLERS[provider]
         )
 
     structured_only = str(fallback_parser_policy or "").strip().lower() == "structured"
-    model_key = "minimax" if "minimax" in model else "default"
-    handlers = (
-        _STRUCTURED_MODEL_HANDLERS.get(model_key, _STRUCTURED_MODEL_HANDLERS["default"])
-        if structured_only
-        else _MODEL_HANDLERS.get(model_key, _MODEL_HANDLERS["default"])
-    )
+    handlers = _STRUCTURED_MODEL_HANDLERS if structured_only else _MODEL_HANDLERS
     plugin_names.extend(handler.name for handler in handlers)
     return tuple(plugin_names)
 
@@ -150,11 +124,7 @@ def parse_fallback_tool_calls(
             and not hasattr(_PARSER_HANDLERS_BY_NAME[name], "parse_envelope")
         ]
     else:
-        model_key = "default"
-        model = str(model_name or "").strip().lower()
-        if "minimax" in model:
-            model_key = "minimax"
-        model_handlers = _MODEL_HANDLERS.get(model_key, _MODEL_HANDLERS["default"])
+        model_handlers = _MODEL_HANDLERS
 
     for handler in model_handlers:
         result = handler.parse_text(text, allowed_tool_names=allowed_tool_names)
@@ -177,7 +147,7 @@ def parse_structured_tool_call_envelopes(
     allowed_tool_names: Iterable[str] | None = None,
     parser_plugin_selection: Sequence[str] | None = None,
 ) -> ToolCallParseResult:
-    del provider_name
+    del provider_name, model_name
     collected_metadata: dict[str, Any] = {}
     parser_names = tuple(parser_plugin_selection or ())
     if parser_names:
@@ -189,13 +159,7 @@ def parse_structured_tool_call_envelopes(
             and not hasattr(_PARSER_HANDLERS_BY_NAME[name], "parse_envelope")
         ]
     else:
-        model_key = "default"
-        model = str(model_name or "").strip().lower()
-        if "minimax" in model:
-            model_key = "minimax"
-        handlers = _STRUCTURED_MODEL_HANDLERS.get(
-            model_key, _STRUCTURED_MODEL_HANDLERS["default"]
-        )
+        handlers = _STRUCTURED_MODEL_HANDLERS
 
     for handler in handlers:
         result = handler.parse_text(text, allowed_tool_names=allowed_tool_names)

@@ -40,13 +40,11 @@ class ProviderProfile(BaseModel):
     @model_validator(mode="after")
     def _sync_capabilities(self) -> "ProviderProfile":
         caps = self.capabilities
-        self.supports_json = bool(self.supports_json or caps.supports_json)
-        self.supports_tools = bool(self.supports_tools or caps.supports_tools)
-        self.supports_vision = bool(self.supports_vision or caps.supports_vision)
-        self.supports_streaming = bool(
-            self.supports_streaming or caps.supports_streaming
-        )
-        self.supports_prompt_caching = bool(
+        self.supports_json = self.supports_json or caps.supports_json
+        self.supports_tools = self.supports_tools or caps.supports_tools
+        self.supports_vision = self.supports_vision or caps.supports_vision
+        self.supports_streaming = self.supports_streaming or caps.supports_streaming
+        self.supports_prompt_caching = (
             self.supports_prompt_caching or caps.supports_prompt_caching
         )
         return self

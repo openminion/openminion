@@ -2,6 +2,7 @@ _DIRECT_ALIASES = {
     "help": "/help",
     "pair": "/pair",
     "diag": "/diag",
+    "status": "/status",
 }
 
 
@@ -11,9 +12,6 @@ def normalize_command_aliases(text: str, *, bot_username: str | None) -> str:
         return text
 
     parts = stripped.split()
-    if not parts:
-        return text
-
     cmd = parts[0][1:]
     args = parts[1:]
 
@@ -26,13 +24,9 @@ def normalize_command_aliases(text: str, *, bot_username: str | None) -> str:
     cmd = cmd.lower()
 
     if cmd == "start":
-        if args:
-            return stripped
-        return "/help"
+        return stripped if args else "/help"
     if cmd in _DIRECT_ALIASES:
         return _DIRECT_ALIASES[cmd]
-    if cmd == "status":
-        return "/status"
     if cmd == "new":
         return "/session new"
     if cmd in {"stop", "cancel"}:

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-from sophiagraph.query import ListQueryOptions, SearchQueryOptions
+from sophiagraph.query import (
+    CandidateListOptions,
+    ListQueryOptions,
+    RecordOrder,
+    SearchQueryOptions,
+)
 
 from .contracts import (
     MEMORY_CONTRACT_VERSION,
@@ -91,9 +96,18 @@ def ensure_memory_compatibility(
     errors = [_render_compatibility_error(service, item) for item in raw_errors]
     errors.sort(key=lambda item: 0 if str(item).startswith("Version mismatch") else 1)
 
-    if errors:
-        if strict:
-            raise MemoryServiceInterfaceError(f"Memory service incompatible: {errors}")
-        return False, errors
+    if strict:
+        raise MemoryServiceInterfaceError(f"Memory service incompatible: {errors}")
+    return False, errors
 
-    return True, []
+
+__all__ = [
+    "CandidateListOptions",
+    "ListQueryOptions",
+    "MemoryNamespaceQueryInterface",
+    "MemoryServiceInterface",
+    "MemoryServiceInterfaceError",
+    "RecordOrder",
+    "SearchQueryOptions",
+    "ensure_memory_compatibility",
+]

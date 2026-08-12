@@ -22,9 +22,7 @@ def config_init(args) -> int:
         home_root=getattr(args, "home_root", None),
         data_root=getattr(args, "data_root", None),
     )
-    home_root = roots.home_root
-    data_root = roots.data_root
-    path = resolve_config_path(args.config, home_root=home_root)
+    path = resolve_config_path(args.config, home_root=roots.home_root)
     if path.exists() and not args.force:
         raise RuntimeError(
             f"Config already exists at {path}. Use --force to overwrite."
@@ -50,7 +48,7 @@ def config_init(args) -> int:
             (Path.home() / ".openminion" / "state" / "openminion.db").resolve()
         )
     else:
-        config.storage.path = str((data_root / "state" / "openminion.db").resolve())
+        config.storage.path = str((roots.data_root / "state" / "openminion.db").resolve())
     save_config(config, args.config)
     print(f"Initialized config at {path} (storage: {config.storage.path})")
     return 0

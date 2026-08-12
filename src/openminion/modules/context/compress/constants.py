@@ -12,11 +12,9 @@ DEFAULT_QUALITY_OVERRIDES: dict[str, str | None] = {
     "BAD": "extractive.v1",
 }
 
-# Path Layout
 DEFAULT_CONFIG_FILENAME = "compress.yaml"
 DEFAULT_INTEGRATED_SQLITE_SUBPATH = Path("compress") / "compress.db"
 
-# Operator preference for the main compression provider.
 COMPRESS_PROVIDER_PREFERENCE_ENV: str = "OPENMINION_COMPRESS_PROVIDER_PREFERENCE"
 COMPRESS_PROVIDER_PREFERENCE_AUTO: str = "auto"
 COMPRESS_PROVIDER_PREFERENCE_LLMLINGUA2: str = "llmlingua2"
@@ -32,9 +30,7 @@ COMPRESS_PROVIDER_PREFERENCE_ALLOWED: frozenset[str] = frozenset(
     }
 )
 
-# Mapping from operator-preference value to the canonical method_id the
-# registry uses. ``auto`` deliberately maps to None — the resolver chain
-# handles it without an explicit override.
+# ``auto`` leaves method selection to the resolver chain.
 COMPRESS_PROVIDER_PREFERENCE_TO_METHOD_ID: dict[str, str | None] = {
     COMPRESS_PROVIDER_PREFERENCE_AUTO: None,
     COMPRESS_PROVIDER_PREFERENCE_LLMLINGUA2: "llmlingua2.v1",

@@ -81,20 +81,17 @@ def extract_workflow_governance_actions(
 ) -> list[WorkflowGovernanceAction]:
     actions: list[WorkflowGovernanceAction] = []
     for fix in fixes or []:
-        action = str(getattr(fix, "action", "") or "").strip().lower()
+        action = str(fix.action or "").strip().lower()
         if action not in SUPPORTED_STRUCTURED_FIX_ACTIONS:
             continue
         actions.append(
             WorkflowGovernanceAction(
                 action=action,
-                title=str(getattr(fix, "title", "") or "").strip() or action,
-                target_command_id=str(
-                    getattr(fix, "target_command_id", "") or ""
-                ).strip()
-                or None,
-                question=str(getattr(fix, "question", "") or "").strip(),
-                precondition=str(getattr(fix, "precondition", "") or "").strip(),
-                confidence=float(getattr(fix, "confidence", 0.0) or 0.0),
+                title=fix.title.strip() or action,
+                target_command_id=(fix.target_command_id or "").strip() or None,
+                question=fix.question.strip(),
+                precondition=fix.precondition.strip(),
+                confidence=fix.confidence,
             )
         )
     return actions
@@ -180,16 +177,11 @@ class WorkflowMode(ABC):
         return self.finalize(ctx)
 
     def _has_pending_jobs(self, ctx: ExecutionContext) -> bool:
-        return bool(getattr(ctx.state, "pending_jobs", []) or [])
+        return bool(ctx.state.pending_jobs)
 
     def _budget_exhausted(self, ctx: ExecutionContext) -> bool:
-        budgets = getattr(ctx.state, "budgets_remaining", None)
-        if budgets is None:
-            return False
-        return (
-            int(getattr(budgets, "ticks", 1) or 0) <= 0
-            or int(getattr(budgets, "time_ms", 1) or 0) <= 0
-        )
+        budgets = ctx.state.budgets_remaining
+        return bool(budgets.ticks <= 0 or budgets.time_ms <= 0)
 
     def _budget_exit(self, ctx: ExecutionContext) -> ExecutionResult:
         transition(ctx.state, "budget_exhausted", logger=ctx.logger)
@@ -210,11 +202,8 @@ class WorkflowMode(ABC):
         job = result.job
         if job is None:
             return
-        existing = {
-            str(getattr(item, "task_id", "") or "")
-            for item in getattr(ctx.state, "pending_jobs", []) or []
-        }
-        if str(getattr(job, "task_id", "") or "") not in existing:
+        existing = {item.task_id for item in ctx.state.pending_jobs}
+        if job.task_id not in existing:
             ctx.state.pending_jobs.append(job)
         transition(ctx.state, "job_scheduled", logger=ctx.logger)
 
@@ -227,7 +216,7 @@ class WorkflowMode(ABC):
     ) -> ExecutionResult:
         del step
         job = result.job if result is not None else None
-        if job is None and getattr(ctx.state, "pending_jobs", None):
+        if job is None and ctx.state.pending_jobs:
             job = ctx.state.pending_jobs[-1]
         message = (
             f"Started async job {job.task_id}; status is {job.status}."

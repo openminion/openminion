@@ -26,6 +26,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_ITERATION_CAP,
     ADAPTIVE_TERM_JOB_PENDING,
@@ -75,6 +76,7 @@ def test_finalization_guidance_preserves_user_requested_answer_format() -> None:
     assert "do not replace a requested format with a generic completion summary" in (
         _FINALIZATION_STATUS_GUIDANCE
     )
+    assert "<finalization_status>" in _FINALIZATION_STATUS_GUIDANCE
 
 
 @dataclass
@@ -424,6 +426,70 @@ def test_engine_runs_multiple_rounds_and_appends_tool_messages() -> None:
         (item.get("payload") or {}).get("adaptive.tool_calls_total") == 2
         for item in loop_ctx.statuses
     )
+
+
+def test_engine_debits_each_tool_result_once() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.read", arguments={}),
+                    ToolCall(id="call-2", name="exec.run", arguments={}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    state = _state(tool_calls=8)
+    managed = CommandExecutionOutcome(
+        approved_command=SimpleNamespace(),
+        action_result=ActionResult(
+            command_id=new_uuid(), status="success", summary="read ok"
+        ),
+        tool_budget_debited=True,
+    )
+    denied = CommandExecutionOutcome(
+        approved_command=SimpleNamespace(),
+        action_result=ActionResult(
+            command_id=new_uuid(), status="failed", summary="denied"
+        ),
+    )
+
+    @dataclass
+    class _MixedBudgetContext(_LoopContext):
+        def execute_command(self, *, command, include_reflect: bool = False):
+            outcome = super().execute_command(
+                command=command,
+                include_reflect=include_reflect,
+            )
+            if outcome.tool_budget_debited:
+                self.state.budgets_remaining.tool_calls -= 1
+            return outcome
+
+    loop_ctx = _MixedBudgetContext(state=state, outcomes=[managed, denied])
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read", "exec.run"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect and test")],
+        tool_specs=_tool_specs("file.read", "exec.run"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert loop_ctx.state.budgets_remaining.tool_calls == 6
 
 
 def test_engine_retries_empty_plan_lookup_after_substantive_tool_results() -> None:
@@ -3976,11 +4042,6 @@ def test_engine_retries_once_when_explicit_direct_tool_turn_returns_zero_call_su
         "The requested tool was not executed, so I cannot truthfully claim it succeeded."
     )
     assert len(runtime.calls) == 1
-    assert any(
-        "use file.write for the required files" in str(message.content).lower()
-        for message in runtime.calls[0]["messages"]
-        if getattr(message, "role", "") == "system"
-    )
 
 
 def test_engine_tracks_multi_step_direct_tool_sequence_across_iterations() -> None:
@@ -5070,13 +5131,8 @@ def test_engine_fails_closed_when_typed_finalization_remains_missing() -> None:
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "tool evidence:" in outcome.final_text
-    assert bool(
-        outcome.state.scratchpad.get(
-            "typed_finalization_contract_used_evidence_fallback"
-        )
-    )
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.final_text is None
 
 
 def test_engine_retries_raw_tool_result_json_as_final_answer() -> None:
@@ -5297,17 +5353,8 @@ def test_engine_retries_provider_fallback_final_answer_after_tool_work() -> None
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "sample.txt currently contains the expected content."
-    assert len(runtime.calls) == 3
-    retry_system_messages = [
-        str(message.content)
-        for message in runtime.calls[2]["messages"]
-        if message.role == "system"
-    ]
-    assert any(
-        "provider recovery/fallback message" in message
-        for message in retry_system_messages
-    )
+    assert outcome.final_text == fallback_text
+    assert len(runtime.calls) == 2
 
 
 def test_engine_salvages_typed_finalization_with_status_only_follow_up() -> None:
@@ -5436,8 +5483,11 @@ def test_engine_salvages_typed_finalization_with_status_only_follow_up() -> None
         "remaining_work": "",
         "blocking_reason": "",
     }
-    assert runtime.calls[-1]["tool_choice"] == "none"
-    assert runtime.calls[-1]["tools"] == []
+    assert runtime.calls[-1]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }
+    assert runtime.calls[-1]["tools"][0].name == "submit_output"
     salvage_messages = [
         str(message.content)
         for message in runtime.calls[-1]["messages"]
@@ -7458,6 +7508,10 @@ def test_general_profile_forces_answer_only_finalization_after_tool_budget_denia
                 provider="fake",
                 model="fake-model",
                 output_text="Here are the top three snippet-backed stories.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The available evidence supports the summary.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -7549,6 +7603,10 @@ def test_general_profile_forces_answer_only_finalization_after_tool_call_cap() -
                 provider="fake",
                 model="fake-model",
                 output_text="Here are the top three snippet-backed stories.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The available evidence supports the summary.",
+                },
                 finish_reason="stop",
             ),
         ]

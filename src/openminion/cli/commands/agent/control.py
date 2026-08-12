@@ -381,9 +381,8 @@ def _collect_skill_inspect_data() -> dict[str, Any]:
                 skill = idx.get(sid)
                 if skill:
                     for tag in skill.metadata.get("tags", []):
-                        if tag not in skills_data["index_stats"]["by_tag"]:
-                            skills_data["index_stats"]["by_tag"][tag] = 0
-                        skills_data["index_stats"]["by_tag"][tag] += 1
+                        by_tag = skills_data["index_stats"]["by_tag"]
+                        by_tag[tag] = by_tag.get(tag, 0) + 1
             break
     except Exception:
         pass
@@ -391,17 +390,7 @@ def _collect_skill_inspect_data() -> dict[str, Any]:
 
 
 def _collect_provider_inspect_data() -> dict[str, Any]:
-    try:
-        return _get_provider_diagnostics(None)
-    except Exception:
-        return {
-            "provider": "unknown",
-            "model": "",
-            "base_url_sanitized": "-",
-            "tool_call_strategy": "-",
-            "bridge_available": False,
-            "last_error": "config unavailable",
-        }
+    return _get_provider_diagnostics(None)
 
 
 def _collect_tools_inspect_data() -> dict[str, Any]:

@@ -147,7 +147,6 @@ def test_extract_failure_memories_stages_correction_and_meta_rule_preference(
             "tool_results": [
                 {
                     "tool_name": "web.search",
-                    "args_signature": '{"query":"sf weather"}',
                 }
             ],
             "correction_history": [

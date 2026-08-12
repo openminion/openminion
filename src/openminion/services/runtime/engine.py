@@ -25,6 +25,7 @@ from openminion.base.runtime.sandbox import (
     NetFetchSpec,
     SandboxRunner,
 )
+from openminion.modules.telemetry.events.module import emit_module_telemetry
 
 
 @dataclass
@@ -50,6 +51,8 @@ class RuntimeContext:
     attempt: int = 1
     turn_id: str | None = None
     pack_id: str | None = None
+    invocation_id: str = ""
+    execution_id: str = ""
 
 
 @dataclass
@@ -115,6 +118,7 @@ class RuntimeEngine:
         on_confirm: ConfirmHandler | None = None,
         task_ctl: Any | None = None,
         blast_radius_adapter: Any | None = None,
+        telemetryctl: Any | None = None,
     ) -> None:
         ensure_runtime_component_compatibility(runner, component_type="runner")
         ensure_runtime_component_compatibility(policy, component_type="policy")
@@ -124,6 +128,7 @@ class RuntimeEngine:
         self._on_confirm = on_confirm
         self._task_ctl = task_ctl
         self._blast_radius_adapter = blast_radius_adapter
+        self._telemetryctl = telemetryctl
         self._idempotency_cache: dict[str, ToolExecutionResult] = {}
 
     def execute_tool_call(
@@ -266,6 +271,22 @@ class RuntimeEngine:
         if self._on_event:
             ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
             self._on_event(event, {"ts": ts, **payload})
+        if self._telemetryctl is not None:
+            emit_module_telemetry(
+                self._telemetryctl,
+                "emit_canonical_event",
+                str(payload.get("session_id") or ""),
+                str(payload.get("turn_id") or payload.get("run_id") or ""),
+                event,
+                payload,
+                trace_id=str(payload.get("trace_id") or "") or None,
+                status=(
+                    "denied"
+                    if event in {"runtime.violation", "tool.call.blocked"}
+                    else "ok"
+                ),
+                logger=__import__("logging").getLogger(__name__),
+            )
 
     def _build_correlation(
         self,
@@ -279,6 +300,9 @@ class RuntimeEngine:
             "agent_id": ctx.agent_id,
             "session_id": ctx.session_id,
             "run_id": ctx.run_id,
+            "turn_id": str(ctx.turn_id or ""),
+            "invocation_id": ctx.invocation_id,
+            "execution_id": ctx.execution_id,
         }
 
     def _replay_cached_result(

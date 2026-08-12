@@ -417,20 +417,18 @@ class MemoryServiceQueryMixin:
             return _fallback("vector_adapter_missing")
         try:
             vector_map: dict[str, float] = {}
-            vector_results: list[tuple[str, float, dict[str, Any] | None]] = []
             for scope in normalized_scopes:
                 scoped_results = self._vector_adapter.search(
                     query=normalized_query,
                     top_k=resolved_limit or 10,
                     filters={"scope": scope},
                 )
-                for record_id, score, meta in scoped_results or []:
-                    vector_results.append((record_id, score, meta))
+                for record_id, score, _meta in scoped_results or []:
                     record_key = str(record_id)
                     current = vector_map.get(record_key)
                     if current is None or float(score or 0.0) > current:
                         vector_map[record_key] = float(score or 0.0)
-            if not vector_results:
+            if not vector_map:
                 return _fallback("vector_results_empty")
 
             keyword_results = self.search(

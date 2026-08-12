@@ -100,11 +100,7 @@ def _render_schema_type(spec: dict[str, Any]) -> str:
         token = str(item.get("type", "")).strip()
         if token:
             rendered.append(token)
-    deduped: list[str] = []
-    for token in rendered:
-        if token not in deduped:
-            deduped.append(token)
-    return "|".join(deduped)
+    return "|".join(dict.fromkeys(rendered))
 
 
 def _schema_type_hints(schema: dict[str, Any]) -> list[str]:
@@ -187,7 +183,7 @@ def _resolve_ollama_schema_format(request: LLMRequest) -> dict[str, Any] | str |
 
 
 def _resolve_ollama_think(request: LLMRequest) -> bool | None:
-    metadata = dict(request.metadata or {})
+    metadata = request.metadata
     raw_profile = (
         metadata.get("thinking_provider_effort")
         or metadata.get("thinking_reasoning_profile")
@@ -215,7 +211,7 @@ class OllamaProvider:
             model=model,
             base_url=base_url,
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         tool_call_strategy = str(
             config.get("tool_call_strategy", LLM_TOOL_CALL_STRATEGY_FALLBACK)
@@ -271,7 +267,7 @@ class OllamaProvider:
             timeout_seconds=_resolve_timeout_seconds(config, metadata=request.metadata),
             provider_name=self.name,
             trace_metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
 
         message_payload = response_payload.get("message")

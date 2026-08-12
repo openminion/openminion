@@ -39,13 +39,10 @@ def select_candidate(
 
     policy = strategy.selection_policy
     if policy == "pick_primary_if_ok":
-        primary = next(
-            (
-                item
-                for item in candidates[:1]
-                if item.status == LLM_CANDIDATE_STATUS_SUCCESS
-            ),
-            None,
+        primary = (
+            candidates[0]
+            if candidates[0].status == LLM_CANDIDATE_STATUS_SUCCESS
+            else None
         )
         if primary is not None:
             return SelectionResult(
@@ -176,7 +173,7 @@ def expand_self_consistency(
     if len(providers) != 1:
         return providers
     fanout = _first_positive_int(strategy.max_parallel, 1)
-    return [providers[0] for _ in range(max(1, fanout))]
+    return [providers[0]] * fanout
 
 
 def enforce_route_access(
@@ -188,7 +185,7 @@ def enforce_route_access(
     profile_ids = route_profile_ids(route)
     if policy.allow_profiles is not None:
         allow = set(policy.allow_profiles)
-        denied = sorted([item for item in profile_ids if item not in allow])
+        denied = sorted(item for item in profile_ids if item not in allow)
         if denied:
             raise LLMCtlError(
                 "POLICY_DENIED",
@@ -197,7 +194,7 @@ def enforce_route_access(
             )
     if policy.deny_profiles is not None:
         deny = set(policy.deny_profiles)
-        blocked = sorted([item for item in profile_ids if item in deny])
+        blocked = sorted(item for item in profile_ids if item in deny)
         if blocked:
             raise LLMCtlError(
                 "POLICY_DENIED",
@@ -227,10 +224,7 @@ def route_profile_ids(
         ids.extend(route.strategy_inline.providers)
     if route.judge_profile_id:
         ids.append(route.judge_profile_id)
-    unique = []
-    for item in ids:
-        if item not in unique:
-            unique.append(item)
+    unique = list(dict.fromkeys(ids))
     for item in unique:
         resolve_profile(item)
     return unique
@@ -244,12 +238,10 @@ def apply_budget_clamps(
 ) -> RuntimeLLMRequest:
     # Keep agent-level orchestration budgets distinct from llmctl BudgetPolicy.
     # These clamps shape request budget for orchestration routing/turn semantics.
-    clamped_tokens = min(
-        int(request.budget.max_tokens), max(1, int(budgets.max_tokens_per_call))
-    )
-    clamped_tokens = min(clamped_tokens, max(1, int(max_tokens_per_call_hard)))
+    clamped_tokens = min(request.budget.max_tokens, max(1, budgets.max_tokens_per_call))
+    clamped_tokens = min(clamped_tokens, max(1, max_tokens_per_call_hard))
     clamped_timeout = min(
-        int(request.budget.timeout_ms), max(1, int(budgets.max_time_ms_per_turn))
+        request.budget.timeout_ms, max(1, budgets.max_time_ms_per_turn)
     )
     budget = request.budget.model_copy(
         update={"max_tokens": clamped_tokens, "timeout_ms": clamped_timeout}
@@ -265,14 +257,12 @@ def apply_ensemble_budget_clamps(
     max_parallel_global: int,
 ) -> EnsembleTemplate:
     max_parallel = min(
-        max(1, int(strategy.max_parallel)),
-        max(1, int(budgets.max_parallel)),
-        max(1, int(max_parallel_global)),
+        max(1, strategy.max_parallel),
+        max(1, budgets.max_parallel),
+        max(1, max_parallel_global),
     )
     updates: dict[str, Any] = {"max_parallel": max_parallel}
     if route.fanout is not None and strategy.mode == "self_consistency":
-        clamped_fanout = min(
-            max(1, int(route.fanout)), max(1, int(budgets.max_ensemble_fanout))
-        )
+        clamped_fanout = min(max(1, route.fanout), max(1, budgets.max_ensemble_fanout))
         updates["max_parallel"] = min(max_parallel, clamped_fanout)
     return strategy.model_copy(update=updates)

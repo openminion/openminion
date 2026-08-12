@@ -300,7 +300,6 @@ class FocusTranscript(ScrollableContainer):
     can_focus = True
 
     def __init__(self, **kwargs) -> None:
-        # launch-time verbosity (passed via the CUC-defined
         verbosity_kwarg = kwargs.pop("verbosity", "normal")
         animation_kwarg = kwargs.pop("animation", None)
         progress_kwarg = kwargs.pop("progress", "full")
@@ -373,9 +372,7 @@ class FocusTranscript(ScrollableContainer):
             return True
         if previous.kind != current.kind:
             return True
-        if (previous.sender or "").strip() != (current.sender or "").strip():
-            return True
-        return False
+        return (previous.sender or "").strip() != (current.sender or "").strip()
 
     def set_messages(self, messages: list[ChatMessage]) -> None:
         """Replace all messages — used for resume + `/clear` paths."""
@@ -406,11 +403,8 @@ class FocusTranscript(ScrollableContainer):
         if len(self._messages) == before:
             return False
         for widget in self.query(FocusMessageWidget):
-            try:
-                if getattr(widget._message, "msg_id", "") == msg_id:
-                    widget.remove()
-            except AttributeError:
-                pass
+            if widget._message.msg_id == msg_id:
+                widget.remove()
         if self._selected_message_id == msg_id:
             self._selected_message_id = (
                 self._messages[-1].msg_id if self._messages else None

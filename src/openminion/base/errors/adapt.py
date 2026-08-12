@@ -120,11 +120,8 @@ def _mapping_from_exception(error: BaseException) -> Mapping[str, Any] | None:
 
 def _nested_error_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     nested = payload.get("error")
-    if isinstance(nested, Mapping) and (
-        "code" in nested
-        or "message" in nested
-        or "detail" in nested
-        or "details" in nested
+    if isinstance(nested, Mapping) and any(
+        key in nested for key in ("code", "message", "detail", "details")
     ):
         return nested
     return payload

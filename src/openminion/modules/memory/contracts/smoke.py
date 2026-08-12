@@ -28,13 +28,10 @@ def ensure_memory_smoke_contract(
         issue = "missing" if member is None else "non-callable"
         errors.append(f"{issue} member: {name}")
     if errors and strict:
-        raise TypeError(
+        raise TypeError(  # allow-bare-raise: defensive type guard
             f"memory smoke contract violation: {errors}"
-        )  # allow-bare-raise: defensive type guard
+        )
     return SmokeMemoryContractCheck(ok=not errors, errors=errors)
 
 
-__all__ = [
-    "SmokeMemoryContractCheck",
-    "ensure_memory_smoke_contract",
-]
+__all__ = ["SmokeMemoryContractCheck", "ensure_memory_smoke_contract"]

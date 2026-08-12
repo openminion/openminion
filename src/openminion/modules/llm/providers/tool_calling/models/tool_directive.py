@@ -34,13 +34,12 @@ class PlainToolDirectiveParser:
         if match is None:
             return ToolCallParseResult()
 
-        raw_name = str(match.group("name") or "").strip()
+        raw_name = match.group("name").strip()
 
         args: dict[str, Any] = {}
         tail = raw[match.end() :]
         seen_arg = False
         for line in tail.splitlines():
-            line = str(line or "")
             if not line.strip():
                 if seen_arg:
                     break
@@ -51,10 +50,8 @@ class PlainToolDirectiveParser:
                     break
                 continue
             seen_arg = True
-            key = str(arg_match.group("key") or "").strip()
-            raw_value = str(arg_match.group("value") or "").strip()
-            if not key:
-                continue
+            key = arg_match.group("key").strip()
+            raw_value = arg_match.group("value").strip()
             if (raw_value.startswith('"') and raw_value.endswith('"')) or (
                 raw_value.startswith("'") and raw_value.endswith("'")
             ):

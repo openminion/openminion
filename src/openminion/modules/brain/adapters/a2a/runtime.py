@@ -27,18 +27,6 @@ from openminion.base.config.env import EnvironmentConfig, resolve_environment_co
 from openminion.modules.brain.schemas import DelegationContext, DelegationResultSummary
 
 
-def _delegate_result_summary(
-    payload: dict[str, Any],
-    *,
-    fallback: str,
-) -> str:
-    for key in ("body", "message", "summary", "answer", "result", "output"):
-        text = str(payload.get(key) or "").strip()
-        if text:
-            return text
-    return fallback
-
-
 def _typed_delegation_result_summary(value: Any) -> dict[str, Any] | None:
     raw = value
     if isinstance(value, str):
@@ -52,6 +40,49 @@ def _typed_delegation_result_summary(value: Any) -> dict[str, Any] | None:
         return DelegationResultSummary.model_validate(raw).model_dump(mode="json")
     except Exception:
         return None
+
+
+def _call_response_payload(
+    response: Any,
+    *,
+    started_at: float,
+    in_progress_code: str,
+) -> dict[str, Any]:
+    payload = response.params if isinstance(response.params, dict) else {}
+    if payload.get("ok") is True:
+        data = payload.get("data", {})
+        normalized_data = data if isinstance(data, dict) else {}
+        return {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": str(normalized_data.get("summary") or "").strip()
+            or f"A2A call completed: {response.from_agent}.{response.method}",
+            "outputs": normalized_data,
+            "artifact_refs": [],
+            "memory_refs": [],
+            "metrics": _metrics(started_at),
+        }
+
+    status_code = str(payload.get("status") or "A2A_FAILED")
+    if status_code == in_progress_code or payload.get("task_id"):
+        return {
+            "status": BRAIN_JOB_STATUS_RUNNING,
+            "task_id": payload.get("task_id"),
+            "poll_after_ms": 1000,
+            "summary": "A2A job already in progress.",
+            "metrics": _metrics(started_at),
+        }
+
+    error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    return {
+        "status": BRAIN_ACTION_STATUS_FAILED,
+        "summary": str(error.get("message") or "A2A call failed"),
+        "error": {
+            "code": str(error.get("code") or status_code),
+            "message": str(error.get("message") or "A2A call failed"),
+            "details": error.get("details"),
+        },
+        "metrics": _metrics(started_at),
+    }
 
 
 class A2actlAdapter:
@@ -126,6 +157,7 @@ class A2actlAdapter:
 
         try:
             from openminion.modules.a2a.models import (
+                A2AObservabilityContext,
                 Envelope,
                 MESSAGE_TYPE_CALL,
                 MESSAGE_TYPE_JOB_START,
@@ -138,6 +170,12 @@ class A2actlAdapter:
                 "error": {"code": "A2A_RUNTIME_MISSING", "message": str(exc)},
             }
 
+        observability_raw = command.get("observability")
+        observability = (
+            A2AObservabilityContext.from_dict(observability_raw)
+            if isinstance(observability_raw, dict)
+            else None
+        )
         envelope = Envelope.new(
             from_agent=from_agent,
             to_agent=target,
@@ -152,6 +190,7 @@ class A2actlAdapter:
                 "session_id": str(session_id or "").strip(),
                 "from_agent": from_agent,
             },
+            observability=observability,
         )
 
         try:
@@ -165,51 +204,11 @@ class A2actlAdapter:
                     "metrics": _metrics(start),
                 }
 
-            response = runtime.call(envelope)
-            payload = response.params if isinstance(response.params, dict) else {}
-            if payload.get("ok") is True:
-                data = payload.get("data", {})
-                normalized_data = data if isinstance(data, dict) else {}
-                summary = _delegate_result_summary(
-                    normalized_data,
-                    fallback=(
-                        f"A2A call completed: {response.from_agent}.{response.method}"
-                    ),
-                )
-                return {
-                    "status": BRAIN_ACTION_STATUS_SUCCESS,
-                    "summary": summary,
-                    "outputs": normalized_data,
-                    "artifact_refs": [],
-                    "memory_refs": [],
-                    "metrics": _metrics(start),
-                }
-
-            status_code = str(payload.get("status") or "A2A_FAILED")
-            if status_code == ERROR_CODE_IN_PROGRESS or payload.get("task_id"):
-                return {
-                    "status": BRAIN_JOB_STATUS_RUNNING,
-                    "task_id": payload.get("task_id"),
-                    "poll_after_ms": 1000,
-                    "summary": "A2A job already in progress.",
-                    "metrics": _metrics(start),
-                }
-
-            error = (
-                payload.get("error") if isinstance(payload.get("error"), dict) else {}
+            return _call_response_payload(
+                runtime.call(envelope),
+                started_at=start,
+                in_progress_code=ERROR_CODE_IN_PROGRESS,
             )
-            return {
-                "status": BRAIN_ACTION_STATUS_FAILED,
-                "summary": str(error.get("message") or "A2A call failed"),
-                "error": {
-                    "code": str(error.get("code") or status_code),
-                    "message": str(error.get("message") or "A2A call failed"),
-                    "details": error.get("details")
-                    if isinstance(error, dict)
-                    else None,
-                },
-                "metrics": _metrics(start),
-            }
         except A2AError as exc:
             return {
                 "status": BRAIN_ACTION_STATUS_FAILED,
@@ -565,28 +564,9 @@ def _delegation_context_block(params: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _sanitized_delegate_summary(*, goal: str, summary: str) -> str:
-    normalized_goal = str(goal or "").strip()
-    lines: list[str] = []
-    for raw_line in str(summary or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.lower().startswith("parent goal:"):
-            continue
-        lines.append(line)
-    normalized_summary = "\n".join(lines).strip()
-    if normalized_goal and normalized_summary == normalized_goal:
-        return ""
-    return normalized_summary
-
-
 def _delegate_message_from_payload(params: dict[str, Any]) -> str:
     goal = str(params.get("goal", "") or "").strip()
-    summary = _sanitized_delegate_summary(
-        goal=goal,
-        summary=str(params.get("summary", "") or "").strip(),
-    )
+    summary = str(params.get("summary", "") or "").strip()
     constraints = _normalized_constraints(params.get("constraints"))
     parts: list[str] = []
     if goal:

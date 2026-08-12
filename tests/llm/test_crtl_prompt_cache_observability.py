@@ -12,8 +12,8 @@ from openminion.modules.context.prefix import PrefixCacheAdapter
 from openminion.modules.llm.prompt_cache import (
     build_prompt_cache_observation_payload,
 )
+from openminion.modules.llm.providers.anthropic.payloads import _usage_from_anthropic
 from openminion.modules.llm.providers.message_payloads import (
-    _usage_from_anthropic,
     _usage_from_openai_like,
 )
 from openminion.modules.llm.schemas import UsageInfo

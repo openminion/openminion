@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 
 from ...constants import DECISION_RATIONALE_MAX_CHARS as _DECISION_RATIONALE_MAX_CHARS
+from ...loop.tools.contracts import canonical_tool_arguments
 from ...schemas import ActionResult, PostCompletionCritique, WorkingState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -50,7 +51,7 @@ def _thinking_excerpt_from_trace_context(
         return ""
     try:
         payload = json.loads(trace_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return ""
     response_payload = payload.get("response")
     if not isinstance(response_payload, dict):
@@ -274,10 +275,6 @@ def _command_signatures(
     plan = getattr(state, "plan", None)
     if plan is None:
         return []
-    try:
-        from ..loop.tools.contracts import canonical_tool_arguments
-    except Exception:
-        return []
     signatures: list[str] = []
     for command in getattr(plan, "steps", []) or []:
         command_id = str(getattr(command, "command_id", "") or "").strip()
@@ -286,10 +283,7 @@ def _command_signatures(
         raw_args = getattr(command, "args", None)
         if not isinstance(raw_args, dict):
             continue
-        try:
-            signature = canonical_tool_arguments(dict(raw_args))
-        except Exception:
-            continue
+        signature = canonical_tool_arguments(raw_args)
         normalized = str(signature or "").strip()
         if normalized:
             signatures.append(normalized)
@@ -308,7 +302,6 @@ def _afe_config(runner: "BrainRunner") -> Any:
 
 
 def _afe_model(runner: "BrainRunner", *, tier: str) -> str:
-    """Resolve the model for AFE extraction from profile LLM profiles."""
     profiles = getattr(getattr(runner, "profile", None), "llm_profiles", None)
     candidates: list[str]
     if tier == "reflect":

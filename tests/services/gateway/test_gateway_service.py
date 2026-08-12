@@ -285,6 +285,7 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
             auto_resume=False,
         )
         session_id = "resume-settled"
+        conversation_id = "focus-resume-settled"
         first = asyncio.run(
             gateway.run_once(
                 channel="console",
@@ -292,6 +293,10 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
                 message="hello",
                 session_id=session_id,
                 deliver=True,
+                inbound_metadata={
+                    "conversation_id": conversation_id,
+                    "resume": "true",
+                },
             )
         )
         second = asyncio.run(
@@ -301,11 +306,14 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
                 message="follow up",
                 session_id=session_id,
                 deliver=True,
-                inbound_metadata={"resume": "true"},
+                inbound_metadata={
+                    "conversation_id": conversation_id,
+                    "resume": "true",
+                },
             )
         )
         self.assertEqual(len(self.provider.requests), 2)
-        self.assertGreater(len(self.provider.requests[-1].history), 0)
+        self.assertEqual(len(self.provider.requests[-1].history), 2)
         self.assertEqual(
             first.metadata.get("thread_id"),
             second.metadata.get("thread_id"),

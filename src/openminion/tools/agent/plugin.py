@@ -342,6 +342,20 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
     elif validated.mode == "cancel":
         result = seam.cancel(task_id=validated.task_id)
     else:
+        policy = getattr(ctx, "policy", None)
+        context_metadata = getattr(policy, "raw", {}).get("context_metadata", {})
+        if not isinstance(context_metadata, dict):
+            context_metadata = {}
+        bind_observability = getattr(seam, "bind_observability", None)
+        if callable(bind_observability):
+            bind_observability(
+                session_id=str(getattr(ctx, "telemetry_session_id", "") or ""),
+                turn_id=str(getattr(ctx, "telemetry_turn_id", "") or ""),
+                invocation_id=str(context_metadata.get("invocation_id") or ""),
+                execution_id=str(context_metadata.get("execution_id") or ""),
+                traceparent=str(context_metadata.get("traceparent") or ""),
+                tracestate=str(context_metadata.get("tracestate") or ""),
+            )
         delegate_kwargs = {
             "agent_id": validated.agent_id,
             "instruction": validated.instruction,

@@ -85,19 +85,14 @@ class OpenMinionMemoryGraphFakosProvider:
         )[:limit]
         record_ids = {record.id for record in records}
         edge_kind = _filter_value(request, "edge_kind")
-        relations: list[Any] = []
-        for record in records:
-            record_relations: tuple[Any, ...] = tuple(
-                store.list_relations(record.id) or ()
-            )
-            for relation in record_relations:
-                if (
-                    relation.source_record_id in record_ids
-                    and relation.target_record_id in record_ids
-                    and _relation_matches_edge_kind(relation, edge_kind)
-                ):
-                    relations.append(relation)
-        unique_relations = {relation.relation_id: relation for relation in relations}
+        unique_relations = {
+            relation.relation_id: relation
+            for record in records
+            for relation in store.list_relations(record.id) or ()
+            if relation.source_record_id in record_ids
+            and relation.target_record_id in record_ids
+            and _relation_matches_edge_kind(relation, edge_kind)
+        }
         return self._graphfakos.GraphFakosGraph(
             graph_id=f"openminion-memory:{self._db_path.name}",
             label="OpenMinion Second-Brain Memory",
@@ -136,9 +131,7 @@ class OpenMinionMemoryGraphFakosProvider:
 
 def _scope_filters(request: Any) -> list[str]:
     raw_scope = str(getattr(request, "filters", {}).get("scope", "") or "").strip()
-    if raw_scope:
-        return [scope for scope in _split_scope_filter(raw_scope) if scope]
-    return []
+    return list(_split_scope_filter(raw_scope)) if raw_scope else []
 
 
 def _record_matches_filters(record: Any, request: Any) -> bool:

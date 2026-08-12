@@ -25,7 +25,6 @@ class RLMAdapter(RLMAPI):
         meta_directive: dict[str, Any] | None = None,
         agent_policy: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run the recursive loop for a single agent turn."""
         response = self._service.generate(
             session_id=session_id,
             agent_id=agent_id,
@@ -37,11 +36,8 @@ class RLMAdapter(RLMAPI):
             meta_directive=meta_directive,
             agent_policy=agent_policy,
         )
-        tick_report = (
-            response.telemetry.tick_reports[-1]
-            if response.telemetry.tick_reports
-            else None
-        )
+        tick_reports = response.telemetry.tick_reports
+        tick_report = tick_reports[-1] if tick_reports else None
         return {
             "status": "completed",
             "final_text": response.final_text,

@@ -30,6 +30,8 @@ from openminion.modules.brain.schemas import (  # type: ignore[attr-defined]
 from openminion.modules.tool.contracts.model_ids import MODEL_TASK_DELEGATE
 from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
+    LIFECYCLE_EVENT_POST_TOOL_USE,
+    LIFECYCLE_EVENT_PRE_TOOL_USE,
     LifecycleEvent,
     fire_lifecycle_event,
 )
@@ -196,11 +198,11 @@ def execute_action_dispatch(
             str(getattr(state, "permission_mode", "default"))
         )
         state.permission_mode = global_permission_mode
-        tool_name_for_gate = str(getattr(command, "tool_name", "") or "").strip()
+        tool_name = str(getattr(command, "tool_name", "") or "").strip()
         permission_mode = effective_permission_mode_for_tool(
             global_mode=global_permission_mode,
             permission_overrides=getattr(state, "permission_overrides", {}),
-            tool_name=tool_name_for_gate,
+            tool_name=tool_name,
         )
         requested_outcome = str(
             getattr(
@@ -212,45 +214,38 @@ def execute_action_dispatch(
         ).strip()
         if not request_outcome_allows_tool(
             requested_outcome=requested_outcome,
-            tool_name=tool_name_for_gate,
+            tool_name=tool_name,
         ):
             result = _request_outcome_blocked_result(
                 command_id=command.command_id,
-                tool_name=tool_name_for_gate,
+                tool_name=tool_name,
                 requested_outcome=requested_outcome,
             )
             runner._remember_idempotency(state=state, command=command, result=result)
             return result, None
-        if permission_mode == "readonly":
-            if is_tool_blocked_by_readonly(tool_name_for_gate):
-                return (
-                    ActionResult(
-                        command_id=command.command_id,
-                        status=BRAIN_ACTION_STATUS_BLOCKED,
-                        summary=(
-                            f"Tool {tool_name_for_gate!r} blocked by "
-                            "readonly permission mode"
+        if permission_mode == "readonly" and is_tool_blocked_by_readonly(tool_name):
+            return (
+                ActionResult(
+                    command_id=command.command_id,
+                    status=BRAIN_ACTION_STATUS_BLOCKED,
+                    summary=f"Tool {tool_name!r} blocked by readonly permission mode",
+                    error=ActionError(
+                        code="PERMISSION_DENIED_READONLY",
+                        message=(
+                            f"Cannot execute write-capable tool {tool_name!r} in "
+                            "readonly permission mode. Switch to default or bypass "
+                            "mode via shift+tab or /permissions <mode>."
                         ),
-                        error=ActionError(
-                            code="PERMISSION_DENIED_READONLY",
-                            message=(
-                                f"Cannot execute write-capable tool "
-                                f"{tool_name_for_gate!r} in readonly "
-                                f"permission mode. Switch to default "
-                                f"or bypass mode via shift+tab or "
-                                f"/permissions <mode>."
-                            ),
-                            details={
-                                "reason_code": "readonly_blocks_write",
-                                "tool_name": tool_name_for_gate,
-                                "permission_mode": "readonly",
-                            },
-                        ),
+                        details={
+                            "reason_code": "readonly_blocks_write",
+                            "tool_name": tool_name,
+                            "permission_mode": "readonly",
+                        },
                     ),
-                    None,
-                )
-        tool_name_for_dispatch = str(getattr(command, "tool_name", "") or "").strip()
-        if tool_name_for_dispatch == MODEL_TASK_DELEGATE:
+                ),
+                None,
+            )
+        if tool_name == MODEL_TASK_DELEGATE:
             args = dict(getattr(command, "args", {}) or {})
             target_agent_id = str(args.get("agent_id", "") or "").strip()
             instruction = str(args.get("instruction", "") or "").strip()
@@ -350,12 +345,6 @@ def execute_action_dispatch(
                     exc=exc,
                 )
         try:
-            from openminion.modules.brain.tools.lifecycle import (
-                LIFECYCLE_EVENT_PRE_TOOL_USE,
-                LifecycleEvent,
-                fire_lifecycle_event,
-            )
-
             fire_lifecycle_event(
                 LifecycleEvent(
                     event_type=LIFECYCLE_EVENT_PRE_TOOL_USE,
@@ -483,12 +472,6 @@ def execute_action_dispatch(
                         exc=exc,
                     )
             try:
-                from openminion.modules.brain.tools.lifecycle import (
-                    LIFECYCLE_EVENT_POST_TOOL_USE,
-                    LifecycleEvent,
-                    fire_lifecycle_event,
-                )
-
                 fire_lifecycle_event(
                     LifecycleEvent(
                         event_type=LIFECYCLE_EVENT_POST_TOOL_USE,

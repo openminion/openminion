@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.loop.tools.contracts import (
-    AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
     DirectToolTurnContext,
 )
@@ -85,11 +84,6 @@ def test_name_only_direct_tool_counts_requested_tool_in_mixed_batch() -> None:
             match_by_name_only=True,
         ),
     )
-    profile = AdaptiveToolLoopProfile(
-        profile_name="test",
-        mode_name="act",
-        allowed_tools=frozenset({"code.repo_index", "file.write"}),
-    )
     ordered_results = [
         (
             SimpleNamespace(name="code.repo_index"),
@@ -111,6 +105,5 @@ def test_name_only_direct_tool_counts_requested_tool_in_mixed_batch() -> None:
         loop_state=state,
         signature="",
         ordered_tool_results=ordered_results,
-        profile=profile,
     )
     assert state.scratchpad["direct_tool_completed_tool_names"] == ["file.write"]

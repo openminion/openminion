@@ -73,8 +73,7 @@ def _wrap_content(content: str, *, prefix_width: int = 0) -> list[str]:
 
 
 def _terminal_supports_color() -> bool:
-    no_color = str(os.environ.get(NO_COLOR_ENV, "")).strip()
-    if no_color:
+    if str(os.environ.get(NO_COLOR_ENV, "")).strip():
         return False
     forced = str(os.environ.get(OPENMINION_COLOR_ENV, "")).strip().lower()
     if forced in BASE_COLOR_FORCE_FALSE_VALUES:
@@ -94,6 +93,4 @@ def _chat_timestamp(timestamp: datetime) -> str:
 
 def _sender_style(sender: str) -> str:
     normalized = str(sender or "").strip().lower()
-    if normalized == "you":
-        return "1;34"
-    return "1;32"
+    return "1;34" if normalized == "you" else "1;32"

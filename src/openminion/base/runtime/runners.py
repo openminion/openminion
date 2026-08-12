@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 import platform
 import shutil
@@ -22,17 +23,16 @@ from .sandbox import (
 from .constants import RUNTIME_NET_MODE_DENY
 
 
-def _realpath(path: str) -> str:
-    try:
-        return os.path.realpath(path)
-    except Exception:
-        return path
+@dataclass(frozen=True)
+class _SubprocessInvocation:
+    cmd: list[str]
+    cwd: str | None = None
 
 
 def _check_fs_path(path: str, allow_list: list[str]) -> None:
-    real = _realpath(path)
+    real = os.path.realpath(path)
     for allowed in allow_list:
-        real_allowed = _realpath(allowed)
+        real_allowed = os.path.realpath(allowed)
         if real == real_allowed or real.startswith(real_allowed + os.sep):
             return
     raise PermissionError(
@@ -74,8 +74,8 @@ def _filter_env(spec: ExecSpec, sandbox: ExecutionSandboxSpec) -> dict[str, str]
 
 
 def _check_cwd(cwd: str, workspace_root: str) -> str:
-    real_cwd = _realpath(cwd)
-    real_ws = _realpath(workspace_root)
+    real_cwd = os.path.realpath(cwd)
+    real_ws = os.path.realpath(workspace_root)
     if real_cwd != real_ws and not real_cwd.startswith(real_ws + os.sep):
         raise PermissionError(
             f"cwd {cwd!r} (resolved: {real_cwd!r}) is outside workspace_root {workspace_root!r}"
@@ -92,6 +92,29 @@ def _trim_exec_output(
     return stdout, stderr[: max(0, max_output_bytes - len(stdout))]
 
 
+def _run_subprocess(
+    invocation: _SubprocessInvocation,
+    spec: ExecSpec,
+    sandbox: ExecutionSandboxSpec,
+) -> ExecResult:
+    try:
+        proc = subprocess.run(
+            invocation.cmd,
+            cwd=invocation.cwd,
+            env=_filter_env(spec, sandbox),
+            input=spec.stdin,
+            capture_output=True,
+            text=True,
+            timeout=sandbox.timeout_s,
+        )
+        stdout, stderr = _trim_exec_output(
+            proc.stdout, proc.stderr, sandbox.max_output_bytes
+        )
+        return ExecResult(returncode=proc.returncode, stdout=stdout, stderr=stderr)
+    except subprocess.TimeoutExpired:
+        return ExecResult(returncode=-1, stdout="", stderr="", timed_out=True)
+
+
 class LocalRunner:
     name = "local"
     contract_version = RUNTIME_INTERFACE_VERSION
@@ -100,27 +123,11 @@ class LocalRunner:
         _check_cmd(spec.cmd, sandbox.cmd_allowlist)
         cwd = spec.cwd or sandbox.workspace_root
         real_cwd = _check_cwd(cwd, sandbox.workspace_root)
-        env = _filter_env(spec, sandbox)
-        try:
-            proc = subprocess.run(
-                spec.cmd,
-                cwd=real_cwd,
-                env=env,
-                input=spec.stdin,
-                capture_output=True,
-                text=True,
-                timeout=sandbox.timeout_s,
-            )
-            stdout, stderr = _trim_exec_output(
-                proc.stdout, proc.stderr, sandbox.max_output_bytes
-            )
-            return ExecResult(returncode=proc.returncode, stdout=stdout, stderr=stderr)
-        except subprocess.TimeoutExpired:
-            return ExecResult(returncode=-1, stdout="", stderr="", timed_out=True)
+        return _run_subprocess(_SubprocessInvocation(spec.cmd, real_cwd), spec, sandbox)
 
     def fs_write(self, spec: FsWriteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
         _check_fs_path(spec.path, sandbox.write_allow)
-        real_path = _realpath(spec.path)
+        real_path = os.path.realpath(spec.path)
         try:
             parent = os.path.dirname(real_path)
             if parent:
@@ -134,7 +141,7 @@ class LocalRunner:
 
     def fs_delete(self, spec: FsDeleteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
         _check_fs_path(spec.path, sandbox.delete_allow)
-        real_path = _realpath(spec.path)
+        real_path = os.path.realpath(spec.path)
         try:
             if os.path.isdir(real_path):
                 shutil.rmtree(real_path)
@@ -190,7 +197,7 @@ class BwrapRunner:
     def _build_bwrap_cmd(
         self, spec: ExecSpec, sandbox: ExecutionSandboxSpec
     ) -> list[str]:
-        workspace_real = _realpath(sandbox.workspace_root)
+        workspace_real = os.path.realpath(sandbox.workspace_root)
         args: list[str] = [
             self._bwrap,
             "--unshare-net",
@@ -206,34 +213,19 @@ class BwrapRunner:
                 args += ["--ro-bind", sys_dir, sys_dir]
         args += ["--bind", workspace_real, workspace_real]
         for mount in sandbox.ro_mounts:
-            real_mount = _realpath(mount)
+            real_mount = os.path.realpath(mount)
             if os.path.exists(real_mount):
                 args += ["--ro-bind", real_mount, real_mount]
         cwd = spec.cwd or sandbox.workspace_root
-        real_cwd = _realpath(cwd)
+        real_cwd = os.path.realpath(cwd)
         args += ["--chdir", real_cwd, "--"]
         args += spec.cmd
         return args
 
     def run_exec(self, spec: ExecSpec, sandbox: ExecutionSandboxSpec) -> ExecResult:
         _check_cmd(spec.cmd, sandbox.cmd_allowlist)
-        env = _filter_env(spec, sandbox)
         bwrap_cmd = self._build_bwrap_cmd(spec, sandbox)
-        try:
-            proc = subprocess.run(
-                bwrap_cmd,
-                env=env,
-                input=spec.stdin,
-                capture_output=True,
-                text=True,
-                timeout=sandbox.timeout_s,
-            )
-            stdout, stderr = _trim_exec_output(
-                proc.stdout, proc.stderr, sandbox.max_output_bytes
-            )
-            return ExecResult(returncode=proc.returncode, stdout=stdout, stderr=stderr)
-        except subprocess.TimeoutExpired:
-            return ExecResult(returncode=-1, stdout="", stderr="", timed_out=True)
+        return _run_subprocess(_SubprocessInvocation(bwrap_cmd), spec, sandbox)
 
     def fs_write(self, spec: FsWriteSpec, sandbox: ExecutionSandboxSpec) -> FsResult:
         return self._local.fs_write(spec, sandbox)

@@ -10,9 +10,11 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_ACTION_STATUS_TIMEOUT,
 )
+from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
 )
+from openminion.modules.llm.schemas import ToolCall
 
 from ..contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
@@ -24,6 +26,7 @@ from ..contracts import (
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
+    CommandExecutionOutcome,
     canonical_tool_call_signature,
     is_budget_exhausted_action_result,
 )
@@ -49,31 +52,22 @@ class LoopExecutionResult(NamedTuple):
     outcome: AdaptiveToolLoopOutcome | None
 
 
-def _error_code(action_result: Any) -> str:
-    raw_error = getattr(action_result, "error", None)
-    if isinstance(raw_error, dict):
-        return str(raw_error.get("code", "") or "").strip().upper()
-    return str(getattr(raw_error, "code", "") or "").strip().upper()
+def _error_code(action_result: ActionResult) -> str:
+    return str(action_result.error.code if action_result.error else "").strip().upper()
 
 
-def _is_structured_policy_recoverable(action_result: Any) -> bool:
+def _is_structured_policy_recoverable(action_result: ActionResult) -> bool:
     if _error_code(action_result) != "POLICY_DENIED":
         return False
-    raw_error = getattr(action_result, "error", None)
-    details = (
-        raw_error.get("details")
-        if isinstance(raw_error, dict)
-        else getattr(raw_error, "details", None)
+    return bool(
+        action_result.error
+        and str(action_result.error.details.get("suggested_tool", "") or "").strip()
     )
-    if not isinstance(details, dict):
-        return False
-    return bool(str(details.get("suggested_tool", "") or "").strip())
 
 
-def _is_confirm_required(action_result: Any) -> bool:
+def _is_confirm_required(action_result: ActionResult) -> bool:
     return (
-        str(getattr(action_result, "status", "") or "").strip()
-        == BRAIN_ACTION_STATUS_NEEDS_USER
+        action_result.status == BRAIN_ACTION_STATUS_NEEDS_USER
         and _error_code(action_result) == TOOL_ERROR_CONFIRM_REQUIRED
     )
 
@@ -82,14 +76,11 @@ def _record_plan_family_call(
     loop_state: AdaptiveToolLoopState,
     *,
     tool_name: str,
-    action_result: Any,
+    action_result: ActionResult,
 ) -> None:
     if not is_plan_family_tool_name(tool_name):
         return
-    if (
-        str(getattr(action_result, "status", "") or "").strip()
-        != BRAIN_ACTION_STATUS_SUCCESS
-    ):
+    if action_result.status != BRAIN_ACTION_STATUS_SUCCESS:
         return
     loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
         _count_substantive_non_control_tool_results(loop_state)
@@ -108,10 +99,9 @@ def execute_iteration_results(
     allowed_tools: frozenset[str],
     public_mode_tag: str,
     signature: str,
-    ordered_tool_results: list[tuple[Any, Any]],
+    ordered_tool_results: list[tuple[ToolCall, CommandExecutionOutcome]],
     cached_indices: frozenset[int],
     iter_batch_parallel_count: int,
-    dispatch_budget_managed: bool,
     initial_batch_had_progress: bool,
     loop_cache: Any,
     loop_profiler: Any,
@@ -134,7 +124,7 @@ def execute_iteration_results(
     batch_had_progress = initial_batch_had_progress
     iter_tc_idx = 0
     for result_index, (tool_call, command_outcome) in enumerate(ordered_tool_results):
-        tool_name = str(getattr(tool_call, "name", "") or "").strip()
+        tool_name = tool_call.name.strip()
         iter_tc_cache_hit = iter_tc_idx in cached_indices
         iter_tc_parallel = not iter_tc_cache_hit and iter_batch_parallel_count > 0
         iter_tc_idx += 1
@@ -155,7 +145,7 @@ def execute_iteration_results(
         )
         loop_state.tool_calls_made.append(tool_name)
         loop_state.total_tool_calls += 1
-        if not (dispatch_budget_managed and not iter_tc_cache_hit):
+        if iter_tc_cache_hit or not command_outcome.tool_budget_debited:
             debit_tool_budget(loop_ctx)
 
         action_result = command_outcome.action_result or build_missing_action_result(
@@ -170,7 +160,7 @@ def execute_iteration_results(
             loop_state, tool_name=tool_name, action_result=action_result
         )
 
-        tc_args_for_cache = dict(getattr(tool_call, "arguments", {}) or {})
+        tc_args_for_cache = dict(tool_call.arguments)
         loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)
         loop_cache.put(tool_name, tc_args_for_cache, command_outcome)
 
@@ -178,7 +168,7 @@ def execute_iteration_results(
             IterationToolCallRecord(
                 tool_name=tool_name,
                 duration_ms=0,
-                status=str(getattr(action_result, "status", "") or ""),
+                status=action_result.status,
                 cache_hit=iter_tc_cache_hit,
                 parallel=iter_tc_parallel,
             )
@@ -213,36 +203,31 @@ def execute_iteration_results(
             and profile.stop_on_needs_user
         ):
             if _is_confirm_required(action_result):
-                pending_command = getattr(command_outcome, "approved_command", None)
+                pending_command = command_outcome.approved_command
                 queued_siblings = []
                 for _later_tool_call, later_outcome in ordered_tool_results[
                     result_index + 1 :
                 ]:
-                    later_action_result = getattr(later_outcome, "action_result", None)
-                    later_command = getattr(later_outcome, "approved_command", None)
-                    if (
-                        later_action_result is not None
-                        and later_command is not None
-                        and _is_confirm_required(later_action_result)
+                    later_action_result = later_outcome.action_result
+                    later_command = later_outcome.approved_command
+                    if later_action_result is not None and _is_confirm_required(
+                        later_action_result
                     ):
                         queued_siblings.append(later_command.model_copy(deep=True))
-                if pending_command is not None:
-                    pending_confirmation = pending_command.model_copy(deep=True)
-                    if queued_siblings:
-                        loop_ctx.state.pending_confirmation_command = (
-                            attach_confirmation_replay_queue(
-                                pending_confirmation, queued_siblings
-                            )
-                        )
-                    else:
-                        loop_ctx.state.pending_confirmation_command = (
-                            pending_confirmation
-                        )
-                    loop_ctx.state.post_action_user_message = (
-                        confirmation_required_user_message(
-                            loop_ctx.state.pending_confirmation_command
+                pending_confirmation = pending_command.model_copy(deep=True)
+                if queued_siblings:
+                    loop_ctx.state.pending_confirmation_command = (
+                        attach_confirmation_replay_queue(
+                            pending_confirmation, queued_siblings
                         )
                     )
+                else:
+                    loop_ctx.state.pending_confirmation_command = pending_confirmation
+                loop_ctx.state.post_action_user_message = (
+                    confirmation_required_user_message(
+                        loop_ctx.state.pending_confirmation_command
+                    )
+                )
             loop_state.termination_reason = ADAPTIVE_TERM_NEEDS_USER
             emit_adaptive_status(
                 loop_ctx,
@@ -267,7 +252,7 @@ def execute_iteration_results(
         if is_budget_exhausted_action_result(action_result):
             loop_state.messages.append(
                 action_result_to_tool_message(
-                    getattr(tool_call, "id", None),
+                    tool_call.id,
                     tool_name,
                     action_result,
                 )
@@ -313,7 +298,7 @@ def execute_iteration_results(
 
         loop_state.messages.append(
             action_result_to_tool_message(
-                getattr(tool_call, "id", None),
+                tool_call.id,
                 tool_name,
                 action_result,
             )
@@ -361,7 +346,7 @@ def execute_iteration_results(
             history=[],
         )
         if micro_score.score >= MICRO_CORRECTION_ANOMALY_THRESHOLD:
-            result_summary = str(getattr(action_result, "summary", "") or "")
+            result_summary = str(action_result.summary or "")
             loop_state.messages.append(
                 build_enrichment_message(
                     tool_name=tool_name,
@@ -382,7 +367,7 @@ def execute_iteration_results(
                 failure_ctx = (
                     f"Tool {tool_name!r} has produced anomalous output "
                     f"(score: {micro_score.score:.2f}) twice in a row. "
-                    f"Last result: {str(getattr(action_result, 'summary', ''))[:300]}"
+                    f"Last result: {action_result.summary[:300]}"
                 )
                 plan = trigger_macro_correction(
                     loop_ctx=loop_ctx,
@@ -429,7 +414,7 @@ def execute_iteration_results(
             failure_ctx = (
                 f"Tool {tool_name!r} returned a severe anomaly "
                 f"(score: {micro_score.score:.2f}) on first occurrence. "
-                f"Last result: {str(getattr(action_result, 'summary', ''))[:300]}"
+                f"Last result: {action_result.summary[:300]}"
             )
             plan = trigger_macro_correction(
                 loop_ctx=loop_ctx,
@@ -480,7 +465,7 @@ def execute_iteration_results(
         } and (
             not profile.allow_llm_recovery_after_tool_failure or direct_tool_failure
         ):
-            if signature not in set(loop_state.seen_signatures):
+            if signature not in loop_state.seen_signatures:
                 loop_state.seen_signatures.append(signature)
             loop_state.termination_reason = ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
             emit_adaptive_status(

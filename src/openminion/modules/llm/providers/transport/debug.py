@@ -24,7 +24,7 @@ def llm_debug_enabled(
     if not raw_filter:
         return True
     providers = {item.strip() for item in raw_filter.split(",") if item.strip()}
-    return str(provider_name or "").strip().lower() in providers
+    return provider_name.strip().lower() in providers
 
 
 def llm_debug_dir(
@@ -48,11 +48,10 @@ def llm_debug_max_chars(
     *,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> int:
-    env_owner = resolve_environment_config(env=env)
-    configured = env_owner.openminion_llm_debug_max_chars
+    configured = resolve_environment_config(env=env).openminion_llm_debug_max_chars
     if configured <= 0:
         return 4000
-    return max(200, int(configured))
+    return max(200, configured)
 
 
 def truncate_debug_value(value: Any, max_chars: int) -> Any:

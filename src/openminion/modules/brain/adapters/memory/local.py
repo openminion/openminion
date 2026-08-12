@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
-from openminion.modules.brain.schemas import iso_now, new_uuid
+from openminion.modules.brain.schemas.base import iso_now, new_uuid
 
 
 class LocalMemoryAdapter:
@@ -77,14 +77,10 @@ class LocalMemoryAdapter:
         observed_at: str,
         feedback_delta: float,
     ) -> int:
-        normalized_ids: list[str] = []
-        seen: set[str] = set()
-        for record_id in record_ids:
-            normalized = str(record_id or "").strip()
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            normalized_ids.append(normalized)
+        normalized_ids = list(
+            dict.fromkeys(record_id.strip() for record_id in record_ids)
+        )
+        normalized_ids = [record_id for record_id in normalized_ids if record_id]
         if not normalized_ids:
             return 0
         self._append(

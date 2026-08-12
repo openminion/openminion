@@ -24,19 +24,19 @@ class IdentityLockfile:
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "generated_from_profile_version": str(self.generated_from_profile_version),
-            "generated_at": str(self.generated_at),
+            "generated_from_profile_version": self.generated_from_profile_version,
+            "generated_at": self.generated_at,
             "files": [
                 {
                     "relative_path": item.relative_path,
                     "sha256": item.sha256,
-                    "size_bytes": int(item.size_bytes),
+                    "size_bytes": item.size_bytes,
                 }
                 for item in self.files
             ],
         }
         if self.tree_sha256:
-            payload["tree_sha256"] = str(self.tree_sha256)
+            payload["tree_sha256"] = self.tree_sha256
         return payload
 
 
@@ -67,7 +67,7 @@ def build_lock_manifest(
             )
         )
 
-    return tuple(sorted(entries, key=lambda item: item.relative_path))
+    return tuple(entries)
 
 
 def compute_tree_sha256(entries: tuple[IdentityLockManifestEntry, ...]) -> str:
@@ -80,11 +80,10 @@ def write_identity_lockfile(
 ) -> None:
     path = Path(lockfile_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = lockfile.to_payload()
-    path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
-        encoding="utf-8",
+    serialized = json.dumps(
+        lockfile.to_payload(), indent=2, sort_keys=True, ensure_ascii=True
     )
+    path.write_text(f"{serialized}\n", encoding="utf-8")
 
 
 def read_identity_lockfile(lockfile_path: str | Path) -> IdentityLockfile:

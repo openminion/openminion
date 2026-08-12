@@ -89,18 +89,17 @@ def generate(
     bad_retrieval_streak = 0
     max_bad_retrieval_streak_seen = 0
     stop_reason = "max_ticks_reached"
-    current_query = query.strip() or "Continue with the current objective."
+    current_query = query.strip()
+    if not current_query:
+        raise ValueError("query must not be empty")
     continuation = RLMContinuation(
         needs_more_ticks=False, suggested_next_query=None, reason="completed"
     )
 
     for tick in range(1, budget_cfg.max_ticks + 1):
-        phases: list[str] = []
-        phases.append("LOAD_STATE")
+        phases = ["LOAD_STATE"]
 
         retrieval_strategy = self._resolve_retrieval_strategy(
-            query=current_query,
-            purpose=purpose,
             constraints=rlm_constraints,
         )
         target_k = max(1, int(self.config.retrieval.k_total))
@@ -236,9 +235,7 @@ def generate(
             task_state=task_state,
             agent_policy=effective_policy,
         )
-        tick_output = self._parse_tick_output(
-            llm_result=llm_result, fallback_query=current_query
-        )
+        tick_output = self._parse_tick_output(llm_result=llm_result)
 
         usage_in, usage_out = self._extract_usage(
             llm_result=llm_result, prompt_messages=context_messages
@@ -265,13 +262,12 @@ def generate(
             wm_state=wm_state,
             wm_patch=tick_output.wm_update,
             query=current_query,
-            answer=tick_output.answer,
             max_items=self.config.wm_max_items_per_list,
             max_tool_summaries=self.config.wm_max_tool_summaries,
         )
 
         citation_coverage = self._estimate_citation_coverage(
-            answer=tick_output.answer, evidence_count=len(tick_evidence)
+            evidence_count=len(tick_evidence)
         )
 
         phases.append("WRITEBACK")
@@ -315,7 +311,7 @@ def generate(
             )
 
         phases.append("STOP_CHECK")
-        next_query = (tick_output.next_query or "").strip() or current_query
+        next_query = (tick_output.next_query or "").strip()
         current_stop_reason = ""
         if tick_output.final and (
             not rlm_constraints.must_cite_evidence or bool(evidence_refs)

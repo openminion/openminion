@@ -151,7 +151,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
             )
 
         try:
-            with active_chat_phase("gateway_session_context"):
+            with active_chat_phase("session_compaction"):
                 await self._session_context.acompact_session(
                     session_id=routing.session.id
                 )

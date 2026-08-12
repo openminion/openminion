@@ -9,6 +9,7 @@ from prompt_toolkit.completion import Completion
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text.ansi import ANSI
+from prompt_toolkit.formatted_text.utils import fragment_list_to_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.layout.containers import Window
@@ -20,6 +21,12 @@ import openminion.cli.interactive.terminal.composer as composer_module
 from openminion.cli.interactive.terminal.composer import (
     _ClickableCompletionMenuControl,
     TerminalComposer,
+)
+from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
+from openminion.cli.presentation.animation import (
+    AnimationRegistry,
+    AnimationResolution,
+    AnimationSpec,
 )
 from openminion.cli.presentation.contracts import Composer
 
@@ -61,9 +68,79 @@ def test_set_busy_switches_placeholder_copy() -> None:
     busy_placeholder = c._formatted_placeholder()[0][1]
     assert "Type to queue while the current turn runs" in busy_placeholder
     assert "Esc interrupts" in busy_placeholder
+    assert c._session.app.erase_when_done is True
     c.set_busy(False)
     assert c._prompt_text() == "❯ "
     assert "Ask anything" in c._formatted_placeholder()[0][1]
+    assert c._session.app.erase_when_done is False
+
+
+def test_busy_prompt_animates_selected_provider_above_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 10.0
+    monkeypatch.setattr(composer_module.time, "monotonic", lambda: now)
+    animation = AnimationSpec("unicode", "helix", ("◐", "◓"), 100)
+    composer = TerminalComposer(animation=AnimationResolution(animation, source="flag"))
+
+    composer.set_busy(True)
+    assert composer._formatted_prompt() == [
+        ("class:busy-indicator", " ◐"),
+        ("", "\n\n"),
+        ("ansicyan", "❯ "),
+    ]
+
+    now = 10.11
+    assert composer._formatted_prompt() == [
+        ("class:busy-indicator", " ◓"),
+        ("", "\n\n"),
+        ("ansicyan", "❯ "),
+    ]
+    assert composer._prompt_refresh_interval() == 0.1
+
+
+def test_busy_prompt_places_status_and_elapsed_before_animation() -> None:
+    animation = AnimationSpec("unicode", "mindwave", ("~  ", "~~ "), 100)
+    line = TerminalStatusLine()
+    line.set_state(
+        state="responding",
+        turn_status="Analyzing request...",
+        elapsed_seconds=5,
+    )
+    composer = TerminalComposer(
+        active_status=line.active_status,
+        animation=AnimationResolution(animation, source="flag"),
+    )
+    composer.set_busy(True)
+
+    text = fragment_list_to_text(composer._formatted_prompt())
+
+    assert text == "Status: Analyzing request... · 5s ~  \n\n❯ "
+
+
+@pytest.mark.parametrize(
+    ("progress", "expected_prompt"),
+    [
+        (
+            "minimal",
+            [
+                ("class:busy-indicator", " •"),
+                ("", "\n\n"),
+                ("ansicyan", "❯ "),
+            ],
+        ),
+        ("off", [("ansicyan", "❯ ")]),
+    ],
+)
+def test_busy_prompt_respects_progress_level(
+    progress: str,
+    expected_prompt: list[tuple[str, str]],
+) -> None:
+    composer = TerminalComposer(progress=progress)
+    composer.set_busy(True)
+
+    assert composer._formatted_prompt() == expected_prompt
+    assert composer._prompt_refresh_interval() is None
 
 
 def test_toggle_multiline_flips_state() -> None:
@@ -100,9 +177,20 @@ def test_completion_menu_reserves_ten_rows() -> None:
     assert c._session.reserve_space_for_menu == 10
 
 
-def test_completion_menu_enables_mouse_support() -> None:
+def test_mouse_capture_is_limited_to_open_completion_menu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buffer = SimpleNamespace(complete_state=None)
+    monkeypatch.setattr(
+        composer_module,
+        "get_app",
+        lambda: SimpleNamespace(current_buffer=buffer),
+    )
     c = TerminalComposer()
-    assert c._session.mouse_support is True
+
+    assert c._session.mouse_support() is False
+    buffer.complete_state = object()
+    assert c._session.mouse_support() is True
 
 
 def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:
@@ -311,6 +399,90 @@ def test_slash_key_inserts_slash_and_opens_completion_menu() -> None:
     assert calls == ["insert:/", "complete:False"]
 
 
+def test_slash_name_key_keeps_completion_menu_filtered() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Document:
+        text_before_cursor = "/m"
+
+    class _Buffer:
+        document = _Document()
+
+        def insert_text(self, text: str) -> None:
+            calls.append(f"insert:{text}")
+
+        def start_completion(self, *, select_first: bool) -> None:
+            calls.append(f"complete:{select_first}")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+        data = "m"
+
+    c._insert_slash_name_char(_Event())
+
+    assert calls == ["insert:m", "complete:False"]
+
+
+def test_plain_text_key_does_not_force_slash_completion() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Document:
+        text_before_cursor = "m"
+
+    class _Buffer:
+        document = _Document()
+
+        def insert_text(self, text: str) -> None:
+            calls.append(f"insert:{text}")
+
+        def start_completion(self, *, select_first: bool) -> None:
+            calls.append(f"complete:{select_first}")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+        data = "m"
+
+    c._insert_slash_name_char(_Event())
+
+    assert calls == ["insert:m"]
+
+
+def test_backspace_reopens_slash_completion_menu() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Document:
+        text_before_cursor = "/te"
+
+    class _Buffer:
+        document = _Document()
+
+        def delete_before_cursor(self, *, count: int) -> None:
+            calls.append(f"delete:{count}")
+            self.document.text_before_cursor = "/t"
+
+        def start_completion(self, *, select_first: bool) -> None:
+            calls.append(f"complete:{select_first}")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._delete_before_cursor(_Event())
+
+    assert calls == ["delete:1", "complete:False"]
+
+
 @pytest.mark.asyncio
 async def test_read_line_resets_multiline_after_submit() -> None:
     c = TerminalComposer()
@@ -322,6 +494,22 @@ async def test_read_line_resets_multiline_after_submit() -> None:
     c._session = type("_Session", (), {"prompt_async": _prompt_async})()
     assert await c.read_line() == "hello"
     assert c._multiline is False
+
+
+@pytest.mark.asyncio
+async def test_read_line_refreshes_busy_prompt_at_animation_cadence() -> None:
+    animation = AnimationSpec("unicode", "helix", ("◐", "◓"), 125)
+    composer = TerminalComposer(animation=AnimationResolution(animation, source="flag"))
+    composer.set_busy(True)
+
+    async def _prompt_async(_session, message, **kwargs):
+        assert callable(message)
+        assert kwargs["refresh_interval"] == 0.125
+        return "queued"
+
+    composer._session = type("_Session", (), {"prompt_async": _prompt_async})()
+
+    assert await composer.read_line() == "queued"
 
 
 @pytest.mark.asyncio
@@ -410,3 +598,91 @@ async def test_read_line_submits_on_enter_with_real_prompt_session() -> None:
         result = await composer.read_line()
 
     assert result == "hi"
+
+
+@pytest.mark.asyncio
+async def test_busy_animation_keeps_real_prompt_input_usable() -> None:
+    with create_pipe_input() as pipe:
+        status_line = TerminalStatusLine()
+        status_line.set_state(
+            state="responding",
+            turn_status="Analyzing request...",
+            elapsed_seconds=9,
+        )
+        composer = TerminalComposer(
+            active_status=status_line.active_status,
+            animation=AnimationResolution(
+                AnimationSpec("unicode", "helix", ("◐", "◓"), 50),
+                source="flag",
+            ),
+        )
+        composer._session = PromptSession(
+            input=pipe,
+            output=DummyOutput(),
+            style=composer._session.style,
+        )
+        composer.set_busy(True)
+
+        async def _send() -> None:
+            import asyncio
+
+            pipe.send_text("queued")
+            await asyncio.sleep(0.06)
+            status_line.set_state(elapsed_seconds=10)
+            composer.invalidate()
+            await asyncio.sleep(0.06)
+            pipe.send_text(" while working\n")
+
+        import asyncio
+
+        asyncio.create_task(_send())
+        result = await composer.read_line()
+
+    assert result == "queued while working"
+
+
+def test_default_animation_follows_structured_brain_phase(monkeypatch) -> None:
+    class _UnicodeProvider:
+        provider_id = "unicode"
+
+        def names(self) -> tuple[str, ...]:
+            return (
+                "sparkle",
+                "braillewave",
+                "assemble",
+                "gearspin",
+                "dna",
+                "orbitnodes",
+                "scanline",
+                "fillsweep",
+                "cascade",
+            )
+
+        def get(self, name: str) -> AnimationSpec:
+            frame = name[0]
+            return AnimationSpec("unicode", name, (frame, frame.upper()), 100)
+
+    registry = AnimationRegistry((_UnicodeProvider(),))
+    monkeypatch.setattr(
+        composer_module,
+        "default_animation_registry",
+        lambda: registry,
+    )
+    composer = TerminalComposer()
+
+    composer.set_busy(True)
+    assert composer._animation_frames == ("s", "S")
+
+    expected = {
+        "analyzing": "braillewave",
+        "planning": "assemble",
+        "executing": "gearspin",
+        "replanning": "dna",
+        "reviewing": "orbitnodes",
+        "verifying": "scanline",
+        "evaluating_completion": "fillsweep",
+        "saving_context": "cascade",
+    }
+    for status_key, animation_name in expected.items():
+        composer.set_activity(status_key)
+        assert composer._activity_animation == animation_name

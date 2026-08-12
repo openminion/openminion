@@ -85,15 +85,16 @@ def _resolve_storage_db_path(config_path: Path, db: Optional[Path]) -> Path:
     data_root = resolve_data_root(
         home_root, data_root=env_owner.get(OPENMINION_DATA_ROOT_ENV, "")
     )
+    default_path = (data_root / DEFAULT_INTEGRATED_STORAGE_SUBPATH).resolve()
     if env_owner.get(OPENMINION_DATA_ROOT_ENV, "").strip():
-        return (data_root / DEFAULT_INTEGRATED_STORAGE_SUBPATH).resolve()
+        return default_path
     try:
         cfg = load_config(config_path, env=dict(os.environ))
     except FileNotFoundError:
-        return (data_root / DEFAULT_INTEGRATED_STORAGE_SUBPATH).resolve()
+        return default_path
     if cfg.storage.backend == "sqlite":
         return resolve_path(cfg.storage.sqlite_path)
-    return (data_root / DEFAULT_INTEGRATED_STORAGE_SUBPATH).resolve()
+    return default_path
 
 
 def _run_storage_command(
@@ -291,10 +292,7 @@ def warm_cache_cmd(
 ) -> None:
     try:
         with _open_identity(config) as (identity, _):
-            count = identity.warm_cache(
-                agent_id=agent_id,
-                purposes=purpose if purpose else None,
-            )
+            count = identity.warm_cache(agent_id=agent_id, purposes=purpose or None)
             _print_json({"ok": True, "warmed": count})
     except Exception as exc:  # pragma: no cover - CLI guard
         _print_json({"ok": False, "error": {"message": str(exc)}})

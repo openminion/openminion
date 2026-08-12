@@ -315,7 +315,6 @@ class TurnRecordingMixin:
             user_message
         )
 
-        facts_auto_extracted = 0
         facts_added = self._record_session_facts(facts=facts, session_id=session_id)
         if has_explicit_remember:
             self._record_explicit_durable_facts(facts=facts, session_id=session_id)
@@ -340,9 +339,6 @@ class TurnRecordingMixin:
         )
         if self._candidate_learning_readiness_enabled:
             self._gc_candidates()
-        if self._auto_extract_enabled:
-            facts_auto_extracted = 0
-        notify_count = facts_auto_extracted if self._auto_extract_notify else 0
         self._enforce_runtime_retention(session_id=session_id)
 
         self._trace(
@@ -353,7 +349,7 @@ class TurnRecordingMixin:
                 "facts_added": facts_added,
                 "todos_added": todos_added,
                 "todos_completed": todos_completed,
-                "facts_auto_extracted": facts_auto_extracted,
+                "facts_auto_extracted": 0,
                 "generation": self._generation,
             },
         )
@@ -364,7 +360,7 @@ class TurnRecordingMixin:
             todos_completed=todos_completed,
             patch_id=patch_id,
             generation=self._generation,
-            facts_auto_extracted=notify_count,
+            facts_auto_extracted=0,
         )
 
 

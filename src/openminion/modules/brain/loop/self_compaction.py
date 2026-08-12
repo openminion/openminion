@@ -1,5 +1,3 @@
-"""Explicit agent-led self-compaction step for future-self summaries."""
-
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -28,7 +26,7 @@ class SelfCompactionResult:
 
 
 def _fit_summary(text: str, *, max_chars: int = SELF_COMPACTION_MAX_CHARS) -> str:
-    rendered = " ".join(str(text or "").strip().split())
+    rendered = " ".join(text.strip().split())
     if len(rendered) <= max_chars:
         return rendered
     trimmed = rendered[: max(0, max_chars - 3)].rstrip()
@@ -185,16 +183,14 @@ def run_self_compaction_step(
             state_hash=eligibility.state_hash,
         )
     prompt = "\n".join(
-        part
-        for part in [
+        (
             "Summarize the current work for your future self.",
             "Return plain text only.",
             "Keep it concise, under 800 characters, and focus on what is done, what remains, active blockers, and the next concrete step.",
             f"Goal: {str(getattr(working_state, 'goal', '') or '').strip()}",
             f"Current session work summary: {str(getattr(working_state, 'session_work_summary', '') or '').strip()}",
-            f"Recent work: {str(recent_work or '').strip()}",
-        ]
-        if str(part or "").strip()
+            f"Recent work: {recent_work.strip()}",
+        )
     )
     response = runtime.complete(
         messages=[
@@ -204,7 +200,7 @@ def run_self_compaction_step(
         tools=[],
         model=model,
         tool_choice="none",
-        max_output_tokens=min(220, max(32, int(budget_state.max_prompt_tokens or 0))),
+        max_output_tokens=min(220, max(32, budget_state.max_prompt_tokens)),
         metadata={"purpose": "self_compaction"},
     )
     summary_text = str(getattr(response, "output_text", "") or "").strip()
@@ -215,6 +211,6 @@ def run_self_compaction_step(
         session_api=session_api,
         now=target_now,
         reason=reason,
-        input_ref=f"prompt:{max(0, int(prompt_token_estimate or 0))}",
+        input_ref=f"prompt:{max(0, prompt_token_estimate)}",
         output_ref=f"summary:{len(summary_text)}",
     )

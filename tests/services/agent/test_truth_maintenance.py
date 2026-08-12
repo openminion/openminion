@@ -125,7 +125,7 @@ def test_session_lifecycle_runs_capacity_and_purge_on_postgres(
     try:
         store = PostgresMemoryStore(
             engine,
-            database_path=Path.cwd() / ".openminion-memory-postgres-truth-test",
+            database_path=tmp_path / ".openminion" / "memory" / "postgres-truth.db",
         )
         service = MemoryService(store=store)
         adapter = MemoryServiceGatewayAdapter(

@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 from typing import Any
 
@@ -12,29 +11,12 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-    ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
 )
 from openminion.modules.brain.loop.tools.iteration.helpers import _MUTATING_FILE_TOOLS
 from openminion.modules.llm.schemas import Message
 
 from .contracts import CODING_TERM_FINAL_TEXT, CODING_TERM_TOOL_FAILURE
-
-
-def _looks_like_verification_stub(text: str) -> bool:
-    token = str(text or "").strip().lower()
-    if not token:
-        return False
-    return token.startswith(
-        (
-            "verification step:",
-            "verification:",
-            "verified:",
-            "readback:",
-            "read back:",
-        )
-    )
-
 
 _CODING_VERIFY_ALLOWED_TOOLS: frozenset[str] = frozenset(
     {
@@ -69,15 +51,11 @@ _RESERVE_TERMINATION_REASONS = frozenset(
 )
 
 
-def _is_tool_choice_none_closure_failure(outcome: AdaptiveToolLoopOutcome) -> bool:
-    if outcome.termination_reason != ADAPTIVE_TERM_LLM_ERROR:
-        return False
-    message = str(getattr(outcome, "error_message", "") or "").lower()
-    return "tool_choice=none" in message
-
-
 def _mutating_result_path(item: dict[str, Any]) -> str | None:
-    for mapping in _mutating_result_mappings(item):
+    mappings = [item]
+    if isinstance(item.get("data"), dict):
+        mappings.append(item["data"])
+    for mapping in mappings:
         for key in ("path", "file_path", "final_path", "target", "target_path"):
             value = mapping.get(key)
             if value is None:
@@ -86,15 +64,6 @@ def _mutating_result_path(item: dict[str, Any]) -> str | None:
             if rendered:
                 return rendered
     return None
-
-
-def _mutating_result_mappings(item: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-    mappings: list[dict[str, Any]] = [item]
-    for key in ("data", "outputs", "result", "payload"):
-        value = item.get(key)
-        if isinstance(value, dict):
-            mappings.append(value)
-    return tuple(mappings)
 
 
 def _workspace_roots_for_mutating_result(runner: Any) -> tuple[Path, ...]:
@@ -126,10 +95,7 @@ class CodingReserveMixin:
         *,
         outcome: AdaptiveToolLoopOutcome,
     ) -> bool:
-        if (
-            outcome.termination_reason not in _RESERVE_TERMINATION_REASONS
-            and not _is_tool_choice_none_closure_failure(outcome)
-        ):
+        if outcome.termination_reason not in _RESERVE_TERMINATION_REASONS:
             return False
         if self._coding_plan is None:
             return False
@@ -222,79 +188,18 @@ class CodingReserveMixin:
             return True
         if outcome.termination_reason != CODING_TERM_FINAL_TEXT:
             return False
-        final_text = str(outcome.final_text or "").strip()
-        if not final_text:
-            return True
-        if _looks_like_verification_stub(final_text):
-            return True
-        from openminion.modules.brain.loop.tools.postprocess.rules import (
-            _looks_like_unexecutable_tool_payload_text,
-        )
-
-        if _looks_like_unexecutable_tool_payload_text(final_text):
-            return True
-        if self._missing_requested_final_markers(final_text):
-            return True
-        return False
+        return not bool(outcome.final_text.strip())
 
     def _is_verifier_incomplete_failure(
         self: Any,
         outcome: AdaptiveToolLoopOutcome,
     ) -> bool:
-        action_result = getattr(outcome, "action_result", None)
-        error = getattr(action_result, "error", None)
-        code = str(getattr(error, "code", "") or "").strip()
-        if code == "coding_verifier_incomplete":
-            return True
-        error_message = str(getattr(outcome, "error_message", "") or "").strip().lower()
-        return error_message.startswith("typed verifier did not confirm")
-
-    def _missing_requested_final_markers(self: Any, text: str) -> bool:
-        lowered = str(text or "").lower()
-        required = self._requested_final_markers()
-        if not required:
-            return False
-        return any(marker not in lowered for marker in required)
-
-    def _requested_final_markers(self: Any) -> tuple[str, ...]:
-        messages = [
-            str(getattr(message, "content", "") or "")
-            for message in list(self._loop_state.messages or [])
-            if str(getattr(message, "role", "") or "").strip().lower() == "user"
-        ]
-        combined = "\n".join(messages)
-        markers: list[str] = []
-
-        for match in re.finditer(
-            r"exact labels?\s+((?:`[^`]+`\s*,?\s*)+)",
-            combined,
-            re.IGNORECASE,
-        ):
-            markers.extend(
-                token.strip().strip("`").rstrip(":").lower()
-                for token in re.findall(r"`([^`]+)`", match.group(1))
-                if token.strip()
-            )
-        for match in re.finditer(
-            r"exact label\s+`([^`]+)`",
-            combined,
-            re.IGNORECASE,
-        ):
-            token = match.group(1).strip().rstrip(":").lower()
-            if token:
-                markers.append(token)
-        if "validation result" in combined.lower():
-            markers.append("validation result")
-        if "files changed" in combined.lower():
-            markers.append("files changed")
-        if "remaining follow-ups" in combined.lower():
-            markers.append("remaining follow-ups")
-
-        unique: list[str] = []
-        for marker in markers:
-            if marker and marker not in unique:
-                unique.append(marker)
-        return tuple(unique)
+        action_result = outcome.action_result
+        return bool(
+            action_result is not None
+            and action_result.error is not None
+            and action_result.error.code == "coding_verifier_incomplete"
+        )
 
     def _has_verifier_candidate(self: Any) -> bool:
         candidate = (
@@ -304,9 +209,7 @@ class CodingReserveMixin:
         return isinstance(candidate, dict) and bool(candidate)
 
     def _has_successful_mutating_file_result(self: Any) -> bool:
-        for item in list(
-            self._loop_state.scratchpad.get("adaptive.tool_results", []) or []
-        ):
+        for item in self._loop_state.scratchpad.get("adaptive.tool_results", []) or []:
             if not isinstance(item, dict):
                 continue
             tool_name = str(item.get("tool_name", "") or "").strip()

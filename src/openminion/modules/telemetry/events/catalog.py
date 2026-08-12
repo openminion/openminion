@@ -18,6 +18,24 @@ STORAGE_MIGRATION = "storage.migration"
 
 AGENT_BOUND = "agent.bound"
 AGENT_SWITCHED = "agent.switched"
+AGENT_INVOCATION_STARTED = "agent.invocation.started"
+AGENT_INVOCATION_COMPLETED = "agent.invocation.completed"
+AGENT_INVOCATION_FAILED = "agent.invocation.failed"
+AGENT_INVOCATION_CANCELLED = "agent.invocation.cancelled"
+AGENT_EXECUTION_STARTED = "agent.execution.started"
+AGENT_EXECUTION_PAUSED = "agent.execution.paused"
+AGENT_EXECUTION_COMPLETED = "agent.execution.completed"
+AGENT_EXECUTION_FAILED = "agent.execution.failed"
+AGENT_EXECUTION_CANCELLED = "agent.execution.cancelled"
+AGENT_TURN_STARTED = "agent.turn.started"
+AGENT_TURN_COMPLETED = "agent.turn.completed"
+AGENT_TURN_FAILED = "agent.turn.failed"
+AGENT_PHASE_STARTED = "agent.phase.started"
+AGENT_PHASE_COMPLETED = "agent.phase.completed"
+AGENT_PHASE_FAILED = "agent.phase.failed"
+AGENT_HANDOFF_STARTED = "agent.handoff.started"
+AGENT_HANDOFF_COMPLETED = "agent.handoff.completed"
+AGENT_HANDOFF_FAILED = "agent.handoff.failed"
 CLIENT_ATTACH = "client.attach"
 CLIENT_DETACHED = "client.detached"
 CLIENT_EXIT_CLEAN = "client.exit_clean"
@@ -51,6 +69,7 @@ TRAILER_FEEDBACK_PENDING = "trailer.feedback_pending"
 
 LLM_CACHE_METRICS = "llm.cache.metrics"
 LLM_CALL_COMPLETED = "llm.call.completed"
+LLM_CALL_FAILED = "llm.call.failed"
 LLM_CALL_STARTED = "llm.call.started"
 LLM_REQUEST_STARTED = "llm.request.started"
 LLM_CALL_LEGACY = "llm_call"
@@ -164,6 +183,9 @@ SFRX_SESSION_FORK = "sfrx_session_fork"
 SFRX_FILE_RESTORE = "sfrx_file_restore"
 
 TOOL_RUN = "tool.run"
+TOOL_EXECUTION_STARTED = "tool.execution.started"
+TOOL_EXECUTION_COMPLETED = "tool.execution.completed"
+TOOL_EXECUTION_FAILED = "tool.execution.failed"
 TOOL_CALL_LEGACY = "tool_call"
 TOOL_ENVELOPE_REPAIR_RETRY = "tool_envelope.repair_retry"
 TOOL_ENVELOPE_REPAIR_EXHAUSTED = "tool_envelope.repair_exhausted"
@@ -194,6 +216,12 @@ MODULE_DEBUG_FAILURE = "module.debug.failure"
 MODULE_STATS = "module.stats"
 TELEMETRY_QUEUE_STATS = "telemetry.queue.stats"
 SUMMARY_UPDATED = "summary.updated"
+BUSINESS_OUTCOME_RECORDED = "business.outcome.recorded"
+TELEMETRY_PROPAGATION_INVALID = "telemetry.propagation.invalid"
+TELEMETRY_OPERATION_ORPHANED = "telemetry.operation.orphaned"
+TELEMETRY_EXPORT_FAILED = "telemetry.export.failed"
+TELEMETRY_EXPORT_PROBE = "telemetry.export.probe"
+TELEMETRY_RETENTION_DELETED = "telemetry.retention.deleted"
 
 
 EVENT_TYPES: frozenset[str] = frozenset(
@@ -214,6 +242,24 @@ EVENT_TYPES: frozenset[str] = frozenset(
         STORAGE_MIGRATION,
         AGENT_BOUND,
         AGENT_SWITCHED,
+        AGENT_INVOCATION_STARTED,
+        AGENT_INVOCATION_COMPLETED,
+        AGENT_INVOCATION_FAILED,
+        AGENT_INVOCATION_CANCELLED,
+        AGENT_EXECUTION_STARTED,
+        AGENT_EXECUTION_PAUSED,
+        AGENT_EXECUTION_COMPLETED,
+        AGENT_EXECUTION_FAILED,
+        AGENT_EXECUTION_CANCELLED,
+        AGENT_TURN_STARTED,
+        AGENT_TURN_COMPLETED,
+        AGENT_TURN_FAILED,
+        AGENT_PHASE_STARTED,
+        AGENT_PHASE_COMPLETED,
+        AGENT_PHASE_FAILED,
+        AGENT_HANDOFF_STARTED,
+        AGENT_HANDOFF_COMPLETED,
+        AGENT_HANDOFF_FAILED,
         CLIENT_ATTACH,
         CLIENT_DETACHED,
         CLIENT_EXIT_CLEAN,
@@ -245,6 +291,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         TRAILER_FEEDBACK_PENDING,
         LLM_CACHE_METRICS,
         LLM_CALL_COMPLETED,
+        LLM_CALL_FAILED,
         LLM_CALL_STARTED,
         LLM_REQUEST_STARTED,
         LLM_CALL_LEGACY,
@@ -347,6 +394,9 @@ EVENT_TYPES: frozenset[str] = frozenset(
         SFRX_SESSION_FORK,
         SFRX_FILE_RESTORE,
         TOOL_RUN,
+        TOOL_EXECUTION_STARTED,
+        TOOL_EXECUTION_COMPLETED,
+        TOOL_EXECUTION_FAILED,
         TOOL_CALL_LEGACY,
         TOOL_ENVELOPE_REPAIR_RETRY,
         TOOL_ENVELOPE_REPAIR_EXHAUSTED,
@@ -373,6 +423,12 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MODULE_STATS,
         TELEMETRY_QUEUE_STATS,
         SUMMARY_UPDATED,
+        BUSINESS_OUTCOME_RECORDED,
+        TELEMETRY_PROPAGATION_INVALID,
+        TELEMETRY_OPERATION_ORPHANED,
+        TELEMETRY_EXPORT_FAILED,
+        TELEMETRY_EXPORT_PROBE,
+        TELEMETRY_RETENTION_DELETED,
     }
 )
 
@@ -432,6 +488,24 @@ __all__ = [
     "STORAGE_MIGRATION",
     "AGENT_BOUND",
     "AGENT_SWITCHED",
+    "AGENT_INVOCATION_STARTED",
+    "AGENT_INVOCATION_COMPLETED",
+    "AGENT_INVOCATION_FAILED",
+    "AGENT_INVOCATION_CANCELLED",
+    "AGENT_EXECUTION_STARTED",
+    "AGENT_EXECUTION_PAUSED",
+    "AGENT_EXECUTION_COMPLETED",
+    "AGENT_EXECUTION_FAILED",
+    "AGENT_EXECUTION_CANCELLED",
+    "AGENT_TURN_STARTED",
+    "AGENT_TURN_COMPLETED",
+    "AGENT_TURN_FAILED",
+    "AGENT_PHASE_STARTED",
+    "AGENT_PHASE_COMPLETED",
+    "AGENT_PHASE_FAILED",
+    "AGENT_HANDOFF_STARTED",
+    "AGENT_HANDOFF_COMPLETED",
+    "AGENT_HANDOFF_FAILED",
     "CLIENT_ATTACH",
     "CLIENT_DETACHED",
     "CLIENT_EXIT_CLEAN",
@@ -463,6 +537,7 @@ __all__ = [
     "TRAILER_FEEDBACK_PENDING",
     "LLM_CACHE_METRICS",
     "LLM_CALL_COMPLETED",
+    "LLM_CALL_FAILED",
     "LLM_CALL_STARTED",
     "LLM_REQUEST_STARTED",
     "LLM_CALL_LEGACY",
@@ -561,6 +636,9 @@ __all__ = [
     "SFRX_SESSION_FORK",
     "SFRX_FILE_RESTORE",
     "TOOL_RUN",
+    "TOOL_EXECUTION_STARTED",
+    "TOOL_EXECUTION_COMPLETED",
+    "TOOL_EXECUTION_FAILED",
     "TOOL_CALL_LEGACY",
     "TOOL_ENVELOPE_REPAIR_RETRY",
     "TOOL_ENVELOPE_REPAIR_EXHAUSTED",
@@ -587,4 +665,9 @@ __all__ = [
     "MODULE_STATS",
     "TELEMETRY_QUEUE_STATS",
     "SUMMARY_UPDATED",
+    "BUSINESS_OUTCOME_RECORDED",
+    "TELEMETRY_PROPAGATION_INVALID",
+    "TELEMETRY_OPERATION_ORPHANED",
+    "TELEMETRY_EXPORT_FAILED",
+    "TELEMETRY_RETENTION_DELETED",
 ]

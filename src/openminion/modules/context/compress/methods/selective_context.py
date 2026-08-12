@@ -10,7 +10,7 @@ _VERSION = "v1.0"
 
 
 def _normalize(text: str) -> set[str]:
-    return {t.lower() for t in text.split() if t.strip()}
+    return {token.lower() for token in text.split()}
 
 
 @dataclass(frozen=True)
@@ -53,26 +53,21 @@ class SelectiveContextPrepass:
         self,
         blocks: Iterable[InputBlock],
     ) -> SelectiveContextResult:
-        sorted_blocks = sorted(blocks, key=lambda b: b.block_id)
         retained: list[InputBlock] = []
         dropped_stats: dict[str, int] = defaultdict(int)
         seen_signatures: list[set[str]] = []
 
-        for block in sorted_blocks:
+        for block in sorted(blocks, key=lambda item: item.block_id):
             sig = _normalize(block.text)
             if not sig:
-                # Empty text — retain as-is (no evidence to compare).
                 retained.append(block)
-                seen_signatures.append(sig)
                 continue
 
             is_dup = False
             for existing in seen_signatures:
-                if not existing:
-                    continue
                 intersection = len(sig & existing)
                 union = len(sig | existing)
-                jaccard = intersection / union if union > 0 else 0.0
+                jaccard = intersection / union
                 if jaccard >= self._threshold:
                     is_dup = True
                     break

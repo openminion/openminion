@@ -216,6 +216,30 @@ def test_doctor_reports_json_checks(
     } <= check_ids
 
 
+def test_doctor_points_paired_config_to_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    monkeypatch.setattr(channel, "_daemon_probe", lambda _path: ("unreachable", {}))
+    monkeypatch.setattr(channel, "_count_active_pairings", lambda _path: 1)
+    config_path = _write_profile(tmp_path)
+
+    rc = channel.telegram_doctor(
+        SimpleNamespace(
+            config=str(config_path),
+            json=False,
+            user_id=None,
+            chat_id=None,
+            topic_id=None,
+        )
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "pairings.active - 1" in output
+    assert f"Next: openminion channel telegram run --config {config_path}" in output
+
+
 def test_identify_prints_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -242,6 +266,10 @@ def test_identify_prints_candidate(
     output = capsys.readouterr().out
     assert "user_id: 11" in output
     assert "chat_id: 22" in output
+    assert "Copy and run:" in output
+    assert (
+        f"openminion channel telegram pair --config {config_path} --user-id 11 --chat-id 22"
+    ) in output
 
 
 def test_identify_reports_active_runner_conflict(
@@ -274,7 +302,32 @@ def test_pair_known_id_prints_deep_link_and_access_warning(
     output = capsys.readouterr().out
     assert "PAIR_TOKEN=" in output
     assert "PAIR_DEEP_LINK=https://t.me/openminion_test_bot?start=" in output
-    assert "broad non-admin controlplane access" in output
+    assert output.index("Open this link in Telegram:") < output.index("PAIR_TOKEN=")
+    assert "Fine-grained ACL is not available yet." in output
+    assert (
+        f"Make sure the listener is running:\nopenminion channel telegram run --config {config_path}"
+        in output
+    )
+
+
+def test_pair_missing_ids_offers_guided_flow(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = _write_profile(tmp_path)
+
+    rc = channel.telegram_pair(_pair_args(config_path, wait=False))
+
+    assert rc == 2
+    output = capsys.readouterr().out
+    assert "Pairing needs Telegram IDs first." in output
+    assert (
+        f"Easy path: openminion channel telegram pair --config {config_path} --wait"
+        in output
+    )
+    assert (
+        f"Or discover IDs first: openminion channel telegram identify --config {config_path}"
+        in output
+    )
 
 
 def test_pair_wait_confirms_candidate_before_issuing_token(
@@ -303,6 +356,10 @@ def test_pair_wait_confirms_candidate_before_issuing_token(
     output = capsys.readouterr().out
     assert "Telegram candidate found:" in output
     assert "PAIR_TOKEN=" in output
+    assert (
+        f"Make sure the listener is running:\nopenminion channel telegram run --config {config_path}"
+        in output
+    )
 
 
 def test_pair_wait_reports_active_runner_conflict(
@@ -346,6 +403,24 @@ def test_run_starts_unified_profile_runner(
     assert rc == 0
     assert runner.run_once_calls == 1
     assert "runner is online" in capsys.readouterr().out
+
+
+def test_run_does_not_claim_online_before_runtime_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = _write_profile(tmp_path)
+
+    def _raise_runtime_error(_config_path: str) -> object:
+        raise RuntimeError("channels.telegram.enabled is false")
+
+    monkeypatch.setattr(
+        channel, "_build_unified_telegram_runtime", _raise_runtime_error
+    )
+
+    with pytest.raises(RuntimeError, match="channels.telegram.enabled is false"):
+        channel.telegram_run(SimpleNamespace(config=str(config_path), once=True))
+
+    assert channel.RUNNER_ONLINE_MESSAGE not in capsys.readouterr().out
 
 
 def test_status_prints_runner_requirement(

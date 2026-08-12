@@ -32,20 +32,17 @@ def _print_report(payload: dict, *, as_json: bool) -> None:
     if as_json:
         print_json_payload(payload)
         return
-    items = payload.get("items", [])
     print(
         "data migrate report: "
         f"started_at={payload.get('started_at')} "
         f"finished_at={payload.get('finished_at')} "
         f"dry_run={payload.get('dry_run')}"
     )
-    if isinstance(items, list):
-        for item in items:
-            if isinstance(item, dict):
-                print(
-                    f"- {item.get('status')}: {item.get('source')} -> {item.get('target')}"
-                    + (f" ({item.get('detail')})" if item.get("detail") else "")
-                )
+    for item in payload.get("items", []):
+        print(
+            f"- {item.get('status')}: {item.get('source')} -> {item.get('target')}"
+            + (f" ({item.get('detail')})" if item.get("detail") else "")
+        )
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

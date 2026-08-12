@@ -126,33 +126,10 @@ def validate_command_readiness(
 
 
 def payload_is_contextually_empty(value: Any) -> bool:
-    if value in (None, "", {}, [], ()):
-        return True
-    saw_leaf = False
-    saw_non_empty_string = False
-    saw_non_string_leaf = False
-
-    def _walk(node: Any) -> None:
-        nonlocal saw_leaf, saw_non_empty_string, saw_non_string_leaf
-        if isinstance(node, Mapping):
-            for item in node.values():
-                _walk(item)
-            return
-        if isinstance(node, (list, tuple)):
-            for item in node:
-                _walk(item)
-            return
-        saw_leaf = True
-        if isinstance(node, str):
-            if str(node).strip():
-                saw_non_empty_string = True
-            return
-        if node is not None:
-            saw_non_string_leaf = True
-
-    _walk(value)
-    if not saw_leaf:
-        return True
-    if saw_non_string_leaf:
-        return False
-    return not saw_non_empty_string
+    if isinstance(value, Mapping):
+        return all(payload_is_contextually_empty(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return all(payload_is_contextually_empty(item) for item in value)
+    if isinstance(value, str):
+        return not value.strip()
+    return value is None

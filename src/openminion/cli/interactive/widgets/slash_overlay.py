@@ -64,10 +64,7 @@ class SlashCommandOverlay(Widget):
         self.highlighted_index = new_idx
 
     def watch_visible(self, visible: bool) -> None:
-        if visible:
-            self.add_class("--visible")
-        else:
-            self.remove_class("--visible")
+        self.set_class(visible, "--visible")
 
     def watch_query(self, _query: str) -> None:
         self._refilter()
@@ -86,18 +83,15 @@ class SlashCommandOverlay(Widget):
         if not query or not query.startswith("/"):
             self._filtered = list(self._items)
         else:
-            prefix_hits = [
-                (name, desc)
-                for (name, desc) in self._items
-                if name.lower().startswith(query)
-            ]
-            substring_hits = [
-                (name, desc)
-                for (name, desc) in self._items
-                if query[1:]
-                and query[1:] in name.lower()
-                and (name, desc) not in prefix_hits
-            ]
+            prefix_hits = []
+            substring_hits = []
+            token = query[1:]
+            for item in self._items:
+                name = item[0].lower()
+                if name.startswith(query):
+                    prefix_hits.append(item)
+                elif token and token in name:
+                    substring_hits.append(item)
             self._filtered = prefix_hits + substring_hits
         self.highlighted_index = 0
         self._render_rows()

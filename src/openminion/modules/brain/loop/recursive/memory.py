@@ -2,6 +2,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
+from pydantic import ValidationError
+
 from .schemas import (
     EvidenceRef,
     MemoryWriteIntent,
@@ -23,22 +25,6 @@ def refresh_working_memory(
     wm_state = self._load_wm_state(session_id=session_id)
     session_slice = self._safe_get_slice(session_id=session_id)
 
-    turns = session_slice.get("recent_turns", [])
-    open_questions = []
-    assistant_decisions = []
-    objective = wm_state.objective
-    for item in turns:
-        role = str(item.get("role", ""))
-        text = str(item.get("text", item.get("content", ""))).strip()
-        if not text:
-            continue
-        if role == "user" and not objective:
-            objective = text
-        if role == "user" and text.endswith("?"):
-            open_questions.append(text)
-        if role == "assistant":
-            assistant_decisions.append(text)
-
     recent_tool_events = session_slice.get("recent_tool_events", [])
     tool_summaries: list[str] = []
     for event in recent_tool_events:
@@ -59,23 +45,19 @@ def refresh_working_memory(
 
     refreshed = WMState(
         wm_version=wm_state.wm_version + 1,
-        objective=objective or wm_state.objective,
+        objective=wm_state.objective,
         constraints=_dedupe_keep_order(wm_state.constraints),
         current_step=current_step,
         step_cursor=step_cursor,
-        key_decisions=_dedupe_keep_order(
-            (wm_state.key_decisions + assistant_decisions)[
-                -self.config.wm_max_items_per_list :
-            ]
-        ),
+        key_decisions=_dedupe_keep_order(wm_state.key_decisions)[
+            -self.config.wm_max_items_per_list :
+        ],
         assumptions=_dedupe_keep_order(wm_state.assumptions)[
             -self.config.wm_max_items_per_list :
         ],
-        open_questions=_dedupe_keep_order(
-            (wm_state.open_questions + open_questions)[
-                -self.config.wm_max_items_per_list :
-            ]
-        ),
+        open_questions=_dedupe_keep_order(wm_state.open_questions)[
+            -self.config.wm_max_items_per_list :
+        ],
         must_not_forget=_dedupe_keep_order(wm_state.must_not_forget)[
             -self.config.wm_max_items_per_list :
         ],
@@ -127,7 +109,7 @@ def _validate_wm_state(self, payload: dict[str, Any]) -> WMState | None:
         return None
     try:
         return WMState.model_validate(payload)
-    except Exception:  # noqa: BLE001
+    except ValidationError:
         return None
 
 
@@ -184,7 +166,6 @@ def _merge_wm(
     wm_state: WMState,
     wm_patch: dict[str, Any],
     query: str,
-    answer: str,
     max_items: int,
     max_tool_summaries: int,
 ) -> WMState:
@@ -194,9 +175,7 @@ def _merge_wm(
         wm_state.constraints + [str(item) for item in patch.get("constraints", [])]
     )
     decisions = _dedupe_keep_order(
-        wm_state.key_decisions
-        + [str(item) for item in patch.get("key_decisions", [])]
-        + ([answer] if answer else [])
+        wm_state.key_decisions + [str(item) for item in patch.get("key_decisions", [])]
     )
     assumptions = _dedupe_keep_order(
         wm_state.assumptions + [str(item) for item in patch.get("assumptions", [])]
@@ -241,13 +220,8 @@ def _merge_wm(
     )
 
 
-def _estimate_citation_coverage(self, *, answer: str, evidence_count: int) -> float:
-    text = (answer or "").strip()
-    if not text:
-        return 0.0
-    claims = max(1, sum(text.count(ch) for ch in [".", "!", "?"]))
-    coverage = float(evidence_count) / float(claims)
-    return max(0.0, min(1.0, coverage))
+def _estimate_citation_coverage(self, *, evidence_count: int) -> float:
+    return float(evidence_count > 0)
 
 
 def _normalize_evidence_refs(

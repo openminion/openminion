@@ -9,11 +9,14 @@ from openminion.modules.llm.providers.base import (
     ProviderToolCall,
 )
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
-from openminion.modules.tool.registry import ToolExecutionBatch
+from openminion.modules.tool.executor import (
+    ToolExecutionBatch,
+    record_external_tool_results,
+)
 from openminion.modules.tool.exposure import apply_model_exposure
 from openminion.modules.policy import ToolBudgetState
 
-from ..telemetry import trace_provider_request, trace_provider_response
+from ..telemetry import generate_with_provider_trace_telemetry
 from .policy import build_policy_adapter, filter_allowed_tool_calls
 from .ports import TurnFlowServicePort
 from .progress import execute_allowed_tool_calls, observe_tool_loop
@@ -42,6 +45,7 @@ class ExecutorRuntime:
         request.metadata = dict(getattr(request, "metadata", {}) or {})
         inbound_meta = getattr(inbound, "metadata", {}) or {}
         session_id = str(inbound_meta.get("session_id", "") or "").strip()
+        turn_id = str(inbound_meta.get("turn_id") or inbound.id)
         run_id = str(inbound_meta.get("run_id", "") or "").strip()
         if session_id and not request.metadata.get("session_id"):
             request.metadata["session_id"] = session_id
@@ -66,10 +70,13 @@ class ExecutorRuntime:
             "inference_step": inference_steps,
             "logger": self._service_port.logger,
         }
-        trace_provider_request(provider_request=request, **trace_args)
-        response = await self._service_port.generate_normalized(request)
-        trace_provider_response(provider_response=response, **trace_args)
-        return response
+        return await generate_with_provider_trace_telemetry(
+            service_port=self._service_port,
+            request=request,
+            session_id=session_id,
+            turn_id=turn_id,
+            trace_args=trace_args,
+        )
 
     def _build_tool_execution_context(self) -> ToolExecutionContext:
         return self._resources.build_context()
@@ -131,6 +138,9 @@ class ExecutorRuntime:
             self._runtime,
             allowed_calls=allowed_calls,
             context=context,
+        )
+        record_external_tool_results(
+            context=context, calls=tool_calls, results=denied_results
         )
         results.extend(denied_results)
         return (

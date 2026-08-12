@@ -1,6 +1,6 @@
 """RMP operator-tunable config."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from openminion.modules.context.repo_map.constants import (
     RMP_DEFAULT_PROFILE_GATE,
@@ -14,9 +14,7 @@ class RepoMapConfig:
 
     enabled: bool = False
     token_budget: int = RMP_DEFAULT_TOKEN_BUDGET
-    profile_gate: tuple[str, ...] = field(
-        default_factory=lambda: tuple(RMP_DEFAULT_PROFILE_GATE)
-    )
+    profile_gate: tuple[str, ...] = RMP_DEFAULT_PROFILE_GATE
 
 
 __all__ = ["RepoMapConfig"]

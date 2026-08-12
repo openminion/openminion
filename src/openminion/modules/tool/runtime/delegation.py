@@ -1,8 +1,12 @@
 import hashlib
+from uuid import uuid4
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from openminion.base.logging import get_logger
+from openminion.modules.a2a.interfaces import A2A_OBSERVABILITY_SCHEMA_VERSION
+from openminion.modules.telemetry.events.module import emit_module_telemetry
+from openminion.modules.telemetry.service import build_execution_traceparent
 from openminion.modules.tool.constants import TOOL_A2A_DELEGATE_DEFAULT_TIMEOUT_SECONDS
 
 
@@ -181,9 +185,36 @@ def run_a2a_job_lifecycle(
 class A2aRuntimeDelegateAdapter:
     """Tool-surface delegation over any A2A ``call`` seam."""
 
-    def __init__(self, *, a2a_call: Any, parent_agent_id: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        a2a_call: Any,
+        parent_agent_id: str = "",
+        telemetryctl: Any | None = None,
+    ) -> None:
         self._a2a_call = a2a_call
         self._parent_agent_id = str(parent_agent_id or "").strip()
+        self._telemetryctl = telemetryctl
+        self._observability: dict[str, str] = {}
+
+    def bind_observability(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        invocation_id: str,
+        execution_id: str,
+        traceparent: str = "",
+        tracestate: str = "",
+    ) -> None:
+        self._observability = {
+            "session_id": str(session_id),
+            "turn_id": str(turn_id),
+            "invocation_id": str(invocation_id),
+            "execution_id": str(execution_id),
+            "traceparent": str(traceparent),
+            "tracestate": str(tracestate),
+        }
 
     def _idempotency_key(
         self,
@@ -199,6 +230,93 @@ class A2aRuntimeDelegateAdapter:
             ).encode("utf-8")
         ).hexdigest()[:32]
         return f"task-delegate:{digest}"
+
+    def _handoff_context(
+        self, target: str
+    ) -> tuple[str, str, dict[str, str], dict | None]:
+        session_id = self._observability.get("session_id", "")
+        turn_id = self._observability.get("turn_id", "")
+        invocation_id = self._observability.get("invocation_id", "")
+        execution_id = self._observability.get("execution_id", "")
+        traceparent = self._observability.get("traceparent", "")
+        if not traceparent and invocation_id and execution_id:
+            traceparent = build_execution_traceparent(invocation_id, execution_id)
+        handoff_id = str(uuid4())
+        payload = {
+            "handoff_id": handoff_id,
+            "handoff_role": "caller",
+            "target_agent": target,
+        }
+        if not (invocation_id and execution_id and traceparent):
+            return session_id, turn_id, payload, None
+        return (
+            session_id,
+            turn_id,
+            payload,
+            {
+                "schema_version": A2A_OBSERVABILITY_SCHEMA_VERSION,
+                "invocation_id": invocation_id,
+                "execution_id": execution_id,
+                "handoff_id": handoff_id,
+                "traceparent": traceparent,
+                "tracestate": self._observability.get("tracestate") or None,
+            },
+        )
+
+    def _emit_handoff(
+        self,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        status: str,
+    ) -> None:
+        emit_module_telemetry(
+            self._telemetryctl,
+            "emit_canonical_event",
+            session_id,
+            turn_id,
+            event_type,
+            payload,
+            status=status,
+            logger=_LOG,
+        )
+
+    def _call_delegate(
+        self,
+        *,
+        target: str,
+        instruction: str,
+        timeout: int,
+        mode: str,
+        permission_mode: str,
+        workspace_root: str,
+        cwd: str,
+        idempotency_key: str,
+        observability: dict | None,
+    ) -> Any:
+        return self._a2a_call(
+            command={
+                "command_id": idempotency_key,
+                "target_agent_id": target,
+                "method": _DELEGATE_METHOD,
+                "expect_async": mode == "async",
+                "params": {
+                    "goal": instruction,
+                    "instruction": instruction,
+                    "timeout_seconds": timeout,
+                    "mode": mode,
+                    "permission_mode": permission_mode,
+                    "workspace_root": workspace_root,
+                    "cwd": cwd,
+                },
+                "timeout_ms": timeout * 1000,
+                "idempotency_key": idempotency_key,
+                "observability": observability,
+            },
+            session_id=f"task-delegate::{self._parent_agent_id or 'agent'}",
+            trace_id=idempotency_key,
+        )
 
     def delegate(
         self,
@@ -238,30 +356,36 @@ class A2aRuntimeDelegateAdapter:
             cwd=normalized_cwd,
         )
         trace_id = idem
+        session_id, turn_id, handoff_payload, observability = self._handoff_context(
+            target
+        )
+        self._emit_handoff(
+            session_id,
+            turn_id,
+            "agent.handoff.started",
+            handoff_payload,
+            "started",
+        )
         try:
-            raw = self._a2a_call(
-                command={
-                    "command_id": idem,
-                    "target_agent_id": target,
-                    "method": _DELEGATE_METHOD,
-                    "expect_async": normalized_mode == "async",
-                    "params": {
-                        "goal": text,
-                        "instruction": text,
-                        "timeout_seconds": timeout,
-                        "mode": normalized_mode,
-                        "permission_mode": str(permission_mode or "ask").strip().lower()
-                        or "ask",
-                        "workspace_root": normalized_workspace_root,
-                        "cwd": normalized_cwd,
-                    },
-                    "timeout_ms": timeout * 1000,
-                    "idempotency_key": idem,
-                },
-                session_id=f"task-delegate::{self._parent_agent_id or 'agent'}",
-                trace_id=trace_id,
+            raw = self._call_delegate(
+                target=target,
+                instruction=text,
+                timeout=timeout,
+                mode=normalized_mode,
+                permission_mode=str(permission_mode or "ask").strip().lower() or "ask",
+                workspace_root=normalized_workspace_root,
+                cwd=normalized_cwd,
+                idempotency_key=idem,
+                observability=observability,
             )
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            self._emit_handoff(
+                session_id,
+                turn_id,
+                "agent.handoff.failed",
+                {**handoff_payload, "error": {"type": type(exc).__name__}},
+                "failed",
+            )
             _LOG.warning("task.delegate A2A call failed: %s", exc)
             return A2ADelegateResult(
                 ok=False,
@@ -272,12 +396,20 @@ class A2aRuntimeDelegateAdapter:
                 trace_id=trace_id,
             )
 
-        return map_a2a_delegate_result(
+        result = map_a2a_delegate_result(
             raw,
             target=target,
             trace_id=trace_id,
             async_requested=normalized_mode == "async",
         )
+        self._emit_handoff(
+            session_id,
+            turn_id,
+            "agent.handoff.completed" if result.ok else "agent.handoff.failed",
+            handoff_payload,
+            "completed" if result.ok else "failed",
+        )
+        return result
 
     def status(self, *, task_id: str) -> A2ADelegateResult:
         return self._run_lifecycle("status", task_id, "poll_task")

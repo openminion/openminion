@@ -19,6 +19,7 @@ def build_a2a_delegate_api(
     mode: str = "auto",
     runtime_resolver: Any = None,
     approval_callback: Any | None = None,
+    telemetryctl: Any | None = None,
 ) -> A2ADelegateApi | None:
     """Build a2a delegate api helper."""
     try:
@@ -42,7 +43,11 @@ def build_a2a_delegate_api(
     call = getattr(a2actl, "call", None)
     if not callable(call):
         return None
-    return A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id=str(agent_id or ""))
+    return A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id=str(agent_id or ""),
+        telemetryctl=telemetryctl,
+    )
 
 
 __all__ = ["A2aRuntimeDelegateAdapter", "build_a2a_delegate_api"]

@@ -6,7 +6,7 @@ from openminion.modules.brain.adapters.a2a import _delegate_message_from_payload
 from openminion.modules.brain.adapters.a2a.runtime import A2actlAdapter
 
 
-def test_delegate_message_from_payload_omits_parent_goal_context_when_goal_present() -> (
+def test_delegate_message_from_payload_preserves_authored_context_when_goal_present() -> (
     None
 ):
     message = _delegate_message_from_payload(
@@ -18,10 +18,14 @@ def test_delegate_message_from_payload_omits_parent_goal_context_when_goal_prese
         }
     )
 
-    assert message == "tell me the current UTC time"
+    assert message == (
+        "tell me the current UTC time\n\n"
+        "Context:\n"
+        "Parent goal: delegate to alibaba-kimi-k2-5 and tell me the current UTC time"
+    )
 
 
-def test_delegate_message_from_payload_keeps_non_parent_context_lines() -> None:
+def test_delegate_message_from_payload_preserves_multiline_context() -> None:
     message = _delegate_message_from_payload(
         {
             "goal": "tell me the current UTC time",
@@ -33,7 +37,10 @@ def test_delegate_message_from_payload_keeps_non_parent_context_lines() -> None:
     )
 
     assert message == (
-        "tell me the current UTC time\n\nContext:\nLatest result: previous attempt timed out"
+        "tell me the current UTC time\n\n"
+        "Context:\n"
+        "Parent goal: delegate to alibaba-kimi-k2-5 and tell me the current UTC time\n"
+        "Latest result: previous attempt timed out"
     )
 
 

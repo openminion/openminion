@@ -26,7 +26,7 @@ from ...execution.feasibility import (
     serialize_feasibility_state,
 )
 from ...execution.lifecycle import set_phase
-from ...loop.clarify import clear_llm_clarify_context
+from ...loop.clarify import clarification_followup_goal, clear_llm_clarify_context
 from ...schemas import iso_now, new_uuid
 from ...tools.parser import normalize_tool_name_for_brain
 from .context import TickRunContext, _runner_delegate
@@ -222,6 +222,20 @@ def _is_explicit_tool_command(text: str) -> bool:
     return bool(normalize_tool_name_for_brain(parts[1]) or parts[1].strip())
 
 
+def _interpret_user_input(*, runner, state, logger, tick_ctx, user_input: str) -> None:
+    resumed_goal = clarification_followup_goal(state=state, user_reply=user_input)
+    _runner_delegate(
+        "_interpret",
+        runner,
+        state=state,
+        user_input=user_input,
+        logger=logger,
+        reset_policy_name=tick_ctx.forced_reset_policy_name,
+    )
+    if resumed_goal != user_input.strip():
+        state.goal = resumed_goal
+
+
 def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
     user_input = tick_ctx.user_input
     if user_input is not None and user_input.strip():
@@ -260,13 +274,12 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 except Exception:  # noqa: BLE001
                     pass
         if not tick_ctx.skip_initial_interpret:
-            _runner_delegate(
-                "_interpret",
-                runner,
+            _interpret_user_input(
+                runner=runner,
                 state=state,
-                user_input=user_input,
                 logger=logger,
-                reset_policy_name=tick_ctx.forced_reset_policy_name,
+                tick_ctx=tick_ctx,
+                user_input=user_input,
             )
         set_status_unchecked(state, BRAIN_STATE_ACTIVE, reason="new_turn")
 

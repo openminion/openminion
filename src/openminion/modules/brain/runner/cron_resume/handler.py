@@ -41,15 +41,13 @@ def resolve_cron_resume_selection(
     cron_job_id = normalized_text(cron_job_id_hint)
     if not task_id:
         return CronResumeSelection()
-    record = task_manager.get_task(task_id) if task_manager is not None else None
+    record = task_manager.get_task(task_id)
     if record is None:
         if cron_job_id:
             task_manager.delete_scheduled_job(cron_job_id)
             return CronResumeSelection(cron_job_id=cron_job_id, orphan_cleaned=True)
         return CronResumeSelection()
-    state_name = normalized_text(
-        getattr(getattr(record, "state", None), "value", getattr(record, "state", None))
-    ).lower()
+    state_name = record.state.value
     if state_name in {
         TaskLifecycleState.CANCELLED.value,
         TaskLifecycleState.DONE.value,
@@ -88,7 +86,7 @@ def schedule_linked_resume_job(
         "linked_task_id": normalized_task_id,
     }
     if payload_extras:
-        payload.update(dict(payload_extras))
+        payload.update(payload_extras)
     job_id = task_manager.create_cron_job(
         name=f"resume-{normalized_task_id[:12]}",
         schedule=schedule.to_store_schedule(now=_utc_now()),
@@ -132,7 +130,7 @@ def schedule_backoff_resume(
         message=f"Resume {mode_name}: {goal}",
         payload_extras={"resume_kind": "backoff", "mode_name": mode_name},
     )
-    metadata = dict(getattr(record, "metadata", {}) or {})
+    metadata = dict(record.metadata)
     metadata["linked_cron_job_id"] = job_id
     metadata["cron_resume_attempt_count"] = int(attempt_count)
     metadata["cron_resume_current_interval_s"] = int(max(1, interval.total_seconds()))
@@ -140,7 +138,7 @@ def schedule_backoff_resume(
         first_scheduled_at or _utc_now().isoformat()
     )
     if extra_metadata:
-        metadata.update(dict(extra_metadata))
+        metadata.update(extra_metadata)
     task_manager.update_task_metadata(task_id=task_id, metadata=metadata)
     return job_id
 
@@ -177,16 +175,16 @@ def schedule_recurring_resume(
         recurring=True,
         payload_extras={"resume_kind": "recurring", "mode_name": mode_name},
     )
-    metadata = dict(getattr(record, "metadata", {}) or {})
+    metadata = dict(record.metadata)
     metadata["linked_cron_job_id"] = job_id
     if extra_metadata:
-        metadata.update(dict(extra_metadata))
+        metadata.update(extra_metadata)
     task_manager.update_task_metadata(task_id=task_id, metadata=metadata)
     return job_id
 
 
 def next_attempt_state(record: Any) -> tuple[int, timedelta, timedelta, str]:
-    metadata = dict(getattr(record, "metadata", {}) or {})
+    metadata = dict(record.metadata)
     attempt_count = int(metadata.get("cron_resume_attempt_count", 0) or 0)
     current_interval = timedelta(
         seconds=max(1, int(metadata.get("cron_resume_current_interval_s", 30) or 30))

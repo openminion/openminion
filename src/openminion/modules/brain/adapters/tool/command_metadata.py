@@ -1,5 +1,3 @@
-"""Command metadata helpers for the brain tool adapter."""
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -33,10 +31,9 @@ def _confirmation_replay_metadata(inputs: Any) -> dict[str, str]:
 def _coerce_message_ref(candidate: Any) -> dict[str, str] | None:
     if not isinstance(candidate, Mapping):
         return None
-    payload = dict(candidate)
-    channel = _first_non_empty(payload, ("channel", "provider"))
+    channel = _first_non_empty(candidate, ("channel", "provider"))
     conversation_id = _first_non_empty(
-        payload,
+        candidate,
         (
             "conversation_id",
             "conversationId",
@@ -48,9 +45,9 @@ def _coerce_message_ref(candidate: Any) -> dict[str, str] | None:
         ),
     )
     message_id = _first_non_empty(
-        payload, ("message_id", "messageId", "source_message_id", "id")
+        candidate, ("message_id", "messageId", "source_message_id", "id")
     )
-    account_id = _first_non_empty(payload, ("account_id", "accountId", "account"))
+    account_id = _first_non_empty(candidate, ("account_id", "accountId", "account"))
 
     if not channel or not conversation_id or not message_id:
         return None
@@ -120,14 +117,11 @@ def _merge_orchestration_context_metadata(
     policy_raw: dict[str, Any],
     orchestration_metadata: Mapping[str, Any] | None,
 ) -> None:
-    context_metadata = policy_raw.get("context_metadata")
-    if isinstance(context_metadata, Mapping):
-        if not isinstance(context_metadata, dict):
-            context_metadata = dict(context_metadata)
-            policy_raw["context_metadata"] = context_metadata
-    else:
-        context_metadata = {}
-        policy_raw["context_metadata"] = context_metadata
+    raw_context_metadata = policy_raw.get("context_metadata")
+    context_metadata = (
+        dict(raw_context_metadata) if isinstance(raw_context_metadata, Mapping) else {}
+    )
+    policy_raw["context_metadata"] = context_metadata
     if not orchestration_metadata:
         return
     existing = context_metadata.get("orchestration")

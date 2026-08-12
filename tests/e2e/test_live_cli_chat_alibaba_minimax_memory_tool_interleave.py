@@ -6,11 +6,11 @@ import pytest
 
 from tests.helpers.live_cli_chat_alibaba import (
     RAW_TOOL_MARKUP_RE,
-    extract_all_debug_payloads,
-    extract_assistant_messages,
     framework_root,
     parse_tool_results,
     run_cli_session,
+    session_outbound_debug_payloads,
+    transcript_has_cli_ready,
 )
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
@@ -41,7 +41,7 @@ def test_live_cli_chat_minimax_official_memory_tool_interleave(agent_id: str) ->
             (
                 "remember: my favorite shell is zsh",
                 "/debug",
-                "what time is it in UTC right now?",
+                'tool time {"timezone":"UTC"}',
                 "/debug",
                 "what shell did i say is my favorite? answer with only the shell name.",
                 "/debug",
@@ -56,26 +56,20 @@ def test_live_cli_chat_minimax_official_memory_tool_interleave(agent_id: str) ->
     transcript = result.transcript
     transcript_path = result.transcript_path
 
-    assert f"chat ready agent={agent_id}" in transcript, (
+    assert transcript_has_cli_ready(transcript=transcript, agent_id=agent_id), (
         f"missing chat ready marker\ntranscript={transcript_path}"
     )
     assert not RAW_TOOL_MARKUP_RE.search(transcript), (
         f"raw tool markup leaked\ntranscript={transcript_path}"
     )
 
-    assistant_messages = extract_assistant_messages(
-        transcript=transcript,
-        session_id=result.session_id,
+    debug_payloads = session_outbound_debug_payloads(
+        data_root=result.data_root,
         agent_id=agent_id,
+        session_id=result.session_id,
     )
-    assert len(assistant_messages) >= 3, (
-        f"expected at least 3 assistant turns, got {len(assistant_messages)}\n"
-        f"transcript={transcript_path}"
-    )
-
-    debug_payloads = extract_all_debug_payloads(transcript)
     assert len(debug_payloads) >= 3, (
-        f"expected at least 3 /debug payloads, got {len(debug_payloads)}\n"
+        f"expected at least 3 durable assistant turns, got {len(debug_payloads)}\n"
         f"transcript={transcript_path}"
     )
 
@@ -130,12 +124,12 @@ def test_live_cli_chat_minimax_official_memory_tool_interleave(agent_id: str) ->
         f"payload={json.dumps(recall_payload, indent=2, sort_keys=True)}\n"
         f"transcript={transcript_path}"
     )
-    recall_body = (
-        assistant_messages[-1] or str(recall_turn.get("body_preview", "") or "")
+    recall_body = str(
+        recall_turn.get("body") or recall_turn.get("body_preview") or ""
     ).lower()
     assert "zsh" in recall_body, (
         f"memory recall did not survive tool-backed turn\n"
-        f"assistant_messages={json.dumps(assistant_messages, indent=2)}\n"
+        f"debug_payloads={json.dumps(debug_payloads, indent=2)}\n"
         f"recall_turn={json.dumps(recall_turn, indent=2, sort_keys=True)}\n"
         f"transcript={transcript_path}"
     )

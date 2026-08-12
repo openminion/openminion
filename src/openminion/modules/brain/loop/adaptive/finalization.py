@@ -54,12 +54,6 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     AdaptiveToolLoopOutcome,
 )
-from openminion.modules.tool.contracts.model_ids import (
-    MODEL_CODE_PATCH,
-    MODEL_FILE_EDIT,
-    MODEL_FILE_WRITE,
-)
-
 from ..services import runner_from_context
 
 from .context import (
@@ -77,28 +71,6 @@ from .termination import (
     _single_failed_tool_result_action,
 )
 
-_SEEDED_REPLAY_ARTIFACT_MUTATION_TOOLS = frozenset(
-    {
-        MODEL_CODE_PATCH,
-        MODEL_FILE_EDIT,
-        MODEL_FILE_WRITE,
-    }
-)
-_RECOVERABLE_READONLY_TOOL_FAILURE_ROOTS = frozenset(
-    {"browser", "fetch", "search", "web"}
-)
-_NON_RECOVERABLE_TOOL_FAILURE_CODES = frozenset(
-    {"INVALID_ARGUMENT", "NEEDS_APPROVAL", "POLICY_DENIED", "SSRF_BLOCKED"}
-)
-_CONTROL_RESTRICTED_REASON_CODES = frozenset(
-    {
-        "confirmation_replay",
-        "confirmation_replay_recovery",
-        "research_iteration_fallback",
-    }
-)
-
-
 from . import modes as _adaptive_modes  # noqa: E402
 
 adaptive_modes: Any = _adaptive_modes
@@ -111,40 +83,6 @@ from ..tools.iteration.helpers import (  # noqa: E402
 from ..tools.evidence import (  # noqa: E402
     _successful_substantive_tool_results,
 )
-from ..tools.postprocess.evidence_closeout import (  # noqa: E402
-    tool_evidence_closeout_text,
-)
-
-
-def _duplicate_exhaustion_evidence_outcome(
-    outcome: AdaptiveToolLoopOutcome,
-) -> AdaptiveToolLoopOutcome | None:
-    if outcome.termination_reason not in {
-        ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-        ADAPTIVE_TERM_CIRCULAR_PATTERN,
-    }:
-        return None
-    reason = (
-        "successful tool evidence was preserved after repeated tool calls, so "
-        "OpenMinion is returning an evidence-based closeout instead of another "
-        "tool attempt."
-    )
-    final_text = tool_evidence_closeout_text(outcome.state, reason=reason)
-    if not final_text:
-        return None
-    outcome.state.scratchpad["adaptive.duplicate_exhaustion_used_evidence_closeout"] = (
-        True
-    )
-    return replace(
-        outcome,
-        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
-        final_text=final_text,
-        finalization_status={
-            "status": "final_answer",
-            "reasoning": "successful tool evidence fallback after repeated tool calls",
-        },
-        error_message=None,
-    )
 
 
 def _finalization_contract_missing_result(
@@ -163,38 +101,6 @@ def _finalization_contract_missing_result(
     )
 
 
-def _has_recoverable_readonly_tool_failure(outcome: AdaptiveToolLoopOutcome) -> bool:
-    """Return true when a read-only web/search failure can still be synthesized."""
-    tool_results = [
-        item
-        for item in list(
-            outcome.state.scratchpad.get("adaptive.tool_results", []) or []
-        )
-        if isinstance(item, dict)
-    ]
-    for item in tool_results:
-        if bool(item.get("ok")):
-            continue
-        tool_name = str(item.get("tool_name", "") or "").strip().lower()
-        root = tool_name.split(".", 1)[0]
-        if tool_name not in _RECOVERABLE_READONLY_TOOL_FAILURE_ROOTS and (
-            root not in _RECOVERABLE_READONLY_TOOL_FAILURE_ROOTS
-        ):
-            continue
-        code = (
-            (
-                str(item.get("error_code", "") or "")
-                or str(dict(item.get("data", {}) or {}).get("error_code", "") or "")
-            )
-            .strip()
-            .upper()
-        )
-        if code in _NON_RECOVERABLE_TOOL_FAILURE_CODES:
-            continue
-        return True
-    return False
-
-
 def _maybe_close_contract_missing_with_tool_evidence(
     runner: Any,
     ctx: ExecutionContext,
@@ -202,19 +108,15 @@ def _maybe_close_contract_missing_with_tool_evidence(
     telemetry_payload: dict[str, Any],
     outcome: AdaptiveToolLoopOutcome,
 ) -> ExecutionResult | None:
-    recoverable_readonly_failure = _has_recoverable_readonly_tool_failure(outcome)
     recovered_tool_failure = _single_failed_tool_result_action(outcome)
-    if recovered_tool_failure is not None and not recoverable_readonly_failure:
+    if recovered_tool_failure is not None:
         return ExecutionResult(
             status=BRAIN_STATE_ERROR,
             working_state=ctx.state,
-            message=str(getattr(recovered_tool_failure, "summary", "") or ""),
+            message=recovered_tool_failure.summary,
             action_result=recovered_tool_failure,
         )
-    if not (
-        _successful_substantive_tool_results(outcome.state)
-        or recoverable_readonly_failure
-    ):
+    if not _successful_substantive_tool_results(outcome.state):
         return None
     closed_result, _blocked_action = runner._maybe_close_from_blocked_outcome(
         ctx,
@@ -579,41 +481,10 @@ class ActLoopFinalizationMixin:
                     "act_finalization_contract_missing",
                 ),
             )
-        bad_final_text = self._seeded_final_text_is_unexecutable_tool_envelope(
-            final_text
-        ) or self._seeded_final_text_is_unexecutable_tool_envelope(closure_final_answer)
-        if (
-            (
-                self._seeded_continue_stays_autonomous(ctx)
-                and disposition
-                in {BRAIN_DISPOSITION_CONTINUE, BRAIN_DISPOSITION_REPLAN}
-            )
-            or bad_final_text
-        ) and self._seeded_final_text_retry_available(ctx):
-            if self._seeded_final_text_is_unexecutable_tool_envelope(final_text):
-                ctx.state.post_action_user_message = (
-                    "Continue from the current task state. Your previous reply "
-                    "emitted raw or unexecutable tool markup. Do not answer with "
-                    "tool markup, XML, JSON tool envelopes, or a blocked-envelope "
-                    "placeholder. If more work remains, call the next required "
-                    "native tool now; if the task is complete, return the requested "
-                    "final answer format."
-                )
-            else:
-                ctx.state.post_action_user_message = (
-                    "Continue from the current task state. Do not answer with a "
-                    "progress note. If more work remains, call the next required "
-                    "tool now; if the task is complete, return the requested final "
-                    "answer format."
-                )
-            original_goal = (
-                str(getattr(ctx.state, "last_user_input", "") or "").strip()
-                or str(getattr(ctx.decision, "objective", "") or "").strip()
-            )
-            if original_goal:
-                ctx.state.post_action_user_message += (
-                    f" Continue the original task: {original_goal}"
-                )
+        if self._seeded_continue_stays_autonomous(ctx) and disposition in {
+            BRAIN_DISPOSITION_CONTINUE,
+            BRAIN_DISPOSITION_REPLAN,
+        }:
             return cast(
                 ExecutionResult,
                 self._autonomous_seeded_result(ctx, action_result=final_action),
@@ -748,12 +619,6 @@ class ActLoopFinalizationMixin:
                     "finalization_status contract."
                 )
                 return _finalization_contract_missing_result(ctx, message=message)
-            evidence_outcome = _duplicate_exhaustion_evidence_outcome(outcome)
-            if evidence_outcome is not None:
-                return cast(
-                    ExecutionResult,
-                    self._finalize_success(ctx, loop_outcome=evidence_outcome),
-                )
             adaptive_modes._extract_failure_memories_for_outcome(ctx, outcome=outcome)
             if outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED:
                 message = (
@@ -873,11 +738,13 @@ class ActLoopFinalizationMixin:
                 == ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
                 else "act_finalization_contract_missing"
             )
+            action_result = _build_error_result(message, code)
+            action_result.outputs.update(telemetry_payload)
             return ExecutionResult(
                 status=BRAIN_STATE_ERROR,
                 working_state=ctx.state,
                 message=message,
-                action_result=_build_error_result(message, code),
+                action_result=action_result,
             )
         if outcome.termination_reason == ADAPTIVE_TERM_DISALLOWED_TOOL:
             message = outcome.error_message or "Disallowed tool requested."

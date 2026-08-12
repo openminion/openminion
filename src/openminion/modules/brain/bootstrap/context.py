@@ -39,13 +39,10 @@ def _rebuild_decide_context_with_hints(
     *,
     state: WorkingState,
     logger: CanonicalEventLogger,
+    model: str,
     budget_max_tokens: int,
     hints: dict[str, Any],
 ) -> tuple[dict[str, Any], int]:
-    model = (
-        str(getattr(runner.profile.llm_profiles, "act_model", "") or "").strip()
-        or str(getattr(runner.profile.llm_profiles, "decide_model", "") or "").strip()
-    )
     context = _runner_delegate(
         "_build_context",
         runner,
@@ -69,12 +66,3 @@ def _compact_decide_mode_descriptions(value: Any) -> list[str] | None:
         names = [str(item or "").strip() for item in value if str(item or "").strip()]
         return names or None
     return None
-
-
-def _drop_example_style_overrides(value: Any) -> dict[str, str] | None:
-    if not isinstance(value, dict):
-        return None
-    kept = {
-        str(key): str(item) for key, item in value.items() if str(key or "").strip()
-    }
-    return kept or None

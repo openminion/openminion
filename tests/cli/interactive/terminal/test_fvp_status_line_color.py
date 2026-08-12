@@ -90,14 +90,14 @@ def test_live_turn_footer_omits_active_warning_row() -> None:
         warn_open, _ = style_token(StyleToken.WARNING)
     rows = text.splitlines()
     assert len(rows) == 1
-    assert "brain:" not in text
+    assert "Status:" not in text
     assert "Analyzing request..." not in text
     assert "2s" not in text
     assert warn_open not in text
     assert "alpha" in text
 
 
-def test_active_turn_brain_row_uses_warning_color_in_bottom_toolbar() -> None:
+def test_active_turn_status_uses_warning_color_outside_bottom_toolbar() -> None:
     line = TerminalStatusLine()
     line.set_state(
         state="responding",
@@ -110,15 +110,13 @@ def test_active_turn_brain_row_uses_warning_color_in_bottom_toolbar() -> None:
         "openminion.cli.presentation.styles.is_color_enabled",
         return_value=True,
     ):
-        text = line.bottom_toolbar()
+        text = line.active_status()
         warn_open, _ = style_token(StyleToken.WARNING)
-    rows = text.splitlines()
-    assert len(rows) == 2
-    assert "brain:" in rows[0]
-    assert "Analyzing request..." in rows[0]
-    assert warn_open in rows[0]
-    assert "alpha" in rows[1]
-    assert warn_open not in rows[1]
+    assert "Status:" in text
+    assert "Analyzing request..." in text
+    assert warn_open in text
+    assert "alpha" not in text
+    assert "Status:" not in line.bottom_toolbar()
 
 
 def test_live_turn_footer_keeps_ansi_identity_segments() -> None:

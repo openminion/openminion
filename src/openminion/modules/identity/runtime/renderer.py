@@ -132,18 +132,13 @@ _SKILL_TOKEN_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _skill_id_tokens(skill_id: str) -> list[str]:
-    text = str(skill_id or "").strip().lower().replace("_", "-")
-    parts = [part for part in _SKILL_TOKEN_SPLIT_RE.split(text) if len(part) >= 3]
-    return parts
+    text = skill_id.strip().lower().replace("_", "-")
+    return [part for part in _SKILL_TOKEN_SPLIT_RE.split(text) if len(part) >= 3]
 
 
 def _query_activates_skill(*, query_text: str, skill_id: str) -> bool:
-    normalized_query = str(query_text or "").strip().lower()
-    if not normalized_query:
-        return False
+    normalized_query = query_text.strip().lower()
     tokens = _skill_id_tokens(skill_id)
-    if not tokens:
-        return False
     return any(token in normalized_query for token in tokens)
 
 
@@ -172,7 +167,7 @@ def _render_skill_items(
         if skill_id in excluded or skill_id in seen:
             continue
         if not _query_activates_skill(
-            query_text=str(query_text or ""),
+            query_text=query_text or "",
             skill_id=skill_id,
         ):
             continue
@@ -184,7 +179,7 @@ def _render_skill_items(
 
     warnings: list[str] = []
     items: list[LineItem] = []
-    remaining_budget = max(1, int(posture.max_skill_tokens))
+    remaining_budget = posture.max_skill_tokens
 
     for index, (skill_id, category) in enumerate(ordered_ids):
         remaining_candidates = max(1, len(ordered_ids) - index)
@@ -285,8 +280,8 @@ def render_identity_snippet(
     query_text: str | None = None,
 ) -> IdentitySnippet:
     resolved_purpose = normalize_purpose(purpose)
-    spec = _PURPOSES.get(resolved_purpose, _PURPOSES["act"])
-    effective_max_chars = max(1, int(max_chars or (max_tokens * 4)))
+    spec = _PURPOSES[resolved_purpose]
+    effective_max_chars = max(1, max_chars or (max_tokens * 4))
     omitted_fields: list[str] = []
     warnings: list[str] = []
     sections = _initial_sections(
@@ -349,7 +344,7 @@ def _initial_sections(
 ) -> list[Section]:
     mission_text = " ".join(profile.role.mission.splitlines()).strip()
     constraints, omitted = _take(
-        list(profile.role.hard_constraints), spec.constraints, "role.hard_constraints"
+        profile.role.hard_constraints, spec.constraints, "role.hard_constraints"
     )
     omitted_fields.extend(omitted)
     confirms, omitted = _take(

@@ -16,9 +16,8 @@ _INTERNAL_FAILURE_REASON_PREFIXES = ("invalid_decide_",)
 
 def is_internal_failure_reason_code(reason_code: str | None) -> bool:
     normalized = str(reason_code or "").strip()
-    return bool(normalized) and (
-        normalized in _INTERNAL_FAILURE_REASON_CODES
-        or normalized.startswith(_INTERNAL_FAILURE_REASON_PREFIXES)
+    return normalized in _INTERNAL_FAILURE_REASON_CODES or normalized.startswith(
+        _INTERNAL_FAILURE_REASON_PREFIXES
     )
 
 

@@ -17,6 +17,7 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.execution.orchestrate.handler import (
+    ORCHESTRATE_MODE,
     OrchestrateMode,
 )
 from openminion.modules.brain.execution.worktree_children import (
@@ -606,6 +607,19 @@ def test_decompose_child_state_resets_llm_call_usage() -> None:
     )
 
     assert child_state.llm_calls_used == 0
+
+
+def test_orchestrate_rejects_recursive_child_decision() -> None:
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {"goal": "Research AWS pricing", "suggested_mode": "act"},
+            {"goal": "Research GCP pricing", "suggested_mode": "act"},
+        ]
+    )
+    runner._decide = lambda **_kwargs: SimpleNamespace(mode=ORCHESTRATE_MODE)
+
+    with pytest.raises(ValueError, match="cannot recursively select orchestrate"):
+        OrchestrateMode().execute(ctx)
 
 
 def test_orchestrate_normalizes_child_budget_floor_after_decompose_handoff(

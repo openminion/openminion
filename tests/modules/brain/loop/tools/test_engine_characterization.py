@@ -43,7 +43,6 @@ from openminion.modules.brain.loop.tools.engine import (
     _effective_cap,
     _eligible_duplicate_batch_execution_facts,
     _event_type_for_budget_stop,
-    _explicit_calendar_years,
     _finalization_status_payload,
     _general_profile_name,
     _goal_declaration_payload,
@@ -59,12 +58,10 @@ from openminion.modules.brain.loop.tools.engine import (
     _meta_rule_preference_payload,
     _pending_finalization_salvage_text,
     _pending_turn_context_payload,
-    _repair_stale_exact_date_search_args,
     _record_duplicate_batch_execution_facts,
     _requires_typed_finalization_contract,
     _session_work_summary_payload,
     _set_turn_progress,
-    _stale_exact_date_query_reason,
     _step_summaries_from_state,
     _subtasks_from_decompose_control,
     _task_plan_abandoned_payload,
@@ -82,10 +79,12 @@ from openminion.modules.brain.loop.tools.engine import (
 from openminion.modules.brain.loop.tools.duplicate_batch import (
     _reset_duplicate_batch_tracking,
 )
+from openminion.modules.brain.loop.tools.budget_finalization import (
+    _finalization_status_from_response,
+    _recover_finalized_answer,
+)
 from openminion.modules.brain.loop.tools.postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
-    _final_text_parrots_policy_denial,
-    _looks_like_execution_preface_draft,
     _looks_like_unexecutable_tool_payload_text,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
@@ -266,135 +265,6 @@ def _failed_outcome(
     )
 
 
-# Pure-function characterization: date helpers
-
-
-class TestExplicitCalendarYears:
-    def test_empty_input_returns_empty_set(self) -> None:
-        assert _explicit_calendar_years("") == set()
-        assert _explicit_calendar_years(None) == set()
-        assert _explicit_calendar_years("   ") == set()
-
-    def test_extracts_single_year(self) -> None:
-        assert _explicit_calendar_years("hello 2024") == {2024}
-
-    def test_extracts_multiple_years_dedup(self) -> None:
-        assert _explicit_calendar_years("2024 vs 2025 and 2024") == {2024, 2025}
-
-    def test_ignores_non_year_digits(self) -> None:
-        # \b(20\d{2})\b — only century 20xx 4-digit numbers
-        assert _explicit_calendar_years("12345 and 1999") == set()
-
-    def test_handles_non_string_input(self) -> None:
-        assert _explicit_calendar_years(2024) == {2024}
-
-
-class TestStaleExactDateQueryReason:
-    def test_require_exact_date_false_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="anything",
-            require_exact_date=False,
-            tool_name="web.search",
-            tool_args={"query": "weather 2024"},
-        )
-        assert result is None
-
-    def test_non_websearch_tool_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="weather",
-            require_exact_date=True,
-            tool_name="file.read",
-            tool_args={"query": "weather 2024"},
-        )
-        assert result is None
-
-    def test_empty_query_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="weather",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": ""},
-        )
-        assert result is None
-
-    def test_query_without_years_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="hello",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "current weather"},
-        )
-        assert result is None
-
-    def test_user_input_has_year_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="what happened in 2023",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "events 2023"},
-            current_year=2026,
-        )
-        assert result is None
-
-    def test_query_year_matches_current_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="what's new",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "news 2026"},
-            current_year=2026,
-        )
-        assert result is None
-
-    def test_stale_year_returns_explanation(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="who won",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "championship 2020"},
-            current_year=2026,
-        )
-        assert result is not None
-        assert "2020" in result
-        assert "2026" in result
-
-    def test_default_current_year_falls_back_to_datetime(self) -> None:
-        # Without explicit current_year, use system year — we won't assert exact
-        # output, only that the function returns None when query year == sys year.
-        from datetime import datetime, timezone
-
-        sys_year = datetime.now(timezone.utc).year
-        result = _stale_exact_date_query_reason(
-            user_input="news",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": f"news {sys_year}"},
-        )
-        assert result is None
-
-
-class TestRepairStaleExactDateSearchArgs:
-    def test_repairs_runtime_invented_stale_year(self) -> None:
-        result = _repair_stale_exact_date_search_args(
-            user_input="what's new",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "news 2025"},
-            current_year=2026,
-        )
-        assert result == {"query": "news"}
-
-    def test_returns_none_when_user_requested_historical_year(self) -> None:
-        result = _repair_stale_exact_date_search_args(
-            user_input="compare 2025 with today",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "news 2025"},
-            current_year=2026,
-        )
-        assert result is None
-
-
 _TASK_PLAN_STEP = {"step_id": "s1", "description": "do work"}
 _PAYLOAD_CASES: list[tuple[Any, str, dict[str, Any]]] = [
     (
@@ -501,6 +371,71 @@ def test_payload_extractor_invalid_dict_returns_none(
     assert result is None or result is not None  # branch executed either way
 
 
+def test_finalization_status_accepts_forced_submit_output_call() -> None:
+    response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        tool_calls=[
+            ToolCall(
+                name="submit_output",
+                arguments={
+                    "status": "final_answer",
+                    "reasoning": "The prior answer completed the request.",
+                },
+            )
+        ],
+    )
+
+    assert _finalization_status_from_response(response) == {
+        "status": "final_answer",
+        "reasoning": "The prior answer completed the request.",
+        "remaining_work": "",
+        "blocking_reason": "",
+    }
+
+
+def test_structured_final_answer_recovery_preserves_answer_and_status() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                tool_calls=[
+                    ToolCall(
+                        name="submit_output",
+                        arguments={
+                            "final_answer": "tradeoffs: concise\nrecommendation: ship",
+                            "status": "final_answer",
+                            "reasoning": "The evidence supports the answer.",
+                        },
+                    )
+                ],
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state())
+
+    result = _recover_finalized_answer(
+        loop_ctx=loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1", allowed_tools=frozenset()
+        ),
+        loop_state=AdaptiveToolLoopState(messages=[]),
+        runtime=runtime,
+        model="m",
+        max_output_tokens=500,
+        metadata=None,
+        public_mode_tag="act",
+    )
+
+    assert result is not None
+    assert result.final_answer.startswith("tradeoffs:")
+    assert result.status == "final_answer"
+    assert runtime.calls[0]["tools"][0].name == "submit_output"
+
+
 # Pure: small predicates / helpers
 
 
@@ -582,24 +517,6 @@ class TestAdaptiveBudgetConfig:
         cfg = AdaptiveBudgetConfig(mode="autonomous", extend_by=4, idle_timeout_s=60)
         prof = _profile(allowed_tools=frozenset({"x"}), adaptive_budget_config=cfg)
         assert _adaptive_budget_config(prof) is cfg
-
-    def test_validates_dict(self) -> None:
-        # The profile is a frozen dataclass; construct with a raw dict
-        # to exercise the dict-validation branch in _adaptive_budget_config.
-        prof = AdaptiveToolLoopProfile(
-            profile_name="t",
-            mode_name="act_adaptive",
-            allowed_tools=frozenset({"x"}),
-            max_iterations=2,
-            adaptive_budget_config={
-                "mode": "autonomous",
-                "extend_by": 2,
-                "idle_timeout_s": 60,
-            },  # type: ignore[arg-type]
-        )
-        cfg = _adaptive_budget_config(prof)
-        assert cfg is not None
-        assert cfg.mode == "autonomous"
 
 
 # Loop state tool-result helpers
@@ -1321,6 +1238,28 @@ class TestBuildToolFailureRecoveryMessage:
         assert "not a JSON array" in msg.content
         assert "omit desc, environment_variables" in msg.content
 
+    def test_file_write_argument_shape_error_gets_schema_guidance(self) -> None:
+        ar = ActionResult(
+            command_id="x",
+            status="failed",
+            summary="Invalid tool arguments",
+            error=ActionError(
+                code="TOOL_ARG_VALIDATION_FAILED",
+                message=(
+                    "2 validation errors for FileWriteArgs\n"
+                    "path\n  Field required\n"
+                    "content\n  Input should be a valid string"
+                ),
+            ),
+        )
+        msg = _build_tool_failure_recovery_message(
+            tool_name="file.write",
+            action_result=ar,
+        )
+        assert msg is not None
+        assert "path and content as strings" in msg.content
+        assert "Do not repeat the same invalid call" in msg.content
+
     def test_exec_run_policy_denied_array_command_gets_string_guidance(self) -> None:
         ar = ActionResult(
             command_id="x",
@@ -1428,6 +1367,22 @@ class TestLooksLikeUnexecutableToolPayloadText:
             "<execute_command> python3 wc_cli.py sample.txt </execute_command>\n"
             "<read_file> wordcount_summary.txt </read_file>"
         )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_file_read_pseudo_xml_without_guessing_an_alias(self) -> None:
+        text = (
+            "I'll verify the file now.\n\n"
+            "<file_read>\n<path>word_count_cli.py</path>\n</file_read>"
+        )
+
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_tool_request_xml_without_executing_it(self) -> None:
+        text = (
+            "I'll activate file tools.\n\n"
+            "<tool_request><name>file.read</name></tool_request>"
+        )
+
         assert _looks_like_unexecutable_tool_payload_text(text) is True
 
     def test_detects_plaintext_tool_calls_array(self) -> None:
@@ -1547,10 +1502,6 @@ class TestToolRequestResult:
 
 
 class TestMemoryConsolidationContext:
-    def test_none_when_state_missing_module_state(self) -> None:
-        ctx = SimpleNamespace(state=SimpleNamespace(module_state=None))
-        assert _memory_consolidation_context(ctx) is None
-
     def test_none_when_consolidation_disabled(self) -> None:
         ctx = SimpleNamespace(
             state=SimpleNamespace(
@@ -1573,10 +1524,6 @@ class TestMemoryConsolidationContext:
 
 
 class TestDelegatedChildContext:
-    def test_none_when_missing_module_state(self) -> None:
-        ctx = SimpleNamespace(state=SimpleNamespace(module_state=None))
-        assert _delegated_child_context(ctx) is None
-
     def test_none_when_disabled(self) -> None:
         ctx = SimpleNamespace(
             state=SimpleNamespace(module_state={"delegation": {"enabled": False}})
@@ -1755,7 +1702,7 @@ def test_loop_executes_tool_then_completes() -> None:
     assert len(loop_ctx.commands) == 1
 
 
-def test_loop_ignores_execution_preface_assistant_message_when_tools_present() -> None:
+def test_loop_preserves_assistant_message_without_semantic_preface_scoring() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1802,10 +1749,10 @@ def test_loop_ignores_execution_preface_assistant_message_when_tools_present() -
         message.content
         for message in outcome.state.messages
         if message.role == "assistant"
-    ] == ["verified and complete"]
+    ] == ["I'll read pyproject.toml and README.md now.", "verified and complete"]
 
 
-def test_loop_ignores_execution_preface_output_text_when_tools_present() -> None:
+def test_loop_preserves_output_text_without_semantic_preface_scoring() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1846,10 +1793,13 @@ def test_loop_ignores_execution_preface_output_text_when_tools_present() -> None
         message.content
         for message in outcome.state.messages
         if message.role == "assistant"
-    ] == ["verified and complete"]
+    ] == [
+        "Reading pyproject.toml and README.md to verify the required strings are present:",
+        "verified and complete",
+    ]
 
 
-def test_loop_retries_status_payload_after_substantive_tool_work() -> None:
+def test_loop_accepts_model_authored_status_shaped_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1896,19 +1846,14 @@ def test_loop_retries_status_payload_after_substantive_tool_work() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert (
-        outcome.final_text
-        == "SOURCES\n- source\n\nCHANGES\n- updated\n\nTESTS\n- passed"
+    assert outcome.final_text == (
+        '{"active_form":"Verifying task completion",'
+        '"confidence":"high","reasoning":"done"}'
     )
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "structured status payload" in msg.content
-        for msg in retry_messages
-    )
+    assert len(runtime.calls) == 2
 
 
-def test_loop_retries_continuing_preface_after_substantive_tool_work() -> None:
+def test_loop_accepts_model_authored_continuation_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1955,16 +1900,14 @@ def test_loop_retries_continuing_preface_after_substantive_tool_work() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "Files changed and validation result: passed."
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "pre-tool draft" in msg.content
-        for msg in retry_messages
+    assert outcome.final_text == (
+        "The directory is confirmed empty. Continuing — write design "
+        "doc, all package files, and tests in parallel now."
     )
+    assert len(runtime.calls) == 2
 
 
-def test_loop_retries_fix_and_rerun_preface_after_validation_failure() -> None:
+def test_loop_accepts_model_authored_fix_and_rerun_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2011,18 +1954,14 @@ def test_loop_retries_fix_and_rerun_preface_after_validation_failure() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert (
-        outcome.final_text == "Design, implementation, and validation result: passed."
+    assert outcome.final_text == (
+        "Validation produced exit code 2. Let me read the source files "
+        "to find and fix the bug, then rerun."
     )
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "pre-tool draft" in msg.content
-        for msg in retry_messages
-    )
+    assert len(runtime.calls) == 2
 
 
-def test_loop_retries_long_file_plan_without_file_creation() -> None:
+def test_loop_accepts_model_authored_file_plan_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2075,13 +2014,8 @@ def test_loop_retries_long_file_plan_without_file_creation() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "Files changed and validation result: passed."
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "pre-tool draft" in msg.content
-        for msg in retry_messages
-    )
+    assert str(outcome.final_text or "").startswith("Goal: Build a minimal Python CLI.")
+    assert len(runtime.calls) == 2
 
 
 def test_loop_iteration_cap_terminates_with_cap_reason() -> None:
@@ -2308,7 +2242,7 @@ def test_loop_tool_failure_then_recovery() -> None:
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
 
 
-def test_loop_missing_markers_after_failed_tool_retry_uses_attempt_fallback() -> None:
+def test_loop_does_not_invent_requested_markers_after_failed_tool() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2365,15 +2299,10 @@ def test_loop_missing_markers_after_failed_tool_retry_uses_attempt_fallback() ->
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    final_text = str(outcome.final_text or "").lower()
-    assert "next steps:" in final_text
-    assert "tool evidence:" in final_text
-    assert "web.search: failed" in final_text
-    assert bool(
-        outcome.state.scratchpad.get(
-            "missing_requested_closeout_markers_used_attempt_fallback"
-        )
+    assert outcome.final_text == (
+        "I found partial evidence but could not finish cleanly."
     )
+    assert len(runtime.calls) == 2
 
 
 def test_loop_seed_response_skips_first_llm_call() -> None:
@@ -2758,7 +2687,7 @@ def test_loop_general_adaptive_profile_finalization_final_answer() -> None:
     assert outcome.finalization_status is not None
 
 
-def test_loop_salvages_substantive_final_answer_when_trailer_retry_fails() -> None:
+def test_loop_fails_closed_when_typed_trailer_retries_fail() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2808,9 +2737,8 @@ def test_loop_salvages_substantive_final_answer_when_trailer_retry_fails() -> No
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text.startswith("SOURCES")
-    assert outcome.finalization_status is not None
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.finalization_status is None
 
 
 def test_loop_salvages_assistant_message_final_answer_when_output_text_is_blank() -> (
@@ -2879,7 +2807,7 @@ def test_loop_salvages_assistant_message_final_answer_when_output_text_is_blank(
     assert outcome.finalization_status is not None
 
 
-def test_loop_salvages_structured_final_answer_without_trailer_on_first_try() -> None:
+def test_loop_does_not_infer_finalization_from_answer_shape() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2940,10 +2868,8 @@ def test_loop_salvages_structured_final_answer_without_trailer_on_first_try() ->
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "**PLAN**" in str(outcome.final_text or "")
-    assert outcome.finalization_status is not None
-    assert outcome.finalization_status["status"] == "final_answer"
+    assert outcome.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+    assert outcome.finalization_status is None
 
 
 def test_loop_confident_complete_signals_confident_completion() -> None:
@@ -3517,7 +3443,7 @@ def test_tool_choice_none_second_retry_degrades_answer_only_closeout_to_budget_e
     )
 
 
-def test_tool_choice_none_missing_validation_continues_with_tools() -> None:
+def test_tool_choice_none_does_not_infer_validation_intent_from_user_prose() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -3623,12 +3549,9 @@ def test_tool_choice_none_missing_validation_continues_with_tools() -> None:
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: validation passed"
-    assert [command.tool_name for command in loop_ctx.commands] == [
-        "file.write",
-        "exec.run",
-    ]
-    assert runtime.calls[0]["tool_choice"] == "auto"
-    assert runtime.calls[1]["tool_choice"] == "auto"
+    assert loop_ctx.commands == []
+    assert runtime.calls[0]["tool_choice"] == "none"
+    assert runtime.calls[1]["tool_choice"] == "none"
     assert "tool_choice_none_retry_continued_for_validation" not in (
         outcome.state.scratchpad
     )
@@ -3670,7 +3593,6 @@ def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None
     )
     initial_state = AdaptiveToolLoopState(
         scratchpad={
-            "adaptive.requested_closeout_markers": ["result"],
             "adaptive.tool_results": [
                 {
                     "tool_name": "file.write",
@@ -3696,7 +3618,7 @@ def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text is not None
     assert "result:" in outcome.final_text
-    assert "file mutations" in outcome.final_text
+    assert "successful file writes" in outcome.final_text
 
 
 def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evidence() -> (
@@ -3738,7 +3660,6 @@ def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evid
     initial_state = AdaptiveToolLoopState(
         scratchpad={
             "coding.final_answer_reserve_used": True,
-            "adaptive.requested_closeout_markers": ["result"],
             "adaptive.tool_results": [
                 {
                     "tool_name": "file.write",
@@ -3764,7 +3685,7 @@ def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evid
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text is not None
     assert outcome.final_text.startswith("result:")
-    assert "file mutations" in outcome.final_text
+    assert "successful file writes" in outcome.final_text
     assert (
         outcome.state.scratchpad["mutating_file_closeout_used_evidence_fallback"]
         is True
@@ -3926,7 +3847,9 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
     assert outcome.final_text == "result: files changed a.py, b.py"
 
 
-def test_tool_choice_none_compact_closeout_falls_back_when_labels_missing() -> None:
+def test_tool_choice_none_compact_closeout_accepts_model_text_without_label_scoring() -> (
+    None
+):
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -3998,18 +3921,13 @@ def test_tool_choice_none_compact_closeout_falls_back_when_labels_missing() -> N
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text is not None
-    assert "validation:" in outcome.final_text
-    assert "follow-ups:" in outcome.final_text
-    assert (
-        outcome.state.scratchpad[
-            "compact_closeout_missing_requested_markers_used_fallback"
-        ]
-        is True
+    assert outcome.final_text == "design: simple\nfiles: a.py, b.py"
+    assert "compact_closeout_missing_requested_markers_used_fallback" not in (
+        outcome.state.scratchpad
     )
 
 
-def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation() -> (
+def test_tool_choice_none_compact_closeout_accepts_model_text_without_shape_scoring() -> (
     None
 ):
     runtime = _FakeRuntime(
@@ -4091,13 +4009,11 @@ def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation()
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text is not None
-    assert "result:" in outcome.final_text
-    assert "validation: deterministic validation was not captured" in outcome.final_text
-    assert "files changed: a.py" in outcome.final_text
-    assert (
-        outcome.state.scratchpad["requested_validation_blocked_answer_only_closeout"]
-        is True
+    assert outcome.final_text == (
+        "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q"
+    )
+    assert "requested_validation_blocked_answer_only_closeout" not in (
+        outcome.state.scratchpad
     )
 
 
@@ -4411,6 +4327,77 @@ class TestForceBudgetAnswerOnlyFinalization:
         loop_ctx = _LoopContext(state=_state())
 
         assert _has_tool_evidence_for_answer_only(loop_ctx, st_loop) is True
+
+    def test_general_budget_closeout_requires_typed_status_after_tool_work(
+        self,
+    ) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"web.search"}),
+            profile_name="general_adaptive_v1",
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="user", content="Research both requested topics.")],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "web.search",
+                        "ok": True,
+                        "content": "First topic results",
+                        "data": {"results": ["first"]},
+                    }
+                ]
+            },
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.goal = "Research both requested topics."
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I will research the second topic next.",
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    finalization_status={
+                        "status": "incomplete",
+                        "reasoning": "Only the first topic was researched.",
+                        "remaining_work": "Research the second topic.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"web.search"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+        assert result.finalization_status is not None
+        assert result.finalization_status["remaining_work"] == (
+            "Research the second topic."
+        )
+        assert len(runtime.calls) == 2
+        assert "Append finalization_status" in str(
+            runtime.calls[0]["messages"][-1].content
+        )
 
     def test_budget_exhaustion_forces_answer_only_from_prior_tool_evidence(
         self,
@@ -5134,6 +5121,72 @@ class TestFinalizeIterationCapExit:
         ]
         assert any("Do not call tools" in message for message in retry_system_messages)
 
+    def test_force_finalization_retries_embedded_tool_call_json(self) -> None:
+        leaked_text = (
+            "I'll create the temporary working folder and set up the project there. "
+            "Let me write the necessary files directly.\n\n"
+            '{"tool_calls":['
+            '{"type":"file.write","name":"file_write_1",'
+            '"path":"tmp-work/README.md","content":"README content"},'
+            '{"type":"file.write","name":"file_write_2",'
+            '"path":"tmp-work/notes.md","content":"Project notes with objectives, '
+            'implementation status, tests, documentation, and follow-up work."}'
+            "]}"
+        )
+        assert len(leaked_text) > 280
+        prof = _profile(
+            allowed_tools=frozenset({"file.write"}),
+            profile_name="general_adaptive_v1",
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            total_tool_calls=1,
+        )
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=leaked_text,
+                    assistant_messages=[Message(role="assistant", content=leaked_text)],
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="Created the requested workspace files.",
+                    assistant_messages=[
+                        Message(
+                            role="assistant",
+                            content="Created the requested workspace files.",
+                        )
+                    ],
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == "Created the requested workspace files."
+        assert len(runtime.calls) == 2
+        assert all(message.content != leaked_text for message in st_loop.messages)
+
     def test_force_finalization_rejects_provider_fallback_text(self) -> None:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
@@ -5177,7 +5230,7 @@ class TestFinalizeIterationCapExit:
             == "internal_failure_final_text"
         )
 
-    def test_force_finalization_rejects_execution_preface_draft(self) -> None:
+    def test_force_finalization_does_not_classify_answer_prose(self) -> None:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
         )
@@ -5214,12 +5267,11 @@ class TestFinalizeIterationCapExit:
         )
 
         assert result is not None
-        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        assert (
-            st_loop.scratchpad["budget_answer_only_finalization_rejected_text"]
-            == "<step1>Create files</step1>\n<step2>Read back one file to validate</step2>"
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == (
+            "<step1>Create files</step1>\n<step2>Read back one file to validate</step2>"
         )
-        assert st_loop.scratchpad["budget_answer_only_restore_index"] == 1
+        assert "budget_answer_only_finalization_rejected_text" not in st_loop.scratchpad
 
     def test_force_finalization_rejects_raw_tool_markup(self) -> None:
         prof = _profile(
@@ -5377,7 +5429,11 @@ class TestFinalizeIterationCapExit:
             "blocking_reason": "",
         }
         assert len(runtime.calls) == 2
-        assert runtime.calls[1]["tool_choice"] == "none"
+        assert runtime.calls[1]["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
+        assert runtime.calls[1]["tools"][0].name == "submit_output"
         retry_messages = runtime.calls[1]["messages"]
         assert retry_messages[-2].role == "assistant"
         assert retry_messages[-2].content == result.final_text
@@ -5385,6 +5441,7 @@ class TestFinalizeIterationCapExit:
         assert "Return only the structured finalization_status signal" in (
             retry_messages[-1].content
         )
+        assert "<finalization_status>" in retry_messages[-1].content
 
     def test_force_finalization_recovers_status_from_retry_trailer_text(
         self,
@@ -5873,10 +5930,10 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         assert out is not None
         assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
         assert "result:" in str(out.final_text or "").lower()
-        assert "validation:" in str(out.final_text or "").lower()
+        assert "validation:" not in str(out.final_text or "").lower()
         assert "tool evidence:" in str(out.final_text or "").lower()
 
-    def test_falls_back_to_evidence_when_duplicate_closure_misses_labels(
+    def test_preserves_model_answer_without_runtime_label_scoring(
         self,
     ) -> None:
         signature = "sig-missing-labels"
@@ -5912,8 +5969,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
 
         assert out is not None
         assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-        assert "result:" in str(out.final_text or "").lower()
-        assert "validation:" in str(out.final_text or "").lower()
+        assert out.final_text == "I read the file successfully."
 
     def test_returns_none_on_provider_fallback_final_text(self) -> None:
         signature = "sig-provider-fallback"
@@ -6286,6 +6342,10 @@ def test_loop_profile_llm_cap_forces_answer_only_when_tool_work_exists() -> None
                 provider="fake",
                 model="m",
                 output_text="SOURCES\n- gathered\n\nCHANGES\n- applied\n\nTESTS\n- pass",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The tool result completed the request.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -6405,7 +6465,7 @@ def test_loop_decompose_mixed_first_round_retries_then_recovers() -> None:
     }
 
 
-def test_loop_freshness_exact_date_query_auto_repairs_before_tool_execution() -> None:
+def test_loop_preserves_model_authored_search_query() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -6432,7 +6492,6 @@ def test_loop_freshness_exact_date_query_auto_repairs_before_tool_execution() ->
         ]
     )
     state = _state()
-    # Inject freshness obligation
     state.freshness_obligations = SimpleNamespace(require_exact_date=True)
     loop_ctx = _LoopContext(
         state=state, outcomes=[_success_outcome("web.search", "ok")]
@@ -6448,8 +6507,8 @@ def test_loop_freshness_exact_date_query_auto_repairs_before_tool_execution() ->
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert len(loop_ctx.commands) == 1
     assert getattr(loop_ctx.commands[0], "tool_name", "") == "web.search"
-    assert getattr(loop_ctx.commands[0], "args", {}).get("query") == "weather"
-    assert any(
+    assert getattr(loop_ctx.commands[0], "args", {}).get("query") == "weather 2018"
+    assert not any(
         status.get("mode_state") == "freshness_exact_date_query_autorepair"
         for status in loop_ctx.statuses
     )
@@ -6518,7 +6577,7 @@ def test_loop_circular_pattern_terminates() -> None:
     }
 
 
-def test_changed_tool_arguments_do_not_trigger_circular_pattern_fallback() -> None:
+def test_changed_tool_arguments_preserve_model_authored_final_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -6576,7 +6635,10 @@ def test_changed_tool_arguments_do_not_trigger_circular_pattern_fallback() -> No
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == (
+        "I hit an internal decision error before I could continue safely on this turn."
+    )
     assert not outcome.state.scratchpad.get("circular_pattern_used_evidence_fallback")
 
 
@@ -6667,6 +6729,67 @@ def test_loop_tool_request_call_activates_inactive_tool() -> None:
         requestable_tool_specs=_tool_specs("extra.tool"),
     )
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+
+
+def test_loop_keeps_requested_tools_active_across_later_requests() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="r1",
+                        name="tool.request",
+                        arguments={"name": "extra.one"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="r2",
+                        name="tool.request",
+                        arguments={"name": "extra.two"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="done after activation",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    outcome = run_adaptive_tool_loop(
+        _LoopContext(state=_state(), outcomes=[]),
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="request two tools")],
+        tool_specs=_tool_specs("file.read"),
+        requestable_tool_specs=_tool_specs("extra.one", "extra.two"),
+    )
+
+    final_messages = runtime.calls[-1]["messages"]
+    inactive_directories = [
+        str(message.content)
+        for message in final_messages
+        if "[INACTIVE TOOL DIRECTORY]" in str(message.content)
+    ]
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert inactive_directories
+    assert "- extra.one:" not in inactive_directories[-1]
 
 
 def test_loop_provider_parallel_capacity_drives_dispatch() -> None:
@@ -6973,7 +7096,7 @@ def test_loop_retries_when_final_answer_is_execution_preface_draft() -> None:
     assert "SOURCES" in str(outcome.final_text or "")
 
 
-def test_loop_retries_snippet_only_answer_when_file_artifacts_were_requested() -> None:
+def test_loop_retains_postprocess_file_artifact_retry_until_owner_cleanup() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7070,10 +7193,9 @@ def test_loop_retries_snippet_only_answer_when_file_artifacts_were_requested() -
         "file.list_dir",
         "file.write",
     ]
-    assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
 
 
-def test_loop_retries_prose_closeout_when_file_artifacts_were_not_created() -> None:
+def test_loop_accepts_model_authored_file_closeout_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7151,11 +7273,11 @@ def test_loop_retries_prose_closeout_when_file_artifacts_were_not_created() -> N
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
-    assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
+    assert loop_ctx.commands == []
+    assert str(outcome.final_text or "").startswith("design: simple CLI")
 
 
-def test_loop_retries_closeout_when_requested_test_file_is_missing() -> None:
+def test_loop_does_not_guess_missing_test_artifact_from_filenames() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7272,14 +7394,11 @@ def test_loop_retries_closeout_when_requested_test_file_is_missing() -> None:
     assert [command.tool_name for command in loop_ctx.commands] == [
         "file.write",
         "exec.run",
-        "file.write",
     ]
-    assert bool(
-        outcome.state.scratchpad.get("missing_requested_file_artifacts_retry_used")
-    )
+    assert outcome.final_text == "result: module complete"
 
 
-def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> None:
+def test_loop_accepts_model_authored_execution_preface_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7335,79 +7454,8 @@ def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> 
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "tool evidence:" in str(outcome.final_text or "").lower()
-    assert "file.read" in str(outcome.final_text or "")
-    assert "core module content present" in str(outcome.final_text or "")
-    assert bool(
-        outcome.state.scratchpad.get("pre_tool_draft_echo_used_evidence_fallback")
-    )
-
-
-def test_loop_falls_back_when_long_closeout_ends_with_unfinished_starting_tail() -> (
-    None
-):
-    draft = (
-        "Design Comparison:\n\n"
-        "| Aspect | Design A | Design B |\n"
-        "|--------|----------|----------|\n"
-        "| Parser approach | regex | string splitting |\n"
-        "| Complexity | medium | low |\n\n"
-        "Selection: Design B because it is simpler.\n\n"
-        "Implementation plan:\n"
-        "- `section_summary.py` - Core module\n"
-        "- `cli.py` - CLI entry\n"
-        "- `test_section_summary.py` - Unit tests\n"
-        "- `README.md` - Documentation\n\n"
-        "Starting with the core module:"
-    )
-    runtime = _FakeRuntime(
-        responses=[
-            LLMResponse(ok=True, provider="fake", model="m", output_text=draft),
-            LLMResponse(ok=True, provider="fake", model="m", output_text=draft),
-        ]
-    )
-    initial_state = AdaptiveToolLoopState(
-        scratchpad={
-            "adaptive.tool_results": [
-                {
-                    "tool_name": "file.write",
-                    "ok": True,
-                    "content": "wrote section_summary.py",
-                    "data": {"path": "section_summary.py"},
-                }
-            ]
-        }
-    )
-    outcome = run_adaptive_tool_loop(
-        _LoopContext(state=_state()),
-        profile=_profile(
-            allowed_tools=frozenset({"file.write"}),
-            max_iterations=4,
-        ),
-        runtime=runtime,
-        model="m",
-        initial_messages=[
-            Message(
-                role="user",
-                content=(
-                    "Use file.write for files. Finish with `design:`, `files:`, "
-                    "`validation:`, and `follow-ups:`."
-                ),
-            )
-        ],
-        initial_state=initial_state,
-        tool_specs=_tool_specs("file.write"),
-    )
-
-    final_text = str(outcome.final_text or "").lower()
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "design:" in final_text
-    assert "files:" in final_text
-    assert "validation:" in final_text
-    assert "follow-ups:" in final_text
-    assert "section_summary.py" in final_text
-    assert bool(
-        outcome.state.scratchpad.get("pre_tool_draft_echo_used_evidence_fallback")
+    assert outcome.final_text == (
+        "I'll read back the core module file to verify the expected content is present."
     )
 
 
@@ -7488,14 +7536,16 @@ def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> Non
     assert bool(
         outcome.state.scratchpad.get("empty_final_after_tool_results_retry_used")
     )
-    assert bool(
+    assert not bool(
         outcome.state.scratchpad.get("empty_final_after_tool_results_final_retry_used")
     )
+    assert runtime.calls[2]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }
 
 
-def test_loop_falls_back_to_evidence_when_typed_finalization_contract_is_missing() -> (
-    None
-):
+def test_loop_fails_closed_when_typed_finalization_contract_is_missing() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7572,60 +7622,8 @@ def test_loop_falls_back_to_evidence_when_typed_finalization_contract_is_missing
         tool_specs=_tool_specs("web.search"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "result:" in str(outcome.final_text or "").lower()
-    assert "web.search" in str(outcome.final_text or "")
-    assert bool(
-        outcome.state.scratchpad.get(
-            "typed_finalization_contract_used_evidence_fallback"
-        )
-    )
-
-
-def test_execution_preface_draft_detects_future_tense_tool_batch() -> None:
-    assert _looks_like_execution_preface_draft(
-        "I'll execute the required tool batch: web.fetch for the PyPA URL, "
-        "then file.write for both pyproject.toml and README.md."
-    )
-
-
-def test_execution_preface_draft_detects_progress_note_after_tool_results() -> None:
-    assert _looks_like_execution_preface_draft(
-        "Reading pyproject.toml and README.md to verify the required strings "
-        "are present:"
-    )
-    assert _looks_like_execution_preface_draft(
-        "I'll read the full report.py to see exactly what was completed and "
-        "what needs to be finished."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Based on the existing tool results, I can see the project is mostly "
-        "complete. Let me verify the tests."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Let me check the current state of the project by reading the existing files."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Proceeding to add `tests/` and `pyproject.toml`, then run validation."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Brief plan: Create 4 files (`loopcalc.py` CLI, `loopcalc_core.py` helper, "
-        "`smoke_test.py`, `README.md`), write them with file.write, then read back "
-        "`loopcalc_core.py` to validate persistence. Writing files now."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Design Comparison:\n\n"
-        "| Aspect | Design A | Design B |\n"
-        "|--------|----------|----------|\n"
-        "| Parser approach | regex | string splitting |\n\n"
-        "Implementation plan:\n"
-        "- `section_summary.py` - Core module\n"
-        "- `cli.py` - CLI entry\n\n"
-        "Starting with the core module:"
-    )
-    assert _looks_like_execution_preface_draft(
-        "Design Comparison\n\nChosen: stdlib argparse.\n\nCreating section_summary.py:"
-    )
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.finalization_status is None
 
 
 def test_unexecutable_tool_payload_detects_embedded_json_after_prose() -> None:
@@ -7637,7 +7635,7 @@ def test_unexecutable_tool_payload_detects_embedded_json_after_prose() -> None:
     )
 
 
-def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> None:
+def test_raw_tool_result_array_retries_without_interpreting_requested_labels() -> None:
     runner = _NoToolRepairHarness()
     runner.loop_state = AdaptiveToolLoopState(
         messages=[
@@ -7669,17 +7667,12 @@ def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> N
         "} ]"
     )
 
-    repaired_text = runner._repair_raw_tool_payload_final_text(raw_payload_text)
+    result = runner._repair_raw_tool_payload_final_text(raw_payload_text)
 
-    assert isinstance(repaired_text, str)
-    final_text = repaired_text.lower()
-    assert "design:" in final_text
-    assert "files:" in final_text
-    assert "validation:" in final_text
-    assert "follow-ups:" in final_text
-    assert "section_summary.py" in final_text
-    assert bool(
-        runner.loop_state.scratchpad.get("raw_tool_payload_used_evidence_fallback")
+    assert result == (True, None)
+    assert "raw tool markup" in runner.loop_state.messages[-1].content
+    assert not runner.loop_state.scratchpad.get(
+        "raw_tool_payload_used_evidence_fallback"
     )
 
 
@@ -7744,35 +7737,6 @@ def test_final_answer_references_unbacked_source_urls_detects_missing_fetch() ->
             "PLAN\n- fetch https://docs.astral.sh/uv/getting-started/installation/\n"
             "UNCERTAINTIES\n- https://pipx.pypa.io/"
         ),
-    )
-
-
-def test_final_text_parrots_policy_denial_detects_exec_run_echo() -> None:
-    st_loop = AdaptiveToolLoopState(
-        scratchpad={
-            "adaptive.tool_results": [
-                {
-                    "tool_name": "exec.run",
-                    "ok": False,
-                    "content": "Denied by policy: command 'pip' is not allowlisted",
-                    "data": {
-                        "error": {
-                            "details": {
-                                "suggested_fix": (
-                                    "Run the allowed direct command `python -m pytest -q "
-                                    "tests` from the workspace instead."
-                                )
-                            }
-                        }
-                    },
-                }
-            ]
-        }
-    )
-
-    assert _final_text_parrots_policy_denial(
-        st_loop,
-        text="Denied by policy: command 'pip' is not allowlisted",
     )
 
 

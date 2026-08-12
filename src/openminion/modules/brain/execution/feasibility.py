@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from .runtime.turn import feasibility as _feasibility_runtime
 from openminion.modules.prompting.continuation import build_feasibility_choice_prompt
 from ..diagnostics.events import CanonicalEventLogger
@@ -71,7 +73,7 @@ def extract_feasibility_report(
         return None
     try:
         return FeasibilityReport.model_validate(payload)
-    except Exception:
+    except ValidationError:
         return None
 
 
@@ -225,28 +227,21 @@ def assess_step_feasibility(
 
 
 def is_hard_infeasibility(report: FeasibilityReport | None) -> bool:
-    if report is None:
-        return False
-    if report.plan_viable:
-        return False
-    if report.viable_intent_ids:
-        return False
-    return report.recommendation in {
-        "retry_full",
-        "abort",
-        "suggest_alternatives",
-        "proceed_full",
-    }
+    return bool(
+        report
+        and not report.plan_viable
+        and not report.viable_intent_ids
+        and report.recommendation
+        in {"retry_full", "abort", "suggest_alternatives", "proceed_full"}
+    )
 
 
 def build_resume_decision(state: WorkingState) -> Decision | None:
     if state.plan is None:
         return None
-    current_step = None
-    if 0 <= int(getattr(state, "cursor", 0) or 0) < len(state.plan.steps):
-        current_step = state.plan.steps[int(getattr(state, "cursor", 0) or 0)]
-    if current_step is None:
+    if state.cursor >= len(state.plan.steps):
         return None
+    current_step = state.plan.steps[state.cursor]
     decision = ActDecision(
         confidence=1.0,
         reason_code="resume_existing_plan",
@@ -265,9 +260,9 @@ def serialize_feasibility_state(
     approved_subset: bool = False,
 ) -> dict[str, Any]:
     payload = report.model_dump(mode="json")
-    payload["awaiting_user_choice"] = bool(awaiting_user_choice)
-    payload["reviewed"] = bool(reviewed)
-    payload["approved_subset"] = bool(approved_subset)
+    payload["awaiting_user_choice"] = awaiting_user_choice
+    payload["reviewed"] = reviewed
+    payload["approved_subset"] = approved_subset
     return payload
 
 
@@ -278,7 +273,6 @@ def _simple_single_step_feasibility(
     runtime_facts: list[dict[str, Any]],
     structured_sub_intents: list[Any],
 ) -> FeasibilityReport | None:
-    """Fast-path typed feasibility for one-step local tool plans."""
     if runtime_facts:
         return None
     if (

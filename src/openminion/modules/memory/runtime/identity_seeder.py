@@ -5,6 +5,12 @@ from openminion.base.time import utc_now_iso as _utc_now_iso
 
 _log = logging.getLogger(__name__)
 
+_PROFILE_SECTION_FIELDS = (
+    ("personality", ("tone", "verbosity"), ("formatting", "interaction_style")),
+    ("risk", ("risk_level",), ("confirm_before", "auto_proceed_rules")),
+    ("tool_posture", ("tool_use",), ("blocked_patterns", "allowed_tools")),
+)
+
 
 def _write_pin(
     *,
@@ -200,76 +206,34 @@ def _seed_role_pins(*, profile: Any, memory_service: Any, agent_id: str) -> int:
     return written
 
 
-def _seed_personality_pins(*, profile: Any, memory_service: Any, agent_id: str) -> int:
-    personality = getattr(profile, "personality", None)
-    if personality is None:
+def _seed_profile_section(
+    *,
+    profile: Any,
+    memory_service: Any,
+    agent_id: str,
+    section: str,
+    scalar_fields: tuple[str, ...],
+    list_fields: tuple[str, ...],
+) -> int:
+    values = getattr(profile, section, None)
+    if values is None:
         return 0
     written = 0
-    written += _write_scalar_pin(
-        memory_service=memory_service,
-        agent_id=agent_id,
-        section="personality",
-        field="tone",
-        value=getattr(personality, "tone", ""),
-    )
-    written += _write_scalar_pin(
-        memory_service=memory_service,
-        agent_id=agent_id,
-        section="personality",
-        field="verbosity",
-        value=getattr(personality, "verbosity", ""),
-    )
-    for field in ("formatting", "interaction_style"):
-        written += _write_list_pin(
+    for field in scalar_fields:
+        written += _write_scalar_pin(
             memory_service=memory_service,
             agent_id=agent_id,
-            section="personality",
+            section=section,
             field=field,
-            values=getattr(personality, field, []),
+            value=getattr(values, field, ""),
         )
-    return written
-
-
-def _seed_risk_pins(*, profile: Any, memory_service: Any, agent_id: str) -> int:
-    risk = getattr(profile, "risk", None)
-    if risk is None:
-        return 0
-    written = _write_scalar_pin(
-        memory_service=memory_service,
-        agent_id=agent_id,
-        section="risk",
-        field="risk_level",
-        value=getattr(risk, "risk_level", ""),
-    )
-    for field in ("confirm_before", "auto_proceed_rules"):
+    for field in list_fields:
         written += _write_list_pin(
             memory_service=memory_service,
             agent_id=agent_id,
-            section="risk",
+            section=section,
             field=field,
-            values=getattr(risk, field, []),
-        )
-    return written
-
-
-def _seed_tool_posture_pins(*, profile: Any, memory_service: Any, agent_id: str) -> int:
-    tool_posture = getattr(profile, "tool_posture", None)
-    if tool_posture is None:
-        return 0
-    written = _write_scalar_pin(
-        memory_service=memory_service,
-        agent_id=agent_id,
-        section="tool_posture",
-        field="tool_use",
-        value=getattr(tool_posture, "tool_use", ""),
-    )
-    for field in ("blocked_patterns", "allowed_tools"):
-        written += _write_list_pin(
-            memory_service=memory_service,
-            agent_id=agent_id,
-            section="tool_posture",
-            field=field,
-            values=getattr(tool_posture, field, []),
+            values=getattr(values, field, []),
         )
     return written
 
@@ -315,15 +279,15 @@ def seed_identity_pins(
     written = _seed_role_pins(
         profile=profile, memory_service=memory_service, agent_id=agent_id
     )
-    written += _seed_personality_pins(
-        profile=profile, memory_service=memory_service, agent_id=agent_id
-    )
-    written += _seed_risk_pins(
-        profile=profile, memory_service=memory_service, agent_id=agent_id
-    )
-    written += _seed_tool_posture_pins(
-        profile=profile, memory_service=memory_service, agent_id=agent_id
-    )
+    for section, scalar_fields, list_fields in _PROFILE_SECTION_FIELDS:
+        written += _seed_profile_section(
+            profile=profile,
+            memory_service=memory_service,
+            agent_id=agent_id,
+            section=section,
+            scalar_fields=scalar_fields,
+            list_fields=list_fields,
+        )
     written += _write_profile_version_pin(
         memory_service=memory_service,
         agent_id=agent_id,

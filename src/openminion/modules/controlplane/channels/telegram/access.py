@@ -30,8 +30,6 @@ class TelegramAccessPolicy:
         *,
         bot_username: str | None,
     ) -> AccessDecision:
-        command_mode = _is_command(envelope.text)
-
         if envelope.chat_type == "private":
             return _evaluate_dm(envelope, self._access)
 
@@ -44,7 +42,7 @@ class TelegramAccessPolicy:
             if not topic_gate.allowed:
                 return topic_gate
 
-            if self._access.mention_only_in_groups and not command_mode:
+            if self._access.mention_only_in_groups and not _is_command(envelope.text):
                 if not _mentions_bot(envelope.text, bot_username):
                     return AccessDecision(False, ACCESS_REASON_MENTION_REQUIRED)
 

@@ -108,6 +108,7 @@ def _run_inproc(
             ),
         },
     }
+    runtime = None
     if getattr(args, "home_root", None) or getattr(args, "data_root", None):
         from openminion.api.runtime import APIRuntime
 
@@ -116,19 +117,15 @@ def _run_inproc(
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),
         )
-        try:
-            turn = run_turn(
-                config_path=args.config,
-                payload=turn_payload,
-                runtime=runtime,
-            )
-        finally:
-            runtime.close()
-    else:
+    try:
         turn = run_turn(
             config_path=args.config,
             payload=turn_payload,
+            runtime=runtime,
         )
+    finally:
+        if runtime is not None:
+            runtime.close()
     return {"ok": True, "turn": turn, "trace_id": str(turn.get("run_id", "")).strip()}
 
 
@@ -144,7 +141,7 @@ def _print_output(args: Any, payload: dict[str, Any]) -> None:
         print_json_payload(payload)
         return
 
-    turn = payload.get("turn") if isinstance(payload, dict) else None
+    turn = payload.get("turn")
     if isinstance(turn, dict):
         text = (
             str(turn.get("final_text", "")).strip() or str(turn.get("body", "")).strip()
@@ -166,12 +163,11 @@ def _resolve_message(args: Any) -> str:
 
 
 def _format_api_error(payload: dict[str, Any], status: int) -> str:
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict):
-            message = str(error.get("message", "")).strip()
-            if message:
-                return f"daemon request failed ({status}): {message}"
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = str(error.get("message", "")).strip()
+        if message:
+            return f"daemon request failed ({status}): {message}"
     return f"daemon request failed ({status})"
 
 

@@ -1,6 +1,6 @@
 """Registry + capability checks for external durable-memory backends."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from openminion.modules.memory.errors import InvalidArgumentError
@@ -25,9 +25,7 @@ class ExternalBackendCapabilities:
 class ExternalBackendRegistration:
     name: str
     factory: ExternalBackendFactory
-    capabilities: ExternalBackendCapabilities = field(
-        default_factory=ExternalBackendCapabilities
-    )
+    capabilities: ExternalBackendCapabilities = ExternalBackendCapabilities()
 
 
 @dataclass(frozen=True)
@@ -57,7 +55,7 @@ def register_external_backend(
     factory: ExternalBackendFactory,
     capabilities: ExternalBackendCapabilities | None = None,
 ) -> None:
-    normalized = str(name or "").strip().lower()
+    normalized = name.strip().lower()
     if not normalized:
         raise InvalidArgumentError("external backend name is required")
     _EXTERNAL_BACKENDS[normalized] = ExternalBackendRegistration(
@@ -72,14 +70,14 @@ def list_registered_external_backends() -> tuple[str, ...]:
 
 
 def get_registered_external_backend(name: str) -> ExternalBackendRegistration:
-    normalized = str(name or "").strip().lower()
+    normalized = name.strip().lower()
     try:
         return _EXTERNAL_BACKENDS[normalized]
     except KeyError as exc:
         known = ", ".join(sorted(_EXTERNAL_BACKENDS)) or "<none>"
         raise InvalidArgumentError(
             f"No external backend registered for {name!r}; known adapters: {known}.",
-            details={"adapter": str(name or ""), "known_adapters": known},
+            details={"adapter": name, "known_adapters": known},
         ) from exc
 
 

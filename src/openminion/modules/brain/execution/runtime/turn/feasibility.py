@@ -131,7 +131,6 @@ def _feasibility_hints(
 ) -> dict[str, Any]:
     return {
         "_llm_call_id": llm_call_id,
-        "current_datetime": "",
         "user_input": str(user_input or state.goal or "").strip(),
         "prompt_tool_schemas_enabled": runner._prompt_tool_schemas_enabled,
         "runtime_tool_schemas": runtime_tool_schemas,
@@ -175,17 +174,16 @@ def _validate_feasibility_report(
     structured_sub_intents: list[Any],
 ) -> FeasibilityReport:
     allowed_ids = {item.id for item in structured_sub_intents}
-    if allowed_ids:
-        invalid_ids = (
-            set(report.viable_intent_ids)
-            | set(report.blocked_intent_ids)
-            | {item.intent_id for item in report.assessments}
-        ) - allowed_ids
-        if invalid_ids:
-            raise ValueError(
-                "feasibility report referenced undeclared intent ids: "
-                + ", ".join(sorted(invalid_ids))
-            )
+    invalid_ids = (
+        set(report.viable_intent_ids)
+        | set(report.blocked_intent_ids)
+        | {item.intent_id for item in report.assessments}
+    ) - allowed_ids
+    if invalid_ids:
+        raise ValueError(
+            "feasibility report referenced undeclared intent ids: "
+            + ", ".join(sorted(invalid_ids))
+        )
     logger.emit(
         "brain.feasibility.completed",
         {

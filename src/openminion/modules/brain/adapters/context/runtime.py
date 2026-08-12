@@ -101,10 +101,7 @@ class ContextCtlAdapter(ContextAPI):
         )
         mode_name = str(hints.get("mode_name") or "").strip().lower() or None
         purpose_name = cast(Purpose, purpose)
-        try:
-            budgets_override = default_budgets_for(purpose_name)
-        except Exception:
-            budgets_override = default_budgets_for("plan")  # fallback
+        budgets_override = default_budgets_for(purpose_name)
 
         request_token_budget = budget.get("max_tokens") or budget.get("identity_tokens")
         budgets_override.total_max_tokens = resolve_context_total_token_budget(

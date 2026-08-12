@@ -113,9 +113,7 @@ def _coerce_optional_int(value: Any) -> int | None:
 
 
 def _coerce_str(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value)
+    return "" if value is None else str(value)
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
@@ -153,8 +151,6 @@ def _coerce_list(value: Any) -> list[Any]:
 
 def _is_search_tool_name(tool_name: str) -> bool:
     name = (tool_name or "").strip().lower()
-    if not name:
-        return False
     return any(name.startswith(prefix) for prefix in _SEARCH_TOOL_NAME_PREFIXES)
 
 
@@ -368,9 +364,10 @@ def _format_tool_or_search_activity_line(event: TurnActivityEvent) -> str | None
             from openminion.cli.presentation.plan_render import render_plan
 
             return render_plan(plan)
+    suffix = format_per_action_metrics_suffix(event)
     if event.kind == KIND_SEARCH:
         rendered = _format_search_activity_line(event)
-        if rendered and not format_per_action_metrics_suffix(event):
+        if rendered and not suffix:
             return rendered
 
     from openminion.cli.status.tool_calls import format_tool_call_line
@@ -392,7 +389,6 @@ def _format_tool_or_search_activity_line(event: TurnActivityEvent) -> str | None
             runtime_tool_name and runtime_tool_name != canonical
         ),
     )
-    suffix = format_per_action_metrics_suffix(event)
     return f"{base_line} {suffix}" if suffix else base_line
 
 

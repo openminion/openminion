@@ -101,8 +101,6 @@ def _normalize_mcp_url(value: object) -> str:
 
 
 def _normalize_string_list(value: object) -> list[str]:
-    if value is None:
-        return []
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]

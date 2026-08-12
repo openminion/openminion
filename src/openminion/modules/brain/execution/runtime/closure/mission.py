@@ -31,28 +31,29 @@ def apply_mission_completion_gate(
     context: Any,
     judgment: ClosureJudgment,
 ) -> ClosureJudgment:
+    mission = context.mission
     if not (
-        context.mission is not None
+        mission is not None
         and mission_is_active(state)
         and judgment.satisfied
         and judgment.next_action == BRAIN_DISPOSITION_CLOSE
     ):
         return judgment
     if context.finish_requested != BRAIN_MISSION_ROUTE_FINISH:
-        context.mission.latest_judgment = MissionJudgment(
+        mission.latest_judgment = MissionJudgment(
             outcome=BRAIN_MISSION_JUDGMENT_CONTINUE,
-            reason=continue_message(context.mission),
+            reason=continue_message(mission),
         )
         logger.emit(
             "brain.mission_judge.completed",
             {
-                "mission_id": context.mission.mission_id,
+                "mission_id": mission.mission_id,
                 "outcome": BRAIN_MISSION_JUDGMENT_CONTINUE,
                 "finish_requested": False,
             },
             trace_id=state.trace_id,
         )
-        judgment.reason = context.mission.latest_judgment.reason
+        judgment.reason = mission.latest_judgment.reason
         return judgment
     mission_judgment = _run_mission_completion_judge(
         runner,
@@ -62,12 +63,12 @@ def apply_mission_completion_gate(
         completion_reason=completion_reason,
         context=context,
     )
-    context.mission.latest_judgment = mission_judgment
-    context.mission.completion_confidence = mission_judgment.confidence
+    mission.latest_judgment = mission_judgment
+    mission.completion_confidence = mission_judgment.confidence
     logger.emit(
         "brain.mission_judge.completed",
         {
-            "mission_id": context.mission.mission_id,
+            "mission_id": mission.mission_id,
             "outcome": mission_judgment.outcome,
             "finish_requested": True,
             "confidence": mission_judgment.confidence,
@@ -81,9 +82,7 @@ def apply_mission_completion_gate(
         if mission_judgment.final_answer:
             judgment.final_answer = mission_judgment.final_answer
         return judgment
-    judgment.reason = mission_judgment.reason.strip() or continue_message(
-        context.mission
-    )
+    judgment.reason = mission_judgment.reason.strip() or continue_message(mission)
     return judgment
 
 
@@ -122,9 +121,9 @@ def _run_mission_completion_judge(
                     "user_input": context.mission.objective,
                     "mission_objective": context.mission.objective,
                     "mission_status": context.mission.status,
-                    "mission_last_turn_summary": str(
-                        getattr(action_result, "summary", "") or ""
-                    ).strip(),
+                    "mission_last_turn_summary": action_result.summary.strip()
+                    if action_result
+                    else "",
                     "closure_candidate_reason": completion_reason,
                     "live_state_overlay": _build_live_state_overlay(state=state),
                     "style_overrides": {

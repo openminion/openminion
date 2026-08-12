@@ -32,9 +32,7 @@ def build_runtime_self_model(
     resolved_agent_id = _resolve_agent_id(
         runtime, agent_id=agent_id, overrides=overrides
     )
-    capability_report, capability_section = _capabilities(
-        runtime, resolved_agent_id, overrides
-    )
+    capability_section = _capabilities(runtime, resolved_agent_id, overrides)
     posture_report, policy_section = _policy(runtime, resolved_agent_id, overrides)
     identity_section = _identity(runtime, resolved_agent_id)
     memory_section = _memory(runtime)
@@ -82,7 +80,7 @@ def _capabilities(
     runtime: Any,
     agent_id: str,
     overrides: Any,
-) -> tuple[dict[str, Any], SelfModelSection]:
+) -> SelfModelSection:
     try:
         report = build_capability_report(
             runtime,
@@ -90,7 +88,7 @@ def _capabilities(
             overrides=overrides,
         )
     except Exception as exc:  # noqa: BLE001
-        return {}, section_unavailable(
+        return section_unavailable(
             DEGRADED_RUNTIME_CAPABILITY_REPORT_UNAVAILABLE,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -100,7 +98,7 @@ def _capabilities(
     inventory = [item for item in tools.get("inventory", []) if isinstance(item, dict)]
     selected_provider = str(providers.get("selected", "") or "").strip()
     selected_model = _selected_model(runtime, agent_id)
-    return report, section_ok(
+    return section_ok(
         provider=selected_provider or "unknown",
         model=selected_model,
         tool_count=int(counts.get("total", len(inventory)) or 0),

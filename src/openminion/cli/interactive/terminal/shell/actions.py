@@ -54,6 +54,7 @@ from .renderers import (
     _switch_theme_variant,
 )
 from .sessions import resume_session, start_new_session
+from .slash_output import handle_debug_output_slash
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -65,6 +66,11 @@ _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _SLASH_COMMANDS = terminal_slash_commands()
 _FIGLET_FONT = "small"
 _FIGLET_TEXT = "OpenMinion"
+
+
+def _slash_arg(text: str) -> str:
+    parts = text.split(maxsplit=1)
+    return parts[1] if len(parts) > 1 else ""
 
 
 def _render_openminion_figlet() -> Text:
@@ -116,8 +122,7 @@ def _handle_slash_theme(text: str, *, console: Console) -> None:
 def _handle_slash_model(text: str, *, runtime: Any, console: Console) -> None:
     """FPC-04: show or switch the active provider/model. Session-scoped."""
 
-    parts = text.split(maxsplit=1)
-    arg = parts[1].strip() if len(parts) > 1 else ""
+    arg = _slash_arg(text).strip()
     if not arg:
         _render_model_status(runtime=runtime, console=console)
         return
@@ -186,8 +191,7 @@ def _handle_slash_permissions(
 ) -> None:
     """Show or set the session-scoped permission mode."""
 
-    parts = text.split(maxsplit=1)
-    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    arg = _slash_arg(text).strip().lower()
     if not arg:
         mode = _runtime_permission_mode(runtime)
         overrides = getattr(runtime, "permission_overrides", {})
@@ -262,8 +266,7 @@ def _permission_mode_message(mode: str) -> str:
 def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
     """List configured agents or show one agent id."""
 
-    parts = text.split(maxsplit=1)
-    arg = parts[1].strip() if len(parts) > 1 else ""
+    arg = _slash_arg(text).strip()
     lister = getattr(runtime, "list_agents", None)
     if not callable(lister):
         console.print(
@@ -303,8 +306,7 @@ def _handle_slash_diff(
 
     from openminion.cli.presentation.git.diff import render_git_diff
 
-    parts = text.split(maxsplit=1)
-    args = parts[1].strip() if len(parts) > 1 else ""
+    args = _slash_arg(text).strip()
     try:
         result = render_git_diff(working_dir, args)
     except ValueError as exc:
@@ -323,7 +325,14 @@ def _handle_slash_diff(
         duration_ms=result.duration_ms,
         exit_code=0,
     )
-    transcript.handle_tool_completed(event)
+    transcript.push_message(
+        ChatMessage(
+            kind=MessageKind.TOOL,
+            sender="tool",
+            body="",
+            tool_event=event,
+        )
+    )
 
 
 def _handle_slash_review(
@@ -336,8 +345,7 @@ def _handle_slash_review(
 
     from openminion.cli.presentation.review import run_review_workflow
 
-    parts = text.split(maxsplit=1)
-    args = parts[1].strip() if len(parts) > 1 else ""
+    args = _slash_arg(text).strip()
     result = run_review_workflow(working_dir, args)
     style = _ERR_STYLE if result.action_result is None else _SYSTEM_STYLE
     console.print(Text(result.body, style=style))
@@ -352,10 +360,8 @@ def _handle_slash_readonly(
 ) -> None:
     """Toggle session-scoped read-only mode."""
 
-    parts = text.split(maxsplit=1)
-    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    arg = _slash_arg(text).strip().lower()
     setter = getattr(runtime, "set_read_only_mode", None)
-    getter = getattr(runtime, "read_only_mode", None)
     if not callable(setter):
         console.print(
             Text(
@@ -364,7 +370,7 @@ def _handle_slash_readonly(
             )
         )
         return
-    current = bool(getter) if not callable(getter) else bool(getter)
+    current = bool(getattr(runtime, "read_only_mode", False))
     if arg == "on":
         new_state = setter(True)
     elif arg == "off":
@@ -461,7 +467,7 @@ def _handle_slash_verbosity(
 def _handle_slash_details(
     text: str, *, transcript: TerminalTranscript, console: Console
 ) -> None:
-    arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+    arg = _slash_arg(text)
     new_level, message = resolve_details_mode(transcript._verbosity, arg)
     transcript.set_verbosity(new_level)
     console.print(Text(f"(details: {message})", style=_MUTED_ITALIC_STYLE))
@@ -521,7 +527,7 @@ def _handle_visible_parity_slash(
     working_dir: str,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
-    arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+    arg = _slash_arg(text)
     if cmd == "/context":
         console.print(Text(render_context_report(runtime), style=_SYSTEM_STYLE))
     elif cmd == "/memory":
@@ -704,8 +710,9 @@ async def _handle_slash(
     if cmd == "/model":
         _handle_slash_model(text, runtime=runtime, console=console)
         return False
-    if cmd == "/cost":
-        _render_cost_snapshot(runtime=runtime, console=console)
+    if handle_debug_output_slash(
+        cmd, text, runtime=runtime, console=console, cost_renderer=_render_cost_snapshot
+    ):
         return False
     if cmd == "/agents":
         _handle_slash_agents(text, runtime=runtime, console=console)
@@ -848,11 +855,17 @@ async def _run_shell_escape(
 def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     """Print the terminal CLI greeter panel."""
     from openminion import __version__
-    from openminion.cli.presentation.header import shorten_working_dir
+    from openminion.cli.presentation.header import (
+        format_runtime_adapter,
+        format_runtime_provider,
+        shorten_working_dir,
+    )
     from rich.panel import Panel
 
     agent = str(getattr(runtime, "agent_id", "openminion") or "openminion")
     model = _runtime_label(runtime)
+    provider = format_runtime_provider(runtime)
+    adapter = format_runtime_adapter(runtime)
     cwd_label = shorten_working_dir(working_dir) or working_dir or "."
     body_lines = [
         Text.assemble(
@@ -869,22 +882,37 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
             ("", ""),
         ),
         Text.assemble(
-            ("model:      ", _MUTED_STYLE),
+            ("provider:    ", _MUTED_STYLE),
+            (provider, _SYSTEM_STYLE),
+        ),
+        Text.assemble(
+            ("model:       ", _MUTED_STYLE),
             (model, _SYSTEM_STYLE),
         ),
-        Text.assemble(
-            ("directory:  ", _MUTED_STYLE),
-            (cwd_label, _SYSTEM_STYLE),
-        ),
-        Text.assemble(
-            ("agent:      ", _MUTED_STYLE),
-            (agent, _SYSTEM_STYLE),
-        ),
     ]
+    if adapter:
+        body_lines.append(
+            Text.assemble(
+                ("API adapter: ", _MUTED_STYLE),
+                (adapter, _SYSTEM_STYLE),
+            )
+        )
+    body_lines.extend(
+        [
+            Text.assemble(
+                ("directory:   ", _MUTED_STYLE),
+                (cwd_label, _SYSTEM_STYLE),
+            ),
+            Text.assemble(
+                ("agent:       ", _MUTED_STYLE),
+                (agent, _SYSTEM_STYLE),
+            ),
+        ]
+    )
     project_context = getattr(runtime, "project_context", None)
     if project_context is not None:
         context_bits = [
-            ("context:    ", _MUTED_STYLE),
+            ("context:     ", _MUTED_STYLE),
             (f"{project_context.display_name}", _SYSTEM_STYLE),
             ("  ", ""),
             (f"({project_context.size_bytes} bytes)", _MUTED_STYLE),
@@ -961,33 +989,3 @@ def _run_init_command(
         except (AttributeError, OSError, TypeError, ValueError):
             pass
     console.print(Text(f"(wrote {target_path})", style=_MUTED_ITALIC_STYLE))
-
-
-def _copy_to_clipboard(text: str) -> bool:
-    """Write text to the first available clipboard backend."""
-    import subprocess
-
-    candidates: tuple[tuple[str, ...], ...] = (
-        ("pbcopy",),
-        ("wl-copy",),
-        ("xclip", "-selection", "clipboard"),
-        ("xsel", "--clipboard", "--input"),
-        ("clip.exe",),
-    )
-    payload = text.encode("utf-8", errors="replace")
-    for cmd in candidates:
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=payload,
-                capture_output=True,
-                timeout=3,
-                check=False,
-            )
-        except (FileNotFoundError, OSError):
-            continue
-        except Exception:
-            continue
-        if proc.returncode == 0:
-            return True
-    return False

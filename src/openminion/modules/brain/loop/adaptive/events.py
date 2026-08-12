@@ -77,13 +77,13 @@ def _current_active_plan(ctx: ExecutionContext) -> dict[str, Any] | None:
 
 
 def _active_plan_id(active_plan: dict[str, Any] | None) -> str:
-    if not isinstance(active_plan, dict):
+    if active_plan is None:
         return ""
     return str(active_plan.get("plan_id") or "").strip()
 
 
 def _active_step_ids(active_plan: dict[str, Any] | None) -> set[str]:
-    if not isinstance(active_plan, dict):
+    if active_plan is None:
         return set()
     steps = active_plan.get("steps")
     if not isinstance(steps, list):
@@ -150,26 +150,18 @@ def _postprocess_adaptive_response_trailers(
     *,
     request_metadata: dict[str, Any] | None = None,
 ) -> None:
-    """Emit trailer.expected / trailer.emitted events for the adaptive final.
-
-    Route-independent trailer postprocess for the adaptive loop path.
-    The direct respond path calls the same service from orchestration.
-    """
     runner = runner_from_context(ctx)
     session_api = getattr(runner, "session_api", None) if runner is not None else None
     if session_api is None:
         return
     payloads = {
-        "task_plan": getattr(loop_outcome, "task_plan", None),
-        "task_plan_step_completed": getattr(
-            loop_outcome, "task_plan_step_completed", None
-        ),
-        "task_plan_step_blocked": getattr(loop_outcome, "task_plan_step_blocked", None),
-        "task_plan_revision": getattr(loop_outcome, "task_plan_revision", None),
-        "task_plan_abandoned": getattr(loop_outcome, "task_plan_abandoned", None),
-        "task_plan_completed": getattr(loop_outcome, "task_plan_completed", None),
-        "confident_complete": getattr(loop_outcome, "confident_complete", None),
-        "session_work_summary": getattr(loop_outcome, "session_work_summary", None),
+        "task_plan": loop_outcome.task_plan,
+        "task_plan_step_completed": loop_outcome.task_plan_step_completed,
+        "task_plan_step_blocked": loop_outcome.task_plan_step_blocked,
+        "task_plan_revision": loop_outcome.task_plan_revision,
+        "task_plan_abandoned": loop_outcome.task_plan_abandoned,
+        "task_plan_completed": loop_outcome.task_plan_completed,
+        "session_work_summary": loop_outcome.session_work_summary,
     }
     service = TrailerPostprocessService()
     service.process(
@@ -177,7 +169,7 @@ def _postprocess_adaptive_response_trailers(
         session_api=session_api,
         session_id=ctx.state.session_id,
         agent_id=ctx.state.agent_id,
-        trace_id=str(getattr(ctx.state, "trace_id", "") or ""),
+        trace_id=str(ctx.state.trace_id or ""),
         route="adaptive_final",
         request_metadata=request_metadata,
     )

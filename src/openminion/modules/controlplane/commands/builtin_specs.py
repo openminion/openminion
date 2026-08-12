@@ -113,11 +113,10 @@ _HANDLER_METHODS: dict[str, str] = {
 
 
 def builtin_command_specs(registry: object) -> dict[str, CommandSpec]:
-    specs: dict[str, CommandSpec] = {}
-    for command_name, method_name in _HANDLER_METHODS.items():
-        handler = getattr(registry, method_name)
-        specs[command_name] = _command_spec(command_name, handler)
-    return specs
+    return {
+        command_name: _command_spec(command_name, getattr(registry, method_name))
+        for command_name, method_name in _HANDLER_METHODS.items()
+    }
 
 
 def _command_spec(command_name: str, handler: Handler) -> CommandSpec:

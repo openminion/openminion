@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from openminion.base.config.base import ConfigError
-from openminion.base.config.parse import _as_bool, _as_int
-from openminion.base.config.parse import split_comma_tokens
+from openminion.base.config.parse import _as_bool, _as_int, split_comma_tokens
 
 from .models import (
     CapabilityBinding,
@@ -94,9 +93,7 @@ def _parse_runtime_policy_tokens(
     default_tokens: tuple[str, ...],
 ) -> list[str]:
     tokens = _parse_string_list(raw_value)
-    if not tokens:
-        return list(default_tokens)
-    return [token.lower() for token in tokens]
+    return [token.lower() for token in tokens] if tokens else list(default_tokens)
 
 
 def _parse_tool_selection_config(value: object) -> ToolSelectionConfig:

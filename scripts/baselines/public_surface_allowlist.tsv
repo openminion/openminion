@@ -44,7 +44,6 @@ modules/brain/loop/adaptive/modes.py	openminion.modules.memory.runtime.consolida
 modules/brain/loop/failures.py	openminion.modules.llm.providers.diagnostics
 modules/brain/loop/providers/retry.py	openminion.modules.llm.providers.diagnostics
 modules/brain/loop/rollouts/runner.py	openminion.modules.llm.runtime.sync
-modules/brain/loop/tools/iteration/helpers.py	openminion.modules.llm.providers.tool_calling.contracts
 modules/brain/paths.py	openminion.modules.storage.runtime.sqlite
 modules/brain/runtime/improvement/notes.py	openminion.modules.memory.runtime.scope
 modules/brain/runtime/improvement/notes.py	openminion.modules.storage.runtime.sqlite

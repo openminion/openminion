@@ -20,11 +20,7 @@ MARKER_FAIL_SUFFIX: Marker = ("✗", StyleToken.ERROR)
 
 def marker_text(marker: Marker, *, bold: bool = False) -> Text:
     glyph, token = marker
-    if not is_color_enabled():
-        return Text(glyph, style="bold" if bold else "")
-    rich_color = _token_to_rich_color(token)
-    style = rich_color if not bold else f"bold {rich_color}"
-    return Text(glyph, style=style)
+    return Text(glyph, style=token_rich_style(token, bold=bold))
 
 
 def marker_ansi(marker: Marker) -> str:

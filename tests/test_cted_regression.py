@@ -62,7 +62,8 @@ class TestToolInventoryIntent:
 
         assert "Available Tools and Skills" in response
         assert "Tools (" in response
-        assert "• file.write" in response or "• file.read" in response
+        assert "Tools (0 available)" in response
+        assert "• file.write" not in response
         assert "Skills:" in response
         tool_count = response.count("• ")
         assert tool_count <= 15, f"Tool list not bounded: {tool_count} tools"

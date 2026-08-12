@@ -48,7 +48,7 @@ def _record(
 
 
 @pytest.fixture
-def postgres_store():
+def postgres_store(tmp_path: Path):
     postgres_url = str(os.environ.get("OPENMINION_TEST_POSTGRES_URL", "")).strip()
     if not postgres_url:
         pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
@@ -59,7 +59,7 @@ def postgres_store():
     engine = sa.create_engine(schema_url(postgres_url, schema_name), future=True)
     store = PostgresMemoryStore(
         engine,
-        database_path=Path.cwd() / ".openminion-memory-postgres-gc-test",
+        database_path=tmp_path / ".openminion" / "memory" / "postgres-gc.db",
     )
     try:
         yield store

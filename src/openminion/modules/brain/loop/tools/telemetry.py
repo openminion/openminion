@@ -20,19 +20,14 @@ def _public_loop_tag(mode_name: str) -> str:
 
 
 def _current_turn_scope_id(loop_ctx: AdaptiveToolLoopContext) -> str:
-    state = getattr(loop_ctx, "state", None)
-    if state is None:
-        return ""
-    trace_id = str(getattr(state, "trace_id", "") or "").strip()
+    state = loop_ctx.state
+    trace_id = str(state.trace_id or "").strip()
     if trace_id:
         return trace_id
     from openminion.modules.brain.schemas import new_uuid  # noqa: PLC0415
 
     trace_id = new_uuid()
-    try:
-        state.trace_id = trace_id
-    except Exception:  # noqa: BLE001
-        return ""
+    state.trace_id = trace_id
     return trace_id
 
 
@@ -43,17 +38,16 @@ def _accumulate_parallel_telemetry(
     tool_calls_parallel: int,
     tool_calls_sequential: int,
 ) -> None:
-    scratchpad = dict(loop_state.scratchpad or {})
-    scratchpad["loop.parallel_fan_out_count"] = int(
-        scratchpad.get("loop.parallel_fan_out_count", 0) or 0
-    ) + int(parallel_fan_out_count or 0)
-    scratchpad["loop.tool_calls_parallel"] = int(
-        scratchpad.get("loop.tool_calls_parallel", 0) or 0
-    ) + int(tool_calls_parallel or 0)
-    scratchpad["loop.tool_calls_sequential"] = int(
-        scratchpad.get("loop.tool_calls_sequential", 0) or 0
-    ) + int(tool_calls_sequential or 0)
-    loop_state.scratchpad = scratchpad
+    scratchpad = loop_state.scratchpad
+    scratchpad["loop.parallel_fan_out_count"] = (
+        scratchpad.get("loop.parallel_fan_out_count", 0) + parallel_fan_out_count
+    )
+    scratchpad["loop.tool_calls_parallel"] = (
+        scratchpad.get("loop.tool_calls_parallel", 0) + tool_calls_parallel
+    )
+    scratchpad["loop.tool_calls_sequential"] = (
+        scratchpad.get("loop.tool_calls_sequential", 0) + tool_calls_sequential
+    )
 
 
 def _emit_iteration_event(

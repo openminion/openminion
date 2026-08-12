@@ -34,7 +34,10 @@ class WeatherRegistrar:
             model_tools=(
                 ModelToolDef(
                     model_tool_id=MODEL_WEATHER,
-                    description="Get current weather conditions",
+                    description=(
+                        "Get current weather for a named place, or omit location "
+                        "to use the current approximate location."
+                    ),
                     parameters={},
                     aliases=(),
                 ),

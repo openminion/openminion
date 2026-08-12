@@ -135,6 +135,20 @@ def test_parse_command_dispatcher_preserves_posix_path() -> None:
     assert parsed.operators == ()
 
 
+def test_parse_command_allows_dev_null_redirection() -> None:
+    parsed = parse_command(
+        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || "
+        "cat ~/.ssh/id_ed25519.pub"
+    )
+
+    assert [segment.argv[0] for segment in parsed.segments] == [
+        "whoami",
+        "cat",
+        "cat",
+    ]
+    assert parsed.operators == ("&&", "||")
+
+
 @pytest.mark.parametrize(
     "shell_family",
     [ShellFamily.POWERSHELL, ShellFamily.CMD],
@@ -155,6 +169,7 @@ def test_parse_command_dispatcher_denies_unknown_shell_family() -> None:
 
 def test_is_read_only_exec_command_uses_parser_and_fails_closed() -> None:
     assert is_read_only_exec_command("ls -la")
+    assert is_read_only_exec_command("whoami")
     assert not is_read_only_exec_command("touch /tmp/demo.txt")
     assert not is_read_only_exec_command("echo 'unterminated")
 

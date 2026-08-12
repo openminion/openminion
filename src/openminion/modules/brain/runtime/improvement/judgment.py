@@ -19,16 +19,8 @@ def decide_online_improvement(
 ) -> ImprovementDecision:
     """Return a typed decision from structural attempt facts."""
 
-    ev = (
-        evaluation
-        if isinstance(evaluation, OnlineImprovementEval)
-        else OnlineImprovementEval.model_validate(evaluation)
-    )
-    policy_obj = (
-        policy
-        if isinstance(policy, SelfImprovementPolicy)
-        else SelfImprovementPolicy.model_validate(policy or {})
-    )
+    ev = OnlineImprovementEval.model_validate(evaluation)
+    policy_obj = SelfImprovementPolicy.model_validate(policy or {})
     if not policy_obj.is_enabled:
         return ImprovementDecision(
             action="ignore",
@@ -36,7 +28,7 @@ def decide_online_improvement(
             confidence=0.0,
         )
 
-    evidence_count = len([ref for ref in ev.evidence_refs if str(ref).strip()])
+    evidence_count = sum(bool(ref.strip()) for ref in ev.evidence_refs)
     has_external_signal = evidence_count >= policy_obj.min_external_signal_count
     if (
         policy_obj.max_staged_items_per_run > 0

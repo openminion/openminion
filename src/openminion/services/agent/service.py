@@ -55,6 +55,7 @@ from .context.history import (
     _resolve_system_prompt,
 )
 from .identity_binding import bind_agent_identity_runtime_api
+from .telemetry import InvocationLifecycleFact
 from .execution.fallbacks import AgentToolFallbacks
 from .execution import AgentTurnFlowMixin
 from .execution.finalization import normalize_provider_response_finalization_status
@@ -238,6 +239,7 @@ class AgentService(AgentTurnFlowMixin):
         tools: ToolRegistry | None = None,
         security_policy: SecurityPolicyEngine | None = None,
         self_improvement: SelfImprovementEngine | None = None,
+        telemetryctl: Any | None = None,
     ) -> None:
         self._config = config
         self._plugins = plugins
@@ -248,6 +250,7 @@ class AgentService(AgentTurnFlowMixin):
         self._tools = tools
         self._security_policy = security_policy
         self._self_improvement = self_improvement
+        self._telemetryctl = telemetryctl
         self._tool_selection = (
             ToolSelectionService(config.runtime.tool_selection, tools)
             if tools
@@ -260,6 +263,114 @@ class AgentService(AgentTurnFlowMixin):
         self._identity_tool_filter: dict | None = None
         self._last_identity_snippet = None
         self._init_identity_runtime()
+
+    def _bind_execution_telemetry(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        invocation_id: str,
+        execution_id: str,
+    ) -> None:
+        if self._telemetryctl is None:
+            return
+        self._telemetryctl.bind_execution(
+            session_id,
+            turn_id,
+            invocation_id=invocation_id,
+            execution_id=execution_id,
+            agent_id=self._identity_agent_id,
+        )
+
+    def _unbind_execution_telemetry(self, *, session_id: str, turn_id: str) -> None:
+        if self._telemetryctl is not None:
+            self._telemetryctl.unbind_execution(session_id, turn_id)
+
+    async def _emit_agent_event(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        status: str,
+        event_id: str | None = None,
+        timestamp: float | None = None,
+        invocation_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> bool:
+        if self._telemetryctl is None:
+            return False
+        try:
+            return bool(
+                await self._telemetryctl.emit_canonical_event(
+                    session_id,
+                    turn_id,
+                    event_type,
+                    payload,
+                    status=status,
+                    event_id=event_id,
+                    timestamp=timestamp,
+                    invocation_id=invocation_id,
+                    execution_id=execution_id,
+                    agent_id=self._identity_agent_id,
+                )
+            )
+        except Exception:
+            self._logger.warning("agent telemetry emit failed", exc_info=True)
+            return False
+
+    async def emit_invocation_lifecycle(self, fact: InvocationLifecycleFact) -> bool:
+        if self._telemetryctl is None:
+            return False
+        try:
+            return bool(
+                await self._telemetryctl.emit_canonical_event(
+                    fact.session_id,
+                    fact.turn_id,
+                    fact.event_type,
+                    fact.payload,
+                    mode=fact.mode,
+                    event_id=fact.event_id,
+                    timestamp=fact.timestamp,
+                    trace_key=fact.trace_key,
+                    invocation_id=fact.invocation_id,
+                    execution_id=fact.execution_id,
+                    agent_id=fact.agent_id or self._identity_agent_id,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            self._logger.warning(
+                "agent invocation lifecycle telemetry emit failed",
+                exc_info=True,
+            )
+            return False
+
+    def emit_invocation_lifecycle_sync(self, fact: InvocationLifecycleFact) -> bool:
+        if self._telemetryctl is None:
+            return False
+        try:
+            return bool(
+                self._telemetryctl.emit_canonical_event_sync(
+                    fact.session_id,
+                    fact.turn_id,
+                    fact.event_type,
+                    fact.payload,
+                    mode=fact.mode,
+                    event_id=fact.event_id,
+                    timestamp=fact.timestamp,
+                    trace_key=fact.trace_key,
+                    invocation_id=fact.invocation_id,
+                    execution_id=fact.execution_id,
+                    agent_id=fact.agent_id or self._identity_agent_id,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            self._logger.warning(
+                "agent invocation lifecycle telemetry emit failed",
+                exc_info=True,
+            )
+            return False
 
     @staticmethod
     def _sanitize_arguments_for_spec(

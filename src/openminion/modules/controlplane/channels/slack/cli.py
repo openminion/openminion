@@ -243,47 +243,9 @@ def register_slack_subcommands(
     slack = channel_subcommands.add_parser(
         "slack", help="Slack channel setup, pairing, and status"
     )
-    subcommands = slack.add_subparsers(dest="slack_command", required=True)
-
-    setup = subcommands.add_parser("setup", help="Configure Slack")
-    _add_config_arg(setup)
-    setup.add_argument("--bot-token-stdin", action="store_true")
-    setup.add_argument("--bot-token-ref", default=None)
-    setup.add_argument("--unsafe-bot-token", default=None)
-    setup.add_argument("--app-token-stdin", action="store_true")
-    setup.add_argument("--app-token-ref", default=None)
-    setup.add_argument("--unsafe-app-token", default=None)
-    setup.add_argument("--signing-secret-stdin", action="store_true")
-    setup.add_argument("--signing-secret-ref", default=None)
-    setup.add_argument("--unsafe-signing-secret", default=None)
-    setup.add_argument("--allow-tracked-secret", action="store_true")
-    setup.set_defaults(handler=handler, needs_app=False)
-
-    doctor = subcommands.add_parser("doctor", help="Check Slack setup")
-    _add_config_arg(doctor)
-    doctor.add_argument("--json", action="store_true")
-    doctor.set_defaults(handler=handler, needs_app=False)
-
-    identify = subcommands.add_parser("identify", help="Show Slack ID guidance")
-    _add_config_arg(identify)
-    identify.set_defaults(handler=handler, needs_app=False)
-
-    pair = subcommands.add_parser("pair", help="Create a Slack pairing token")
-    _add_config_arg(pair)
-    pair.add_argument("--team-id", default=None)
-    pair.add_argument("--channel-id", default=None)
-    pair.add_argument("--user-id", default=None)
-    pair.add_argument("--ttl-seconds", type=int, default=None)
-    pair.add_argument("--scopes", default=None)
-    pair.set_defaults(handler=handler, needs_app=False)
-
-    run = subcommands.add_parser("run", help="Run the Slack channel")
-    _add_config_arg(run)
-    run.set_defaults(handler=handler, needs_app=False)
-
-    status = subcommands.add_parser("status", help="Show Slack status")
-    _add_config_arg(status)
-    status.set_defaults(handler=handler, needs_app=False)
+    _register_direct(
+        slack.add_subparsers(dest="slack_command", required=True), handler=handler
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -296,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def _register_direct(
     subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+    *,
+    handler: Any | None = None,
 ) -> None:
     for name, help_text in {
         "setup": "Configure Slack",
@@ -326,6 +290,8 @@ def _register_direct(
             parser.add_argument("--user-id", default=None)
             parser.add_argument("--ttl-seconds", type=int, default=None)
             parser.add_argument("--scopes", default=None)
+        if handler is not None:
+            parser.set_defaults(handler=handler, needs_app=False)
 
 
 def issue_slack_pair_token_for_cli(

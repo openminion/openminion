@@ -38,14 +38,7 @@ def _build_replan_transition(runner, *, state: WorkingState, logger):
                 {
                     "reason": reason,
                     "retained_step_output_count": retained_count,
-                    "retained_step_output_limit": int(
-                        getattr(
-                            runner.options,
-                            "adaptive_replan_retained_step_outputs",
-                            0,
-                        )
-                        or 0
-                    ),
+                    "retained_step_output_limit": retained_limit,
                 },
                 trace_id=state.trace_id,
                 status="info",
@@ -56,7 +49,7 @@ def _build_replan_transition(runner, *, state: WorkingState, logger):
 
 
 def _current_plan_command(state: WorkingState):
-    current_plan = getattr(state, "plan", None)
+    current_plan = state.plan
     current_command = (
         current_plan.steps[state.cursor]
         if current_plan is not None and state.cursor < len(current_plan.steps)
@@ -196,9 +189,7 @@ def transition_to_replan_state(
 
     retained = []
     if retained_step_outputs > 0:
-        retained = list(getattr(state, "step_outputs", []) or [])[
-            -retained_step_outputs:
-        ]
+        retained = list(state.step_outputs)[-retained_step_outputs:]
 
     state.replans_used += 1
     state.step_outputs = retained

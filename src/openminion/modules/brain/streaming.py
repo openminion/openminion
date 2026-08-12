@@ -13,8 +13,6 @@ def turn_progress_from_llm_stream_event(
     trace_id: str,
     timestamp: str | None = None,
 ) -> dict[str, Any] | None:
-    """Map a provider text delta into the existing turn-progress envelope."""
-
     if event.type != "delta" or not event.delta_text:
         return None
     payload: dict[str, Any] = {
@@ -23,7 +21,7 @@ def turn_progress_from_llm_stream_event(
         "data": {"delta_text": event.delta_text},
     }
     if timestamp:
-        payload["ts"] = str(timestamp)
+        payload["ts"] = timestamp
     return payload
 
 

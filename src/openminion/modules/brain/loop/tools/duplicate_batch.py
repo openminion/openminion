@@ -32,10 +32,7 @@ from .evidence import (
     _successful_substantive_tool_results,
 )
 from .postprocess.rules import _looks_like_unexecutable_tool_payload_text
-from .postprocess.evidence_closeout import (
-    missing_requested_closeout_markers,
-    tool_evidence_closeout_text,
-)
+from .postprocess.evidence_closeout import tool_evidence_closeout_text
 from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
 
@@ -555,16 +552,6 @@ def _force_duplicate_batch_answer_only_closure(
             duration_ms=duration_ms,
             tokens_used=tokens_used,
         )
-    if missing_requested_closeout_markers(loop_state, final_text):
-        fallback_outcome = _duplicate_batch_evidence_fallback_outcome(
-            profile=profile,
-            loop_state=loop_state,
-            allowed_tools=allowed_tools,
-            duration_ms=duration_ms,
-            tokens_used=tokens_used,
-        )
-        if fallback_outcome is not None:
-            return fallback_outcome
     loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
     return (
         AdaptiveToolLoopOutcome(

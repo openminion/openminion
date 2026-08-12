@@ -80,4 +80,4 @@ def run_migrations(db_path: str | Path) -> None:
 
 
 def list_migrations() -> list[str]:
-    return [*LEGACY_MIGRATIONS, BASELINE_REVISION]
+    return [*LEGACY_MIGRATIONS, BASELINE_REVISION, "0002_run_invocation"]

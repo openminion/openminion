@@ -108,10 +108,7 @@ class PostgresAuditArchiveStore:
 
         for path in sorted(self.audit_root.glob("*.db")):
             day = _date_from_filename(path.name)
-            if day is None:
-                skipped.append(path.name)
-                continue
-            if day >= cutoff:
+            if day is None or day >= cutoff:
                 skipped.append(path.name)
                 continue
             inserted = self.archive_file(path)

@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
+import pytest
+from pydantic import ValidationError
+
 from openminion.modules.brain.constants import MissionStatus
 from openminion.modules.brain.runtime.goal.context import (
     build_goal_context_card,
@@ -287,6 +290,7 @@ def test_async_wake_child_task_and_learning_candidate_are_review_gated(
     assert resumed is not None
     assert resumed.active is True
     assert ledger.summary_for_run(resumed.run_id).evidence_refs == ("job:1",)
+    assert ledger.list_for_run(resumed.run_id)[-1].next_instruction == ""
 
     child_step = build_child_task_step(
         state=resumed,
@@ -297,10 +301,20 @@ def test_async_wake_child_task_and_learning_candidate_are_review_gated(
     )
     assert child_step.evaluator_outcome == "continue"
     assert child_step.mission_status == MissionStatus.ACTIVE
+    assert child_step.next_instruction == ""
 
     candidate = build_learning_candidate(state=state, proof_ref="proof:1")
     assert candidate["review_required"] is True
     assert candidate["proof_ref"] == "proof:1"
+
+
+def test_goal_turn_result_rejects_scalar_reference_payloads() -> None:
+    with pytest.raises(ValidationError):
+        GoalTurnResult(
+            proposed_outcome="continue",
+            reason="working",
+            evidence_refs=1,  # type: ignore[arg-type]
+        )
 
 
 def test_goal_cli_live_driver_inspect_evidence_pause_resume(tmp_path: Path) -> None:

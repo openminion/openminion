@@ -12,6 +12,7 @@ from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.tools.phases.eval import EvalMode
 from openminion.modules.brain.loop.tools.phases.observe import OBSERVE_MODE, ObserveMode
 from openminion.modules.brain.loop.tools.phases.refine import REFINE_MODE, RefineMode
+from openminion.modules.brain.loop.tools.contracts import PreparedToolDispatch
 from openminion.modules.brain.checkpoint.contracts import (
     TaskBackedModeContract,
 )
@@ -194,6 +195,24 @@ class _FakeCommandExecutor:
     outcomes: list[CommandExecutionOutcome] = field(default_factory=list)
     _index: int = 0
 
+    def prepare_tool_dispatch(
+        self, *, state, command, logger, include_reflect=True
+    ) -> PreparedToolDispatch:
+        del logger, include_reflect
+        return PreparedToolDispatch(
+            approved_command=command,
+            original_command=command,
+            command_id=command.command_id,
+            tool_name=command.tool_name,
+            validated_args=dict(command.args),
+            session_id=state.session_id,
+            trace_id=state.trace_id,
+            agent_id=state.agent_id,
+            lineage={},
+            permission_mode=state.permission_mode,
+            payload={},
+        )
+
     def execute_command(
         self,
         *,
@@ -330,7 +349,7 @@ def test_refine_mode_pauses_and_resumes_from_checkpoint() -> None:
         paused = mode.execute(first_ctx)
 
         assert paused.status == "waiting_user"
-        assert len(first_services.plan_calls) == 1
+        assert first_services.plan_calls == []
         checkpoint_id = str(first_ctx.state.task_backed_checkpoint_id or "")
         assert checkpoint_id.endswith("-cursor-1")
         assert isinstance(mode, TaskBackedModeContract)
@@ -361,7 +380,7 @@ def test_refine_mode_pauses_and_resumes_from_checkpoint() -> None:
         finished = mode.execute(resumed_ctx)
 
         assert finished.status == "done"
-        assert len(resumed_services.plan_calls) == 1
+        assert resumed_services.plan_calls == []
         task = task_manager.get_task(str(resumed_ctx.state.task_backed_task_id))
         assert task is not None
         assert task.state == TaskLifecycleState.DONE
@@ -787,7 +806,7 @@ def test_eval_mode_resumes_from_cached_evidence_and_skips_regather() -> None:
         paused = mode.execute(first_ctx)
 
         assert paused.status == "waiting_user"
-        assert len(first_services.plan_calls) == 1
+        assert first_services.plan_calls == []
         checkpoint_id = str(first_ctx.state.task_backed_checkpoint_id or "")
         assert checkpoint_id.endswith("-cursor-1")
         assert isinstance(mode, TaskBackedModeContract)

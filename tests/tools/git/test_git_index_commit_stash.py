@@ -119,7 +119,9 @@ class CommitHandlerTests(unittest.TestCase):
     def test_add_then_commit_appears_in_log_with_intact_message(self) -> None:
         (self.tmp / "feature.txt").write_text("payload\n", encoding="utf-8")
         _h_add({"paths": ["feature.txt"]}, self.ctx)
-        commit_result = _h_commit({"message": "add feature file"}, self.ctx)
+        commit_result = _h_commit(
+            {"message": "add feature file", "paths": ["feature.txt"]}, self.ctx
+        )
         self.assertEqual(commit_result["parsed"]["message"], "add feature file")
         self.assertTrue(commit_result["parsed"]["sha"])
         # Log should include the new commit on top.
@@ -129,12 +131,12 @@ class CommitHandlerTests(unittest.TestCase):
 
     def test_commit_with_nothing_staged_returns_git_nothing_to_commit(self) -> None:
         with self.assertRaises(ToolRuntimeError) as ctx:
-            _h_commit({"message": "empty"}, self.ctx)
+            _h_commit({"message": "empty", "paths": ["README.md"]}, self.ctx)
         self.assertEqual(ctx.exception.code, "GIT_NOTHING_TO_COMMIT")
 
     def test_commit_with_empty_message_returns_invalid_argument(self) -> None:
         with self.assertRaises(ToolRuntimeError) as ctx:
-            _h_commit({"message": "   "}, self.ctx)
+            _h_commit({"message": "   ", "paths": ["README.md"]}, self.ctx)
         self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
 
     def test_commit_with_missing_message_returns_invalid_argument(self) -> None:
@@ -142,13 +144,51 @@ class CommitHandlerTests(unittest.TestCase):
             _h_commit({}, self.ctx)
         self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
 
+    def test_commit_with_missing_paths_returns_invalid_argument(self) -> None:
+        with self.assertRaises(ToolRuntimeError) as ctx:
+            _h_commit({"message": "missing paths"}, self.ctx)
+        self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
+
     def test_commit_message_with_newlines_is_passed_through(self) -> None:
         # `-m` accepts multi-line messages. Pin that we don't mangle them.
         (self.tmp / "x.txt").write_text("x\n", encoding="utf-8")
         _h_add({"paths": ["x.txt"]}, self.ctx)
         multiline = "first line\n\nbody line"
-        result = _h_commit({"message": multiline}, self.ctx)
+        result = _h_commit({"message": multiline, "paths": ["x.txt"]}, self.ctx)
         self.assertEqual(result["parsed"]["message"], multiline)
+
+    def test_commit_leaves_unlisted_staged_paths_in_the_index(self) -> None:
+        (self.tmp / "owned.txt").write_text("owned\n", encoding="utf-8")
+        (self.tmp / "other.txt").write_text("other\n", encoding="utf-8")
+        _h_add({"paths": ["owned.txt", "other.txt"]}, self.ctx)
+
+        result = _h_commit(
+            {"message": "commit owned file", "paths": ["owned.txt"]},
+            self.ctx,
+        )
+
+        self.assertEqual(result["parsed"]["committed_paths"], ["owned.txt"])
+        status = _h_status({"path": "."}, self.ctx)["parsed"]
+        staged = {
+            entry["path"]
+            for entry in status["files"]
+            if entry["index_status"] not in {".", "?"}
+        }
+        self.assertEqual(staged, {"other.txt"})
+
+    def test_commit_rejects_unstaged_changes_in_requested_path(self) -> None:
+        path = self.tmp / "README.md"
+        path.write_text("staged\n", encoding="utf-8")
+        _h_add({"paths": ["README.md"]}, self.ctx)
+        path.write_text("not staged\n", encoding="utf-8")
+
+        with self.assertRaises(ToolRuntimeError) as ctx:
+            _h_commit(
+                {"message": "do not capture unstaged", "paths": ["README.md"]},
+                self.ctx,
+            )
+
+        self.assertEqual(ctx.exception.code, "INVALID_ARGUMENT")
 
 
 @unittest.skipIf(_GIT is None, "git binary not on PATH")

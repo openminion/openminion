@@ -7,11 +7,18 @@ from tests.helpers.live_cli_chat_alibaba import (
     extract_assistant_messages,
     extract_debug_payloads,
     extract_last_debug_payload,
+    transcript_has_cli_ready,
 )
 
 
 _SESSION_ID = "test-session-01"
 _AGENT_ID = "test-agent"
+
+
+def test_focus_banner_is_accepted_as_cli_ready_with_flexible_spacing() -> None:
+    transcript = "OpenMinion CLI\n│ agent:       minimax-m2-7\n"
+
+    assert transcript_has_cli_ready(transcript=transcript, agent_id="minimax-m2-7")
 
 
 def test_legacy_prose_marker_path_extracts_assistant_body() -> None:

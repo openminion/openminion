@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -293,16 +294,10 @@ def test_cli_inproc_tool_run_injects_runtime_env(monkeypatch):
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
     config.runtime.env = {"ECC_104_CLI": "enabled"}
-    fake_runtime = SimpleNamespace(
-        config=config,
-        tools=_FakeTools(),
-        close=lambda: None,
-    )
-
     monkeypatch.setattr(
-        cli_tools_commands.APIRuntime,
-        "from_config_path",
-        staticmethod(lambda config_path: fake_runtime),
+        cli_tools_commands,
+        "_local_tool_runtime",
+        lambda _args: nullcontext((config, _FakeTools())),
     )
 
     class _SelectionService:

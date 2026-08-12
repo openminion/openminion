@@ -1,6 +1,5 @@
 """Turn post-action runtime judgment implementation."""
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from ....diagnostics.events import CanonicalEventLogger
@@ -64,7 +63,7 @@ def evaluate_post_action_judgment(
         runner,
         state=state,
         purpose="judge",
-        budget={"max_tokens": min(1200, int(state.budgets_remaining.tokens or 0))},
+        budget={"max_tokens": min(1200, state.budgets_remaining.tokens)},
         hints=hints,
         logger=logger,
     )
@@ -109,21 +108,20 @@ def _post_action_hint_facts(
     runtime_facts: dict[str, Any] | None,
 ) -> dict[str, Any]:
     step_key = (
-        str(getattr(current_command, "command_id", "") or "").strip()
-        or str(getattr(action_result, "command_id", "") or "").strip()
+        current_command.command_id
+        if current_command
+        else action_result.command_id
+        if action_result
+        else ""
     )
     hint_facts: dict[str, Any] = {
-        "fact_kind": str(fact_kind or "").strip() or "action_result",
-        "current_step_index": int(current_step_index or 0),
-        "total_steps": int(total_steps or 0),
-        "current_retry_count": int(state.retries_for_step.get(step_key, 0) or 0)
-        if step_key
-        else 0,
-        "max_retries_per_step": int(
-            getattr(runner.options, "max_retries_per_step", 0) or 0
-        ),
-        "replans_used": int(getattr(state, "replans_used", 0) or 0),
-        "max_replans": int(getattr(runner.options, "max_replans", 0) or 0),
+        "fact_kind": fact_kind.strip() or "action_result",
+        "current_step_index": current_step_index or 0,
+        "total_steps": total_steps or 0,
+        "current_retry_count": state.retries_for_step.get(step_key, 0),
+        "max_retries_per_step": runner.options.max_retries_per_step,
+        "replans_used": state.replans_used,
+        "max_replans": runner.options.max_replans,
         "configured_failure_strategy": str(
             getattr(runner.options, "failure_strategy", "") or ""
         ).strip(),
@@ -131,8 +129,8 @@ def _post_action_hint_facts(
         "action_result": _model_payload(action_result),
         "next_step_preview": _next_step_preview(state=state, total_steps=total_steps),
     }
-    if isinstance(runtime_facts, Mapping):
-        hint_facts.update(dict(runtime_facts))
+    if runtime_facts:
+        hint_facts.update(runtime_facts)
     return hint_facts
 
 
@@ -145,16 +143,13 @@ def _post_action_hints(
 ) -> dict[str, Any]:
     return {
         "_llm_call_id": llm_call_id,
-        "current_datetime": "",
-        "user_input": str(
-            getattr(state, "goal", "") or getattr(state, "last_user_input", "") or ""
-        ).strip(),
+        "user_input": (state.goal or state.last_user_input).strip(),
         "post_action_fact_kind": hint_facts["fact_kind"],
         "post_action_runtime_facts": hint_facts,
         "post_action_intent_outcomes": intent_execution_payload(state),
-        "post_action_success_criteria": dict(
-            getattr(current_command, "success_criteria", {}) or {}
-        ),
+        "post_action_success_criteria": current_command.success_criteria
+        if current_command
+        else {},
         "live_state_overlay": build_live_state_overlay(
             state=state,
             extra_fields={
@@ -220,7 +215,7 @@ def _token_budget_exceeded(
     estimate = _runner_delegate(
         "_estimate_tokens", runner, model=model, context=context
     )
-    available_tokens = int(getattr(state.budgets_remaining, "tokens", 0) or 0)
+    available_tokens = state.budgets_remaining.tokens
     if estimate <= available_tokens:
         return False
     logger.emit(
@@ -312,7 +307,4 @@ def _validate_post_action_judgment(
 def _model_payload(value: Any | None) -> dict[str, Any] | None:
     if value is None:
         return None
-    try:
-        return value.model_dump(mode="json")
-    except Exception:
-        return None
+    return value.model_dump(mode="json")

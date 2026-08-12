@@ -117,8 +117,7 @@ class DebugRegistry:
 
     def get_all_debug(self) -> list[ModuleDebugPayload]:
         results: list[ModuleDebugPayload] = []
-        for module_name in sorted(self._providers.keys()):
-            provider = self._providers[module_name]
+        for module_name, provider in sorted(self._providers.items()):
             try:
                 results.append(provider.get_debug())
             except Exception as exc:  # pragma: no cover - defensive

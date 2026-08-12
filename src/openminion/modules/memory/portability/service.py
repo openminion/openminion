@@ -162,12 +162,11 @@ class MemoryBundleServiceOps:
             for scope in normalized_scopes
             if scope.startswith("session:")
         }
-        provenance_traces: list[TurnProvenanceTrace] = []
-        for trace in default_provenance_recorder().iter_all_traces():
-            if requested_session_ids and trace.session_id not in requested_session_ids:
-                continue
-            provenance_traces.append(trace)
-        return provenance_traces
+        return [
+            trace
+            for trace in default_provenance_recorder().iter_all_traces()
+            if not requested_session_ids or trace.session_id in requested_session_ids
+        ]
 
     def import_bundle_snapshot(
         self,

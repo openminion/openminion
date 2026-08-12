@@ -47,9 +47,7 @@ def maybe_register_reactions_adapter(api: TelegramBotAPI) -> None:
 
 def _message_ref(message: Any) -> tuple[str, int]:
     if hasattr(message, "conversation_id") and hasattr(message, "message_id"):
-        chat_id = str(getattr(message, "conversation_id"))
-        message_id = int(getattr(message, "message_id"))
-        return chat_id, message_id
+        return str(message.conversation_id), int(message.message_id)
 
     if isinstance(message, dict):
         chat_id = str(message.get("conversation_id") or message.get("chat_id") or "")

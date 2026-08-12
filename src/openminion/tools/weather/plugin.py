@@ -71,8 +71,9 @@ class WeatherArgs(BaseModel):
         default=None,
         description=(
             "Preferred place query. When the user names a city or place, copy it "
-            "here explicitly. Required unless both latitude and longitude are "
-            "provided. Never pass null, empty strings, or the literal 'None'."
+            "here explicitly. Omit it to resolve the current approximate location "
+            "through the configured location provider. Never pass null, empty "
+            "strings, or the literal 'None'."
         ),
     )
     city: str | None = Field(

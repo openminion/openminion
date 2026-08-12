@@ -130,7 +130,10 @@ def test_status_add_commit_log_round_trip_emits_v2_metadata() -> None:
                 registry=registry,
                 workspace=workspace,
                 tool_name="git.commit",
-                arguments={"message": "ngt07 integration commit"},
+                arguments={
+                    "message": "ngt07 integration commit",
+                    "paths": ["README.md"],
+                },
             ),
             _execute(
                 registry=registry,
@@ -183,7 +186,10 @@ def test_branch_checkout_commit_checkout_main_round_trip_emits_v2_metadata() -> 
                     registry=registry,
                     workspace=workspace,
                     tool_name="git.commit",
-                    arguments={"message": "branch flow commit"},
+                    arguments={
+                        "message": "branch flow commit",
+                        "paths": ["README.md"],
+                    },
                 ),
                 _execute(
                     registry=registry,

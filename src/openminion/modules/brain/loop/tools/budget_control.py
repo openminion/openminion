@@ -17,6 +17,7 @@ from openminion.modules.brain.loop.constants import (
     BUDGET_ANSWER_ONLY_TEXT_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT,
+    FINALIZATION_STATUS_TRAILER_GUIDANCE,
 )
 from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
@@ -53,6 +54,7 @@ from .contracts import (
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
 )
+from .direct_tool import _direct_tool_turn_active
 from .evidence import (
     _is_substantive_tool_name,
     _loop_tool_result_payloads,
@@ -91,12 +93,7 @@ def _effective_cap(
 def _adaptive_budget_config(
     profile: AdaptiveToolLoopProfile,
 ) -> AdaptiveBudgetConfig | None:
-    raw = getattr(profile, "adaptive_budget_config", None)
-    if isinstance(raw, AdaptiveBudgetConfig):
-        return raw
-    if isinstance(raw, dict):
-        return AdaptiveBudgetConfig.model_validate(raw)
-    return None
+    return profile.adaptive_budget_config
 
 
 def _emit_budget_event(
@@ -261,6 +258,7 @@ def _max_steps_hint_from_state(loop_ctx: AdaptiveToolLoopContext) -> int | None:
 def _answer_only_finalization_contract_requested(
     loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
+    profile: AdaptiveToolLoopProfile,
 ) -> bool:
     texts = [
         str(getattr(message, "content", "") or "")
@@ -275,7 +273,13 @@ def _answer_only_finalization_contract_requested(
                 str(getattr(state, "goal", "") or ""),
             ]
         )
-    return any(STATE_KEY_FINALIZATION_STATUS in text for text in texts)
+    if any(STATE_KEY_FINALIZATION_STATUS in text for text in texts):
+        return True
+    return (
+        _general_profile_name(profile)
+        and not _direct_tool_turn_active(loop_state)
+        and bool(_substantive_tool_results(loop_state))
+    )
 
 
 def _ensure_effective_cap_initialized(
@@ -564,6 +568,9 @@ def _force_budget_answer_only_finalization(
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | None:
     has_tool_evidence = _has_tool_evidence_for_answer_only(loop_ctx, loop_state)
+    contract_requested = _answer_only_finalization_contract_requested(
+        loop_ctx, loop_state, profile
+    )
     if not _general_profile_name(profile) and not has_tool_evidence:
         return None
     if not _llm_budget_available_for_answer_only(
@@ -601,6 +608,14 @@ def _force_budget_answer_only_finalization(
                     ),
                 )
             )
+    finalization_instruction = (
+        " Append finalization_status with status=final_answer only if the answer "
+        "fully completes the original request; otherwise use status=incomplete "
+        "or status=blocked."
+        f" {FINALIZATION_STATUS_TRAILER_GUIDANCE}"
+        if contract_requested
+        else ""
+    )
     loop_state.messages.append(
         Message(
             role="system",
@@ -612,8 +627,8 @@ def _force_budget_answer_only_finalization(
                 "do not say you will continue, and preserve any explicit output "
                 "format, headings, citation requirements, and exact-date "
                 "requirements the user requested. If evidence is partial, say "
-                "that briefly and still answer. If the turn has a typed "
-                "finalization_status contract, preserve it."
+                "that briefly and still answer."
+                f"{finalization_instruction}"
             ),
         )
     )
@@ -673,8 +688,6 @@ def _force_budget_answer_only_finalization(
     response = _normalize_finalization_status_response(response)
     _debit_llm_usage(loop_ctx, response)
     loop_state.llm_calls += 1
-    for assistant_message in list(getattr(response, "assistant_messages", []) or []):
-        loop_state.messages.append(assistant_message)
     if not bool(getattr(response, "ok", False)):
         error = getattr(response, "error", None)
         error_message = str(getattr(error, "message", "") or "LLM returned not-ok")
@@ -710,7 +723,7 @@ def _force_budget_answer_only_finalization(
             reason="answer_only_finalization_internal_failure_text",
         )
     finalization_status = _finalization_status_from_response(response)
-    return answer_only_final_text_outcome(
+    outcome = answer_only_final_text_outcome(
         loop_ctx=loop_ctx,
         profile=profile,
         loop_state=loop_state,
@@ -724,10 +737,13 @@ def _force_budget_answer_only_finalization(
         final_text=final_text,
         finalization_status=finalization_status,
         has_tool_evidence=has_tool_evidence,
-        contract_requested=_answer_only_finalization_contract_requested(
-            loop_ctx, loop_state
-        ),
+        contract_requested=contract_requested,
     )
+    if outcome.final_text == final_text:
+        loop_state.messages.extend(
+            list(getattr(response, "assistant_messages", []) or [])
+        )
+    return outcome
 
 
 def _budget_finalization_has_substantive_user_message(

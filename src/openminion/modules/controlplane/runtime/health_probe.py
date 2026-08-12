@@ -147,9 +147,7 @@ class ControlPlaneHealthProbeSidecar:
 
     def _authorized(self, authorization: str | None) -> bool:
         token = str(self.config.bearer_token or "").strip()
-        if not token:
-            return True
-        return str(authorization or "").strip() == f"Bearer {token}"
+        return not token or str(authorization or "").strip() == f"Bearer {token}"
 
 
 def _audit_payload(raw: dict[str, Any]) -> dict[str, Any]:

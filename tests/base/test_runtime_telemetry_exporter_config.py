@@ -25,6 +25,8 @@ def test_runtime_telemetry_exporter_config_parses_and_round_trips() -> None:
     assert config.telemetry_exporter.service_name == "openminion-prod"
     assert config.telemetry_exporter.protocol == "grpc"
     assert config.telemetry_exporter.include_assistant_body is True
+    assert config.telemetry_exporter.include_output_messages is True
+    assert config.telemetry_exporter.include_input_messages is False
     assert config.telemetry_exporter.sample_rate == 0.25
 
     payload = _runtime_config_to_payload(config)
@@ -34,6 +36,10 @@ def test_runtime_telemetry_exporter_config_parses_and_round_trips() -> None:
         "service_name": "openminion-prod",
         "protocol": "grpc",
         "include_assistant_body": True,
+        "include_input_messages": False,
+        "include_output_messages": True,
+        "include_tool_content": False,
+        "include_local_content": False,
         "sample_rate": 0.25,
         # backend + headers default to empty when the input config
         # does not set them; round-trip preserves the empty shape.
@@ -85,3 +91,25 @@ def test_runtime_telemetry_exporter_config_rejects_non_dict_headers() -> None:
     )
 
     assert config.telemetry_exporter.headers == {}
+
+
+def test_runtime_telemetry_content_controls_are_independent() -> None:
+    config = _build_runtime_config(
+        {
+            "telemetry_exporter": {
+                "include_input_messages": True,
+                "include_output_messages": False,
+                "include_tool_content": True,
+                "include_local_content": True,
+                "noncritical_queue_capacity": 64,
+                "queue_flush_timeout_seconds": 0.5,
+            }
+        }
+    ).telemetry_exporter
+
+    assert config.include_input_messages is True
+    assert config.include_output_messages is False
+    assert config.include_tool_content is True
+    assert config.include_local_content is True
+    assert config.noncritical_queue_capacity == 64
+    assert config.queue_flush_timeout_seconds == 0.5

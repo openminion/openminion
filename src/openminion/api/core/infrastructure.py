@@ -22,7 +22,7 @@ from openminion.modules.storage.runtime import (
     resolve_database_path,
 )
 from openminion.modules.telemetry import storage_hook
-from openminion.modules.telemetry.service import TelemetryService
+from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 from openminion.services.agent.memory import resolve_memory_root
 from openminion.services.brain.factory.retrieve import build_retrieve_service
 from openminion.services.channel.authenticity import build_channel_authenticity_policy
@@ -110,6 +110,7 @@ def build_runtime_infrastructure(
         env=manager.env.snapshot(),
         otel_exporter_config=getattr(base_config.runtime, "telemetry_exporter", None),
     )
+    telemetryctl = TelemetryCtl(telemetry_service)
     runtime_storage = build_runtime_storage(
         paths.storage,
         env=manager.env,
@@ -118,16 +119,7 @@ def build_runtime_infrastructure(
         telemetry_hook=storage_hook.TelemetryServiceStorageHook(telemetry_service),
     )
     logger = configure_logging(base_config.runtime.log_level, mode=logging_mode)
-    security_policy = SecurityPolicyEngine(
-        tool_budget_policy=ToolBudgetPolicy(
-            max_calls_per_run=base_config.security.tool_policy.max_calls_per_run,
-            max_calls_per_tool=base_config.security.tool_policy.max_calls_per_tool,
-            max_budget_cost_per_run=base_config.security.tool_policy.max_budget_cost_per_run,
-        ),
-        default_tool_required_scopes=frozenset(
-            base_config.security.tool_policy.default_required_scopes
-        ),
-    )
+    security_policy = _build_security_policy(base_config, telemetryctl)
     agent_security_policy = None if disable_security_policy else security_policy
     extension_runtime = LifecycleService.from_config(
         base_config,
@@ -167,6 +159,7 @@ def build_runtime_infrastructure(
     )
     return {
         "telemetry_service": telemetry_service,
+        "telemetryctl": telemetryctl,
         "runtime_storage": runtime_storage,
         "logger": logger,
         "security_policy": security_policy,
@@ -188,6 +181,22 @@ def build_runtime_infrastructure(
         "action_policy": action_policy,
         **support,
     }
+
+
+def _build_security_policy(
+    base_config: OpenMinionConfig,
+    telemetryctl: TelemetryCtl,
+) -> SecurityPolicyEngine:
+    tool_policy = base_config.security.tool_policy
+    return SecurityPolicyEngine(
+        tool_budget_policy=ToolBudgetPolicy(
+            max_calls_per_run=tool_policy.max_calls_per_run,
+            max_calls_per_tool=tool_policy.max_calls_per_tool,
+            max_budget_cost_per_run=tool_policy.max_budget_cost_per_run,
+        ),
+        default_tool_required_scopes=frozenset(tool_policy.default_required_scopes),
+        telemetryctl=telemetryctl,
+    )
 
 
 def _bind_channel_supervisor_telemetry(

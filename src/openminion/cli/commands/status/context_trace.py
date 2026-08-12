@@ -45,16 +45,7 @@ def run_context_trace_status(args: Any, *, config: Any) -> int:
     finally:
         store.close()
 
-    if getattr(args, "json", False):
-        if getattr(args, "review", False):
-            payload["review"] = build_memory_context_review(
-                payload,
-                canary_path=getattr(args, "canary", None),
-                calibration_path=getattr(args, "calibration", None),
-                artifacts_dir=getattr(args, "artifacts_dir", None),
-            ).to_dict()
-        print_json_payload(payload)
-        return 0
+    review = None
     if getattr(args, "review", False):
         review = build_memory_context_review(
             payload,
@@ -62,6 +53,12 @@ def run_context_trace_status(args: Any, *, config: Any) -> int:
             calibration_path=getattr(args, "calibration", None),
             artifacts_dir=getattr(args, "artifacts_dir", None),
         )
+    if getattr(args, "json", False):
+        if review is not None:
+            payload["review"] = review.to_dict()
+        print_json_payload(payload)
+        return 0
+    if review is not None:
         print(render_memory_context_review(review))
         return 0
     _print_context_trace_status(payload)

@@ -37,10 +37,9 @@ def test_scenario_list_accepts_all_and_rejects_unknown() -> None:
     module = _load_module()
 
     assert module._scenario_list("all") == list(module.DEFAULT_SCENARIOS)
-    assert module._scenario_list("simple_turn,context_heavy_turn") == [
-        "simple_turn",
-        "context_heavy_turn",
-    ]
+    assert module._scenario_list(
+        "simple_turn,instrumentation_overhead_aa,context_heavy_turn"
+    ) == ["simple_turn", "instrumentation_overhead_aa", "context_heavy_turn"]
 
     try:
         module._scenario_list("not_real")
@@ -336,6 +335,23 @@ def test_deterministic_full_turn_records_complete_turn_metrics(tmp_path: Path) -
     assert run.provider_profile == "stub"
     assert run.measurement_identity["fixture_revision"] == "deterministic-full-turn-v1"
     assert run.metrics["model_call_count"] == 1
+    assert run.metrics["provider_call_purposes"] == ["entry"]
+    assert run.metrics["provider_attempts"] == [
+        {
+            "logical_call_id": "deterministic-full-turn-entry",
+            "semantic_purpose": "entry",
+            "attempt": 1,
+            "provider": "stub",
+            "model": "stub-model",
+            "route_posture": "primary",
+            "attempt_posture": "initial",
+            "latency_ms": run.metrics["provider_round_trip_ms"],
+            "outcome": "ok",
+        }
+    ]
+    assert run.metrics["selector_latency_ms"] == 0
+    assert run.metrics["session_compaction_policy"] == "noop"
+    assert run.metrics["memory_followup_pending_count"] == 0
     assert run.metrics["tool_call_count"] == 1
     assert run.metrics["storage_operation_count"] == 6
     assert run.metrics["render_chunk_count"] == 2
@@ -350,6 +366,78 @@ def test_deterministic_full_turn_records_complete_turn_metrics(tmp_path: Path) -
         "terminal_delivery_ns",
     ):
         assert run.metrics["phase_timings_ns"][phase] >= 0
+
+
+def test_instrumentation_overhead_aa_records_20_by_20_comparison(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+
+    run = module.run_scenario(
+        "instrumentation_overhead_aa",
+        module.RunOptions(
+            workspace_root=Path(__file__).resolve().parents[3],
+            output_root=tmp_path,
+            python=Path(sys.executable),
+            runs=1,
+            timeout_seconds=5,
+            include_importtime=False,
+            profile=False,
+        ),
+    )
+
+    assert run.ok is True
+    assert run.metrics["instrumentation_aa_enabled_samples"] == 20
+    assert run.metrics["instrumentation_aa_disabled_samples"] == 20
+    assert run.metrics["instrumentation_overhead_median_ms"] >= 0
+    assert run.metrics["provider_calls_allowed"] is False
+    assert run.metrics["storage_mutations_allowed"] is False
+
+
+def test_tcpl_matrix_scenarios_record_route_branch_inputs(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    direct = module.run_scenario("tcpl_selector_direct_route", options)
+    retrieval = module.run_scenario("tcpl_selector_retrieval_route", options)
+    llm = module.run_scenario("tcpl_selector_llm_route", options)
+    compaction = module.run_scenario("tcpl_compaction_threshold_crossing", options)
+    pending = module.run_scenario("tcpl_memory_followup_pending", options)
+    direct_tool = module.run_scenario("tcpl_branch_direct_tool", options)
+    repair = module.run_scenario("tcpl_branch_final_answer_repair", options)
+    retry = module.run_scenario("tcpl_provider_retry_fallback", options)
+
+    assert direct.metrics["skill_selection_route"] == "direct_no_catalog"
+    assert direct.metrics["selector_candidate_count"] == 0
+    assert retrieval.metrics["skill_selection_route"] == "retrieval"
+    assert retrieval.metrics["selector_candidate_count"] == 3
+    assert llm.metrics["provider_call_purposes"] == ["skill_selection", "entry"]
+    assert llm.metrics["selector_candidate_count"] == 24
+    assert compaction.metrics["session_compaction_policy"] == "threshold_crossing"
+    assert compaction.metrics["session_compaction_ms"] >= 10
+    assert pending.metrics["memory_projection_posture"] == "pending"
+    assert pending.metrics["memory_summary_structure_ms"] > 0
+    assert direct_tool.metrics["provider_call_purposes"] == ["entry", "act", "judge"]
+    assert repair.metrics["closure_branch"] == "final_answer_repair"
+    assert retry.metrics["provider_call_purposes"] == ["entry"]
+    assert [item["route_posture"] for item in retry.metrics["provider_attempts"]] == [
+        "primary",
+        "primary",
+        "fallback",
+    ]
+    assert [item["attempt_posture"] for item in retry.metrics["provider_attempts"]] == [
+        "initial",
+        "retry",
+        "initial",
+    ]
 
 
 def test_provider_payload_serialization_reuses_wire_body() -> None:
@@ -553,6 +641,120 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     )
 
 
+def test_tcpl02_skill_entry_candidate_records_parity_and_rollback(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    module.run_baseline(
+        options,
+        [
+            "tcpl_02_skill_llm_baseline",
+            "tcpl_02_skill_entry_candidate",
+            "tcpl_02_skill_entry_rollback",
+        ],
+    )
+
+    samples = [
+        json.loads(line)
+        for line in (tmp_path / "samples.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    by_id = {sample["scenario_id"]: sample for sample in samples}
+    baseline = by_id["tcpl_02_skill_llm_baseline"]
+    candidate = by_id["tcpl_02_skill_entry_candidate"]
+    rollback = by_id["tcpl_02_skill_entry_rollback"]
+
+    assert baseline["provider_call_purposes"] == ["skill_selection", "entry"]
+    assert candidate["provider_call_purposes"] == ["entry"]
+    assert rollback["provider_call_purposes"] == ["skill_selection", "entry"]
+    assert baseline["provider_call_count"] == 2
+    assert candidate["provider_call_count"] == 1
+    assert rollback["provider_call_count"] == 2
+    assert baseline["selected_skill_ids"] == candidate["selected_skill_ids"]
+    assert candidate["applied_skill_ids"] == baseline["applied_skill_ids"]
+    assert candidate["quality_assertions"]["skill_selection_quality"] == "pass"
+    assert candidate["comparable_identity"]["candidate_posture"] == "entry_opt_in"
+    assert candidate["comparable_identity"]["rollback_posture"] == "llm"
+    assert rollback["comparable_identity"]["candidate_posture"] == "rollback_llm"
+    assert (
+        baseline["shadow_decisions"]["skill_entry"]["candidate_decision"]
+        == "entry_candidate_eligible"
+    )
+    assert (
+        baseline["shadow_decisions"]["skill_entry"]["projected_avoided_provider_calls"]
+        == 1
+    )
+
+
+def test_tcpl_remaining_rows_record_nochange_dispositions(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    module.run_baseline(
+        options,
+        [
+            "tcpl_01_streaming_safety_nochange",
+            "tcpl_03_memory_projection_defer",
+            "tcpl_04_compaction_defer",
+            "tcpl_05_delivery_fence_retain",
+        ],
+    )
+
+    samples = [
+        json.loads(line)
+        for line in (tmp_path / "samples.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    by_id = {sample["scenario_id"]: sample for sample in samples}
+
+    streaming = by_id["tcpl_01_streaming_safety_nochange"]
+    assert streaming["provider_call_purposes"] == ["entry"]
+    assert streaming["comparable_identity"]["candidate_posture"] == (
+        "streaming_nochange"
+    )
+    assert streaming["quality_assertions"]["transcript_quality"] == "pass"
+
+    memory = by_id["tcpl_03_memory_projection_defer"]
+    assert memory["provider_call_purposes"] == ["summarize", "entry"]
+    assert memory["memory_followup_pending_count"] == 2
+    assert memory["quality_assertions"]["memory_quality"] == "pass"
+
+    compaction = by_id["tcpl_04_compaction_defer"]
+    assert compaction["provider_call_purposes"] == ["self_compaction", "entry"]
+    assert compaction["session_compaction_policy"] == "threshold_crossing"
+    assert (
+        compaction["shadow_decisions"]["session_compaction"]["candidate_decision"]
+        == "derived_projection_candidate"
+    )
+
+    delivery = by_id["tcpl_05_delivery_fence_retain"]
+    assert delivery["provider_call_purposes"] == ["entry"]
+    assert delivery["comparable_identity"]["candidate_posture"] == (
+        "delivery_fence_retain"
+    )
+    assert delivery["quality_assertions"]["policy_quality"] == "pass"
+
+
 def test_tcpl_sample_validation_rejects_missing_identity(tmp_path: Path) -> None:
     module = _load_module()
     options = module.RunOptions(
@@ -649,6 +851,7 @@ def test_tcpl_provider_purpose_remains_unavailable_when_not_reported() -> None:
 
     assert module._provider_call_purposes(metrics) == ["unavailable"]
     assert module._provider_call_latencies(metrics) == [7]
+    assert module._provider_attempts(metrics) == []
 
 
 def test_tcpl_missing_coverage_reports_required_measurements() -> None:
@@ -659,6 +862,7 @@ def test_tcpl_missing_coverage_reports_required_measurements() -> None:
             {
                 "selector_latency_ms": 1,
                 "selector_token_count": 10,
+                "provider_attempts": [],
                 "transcript_persistence_ms": 2,
                 "phase_timings_ms": {"terminal_delivery_ms": 1},
             }
@@ -667,6 +871,7 @@ def test_tcpl_missing_coverage_reports_required_measurements() -> None:
 
     assert "selector" not in missing
     assert "delivery" not in missing
+    assert "provider_attempts" in missing
     assert "compaction" in missing
     assert "memory_followup" in missing
     assert missing["persistence"] == ["base_memory_persistence_ms|memory_write_ms"]
@@ -678,6 +883,19 @@ def test_tcpl_missing_coverage_accepts_current_phase_owner_aliases() -> None:
     missing = module._tcpl_missing_coverage(
         [
             {
+                "provider_attempts": [
+                    {
+                        "logical_call_id": "call-1",
+                        "semantic_purpose": "entry",
+                        "attempt": 1,
+                        "provider": "stub",
+                        "model": "stub-model",
+                        "route_posture": "primary",
+                        "attempt_posture": "initial",
+                        "latency_ms": 0,
+                        "outcome": "ok",
+                    }
+                ],
                 "selector_latency_ms": 1,
                 "selector_token_count": 10,
                 "session_compaction_ms": 0,
@@ -697,6 +915,35 @@ def test_tcpl_missing_coverage_accepts_current_phase_owner_aliases() -> None:
     )
 
     assert missing == {}
+
+
+def test_tcpl_sample_validation_rejects_incomplete_provider_attempt() -> None:
+    module = _load_module()
+    sample = {
+        "comparable_identity": {
+            "git_revision": "rev",
+            "dirty_tree_fingerprint": "fingerprint",
+            "scenario_id": "scenario",
+            "fixture_hash": "fixture",
+            "provider": "stub",
+            "model": "unavailable",
+            "config_hash": "config",
+            "candidate_posture": "baseline_current",
+            "rollback_posture": "baseline_current",
+            "cold_warm": "not_applicable",
+            "host_runtime_hash": "host",
+        },
+        "wall_time_ms": 1,
+        "wall_time_ns": 1,
+        "provider_attempts": [{"semantic_purpose": "entry"}],
+    }
+
+    try:
+        module._validate_tcpl_sample(sample)
+    except ValueError as exc:
+        assert "provider_attempts missing logical_call_id" in str(exc)
+    else:
+        raise AssertionError("incomplete provider attempt should fail")
 
 
 def test_tcpl_shadow_decisions_are_observation_only() -> None:

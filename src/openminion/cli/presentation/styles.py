@@ -91,22 +91,13 @@ def _detect_color_mode() -> str:
         return _COLOR_MODE
 
     env_config = resolve_environment_config()
-    if env_config.get("NO_COLOR", ""):
-        _COLOR_MODE = "off"
-        return _COLOR_MODE
-
     openminion_color = env_config.get("OPENMINION_COLOR", "").strip().lower()
-    if openminion_color in {"1", "true", "on"}:
+    if env_config.get("NO_COLOR", "") or openminion_color in {"0", "false", "off"}:
+        _COLOR_MODE = "off"
+    elif openminion_color in {"1", "true", "on"}:
         _COLOR_MODE = "on"
-        return _COLOR_MODE
-    if openminion_color in {"0", "false", "off"}:
-        _COLOR_MODE = "off"
-        return _COLOR_MODE
-
-    if sys.stdout.isatty():
-        _COLOR_MODE = "auto"
     else:
-        _COLOR_MODE = "off"
+        _COLOR_MODE = "auto" if sys.stdout.isatty() else "off"
 
     return _COLOR_MODE
 
@@ -117,11 +108,7 @@ def get_color_mode() -> str:
 
 def is_color_enabled() -> bool:
     mode = _detect_color_mode()
-    if mode == "on":
-        return True
-    if mode == "off":
-        return False
-    return sys.stdout.isatty()
+    return mode == "on" or (mode == "auto" and sys.stdout.isatty())
 
 
 def style(token: StyleToken, text: str) -> str:

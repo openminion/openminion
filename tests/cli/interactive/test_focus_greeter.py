@@ -41,7 +41,9 @@ def test_greeter_includes_default_content_blocks() -> None:
     assert body.splitlines()[0] == "OpenMinion"
     assert "How can I help today?" in body
     assert "example-dir" in body
-    assert "echo/demo" in body
+    assert "/demo" in body
+    assert "provider: echo" in body
+    assert "echo/demo" not in body
     assert "theme: light" in body
     assert "Try:" in body
     assert "explain this codebase" in body

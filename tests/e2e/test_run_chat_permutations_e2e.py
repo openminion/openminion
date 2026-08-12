@@ -10,13 +10,17 @@ from openminion.base.constants import (
     OPENMINION_GENERATED_ROOT_ENV,
 )
 from tests.e2e.runners.run_chat_permutations_e2e import (
+    EXTERNAL_SERVICES_CONVERSATION,
+    RELEASE_GATE_CONVERSATION,
     _build_conversation,
     _chat_subprocess_env,
     _conversation_messages,
     _conversation_workdir,
     _default_work_root,
+    _external_service_prerequisite_reason,
     _latest_prompt_requires_confirmation,
     _ready_prompt_detected,
+    _resolve_conversations,
     _scenario_data_root_parent,
     _transcript_has_known_failure,
     _turn_response_boundary_detected_since,
@@ -157,6 +161,77 @@ def test_main_accepts_explicit_artifact_roots_with_stale_generated_env(
     workdir = captured["workdir"]
     assert isinstance(workdir, Path)
     assert workdir == tmp_path / "workdirs" / "echo" / "echo" / "conversation"
+
+
+def test_default_conversations_use_release_gate_fixture_only() -> None:
+    assert _resolve_conversations(
+        conversations=None,
+        conversation_dir=None,
+        include_edgecases=False,
+        include_chaos=False,
+        include_external_services=False,
+        include_diagnostic=False,
+    ) == [RELEASE_GATE_CONVERSATION]
+
+
+def test_external_services_fixture_is_explicit_opt_in() -> None:
+    assert _resolve_conversations(
+        conversations=None,
+        conversation_dir=None,
+        include_edgecases=False,
+        include_chaos=False,
+        include_external_services=True,
+        include_diagnostic=False,
+    ) == [RELEASE_GATE_CONVERSATION, EXTERNAL_SERVICES_CONVERSATION]
+
+
+def test_external_services_prerequisites_report_missing_key_and_browser(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("TINYFISH_API_KEY", raising=False)
+    monkeypatch.delenv("PINCHTAB_URL", raising=False)
+    monkeypatch.delenv("PINCHTAB_AUTOSTART", raising=False)
+
+    reason = _external_service_prerequisite_reason(EXTERNAL_SERVICES_CONVERSATION)
+
+    assert "missing_provider_key:TINYFISH_API_KEY" in reason
+    assert "external_service_unavailable:PINCHTAB_URL/PINCHTAB_AUTOSTART" in reason
+
+
+def test_main_records_external_prerequisite_skip(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPENMINION_E2E_PROVIDERS", "echo")
+    monkeypatch.delenv("TINYFISH_API_KEY", raising=False)
+    monkeypatch.delenv("PINCHTAB_URL", raising=False)
+    monkeypatch.delenv("PINCHTAB_AUTOSTART", raising=False)
+
+    def _fake_run_chat(**_kwargs):
+        return True, "ok"
+
+    monkeypatch.setattr(runner, "_run_chat", _fake_run_chat)
+
+    log_root = tmp_path / "logs"
+    assert (
+        runner.main(
+            [
+                "--include-external-services",
+                "--log-root",
+                str(log_root),
+                "--config-root",
+                str(tmp_path / "configs"),
+                "--work-root",
+                str(tmp_path / "workdirs"),
+            ]
+        )
+        == 0
+    )
+
+    summary = json.loads((log_root / "summary.json").read_text(encoding="utf-8"))
+    assert summary["passed"] == 1
+    assert summary["skipped"] == 1
+    assert summary["failed"] == 0
+    skip_reason = summary["results"][1]["reason"]
+    assert "missing_provider_key:TINYFISH_API_KEY" in skip_reason
+    assert "external_service_unavailable:PINCHTAB_URL/PINCHTAB_AUTOSTART" in skip_reason
 
 
 def test_default_work_root_uses_ignored_generated_runtime_tree() -> None:

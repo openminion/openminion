@@ -133,7 +133,6 @@ def bind_channel_identity_memory(
         channel_thread_id=channel_thread_id,
         participant_kind=participant_kind,
     )
-    resolved_namespace_id = namespace_id or paired_namespace_id(pairing_id)
     identity_api.bind(
         principal_id=pairing_id,
         channel=channel,
@@ -141,7 +140,7 @@ def bind_channel_identity_memory(
         scopes=scopes,
         status=PRINCIPAL_BINDING_STATUS_ACTIVE,
         meta={
-            "namespace_id": resolved_namespace_id,
+            "namespace_id": namespace_id or paired_namespace_id(pairing_id),
             "channel_account_id": channel_account_id,
             "channel_thread_id": channel_thread_id,
             "participant_kind": participant_kind,
@@ -270,10 +269,9 @@ class StoreBackedIdentityAPI:
         binding = self.get_binding(channel=channel, subject_id=subject_id)
         if binding is None or binding.status != PRINCIPAL_BINDING_STATUS_ACTIVE:
             return None
-        scopes = binding.scopes or tuple(default_scopes)
         return AuthContext(
             role="paired",
-            scopes=tuple(scopes),
+            scopes=binding.scopes or default_scopes,
             principal_id=binding.principal_id,
             metadata={
                 "principal_id": binding.principal_id,
@@ -333,8 +331,7 @@ class CachedIdentityAPI:
         note: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> None:
-        key = (str(channel), str(subject_id))
-        self._resolve_cache.pop(key, None)
+        self._resolve_cache.pop((str(channel), str(subject_id)), None)
         self._inner.bind(
             principal_id=principal_id,
             channel=channel,

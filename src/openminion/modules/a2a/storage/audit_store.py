@@ -242,12 +242,8 @@ class PostgresAuditStore(AuditStore):
 
 
 def _where_clause(filter_by: dict[str, Any]) -> tuple[list[str], list[Any]]:
-    where: list[str] = []
-    params: list[Any] = []
-    for clause, value in _filter_clauses(filter_by, placeholder="?").items():
-        where.append(clause)
-        params.append(value)
-    return where, params
+    clauses = _filter_clauses(filter_by, placeholder="?")
+    return list(clauses), list(clauses.values())
 
 
 def _postgres_where_clause(
@@ -360,7 +356,7 @@ def _json(value: Any) -> str | None:
 
 
 def _json_load(raw: Any, default: Any) -> Any:
-    if raw in {None, ""}:
+    if raw in (None, ""):
         return default
     try:
         return json.loads(str(raw))

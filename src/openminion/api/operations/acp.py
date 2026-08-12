@@ -66,11 +66,7 @@ class OpenMinionACPAgent:
         del client_capabilities, client_info
         self._initialized = True
         return InitializeResponse(
-            protocol_version=(
-                _PROTOCOL_VERSION
-                if protocol_version != _PROTOCOL_VERSION
-                else protocol_version
-            ),
+            protocol_version=_PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
                 load_session=True,
                 prompt_capabilities=PromptCapabilities(

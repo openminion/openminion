@@ -272,16 +272,12 @@ def _select_skills_with_llm(
             continue
         seen.add(lowered)
         if len(refs) >= max(1, capacity):
-            # this valid pick was dropped because we already hit
-            # capacity. Record the count so post-hoc analysis can see when
-            # the LLM is being asked to clamp itself.
             clamped_count += 1
             continue
         refs.append(_catalog_ref(catalog_by_id[skill_id], source=f"{strategy}-select"))
-    if invalid_picks and not refs:
-        fail_reason = _SKILL_SELECTION_INVALID_SKILL_ID
-    else:
-        fail_reason = None
+    fail_reason = (
+        _SKILL_SELECTION_INVALID_SKILL_ID if invalid_picks and not refs else None
+    )
     llm_pick_details = {
         "raw_pick_ids": list(shortlisted_ids),
         "invalid_pick_ids": invalid_picks,
@@ -399,8 +395,7 @@ def _catalog_retrieval_title(entry: dict[str, Any]) -> str:
             if humanized and humanized.lower() != candidate.lower():
                 return humanized
             return candidate
-    humanized = _humanize_skill_alias(skill_id)
-    return humanized or skill_id
+    return ""
 
 
 def _catalog_retrieval_text(entry: dict[str, Any]) -> str:
@@ -486,7 +481,7 @@ def _normalized_text_list(values: Any) -> list[str]:
 def _normalized_skill_ids(values: list[Any]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
-    for raw in list(values or []):
+    for raw in values:
         skill_id = str(raw or "").strip()
         if not skill_id:
             continue

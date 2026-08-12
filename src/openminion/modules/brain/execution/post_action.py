@@ -18,7 +18,7 @@ def clear_post_action_user_message(*, state: WorkingState) -> None:
 def _consume_waiting_user_state_before_post_action_transition(
     *, state: WorkingState
 ) -> None:
-    if str(getattr(state, "status", "") or "").strip() != BRAIN_STATE_WAITING_USER:
+    if state.status != BRAIN_STATE_WAITING_USER:
         return
     transition(state, "user_input_received")
 
@@ -58,9 +58,9 @@ def apply_post_action_judgment(
     transition_to_replan: Callable[..., bool] | None,
 ) -> str:
     clear_post_action_user_message(state=state)
-    message = str(judgment.user_message or "").strip()
-    reason = str(judgment.reason or "").strip()
-    outcome = str(judgment.outcome or "").strip()
+    message = (judgment.user_message or judgment.reason).strip()
+    reason = judgment.reason.strip()
+    outcome = str(judgment.outcome).strip()
     if message:
         state.post_action_user_message = message
 
@@ -71,9 +71,7 @@ def apply_post_action_judgment(
             state.retries_for_step.pop(step_key, None)
         transition(
             state,
-            "task_completed"
-            if state.cursor >= int(total_steps or 0)
-            else "step_advanced",
+            "task_completed" if state.cursor >= total_steps else "step_advanced",
         )
         return outcome
 
@@ -84,11 +82,6 @@ def apply_post_action_judgment(
             state.retries_for_step[step_key] = retry_count
         if step_key and retry_count > max_retries_per_step:
             transition(state, "retries_exhausted")
-            if not state.post_action_user_message:
-                state.post_action_user_message = (
-                    "Retry budget is exhausted, so I need guidance before trying "
-                    "another recovery path."
-                )
         else:
             transition(state, "step_retrying")
         return outcome
@@ -100,31 +93,15 @@ def apply_post_action_judgment(
         ):
             return outcome
         transition(state, "feasibility_needs_user")
-        if not state.post_action_user_message:
-            state.post_action_user_message = (
-                "I could not safely replan after that result, so I need guidance."
-            )
         return outcome
 
     if outcome == "halt":
         transition(state, "execution_stopped")
-        if not state.post_action_user_message:
-            state.post_action_user_message = reason or "I stopped before proceeding."
         return outcome
 
     if outcome == "ask_user":
         _consume_waiting_user_state_before_post_action_transition(state=state)
         transition(state, "judgment_ask_user")
-        if not state.post_action_user_message:
-            state.post_action_user_message = (
-                reason or "User guidance is required before continuing."
-            )
         return outcome
 
-    _consume_waiting_user_state_before_post_action_transition(state=state)
-    transition(state, "judgment_ask_user")
-    if not state.post_action_user_message:
-        state.post_action_user_message = (
-            "Post-action judgment is unavailable; user guidance is required."
-        )
-    return outcome
+    raise ValueError(f"unsupported post-action outcome: {outcome}")

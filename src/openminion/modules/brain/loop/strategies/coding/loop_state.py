@@ -10,8 +10,6 @@ from openminion.modules.llm.schemas import Message
 
 @dataclass
 class CodingLoopState:
-    """Mutable state for one coding-mode invocation."""
-
     messages: list[Message] = field(default_factory=list)
     iteration: int = 0
     llm_calls: int = 0
@@ -31,7 +29,7 @@ class CodingLoopState:
     ) -> None:
         results = [
             item
-            for item in list(self.scratchpad.get("adaptive.tool_results", []) or [])
+            for item in self.scratchpad.get("adaptive.tool_results", []) or []
             if isinstance(item, dict)
         ]
         results.append(
@@ -90,7 +88,7 @@ class CodingLoopState:
         }
         tool_results = [
             item
-            for item in list(self.scratchpad.get("adaptive.tool_results", []) or [])
+            for item in self.scratchpad.get("adaptive.tool_results", []) or []
             if isinstance(item, dict)
         ]
         if tool_results:

@@ -32,7 +32,7 @@ _PROFILE_RANK = {
 
 
 def _profile_rank(profile: str) -> int:
-    return _PROFILE_RANK.get(str(profile or "").strip(), 1)
+    return _PROFILE_RANK.get(profile.strip(), 1)
 
 
 def _normalized_allowed_profiles(
@@ -75,7 +75,6 @@ def resolve_thinking(
         request=request,
         layers=layers,
         mode_policy=None,
-        mode_name=None,
     )
 
 
@@ -109,9 +108,7 @@ def resolve_mode_aware_thinking(
         getattr(mode_policy, "default_reasoning_profile", None)
     )
     allowed_profiles = _normalized_allowed_profiles(mode_policy)
-    allow_request_override = (
-        True if mode_policy is None else bool(mode_policy.allow_request_override)
-    )
+    allow_request_override = mode_policy is None or mode_policy.allow_request_override
 
     degraded_reasons: list[str] = []
     if config_resolution.unknown_request_profile:
@@ -166,12 +163,12 @@ def resolve_mode_aware_thinking(
         supported=supported,
         degraded_reason=degraded_reasons[0] if degraded_reasons else None,
         degraded_reasons=tuple(degraded_reasons),
-        provider_name=str(request.provider or "").strip(),
-        model_name=str(request.model or "").strip(),
+        provider_name=config_resolution.provider_name,
+        model_name=config_resolution.model_name,
         system_profile=system_profile,
         agent_profile=agent_profile,
         request_override_profile=requested_profile,
-        mode_name=str(mode_name or "").strip() or None,
+        mode_name=(mode_name or "").strip() or None,
         mode_default_profile=mode_default_profile,
         mode_allowed_profiles=allowed_profiles,
         mode_request_override_allowed=allow_request_override,
@@ -207,10 +204,8 @@ def build_runtime_thinking_diagnostics(
         code_default_profile=(
             normalize_optional_reasoning_profile(code_default_profile) or "minimal"
         ),
-        system_profile=normalize_optional_reasoning_profile(system_profile),
-        agent_profile=normalize_optional_reasoning_profile(agent_profile),
-        invocation_requested_profile=normalize_optional_reasoning_profile(
-            invocation_requested_profile
-        ),
+        system_profile=effective.system_profile,
+        agent_profile=effective.agent_profile,
+        invocation_requested_profile=effective.requested_profile,
         effective=effective,
     )

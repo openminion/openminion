@@ -28,14 +28,12 @@ from openminion.cli.interactive.project_context import (
     build_project_context_metadata,
 )
 from openminion.modules.telemetry.trace import phase_timing
-from openminion.services.gateway.constants import (
-    CALLER_HANDLES_DELIVERY_METADATA_KEY,
-)
 from openminion.base.config.settings import SettingsResolver
 from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
 from .agent_sidebar import build_agent_sidebar_items
 from .controls import RuntimeControlsMixin
 from .delegation import RuntimeDelegationMixin
+from .directory_sessions import build_directory_session_record
 from .mcp import RuntimeMCPMixin
 from .messages import (
     TARGET_KIND_FOCUS as _TARGET_KIND_FOCUS,
@@ -44,35 +42,6 @@ from .messages import (
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
 _LIVE_USAGE_THROTTLE_SECONDS = 0.5
-_TURN_FAILURE_TEXT_MAP: tuple[tuple[str, str], ...] = (
-    (
-        "finalization_status contract",
-        "The model ended the turn without the required completion contract. "
-        "Please try again.",
-    ),
-    (
-        "required completion contract",
-        "The model ended the turn without the required completion contract. "
-        "Please try again.",
-    ),
-)
-
-
-def _retryable_turn_failure_message(text: str) -> str | None:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
-        return None
-    for marker, rendered in _TURN_FAILURE_TEXT_MAP:
-        if marker in lowered:
-            return rendered
-    return None
-
-
-def _is_retryable_turn_failure_text(text: str) -> bool:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
-        return False
-    return any(marker in lowered for marker, _ in _TURN_FAILURE_TEXT_MAP)
 
 
 def _session_sort_key(session: Any) -> str:
@@ -255,11 +224,11 @@ class OpenMinionRuntime(
         )
 
     def _goal_database_path(self) -> Path:
-        from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+        from openminion.modules.brain.paths import resolve_brain_runtime_db_path
 
         return cast(
             Path,
-            resolve_brain_sessions_db_path(storage_path=self._rt.storage_path),
+            resolve_brain_runtime_db_path(storage_path=self._rt.storage_path),
         )
 
     def token_usage_snapshot(self) -> TokenUsageSnapshot:
@@ -503,16 +472,16 @@ class OpenMinionRuntime(
         normalized_session_id = str(session_id or "").strip()
         if not normalized_session_id:
             raise ValueError("session_id is required")
+        metadata_patch = self._session_metadata_patch()
         session = self._rt.sessions.resolve_session(
             agent_id=self.agent_id,
             channel=self._channel,
             target=self._target,
             session_id=normalized_session_id,
-            metadata=self._session_metadata_patch(),
+            metadata=metadata_patch,
         )
         self._session_id = session.id
         self._sync_conversation_id()
-        metadata_patch = self._session_metadata_patch()
         if metadata_patch:
             self._rt.sessions.update_session_metadata(
                 session_id=session.id,
@@ -524,16 +493,16 @@ class OpenMinionRuntime(
     def create_new_session(self) -> str:
         self._ensure_agent_resolved()
         prefix = _TARGET_KIND_FOCUS if self._target == _TARGET_KIND_FOCUS else "sess"
+        metadata_patch = self._session_metadata_patch()
         session = self._rt.sessions.resolve_session(
             agent_id=self.agent_id,
             channel=self._channel,
             target=self._target,
             session_id=f"{prefix}-{uuid4().hex}",
-            metadata=self._session_metadata_patch(),
+            metadata=metadata_patch,
         )
         self._session_id = session.id
         self._sync_conversation_id()
-        metadata_patch = self._session_metadata_patch()
         if metadata_patch:
             self._rt.sessions.update_session_metadata(
                 session_id=session.id,
@@ -558,13 +527,21 @@ class OpenMinionRuntime(
         self._ensure_agent_resolved()
         if not self._working_dir:
             return []
-        return self._rt.sessions.list_sessions(
+        sessions = self._rt.sessions.list_sessions(
             limit=limit,
             newest_first=True,
             agent_id=self.agent_id,
             target=self._target,
             metadata_filter={"working_dir": self._working_dir},
         )
+        return [
+            build_directory_session_record(
+                session,
+                store=self._rt.sessions,
+                role_to_sender=self._role_to_sender,
+            )
+            for session in sessions
+        ]
 
     async def send_message(
         self,
@@ -705,90 +682,61 @@ class OpenMinionRuntime(
         self._ensure_agent_resolved()
         if not self.is_bound:
             raise RuntimeError("interactive runtime is not bound to a session")
-        max_attempts = 2
-        for attempt in range(1, max_attempts + 1):
-            self._begin_turn_usage_tracking()
-            kwargs, stream_handler, wrapped_progress = self._prepare_gateway_turn(
-                text,
-                progress_callback=progress_callback,
-                inbound_metadata=inbound_metadata,
-                approval_callback=approval_callback,
-            )
-            if stream_handler is not None:
-                final_text = ""
-                final_metadata: Mapping[str, Any] | None = None
-                emitted_text = False
-                try:
-                    async for event in stream_handler(**kwargs):
-                        kind = str(getattr(event, "kind", "") or "")
-                        if kind == "assistant_token":
-                            token = str(getattr(event, "text", "") or "")
-                            if not token:
-                                continue
-                            phase_timing.mark_active_chat_provider_token()
-                            emitted_text = True
-                            final_text += token
-                            yield token
+        self._begin_turn_usage_tracking()
+        kwargs, stream_handler, wrapped_progress = self._prepare_gateway_turn(
+            text,
+            progress_callback=progress_callback,
+            inbound_metadata=inbound_metadata,
+            approval_callback=approval_callback,
+        )
+        if stream_handler is not None:
+            final_text = ""
+            final_metadata: Mapping[str, Any] | None = None
+            emitted_text = False
+            try:
+                async for event in stream_handler(**kwargs):
+                    kind = str(getattr(event, "kind", "") or "")
+                    if kind == "assistant_token":
+                        token = str(getattr(event, "text", "") or "")
+                        if not token:
                             continue
-                        if kind == "final_message":
-                            final_message = getattr(event, "final_message", None)
-                            if isinstance(final_message, Mapping):
-                                metadata = final_message.get("metadata", {})
-                                final_metadata = (
-                                    dict(metadata)
-                                    if isinstance(metadata, Mapping)
-                                    else {}
-                                )
-                                response = Message(
-                                    channel=str(final_message.get("channel", "") or ""),
-                                    target=str(final_message.get("target", "") or ""),
-                                    body=str(final_message.get("body", "") or ""),
-                                    metadata=dict(final_metadata),
-                                )
-                                final_text = self._message_text(response)
-                            continue
-                        progress_payload = self._progress_payload_from_stream_event(
-                            event
-                        )
-                        if progress_payload:
-                            wrapped_progress(progress_payload)
-                except Exception:
-                    self._finalize_turn_usage(None, succeeded=False)
-                    raise
-                retryable_failure = _retryable_turn_failure_message(final_text)
-                if retryable_failure is not None:
-                    self._finalize_turn_usage(final_metadata, succeeded=False)
-                    if attempt < max_attempts and _is_retryable_turn_failure_text(
-                        final_text
-                    ):
+                        phase_timing.mark_active_chat_provider_token()
+                        emitted_text = True
+                        final_text += token
+                        yield token
                         continue
-                    if not emitted_text:
-                        yield retryable_failure
-                    return
-                self._finalize_turn_usage(final_metadata, succeeded=True)
-                if final_text and not emitted_text:
-                    yield final_text
-                return
-            response = await self._handle_gateway_message(kwargs)
-            text_body = self._message_text(response)
-            retryable_failure = _retryable_turn_failure_message(text_body)
-            if retryable_failure is not None:
-                self._finalize_turn_usage(
-                    getattr(response, "metadata", None),
-                    succeeded=False,
-                )
-                if attempt < max_attempts and _is_retryable_turn_failure_text(
-                    text_body
-                ):
-                    continue
-                yield retryable_failure
-                return
-            self._finalize_turn_usage(
-                getattr(response, "metadata", None),
-                succeeded=True,
-            )
-            yield text_body
+                    if kind == "final_message":
+                        final_message = getattr(event, "final_message", None)
+                        if isinstance(final_message, Mapping):
+                            metadata = final_message.get("metadata", {})
+                            final_metadata = (
+                                dict(metadata) if isinstance(metadata, Mapping) else {}
+                            )
+                            response = Message(
+                                channel=str(final_message.get("channel", "") or ""),
+                                target=str(final_message.get("target", "") or ""),
+                                body=str(final_message.get("body", "") or ""),
+                                metadata=dict(final_metadata),
+                            )
+                            final_text = self._message_text(response)
+                        continue
+                    progress_payload = self._progress_payload_from_stream_event(event)
+                    if progress_payload:
+                        wrapped_progress(progress_payload)
+            except Exception:
+                self._finalize_turn_usage(None, succeeded=False)
+                raise
+            self._finalize_turn_usage(final_metadata, succeeded=True)
+            if final_text and not emitted_text:
+                yield final_text
             return
+        response = await self._handle_gateway_message(kwargs)
+        text_body = self._message_text(response)
+        self._finalize_turn_usage(
+            getattr(response, "metadata", None),
+            succeeded=True,
+        )
+        yield text_body
 
     def _merge_inbound_metadata(
         self,
@@ -806,11 +754,8 @@ class OpenMinionRuntime(
             and not str(merged.get("conversation_id", "") or "").strip()
         ):
             merged["conversation_id"] = self._conversation_id
-        if (
-            self._target == _TARGET_KIND_FOCUS
-            and not str(merged.get(CALLER_HANDLES_DELIVERY_METADATA_KEY, "")).strip()
-        ):
-            merged[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        if self._target == _TARGET_KIND_FOCUS:
+            self._apply_focus_turn_metadata(merged)
         return merged or None
 
     def _begin_turn_usage_tracking(self) -> None:

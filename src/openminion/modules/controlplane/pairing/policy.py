@@ -35,7 +35,6 @@ class PairingPolicy:
             hash_pepper=getattr(config, "hash_pepper", None),
             allow_in_groups=bool(getattr(config, "allow_in_groups", False)),
             default_scopes=list(
-                getattr(config, "default_scopes", DEFAULT_MINIMAL_SCOPES)
-                or DEFAULT_MINIMAL_SCOPES
+                getattr(config, "default_scopes", None) or DEFAULT_MINIMAL_SCOPES
             ),
         )

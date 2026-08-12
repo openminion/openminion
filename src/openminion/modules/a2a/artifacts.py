@@ -22,8 +22,7 @@ class LocalArtifactStore:
         self, data: bytes, *, mime: str, label: str | None = None
     ) -> ArtifactRef:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        rel_dir = Path(day)
-        full_dir = self.root / rel_dir
+        full_dir = self.root / day
         full_dir.mkdir(parents=True, exist_ok=True)
         suffix = _suffix_from_mime(mime)
         name = f"{uuid.uuid4().hex}{suffix}"

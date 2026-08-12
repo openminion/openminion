@@ -84,7 +84,7 @@ def _knowledge_record_refs(knowledge_readout: Any) -> list[str]:
 
 
 def _shape_parts(subject_id: str) -> tuple[str, str, str] | None:
-    parts = [part.strip() for part in str(subject_id or "").split("|")]
+    parts = [part.strip() for part in subject_id.split("|")]
     if len(parts) != 3 or any(not part for part in parts):
         return None
     return parts[0], parts[1], parts[2]
@@ -99,11 +99,7 @@ def project_recurring_task_shapes(
 ) -> list[RecurringTaskShape]:
     """Project typed recurring task-shapes from aggregate readouts."""
 
-    recurrence_window = (
-        window
-        if isinstance(window, TaskShapeRecurrenceWindow)
-        else TaskShapeRecurrenceWindow.model_validate(window)
-    )
+    recurrence_window = TaskShapeRecurrenceWindow.model_validate(window)
     failure_refs = _failure_pattern_refs(
         failure_readout,
         min_recurrence_threshold=recurrence_window.min_recurrence_threshold,

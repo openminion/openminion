@@ -77,10 +77,9 @@ class ThinkingResolved:
             payload["mode_default_profile"] = self.mode_default_profile
         if self.mode_allowed_profiles:
             payload["mode_allowed_profiles"] = list(self.mode_allowed_profiles)
-        if self.mode_request_override_allowed is not None:
-            payload["mode_request_override_allowed"] = bool(
-                self.mode_request_override_allowed
-            )
+        override_allowed = self.mode_request_override_allowed
+        if override_allowed is not None:
+            payload["mode_request_override_allowed"] = override_allowed
         return payload
 
 

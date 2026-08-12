@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Literal
@@ -358,18 +359,8 @@ def project_child_budget(
     """Apply the typed budget propagation policy to a parent budget."""
 
     _require_policy(policy, valid=_VALID_BUDGET_POLICIES, kind="budget")
-    parent_obj = (
-        parent_budget
-        if isinstance(parent_budget, ParentBudget)
-        else ParentBudget.model_validate(parent_budget)
-    )
-    share_obj: BudgetShare | None
-    if share is None:
-        share_obj = None
-    elif isinstance(share, BudgetShare):
-        share_obj = share
-    else:
-        share_obj = BudgetShare.model_validate(share)
+    parent_obj = ParentBudget.model_validate(parent_budget)
+    share_obj = BudgetShare.model_validate(share) if share is not None else None
 
     if policy == "share_pool":
         return ChildBudget(
@@ -412,31 +403,23 @@ def project_child_deadline(
     """Apply the typed deadline policy to a parent deadline."""
 
     _require_policy(policy, valid=_VALID_DEADLINE_POLICIES, kind="deadline")
-    parent_obj: ParentDeadline | None
-    if parent_deadline is None:
-        parent_obj = None
-    elif isinstance(parent_deadline, ParentDeadline):
-        parent_obj = parent_deadline
-    else:
-        parent_obj = ParentDeadline.model_validate(parent_deadline)
+    parent_obj = (
+        ParentDeadline.model_validate(parent_deadline)
+        if parent_deadline is not None
+        else None
+    )
 
     parent_iso = (parent_obj.deadline_iso if parent_obj is not None else "").strip()
 
-    if policy == "none":
-        return ChildDeadline(deadline_iso="", source_policy=policy)
-    if policy == "fresh_child":
+    if policy in {"none", "fresh_child"}:
         return ChildDeadline(deadline_iso="", source_policy=policy)
     if policy == "inherit":
         return ChildDeadline(deadline_iso=parent_iso, source_policy=policy)
     if not parent_iso:
         return ChildDeadline(deadline_iso="", source_policy=policy)
-    margin_obj: ChildMargin
-    if margin is None:
-        margin_obj = ChildMargin()
-    elif isinstance(margin, ChildMargin):
-        margin_obj = margin
-    else:
-        margin_obj = ChildMargin.model_validate(margin)
+    margin_obj = (
+        ChildMargin.model_validate(margin) if margin is not None else ChildMargin()
+    )
     if margin_obj.margin_ms <= 0:
         return ChildDeadline(deadline_iso=parent_iso, source_policy=policy)
     return ChildDeadline(
@@ -453,18 +436,8 @@ def evaluate_cancellation_cascade(
     """Evaluate the typed cancellation-cascade plan."""
 
     _require_policy(policy, valid=_VALID_CANCEL_POLICIES, kind="cancellation")
-    parent_obj = (
-        parent_state
-        if isinstance(parent_state, ParentStateSnapshot)
-        else ParentStateSnapshot.model_validate(parent_state)
-    )
-    child_objs: list[ChildStateSnapshot] = []
-    for child in children:
-        child_objs.append(
-            child
-            if isinstance(child, ChildStateSnapshot)
-            else ChildStateSnapshot.model_validate(child)
-        )
+    parent_obj = ParentStateSnapshot.model_validate(parent_state)
+    child_objs = [ChildStateSnapshot.model_validate(child) for child in children]
 
     if not parent_obj.cancel_requested:
         return CascadePlan(
@@ -510,18 +483,10 @@ def aggregate_delegation_results(
     """
 
     _require_policy(policy, valid=_VALID_AGGREGATION_POLICIES, kind="aggregation")
-    records: list[ChildResultRecord] = []
-    for record in child_results:
-        records.append(
-            record
-            if isinstance(record, ChildResultRecord)
-            else ChildResultRecord.model_validate(record)
-        )
-
-    success_count = sum(1 for r in records if r.status == "success")
-    failure_count = sum(1 for r in records if r.status == "failure")
-    skipped_count = sum(1 for r in records if r.status == "skipped")
-    canceled_count = sum(1 for r in records if r.status == "canceled")
+    records = [ChildResultRecord.model_validate(record) for record in child_results]
+    status_counts = Counter(record.status for record in records)
+    successes = [record for record in records if record.status == "success"]
+    merged_successes = {record.child_id: dict(record.payload) for record in successes}
     child_ids = [r.child_id for r in records]
 
     def build_result(
@@ -532,10 +497,10 @@ def aggregate_delegation_results(
     ) -> AggregatedResult:
         return AggregatedResult(
             total_children=len(records),
-            success_count=success_count,
-            failure_count=failure_count,
-            skipped_count=skipped_count,
-            canceled_count=canceled_count,
+            success_count=status_counts["success"],
+            failure_count=status_counts["failure"],
+            skipped_count=status_counts["skipped"],
+            canceled_count=status_counts["canceled"],
             completed_required=completed_required,
             selected_child_id=selected_child_id,
             merged_payload=merged_payload,
@@ -548,37 +513,23 @@ def aggregate_delegation_results(
         completed_required = bool(required_records) and all(
             r.status == "success" for r in required_records
         )
-        merged: dict[str, Any] = {}
-        for r in records:
-            if r.status == "success":
-                merged[r.child_id] = dict(r.payload)
         return build_result(
             completed_required=completed_required,
             selected_child_id="",
-            merged_payload=merged,
+            merged_payload=merged_successes,
         )
     if policy == "first_success":
-        selected = ""
-        merged = {}
-        for r in records:
-            if r.status == "success":
-                selected = r.child_id
-                merged = dict(r.payload)
-                break
+        selected = successes[0] if successes else None
         return build_result(
-            completed_required=bool(selected),
-            selected_child_id=selected,
-            merged_payload=merged,
+            completed_required=selected is not None,
+            selected_child_id=selected.child_id if selected else "",
+            merged_payload=dict(selected.payload) if selected else {},
         )
     if policy == "best_effort":
-        merged = {}
-        for r in records:
-            if r.status == "success":
-                merged[r.child_id] = dict(r.payload)
         return build_result(
-            completed_required=success_count > 0,
+            completed_required=bool(successes),
             selected_child_id="",
-            merged_payload=merged,
+            merged_payload=merged_successes,
         )
     merged = {}
     for r in records:

@@ -54,7 +54,7 @@ class OpenRouterProvider(OpenAIProvider):
             model=model,
             base_url=base_url,
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         tool_call_strategy = str(
             config.get("tool_call_strategy", LLM_TOOL_CALL_STRATEGY_HYBRID)
@@ -129,7 +129,7 @@ class OpenRouterProvider(OpenAIProvider):
             timeout_seconds=_resolve_timeout_seconds(config, metadata=request.metadata),
             provider_name=self.name,
             trace_metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
 
         choices = response_payload.get("choices")
@@ -198,13 +198,6 @@ class OpenRouterProvider(OpenAIProvider):
         )
 
         if not text and not tool_calls:
-            # Classify into explicit error codes; CER-04: Tool-call-only is valid
-            if not first_choice or not message_payload:
-                raise LLMCtlError(
-                    "MALFORMED_PAYLOAD",
-                    f"{self.name} response has malformed or missing payload structure",
-                    details={"retryable": False},
-                )
             raise LLMCtlError(
                 "EMPTY_PAYLOAD",
                 f"{self.name} response did not include text or tool calls",
@@ -350,16 +343,12 @@ class OpenRouterProvider(OpenAIProvider):
 
     @staticmethod
     def _collapse_system_messages_for_model(model_name: str) -> bool:
-        return "qwen" in str(model_name or "").strip().lower()
+        return "qwen" in model_name.strip().lower()
 
     @staticmethod
     def _resolve_max_tokens(request: LLMRequest, config: dict[str, Any]) -> int | None:
         if request.max_output_tokens is not None:
-            try:
-                value = int(request.max_output_tokens)
-            except (TypeError, ValueError):
-                return None
-            return value if value > 0 else None
+            return request.max_output_tokens if request.max_output_tokens > 0 else None
         raw = config.get("max_tokens")
         try:
             value = int(raw) if raw is not None else 0
@@ -384,9 +373,9 @@ class OpenRouterProvider(OpenAIProvider):
                 },
                 timeout_seconds=_resolve_timeout_seconds(config),
                 provider_name=self.name,
-                env=config.get("__env__") if isinstance(config, dict) else None,
+                env=config.get("__env__"),
             )
-            data = payload.get("data") if isinstance(payload, dict) else None
+            data = payload.get("data")
             if isinstance(data, list):
                 return [
                     str(m.get("id", ""))

@@ -27,8 +27,6 @@ _DEFAULT_IDENTITY_BUDGET_CAP_RATIOS: dict[str, float] = {
 
 
 def _normalize_identity_budget_section_name(raw: Any) -> str:
-    if isinstance(raw, str):
-        return raw.strip().lower()
     return str(raw).strip().lower()
 
 

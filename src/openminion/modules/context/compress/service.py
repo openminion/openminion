@@ -1,6 +1,8 @@
 import hashlib
 import json
+from dataclasses import replace
 
+from ..mode_ranking import _MODE_PLAN, _MODE_RESPOND, normalize_mode_name
 from .budget import BudgetPlanner
 from .errors import MethodError, ValidationError
 from .hashing import compute_compression_hash
@@ -19,12 +21,8 @@ from .schemas import (
 from .storage.store import ExplainPayload, TelemetryStore
 from .token_count import count_tokens
 
-_ENGINE_VERSION = "2026-03-01"
 _TOKENIZER_ID = "whitespace.v1"
 _SCORER_VERSION = "v1.0"
-_MODE_RESPOND = "respond"
-_MODE_ACT = "act"
-_MODE_PLAN = "plan"
 
 
 def _count_tokens(
@@ -35,7 +33,7 @@ def _count_tokens(
 
 def _policy_hash(policy: CompressionPolicy) -> str:
     data = json.dumps(
-        {k: v for k, v in policy.__dict__.items()},
+        policy.__dict__,
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -56,19 +54,12 @@ def _block_hash(
     return hashlib.sha256(data.encode()).hexdigest()[:16]
 
 
-def _normalized_mode_name(mode_name: str | None) -> str | None:
-    normalized = str(mode_name or "").strip().lower()
-    if normalized in {_MODE_RESPOND, _MODE_ACT, _MODE_PLAN}:
-        return normalized
-    return None
-
-
 def _mode_adjusted_max_units(
     request: CompressionRequest,
     *,
     base_max_units: int,
 ) -> int:
-    normalized_mode = _normalized_mode_name(request.mode_name)
+    normalized_mode = normalize_mode_name(request.mode_name)
     if normalized_mode == _MODE_RESPOND:
         return max(1, base_max_units - 1)
     if normalized_mode == _MODE_PLAN:
@@ -103,10 +94,9 @@ class CompressionService:
 
         budget_envelopes = self._budget_planner.plan(request.budgets)
 
-        # Derive max_units from token budget - simple heuristic
         avg_tokens_per_block = max(
             1,
-            _count_tokens(block_list) // max(len(block_list), 1),
+            _count_tokens(block_list) // len(block_list),
         )
         max_units = max(1, budget_envelopes.total_cap // avg_tokens_per_block)
         max_units = _mode_adjusted_max_units(request, base_max_units=max_units)
@@ -125,16 +115,16 @@ class CompressionService:
         except Exception as exc:
             raise MethodError(f"extractive compressor failed: {exc}") from exc
 
-        # Determine empty augmentation
         empty_aug = (
             len(compressed_blocks) == 0 and request.policy.allow_empty_augmentation
         )
         empty_reason: str | None = None
         if empty_aug:
-            if request.retrieval_quality_hint == "BAD":
-                empty_reason = "low_quality"
-            else:
-                empty_reason = "irrelevant"
+            empty_reason = (
+                "low_quality"
+                if request.retrieval_quality_hint == "BAD"
+                else "irrelevant"
+            )
 
         input_tokens = _count_tokens(block_list)
         output_tokens = _count_tokens(compressed_blocks)
@@ -158,7 +148,6 @@ class CompressionService:
             scorer_version=_SCORER_VERSION,
         )
 
-        # Build result (placeholder hash first, then compute real hash)
         result = CompressionResult(
             blocks=compressed_blocks,
             report=report,
@@ -169,11 +158,10 @@ class CompressionService:
             compression_hash="",
             warnings=warnings,
         )
-        compression_hash = compute_compression_hash(request, result)
-        # Re-create with real hash (frozen dataclass)
-        from dataclasses import replace
-
-        result = replace(result, compression_hash=compression_hash)
+        result = replace(
+            result,
+            compression_hash=compute_compression_hash(request, result),
+        )
 
         run_id = self._store.record_run(request.request_id, result)
         return result, run_id

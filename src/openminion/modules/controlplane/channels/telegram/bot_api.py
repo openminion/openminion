@@ -75,8 +75,7 @@ class TelegramBotAPI:
         if not isinstance(response, dict):
             raise TelegramTransportError("telegram response is not JSON object")
 
-        ok = bool(response.get("ok"))
-        if not ok:
+        if not bool(response.get("ok")):
             code = int(response.get("error_code") or 500)
             description = str(response.get("description") or "telegram api error")
             retry_after = None
@@ -133,10 +132,9 @@ class TelegramBotAPI:
         if offset is not None:
             payload["offset"] = int(offset)
         result = self.call("getUpdates", payload)
-        if isinstance(result.get("value"), list):
-            raw_updates = result["value"]
-        else:
-            raw_updates = result if isinstance(result, list) else []
+        raw_updates = result.get("value")
+        if not isinstance(raw_updates, list):
+            return []
         return [row for row in raw_updates if isinstance(row, dict)]
 
     def send_message(self, payload: dict[str, Any]) -> dict[str, Any]:

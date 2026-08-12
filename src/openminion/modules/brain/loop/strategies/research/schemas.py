@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -18,6 +20,14 @@ class ResearchFinding(BaseModel):
     source_query: str
     content: str
     evidence_dates: list[str] = Field(default_factory=list)
+
+
+class ResearchSynthesis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(..., min_length=1)
+    status: Literal["complete", "incomplete", "blocked"] = "complete"
+    remaining_work: str = ""
 
 
 class ConvergenceCheck(BaseModel):

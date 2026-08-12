@@ -45,6 +45,24 @@ def test_decompose_contract_types_are_runtime_checkable() -> None:
     assert isinstance(AbortOnNewMessagePolicy(), CancellationPolicy)
 
 
+def test_synthesis_fails_closed_without_llm_service() -> None:
+    state = WorkingState(
+        session_id="s-decompose",
+        agent_id="agent",
+        budgets_remaining=BudgetCounters(
+            ticks=0, tool_calls=0, a2a_calls=0, tokens=0, time_ms=0
+        ),
+    )
+    ctx = SimpleNamespace(
+        state=state,
+        user_input="summarize",
+        _services=SimpleNamespace(runner=None),
+    )
+
+    with pytest.raises(RuntimeError, match="requires an LLM service"):
+        LLMSynthesizer().synthesize(ctx=ctx, results=[])
+
+
 def test_decompose_payload_rejects_fewer_than_two_subtasks() -> None:
     with pytest.raises(ValidationError):
         DecomposePayload(subtasks=[SubtaskSpec(goal="only one")])

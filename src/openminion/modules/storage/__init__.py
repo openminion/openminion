@@ -6,10 +6,7 @@ from openminion.modules.storage.runtime.module_integrity import (
     verify_module_integrity,
     repair_module_db,
 )
-from openminion.modules.storage.runtime.module_io import (
-    backup_module_db,
-    restore_module_db,
-)
+from .runtime.module_io import backup_module_db, restore_module_db
 from openminion.modules.storage.backends.registry import (
     BackendRegistry,
     NoopVectorStore,
@@ -44,6 +41,7 @@ from openminion.modules.storage.runtime.provider_selection import (
     resolve_storage_provider,
 )
 from openminion.modules.storage.runtime.vector_sync import VectorSyncScheduler
+from openminion.modules.storage.runtime.context import build_runtime_storage
 from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLite
 from openminion.modules.storage.telemetry import (
     NoopStorageTelemetryHook,
@@ -85,6 +83,7 @@ __all__ = (
     "NoopStorageTelemetryHook",
     "ZvecVectorStore",
     "default_backend_registry",
+    "build_runtime_storage",
     "BlobStoreInterface",
     "StructuredStoreInterface",
     "VectorStoreInterface",

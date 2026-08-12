@@ -1,7 +1,7 @@
 # OpenMinion Terminal Surfaces
 
 Status: active
-Last updated: 2026-07-19
+Last updated: 2026-08-10
 
 OpenMinion has one canonical interactive CLI: `openminion`. It uses the
 terminal renderer by default. Textual remains available through explicit
@@ -24,6 +24,10 @@ forwarding layer or dashboard tombstone. Use the canonical routes above.
 
 Without `--session`, interactive startup creates a fresh session. Use
 `--session <id>` when resuming or naming a session is intentional.
+
+The default terminal leaves mouse-wheel input with the terminal for native
+scrollback. It captures the mouse only while a clickable completion menu is
+open, then returns control to the terminal when the menu closes.
 
 ## Interactive activity animation
 
@@ -56,7 +60,16 @@ python -m pip install "openminion[animations]"
 
 Theme colors, backgrounds, labels, progress level, and reduced-motion behavior
 remain owned by OpenMinion. `--progress minimal` and `--progress off` override
-any selected provider.
+any selected provider. While a turn runs, the default terminal renderer shows
+the active status, elapsed time, and one animation frame on the line above the
+unchanged input prompt. Stable agent, model, and working-directory details stay
+in the bottom toolbar. Minimal progress uses a static dot while keeping elapsed
+time, and off hides the active row. With the optional Unicode catalog, the
+default terminal animation follows structured brain phases: for example,
+braillewave while analyzing, assemble while planning, dna while replanning,
+gearspin while executing, orbitnodes while reviewing, scanline while verifying,
+fillsweep while evaluating completion, and cascade while saving context. An
+explicitly selected or saved animation remains fixed instead.
 
 ## Dashboard replacements
 
@@ -208,6 +221,21 @@ content, paths, credentials, or resource payloads.
 
 Runtime-backed interactive sessions can emit that counter. Paths without a live
 telemetry service report no event rather than inferring usage as zero.
+
+## Telemetry invocation inspection
+
+`telemetryctl doctor` reports whether local telemetry paths are ready and
+whether external OpenTelemetry export is `disabled`, `ready`, or `incomplete`.
+Local telemetry remains usable when external export is disabled.
+
+`telemetryctl invocation list` lists locally persisted invocation identities
+with filters for agent, status, and event type. Use
+`telemetryctl invocation show <invocation-id>` for deterministic structural
+events and timing, token, cache, cost, policy, and correlated-log summaries.
+`telemetryctl invocation graph <invocation-id>` shows finite execution
+segments plus orphan and propagation diagnostics. These commands do not
+interpret hidden reasoning or print prompt, completion, tool argument, or tool
+result content.
 
 ## Retirement status
 

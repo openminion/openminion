@@ -112,7 +112,13 @@ def test_polling_resume_strategy_maps_job_states(
     a2a_api = SimpleNamespace(
         poll_task=lambda **kwargs: {
             "status": status,
-            "summary": "Delegation cancelled" if status == "cancelled" else "",
+            "summary": (
+                "Delegated answer"
+                if status == "completed"
+                else "Delegation cancelled"
+                if status == "cancelled"
+                else ""
+            ),
             "outputs": {"answer": "Delegated answer"} if status == "completed" else {},
             "error": {"code": "A2A_FAILED", "message": "delegate exploded"}
             if status == "failed"

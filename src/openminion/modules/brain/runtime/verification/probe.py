@@ -138,9 +138,7 @@ def apply_verification_to_judgment(
 def _normalize_tool_results(
     raw: Iterable[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    if not raw:
-        return []
-    return [item for item in raw if isinstance(item, dict)]
+    return [item for item in raw or () if isinstance(item, dict)]
 
 
 def _side_effect_state(
@@ -190,9 +188,7 @@ def _is_exec_run(result: dict[str, Any]) -> bool:
 
 
 def _command_matches(command: str, patterns: tuple[str, ...]) -> bool:
-    if not command:
-        return False
-    return any(pattern in command for pattern in patterns)
+    return bool(command) and any(pattern in command for pattern in patterns)
 
 
 def _find_last_test_invocation(
@@ -213,8 +209,7 @@ def _find_last_build_invocation(
     explicit = _find_last_matching(results, _BUILD_PATTERNS)
     if explicit is not None:
         return explicit
-    last: dict[str, Any] | None = None
-    for result in results:
+    for result in reversed(results):
         if not _is_exec_run(result):
             continue
         command = _extract_command_text(result)
@@ -223,22 +218,21 @@ def _find_last_build_invocation(
             and "test" not in command
             and "check" not in command
         ):
-            last = result
-    return last
+            return result
+    return None
 
 
 def _find_last_matching(
     results: list[dict[str, Any]],
     patterns: tuple[str, ...],
 ) -> dict[str, Any] | None:
-    last: dict[str, Any] | None = None
-    for result in results:
+    for result in reversed(results):
         if not _is_exec_run(result):
             continue
         command = _extract_command_text(result)
         if _command_matches(command, patterns):
-            last = result
-    return last
+            return result
+    return None
 
 
 def _exit_code(result: dict[str, Any]) -> int | None:

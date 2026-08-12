@@ -149,9 +149,4 @@ def _resolve_reply_target(
 def _split_text(text: str, limit: int) -> list[str]:
     if len(text) <= limit:
         return [text]
-    chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        chunks.append(text[start : start + limit])
-        start += limit
-    return chunks
+    return [text[start : start + limit] for start in range(0, len(text), limit)]

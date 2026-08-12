@@ -43,9 +43,7 @@ def _dedupe_keep_order(items: list[str]) -> list[str]:
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    raw = str(ts).strip()
+    raw = str(ts or "").strip()
     if not raw:
         return None
     try:

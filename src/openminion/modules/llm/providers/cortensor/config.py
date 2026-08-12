@@ -11,7 +11,7 @@ def resolve_cortensor_runtime_config(
     env: Mapping[str, str] | None = None,
 ):
     provider_config = config.providers.cortensor
-    resolved_env = _resolve_env(env)
+    resolved_env = env if env is not None else resolve_environment_config()
     base_url_override = str(resolved_env.get("CORTENSOR_API_URL", "")).strip()
     mode_override = str(resolved_env.get("CORTENSOR_API_MODE", "")).strip()
     session_id_override_raw = str(resolved_env.get("CORTENSOR_SESSION_ID", "")).strip()
@@ -39,31 +39,16 @@ def resolve_cortensor_runtime_config(
         provider_config.session_id, session_id_override_raw
     )
 
-    session_ids_override = list(provider_config.session_ids)
-    if session_ids_override_raw:
-        parsed_ids = _parse_positive_session_ids_csv(session_ids_override_raw)
-        if parsed_ids:
-            session_ids_override = parsed_ids
-
-    session_pool_override = provider_config.session_pool
-    if session_pool_override_raw:
-        session_pool_override = session_pool_override_raw
-
-    dedicated_session_ids_override = list(provider_config.dedicated_session_ids)
-    if dedicated_session_ids_override_raw:
-        parsed_dedicated_ids = _parse_positive_session_ids_csv(
-            dedicated_session_ids_override_raw
-        )
-        if parsed_dedicated_ids:
-            dedicated_session_ids_override = parsed_dedicated_ids
-
-    ephemeral_session_ids_override = list(provider_config.ephemeral_session_ids)
-    if ephemeral_session_ids_override_raw:
-        parsed_ephemeral_ids = _parse_positive_session_ids_csv(
-            ephemeral_session_ids_override_raw
-        )
-        if parsed_ephemeral_ids:
-            ephemeral_session_ids_override = parsed_ephemeral_ids
+    session_ids_override = _parse_positive_session_ids_csv(
+        session_ids_override_raw
+    ) or list(provider_config.session_ids)
+    session_pool_override = session_pool_override_raw or provider_config.session_pool
+    dedicated_session_ids_override = _parse_positive_session_ids_csv(
+        dedicated_session_ids_override_raw
+    ) or list(provider_config.dedicated_session_ids)
+    ephemeral_session_ids_override = _parse_positive_session_ids_csv(
+        ephemeral_session_ids_override_raw
+    ) or list(provider_config.ephemeral_session_ids)
 
     session_parallel_requests_override = _positive_int_override(
         provider_config.session_parallel_requests,
@@ -106,7 +91,7 @@ def _positive_int_override(default: int, raw_value: str) -> int:
 
 def _parse_positive_session_ids_csv(raw_value: str) -> list[int]:
     parsed_ids: list[int] = []
-    for part in [item.strip() for item in str(raw_value).split(",")]:
+    for part in [item.strip() for item in raw_value.split(",")]:
         if not part:
             continue
         try:
@@ -116,9 +101,3 @@ def _parse_positive_session_ids_csv(raw_value: str) -> list[int]:
         if parsed > 0:
             parsed_ids.append(parsed)
     return parsed_ids
-
-
-def _resolve_env(env: Mapping[str, str] | None) -> Mapping[str, str]:
-    if env is not None:
-        return env
-    return resolve_environment_config()

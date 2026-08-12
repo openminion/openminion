@@ -29,12 +29,7 @@ _NON_TRANSACTIONAL_CAPABILITIES = replace(
 
 
 def _read_nested_mapping(config: Any, key: str) -> dict[str, Any]:
-    if isinstance(config, dict):
-        value = config.get(key)
-        if isinstance(value, dict):
-            return dict(value)
-        return {}
-    value = getattr(config, key, None)
+    value = config.get(key) if isinstance(config, dict) else getattr(config, key, None)
     if value is None:
         return {}
     if isinstance(value, dict):
@@ -107,16 +102,15 @@ def _resolve_artifactctl(artifactctl: Any | None) -> Any | None:
 
 
 def _sqlite_path_from_config(config: Any, *, default: Path) -> Path:
-    sqlite_path = default
     if config is None:
-        return sqlite_path
+        return default
     if isinstance(config, dict):
-        if config.get("sqlite_path"):
-            sqlite_path = Path(str(config.get("sqlite_path")))
         store_cfg = config.get("store")
-        if isinstance(store_cfg, dict) and store_cfg.get("sqlite_path"):
-            sqlite_path = Path(str(store_cfg.get("sqlite_path")))
-        return sqlite_path
+        store_path = (
+            store_cfg.get("sqlite_path") if isinstance(store_cfg, dict) else None
+        )
+        return Path(str(store_path or config.get("sqlite_path") or default))
+    sqlite_path = default
     sqlite_path_attr = getattr(config, "sqlite_path", None)
     if sqlite_path_attr:
         sqlite_path = Path(str(sqlite_path_attr))

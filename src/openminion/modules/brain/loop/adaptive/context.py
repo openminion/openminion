@@ -1,4 +1,3 @@
-import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,14 +10,11 @@ from openminion.modules.brain.execution.intent_state import (
     update_intent_execution_states,
 )
 from openminion.modules.brain.tools.parser import (
-    explicit_tool_name_sequence,
-    normalize_tool_name_for_brain,
     parse_tool_command,
 )
 from openminion.modules.brain.schemas import (
     ActionResult,
     build_intent_execution_states,
-    new_uuid,
 )
 from openminion.modules.brain.loop.tools import (
     AdaptiveToolLoopState,
@@ -55,48 +51,6 @@ def _adaptive_loop_metadata(ctx: ExecutionContext, *, purpose: str) -> dict[str,
             TRAILER_LANE_SWSC,
         ]
     return metadata
-
-
-_EXPLICIT_TOOL_TOKEN_RE = re.compile(r"\b[a-z][a-z0-9_.-]*\b")
-_EXACT_TOOL_BATCH_RE = re.compile(
-    r"(?is)\b(?:first|initial|required)\s+tool\s+batch\b.*?(?:[.!?](?:\s|$)|\n|$)"
-)
-
-
-def _collapse_repeated_single_tool_mentions(
-    tool_names: tuple[str, ...],
-) -> tuple[str, ...]:
-    if not tool_names:
-        return ()
-    if len(set(tool_names)) == 1:
-        return (tool_names[0],)
-    return tool_names
-
-
-def _explicit_tool_name_mentions(user_text: str) -> tuple[str, ...]:
-    matches: list[str] = []
-    for token in _EXPLICIT_TOOL_TOKEN_RE.findall(str(user_text or "").strip().lower()):
-        canonical = normalize_tool_name_for_brain(token)
-        if not canonical:
-            continue
-        if canonical not in matches:
-            matches.append(canonical)
-    return tuple(matches)
-
-
-def _looks_like_direct_tool_instruction(user_text: str) -> bool:
-    text = str(user_text or "").strip()
-    if not text:
-        return False
-    return text.lower().startswith("tool ")
-
-
-def _exact_first_tool_batch_sequence(user_text: str) -> tuple[str, ...]:
-    text = str(user_text or "")
-    match = _EXACT_TOOL_BATCH_RE.search(text)
-    if match is None:
-        return ()
-    return explicit_tool_name_sequence(match.group(0))
 
 
 def _seeded_command_tool_call(seeded_command: Any) -> tuple[ToolCall | Any, str] | None:
@@ -169,85 +123,13 @@ def _parsed_command_context(ctx: ExecutionContext) -> DirectToolTurnContext | No
     )
 
 
-def _name_only_context(tool_names: tuple[str, ...]) -> DirectToolTurnContext | None:
-    if not tool_names:
-        return None
-    return DirectToolTurnContext(
-        requested_tool_names=tool_names,
-        requested_batch_signature="",
-        requested_calls=(),
-        match_by_name_only=True,
-    )
-
-
-def _exact_batch_context(user_text: str) -> DirectToolTurnContext | None:
-    exact_batch_sequence = _exact_first_tool_batch_sequence(user_text)
-    if len(exact_batch_sequence) < 2:
-        return None
-    return _name_only_context(exact_batch_sequence)
-
-
-def _seed_response_context(
-    *,
-    user_text: str,
-    seed_response: Any | None,
-) -> DirectToolTurnContext | None:
-    seed_tool_calls = list(getattr(seed_response, "tool_calls", []) or [])
-    if not user_text or len(seed_tool_calls) != 1:
-        return None
-    seed_tool_call = seed_tool_calls[0]
-    seed_tool_name = str(getattr(seed_tool_call, "name", "") or "").strip()
-    if not (
-        seed_tool_name
-        and seed_tool_name in user_text
-        and _looks_like_direct_tool_instruction(user_text)
-    ):
-        return None
-    requested_batch_signature = semantic_batch_signature([seed_tool_call])
-    if not requested_batch_signature:
-        return None
-    return DirectToolTurnContext(
-        requested_tool_names=(seed_tool_name,),
-        requested_batch_signature=requested_batch_signature,
-        requested_calls=(seed_tool_call,),
-    )
-
-
-def _explicit_sequence_context(user_text: str) -> DirectToolTurnContext | None:
-    explicit_sequence = explicit_tool_name_sequence(user_text)
-    if not explicit_sequence or not _looks_like_direct_tool_instruction(user_text):
-        return None
-    return _name_only_context(
-        _collapse_repeated_single_tool_mentions(explicit_sequence)
-    )
-
-
-def _explicit_mention_context(user_text: str) -> DirectToolTurnContext | None:
-    explicit_mentions = _explicit_tool_name_mentions(user_text)
-    if len(explicit_mentions) != 1 or not _looks_like_direct_tool_instruction(
-        user_text
-    ):
-        return None
-    return _name_only_context(explicit_mentions)
-
-
 def _direct_tool_turn_context(
     *,
     ctx: ExecutionContext,
     seed_response: Any | None,
 ) -> DirectToolTurnContext | None:
-    user_text = str(ctx.user_input or "").strip()
-    for candidate in (
-        _seeded_commands_context(ctx),
-        _parsed_command_context(ctx),
-        _exact_batch_context(user_text),
-        _seed_response_context(user_text=user_text, seed_response=seed_response),
-        _explicit_sequence_context(user_text),
-        _explicit_mention_context(user_text),
-    ):
-        if candidate is not None:
-            return candidate
-    return None
+    del seed_response
+    return _seeded_commands_context(ctx) or _parsed_command_context(ctx)
 
 
 class _AdaptiveLoopContextAdapter:
@@ -281,32 +163,11 @@ class _AdaptiveLoopContextAdapter:
         include_reflect: bool = False,
     ):
         command = self._attach_current_intent(command)
-        prepare_fn = getattr(self._ctx.command_executor, "prepare_tool_dispatch", None)
-        if callable(prepare_fn):
-            return prepare_fn(
-                state=self._ctx.state,
-                command=command,
-                logger=self._ctx.logger,
-                include_reflect=include_reflect,
-            )
-        from openminion.modules.brain.loop.tools.contracts import (
-            PreparedToolDispatch,
-        )  # noqa: PLC0415
-
-        return PreparedToolDispatch(
-            approved_command=command,
-            original_command=command,
-            command_id=str(getattr(command, "command_id", "") or new_uuid()),
-            tool_name=str(getattr(command, "tool_name", "") or "").strip(),
-            validated_args=dict(getattr(command, "args", {}) or {}),
-            session_id=str(getattr(self._ctx.state, "session_id", "") or ""),
-            trace_id=str(getattr(self._ctx.state, "trace_id", "") or ""),
-            agent_id=str(getattr(self._ctx.state, "agent_id", "") or ""),
-            lineage={},
-            permission_mode=str(
-                getattr(self._ctx.state, "permission_mode", "default") or "default"
-            ),
-            payload={},
+        return self._ctx.command_executor.prepare_tool_dispatch(
+            state=self._ctx.state,
+            command=command,
+            logger=self._ctx.logger,
+            include_reflect=include_reflect,
         )
 
     def execute_prepared_tool_dispatch(
@@ -344,10 +205,11 @@ class _AdaptiveLoopContextAdapter:
         outcome = CommandExecutionOutcome(
             approved_command=prepare_outcome.approved_command,
             action_result=prepare_outcome.action_result,
+            tool_budget_debited=prepare_outcome.tool_budget_debited,
         )
         return self._postprocess_outcome(
             outcome,
-            original_command=getattr(prepare_outcome, "original_command", None),
+            original_command=prepare_outcome.original_command,
         )
 
     def emit_status(self, **kwargs) -> None:
@@ -407,9 +269,7 @@ class _AdaptiveLoopContextAdapter:
                 self.state.post_action_user_message = (
                     confirmation_required_user_message(approved_command)
                 )
-        if action_result is not None and getattr(
-            self.state, "intent_execution_states", []
-        ):
+        if action_result is not None and self.state.intent_execution_states:
             update_intent_execution_states(
                 self._runner,
                 state=self.state,
@@ -421,7 +281,7 @@ class _AdaptiveLoopContextAdapter:
         return outcome
 
     def _attach_current_intent(self, command: Any) -> Any:
-        if command is None or not getattr(self.state, "intent_execution_states", []):
+        if command is None or not self.state.intent_execution_states:
             return command
         current_ids = list(getattr(command, "sub_intent_ids", []) or [])
         if current_ids:
@@ -438,9 +298,9 @@ class _AdaptiveLoopContextAdapter:
             return command
 
     def _current_pending_intent_id(self) -> str:
-        for item in list(getattr(self.state, "intent_execution_states", []) or []):
-            if str(getattr(item, "status", "") or "").strip() != "succeeded":
-                return str(getattr(item, "intent_id", "") or "").strip()
+        for item in self.state.intent_execution_states:
+            if item.status != "succeeded":
+                return item.intent_id
         return ""
 
 
@@ -449,19 +309,13 @@ def _sync_adaptive_intent_tracking(
     ctx: ExecutionContext,
     loop_state: AdaptiveToolLoopState | None = None,
 ) -> tuple[list[str], list[str]]:
-    if not getattr(ctx.state, "intent_execution_states", []) and getattr(
-        ctx.state, "decision_sub_intent_refs", []
-    ):
+    if not ctx.state.intent_execution_states and ctx.state.decision_sub_intent_refs:
         ctx.state.intent_execution_states = build_intent_execution_states(
-            list(getattr(ctx.state, "decision_sub_intent_refs", []) or []),
+            ctx.state.decision_sub_intent_refs,
             existing=[],
         )
-    completed_ids = succeeded_intent_ids(
-        list(getattr(ctx.state, "intent_execution_states", []) or [])
-    )
-    remaining_ids = remaining_intent_ids(
-        list(getattr(ctx.state, "intent_execution_states", []) or [])
-    )
+    completed_ids = succeeded_intent_ids(ctx.state.intent_execution_states)
+    remaining_ids = remaining_intent_ids(ctx.state.intent_execution_states)
     ctx.state.adaptive_satisfied_intent_ids = list(completed_ids)
     if loop_state is not None:
         loop_state.scratchpad["completed_intent_ids"] = list(completed_ids)

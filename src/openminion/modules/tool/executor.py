@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.contracts import ProviderToolCall
 from openminion.modules.tool.constants import OPENMINION_CONFIG_PATH_ENV
+from openminion.modules.tool.diagnostics.events import emit_tool_execution_event
 from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime.blast_radius import (
     TOOL_RESULT_BLAST_RADIUS_KEY,
@@ -381,7 +382,70 @@ def _stamp_and_emit_tool_result(
             "duration_ms": int(stamped.duration_ms or 0),
         },
     )
+    data = stamped.data if isinstance(stamped.data, Mapping) else {}
+    error_code = str(data.get("error_code") or "").strip()
+    reason_code = str(data.get("reason_code") or "").strip()
+    error: dict[str, Any] | None = None
+    if not stamped.ok:
+        error = {
+            "type": error_code or reason_code or "tool_execution_failed",
+            "code": error_code or reason_code or "TOOL_EXECUTION_FAILED",
+            "category": (
+                "timeout"
+                if _is_timeout_result(stamped)
+                else "policy"
+                if stamped.state == "denied"
+                else "execution"
+            ),
+        }
+    emit_tool_execution_event(
+        ctx=context,
+        event_type=(
+            "tool.execution.completed" if stamped.ok else "tool.execution.failed"
+        ),
+        status=stamped.state,
+        error=error,
+        payload={
+            "tool_call_id": stamped.call_id,
+            "tool_name": stamped.tool_name,
+            "source": stamped.source,
+            "duration_ms": int(stamped.duration_ms or 0),
+            "verified": bool(stamped.verified),
+            "fallback_index": int(stamped.fallback_index or 0),
+            "fallback_used": bool(data.get("runtime_fallback_used", False)),
+            "runtime_binding_id": str(data.get("runtime_binding_id") or ""),
+            "runtime_tool_name": str(data.get("runtime_tool_name") or ""),
+            "retry_count": int(stamped.fallback_index or 0),
+            "exit_code": data.get("exit_code", 0 if stamped.ok else 1),
+            "result_bytes": len(
+                json.dumps(stamped.data or {}, sort_keys=True, default=str).encode()
+            ),
+            "reason_code": reason_code,
+        },
+    )
     return stamped
+
+
+def _emit_tool_execution_started(
+    context: ToolExecutionContext,
+    *,
+    call: ProviderToolCall,
+) -> None:
+    arguments = call.arguments if isinstance(call.arguments, Mapping) else {}
+    emit_tool_execution_event(
+        ctx=context,
+        event_type="tool.execution.started",
+        status="running",
+        payload={
+            "tool_call_id": str(call.id or ""),
+            "tool_name": str(call.name or "").strip() or "unknown",
+            "source": str(call.source or ""),
+            "argument_count": len(arguments),
+            "argument_bytes": len(
+                json.dumps(arguments, sort_keys=True, default=str).encode()
+            ),
+        },
+    )
 
 
 def _runtime_direct_allowed(
@@ -458,6 +522,7 @@ def execute_single_call(
 ) -> ToolExecutionResult:
     started_at = time.time()
     raw_tool_name = str(call.name).strip()
+    _emit_tool_execution_started(context, call=call)
     _emit_tool_execution_counter(
         context,
         counter_name="tool_execution_started",
@@ -479,7 +544,6 @@ def execute_single_call(
             result=_unknown_tool_result(call=call, raw_tool_name=raw_tool_name),
             started_at=started_at,
         )
-
     from openminion.modules.tool.exposure import exposure_scope
 
     scope_metadata = (
@@ -689,7 +753,38 @@ def execute_calls_with_dependencies(
             )
             pending.remove(node_id)
 
-    return [graph.result_by_node[node_id] for node_id in graph.node_order]
+    results: list[ToolExecutionResult] = []
+    for node_id in graph.node_order:
+        result = graph.result_by_node[node_id]
+        if result.duration_ms is None:
+            call = graph.call_by_node[node_id]
+            started_at = time.time()
+            _emit_tool_execution_started(context, call=call)
+            result = _stamp_and_emit_tool_result(
+                context,
+                result=result,
+                started_at=started_at,
+            )
+        results.append(result)
+    return results
+
+
+def record_external_tool_results(
+    *,
+    context: ToolExecutionContext,
+    calls: Sequence[ProviderToolCall],
+    results: Sequence[ToolExecutionResult],
+) -> None:
+    results_by_call_id = {str(result.call_id or ""): result for result in results}
+    for call in calls:
+        result = results_by_call_id.get(str(call.id or ""))
+        if result is not None:
+            _emit_tool_execution_started(context, call=call)
+            _stamp_and_emit_tool_result(
+                context,
+                result=result,
+                started_at=time.time(),
+            )
 
 
 def _dependency_graph_for_calls(

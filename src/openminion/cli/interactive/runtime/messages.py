@@ -8,6 +8,10 @@ from typing import Any, Mapping
 from openminion.base.types import Message
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.blocks import tool_call_body
+from openminion.services.gateway.constants import (
+    CALLER_HANDLES_DELIVERY_METADATA_KEY,
+)
+from openminion.services.gateway.routing import parse_metadata_bool
 
 TARGET_KIND_FOCUS: str = "focus"
 _TIMESTAMPED_SENDER_PREFIX_RE = re.compile(
@@ -19,6 +23,20 @@ class RuntimeMessageMixin:
     _agent_id: str | None
     _target: str
     _working_dir: str | None
+
+    @staticmethod
+    def _apply_focus_turn_metadata(metadata: dict[str, str]) -> None:
+        if not str(
+            metadata.get(CALLER_HANDLES_DELIVERY_METADATA_KEY, "") or ""
+        ).strip():
+            metadata[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        if (
+            "resume" not in metadata
+            and not str(metadata.get("thread_id", "") or "").strip()
+            and not parse_metadata_bool(metadata, "reset")
+            and not parse_metadata_bool(metadata, "reset_session")
+        ):
+            metadata["resume"] = "true"
 
     def _record_to_chat_messages(self, record: object) -> list[ChatMessage]:
         role = str(getattr(record, "role", "") or "").strip().lower()
@@ -133,13 +151,12 @@ class RuntimeMessageMixin:
             or ""
         ).strip()
         if direct_name:
+            content = self._tool_result(metadata) or ""
             return ToolEvent(
                 tool_name=direct_name,
                 args=self._tool_args_from_payload(metadata),
-                content=self._tool_result(metadata) or "",
-                content_type=self._infer_content_type(
-                    self._tool_result(metadata) or ""
-                ),
+                content=content,
+                content_type=self._infer_content_type(content),
                 call_id=str(
                     metadata.get("call_id") or metadata.get("id") or ""
                 ).strip(),
@@ -236,11 +253,7 @@ class RuntimeMessageMixin:
             decoded = [decoded]
         if not isinstance(decoded, list):
             return []
-        results: list[dict[str, Any]] = []
-        for item in decoded:
-            if isinstance(item, Mapping):
-                results.append(dict(item))
-        return results
+        return [dict(item) for item in decoded if isinstance(item, Mapping)]
 
     def _display_path(self, value: str) -> str:
         raw = str(value or "").strip()

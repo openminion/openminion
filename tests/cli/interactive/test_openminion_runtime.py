@@ -348,6 +348,7 @@ async def test_openminion_runtime_marks_focus_returns_as_caller_delivered() -> N
             "cwd": str(Path("/tmp/focus-ws").resolve(strict=False)),
             "caller_handles_delivery": "true",
             "conversation_id": "focus-sess-001",
+            "resume": "true",
         }
     ]
 
@@ -432,6 +433,31 @@ async def test_openminion_focus_runtime_reuses_stable_conversation_id() -> None:
     assert second_metadata["conversation_id"] == f"focus-{first_session_id}"
     assert first_metadata["caller_handles_delivery"] == "true"
     assert second_metadata["caller_handles_delivery"] == "true"
+    assert first_metadata["resume"] == "true"
+    assert second_metadata["resume"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_openminion_focus_runtime_preserves_explicit_reset_metadata() -> None:
+    rt = _FakeRuntime()
+    focus_rt = OpenMinionRuntime(
+        rt,
+        target="focus",
+        working_dir="/tmp/focus-ws",
+    )
+
+    _ = [
+        chunk
+        async for chunk in focus_rt.send_message(
+            "start over",
+            inbound_metadata={"reset_session": "true"},
+        )
+    ]
+
+    metadata = rt.resolve_gateway("alpha").calls[0]["inbound_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["reset_session"] == "true"
+    assert "resume" not in metadata
 
 
 @pytest.mark.asyncio
@@ -558,30 +584,15 @@ def test_openminion_runtime_reports_mcp_errors_without_hiding_registered_tools()
 
 
 @pytest.mark.asyncio
-async def test_openminion_runtime_retries_retryable_contract_failure_once() -> None:
+async def test_openminion_runtime_preserves_model_failure_facts_without_retry() -> None:
     rt = _FakeRuntime()
     gateway = rt.resolve_gateway("alpha")
-    responses = iter(
-        [
-            Message(
-                channel="cli",
-                target="tui",
-                body=(
-                    "General act work ended without the required typed "
-                    "finalization_status contract."
-                ),
-                metadata={},
-            ),
-            Message(
-                channel="cli",
-                target="tui",
-                body="alpha:Recovered answer",
-                metadata={},
-            ),
-        ]
+    failure_text = (
+        "General act work ended without the required typed "
+        "finalization_status contract."
     )
 
-    async def _retry_handle_message(
+    async def _fail_handle_message(
         *,
         channel: str,
         target: str,
@@ -599,62 +610,19 @@ async def test_openminion_runtime_retries_retryable_contract_failure_once() -> N
                 "session_id": session_id,
             }
         )
-        return next(responses)
-
-    gateway.handle_message = _retry_handle_message
-    tui_rt = OpenMinionRuntime(rt)
-
-    chunks = [chunk async for chunk in tui_rt.send_message("ping")]
-    assert chunks == ["Recovered answer"]
-    assert len(gateway.calls) == 2
-
-
-@pytest.mark.asyncio
-async def test_openminion_runtime_maps_retryable_contract_failure_after_retry() -> None:
-    rt = _FakeRuntime()
-    gateway = rt.resolve_gateway("alpha")
-
-    async def _fail_handle_message(
-        *,
-        channel: str,
-        target: str,
-        body: str,
-        session_id: str,
-        inbound_metadata=None,
-        progress_callback=None,
-        deliver: bool = True,
-    ) -> Message:
-        del inbound_metadata, progress_callback, deliver
-        gateway.calls.append(
-            {
-                "channel": channel,
-                "target": target,
-                "body": body,
-                "session_id": session_id,
-            }
-        )
         return Message(
             channel=channel,
             target=target,
-            body=(
-                "General act work ended without the required typed "
-                "finalization_status contract."
-            ),
+            body=failure_text,
             metadata={},
         )
 
     gateway.handle_message = _fail_handle_message
-    focus_rt = OpenMinionRuntime(
-        rt,
-        target="focus",
-        working_dir="/tmp/focus-ws",
-    )
+    tui_rt = OpenMinionRuntime(rt)
 
-    chunks = [chunk async for chunk in focus_rt.send_message("remember: x=y")]
-    assert chunks == [
-        "The model ended the turn without the required completion contract. Please try again."
-    ]
-    assert len(gateway.calls) == 2
+    chunks = [chunk async for chunk in tui_rt.send_message("ping")]
+    assert chunks == [failure_text]
+    assert len(gateway.calls) == 1
 
 
 @pytest.mark.asyncio

@@ -35,13 +35,6 @@ from .service import RLMService
 from openminion.modules.brain.schemas.state import BrainMode
 
 BRAIN_LOOP_RECURSIVE_SELECTION_MODE = BrainMode.AUTONOMOUS
-"""Typed selection signal for the recursive loop family (spec §5.3).
-
-The runner-tick orchestrator routes to `run_recursive_turn` when
-`state.mode == BRAIN_LOOP_RECURSIVE_SELECTION_MODE` and `runner.rlm_api`
-is not None. Named so later rows can cite a canonical signal instead of
-re-deriving the string `"autonomous"`.
-"""
 
 __all__ = [
     "ArtifactClient",

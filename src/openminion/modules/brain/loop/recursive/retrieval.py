@@ -32,9 +32,7 @@ def retrieve(
     )
     resolved_strategy = strategy if strategy != "auto" else retrieval_filters.strategy
     if resolved_strategy == "auto":
-        resolved_strategy = self._resolve_retrieval_strategy(
-            query=query, purpose=purpose, constraints=None
-        )
+        resolved_strategy = self._resolve_retrieval_strategy(constraints=None)
 
     if self._retrievectl is not None:
         external = self._retrieve_external(
@@ -106,8 +104,6 @@ def expand(self, ref: str, mode: str, k: int) -> list[RetrievedContext]:
 def _resolve_retrieval_strategy(
     self,
     *,
-    query: str,
-    purpose: str,
     constraints: RLMConstraints | None,
 ) -> RetrievalStrategy:
     if constraints is not None and constraints.retrieval_strategy != "auto":
@@ -644,10 +640,7 @@ def _artifact_text_excerpt(self, *, ref: str, fallback_meta: dict[str, Any]) -> 
         return ""
     if not isinstance(raw, (bytes, bytearray)):
         return str(raw)[: self.config.retrieval.text_snippet_chars]
-    try:
-        decoded = bytes(raw).decode("utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        return ""
+    decoded = bytes(raw).decode("utf-8", errors="replace")
     return decoded.strip()[: self.config.retrieval.text_snippet_chars]
 
 

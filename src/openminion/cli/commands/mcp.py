@@ -15,19 +15,17 @@ _SECRET_KEY_TOKENS = ("token", "secret", "password", "key", "authorization")
 
 def run_mcp(args: argparse.Namespace) -> int:
     command = str(getattr(args, "mcp_command", "") or "").strip().lower()
-    if command == "import":
-        return _mcp_import(args)
-    if command == "list":
-        return _mcp_list(args)
-    if command == "validate":
-        return _mcp_validate(args)
-    if command == "test":
-        return _mcp_test(args)
-    if command == "restart":
-        return _mcp_restart(args)
-    if command == "logs":
-        return _mcp_logs(args)
-    raise RuntimeError("Unknown mcp command")
+    handler = {
+        "import": _mcp_import,
+        "list": _mcp_list,
+        "validate": _mcp_validate,
+        "test": _mcp_test,
+        "restart": _mcp_restart,
+        "logs": _mcp_logs,
+    }.get(command)
+    if handler is None:
+        raise RuntimeError("Unknown mcp command")
+    return handler(args)
 
 
 def _mcp_import(args: argparse.Namespace) -> int:

@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,8 @@ from openminion.modules.telemetry.interfaces import (
     ensure_telemetry_interface_compatibility,
 )
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
+from openminion.modules.telemetry.storage.base import TelemetryStore
+from openminion.modules.telemetry.storage.store import SQLiteTelemetryStore
 
 
 class TestTelemetryInterfaceContract:
@@ -30,6 +33,9 @@ class TestTelemetryInterfaceContract:
         assert hasattr(service, "contract_version")
         assert service.contract_version == "v1"
         assert hasattr(service, "get_module_summary")
+        assert hasattr(service, "get_event_high_water")
+        assert hasattr(service, "get_event_page")
+        assert hasattr(service, "find_turn_invocation_ids")
 
         ctl = TelemetryCtl(service)
         assert hasattr(ctl, "contract_version")
@@ -38,6 +44,22 @@ class TestTelemetryInterfaceContract:
         assert hasattr(ctl, "emit_module_operation")
         assert hasattr(ctl, "emit_module_counter")
         assert hasattr(ctl, "emit_tool_exec_operation")
+        assert hasattr(ctl, "emit_canonical_event_sync")
+
+    def test_storage_contract_signatures_match_implementation(self):
+        for method_name in (
+            "insert_event",
+            "insert_event_if_absent",
+            "fetch_session_events",
+            "fetch_invocation_events",
+            "fetch_execution_events",
+            "event_high_water",
+            "fetch_event_page",
+            "find_turn_invocation_ids",
+        ):
+            assert inspect.signature(getattr(TelemetryStore, method_name)) == (
+                inspect.signature(getattr(SQLiteTelemetryStore, method_name))
+            )
 
     def test_telemetry_compatibility_with_current_implementation(self, tmp_path: Path):
         service = TelemetryService(db_path=tmp_path / "telemetry.db")

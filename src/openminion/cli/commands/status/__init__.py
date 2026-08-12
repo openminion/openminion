@@ -5,9 +5,8 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from openminion.cli.parser.flags import add_json_output_flag, add_runtime_source_flag
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.cli.commands.status.trace_parser import (
-    register_status_context_trace_subcommand,
-)
+from .telemetry import register_telemetry_subcommand, run_telemetry_status
+from .trace_parser import register_status_context_trace_subcommand
 
 if TYPE_CHECKING:
     StatusSubcommands: TypeAlias = argparse._SubParsersAction[Any]
@@ -467,6 +466,7 @@ def register(subparsers: StatusSubcommands) -> None:
     _register_status_identity_subcommand(status_subcommands)
     _register_status_onboarding_subcommand(status_subcommands)
     _register_status_readiness_subcommand(status_subcommands)
+    register_telemetry_subcommand(status_subcommands, handler=run_telemetry_status)
     _register_simple_status_subcommand(
         status_subcommands,
         "tools",

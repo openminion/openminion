@@ -72,10 +72,9 @@ def _source_record_content(record: Any) -> Mapping[str, Any]:
 
 
 def _record_id(record: Any) -> str:
-    candidate = str(
+    return str(
         _record_field(record, "record_id") or _record_field(record, "id") or ""
     ).strip()
-    return candidate
 
 
 def _record_scope(record: Any) -> str:
@@ -95,9 +94,9 @@ def _candidate_ref(candidate: KnowledgeConsolidationCandidate) -> str:
 
 def _parse_candidate_ref(candidate_ref: str) -> dict[str, Any]:
     prefix = "kcon::"
-    if not str(candidate_ref or "").startswith(prefix):
+    if not candidate_ref.startswith(prefix):
         raise ValueError("invalid candidate_ref")
-    payload = json.loads(str(candidate_ref)[len(prefix) :])
+    payload = json.loads(candidate_ref[len(prefix) :])
     if not isinstance(payload, dict):
         raise ValueError("invalid candidate_ref payload")
     return payload
@@ -256,11 +255,7 @@ def decide_consolidation(
 ) -> ConsolidationDecision:
     """Produce one typed consolidation decision without side effects."""
 
-    candidate_obj = (
-        candidate
-        if isinstance(candidate, KnowledgeConsolidationCandidate)
-        else KnowledgeConsolidationCandidate.model_validate(candidate)
-    )
+    candidate_obj = KnowledgeConsolidationCandidate.model_validate(candidate)
     normalized_policy_id = str(policy_id or "").strip()
     if not normalized_policy_id:
         raise ValueError("policy_id is required")
@@ -279,35 +274,26 @@ def apply_consolidation(
 ) -> ConsolidatedKnowledgeRecord | None:
     """Persist a consolidated record and supersede the source records."""
 
-    decision_obj = (
-        decision
-        if isinstance(decision, ConsolidationDecision)
-        else ConsolidationDecision.model_validate(decision)
-    )
+    decision_obj = ConsolidationDecision.model_validate(decision)
     if decision_obj.status != "accepted":
         return None
-    payload = _parse_candidate_ref(decision_obj.candidate_ref)
-    source_record_refs = [
-        str(ref).strip()
-        for ref in payload.get("source_record_refs", [])
-        if str(ref).strip()
-    ]
+    candidate = KnowledgeConsolidationCandidate.model_validate(
+        _parse_candidate_ref(decision_obj.candidate_ref)
+    )
+    source_record_refs = candidate.source_record_refs
     consolidated = ConsolidatedKnowledgeRecord(
         source_record_lineage=source_record_refs,
-        consolidation_criterion_id=payload["criterion_id"],
-        freshness_metadata=dict(payload.get("evidence_window") or {}),
+        consolidation_criterion_id=candidate.criterion_id,
+        freshness_metadata=candidate.evidence_window,
         superseded_records=list(source_record_refs),
-        consolidated_kind=str(payload.get("proposed_consolidated_kind") or "").strip(),
-        consolidated_signature=str(payload.get("proposed_signature") or "").strip(),
+        consolidated_kind=candidate.proposed_consolidated_kind,
+        consolidated_signature=candidate.proposed_signature,
     )
-    writer = getattr(memory_api, "write_record", None)
-    if not callable(writer):
-        raise ValueError("memory_api.write_record is required")
     target_scope = str(
         consolidated.freshness_metadata.get("target_scope") or "global:default"
     ).strip()
     record_id = str(
-        writer(
+        memory_api.write_record(
             scope=target_scope,
             record_type="consolidated_knowledge",
             title=f"Consolidated {consolidated.consolidated_signature}",

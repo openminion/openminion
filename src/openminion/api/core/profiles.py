@@ -28,7 +28,7 @@ from openminion.modules.storage.runtime import (
     RuntimeStorageContext,
     SessionStore,
 )
-from openminion.modules.telemetry.service import TelemetryService
+from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 from openminion.modules.tool import ToolRegistry
 from openminion.services.agent import AgentService
 from openminion.services.channel.authenticity import build_channel_authenticity_policy
@@ -184,6 +184,7 @@ class RuntimeProfilesMixin:
     runtime_storage: RuntimeStorageContext
     storage_connection: Connection
     telemetry_service: TelemetryService
+    telemetryctl: TelemetryCtl
     sessions: SessionStore
     idempotency: IdempotencyStore
     channels: ChannelRegistry
@@ -311,6 +312,7 @@ class RuntimeProfilesMixin:
                 config_manager=self.config_manager,
                 retrieve_service=self.retrieve_ctl,
                 action_policy_service=self.action_policy,
+                telemetryctl=self.telemetryctl,
             )
             agent_service = cast(AgentService, service)
             self._bind_runtime_handle(agent_service, self)

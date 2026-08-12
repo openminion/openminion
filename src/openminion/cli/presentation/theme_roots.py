@@ -8,10 +8,7 @@ def resolve_runtime_data_root(runtime: Any) -> Path | None:
     api_runtime = getattr(runtime, "_rt", None)
     data_root = getattr(api_runtime, "data_root", None)
     if data_root is not None:
-        try:
-            return Path(str(data_root))
-        except (TypeError, ValueError):
-            return None
+        return Path(str(data_root))
     config_path = str(getattr(api_runtime, "config_path", "") or "").strip()
     if not config_path:
         return None

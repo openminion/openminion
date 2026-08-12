@@ -23,8 +23,6 @@ TYPE_PRIOR: dict[str, float] = {
 
 @dataclass(frozen=True)
 class ScoredUnit:
-    """Single scored unit derived from an input block."""
-
     block_id: str
     block_type: str
     text: str
@@ -87,11 +85,11 @@ def _lexical_overlap(query: str, text: str) -> float:
     if not query_terms or not text_terms:
         return 0.0
     overlap = len(query_terms & text_terms)
-    return overlap / max(len(query_terms), 1)
+    return overlap / len(query_terms)
 
 
 def _tokenize(payload: str) -> set[str]:
-    return {token.strip().lower() for token in payload.split() if token.strip()}
+    return {token.lower() for token in payload.split()}
 
 
 def _normalize_recency(recency_ts) -> float:

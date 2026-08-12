@@ -113,15 +113,15 @@ def run_identity_status(args, *, config) -> int:
             purpose=purpose,
             max_tokens=max_tokens,
         )
-        meta = dict(getattr(profile, "meta", {}) or {})
+        meta = dict(profile.meta or {})
         provenance = build_identity_provenance(profile)
         payload = {
             "ok": True,
             "agent_id": agent_id,
             "identity_db_path": str(db_path),
             "profile_revision": int(profile.profile_revision),
-            "profile_version": str(snippet.profile_version),
-            "render_version": str(snippet.render_version),
+            "profile_version": snippet.profile_version,
+            "render_version": snippet.render_version,
             "bundle_imported": bool(meta.get("bundle_imported")),
             "bundle_fingerprint": str(meta.get("bundle_fingerprint") or ""),
             **provenance,
@@ -129,8 +129,8 @@ def run_identity_status(args, *, config) -> int:
         if getattr(args, "render", False):
             payload.update(
                 {
-                    "purpose": str(snippet.purpose),
-                    "text": str(snippet.text),
+                    "purpose": snippet.purpose,
+                    "text": snippet.text,
                 }
             )
             if getattr(args, "json", False):
@@ -170,7 +170,4 @@ def run_identity_status(args, *, config) -> int:
             print(f"- identity_db_path: {db_path}")
         return 0
     finally:
-        try:
-            identityctl.close()
-        except Exception:
-            pass
+        identityctl.close()

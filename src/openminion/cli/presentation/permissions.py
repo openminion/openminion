@@ -83,15 +83,11 @@ _PERMISSION_CHOICES_BY_ID = {
 }
 _PERMISSION_CHOICE_ALIASES = {
     "read-only": PERMISSION_CHOICE_READONLY,
-    "readonly": PERMISSION_CHOICE_READONLY,
-    "ask": PERMISSION_CHOICE_ASK,
     "ask-for-approval": PERMISSION_CHOICE_ASK,
     "approve": PERMISSION_CHOICE_AUTO,
     "approve-for-me": PERMISSION_CHOICE_AUTO,
-    "auto": PERMISSION_CHOICE_AUTO,
     "full": PERMISSION_CHOICE_FULL_ACCESS,
     "full-access": PERMISSION_CHOICE_FULL_ACCESS,
-    "full_access": PERMISSION_CHOICE_FULL_ACCESS,
 }
 
 
@@ -174,8 +170,6 @@ def apply_permission_menu_choice(
         permission_mode=mode,
         action_policy_mode=action_mode,
     )
-    if not status:
-        status = choice.status_label
     warning = " — full access for this session" if choice.requires_confirmation else ""
     return PermissionApplyResult(
         choice=choice,

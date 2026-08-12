@@ -4,6 +4,18 @@ from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.presentation.contracts import StatusLine
 
 
+def test_status_key_drives_activity_callback() -> None:
+    line = TerminalStatusLine()
+    statuses: list[str] = []
+    line.set_activity_callback(statuses.append)
+
+    line.set_state(status_key="analyzing")
+    line.set_state(status_key="analyzing", elapsed_seconds=1)
+    line.set_state(status_key="executing")
+
+    assert statuses == ["analyzing", "executing"]
+
+
 def test_status_line_satisfies_protocol() -> None:
     line = TerminalStatusLine()
     assert isinstance(line, StatusLine)
@@ -47,10 +59,10 @@ def test_active_turn_footer_stays_identity_only() -> None:
     assert "model: x" in text
     assert "cwd: /tmp/wd" in text
     assert "queue:" not in text
-    assert "brain:" not in text
+    assert "Status:" not in text
 
 
-def test_active_turn_footer_shows_turn_status_separate_from_prompt() -> None:
+def test_active_turn_status_is_separate_from_stable_footer() -> None:
     line = TerminalStatusLine()
     line.set_state(
         agent="alpha",
@@ -60,17 +72,16 @@ def test_active_turn_footer_shows_turn_status_separate_from_prompt() -> None:
         elapsed_seconds=2.5,
         turn_status="Analyzing request...",
     )
-    text = line.bottom_toolbar()
-    rows = text.splitlines()
-    assert len(rows) == 2
-    assert "brain: Analyzing request..." in rows[0]
-    assert "2s" in rows[0]
-    assert "queue:" not in rows[0]
-    assert "brain:" not in rows[1]
-    assert "alpha" in text
-    assert "model: x" in text
-    assert "2.5s" not in text
-    assert "Esc cancel" not in text
+    status = line.active_status()
+    footer = line.bottom_toolbar()
+    assert "Status: Analyzing request..." in status
+    assert "2s" in status
+    assert "queue:" not in status
+    assert "Status:" not in footer
+    assert "alpha" in footer
+    assert "model: x" in footer
+    assert "2.5s" not in footer
+    assert "Esc cancel" not in footer
 
 
 def test_active_turn_footer_suppresses_custom_status_copy() -> None:
@@ -127,7 +138,7 @@ def test_live_turn_footer_keeps_active_status_out_of_transcript_footer() -> None
     text = line.live_turn_footer()
     rows = text.splitlines()
     assert len(rows) == 1
-    assert "brain:" not in text
+    assert "Status:" not in text
     assert "Loading session history..." not in text
     assert "6s" not in text
     assert "status:" not in text
@@ -215,11 +226,11 @@ def test_bottom_identity_row_stays_stable_when_turn_finishes() -> None:
         state="responding",
         turn_status="Analyzing request...",
     )
-    active_rows = line.bottom_toolbar().splitlines()
+    active_footer = line.bottom_toolbar()
 
     line.set_state(state="idle", turn_status="")
 
     assert "input:" not in line.bottom_toolbar()
     assert "queue:" not in line.bottom_toolbar()
-    assert "brain:" not in line.bottom_toolbar()
-    assert line.bottom_toolbar() == active_rows[-1]
+    assert "Status:" not in line.bottom_toolbar()
+    assert line.bottom_toolbar() == active_footer

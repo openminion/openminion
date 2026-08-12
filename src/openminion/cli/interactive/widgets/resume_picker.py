@@ -27,10 +27,9 @@ class _ResumePickerRow(_PickerRow):
             meta_bits.append(age)
         meta_bits.append(f"{count} msg" if count == 1 else f"{count} msgs")
         meta = "  " + "  ".join(meta_bits)
-        preview_display = ""
-        if preview:
-            truncated = preview if len(preview) <= 70 else preview[:69] + "…"
-            preview_display = f"\n      {truncated}"
+        if len(preview) > 70:
+            preview = preview[:69] + "…"
+        preview_display = f"\n      {preview}" if preview else ""
         Static.__init__(
             self,
             f"  {display:<24}{meta}{preview_display}",

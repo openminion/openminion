@@ -101,14 +101,13 @@ class OutboxWorker:
     def _parse_payload(self, raw: Any) -> dict[str, Any]:
         if isinstance(raw, dict):
             return raw
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    return parsed
-            except Exception:
-                return {}
-        return {}
+        if not isinstance(raw, str):
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _audit(self, event_type: str, **details: object) -> None:
         emit_audit_event(self.audit_logger, event_type, **details)

@@ -17,7 +17,6 @@ from openminion.modules.brain.schemas import (
     ActionResult,
     ActionMetrics,
     BudgetCounters,
-    RespondDecision,
     WorkingState,
     new_uuid,
     normalize_decomposed_subtasks,
@@ -344,10 +343,6 @@ class OrchestrateMode:
                     f"agent profile; received {len(payload.subtasks)}."
                 ),
             )
-        available_routes = []
-        runner = runner_from_context(ctx)
-        if runner is not None:
-            available_routes = ["respond", "act"]
         normalized: list[SubtaskSpec] = []
         for index, subtask in enumerate(payload.subtasks, start=1):
             updated = subtask.model_copy(
@@ -355,7 +350,7 @@ class OrchestrateMode:
                     "subtask_id": str(subtask.subtask_id or f"subtask-{index}").strip(),
                     "suggested_mode": self._resolver.resolve(
                         subtask=subtask,
-                        available_routes=available_routes or ["respond", "act"],
+                        available_routes=["respond", "act"],
                     ),
                 }
             )
@@ -423,24 +418,6 @@ class OrchestrateMode:
         clear_policy_facts(child_state)
         return child_state
 
-    def _fallback_decision(self, subtask: SubtaskSpec):
-        if str(getattr(subtask, "suggested_mode", "") or "").strip() == "respond":
-            return RespondDecision(
-                confidence=0.6,
-                reason_code="orchestrate_subtask_fallback",
-                respond_kind="answer",
-                sub_intents=[subtask.goal],
-                answer=subtask.goal,
-            )
-        from openminion.modules.brain.schemas.decisions import ActDecision
-
-        return ActDecision(
-            confidence=0.7,
-            reason_code="orchestrate_subtask_fallback",
-            sub_intents=[subtask.goal],
-            rationale=subtask.goal,
-        )
-
     def _decide_subtask(
         self,
         ctx: ExecutionContext,
@@ -454,7 +431,7 @@ class OrchestrateMode:
             return delegate_assignment
         runner = runner_from_context(ctx)
         if runner is None:
-            return self._fallback_decision(subtask)
+            raise RuntimeError("OrchestrateMode requires runner-backed services")
         decide_override = getattr(runner, "_decide", None)
         if callable(decide_override):
             decision = decide_override(
@@ -473,7 +450,7 @@ class OrchestrateMode:
             str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
             == ORCHESTRATE_MODE
         ):
-            return self._fallback_decision(subtask)
+            raise ValueError("Orchestrate subtasks cannot recursively select orchestrate")
         return decision
 
     def _result_from_mode_output(

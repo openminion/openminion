@@ -98,18 +98,15 @@ class OpenMinionDebugProvider(_CoreDebugProvider):
 
         try:
             import openminion.modules.brain.meta  # noqa: F401
-        except ImportError:
-            try:
-                import openminion.modules.brain.meta as openminion_brain_meta  # noqa: F401
-            except ImportError as exc:
-                failures.append(
-                    {
-                        "module": "openminion-brain-meta",
-                        "type": "import_error",
-                        "error": str(exc),
-                        "impact": "meta-evaluation unavailable",
-                    }
-                )
+        except ImportError as exc:
+            failures.append(
+                {
+                    "module": "openminion-brain-meta",
+                    "type": "import_error",
+                    "error": str(exc),
+                    "impact": "meta-evaluation unavailable",
+                }
+            )
 
         try:
             import openminion.modules.session  # noqa: F401

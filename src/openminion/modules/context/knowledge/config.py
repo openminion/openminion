@@ -174,9 +174,9 @@ def resolve_knowledge_graphs_config(
     config_or_payload: Any | None,
 ) -> KnowledgeGraphsConfig:
     """Resolve the typed knowledge-graph config from OpenMinion config data."""
-    if config_or_payload is None:
-        return KnowledgeGraphsConfig()
-    payload = _extract_payload(config_or_payload)
+    payload = (
+        _extract_payload(config_or_payload) if config_or_payload is not None else {}
+    )
     if not payload:
         return KnowledgeGraphsConfig()
     return knowledge_graphs_config_from_mapping(payload)
@@ -333,9 +333,7 @@ def _optional_mapping(value: Any, *, field_name: str) -> Mapping[str, Any]:
 def _sequence_value(value: Any) -> tuple[Any, ...]:
     if value is None:
         return ()
-    if isinstance(value, tuple):
-        return value
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return tuple(value)
     return (value,)
 

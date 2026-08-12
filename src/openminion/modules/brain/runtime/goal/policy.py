@@ -36,68 +36,36 @@ def authorize_goal_action(
     """Resolve `(profile_policy, action_type)` into `GoalAuthorization`."""
     normalized_action = str(action_type or "").strip().lower()
     if normalized_action == "none":
-        return GoalAuthorization(
-            allowed=False,
-            requires_user_confirm=False,
-            reason=_REASON_ACTION_NONE,
-            risk_tier=goal_policy_risk_tier(
-                allowed=False,
-                requires_user_confirm=False,
-            ),
-        )
+        return _authorization(False, False, _REASON_ACTION_NONE)
 
     normalized_policy = str(profile_policy or "").strip().lower() or "suggest"
 
     if normalized_policy == "auto_full":
-        return GoalAuthorization(
-            allowed=True,
-            requires_user_confirm=False,
-            reason=_REASON_AUTO_FULL,
-            risk_tier=goal_policy_risk_tier(
-                allowed=True,
-                requires_user_confirm=False,
-            ),
-        )
+        return _authorization(True, False, _REASON_AUTO_FULL)
 
     if normalized_policy == "auto_safe":
         if normalized_action in {"watch", "task"}:
-            return GoalAuthorization(
-                allowed=True,
-                requires_user_confirm=False,
-                reason=_REASON_AUTO_SAFE_WATCH_TASK,
-                risk_tier=goal_policy_risk_tier(
-                    allowed=True,
-                    requires_user_confirm=False,
-                ),
-            )
-        return GoalAuthorization(
-            allowed=False,
-            requires_user_confirm=True,
-            reason=_REASON_AUTO_SAFE_SUGGEST_ONLY,
-            risk_tier=goal_policy_risk_tier(
-                allowed=False,
-                requires_user_confirm=True,
-            ),
-        )
+            return _authorization(True, False, _REASON_AUTO_SAFE_WATCH_TASK)
+        return _authorization(False, True, _REASON_AUTO_SAFE_SUGGEST_ONLY)
 
     if normalized_policy == "suggest":
-        return GoalAuthorization(
-            allowed=False,
-            requires_user_confirm=True,
-            reason=_REASON_SUGGEST_DEFAULT,
-            risk_tier=goal_policy_risk_tier(
-                allowed=False,
-                requires_user_confirm=True,
-            ),
-        )
+        return _authorization(False, True, _REASON_SUGGEST_DEFAULT)
 
+    return _authorization(False, True, _REASON_UNKNOWN_POLICY)
+
+
+def _authorization(
+    allowed: bool,
+    requires_user_confirm: bool,
+    reason: str,
+) -> GoalAuthorization:
     return GoalAuthorization(
-        allowed=False,
-        requires_user_confirm=True,
-        reason=_REASON_UNKNOWN_POLICY,
+        allowed=allowed,
+        requires_user_confirm=requires_user_confirm,
+        reason=reason,
         risk_tier=goal_policy_risk_tier(
-            allowed=False,
-            requires_user_confirm=True,
+            allowed=allowed,
+            requires_user_confirm=requires_user_confirm,
         ),
     )
 

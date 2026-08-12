@@ -95,5 +95,4 @@ def _optional_int(value: Any) -> int | None:
 def _format_ms(value: int) -> str:
     if value < 1000:
         return f"{value}ms"
-    seconds = value / 1000
-    return f"{seconds:.1f}s"
+    return f"{value / 1000:.1f}s"

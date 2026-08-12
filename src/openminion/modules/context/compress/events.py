@@ -2,8 +2,6 @@ import logging
 
 from openminion.modules.telemetry.events.module import make_module_emitters
 
-_LOGGER = logging.getLogger(__name__)
-_MODULE_ID = "context.compress"
 _ALLOWED_OPERATIONS = frozenset(
     {
         "summary_create",
@@ -14,9 +12,9 @@ _ALLOWED_OPERATIONS = frozenset(
 )
 
 _emitters = make_module_emitters(
-    module_id=_MODULE_ID,
+    module_id="context.compress",
     allowed_operations=_ALLOWED_OPERATIONS,
-    logger=_LOGGER,
+    logger=logging.getLogger(__name__),
 )
 emit_module_telemetry = _emitters.emit_module_telemetry
 emit_compress_operation = _emitters.emit_operation

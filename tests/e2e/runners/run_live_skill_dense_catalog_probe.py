@@ -28,6 +28,7 @@ from tests.helpers.live_skill_targets import (  # noqa: E402
     dense_skill_artifact_dirname,
     official_skill_dense_targets,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -416,6 +417,7 @@ def _probe_missing_negative(
 
 
 def main() -> int:
+    isolate_runtime_roots(prefix="openminion-live-skill-probe-")
     args = _parse_args()
     target = _resolve_target(args.target)
     matrix.validate_skill_live_target(target)

@@ -62,18 +62,15 @@ def build_prompt_safe_terminal_writer(
 
     def _writer(render: Callable[[], None]) -> Any:
         prompt_output = getattr(prompt_session, "output", None)
-        wrapped = (
-            (lambda: render())
-            if prompt_output is None
-            else (
-                lambda: write_console_render_via_prompt_output(
-                    console=console,
-                    prompt_output=prompt_output,
-                    render=render,
-                )
+        if prompt_output is None:
+            return _run_with_prompt(render)
+        return _run_with_prompt(
+            lambda: write_console_render_via_prompt_output(
+                console=console,
+                prompt_output=prompt_output,
+                render=render,
             )
         )
-        return _run_with_prompt(wrapped)
 
     def _write_control(payload: str) -> Any:
         prompt_output = getattr(prompt_session, "output", None)

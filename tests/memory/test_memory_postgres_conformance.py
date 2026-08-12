@@ -58,7 +58,7 @@ def _candidate(candidate_id: str, *, status: str = "proposed") -> MemoryCandidat
 
 
 @pytest.fixture(params=["sqlite", "postgres"], ids=["sqlite", "postgres"])
-def store(request: pytest.FixtureRequest):
+def store(request: pytest.FixtureRequest, tmp_path: Path):
     if request.param == "sqlite":
         with tempfile.TemporaryDirectory() as tmp:
             yield SQLiteMemoryStore(Path(tmp) / "memory.db")
@@ -75,7 +75,9 @@ def store(request: pytest.FixtureRequest):
     try:
         yield PostgresMemoryStore(
             engine,
-            database_path=Path.cwd() / ".openminion-memory-postgres-test",
+            database_path=(
+                tmp_path / ".openminion" / "memory" / "postgres-conformance.db"
+            ),
         )
     finally:
         engine.dispose()

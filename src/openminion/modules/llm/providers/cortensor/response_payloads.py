@@ -13,7 +13,7 @@ def _cortensor_first_choice(response_payload: Mapping[str, Any]) -> dict[str, An
     choices = response_payload.get("choices")
     if not isinstance(choices, list) or not choices:
         raise LLMCtlError("PROVIDER_ERROR", "Cortensor response missing choices")
-    first_choice = choices[0] if isinstance(choices[0], dict) else None
+    first_choice = choices[0]
     if not isinstance(first_choice, dict):
         raise LLMCtlError(
             "PROVIDER_ERROR", "Cortensor response has invalid choice payload"
@@ -88,8 +88,8 @@ def _raise_empty_cortensor_response(
     message_payload: Any,
     response_payload: Mapping[str, Any],
 ) -> None:
-    response_str = str(response_payload)
-    if "urn:" in response_str.lower() or "task_id" in response_str:
+    response_str = str(response_payload).lower()
+    if "urn:" in response_str or "task_id" in response_str:
         raise LLMCtlError(
             "EMPTY_URN_CONTENT",
             "Cortensor response contains URN but no resolvable content (off-chain result pending)",
@@ -97,10 +97,8 @@ def _raise_empty_cortensor_response(
         )
     has_text_field = (
         (isinstance(message_payload, dict) and "content" in message_payload)
-        or ("text" in first_choice)
-        or ("output_text" in first_choice)
-        or ("text" in response_payload)
-        or ("output_text" in response_payload)
+        or any(key in first_choice for key in ("text", "output_text"))
+        or any(key in response_payload for key in ("text", "output_text"))
     )
     if not has_text_field:
         raise LLMCtlError(

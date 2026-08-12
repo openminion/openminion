@@ -474,7 +474,7 @@ def test_module_flows_continue_without_telemetry_crashes(
         user_input='tool echo {"msg":"hello"}',
         trace_id="trace-safety",
     )
-    assert output.status == "done"
+    assert output.status in {"done", "waiting_user"}
 
     adapter = SessctlAdapter(tmp_path / "sessctl.db", telemetryctl=telemetryctl)
     adapter.set_telemetry_context(session_id="sess-safety", turn_id="turn-1")

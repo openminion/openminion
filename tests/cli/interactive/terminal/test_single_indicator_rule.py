@@ -99,8 +99,8 @@ def test_turn_status_ticker_refreshes_footer_elapsed_counter() -> None:
     assert line.elapsed_seconds >= 1.0
     assert invalidations >= 2
     assert "1s" not in line.live_turn_footer()
-    assert "brain:" not in line.live_turn_footer()
-    assert "1s" in line.bottom_toolbar()
+    assert "Status:" not in line.live_turn_footer()
+    assert "1s" in line.active_status()
 
 
 def test_turn_status_ticker_seeds_missing_label_so_footer_stays_visible() -> None:
@@ -131,7 +131,7 @@ def test_turn_status_ticker_seeds_missing_label_so_footer_stays_visible() -> Non
     asyncio.run(_run())
 
     assert line.turn_status_label == "Working..."
-    assert "brain: Working..." in line.bottom_toolbar()
+    assert "Status: Working..." in line.active_status()
     assert invalidations >= 1
 
 
@@ -145,7 +145,7 @@ def test_bottom_toolbar_contains_no_responding_text_during_idle_mode() -> None:
     assert "openai/test" in text
 
 
-def test_bottom_toolbar_stays_stable_during_active_turns() -> None:
+def test_active_status_and_bottom_toolbar_stay_separate_during_turns() -> None:
     line = TerminalStatusLine()
     line.set_state(
         state="responding",
@@ -155,18 +155,17 @@ def test_bottom_toolbar_stays_stable_during_active_turns() -> None:
         cwd="/tmp",
         turn_status="Analyzing request...",
     )
-    text = line.bottom_toolbar()
-    rows = text.splitlines()
-    assert len(rows) == 2
-    assert "brain: Analyzing request..." in rows[0]
-    assert "5s" in rows[0]
-    assert "queue:" not in rows[0]
-    assert "brain:" not in rows[1]
-    assert "responding" not in text
-    assert "Esc cancel" not in text
-    assert "5.0s" not in text
-    assert "alpha" in text
-    assert "openai/test" in text
+    status = line.active_status()
+    footer = line.bottom_toolbar()
+    assert "Status: Analyzing request..." in status
+    assert "5s" in status
+    assert "queue:" not in status
+    assert "Status:" not in footer
+    assert "responding" not in footer
+    assert "Esc cancel" not in footer
+    assert "5.0s" not in footer
+    assert "alpha" in footer
+    assert "openai/test" in footer
 
 
 def test_live_turn_footer_omits_active_timer_and_hint() -> None:
@@ -182,7 +181,7 @@ def test_live_turn_footer_omits_active_timer_and_hint() -> None:
     text = line.live_turn_footer()
     rows = text.splitlines()
     assert len(rows) == 1
-    assert "brain:" not in text
+    assert "Status:" not in text
     assert "Analyzing request..." not in text
     assert "5s" not in text
     assert "status:" not in text

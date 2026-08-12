@@ -54,33 +54,23 @@ class ChatRuntimeAPI(AgentRuntimeAPI, Protocol):
         ...
 
 
-_PROPERTY_MEMBERS = {"agent_id", "session_id", "transport"}
+_PROPERTY_MEMBERS = ("agent_id", "session_id", "transport")
+_AGENT_RUNTIME_METHODS = (
+    "get_current_history",
+    "list_sessions",
+    "list_agents",
+    "list_tools",
+    "switch_session",
+    "switch_agent",
+    "new_session",
+)
 
 _REQUIRED: dict[str, tuple[str, ...]] = {
-    "agent_runtime": (
-        "agent_id",
-        "session_id",
-        "transport",
-        "get_current_history",
-        "list_sessions",
-        "list_agents",
-        "list_tools",
-        "switch_session",
-        "switch_agent",
-        "new_session",
-    ),
+    "agent_runtime": (*_PROPERTY_MEMBERS, *_AGENT_RUNTIME_METHODS),
     "chat_runtime": (
-        "agent_id",
-        "session_id",
-        "transport",
+        *_PROPERTY_MEMBERS,
         "send_message",
-        "get_current_history",
-        "list_sessions",
-        "list_agents",
-        "list_tools",
-        "switch_session",
-        "switch_agent",
-        "new_session",
+        *_AGENT_RUNTIME_METHODS,
     ),
 }
 

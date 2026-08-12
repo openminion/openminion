@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from openminion.modules.brain.loop.recursive.schemas import (
     MetaDirective,
     RLMConstraints,
@@ -259,19 +261,18 @@ def test_m3_skill_retrieval_counts_in_telemetry() -> None:
     assert total_skill >= 0  # conservative: just ensure field exists and is numeric
 
 
-def test_m3_malformed_llm_response_falls_back_to_empty_answer() -> None:
+def test_m3_malformed_llm_response_fails_closed() -> None:
     session = _Sess()
     llm = _LLM([{}])
     service = RLMService(sessctl=session, contextctl=_Ctx(), llmctl=llm)
-    resp = service.generate(
-        session_id="sess-m3-07",
-        agent_id="agt-7",
-        purpose="act",
-        query="what?",
-        budgets=RLMBudgets(max_ticks=1),
-    )
-    assert isinstance(resp.final_text, str)
-    assert resp.telemetry.ticks_used == 1
+    with pytest.raises(ValueError, match="non-final recursive tick output"):
+        service.generate(
+            session_id="sess-m3-07",
+            agent_id="agt-7",
+            purpose="act",
+            query="what?",
+            budgets=RLMBudgets(max_ticks=1),
+        )
 
 
 def test_m3_task_state_persisted_alongside_wm() -> None:

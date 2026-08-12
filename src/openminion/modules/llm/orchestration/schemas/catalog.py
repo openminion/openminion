@@ -95,14 +95,12 @@ class LLMCatalogConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_ids(self) -> "LLMCatalogConfig":
-        profile_ids = [item.id for item in self.profiles]
-        ensemble_ids = [item.id for item in self.ensembles]
-        if len(profile_ids) != len(set(profile_ids)):
-            raise ValueError(
-                "profiles.*.id must be unique"
-            )  # allow-bare-raise: pydantic @model_validator body
-        if len(ensemble_ids) != len(set(ensemble_ids)):
-            raise ValueError(
-                "ensembles.*.id must be unique"
-            )  # allow-bare-raise: pydantic @model_validator body
+        for label, identifiers in (
+            ("profiles", [item.id for item in self.profiles]),
+            ("ensembles", [item.id for item in self.ensembles]),
+        ):
+            if len(identifiers) != len(set(identifiers)):
+                raise ValueError(  # allow-bare-raise: pydantic @model_validator body
+                    f"{label}.*.id must be unique"
+                )
         return self

@@ -1,0 +1,3 @@
+EVENT_PAGE_MAX = 2000
+
+__all__ = ["EVENT_PAGE_MAX"]

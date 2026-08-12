@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -181,6 +183,13 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
 
+    runtime_tmp = tempfile.TemporaryDirectory(prefix="openminion-memory-identity-e2e-")
+    runtime_root = Path(runtime_tmp.name)
+    data_root = runtime_root / ".openminion"
+    os.environ["OPENMINION_HOME"] = str(runtime_root)
+    os.environ["OPENMINION_DATA_ROOT"] = str(data_root)
+    os.environ["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
+
     summary = SmokeSummary()
 
     # Step 1: Fixture validation
@@ -245,11 +254,9 @@ def main() -> int:
         print("=" * 60)
 
     # Exit code
-    if not summary.fixtures_ok:
-        return 2
-    if summary.failed > 0:
-        return 1
-    return 0
+    exit_code = 2 if not summary.fixtures_ok else int(summary.failed > 0)
+    runtime_tmp.cleanup()
+    return exit_code
 
 
 if __name__ == "__main__":

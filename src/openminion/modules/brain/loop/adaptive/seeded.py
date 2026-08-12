@@ -1,5 +1,4 @@
 from dataclasses import replace
-import re
 from typing import Any, cast
 
 from openminion.modules.brain.constants import (
@@ -25,7 +24,6 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.execution.lifecycle import active_mode_result
-from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.schemas.base import new_uuid
 from openminion.modules.brain.schemas.state import ActionResult
 from openminion.modules.brain.loop.tools import (
@@ -40,11 +38,6 @@ from openminion.modules.brain.loop.tools import (
 )
 from openminion.modules.llm.schemas import Message
 from openminion.modules.brain.loop.self_compaction import run_self_compaction_step
-from openminion.modules.tool.contracts.model_ids import (
-    MODEL_CODE_PATCH,
-    MODEL_FILE_EDIT,
-    MODEL_FILE_WRITE,
-)
 
 from ..services import runner_from_context
 
@@ -63,41 +56,13 @@ from .events import (
 from .termination import (
     _waiting_without_plan_can_close,
 )
-from ..tools.postprocess.rules import (
-    _looks_like_execution_preface_draft,
-    _looks_like_unexecutable_tool_payload_text,
-)
 
-_SEEDED_REPLAY_ARTIFACT_MUTATION_TOOLS = frozenset(
-    {
-        MODEL_CODE_PATCH,
-        MODEL_FILE_EDIT,
-        MODEL_FILE_WRITE,
-    }
-)
 _CONTROL_RESTRICTED_REASON_CODES = frozenset(
     {
         "confirmation_replay",
         "confirmation_replay_recovery",
         "research_iteration_fallback",
     }
-)
-_SEEDED_CONTINUATION_FILE_TOKEN_RE = re.compile(
-    r"\b[\w.-]+\.(?:py|md|toml|txt|json|yaml|yml|csv|ini|cfg)\b",
-    re.IGNORECASE,
-)
-_SEEDED_CONTINUATION_VERIFICATION_MARKERS = (
-    "pytest",
-    "tests",
-    "verify",
-    "verification",
-    "validate",
-    "validation",
-)
-_SEEDED_CONTINUATION_FINAL_ANSWER_MARKERS = (
-    "sources",
-    "changes",
-    "final answer",
 )
 
 
@@ -191,99 +156,6 @@ class ActLoopSeededMixin:
             "confirmation_replay_validation",
             "entry_tool_call",
         }
-
-    def _seeded_close_disposition_reopens_autonomous(
-        self,
-        ctx: ExecutionContext,
-        *,
-        judgment: Any,
-    ) -> bool:
-        if not self._seeded_continue_stays_autonomous(ctx):
-            return False
-        if not str(getattr(judgment, "final_answer", "") or "").strip():
-            return True
-        for command in self._seeded_commands(ctx):
-            raw_tool_name = str(getattr(command, "tool_name", "") or "").strip()
-            tool_name = (
-                normalize_tool_name_for_brain(raw_tool_name) or raw_tool_name
-            ).strip()
-            if tool_name in _SEEDED_REPLAY_ARTIFACT_MUTATION_TOOLS:
-                return True
-        return False
-
-    def _seeded_mutation_batch_should_continue_autonomously(
-        self,
-        ctx: ExecutionContext,
-        *,
-        action_result: ActionResult,
-    ) -> bool:
-        if not self._seeded_continue_stays_autonomous(ctx):
-            return False
-        original_goal = self._seeded_original_goal(ctx)
-        if not original_goal:
-            return False
-        outputs = dict(getattr(action_result, "outputs", {}) or {})
-        tool_results = [
-            item
-            for item in list(outputs.get("tool_results", []) or [])
-            if isinstance(item, dict) and bool(item.get("ok"))
-        ]
-        tool_names = {
-            str(item.get("tool_name", "") or "").strip()
-            for item in tool_results
-            if str(item.get("tool_name", "") or "").strip()
-        }
-        if not tool_names:
-            tool_names = {
-                str(getattr(command, "tool_name", "") or "").strip()
-                for command in self._seeded_commands(ctx)
-                if str(getattr(command, "tool_name", "") or "").strip()
-            }
-        if not any(
-            tool_name in _SEEDED_REPLAY_ARTIFACT_MUTATION_TOOLS
-            for tool_name in tool_names
-        ):
-            return False
-        if "exec.run" in tool_names:
-            return False
-        goal_lower = original_goal.lower()
-        mentioned_files = {
-            match.group(0)
-            for match in _SEEDED_CONTINUATION_FILE_TOKEN_RE.finditer(original_goal)
-        }
-        needs_verification = any(
-            marker in goal_lower for marker in _SEEDED_CONTINUATION_VERIFICATION_MARKERS
-        )
-        needs_structured_final_answer = any(
-            marker in goal_lower for marker in _SEEDED_CONTINUATION_FINAL_ANSWER_MARKERS
-        )
-        return (
-            len(mentioned_files) > 1
-            or needs_verification
-            or needs_structured_final_answer
-        )
-
-    def _seeded_final_text_is_unexecutable_tool_envelope(self, text: str) -> bool:
-        return _looks_like_unexecutable_tool_payload_text(
-            text
-        ) or _looks_like_execution_preface_draft(text)
-
-    def _seeded_final_text_retry_available(
-        self,
-        ctx: ExecutionContext,
-        *,
-        max_retries: int = 4,
-    ) -> bool:
-        module_state = dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {})
-        retry_state = module_state.get("seeded_final_text_autonomous_retry")
-        if not isinstance(retry_state, dict):
-            retry_state = {}
-        count = int(retry_state.get("count", 0) or 0)
-        if count >= max_retries:
-            return False
-        module_state["seeded_final_text_autonomous_retry"] = {"count": count + 1}
-        ctx.state.module_state = module_state
-        return True
 
     def _seeded_replay_initial_state(
         self, ctx: ExecutionContext
@@ -414,44 +286,12 @@ class ActLoopSeededMixin:
         ctx: ExecutionContext,
         loop_outcome: AdaptiveToolLoopOutcome,
     ) -> str:
-        tool_results = [
-            item
-            for item in list(
-                getattr(getattr(loop_outcome, "state", None), "scratchpad", {}).get(
-                    "adaptive.tool_results", []
-                )
-                or []
-            )
-            if isinstance(item, dict) and bool(item.get("ok"))
-        ]
-        successful_tools = [
-            str(item.get("tool_name", "") or "").strip()
-            for item in tool_results
-            if str(item.get("tool_name", "") or "").strip()
-        ]
-        if not successful_tools:
-            successful_tools = [
-                str(getattr(command, "tool_name", "") or "").strip()
-                for command in self._seeded_commands(ctx)
-                if str(getattr(command, "tool_name", "") or "").strip()
-            ]
-        if not successful_tools:
-            return ""
-        unique_tools = tuple(dict.fromkeys(successful_tools))
+        del loop_outcome
         guidance = (
             "Continue from the current task state. Do not restart from scratch or "
             "repeat already successful tool calls unless you are correcting a "
             "specific mistake."
         )
-        if unique_tools == ("file.write",):
-            guidance += (
-                " Recent progress created or updated files, so inspect or verify the "
-                "current project state before claiming success."
-            )
-        elif unique_tools:
-            guidance += (
-                " Build on the completed tool work before choosing the next action."
-            )
         guidance += " Only give a final answer after the task is actually satisfied."
         original_goal = self._seeded_original_goal(ctx)
         if original_goal:
@@ -460,18 +300,13 @@ class ActLoopSeededMixin:
 
     def _seeded_original_goal(self, ctx: ExecutionContext) -> str:
         """Return the user task that seeded a confirmation replay."""
-        pending_goal = str(
-            getattr(ctx.state, "pending_confirmation_goal", "") or ""
-        ).strip()
-        pending_input = str(
-            getattr(ctx.state, "pending_confirmation_last_user_input", "") or ""
-        ).strip()
+        pending_goal = str(ctx.state.pending_confirmation_goal or "").strip()
+        pending_input = ctx.state.pending_confirmation_last_user_input.strip()
         return (
             pending_goal
             or pending_input
-            or str(getattr(ctx.state, "goal", "") or "").strip()
-            or str(getattr(ctx.decision, "objective", "") or "").strip()
-            or str(getattr(ctx.state, "last_user_input", "") or "").strip()
+            or str(ctx.state.goal or "").strip()
+            or ctx.state.last_user_input.strip()
         )
 
     def _execute_seeded_commands(self: Any, ctx: ExecutionContext) -> ExecutionResult:
@@ -595,11 +430,8 @@ class ActLoopSeededMixin:
         follow_up = recovery_message
         if original_goal:
             follow_up = f"{follow_up}\n\nContinue the original task: {original_goal}"
-        try:
-            ctx.decision._seeded_commands = []
-            ctx.decision.reason_code = "confirmation_replay_recovery"
-        except Exception:  # noqa: BLE001
-            pass
+        ctx.decision._seeded_commands = []
+        ctx.decision.reason_code = "confirmation_replay_recovery"
         recovery_ctx = replace(ctx, user_input=follow_up)
         ctx.state.post_action_user_message = ""
         ctx.state.last_result = action_result
@@ -634,18 +466,15 @@ class ActLoopSeededMixin:
             summary=f"{_public_act_tag()} completed.",
             outputs=telemetry_payload,
         )
-        try:
-            action_result = action_result.model_copy(
-                update={
-                    "outputs": {
-                        **dict(getattr(action_result, "outputs", {}) or {}),
-                        **telemetry_payload,
-                    }
-                },
-                deep=True,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        action_result = action_result.model_copy(
+            update={
+                "outputs": {
+                    **action_result.outputs,
+                    **telemetry_payload,
+                }
+            },
+            deep=True,
+        )
         ctx.state.last_result = action_result
         continuation_guidance = self._seeded_autonomous_continuation_guidance(
             ctx=ctx, loop_outcome=loop_outcome
@@ -691,30 +520,12 @@ class ActLoopSeededMixin:
                 state=ctx.state,
                 action_result=action_result,
             )
-        if self._seeded_mutation_batch_should_continue_autonomously(
-            ctx,
-            action_result=action_result,
-        ):
-            ctx.state.post_action_user_message = continuation_guidance
-            return cast(
-                ExecutionResult,
-                self._autonomous_seeded_result(ctx, action_result=action_result),
-            )
         judgment = ctx.evaluate_turn_closure(
             action_result=action_result,
             completion_reason="act_seeded_commands_completed",
         )
         disposition = ctx.apply_closure_judgment(judgment=judgment)
         if disposition == BRAIN_DISPOSITION_CLOSE:
-            if self._seeded_close_disposition_reopens_autonomous(
-                ctx,
-                judgment=judgment,
-            ):
-                ctx.state.post_action_user_message = continuation_guidance
-                return cast(
-                    ExecutionResult,
-                    self._autonomous_seeded_result(ctx, action_result=action_result),
-                )
             ctx.extract_success_memories(
                 action_result=action_result,
                 judgment=judgment,

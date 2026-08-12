@@ -1,6 +1,7 @@
 """Durable task-run facts and projections."""
 
 from .constants import RUN_STATUS_DEFAULT_SCAN_LIMIT
+from .status import Run, RunEvent, RunStatus, RunSummary, RunTerminalState
 from .status import (
     ATTACH_ROLE_OBSERVER,
     ATTACH_ROLE_WRITER,
@@ -18,6 +19,7 @@ from .status import (
     RUN_STATE_WAITING_TOOL,
     RUN_TERMINAL_BLOCKED,
     RUN_TERMINAL_BUDGET_EXHAUSTED,
+    RUN_TERMINAL_CANCELLED,
     RUN_TERMINAL_COMPLETED,
     RUN_TERMINAL_FAILED,
     RUN_TERMINAL_NEEDS_HUMAN,
@@ -31,12 +33,7 @@ from .status import (
     THREAD_STATE_FAILED,
     THREAD_STATE_RESPONSE_UNDELIVERED,
     THREAD_STATE_SETTLED,
-    Run,
     RunCheckpoint,
-    RunEvent,
-    RunStatus,
-    RunSummary,
-    RunTerminalState,
     ThreadLifecycleProjection,
     ThreadRoutingDecision,
     append_lifecycle_event,
@@ -45,6 +42,7 @@ from .status import (
     is_run_terminal_state,
     list_session_run_events,
     list_session_runs,
+    resolve_invocation_terminal,
     resolve_run_terminal_persistence,
     resolve_thread_lifecycle,
     resolve_thread_routing_decision,
@@ -68,6 +66,7 @@ __all__ = [
     "RUN_STATUS_DEFAULT_SCAN_LIMIT",
     "RUN_TERMINAL_BLOCKED",
     "RUN_TERMINAL_BUDGET_EXHAUSTED",
+    "RUN_TERMINAL_CANCELLED",
     "RUN_TERMINAL_COMPLETED",
     "RUN_TERMINAL_FAILED",
     "RUN_TERMINAL_NEEDS_HUMAN",
@@ -95,6 +94,7 @@ __all__ = [
     "is_run_terminal_state",
     "list_session_run_events",
     "list_session_runs",
+    "resolve_invocation_terminal",
     "resolve_run_terminal_persistence",
     "resolve_thread_lifecycle",
     "resolve_thread_routing_decision",

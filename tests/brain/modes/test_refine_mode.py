@@ -2,7 +2,7 @@
 
 Covers RFM-01 (schemas), RFM-02 (characterization), RFM-03 (payload extraction),
 RFM-04 (initialize), RFM-05 (execute_step / child dispatch), RFM-06 (judge_step /
-quality gate / stall detection), RFM-07 (finalize / full loop), RFM-08 (registry).
+quality gate), RFM-07 (finalize / full loop), RFM-08 (registry).
 """
 
 from __future__ import annotations
@@ -402,7 +402,7 @@ def test_refine_mode_decision_descriptions_contains_refine() -> None:
     assert REFINE_MODE not in descriptions
 
 
-# Payload extraction and fallback chain
+# Payload extraction
 
 
 def test_target_from_refine_target_field() -> None:
@@ -411,52 +411,10 @@ def test_target_from_refine_target_field() -> None:
     assert mode._target_from_context(ctx) == "handler.py"
 
 
-def test_target_falls_back_to_objective() -> None:
+def test_target_does_not_fall_back_to_other_prose() -> None:
     ctx, _ = _ctx(refine_target="", objective="fallback-objective.py")
     mode = RefineMode()
-    assert mode._target_from_context(ctx) == "fallback-objective.py"
-
-
-def test_target_falls_back_to_state_goal() -> None:
-    working_state = _state(goal="state-goal-target.py")
-    ctx = ExecutionContext(
-        state=working_state,
-        decision=SimpleNamespace(
-            mode=REFINE_MODE,
-            refine_target="",
-            refine_criteria=[],
-            objective="",
-        ),
-        user_input="",
-        logger=SimpleNamespace(emit=lambda *a, **kw: None),
-        options=SimpleNamespace(),
-        llm_adapter=None,
-        command_executor=SimpleNamespace(),
-        _services=_FakeServices(),
-    )
-    mode = RefineMode()
-    assert mode._target_from_context(ctx) == "state-goal-target.py"
-
-
-def test_target_falls_back_to_user_input() -> None:
-    working_state = _state(goal="")
-    ctx = ExecutionContext(
-        state=working_state,
-        decision=SimpleNamespace(
-            mode=REFINE_MODE,
-            refine_target="",
-            refine_criteria=[],
-            objective="",
-        ),
-        user_input="user-input-target.py",
-        logger=SimpleNamespace(emit=lambda *a, **kw: None),
-        options=SimpleNamespace(),
-        llm_adapter=None,
-        command_executor=SimpleNamespace(),
-        _services=_FakeServices(),
-    )
-    mode = RefineMode()
-    assert mode._target_from_context(ctx) == "user-input-target.py"
+    assert mode._target_from_context(ctx) == ""
 
 
 def test_missing_target_fails_validate() -> None:
@@ -546,7 +504,7 @@ def test_iteration_budget_uses_remaining_iterations() -> None:
 # Execute step / child dispatch
 
 
-def test_execute_step_returns_improvement_text() -> None:
+def test_execute_step_fails_closed_without_runner() -> None:
     ctx, services = _ctx(refine_target="handler.py")
     mode = RefineMode()
     mode.initialize(ctx)
@@ -555,8 +513,8 @@ def test_execute_step_returns_improvement_text() -> None:
 
     step = WorkflowStep(value="refine_iteration_1", index=0, total=3)
     result = mode.execute_step(ctx, step)
-    assert result.metadata.get("improvement")
-    assert services.plan_calls  # fell back to ctx.plan()
+    assert result.metadata["improvement"] == ""
+    assert services.plan_calls == []
 
 
 def test_execute_step_child_state_isolation() -> None:
@@ -574,19 +532,7 @@ def test_execute_step_child_state_isolation() -> None:
     assert child_state.goal == "improve x.py"
 
 
-def test_execute_step_recursive_refine_blocked() -> None:
-    # When runner is None, falls back to ctx.plan() — no recursion possible.
-    ctx, services = _ctx(refine_target="handler.py")
-    mode = RefineMode()
-    mode.initialize(ctx)
-
-    step = WorkflowStep(value="refine_iteration_1", index=0, total=3)
-    result = mode.execute_step(ctx, step)
-    assert result.metadata.get("improvement")
-    assert len(services.plan_calls) == 1
-
-
-# Judge step / quality gate / stall detection
+# Judge step / quality gate
 
 
 _GATE_PASS_JSON = json.dumps(
@@ -658,7 +604,7 @@ def test_quality_gate_fail_continues() -> None:
     assert mode._round_history[0].passed_gate is False
 
 
-def test_stall_detection_closes() -> None:
+def test_repeated_issues_remain_model_owned() -> None:
     stall_json = json.dumps(
         {
             "action_taken": "Attempted fix",
@@ -682,8 +628,7 @@ def test_stall_detection_closes() -> None:
     step = WorkflowStep(value="refine_iteration_2", index=1, total=3)
     step_result = StepResult(step=step, metadata={"improvement": "Attempted fix"})
     judgment = mode.judge_step(ctx, step, step_result)
-    assert judgment.disposition == "close"
-    assert judgment.metadata.get("stall_detected") is True
+    assert judgment.disposition == "continue"
 
 
 def test_stall_detection_does_not_fire_on_different_issues() -> None:
@@ -710,7 +655,6 @@ def test_stall_detection_does_not_fire_on_different_issues() -> None:
     step_result = StepResult(step=step, metadata={"improvement": "Fixed docstrings"})
     judgment = mode.judge_step(ctx, step, step_result)
     assert judgment.disposition == "continue"
-    assert judgment.metadata.get("stall_detected") is None
 
 
 def test_parse_failure_returns_fallback_round() -> None:
@@ -768,10 +712,9 @@ def test_finalize_produces_summary() -> None:
     assert "Quality gate passed" in result.message
 
 
-def test_finalize_reports_stall_reason() -> None:
+def test_finalize_reports_iteration_cap_for_repeated_issues() -> None:
     ctx, _ = _ctx()
     mode = RefineMode()
-    mode._termination_reason = "stall"
     mode._round_history = [
         RefinementRound(
             iteration=1,
@@ -790,7 +733,7 @@ def test_finalize_reports_stall_reason() -> None:
     ]
     result = mode.finalize(ctx)
     assert result.status == "done"
-    assert "Refinement stalled" in result.message
+    assert "Iteration cap reached" in result.message
     assert "Outstanding issues: stubborn bug" in result.message
 
 
@@ -893,8 +836,7 @@ def test_full_loop_iteration_cap_reached() -> None:
     assert "issue C" in result.message
 
 
-def test_full_loop_stall_forces_early_close() -> None:
-    """Identical remaining_issues → stall → early close before cap."""
+def test_full_loop_repeated_issues_run_to_iteration_cap() -> None:
     round1 = json.dumps(
         {
             "action_taken": "Attempt 1",
@@ -918,9 +860,8 @@ def test_full_loop_stall_forces_early_close() -> None:
     mode = RefineMode()
     result = mode.execute(ctx)
     assert result.status == "done"
-    assert len(mode._round_history) == 2
-    assert "Refinement stalled" in result.message
-    assert "stubborn bug" in result.message
+    assert len(mode._round_history) == 3
+    assert "Iteration cap reached" in result.message
 
 
 def test_full_loop_missing_target_validate_rejects() -> None:

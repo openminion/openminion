@@ -60,6 +60,32 @@ def _append_retry_system_instruction(
     return result
 
 
+def _openai_stream_payload(
+    request: LLMRequest,
+    *,
+    model: str,
+    request_compat: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": _messages_openai_like(
+            request,
+            include_fallback_instruction=False,
+            collapse_system_messages=request_compat.collapse_system_messages,
+            extra_system_instruction=request_compat.native_tool_only_instruction,
+            tool_name_overrides=None,
+        ),
+        "stream": True,
+    }
+    if request.temperature is not None:
+        payload["temperature"] = request.temperature
+    if request.max_output_tokens is not None and request.max_output_tokens > 0:
+        payload["max_tokens"] = request.max_output_tokens
+    if request.stop:
+        payload["stop"] = request.stop
+    return payload
+
+
 class OpenAIProvider:
     name = "openai"
     contract_version = LLM_RESPONSE_INTERFACE_VERSION
@@ -74,7 +100,7 @@ class OpenAIProvider:
         provider_identity: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None,
         env: Any,
-    ):
+    ) -> Any:
         return resolve_behavior_profile(
             provider=self.name,
             model=model,
@@ -92,11 +118,9 @@ class OpenAIProvider:
         behavior_profile = self._resolve_behavior_profile(
             model=model,
             base_url=base_url,
-            provider_identity=(
-                config.get("provider_identity") if isinstance(config, dict) else None
-            ),
+            provider_identity=config.get("provider_identity"),
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         request_compat = resolve_openai_request_compat(
             provider_identity=(
@@ -179,7 +203,7 @@ class OpenAIProvider:
             ),
             "provider_name": self.name,
             "trace_metadata": request.metadata,
-            "env": config.get("__env__") if isinstance(config, dict) else None,
+            "env": config.get("__env__"),
         }
         while True:
             try:
@@ -265,7 +289,6 @@ class OpenAIProvider:
             )
             if tool_calls and tool_call_resolution.selected_source != "native":
                 text = ""
-                raw_text = ""
                 text_source = tool_call_resolution.selected_source
 
             if text or tool_calls:
@@ -283,13 +306,6 @@ class OpenAIProvider:
                 )
                 continue
 
-            # Classify into explicit error codes; CER-04: Tool-call-only is valid
-            if not first_choice or not message_payload:
-                raise LLMCtlError(
-                    "MALFORMED_PAYLOAD",
-                    f"{self.name} response has malformed or missing payload structure",
-                    details={"retryable": False},
-                )
             raise LLMCtlError(
                 "EMPTY_PAYLOAD",
                 f"{self.name} response did not include text or tool calls",
@@ -406,11 +422,9 @@ class OpenAIProvider:
         behavior_profile = self._resolve_behavior_profile(
             model=model,
             base_url=base_url,
-            provider_identity=(
-                config.get("provider_identity") if isinstance(config, dict) else None
-            ),
+            provider_identity=config.get("provider_identity"),
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         request_compat = resolve_openai_request_compat(
             provider_identity=(
@@ -421,28 +435,11 @@ class OpenAIProvider:
             request_dialect=behavior_profile.request_dialect,
         )
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": _messages_openai_like(
-                request,
-                include_fallback_instruction=False,
-                collapse_system_messages=request_compat.collapse_system_messages,
-                extra_system_instruction=request_compat.native_tool_only_instruction,
-                tool_name_overrides=None,
-            ),
-            "stream": True,
-        }
-        if request.temperature is not None:
-            payload["temperature"] = request.temperature
-        if request.max_output_tokens is not None:
-            try:
-                max_tokens = int(request.max_output_tokens)
-                if max_tokens > 0:
-                    payload["max_tokens"] = max_tokens
-            except (TypeError, ValueError):
-                pass
-        if request.stop:
-            payload["stop"] = request.stop
+        payload = _openai_stream_payload(
+            request,
+            model=model,
+            request_compat=request_compat,
+        )
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -452,6 +449,7 @@ class OpenAIProvider:
         timeout_seconds = _resolve_timeout_seconds(config, metadata=request.metadata)
 
         try:
+            stream_event_type = "message"
             for line in iter_sse_post_lines(
                 url=f"{base_url}/chat/completions",
                 payload=payload,
@@ -460,6 +458,9 @@ class OpenAIProvider:
                 provider_name=self.name,
                 trace_metadata=request.metadata,
             ):
+                if line.startswith("event:"):
+                    stream_event_type = line[len("event:") :].strip() or "message"
+                    continue
                 if not line.startswith("data:"):
                     continue
                 data_str = line[len("data:") :].strip()
@@ -467,8 +468,19 @@ class OpenAIProvider:
                     break
                 try:
                     chunk = json.loads(data_str)
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as exc:
+                    yield LLMStreamEvent(
+                        type="error",
+                        error=ResponseError(
+                            code="PROVIDER_ERROR",
+                            message="openai stream malformed event payload",
+                            details={
+                                "stream_event_type": stream_event_type,
+                                "error": str(exc),
+                            },
+                        ),
+                    )
+                    break
                 choices = chunk.get("choices")
                 if not isinstance(choices, list) or not choices:
                     continue

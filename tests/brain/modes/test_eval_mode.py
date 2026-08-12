@@ -315,10 +315,9 @@ def test_eval_criterion_valid() -> None:
     assert c.evidence == ""
 
 
-def test_eval_criterion_normalizes_verdict_aliases() -> None:
-    assert EvalCriterion(name="robustness", verdict="PASS").verdict == "pass"
-    assert EvalCriterion(name="robustness", verdict="warning").verdict == "partial"
-    assert EvalCriterion(name="robustness", verdict="FAILED").verdict == "fail"
+def test_eval_criterion_rejects_verdict_aliases() -> None:
+    with pytest.raises(ValidationError):
+        EvalCriterion(name="robustness", verdict="PASS")
 
 
 def test_eval_criterion_rejects_missing_name() -> None:
@@ -337,15 +336,9 @@ def test_eval_judgment_valid() -> None:
     assert j.criteria == []
 
 
-def test_eval_judgment_normalizes_overall_verdict_aliases() -> None:
-    assert EvalJudgment(target="x.py", overall_verdict="PASS").overall_verdict == "pass"
-    assert (
-        EvalJudgment(target="x.py", overall_verdict="mixed").overall_verdict
-        == "partial"
-    )
-    assert (
-        EvalJudgment(target="x.py", overall_verdict="FAILED").overall_verdict == "fail"
-    )
+def test_eval_judgment_rejects_overall_verdict_aliases() -> None:
+    with pytest.raises(ValidationError):
+        EvalJudgment(target="x.py", overall_verdict="PASS")
 
 
 def test_eval_judgment_rejects_out_of_range_confidence() -> None:
@@ -405,7 +398,7 @@ def test_eval_mode_appears_in_available_modes() -> None:
     assert EVAL_MODE not in available_routes()
 
 
-# Payload extraction and fallback chain
+# Payload extraction
 
 
 def test_target_from_eval_target_field() -> None:
@@ -414,53 +407,10 @@ def test_target_from_eval_target_field() -> None:
     assert mode._target_from_context(ctx) == "handler.py"
 
 
-def test_target_falls_back_to_objective() -> None:
-    # eval_target is empty, falls back to objective.
+def test_target_does_not_fall_back_to_other_prose() -> None:
     ctx, _ = _ctx(eval_target="", objective="fallback-objective.py")
     mode = EvalMode()
-    assert mode._target_from_context(ctx) == "fallback-objective.py"
-
-
-def test_target_falls_back_to_state_goal() -> None:
-    working_state = _state(goal="state-goal-target.py")
-    ctx = ExecutionContext(
-        state=working_state,
-        decision=SimpleNamespace(
-            mode=EVAL_MODE,
-            eval_target="",
-            eval_criteria=[],
-            objective="",
-        ),
-        user_input="",
-        logger=SimpleNamespace(emit=lambda *a, **kw: None),
-        options=SimpleNamespace(),
-        llm_adapter=None,
-        command_executor=SimpleNamespace(),
-        _services=_FakeServices(),
-    )
-    mode = EvalMode()
-    assert mode._target_from_context(ctx) == "state-goal-target.py"
-
-
-def test_target_falls_back_to_user_input() -> None:
-    working_state = _state(goal="")
-    ctx = ExecutionContext(
-        state=working_state,
-        decision=SimpleNamespace(
-            mode=EVAL_MODE,
-            eval_target="",
-            eval_criteria=[],
-            objective="",
-        ),
-        user_input="user-input-target.py",
-        logger=SimpleNamespace(emit=lambda *a, **kw: None),
-        options=SimpleNamespace(),
-        llm_adapter=None,
-        command_executor=SimpleNamespace(),
-        _services=_FakeServices(),
-    )
-    mode = EvalMode()
-    assert mode._target_from_context(ctx) == "user-input-target.py"
+    assert mode._target_from_context(ctx) == ""
 
 
 def test_missing_target_fails_validate() -> None:
@@ -502,12 +452,12 @@ def test_criteria_empty_when_not_provided() -> None:
 # Evidence gathering
 
 
-def test_evidence_gathering_returns_non_empty_text() -> None:
+def test_evidence_gathering_fails_closed_without_runner() -> None:
     ctx, services = _ctx(eval_target="handler.py")
     mode = EvalMode()
     evidence = mode._gather_evidence(ctx, target="handler.py", criteria=["style"])
-    assert evidence  # non-empty
-    assert services.plan_calls  # fell back to ctx.plan()
+    assert evidence == ""
+    assert services.plan_calls == []
 
 
 def test_evidence_gathering_child_state_isolation() -> None:
@@ -523,18 +473,6 @@ def test_evidence_gathering_child_state_isolation() -> None:
     assert child_state.task_backed_task_id is None
     assert child_state.pending_jobs == []
     assert child_state.step_outputs == []
-
-
-def test_recursive_eval_blocked() -> None:
-    # When the child decision would be "eval", it must be replaced.
-    # We verify by checking the mode falls back to ctx.plan() when runner is None.
-    ctx, services = _ctx(eval_target="handler.py")
-    mode = EvalMode()
-    # runner is None → falls back to ctx.plan() (no recursion possible)
-    evidence = mode._gather_evidence(ctx, target="handler.py", criteria=[])
-    assert evidence
-    # plan was called exactly once for the evidence phase
-    assert len(services.plan_calls) == 1
 
 
 # Judgment parsing
@@ -582,13 +520,13 @@ def test_judge_uses_structured_llm_when_runner_available() -> None:
         llm_api=_StructuredLLM(
             payload={
                 "target": "ignored.py",
-                "overall_verdict": "PASS",
+                "overall_verdict": "pass",
                 "summary": "All criteria met.",
                 "confidence": 0.91,
                 "criteria": [
                     {
                         "name": "quality",
-                        "verdict": "FAILED",
+                        "verdict": "fail",
                         "evidence": "missing tests",
                     }
                 ],
@@ -628,7 +566,7 @@ def test_judge_strips_markdown_fences() -> None:
     assert judgment.overall_verdict == "pass"
 
 
-def test_judge_normalizes_verdict_values() -> None:
+def test_judge_fails_closed_on_verdict_aliases() -> None:
     raw = json.dumps(
         {
             "overall_verdict": "WARNING",
@@ -642,7 +580,7 @@ def test_judge_normalizes_verdict_values() -> None:
     mode = EvalMode()
     judgment = mode._judge(ctx, target="x.py", criteria=[], evidence="")
     assert judgment.overall_verdict == "partial"
-    assert [criterion.verdict for criterion in judgment.criteria] == ["fail", "pass"]
+    assert judgment.criteria == []
 
 
 def test_judge_pins_requested_target_over_model_target() -> None:

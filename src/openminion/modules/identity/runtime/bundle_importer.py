@@ -1,6 +1,6 @@
-from dataclasses import dataclass
 import re
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 from openminion.modules.identity.runtime.defaults import (
     default_mission,
@@ -50,7 +50,7 @@ def parse_bundle_documents(
 
     for document in documents:
         normalized = _normalize_path(document.relative_path)
-        content = str(document.content or "")
+        content = document.content
         if normalized == "agent.md":
             agent_md = content
             continue
@@ -81,7 +81,7 @@ def parse_bundle_documents(
 
 def split_markdown_sections(markdown: str) -> dict[str, str]:
     """Split markdown by H2 headings into a lowercase-section map."""
-    text = str(markdown or "")
+    text = markdown
     matches = list(_HEADING_RE.finditer(text))
     if not matches:
         return {}
@@ -96,7 +96,7 @@ def split_markdown_sections(markdown: str) -> dict[str, str]:
 
 def parse_bullets(value: str) -> tuple[str, ...]:
     """Extract markdown bullet lines; fallback to normalized paragraph if no bullets."""
-    text = str(value or "").strip()
+    text = value.strip()
     if not text:
         return ()
     bullets: list[str] = []
@@ -158,7 +158,7 @@ def build_profile_from_parsed_bundle(
     return AgentProfile(
         agent_id=normalize_text(agent_id),
         display_name=normalize_text(display_name or agent_id),
-        profile_revision=max(1, int(profile_revision)),
+        profile_revision=max(1, profile_revision),
         role=RoleSpec(
             mission=mission,
             responsibilities=list(parsed.responsibilities + parsed.skills),
@@ -182,7 +182,7 @@ def build_profile_from_parsed_bundle(
 
 
 def _normalize_path(path: str) -> str:
-    return str(path or "").strip().replace("\\", "/").lower().lstrip("./")
+    return path.strip().replace("\\", "/").lower().lstrip("./")
 
 
 def _skill_name_from_path(normalized_path: str) -> str:
@@ -199,8 +199,6 @@ def _skill_responsibility(*, skill_name: str, summary: str) -> str:
 
 
 def _compose_tone(voice: tuple[str, ...]) -> str:
-    if not voice:
-        return DEFAULT_TONE
     normalized = [
         normalize_text(item).rstrip(".") for item in voice if normalize_text(item)
     ]

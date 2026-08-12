@@ -99,7 +99,7 @@ def test_storage_cli_plan_and_verify_cover_tier3_modules(
 
 
 @pytest.mark.postgres
-def test_postgres_memory_search_end_to_end() -> None:
+def test_postgres_memory_search_end_to_end(tmp_path: Path) -> None:
     postgres_url = str(os.getenv("OPENMINION_TEST_POSTGRES_URL", "")).strip()
     if not postgres_url:
         pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
@@ -111,7 +111,7 @@ def test_postgres_memory_search_end_to_end() -> None:
     try:
         store = PostgresMemoryStore(
             engine,
-            database_path=Path.cwd() / ".openminion-memory-postgres-e2e",
+            database_path=tmp_path / ".openminion" / "memory" / "postgres-e2e.db",
         )
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         for idx in range(10):

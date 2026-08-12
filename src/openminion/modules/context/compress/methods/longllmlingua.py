@@ -66,7 +66,6 @@ class LongLLMLinguaCompressor:
                 method_meta={"method_id": METHOD_ID, "version": _VERSION},
             )
 
-        # Segment blocks and rank by mean retrieval score.
         segments = self._segment(block_list)
         retained_blocks = self._rank_and_prune(segments)
 
@@ -83,24 +82,19 @@ class LongLLMLinguaCompressor:
         )
 
     def _segment(self, blocks: list[InputBlock]) -> list[list[InputBlock]]:
-        segments = []
-        for i in range(0, len(blocks), self._segment_size):
-            segments.append(blocks[i : i + self._segment_size])
-        return segments
+        return [
+            blocks[index : index + self._segment_size]
+            for index in range(0, len(blocks), self._segment_size)
+        ]
 
     def _rank_and_prune(self, segments: list[list[InputBlock]]) -> list[InputBlock]:
-        if not segments:
-            return []
-
         def segment_score(seg: list[InputBlock]) -> float:
             total = sum(float(b.meta.get("retrieval_score", 0.0)) for b in seg)
             return total / len(seg)
 
         scored = sorted(segments, key=segment_score, reverse=True)
-        # Keep top half of segments (minimum 1).
         keep_n = max(1, (len(scored) + 1) // 2)
-        kept_segments = scored[:keep_n]
-        # Flatten and preserve original order (by block_id).
-        all_blocks = [b for seg in kept_segments for b in seg]
-        all_blocks.sort(key=lambda b: b.block_id)
-        return all_blocks
+        return sorted(
+            (block for segment in scored[:keep_n] for block in segment),
+            key=lambda block: block.block_id,
+        )

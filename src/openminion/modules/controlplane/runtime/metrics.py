@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Callable, Iterable, Mapping
 
 from .audit import AuditEvent
 
@@ -78,9 +78,9 @@ class MetricsRegistry:
 
     def render_prometheus(self) -> bytes:
         lines: list[str] = []
-        for name, labels, value in self._iter_samples(self.counters.items()):
+        for (name, labels), value in sorted(self.counters.items()):
             lines.append(f"{name}{_format_labels(labels)} {value:g}")
-        for name, labels, value in self._iter_samples(self.gauges.items()):
+        for (name, labels), value in sorted(self.gauges.items()):
             lines.append(f"{name}{_format_labels(labels)} {value:g}")
         for (name, labels), values in sorted(self.histograms.items()):
             lines.append(f"{name}_count{_format_labels(labels)} {len(values):g}")
@@ -93,13 +93,6 @@ class MetricsRegistry:
             "gauges": len(self.gauges),
             "histograms": len(self.histograms),
         }
-
-    @staticmethod
-    def _iter_samples(
-        samples: Iterable[tuple[tuple[str, tuple[tuple[str, str], ...]], float]],
-    ) -> list[tuple[str, tuple[tuple[str, str], ...], float]]:
-        return [(name, labels, value) for (name, labels), value in sorted(samples)]
-
 
 class MetricsAuditSink:
     def __init__(self, registry: MetricsRegistry) -> None:

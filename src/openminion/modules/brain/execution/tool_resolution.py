@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.tool.runtime.argument_repair import (
+    synthesize_simple_tool_arguments,
     tool_family_for_argument_repair,
 )
 from openminion.modules.tool.contracts.model_ids import (
@@ -69,7 +70,7 @@ def resolve_forced_tool_name(
     if forced_tools:
         candidates: list[str] = []
         for name in forced_tools:
-            token = str(name or "").strip()
+            token = name.strip()
             if not token:
                 continue
             normalized = normalize_tool_name_for_brain(token)
@@ -111,10 +112,8 @@ def resolve_capability_tool_fallback(
     category: str,
     available_tools: set[str],
 ) -> str | None:
-    normalized = str(category or "").strip().lower()
-    available = {
-        str(item or "").strip() for item in available_tools if str(item or "").strip()
-    }
+    normalized = category.strip().lower()
+    available = {item.strip() for item in available_tools if item.strip()}
 
     if not available:
         return None
@@ -159,12 +158,17 @@ def build_forced_tool_command(
     user_input: str,
     tool_name: str,
 ) -> ToolCommand | None:
-    normalized_tool_name = normalize_tool_name_for_brain(tool_name) or str(tool_name)
-    lower_name = str(normalized_tool_name).lower()
+    normalized_tool_name = normalize_tool_name_for_brain(tool_name) or tool_name
+    lower_name = normalized_tool_name.lower()
     family = tool_family_for_argument_repair(normalized_tool_name)
     args: dict[str, Any] | None = None
     if family in {MODEL_TIME, MODEL_LOCATION, MODEL_HOST_METRICS}:
         args = {}
+    elif family == MODEL_WEATHER:
+        args = synthesize_simple_tool_arguments(
+            tool_name=normalized_tool_name,
+            user_input=user_input,
+        )
     elif lower_name == MODEL_EXEC_RUN:
         return None
     elif lower_name == "fetch.providers":
@@ -193,8 +197,6 @@ def build_forced_tool_command(
 
 
 def available_tool_names(runner: "BrainRunner") -> set[str]:
-    """Return the set of tool names available to the brain."""
-
     return RunnerToolCatalog(runner).list_tool_names()
 
 

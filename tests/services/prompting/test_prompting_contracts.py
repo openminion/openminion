@@ -227,6 +227,7 @@ def test_decision_prompt_fragments_preserve_current_contract() -> None:
     )
     assert "entry_response_rule" in DECIDE_STYLE_OVERRIDES
     assert "clarify(question=...)" in DECIDE_STYLE_OVERRIDES["entry_clarify_rule"]
+    assert "optional tool arguments" in DECIDE_STYLE_OVERRIDES["entry_clarify_rule"]
     assert fixed_profile_rewrites("full") == {
         "entry_fixed_profile_rule": (
             "Runtime already resolved the working act profile to 'full'. Work within "

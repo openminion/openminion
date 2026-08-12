@@ -79,7 +79,7 @@ def _ctx(*, ticks: int = 5, time_ms: int = 10_000) -> ExecutionContext:
             answer="ok",
         ),
         user_input="go",
-        logger=SimpleNamespace(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
         options=SimpleNamespace(),
         llm_adapter=None,
         command_executor=SimpleNamespace(),

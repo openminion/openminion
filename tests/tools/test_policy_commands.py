@@ -72,6 +72,17 @@ def test_allowlist_permits_allowed_command(policy_allowlist):
     assert exec_name == "git"
 
 
+def test_default_allowlist_permits_ssh_command(policy_allowlist):
+    exec_name = policy_allowlist.ensure_command_allowed(
+        ["ssh", "example-host", "uptime"]
+    )
+    assert exec_name == "ssh"
+
+
+def test_default_allowlist_permits_identity_inspection(policy_allowlist):
+    assert policy_allowlist.ensure_command_allowed(["whoami"]) == "whoami"
+
+
 def test_preflight_denies_unallowlisted_exec_before_confirmation(tmp_path):
     policy = _exec_policy_for_preflight(tmp_path)
 

@@ -54,13 +54,10 @@ def _token_severity(severity: str) -> StyleToken:
     return StyleToken.SYSTEM
 
 
-def _join_rows(*rows: str) -> str:
-    return "\n".join(row for row in rows if row)
-
-
 class TerminalStatusLine:
     def __init__(self) -> None:
         self.state: str = "idle"
+        self.status_key: str = ""
         self.elapsed_seconds: float = 0.0
         self.tool_name: str = ""
         self.usage_summary: str = ""
@@ -76,9 +73,13 @@ class TerminalStatusLine:
         self.tokens_severity: str = "normal"
         self.queued_count: int = 0
         self._refresh_callback: Callable[[], None] | None = None
+        self._activity_callback: Callable[[str], None] | None = None
 
     def set_refresh_callback(self, callback: Callable[[], None] | None) -> None:
         self._refresh_callback = callback
+
+    def set_activity_callback(self, callback: Callable[[str], None] | None) -> None:
+        self._activity_callback = callback
 
     def _request_refresh(self) -> None:
         callback = self._refresh_callback
@@ -87,6 +88,7 @@ class TerminalStatusLine:
         callback()
 
     def set_state(self, **segments: Any) -> None:
+        previous_status_key = self.status_key
         changed = False
         for key, value in segments.items():
             if value is None:
@@ -114,6 +116,11 @@ class TerminalStatusLine:
                     changed = True
         if changed:
             self._request_refresh()
+        if (
+            self.status_key != previous_status_key
+            and self._activity_callback is not None
+        ):
+            self._activity_callback(self.status_key)
 
     def _stable_segments(self) -> list[str]:
         segments: list[str] = []
@@ -148,15 +155,13 @@ class TerminalStatusLine:
             )
         return segments
 
-    def _active_status_row(self) -> str:
+    def active_status(self) -> str:
         if not self.turn_status_label or self.state == "idle":
             return ""
-        status = _wrap(StyleToken.WARNING, "● ", bold=True) + _active_labeled_segment(
-            "brain: ", self.turn_status_label
-        )
+        status = _active_labeled_segment("Status: ", self.turn_status_label)
         elapsed = _wrap(
             StyleToken.WARNING,
-            f"{_SEGMENT_SEP}{format_elapsed_label(self.elapsed_seconds)}",
+            f" · {format_elapsed_label(self.elapsed_seconds)}",
             bold=True,
         )
         return f"{status}{elapsed}"
@@ -173,7 +178,6 @@ class TerminalStatusLine:
         return sep.join(segments)
 
     def bottom_toolbar(self) -> str:
-        active_row = self._active_status_row()
         stable_row = self._stable_row()
         if self.usage_summary:
             usage_styled = _wrap(StyleToken.SYSTEM, self.usage_summary)
@@ -181,7 +185,7 @@ class TerminalStatusLine:
                 stable_row = f"{stable_row}   {usage_styled}"
             else:
                 stable_row = usage_styled
-        return _join_rows(active_row, stable_row)
+        return stable_row
 
     def live_turn_footer(self) -> str:
         return self.stable_footer()

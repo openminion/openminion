@@ -122,12 +122,9 @@ from .iteration.helpers import (
     _build_intent_execution_state_message,
     _build_tool_failure_recovery_message,
     _count_substantive_non_control_tool_results,
-    _explicit_calendar_years,
     _loop_tool_result_payloads,
-    _repair_stale_exact_date_search_args,
     _requires_typed_finalization_contract,
     _set_turn_progress,
-    _stale_exact_date_query_reason,
     _tool_result_payload_from_action,
 )
 from .evidence import _loop_has_non_success_tool_result
@@ -306,7 +303,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
     requestable_specs: list[Any]
     requestable_specs_by_name: dict[str, Any]
     active_tool_specs: list[Any]
-    active_tool_names: list[str]
+    active_tool_names: set[str]
     allowed_tools: frozenset[str]
     seeded_queue: list[Any]
     loop_state: AdaptiveToolLoopState
@@ -475,23 +472,17 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 mode_state="llm_progress",
             )
 
-            payloads = self._build_response_payloads(prepared.response)
             if not tool_calls:
                 continue_loop, outcome = self._handle_no_tool_calls(
                     prepared=prepared,
-                    payloads=payloads,
+                    payloads=self._build_response_payloads(prepared.response),
                 )
                 if continue_loop:
                     continue
                 assert outcome is not None
                 return outcome
 
-            self._record_pre_tool_draft(payloads, prepared.response)
-
-            outcome = self._maybe_force_direct_closure(
-                prepared=prepared,
-                allowed_tool_calls=tool_calls,
-            )
+            outcome = self._maybe_force_direct_closure(prepared=prepared)
             if outcome is not None:
                 return outcome
 
@@ -554,7 +545,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 allowed_tools=self.allowed_tools,
                 public_mode_tag=self.public_mode_tag,
                 active_tool_specs=self.active_tool_specs,
-                active_tool_names=set(self.active_tool_names),
+                active_tool_names=self.active_tool_names,
                 requestable_specs=self.requestable_specs,
                 requestable_specs_by_name=self.requestable_specs_by_name,
                 tool_request_enabled=self.tool_request_enabled,
@@ -567,8 +558,6 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 on_tool_result=self.on_tool_result,
                 append_tool_result_payload=_append_tool_result_payload,
                 set_turn_progress=_set_turn_progress,
-                repair_stale_exact_date_search_args=_repair_stale_exact_date_search_args,
-                stale_exact_date_query_reason=_stale_exact_date_query_reason,
             )
             if dispatch_phase.outcome is not None:
                 return dispatch_phase.outcome
@@ -589,7 +578,6 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 ordered_tool_results=dispatch_phase.ordered_tool_results,
                 cached_indices=dispatch_phase.cached_indices,
                 iter_batch_parallel_count=dispatch_phase.iter_batch_parallel_count,
-                dispatch_budget_managed=dispatch_phase.dispatch_budget_managed,
                 initial_batch_had_progress=dispatch_phase.batch_had_progress,
                 loop_cache=self.loop_cache,
                 loop_profiler=self.loop_profiler,
@@ -694,18 +682,10 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
         )
         return True
 
-    def _record_pre_tool_draft(self, payloads: dict[str, Any], response: Any) -> None:
-        pre_tool_draft = str(
-            payloads["final_text"] or getattr(response, "output_text", "") or ""
-        ).strip()
-        if pre_tool_draft:
-            self.loop_state.scratchpad["last_pre_tool_draft_text"] = pre_tool_draft
-
 
 __all__ = [
     "_build_intent_execution_state_message",
     "_count_substantive_non_control_tool_results",
-    "_explicit_calendar_years",
     "_loop_has_non_success_tool_result",
     "_loop_tool_result_payloads",
     "_requires_typed_finalization_contract",

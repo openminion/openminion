@@ -64,7 +64,6 @@
     "openminion/modules/brain/loop/tools/prefetch.py": 1,
     "openminion/modules/brain/loop/tools/runtime.py": 1,
     "openminion/modules/brain/runtime/approval/llm.py": 1,
-    "openminion/modules/brain/runtime/failures.py": 1,
     "openminion/modules/brain/runtime/review/diff.py": 1
   },
   "bare_count": 0

@@ -39,18 +39,6 @@ _STRUCTURED_RESPONSE_FIELD_NAMES: tuple[str, ...] = (
     "task_plan_completed",
 )
 
-_CONTINUATION_PROMPT: str = ACTIVE_TASK_CONTINUATION_PROMPT
-
-
-def continuation_prompt(*, original_request: str = "") -> str:
-    return str(build_active_task_continuation_prompt(original_request=original_request))
-
-
-def serialize_thinking_blocks_payload(
-    raw_blocks: list[Any] | None,
-) -> list[dict[str, Any]]:
-    return serialize_thinking_blocks(raw_blocks)
-
 
 def extract_structured_response_fields(raw_response: Any) -> dict[str, Any]:
     if raw_response is None:
@@ -83,33 +71,20 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
         source = dumped if isinstance(dumped, dict) else {}
     else:
         source = {
-            "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
-            "completion_tokens": getattr(raw_usage, "completion_tokens", None),
-            "total_tokens": getattr(raw_usage, "total_tokens", None),
-            "total_source": getattr(raw_usage, "total_source", None),
-            "total_tokens_source": getattr(
-                raw_usage,
+            key: getattr(raw_usage, key, None)
+            for key in (
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "total_source",
                 "total_tokens_source",
-                None,
-            ),
-            "input_tokens": getattr(raw_usage, "input_tokens", None),
-            "output_tokens": getattr(raw_usage, "output_tokens", None),
-            "cached_tokens": getattr(raw_usage, "cached_tokens", None),
-            "cache_read_input_tokens": getattr(
-                raw_usage,
+                "input_tokens",
+                "output_tokens",
+                "cached_tokens",
                 "cache_read_input_tokens",
-                None,
-            ),
-            "cache_creation_tokens": getattr(
-                raw_usage,
                 "cache_creation_tokens",
-                None,
-            ),
-            "cache_creation_input_tokens": getattr(
-                raw_usage,
                 "cache_creation_input_tokens",
-                None,
-            ),
+            )
         }
 
     usage: dict[str, Any] = {}
@@ -150,8 +125,8 @@ def metadata_user_prompt(metadata: dict[str, str]) -> str:
     for key in ("user_input", "original_user_input", "last_user_input"):
         value = str(metadata.get(key, "") or "").strip()
         if value:
-            return continuation_prompt(original_request=value)
-    return _CONTINUATION_PROMPT
+            return build_active_task_continuation_prompt(original_request=value)
+    return ACTIVE_TASK_CONTINUATION_PROMPT
 
 
 def successful_tool_names_from_history(
@@ -237,8 +212,8 @@ def latest_prompt_and_history(
             prompt_index = idx
             break
     if prompt_index >= 0:
-        history_entries = list(conversational[:prompt_index]) + list(
-            conversational[prompt_index + 1 :]
+        history_entries = (
+            conversational[:prompt_index] + conversational[prompt_index + 1 :]
         )
     elif conversational:
         history_entries = list(conversational)
@@ -304,9 +279,7 @@ def trim_submit_output_history(
         str(spec.name).strip() == "submit_output" for spec in tools
     ):
         return history
-    if not history:
-        return history
-    return history[-2:] if purpose == "decide" else []
+    return history if purpose == "decide" else []
 
 
 def raw_response_model_name(raw_response: Any) -> str:
@@ -389,7 +362,7 @@ def llm_response_kwargs(
             ToolCall(id=tc.id or "call_1", name=tc.name, arguments=tc.arguments)
             for tc in resp.tool_calls
         ],
-        "thinking": serialize_thinking_blocks_payload(list(resp.thinking or [])),
+        "thinking": serialize_thinking_blocks(list(resp.thinking or [])),
         "usage": UsageInfo(
             input_tokens=optional_int(prompt_tokens),
             output_tokens=optional_int(completion_tokens),

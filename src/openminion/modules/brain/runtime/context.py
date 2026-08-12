@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.brain.runtime.reasoning import (
@@ -322,20 +323,10 @@ def _plan_cursor_tool_names(state: WorkingState) -> tuple[str, ...]:
 
 
 def _state_tool_names(state: WorkingState) -> tuple[str, ...]:
-    names: list[str] = []
-    command = getattr(state, "pending_confirmation_command", None)
-    names.extend(_command_tool_names(command))
+    names = list(_command_tool_names(state.pending_confirmation_command))
     if not names:
         names.extend(_plan_cursor_tool_names(state))
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for name in names:
-        normalized = str(name or "").strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        ordered.append(normalized)
-    return tuple(ordered)
+    return tuple(_dedupe_text_values(names))
 
 
 def _state_error_slugs(state: WorkingState) -> tuple[str, ...]:
@@ -423,6 +414,34 @@ def _improvement_note_overlay(
     }
 
 
+def _memory_cards_by_type(
+    runner: "BrainRunner",
+    *,
+    agent_id: str,
+    record_type: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    context_service = getattr(getattr(runner, "context_api", None), "service", None)
+    memctl = getattr(context_service, "_memctl", None)
+    list_cards = getattr(memctl, "list_cross_session_memory_cards_by_type", None)
+    if not callable(list_cards):
+        return []
+    cards = list_cards(
+        agent_id=agent_id,
+        record_types=[record_type],
+        limit=limit,
+    )
+    return [
+        {
+            "record_id": str(getattr(card, "record_id", "") or "").strip(),
+            "record_type": record_type,
+            "text": str(getattr(card, "text", "") or f"{record_type}_ref").strip(),
+            "meta": dict(getattr(card, "meta", {}) or {}),
+        }
+        for card in cards
+    ]
+
+
 def _strategy_outcome_overlay(
     runner: "BrainRunner",
     *,
@@ -438,30 +457,14 @@ def _strategy_outcome_overlay(
         return {}
     capability_category = str(hints.get("capability_category", "") or "").strip()
     intent_category = str(getattr(state, "decision_reason_code", "") or "").strip()
-    context_service = getattr(getattr(runner, "context_api", None), "service", None)
-    memctl = getattr(context_service, "_memctl", None)
-    list_cards = getattr(memctl, "list_cross_session_memory_cards_by_type", None)
-    if not callable(list_cards):
-        return {}
-    cards = list_cards(
+    payloads = _memory_cards_by_type(
+        runner,
         agent_id=state.agent_id,
-        record_types=["strategy_outcome"],
+        record_type="strategy_outcome",
         limit=CONTEXT_STRATEGY_OUTCOME_LIMIT,
     )
-    if not cards:
+    if not payloads:
         return {}
-    payloads: list[dict[str, Any]] = []
-    for card in cards:
-        payloads.append(
-            {
-                "record_id": str(getattr(card, "record_id", "") or "").strip(),
-                "record_type": "strategy_outcome",
-                "text": str(
-                    getattr(card, "text", "") or "strategy_outcome_ref"
-                ).strip(),
-                "meta": dict(getattr(card, "meta", {}) or {}),
-            }
-        )
     return {
         "strategy_outcome_cards": payloads,
         "strategy_outcome_strategy_id": strategy_id,
@@ -475,30 +478,14 @@ def _post_completion_critique_overlay(
     *,
     state: WorkingState,
 ) -> dict[str, Any]:
-    context_service = getattr(getattr(runner, "context_api", None), "service", None)
-    memctl = getattr(context_service, "_memctl", None)
-    list_cards = getattr(memctl, "list_cross_session_memory_cards_by_type", None)
-    if not callable(list_cards):
-        return {}
-    cards = list_cards(
+    payloads = _memory_cards_by_type(
+        runner,
         agent_id=state.agent_id,
-        record_types=["post_completion_critique"],
+        record_type="post_completion_critique",
         limit=CONTEXT_POST_COMPLETION_CRITIQUE_LIMIT,
     )
-    if not cards:
+    if not payloads:
         return {}
-    payloads: list[dict[str, Any]] = []
-    for card in cards:
-        payloads.append(
-            {
-                "record_id": str(getattr(card, "record_id", "") or "").strip(),
-                "record_type": "post_completion_critique",
-                "text": str(
-                    getattr(card, "text", "") or "post_completion_critique_ref"
-                ).strip(),
-                "meta": dict(getattr(card, "meta", {}) or {}),
-            }
-        )
     intent_ids = [
         str(getattr(item, "intent_id", "") or "").strip()
         for item in list(getattr(state, "intent_execution_states", []) or [])
@@ -535,21 +522,16 @@ def _adaptive_low_progress_counts(state: WorkingState) -> tuple[int, int]:
         return (0, 0)
     raw_history = adaptive_loop.get("tool_call_history")
     history = raw_history if isinstance(raw_history, list) else []
-    hashes: list[str] = []
-    for item in history:
-        if not isinstance(item, dict):
-            continue
-        args_hash = str(item.get("args_hash") or "").strip()
-        if args_hash:
-            hashes.append(args_hash)
+    hashes = [
+        args_hash
+        for item in history
+        if isinstance(item, dict)
+        and (args_hash := str(item.get("args_hash") or "").strip())
+    ]
     if not hashes:
         return (0, 0)
-    counts: dict[str, int] = {}
-    for args_hash in hashes:
-        counts[args_hash] = counts.get(args_hash, 0) + 1
-    repeated_arg_signature_count = sum(
-        max(0, count - 1) for count in counts.values() if count > 1
-    )
+    counts = Counter(hashes)
+    repeated_arg_signature_count = len(hashes) - len(counts)
     raw_budgets = adaptive_loop.get("budgets_consumed")
     budgets = raw_budgets if isinstance(raw_budgets, dict) else {}
     total_tool_calls = int(budgets.get("tool_calls", len(hashes)) or 0)
@@ -663,8 +645,7 @@ def build_context(
 ) -> dict[str, Any]:
     if runner.context_api is None:
         return {}
-    if hints is None:
-        hints = {}
+    hints = dict(hints or {})
 
     if state.unresolved_clarify_items:
         hints["pending_clarifications"] = [
@@ -729,12 +710,12 @@ def build_context(
         hints["live_state_overlay"] = live_state_overlay
     hints.update(_budget_telemetry_overlay(runner, state=state))
 
-    original_hint_keys = set(hints.keys())
-    sanitized_hints: dict[str, Any] = {}
-    for key, value in hints.items():
-        if _is_phase_hint_allowed(purpose=purpose, key=key):
-            sanitized_hints[key] = value
-    dropped_keys = sorted(original_hint_keys.difference(sanitized_hints.keys()))
+    sanitized_hints = {
+        key: value
+        for key, value in hints.items()
+        if _is_phase_hint_allowed(purpose=purpose, key=key)
+    }
+    dropped_keys = sorted(hints.keys() - sanitized_hints.keys())
     hints = sanitized_hints
     if dropped_keys:
         logger.emit(

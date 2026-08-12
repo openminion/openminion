@@ -1,6 +1,5 @@
 """Turn-entry runtime implementation for execution dispatch."""
 
-from dataclasses import dataclass
 from typing import Any
 
 from ....config import fixed_act_profile_from_profile
@@ -34,28 +33,20 @@ from openminion.modules.prompting.continuation import (
 )
 
 
-@dataclass(slots=True)
-class DispatchRuntimeContext:
-    effective_user_input: str | None
-    fixed_act_profile: str | None
-
-
 def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: Any):
+    effective_user_input = (
+        None if request.consume_user_input_for_command else request.user_input
+    )
     try:
         validation_attempts = 0
-        context = DispatchRuntimeContext(
-            effective_user_input=None
-            if request.consume_user_input_for_command
-            else request.user_input,
-            fixed_act_profile=fixed_act_profile_from_profile(
-                getattr(runner, "profile", None)
-            ),
+        fixed_act_profile = fixed_act_profile_from_profile(
+            getattr(runner, "profile", None)
         )
         disabled_wait = _disabled_handoff_wait_response(
             runner=runner,
             state=state,
             logger=logger,
-            user_input=context.effective_user_input,
+            user_input=effective_user_input,
         )
         if disabled_wait is not None:
             return disabled_wait
@@ -66,7 +57,7 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
                     state=state,
                     logger=logger,
                     request=request,
-                    user_input=context.effective_user_input,
+                    user_input=effective_user_input,
                 )
             raw_entry_act_profile = (
                 str(getattr(request.decision, "act_profile", "") or "").strip() or None
@@ -76,8 +67,8 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
                 state=state,
                 logger=logger,
                 request=request,
-                user_input=context.effective_user_input,
-                fixed_act_profile=context.fixed_act_profile,
+                user_input=effective_user_input,
+                fixed_act_profile=fixed_act_profile,
             )
             _emit_entry_event(
                 state=state,
@@ -90,22 +81,22 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
                 state=state,
                 logger=logger,
                 request=request,
-                user_input=context.effective_user_input,
+                user_input=effective_user_input,
             )
             if override is not None:
                 return override
             validation_decision = _decision_for_validation(
                 state=state,
                 request=request,
-                user_input=context.effective_user_input,
-                fixed_act_profile=context.fixed_act_profile,
+                user_input=effective_user_input,
+                fixed_act_profile=fixed_act_profile,
             )
             accepted = _accept_or_redecide(
                 runner=runner,
                 state=state,
                 logger=logger,
                 request=request,
-                user_input=context.effective_user_input,
+                user_input=effective_user_input,
                 validation_decision=validation_decision,
                 validation_attempts=validation_attempts,
             )
@@ -126,7 +117,7 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
             runner=runner,
             state=state,
             logger=logger,
-            user_input=context.effective_user_input,
+            user_input=effective_user_input,
             exc=exc,
         )
 
@@ -345,20 +336,17 @@ def _decision_for_validation(
         and state.plan is not None
         and 0 <= state.cursor < len(state.plan.steps)
     ):
-        try:
-            remaining_commands = entry_barrel._copied_seeded_commands(
-                list(state.plan.steps[state.cursor :]) or []
-            )
-            replay_decision = ActDecision(
-                confidence=1.0,
-                reason_code="confirmation_replay_validation",
-                sub_intents=list(getattr(state, "decision_sub_intents", []) or []),
-                rationale=str(getattr(state, "decision_rationale", "") or "").strip(),
-            )
-            replay_decision._seeded_commands = remaining_commands
-            decision = replay_decision
-        except Exception:
-            decision = None
+        remaining_commands = entry_barrel._copied_seeded_commands(
+            list(state.plan.steps[state.cursor :])
+        )
+        replay_decision = ActDecision(
+            confidence=1.0,
+            reason_code="confirmation_replay_validation",
+            sub_intents=list(getattr(state, "decision_sub_intents", []) or []),
+            rationale=str(getattr(state, "decision_rationale", "") or "").strip(),
+        )
+        replay_decision._seeded_commands = remaining_commands
+        decision = replay_decision
     if (
         decision is not None
         and _decision_route_name(decision) == BRAIN_DECISION_ROUTE_ACT
@@ -580,9 +568,7 @@ def _invoke_and_finalize(
     checkpoint_interval = max(
         0, int(getattr(runner.options, "plan_checkpoint_interval", 0) or 0)
     )
-    state_mode = str(getattr(state, "mode", "") or "").strip().lower()
-    if hasattr(getattr(state, "mode", None), "value"):
-        state_mode = str(getattr(state.mode, "value", "") or "").strip().lower()
+    state_mode = getattr(state.mode, "value", state.mode)
     if _should_pause_for_checkpoint(
         state=state,
         result=result,

@@ -1,8 +1,11 @@
+from datetime import datetime
 from typing import Any, Optional
 from collections.abc import Callable
 from uuid import uuid4
 
 from openminion.base.types import Message
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
+from openminion.modules.telemetry.events.catalog import AGENT_INVOCATION_STARTED
 from openminion.modules.task.run import (
     ATTACH_ROLE_OBSERVER,
     ATTACH_ROLE_WRITER,
@@ -19,11 +22,30 @@ from openminion.services.gateway.turn_intent import (
     build_fail_closed_terminal_resolution,
 )
 from openminion.services.gateway.types import TurnContext
+from openminion.services.agent.telemetry import InvocationLifecycleFact
 
 from .flow_models import _RoutingResult
 
 
 class GatewayTurnSetupMixin:
+    def _resolve_invocation_id(self, *, lifecycle: Any) -> tuple[str, str, str]:
+        prior_invocation_id = str(lifecycle.invocation_id or "").strip()
+        if not prior_invocation_id:
+            reason = (
+                "legacy_thread_without_invocation"
+                if lifecycle.invocation_source_event_id
+                else "new_thread"
+            )
+            return uuid4().hex, reason, ""
+        terminal_states = (
+            THREAD_STATE_SETTLED,
+            THREAD_STATE_FAILED,
+            THREAD_STATE_CANCELLED,
+        )
+        if lifecycle.thread_state in terminal_states:
+            return uuid4().hex, "terminal_parent", prior_invocation_id
+        return prior_invocation_id, "resumed_thread", ""
+
     def _resolve_attach_role(self, routing: _RoutingResult) -> tuple[str, bool]:
         lifecycle = routing.lifecycle
         attach_role = ""
@@ -131,24 +153,14 @@ class GatewayTurnSetupMixin:
             thread_state=lifecycle.thread_state,
             qualifier=lifecycle.qualifier,
         )
+        invocation_id, invocation_reason, parent_invocation_id = (
+            self._resolve_invocation_id(lifecycle=lifecycle)
+        )
+        lifecycle_payload["invocation_id"] = invocation_id
+        lifecycle_payload["invocation_reason"] = invocation_reason
+        routing.normalized_inbound_metadata["invocation_id"] = invocation_id
         run_id = uuid4().hex
-        if hasattr(self._sessions, "create_run_record"):
-            self._sessions.create_run_record(
-                session_id,
-                run_type="llm",
-                run_id=run_id,
-                meta={
-                    "request_id": normalized_request_id,
-                    "channel": channel,
-                    "target": target,
-                    **self._lifecycle_ops.optional_ids(
-                        conversation_id=conversation_id,
-                        thread_id=thread_id,
-                        attach_id=attach_id,
-                    ),
-                },
-            )
-        self._emit_run_state(
+        queued_event = self._emit_run_state(
             session_id=session_id,
             run_id=run_id,
             state=RUN_STATE_QUEUED,
@@ -159,6 +171,33 @@ class GatewayTurnSetupMixin:
                 extra={"channel": channel, "target": target},
             ),
         )
+        if queued_event is not None:
+            source_event_id = int(queued_event.id)
+            source_timestamp = queued_event.created_at
+            if invocation_reason == "resumed_thread":
+                source_event_id = int(lifecycle.invocation_source_event_id)
+                source_timestamp = lifecycle.invocation_started_at
+            payload: dict[str, Any] = {
+                "scope": "durable",
+                "source_event_id": source_event_id,
+                "source_event_type": "run.queued",
+                "run_id": run_id,
+                "thread_id": thread_id,
+            }
+            if parent_invocation_id:
+                payload["parent_invocation_id"] = parent_invocation_id
+            self._lifecycle_ops.emit_invocation_lifecycle(
+                InvocationLifecycleFact(
+                    event_id=f"agent.invocation:{invocation_id}:start",
+                    timestamp=datetime.fromisoformat(source_timestamp).timestamp(),
+                    event_type=AGENT_INVOCATION_STARTED,
+                    invocation_id=invocation_id,
+                    session_id=session_id,
+                    turn_id=normalized_request_id,
+                    agent_id=self._agent_id,
+                    payload=payload,
+                )
+            )
         return run_id, lifecycle_payload
 
     def _build_memory_context(
@@ -171,7 +210,8 @@ class GatewayTurnSetupMixin:
         run_id: str,
         history: list[Message],
     ) -> TurnContext:
-        self._memory_followup_queue.flush(session_id=routing.session.id)
+        with active_chat_phase("memory_followup_flush"):
+            self._memory_followup_queue.flush(session_id=routing.session.id)
         return build_turn_context(
             history=history,
             agent_id=self._agent_id,

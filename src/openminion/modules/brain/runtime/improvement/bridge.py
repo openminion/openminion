@@ -32,16 +32,8 @@ def stage_improvement_decision(
     decision: ImprovementDecision | Mapping[str, Any],
     evaluation: OnlineImprovementEval | Mapping[str, Any],
 ) -> SelfImprovementStageResult:
-    decision_obj = (
-        decision
-        if isinstance(decision, ImprovementDecision)
-        else ImprovementDecision.model_validate(decision)
-    )
-    evaluation_obj = (
-        evaluation
-        if isinstance(evaluation, OnlineImprovementEval)
-        else OnlineImprovementEval.model_validate(evaluation)
-    )
+    decision_obj = ImprovementDecision.model_validate(decision)
+    evaluation_obj = OnlineImprovementEval.model_validate(evaluation)
     if decision_obj.action not in {"stage_lesson", "stage_candidate"}:
         return _skipped(decision_obj, "action_not_stageable")
     if decision_obj.memory_kind == "none":
@@ -77,7 +69,6 @@ def stage_improvement_decision(
     )
     return SelfImprovementStageResult(
         candidate_id=candidate_id,
-        skipped_reason=None,
         action=decision_obj.action,
         memory_kind=decision_obj.memory_kind,
     )

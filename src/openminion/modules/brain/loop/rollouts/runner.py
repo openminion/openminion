@@ -1,5 +1,3 @@
-"""Concurrent rollout runner and winner selection."""
-
 import asyncio
 import time
 import uuid
@@ -22,8 +20,6 @@ RolloutAction = Callable[[int, dict[str, Any]], Awaitable[Any]]
 
 @dataclass
 class HighestScoreSelector:
-    """Selects the best rollout, breaking ties by latency."""
-
     def select(self, results: Sequence[RolloutResult]) -> RolloutResult:
         if not results:
             raise ValueError("HighestScoreSelector.select: empty results")
@@ -79,8 +75,6 @@ async def parallel_rollout_async(
     scorer: RolloutScorer,
     selector: RolloutSelector | None = None,
 ) -> RolloutResult:
-    """Async entry point for spawning, scoring, and selecting rollouts."""
-
     sem = asyncio.Semaphore(plan.max_parallelism)
     tasks = [
         asyncio.create_task(
@@ -96,31 +90,14 @@ async def parallel_rollout_async(
         for i in range(plan.n_rollouts)
     ]
 
-    try:
-        done, pending = await asyncio.wait(tasks, timeout=float(plan.timeout_seconds))
-    except Exception:
-        for t in tasks:
-            t.cancel()
-        raise
+    done, pending = await asyncio.wait(tasks, timeout=plan.timeout_seconds)
 
     for p in pending:
         p.cancel()
 
-    results: list[RolloutResult] = []
-    for task in done:
-        try:
-            results.append(task.result())
-        except Exception as exc:  # noqa: BLE001
-            results.append(
-                RolloutResult(
-                    rollout_id=f"{plan.step_id}-error",
-                    output=None,
-                    error=str(exc),
-                )
-            )
+    results = [task.result() for task in done]
 
     if not results:
-        # All rollouts timed out — synthesize a typed failure.
         return RolloutResult(
             rollout_id=f"{plan.step_id}-timeout",
             output=None,
@@ -140,8 +117,6 @@ def parallel_rollout(
     scorer: RolloutScorer,
     selector: RolloutSelector | None = None,
 ) -> RolloutResult:
-    """Sync wrapper around the async runner."""
-
     return run_async_compat(
         parallel_rollout_async(
             plan,

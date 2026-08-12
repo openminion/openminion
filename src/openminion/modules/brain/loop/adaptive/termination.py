@@ -69,10 +69,9 @@ def effective_soft_cap(
     decision: Any,
     config: AdaptiveBudgetConfig,
 ) -> int:
-    """AIB-05: compute the per-turn soft cap from typed Decision fields."""
     cap = int(config.soft_cap)
     if decision is None:
-        return min(cap, ADAPTIVE_BUDGET_HARD_CAP)
+        return min(cap, int(ADAPTIVE_BUDGET_HARD_CAP))
 
     max_steps_hint = getattr(decision, "max_steps_hint", None)
     if max_steps_hint is not None:
@@ -91,7 +90,7 @@ def effective_soft_cap(
     if sub_intent_count > 1:
         cap = max(cap, int(config.soft_cap) * sub_intent_count)
 
-    return min(cap, ADAPTIVE_BUDGET_HARD_CAP)
+    return min(cap, int(ADAPTIVE_BUDGET_HARD_CAP))
 
 
 def _append_partial_success(
@@ -117,8 +116,7 @@ def _waiting_without_plan_can_close(
     return (
         ctx.state.plan is None
         and not remaining_ids
-        and str(getattr(ctx.state, "status", "") or "").strip()
-        == BRAIN_STATE_WAITING_USER
+        and ctx.state.status == BRAIN_STATE_WAITING_USER
         and post_action_message.startswith(
             "I no longer have an active plan for that result"
         )
@@ -146,7 +144,7 @@ def _build_blocked_result(summary: str, code: str) -> ActionResult:
 def _single_failed_tool_result_action(
     outcome: AdaptiveToolLoopOutcome,
 ) -> ActionResult | None:
-    scratchpad = dict(getattr(getattr(outcome, "state", None), "scratchpad", {}) or {})
+    scratchpad = outcome.state.scratchpad
     tool_results = [
         item
         for item in list(scratchpad.get("adaptive.tool_results", []) or [])
@@ -160,7 +158,7 @@ def _single_failed_tool_result_action(
     message = (
         str(tool_result.get("error", "") or "").strip()
         or str(tool_result.get("content", "") or "").strip()
-        or str(getattr(outcome, "error_message", "") or "").strip()
+        or str(outcome.error_message or "").strip()
     )
     if not message:
         return None

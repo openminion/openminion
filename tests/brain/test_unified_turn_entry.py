@@ -207,6 +207,16 @@ class _RecordingEntryLLM:
         return self.response
 
 
+class _SequencedEntryLLM(_RecordingEntryLLM):
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        super().__init__(responses[-1])
+        self.responses = responses
+
+    def call(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        return self.responses[len(self.requests) - 1]
+
+
 def _build_runner(
     tmp_path: Path,
     *,
@@ -374,6 +384,46 @@ def test_unified_entry_clarify_path_returns_waiting_question(tmp_path: Path) -> 
     assert decision.question == "Which city should I use?"
 
 
+def test_unified_entry_reconsiders_clarify_before_requesting_tool(
+    tmp_path: Path,
+) -> None:
+    llm = _SequencedEntryLLM(
+        [
+            _tool_response(
+                "clarify",
+                {"question": "How should I inspect the target environment?"},
+            ),
+            _tool_response(
+                "tool.request",
+                {"name": "exec.run", "terminal_after_success": False},
+            ),
+        ]
+    )
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-clarify-reconsideration")
+
+    decision = runner._decide(
+        state=state,
+        user_input="inspect the target environment and report its state",
+        logger=fake_logger(),
+    )
+
+    assert decision.mode == "act"
+    assert decision.reason_code == "entry_tool_call"
+    assert len(llm.requests) == 2
+    retry_system_text = "\n".join(
+        str(message.content or "")
+        for message in llm.requests[1].messages
+        if message.role == "system"
+    )
+    assert "Reconsider the clarification before asking the user" in retry_system_text
+    assert "inactive tool directory" in retry_system_text
+    response = getattr(decision, "_entry_response", None)
+    assert response is not None
+    assert response.tool_calls[0].name == "tool.request"
+    assert response.tool_calls[0].arguments["name"] == "exec.run"
+
+
 def test_unified_entry_act_path_attaches_seed_response(tmp_path: Path) -> None:
     response = _tool_response("time", {"timezone": "UTC"})
     llm = _RecordingEntryLLM(response)
@@ -416,7 +466,7 @@ def test_unified_entry_coding_control_routes_to_coding_profile(tmp_path: Path) -
     assert getattr(getattr(route, "execution_target", None), "kind", "") == "local"
 
 
-def test_unified_entry_file_write_seed_routes_to_coding_profile(
+def test_unified_entry_file_write_seed_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
     response = _tool_response(
@@ -434,15 +484,15 @@ def test_unified_entry_file_write_seed_routes_to_coding_profile(
     )
 
     assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_seed_tool_call"
+    assert decision.reason_code == "entry_tool_call"
     assert getattr(decision, "_entry_response", None) is response
     route = getattr(decision, "_pre_resolved_act_route", None)
     assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_mutation_seed_tool_call"
+    assert getattr(route, "act_profile", "") == "general"
+    assert getattr(route, "source", "") == "runtime_default_general"
 
 
-def test_unified_entry_readonly_seed_routes_explicit_file_artifact_to_coding(
+def test_unified_entry_readonly_seed_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
     response = _tool_response("file.list_dir", {"path": "."})
@@ -460,15 +510,15 @@ def test_unified_entry_readonly_seed_routes_explicit_file_artifact_to_coding(
     )
 
     assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_user_file_artifact_request"
+    assert decision.reason_code == "entry_tool_call"
     assert getattr(decision, "_entry_response", None) is response
     route = getattr(decision, "_pre_resolved_act_route", None)
     assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+    assert getattr(route, "act_profile", "") == "general"
+    assert getattr(route, "source", "") == "runtime_default_general"
 
 
-def test_unified_entry_file_tools_phrase_routes_file_artifact_to_coding(
+def test_unified_entry_file_tools_phrase_does_not_override_model_response(
     tmp_path: Path,
 ) -> None:
     response = _text_response("I'll create it.")
@@ -485,16 +535,12 @@ def test_unified_entry_file_tools_phrase_routes_file_artifact_to_coding(
         logger=fake_logger(),
     )
 
-    assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_user_file_artifact_request"
-    assert getattr(decision, "_entry_response", None) is None
-    route = getattr(decision, "_pre_resolved_act_route", None)
-    assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+    assert decision.mode == "respond"
+    assert decision.reason_code == "entry_text_response"
+    assert decision.answer == "I'll create it."
 
 
-def test_unified_entry_tool_request_for_file_artifact_does_not_seed_coding(
+def test_unified_entry_tool_request_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
     response = _tool_response("tool.request", {"name": "file.write"})
@@ -512,12 +558,12 @@ def test_unified_entry_tool_request_for_file_artifact_does_not_seed_coding(
     )
 
     assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_user_file_artifact_request"
-    assert getattr(decision, "_entry_response", None) is None
+    assert decision.reason_code == "entry_tool_call"
+    assert getattr(decision, "_entry_response", None) is response
     route = getattr(decision, "_pre_resolved_act_route", None)
     assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+    assert getattr(route, "act_profile", "") == "general"
+    assert getattr(route, "source", "") == "runtime_default_general"
 
 
 def test_entry_decompose_with_one_subtask_routes_to_orchestrate(

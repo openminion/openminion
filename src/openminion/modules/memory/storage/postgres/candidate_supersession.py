@@ -130,7 +130,6 @@ def candidate_update(
 
 
 def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> MemoryRecord:
-    promoted_candidate: MemoryCandidate | None = None
     superseded_owner_id: str | None = None
     superseded_ref_values: list[Any] = []
     new_id = uuid.uuid4().hex
@@ -218,11 +217,10 @@ def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> Memor
             owner_id=superseded_owner_id,
             ref_values=superseded_ref_values,
         )
-    if promoted_candidate is not None:
-        store._remove_artifact_refs(
-            owner_id=promoted_candidate.candidate_id,
-            ref_values=promoted_candidate.evidence_refs,
-        )
+    store._remove_artifact_refs(
+        owner_id=promoted_candidate.candidate_id,
+        ref_values=promoted_candidate.evidence_refs,
+    )
     return result
 
 
@@ -247,7 +245,6 @@ def supersede_by_contradiction(
     if old_record_id == new_record_id:
         raise InvalidArgumentError("old and new records must differ")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    old_record: MemoryRecord | None = None
     with store._lock:
         with store._engine.begin() as conn:
             old_row = store._get_required_record(conn, old_record_id)
@@ -268,11 +265,10 @@ def supersede_by_contradiction(
         new_record_id,
         missing_error=StoreWriteError("failed to supersede memory record"),
     )
-    if old_record is not None:
-        store._remove_artifact_refs(
-            owner_id=old_record_id,
-            ref_values=old_record.evidence_refs,
-        )
+    store._remove_artifact_refs(
+        owner_id=old_record_id,
+        ref_values=old_record.evidence_refs,
+    )
     store._add_artifact_refs(owner_id=result.id, ref_values=result.evidence_refs)
     return result
 

@@ -16,6 +16,8 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.brain.schemas import AdaptiveBudgetConfig
 
+from .contracts import AdaptiveToolLoopState
+
 
 BUDGET_MODULE_STATE_KEY = "adaptive_budget"
 BUDGET_PENDING_KEY = "pending_extension"
@@ -41,15 +43,15 @@ def _budget_bucket(*, state: Any, create: bool = False) -> dict[str, Any] | None
 def check_safety_rails(
     *,
     config: AdaptiveBudgetConfig,
-    loop_state: Any,
+    loop_state: AdaptiveToolLoopState,
     session_extensions_used: int,
     tokens_used: int,
     max_total_llm_tokens: int,
 ) -> str | None:
     """Return a typed stop reason when extension must halt."""
-    extensions_used = int(getattr(loop_state, "extensions_used", 0) or 0)
-    current_cap = int(getattr(loop_state, "effective_max_iterations", 0) or 0)
-    consecutive_noops = int(getattr(loop_state, "consecutive_noops", 0) or 0)
+    extensions_used = loop_state.extensions_used
+    current_cap = loop_state.effective_max_iterations
+    consecutive_noops = loop_state.consecutive_noops
 
     if extensions_used >= int(config.max_extensions_per_turn):
         return STOP_BUDGET_EXHAUSTED
@@ -67,27 +69,27 @@ def check_safety_rails(
 def apply_extension(
     *,
     config: AdaptiveBudgetConfig,
-    loop_state: Any,
+    loop_state: AdaptiveToolLoopState,
 ) -> int:
     """Increase the effective iteration cap within the hard ceiling."""
-    current_cap = int(getattr(loop_state, "effective_max_iterations", 0) or 0)
+    current_cap = loop_state.effective_max_iterations
     new_cap = min(current_cap + int(config.extend_by), ADAPTIVE_BUDGET_HARD_CAP)
     loop_state.effective_max_iterations = new_cap
-    loop_state.extensions_used = int(getattr(loop_state, "extensions_used", 0) or 0) + 1
+    loop_state.extensions_used += 1
     return new_cap
 
 
 def compose_pause_question(
     *,
     config: AdaptiveBudgetConfig,
-    loop_state: Any,
+    loop_state: AdaptiveToolLoopState,
     active_work_summary: str = "",
     step_summaries: tuple[str, ...] = (),
     max_steps_hint: int | None = None,
 ) -> str:
     """AIB-10: build the ask-user message from typed state only."""
-    iteration = int(getattr(loop_state, "iteration", 0) or 0)
-    cap = int(getattr(loop_state, "effective_max_iterations", 0) or 0)
+    iteration = loop_state.iteration
+    cap = loop_state.effective_max_iterations
 
     lines: list[str] = [f"Budget reached: {iteration}/{cap} iterations"]
     summary = str(active_work_summary or "").strip()
@@ -104,10 +106,7 @@ def compose_pause_question(
                 lines.append(f"  - {step_text[:200]}")
 
     if max_steps_hint is not None:
-        try:
-            remaining = max(0, int(max_steps_hint) - iteration)
-        except (TypeError, ValueError):
-            remaining = 0
+        remaining = max(0, max_steps_hint - iteration)
         if remaining > 0:
             lines.append(f"Remaining estimate: ~{remaining} steps")
 

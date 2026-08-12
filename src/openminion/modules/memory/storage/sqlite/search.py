@@ -113,11 +113,10 @@ def search(store: Any, options: SearchQueryOptions) -> list[MemoryRecord]:
 
     scored_records: list[MemoryRecord] = []
     for record, raw_score in ranked_results:
-        raw = float(raw_score)
-        normalized_score = 0.0 if raw >= 0.0 else 1.0 - math.exp(raw)
+        normalized_score = 0.0 if raw_score >= 0.0 else 1.0 - math.exp(raw_score)
         normalized_score = max(0.0, min(1.0, normalized_score))
         meta = dict(getattr(record, "meta", {}) or {})
-        meta["bm25_raw_score"] = raw
+        meta["bm25_raw_score"] = raw_score
         meta["bm25_score"] = normalized_score
         scored_records.append(replace(record, meta=meta))
 

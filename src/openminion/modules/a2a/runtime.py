@@ -42,6 +42,7 @@ from openminion.modules.a2a.errors import (
     ERROR_CODE_STALE_JOB,
 )
 from openminion.modules.a2a.models import (
+    AgentDescriptor,
     AuditRecord,
     Envelope,
     EnvelopeValidationError,
@@ -250,9 +251,7 @@ class A2ARuntime:
         return job
 
     def job_cancel(self, task_id: str) -> JobRecord:
-        job = self.state_store.get_job(task_id)
-        if job is None:
-            raise A2AError(ERROR_CODE_JOB_NOT_FOUND, f"Job '{task_id}' was not found")
+        job = self.job_status(task_id)
         if job.is_terminal():
             return job
 
@@ -682,6 +681,7 @@ class A2ARuntime:
             idempotency_key=request.idempotency_key,
             trace_id=request.trace_id,
             meta={"cached": cached},
+            observability=request.observability,
         )
 
     def _error_result_envelope(
@@ -712,6 +712,7 @@ class A2ARuntime:
             idempotency_key=request.idempotency_key,
             trace_id=request.trace_id,
             meta={"cached": cached, "error": True},
+            observability=request.observability,
         )
 
     def _in_progress_result_envelope(
@@ -744,13 +745,12 @@ class A2ARuntime:
             idempotency_key=request.idempotency_key,
             trace_id=request.trace_id,
             meta={"cached": cached, "in_progress": True},
+            observability=request.observability,
         )
 
     def _build_descriptor(
         self, *, agent_id: str, capabilities: list[str], tags: list[str] | None
-    ) -> Any:
-        from openminion.modules.a2a.models import AgentDescriptor
-
+    ) -> AgentDescriptor:
         return AgentDescriptor(
             agent_id=agent_id,
             capabilities=list(capabilities),

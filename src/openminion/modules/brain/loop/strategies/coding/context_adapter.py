@@ -1,5 +1,3 @@
-"""Context adapter for the coding strategy tool loop."""
-
 from typing import Any, Callable
 
 from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_NEEDS_USER
@@ -14,7 +12,7 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
 from openminion.modules.brain.runner.tick.context import (
     _store_pending_confirmation_metadata,
 )
-from openminion.modules.brain.schemas import ActionResult, new_uuid
+from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
 
@@ -49,32 +47,11 @@ class _CodingLoopContextAdapter:
         command: Any,
         include_reflect: bool = False,
     ):
-        prepare_fn = getattr(self._ctx.command_executor, "prepare_tool_dispatch", None)
-        if callable(prepare_fn):
-            return prepare_fn(
-                state=self._ctx.state,
-                command=command,
-                logger=self._ctx.logger,
-                include_reflect=include_reflect,
-            )
-        from openminion.modules.brain.loop.tools.contracts import (
-            PreparedToolDispatch,
-        )  # noqa: PLC0415
-
-        return PreparedToolDispatch(
-            approved_command=command,
-            original_command=command,
-            command_id=str(getattr(command, "command_id", "") or new_uuid()),
-            tool_name=str(getattr(command, "tool_name", "") or "").strip(),
-            validated_args=dict(getattr(command, "args", {}) or {}),
-            session_id=str(getattr(self._ctx.state, "session_id", "") or ""),
-            trace_id=str(getattr(self._ctx.state, "trace_id", "") or ""),
-            agent_id=str(getattr(self._ctx.state, "agent_id", "") or ""),
-            lineage={},
-            permission_mode=str(
-                getattr(self._ctx.state, "permission_mode", "default") or "default"
-            ),
-            payload={},
+        return self._ctx.command_executor.prepare_tool_dispatch(
+            state=self._ctx.state,
+            command=command,
+            logger=self._ctx.logger,
+            include_reflect=include_reflect,
         )
 
     def execute_prepared_tool_dispatch(
@@ -112,6 +89,7 @@ class _CodingLoopContextAdapter:
         outcome = CommandExecutionOutcome(
             approved_command=prepare_outcome.approved_command,
             action_result=prepare_outcome.action_result,
+            tool_budget_debited=prepare_outcome.tool_budget_debited,
         )
         return self._postprocess_outcome(
             outcome,
@@ -124,13 +102,9 @@ class _CodingLoopContextAdapter:
         *,
         original_command: Any | None,
     ) -> Any:
-        approved_command = getattr(outcome, "approved_command", original_command)
-        action_result = getattr(outcome, "action_result", None)
-        raw_error = getattr(action_result, "error", None)
-        if isinstance(raw_error, dict):
-            error_code = str(raw_error.get("code", "") or "")
-        else:
-            error_code = str(getattr(raw_error, "code", "") or "")
+        approved_command = outcome.approved_command or original_command
+        action_result = outcome.action_result
+        error_code = action_result.error.code if action_result.error is not None else ""
         if (
             action_result is not None
             and str(getattr(action_result, "status", "") or "").strip()
@@ -148,7 +122,7 @@ class _CodingLoopContextAdapter:
         if (
             action_result is not None
             and approved_command is not None
-            and callable(self._on_command_result)
+            and self._on_command_result is not None
         ):
             self._on_command_result(approved_command, action_result)
         return outcome

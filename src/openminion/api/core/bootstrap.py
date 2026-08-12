@@ -65,6 +65,7 @@ def build_default_runtime_stack(
         config_manager=manager,
         retrieve_service=infrastructure["retrieve_ctl"],
         action_policy_service=infrastructure["action_policy"],
+        telemetryctl=infrastructure.get("telemetryctl"),
     )
     bind_mcp_sampling_executor(infrastructure["tools"], agent)
     gateway = build_gateway_service(
@@ -118,6 +119,7 @@ def finalize_runtime_instance(
             else None
         ),
         telemetry_service=infrastructure["telemetry_service"],
+        telemetryctl=infrastructure.get("telemetryctl"),
         runtime_storage=runtime_storage,
         storage_connection=runtime_storage.connection,
         sessions=runtime_storage.sessions,

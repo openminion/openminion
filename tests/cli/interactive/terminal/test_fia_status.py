@@ -22,12 +22,16 @@ class _FakeRuntime:
         agent_id: str = "openminion",
         provider_name: str = "openai",
         model_name: str = "gpt-4",
+        service_vendor_name: str = "openai",
+        transport_adapter_name: str = "",
         session_id: str = "test-session-123",
         usage: Any = None,
     ) -> None:
         self.agent_id = agent_id
         self.provider_name = provider_name
         self.model_name = model_name
+        self.service_vendor_name = service_vendor_name
+        self.transport_adapter_name = transport_adapter_name
         self.session_id = session_id
         self._usage = usage
 
@@ -70,7 +74,9 @@ def test_render_status_block_shows_agent_model_cwd() -> None:
     _render_status_block(runtime=runtime, console=console, working_dir="/work/dir")
     out = buf.getvalue()
     assert "openminion" in out
-    assert "openai/gpt-4" in out
+    assert "model: gpt-4" in out
+    assert "provider: openai" in out
+    assert "openai/gpt-4" not in out
     assert "test-session-123" in out
     assert "/work/dir" in out
 
@@ -82,6 +88,22 @@ def test_render_status_block_no_usage_shows_hint() -> None:
     out = buf.getvalue()
     # No real usage data → defensive hint.
     assert "no usage data" in out or "usage:" in out
+
+
+def test_render_status_block_separates_nvidia_service_from_openai_api() -> None:
+    runtime = _FakeRuntime(
+        model_name="google/gemma-4-31b-it",
+        service_vendor_name="nvidia",
+        transport_adapter_name="openai_chat",
+    )
+    console, buf = _make_console()
+    _render_status_block(runtime=runtime, console=console, working_dir="/work/dir")
+    out = buf.getvalue()
+
+    assert "model: google/gemma-4-31b-it" in out
+    assert "provider: nvidia" in out
+    assert "API adapter: OpenAI-compatible" in out
+    assert "openai/google/gemma-4-31b-it" not in out
 
 
 def test_render_status_block_handles_usage_format_error() -> None:
@@ -103,7 +125,8 @@ def test_slash_status_dispatch_shows_status_block() -> None:
     out = asyncio.run(_dispatch("/status", runtime=runtime, working_dir="/cwd"))
     assert "Status:" in out
     assert "openminion" in out
-    assert "openai/gpt-4" in out
+    assert "model: gpt-4" in out
+    assert "provider: openai" in out
 
 
 def test_slash_status_does_NOT_fall_through() -> None:

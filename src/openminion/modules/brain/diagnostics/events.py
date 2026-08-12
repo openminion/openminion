@@ -97,20 +97,16 @@ class CanonicalEventLogger:
         importance: int | None = None,
         redaction: str | None = None,
     ) -> str:
-        """Emit a canonical event with enriched actor_type and importance fields."""
-        actor_type = derive_actor_type(event_type)
-        derived_importance = (
-            importance if importance is not None else derive_importance(event_type)
-        )
-
         return self._session_api.append_event(
             self._session_id,
             event_type,
             payload,
-            actor_type=actor_type,
+            actor_type=derive_actor_type(event_type),
             actor_id=self._agent_id,
             trace={"trace_id": trace_id, "span_id": span_id} if trace_id else None,
-            importance=derived_importance,
+            importance=(
+                importance if importance is not None else derive_importance(event_type)
+            ),
             redaction=redaction or "none",
             trace_id=trace_id,
             task_id=task_id,

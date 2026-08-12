@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, get_args
 
 from openminion.modules.memory.errors import InvalidArgumentError
 
@@ -13,14 +13,7 @@ DelegatedMemorySessionEventType = Literal[
     "memory.delegation.grant_revoked",
 ]
 
-_EVENT_TYPES = frozenset(
-    {
-        "memory.delegation.grant_resolved",
-        "memory.delegation.access_denied",
-        "memory.delegation.candidate_handed_back",
-        "memory.delegation.grant_revoked",
-    }
-)
+_EVENT_TYPES = frozenset(get_args(DelegatedMemorySessionEventType))
 
 
 class CanonicalSessionEventSink(Protocol):

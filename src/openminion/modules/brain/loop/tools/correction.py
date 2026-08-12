@@ -154,8 +154,6 @@ def dispatch_correction_plan(
         return None
 
     if plan.correction_type == "retry_different":
-        if not plan.corrected_args:
-            raise ValueError("retry_different correction plan requires corrected_args")
         messages.append(
             Message(
                 role="system",

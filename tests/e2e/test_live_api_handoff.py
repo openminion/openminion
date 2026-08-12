@@ -31,7 +31,7 @@ def test_live_provider_backed_agent_handoff(
         pytest.skip(f"missing MiniMax config: {config_path}")
 
     data_root = tmp_path / "data"
-    monkeypatch.setenv("OPENMINION_HOME", str(framework_root))
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     runtime = APIRuntime.from_config_path(str(config_path))
     child = Agent(

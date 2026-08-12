@@ -43,7 +43,7 @@ def test_diff_slash_no_diff_prints_muted_message(tmp_path) -> None:
     out, transcript = _dispatch("/diff", working_dir=str(tmp_path))
 
     assert "no pending changes" in out
-    transcript.handle_tool_completed.assert_not_called()
+    transcript.push_message.assert_not_called()
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
@@ -56,8 +56,10 @@ def test_diff_slash_routes_unified_diff_to_tool_renderer(tmp_path) -> None:
 
     _out, transcript = _dispatch("/diff note.txt", working_dir=str(tmp_path))
 
-    transcript.handle_tool_completed.assert_called_once()
-    event = transcript.handle_tool_completed.call_args.args[0]
+    transcript.push_message.assert_called_once()
+    message = transcript.push_message.call_args.args[0]
+    event = message.tool_event
+    assert event is not None
     assert event.tool_name == "Edit"
     assert "diff --git" in event.content
     assert "-old" in event.content

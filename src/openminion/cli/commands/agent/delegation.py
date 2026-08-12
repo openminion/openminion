@@ -184,9 +184,7 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
 
 def delegate_action_requires_task_id(action: str) -> bool:
     normalized = str(action or "").strip().lower()
-    if normalized == "delegate":
-        return False
-    return normalized.removeprefix("delegate-") in _STATUS_MODES
+    return normalized != "delegate" and normalized.removeprefix("delegate-") in _STATUS_MODES
 
 
 __all__ = [

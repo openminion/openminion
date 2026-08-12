@@ -77,6 +77,23 @@ def _attr_or_meta(item: Any, attr_name: str, key: str) -> str:
     return _strip_attr(item, attr_name) or _meta_text(item, key)
 
 
+def _candidate_ref(candidate: Any, *, redact: bool) -> dict[str, Any]:
+    content = _candidate_text(getattr(candidate, "content", ""))
+    if redact:
+        content = _redact_secrets(content)
+    return {
+        "candidate_id": _strip_attr(candidate, "candidate_id"),
+        "record_type": _strip_attr(candidate, "type"),
+        "title": _strip_attr(candidate, "title"),
+        "content_preview": _truncate_preview(content),
+        "confidence": float(getattr(candidate, "confidence", 0.0) or 0.0),
+        "created_at": _strip_attr(candidate, "created_at"),
+        "source_session": _strip_attr(candidate, "session_id"),
+        "proposed_scope": _strip_attr(candidate, "proposed_scope"),
+        "source": _strip_attr(candidate, "source"),
+    }
+
+
 def _record_event_time(record: Any) -> str:
     return _strip_attr(record, "event_time") or _strip_attr(record, "created_at")
 
@@ -148,36 +165,19 @@ def extract_consolidation_payload(
     clusters: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for candidate in candidates:
-        candidate_id = str(getattr(candidate, "candidate_id", "") or "").strip()
+        candidate_ref = _candidate_ref(candidate, redact=True)
+        candidate_id = candidate_ref["candidate_id"]
         if not candidate_id:
             continue
-        title = _strip_attr(candidate, "title")
-        record_type = _strip_attr(candidate, "type")
-        proposed_scope = _strip_attr(candidate, "proposed_scope")
-        preview = _truncate_preview(
-            _redact_secrets(_candidate_text(getattr(candidate, "content", "")))
-        )
-        candidate_ref = {
-            "candidate_id": candidate_id,
-            "record_type": record_type,
-            "title": title,
-            "content_preview": preview,
-            "confidence": float(getattr(candidate, "confidence", 0.0) or 0.0),
-            "created_at": _strip_attr(candidate, "created_at"),
-            "source_session": _strip_attr(candidate, "session_id"),
-            "proposed_scope": proposed_scope,
-            "source": _strip_attr(candidate, "source"),
-        }
         candidate_refs.append(candidate_ref)
 
-        cluster_key = (
-            _attr_or_meta(candidate, "key", "normalized_key")
-            or title.lower()
-            or f"{record_type}:{candidate_id}"
-        )
+        title = candidate_ref["title"]
+        record_type = candidate_ref["record_type"]
+        proposed_scope = candidate_ref["proposed_scope"]
+        normalized_key = _attr_or_meta(candidate, "key", "normalized_key")
+        cluster_key = normalized_key or title.lower() or f"{record_type}:{candidate_id}"
         clusters[cluster_key].append(candidate_ref)
 
-        normalized_key = _attr_or_meta(candidate, "key", "normalized_key")
         if normalized_key:
             duplicate_record = None
             finder = getattr(memory_api, "find_record_by_normalized_key", None)
@@ -285,25 +285,10 @@ def collect_memory_consolidation_candidates(
 
     batch: list[dict[str, Any]] = []
     for candidate in items:
-        candidate_id = _strip_attr(candidate, "candidate_id")
-        if not candidate_id:
+        candidate_ref = _candidate_ref(candidate, redact=False)
+        if not candidate_ref["candidate_id"]:
             continue
-        session_id = _strip_attr(candidate, "session_id")
-        batch.append(
-            {
-                "candidate_id": candidate_id,
-                "record_type": _strip_attr(candidate, "type"),
-                "title": _strip_attr(candidate, "title"),
-                "content_preview": _truncate_preview(
-                    _candidate_text(getattr(candidate, "content", ""))
-                ),
-                "confidence": float(getattr(candidate, "confidence", 0.0) or 0.0),
-                "created_at": _strip_attr(candidate, "created_at"),
-                "source_session": session_id,
-                "proposed_scope": _strip_attr(candidate, "proposed_scope"),
-                "source": _strip_attr(candidate, "source"),
-            }
-        )
+        batch.append(candidate_ref)
     return batch
 
 

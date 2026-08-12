@@ -148,7 +148,6 @@ class SQLiteGoalRunStore:
         self._ensure_schema()
 
     def save(self, state: GoalRunState) -> GoalRunState:
-        self._ensure_schema()
         payload = state.model_dump_json()
         with self._connect() as conn:
             conn.execute(
@@ -252,7 +251,6 @@ class SQLiteGoalRunStore:
             )
 
     def _one(self, sql: str, params: tuple[object, ...]) -> sqlite3.Row | None:
-        self._ensure_schema()
         with self._connect() as conn:
             return cast(sqlite3.Row | None, conn.execute(sql, params).fetchone())
 
@@ -441,17 +439,7 @@ class GoalRunController:
         )
 
     def cap_state(self, state: GoalRunState) -> GoalRunCapState:
-        elapsed = max(0, (goal_now_ms() - state.started_at_ms) // 1000)
-        return GoalRunCapState(
-            max_auto_turns=state.caps.max_auto_turns,
-            turns_used=state.turn_count,
-            max_wall_clock_seconds=state.caps.max_wall_clock_seconds,
-            elapsed_seconds=elapsed,
-            token_cost_cap=state.caps.token_cost_cap,
-            user_interrupt_enabled=state.caps.user_interrupt_enabled,
-            repeated_no_progress_limit=state.caps.repeated_no_progress_limit,
-            repeated_no_progress_count=state.repeated_no_progress_count,
-        )
+        return _goal_run_cap_state(state)
 
     def run_replay(
         self,
@@ -573,14 +561,12 @@ def build_continuation_prompt(
 ) -> str:
     """Build the short structural prompt for the next automatic turn."""
 
-    return str(
-        build_goal_run_continuation_prompt(
-            goal_id=state.goal_id,
-            evaluator_outcome=evaluation.outcome,
-            reason=evaluation.reason,
-            evidence_refs=evaluation.evidence_refs,
-            next_instruction=evaluation.next_instruction,
-        )
+    return build_goal_run_continuation_prompt(
+        goal_id=state.goal_id,
+        evaluator_outcome=evaluation.outcome,
+        reason=evaluation.reason,
+        evidence_refs=evaluation.evidence_refs,
+        next_instruction=evaluation.next_instruction,
     )
 
 
@@ -606,9 +592,6 @@ def parse_replay_evaluations(
                 outcome=cast(GoalRunOutcome, normalized),
                 mission_status=_OUTCOME_TO_STATUS[normalized],
                 reason=reason.strip() or normalized,
-                next_instruction="continue bounded goal work"
-                if normalized == "continue"
-                else "",
             )
         )
     return tuple(evaluations)
@@ -617,7 +600,7 @@ def parse_replay_evaluations(
 def render_goal_run_status(state: GoalRunState | None) -> str:
     if state is None:
         return "No active goal run for this session."
-    cap_state = _cap_state_for_render(state)
+    cap_state = _goal_run_cap_state(state)
     lines = [
         f"run={state.run_id}",
         f"goal={state.goal_id}",
@@ -634,7 +617,7 @@ def render_goal_run_status(state: GoalRunState | None) -> str:
     return "\n".join(lines)
 
 
-def _cap_state_for_render(state: GoalRunState) -> GoalRunCapState:
+def _goal_run_cap_state(state: GoalRunState) -> GoalRunCapState:
     return GoalRunCapState(
         max_auto_turns=state.caps.max_auto_turns,
         turns_used=state.turn_count,

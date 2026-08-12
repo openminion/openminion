@@ -1,5 +1,3 @@
-"""Goal access helpers for the adaptive loop."""
-
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,8 +17,6 @@ GoalIterationOutcome = Literal[
 
 
 class GoalIterationReport(BaseModel):
-    """Structured per-iteration progress fact relative to a durable goal."""
-
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     goal_id: str = Field(min_length=1)
@@ -35,8 +31,6 @@ def resolve_active_goal(
     goal_store: GoalStore | None = None,
     goal_runtime: Any | None = None,
 ) -> Goal | None:
-    """Resolve the current session's canonical goal without guessing globally."""
-
     goal_id = _state_goal_id(state)
     if goal_id and goal_store is not None:
         goal = goal_store.get(goal_id)
@@ -67,8 +61,6 @@ def build_goal_iteration_report(
     reason: str = "",
     evidence_refs: tuple[str, ...] | list[str] = (),
 ) -> GoalIterationReport:
-    """Build the loop's structured progress fact for one iteration."""
-
     return GoalIterationReport(
         goal_id=goal.goal_id,
         outcome=outcome,
@@ -88,8 +80,6 @@ def report_goal_iteration(
     goal_store: GoalStore | None = None,
     goal_runtime: Any | None = None,
 ) -> GoalIterationReport | None:
-    """Build a goal-relative report only when the current session has a goal."""
-
     goal = resolve_active_goal(
         state,
         goal_store=goal_store,

@@ -109,7 +109,6 @@ class MemoryMerger:
             return self._import_candidate_mode(
                 rewritten_records=rewritten_records,
                 bundle_id=bundle_id,
-                source_instance=source_instance,
                 imported_at=imported_at,
                 snapshot=snapshot,
                 options=options,
@@ -141,11 +140,10 @@ class MemoryMerger:
 
         for record in records:
             existing = self._service._store.get(record.id)  # noqa: SLF001
-            if existing is None:
-                continue
-            if _record_equal(existing, record, ignore_id=False):
-                continue
-            id_map[record.id] = _new_id("mem")
+            if existing is not None and not _record_equal(
+                existing, record, ignore_id=False
+            ):
+                id_map[record.id] = _new_id("mem")
         return id_map
 
     def _rewrite_record(
@@ -272,7 +270,6 @@ class MemoryMerger:
         *,
         rewritten_records: list[MemoryRecord],
         bundle_id: str,
-        source_instance: Any,
         imported_at: str,
         snapshot: MemoryBundleSnapshot,
         options: MemoryBundleImportOptions,
@@ -341,9 +338,7 @@ class MemoryMerger:
         imported_records = 0
         skipped_records = 0
 
-        for source_record, record in zip(
-            snapshot.records, rewritten_records, strict=False
-        ):
+        for source_record, record in zip(snapshot.records, rewritten_records):
             existing_exact = self._service._store.get(record.id)  # noqa: SLF001
             if existing_exact is not None and _record_equal(
                 existing_exact,

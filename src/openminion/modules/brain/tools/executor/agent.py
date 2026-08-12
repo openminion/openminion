@@ -13,6 +13,7 @@ from ...schemas import (
     WorkingState,
     new_uuid,
 )
+from ...tool_catalog import RunnerToolCatalog
 from ..parser import normalize_tool_name_for_brain
 
 
@@ -80,33 +81,7 @@ def _resolve_local_tool_name(
     normalized = normalize_tool_name_for_brain(method)
     if normalized:
         return normalized
-    available_tool_names = set()
-    tool_name_provider = getattr(runner, "_available_tool_names", None)
-    if callable(tool_name_provider):
-        try:
-            available_tool_names = {
-                str(item or "").strip()
-                for item in list(tool_name_provider())
-                if str(item or "").strip()
-            }
-        except Exception:  # pragma: no cover
-            available_tool_names = set()
-    if method in available_tool_names:
-        return method
-    tool_api = getattr(runner, "tool_api", None)
-    list_tools = getattr(tool_api, "list_tools", None)
-    if callable(list_tools):
-        try:
-            runtime_names = {
-                str(item.get("name", "")).strip()
-                for item in list_tools()
-                if isinstance(item, dict) and str(item.get("name", "")).strip()
-            }
-        except Exception:  # pragma: no cover
-            runtime_names = set()
-        if method in runtime_names:
-            return method
-    return ""
+    return method if method in RunnerToolCatalog(runner).list_tool_names() else ""
 
 
 def _execute_local_self_agent_command(

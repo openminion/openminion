@@ -12,7 +12,6 @@ def create_skill_adapter(
     config: Any = None,
     telemetryctl: Any | None = None,
 ) -> Any:
-    """SKI-01: Create skill adapter for runtime integration."""
     if mode_is_local(mode):
         return None
     try:
@@ -21,12 +20,11 @@ def create_skill_adapter(
         resolved_home_root = (
             Path(home_root).expanduser().resolve(strict=False) if home_root else None
         )
-        skill_config = config if config is not None else {}
         return Skill(
-            config=skill_config,
+            config=config if config is not None else {},
             home_root=resolved_home_root,
             telemetryctl=telemetryctl,
         )
-    except Exception:
+    except ImportError:
         raise_if_strict(mode)
         return None

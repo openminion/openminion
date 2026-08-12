@@ -78,14 +78,13 @@ class InboxOutboxStore:
     ) -> dict[str, Any] | None:
         now = _iso_now()
         with self._rs.transaction():
-            reclaim_before = _iso_ago(reclaim_ttl_s)
             self._rs.execute_count(
                 """
                 UPDATE cp_inbox
                 SET status='new', lock_owner=NULL, locked_at=NULL
                 WHERE status='processing' AND locked_at IS NOT NULL AND locked_at < ?
                 """,
-                (reclaim_before,),
+                (_iso_ago(reclaim_ttl_s),),
             )
             rows = self._rs.query_dicts(
                 """
@@ -245,14 +244,13 @@ class InboxOutboxStore:
         """Claim the next deliverable outbox row, incrementing ``attempts``."""
         now = _iso_now()
         with self._rs.transaction():
-            reclaim_before = _iso_ago(reclaim_ttl_s)
             self._rs.execute_count(
                 """
                 UPDATE cp_outbox
                 SET status='pending', lock_owner=NULL, locked_at=NULL
                 WHERE status='sending' AND locked_at IS NOT NULL AND locked_at < ?
                 """,
-                (reclaim_before,),
+                (_iso_ago(reclaim_ttl_s),),
             )
             rows = self._rs.query_dicts(
                 """

@@ -72,7 +72,6 @@ class SQLiteGoalRunStepLedger:
         self._ensure_schema()
 
     def append(self, step: GoalRunStep) -> GoalRunStep:
-        self._ensure_schema()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -94,7 +93,6 @@ class SQLiteGoalRunStepLedger:
         return step
 
     def list_for_run(self, run_id: str) -> tuple[GoalRunStep, ...]:
-        self._ensure_schema()
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -152,7 +150,6 @@ class SQLiteGoalRunStepLedger:
                 evaluator_outcome="continue",
                 mission_status=MissionStatus.ACTIVE,
                 evaluator_reason=reason,
-                next_instruction="resume goal after async wake",
             )
         )
 

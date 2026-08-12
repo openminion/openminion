@@ -14,9 +14,11 @@ from tests.e2e.cli.focus.harness.provider_matrix import (  # noqa: E402
     load_provider_session_resilience_manifest,
     write_provider_session_resilience_report,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
+    isolate_runtime_roots(prefix="openminion-provider-session-")
     parser = argparse.ArgumentParser(
         prog="run_provider_session_resilience.py",
         description="Validate provider/session resilience manifests.",

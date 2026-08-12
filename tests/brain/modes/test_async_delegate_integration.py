@@ -263,6 +263,7 @@ def test_async_delegate_flow_starts_pending_then_resumes_to_done() -> None:
 
         a2a_api.poll_response = {
             "status": "completed",
+            "summary": "Research complete.",
             "outputs": {"answer": "Research complete."},
         }
         resumed = mode.resume(ctx)

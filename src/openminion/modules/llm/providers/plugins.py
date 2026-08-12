@@ -42,12 +42,6 @@ class ProviderRegistry:
                 f"Provider already registered: {name}",
                 {"provider": name},
             )
-        if not hasattr(provider, "complete"):
-            raise LLMCtlError(
-                "INVALID_ARGUMENT",
-                f"Provider '{name}' missing 'complete' method",
-                {"provider": name},
-            )
         self._providers[name] = provider
 
     def get(self, name: str) -> Provider:
@@ -89,11 +83,7 @@ def register_builtin_providers(registry: ProviderRegistry) -> list[dict[str, Any
         name = provider.name
         try:
             registry.add(provider)
-            health = (
-                provider.healthcheck({})
-                if hasattr(provider, "healthcheck")
-                else {"ok": True}
-            )
+            health = provider.healthcheck({})
             statuses.append(
                 {
                     "name": name,
@@ -151,11 +141,7 @@ def load_plugin_providers(registry: ProviderRegistry) -> list[dict[str, Any]]:
             registry.add(provider)
             status["loaded"] = True
 
-            health = {"ok": True}
-            if hasattr(provider, "healthcheck"):
-                maybe_health = provider.healthcheck({})
-                if isinstance(maybe_health, dict):
-                    health = maybe_health
+            health = provider.healthcheck({})
             status["healthy"] = bool(health.get("ok", True))
             status["health"] = health
         except Exception as exc:

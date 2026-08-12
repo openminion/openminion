@@ -142,11 +142,7 @@ def stage_candidate_with_owner(
 ) -> ImprovementCandidateStageResult:
     """Stage one candidate through its owning module/service adapter."""
 
-    candidate_obj = (
-        candidate
-        if isinstance(candidate, ImprovementCandidate)
-        else ImprovementCandidate.model_validate(candidate)
-    )
+    candidate_obj = ImprovementCandidate.model_validate(candidate)
     stage_fn = owner_stage_fns.get(candidate_obj.target_type)
     if stage_fn is None:
         return ImprovementCandidateStageResult(
@@ -250,32 +246,13 @@ def stage_learning_memory_candidate(
 ) -> ImprovementCandidateStageResult:
     """Stage an explicitly authored semantic lesson as a memory candidate."""
 
-    candidate_obj = (
-        candidate
-        if isinstance(candidate, ImprovementCandidate)
-        else ImprovementCandidate.model_validate(candidate)
-    )
+    candidate_obj = ImprovementCandidate.model_validate(candidate)
     if candidate_obj.target_type != "memory":
-        return ImprovementCandidateStageResult(
-            candidate_id=candidate_obj.candidate_id,
-            target_type=candidate_obj.target_type,
-            status="skipped",
-            reason_code="memory_learning_target_required",
-        )
+        return _skipped_stage_result(candidate_obj, "memory_learning_target_required")
     if candidate_obj.semantic_author_source is None:
-        return ImprovementCandidateStageResult(
-            candidate_id=candidate_obj.candidate_id,
-            target_type=candidate_obj.target_type,
-            status="skipped",
-            reason_code="semantic_author_source_required",
-        )
+        return _skipped_stage_result(candidate_obj, "semantic_author_source_required")
     if candidate_obj.state != "staged":
-        return ImprovementCandidateStageResult(
-            candidate_id=candidate_obj.candidate_id,
-            target_type=candidate_obj.target_type,
-            status="skipped",
-            reason_code="candidate_state_not_stageable",
-        )
+        return _skipped_stage_result(candidate_obj, "candidate_state_not_stageable")
     owner_result = stage_memory_candidate(
         candidate_obj,
         memory_service=memory_service,
@@ -288,6 +265,18 @@ def stage_learning_memory_candidate(
         target_type=candidate_obj.target_type,
         status="staged",
         owner_result=dict(owner_result),
+    )
+
+
+def _skipped_stage_result(
+    candidate: ImprovementCandidate,
+    reason_code: str,
+) -> ImprovementCandidateStageResult:
+    return ImprovementCandidateStageResult(
+        candidate_id=candidate.candidate_id,
+        target_type=candidate.target_type,
+        status="skipped",
+        reason_code=reason_code,
     )
 
 

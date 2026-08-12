@@ -3,6 +3,30 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 import time
+import uuid
+
+from .debug_schemas import (
+    TELEMETRY_CORRELATION_REPORT_SCHEMA_V1 as TELEMETRY_CORRELATION_REPORT_SCHEMA_V1,
+    TELEMETRY_DEBUG_SCHEMA_V1 as TELEMETRY_DEBUG_SCHEMA_V1,
+    TELEMETRY_EXPORT_SMOKE_SCHEMA_V1 as TELEMETRY_EXPORT_SMOKE_SCHEMA_V1,
+    TELEMETRY_RETENTION_PLAN_SCHEMA_V1 as TELEMETRY_RETENTION_PLAN_SCHEMA_V1,
+    TELEMETRY_TIMING_REPORT_SCHEMA_V1 as TELEMETRY_TIMING_REPORT_SCHEMA_V1,
+    TelemetryCorrelationReport as TelemetryCorrelationReport,
+    TelemetryDebugDiagnostic as TelemetryDebugDiagnostic,
+    TelemetryDebugError as TelemetryDebugError,
+    TelemetryDebugExportHealth as TelemetryDebugExportHealth,
+    TelemetryDebugInvocation as TelemetryDebugInvocation,
+    TelemetryDebugLinks as TelemetryDebugLinks,
+    TelemetryDebugReport as TelemetryDebugReport,
+    TelemetryDebugSelection as TelemetryDebugSelection,
+    TelemetryDebugUsage as TelemetryDebugUsage,
+    TelemetryExportSmokeReport as TelemetryExportSmokeReport,
+    TelemetryRetentionPlan as TelemetryRetentionPlan,
+    TelemetryTimingReport as TelemetryTimingReport,
+)
+
+TELEMETRY_EVENT_SCHEMA_V1 = "openminion.telemetry_event.v1"
+TELEMETRY_EVENT_SCHEMA_V2 = "openminion.telemetry_event.v2"
 
 
 class DropReason(str, Enum):
@@ -417,16 +441,73 @@ class TelemetryEvent:
     timestamp: float = field(default_factory=time.time)
     data: dict[str, Any] = field(default_factory=dict)
     mode: str | None = None
+    schema_version: str = TELEMETRY_EVENT_SCHEMA_V1
+    event_id: str = ""
+    trace_key: str | None = None
+    invocation_id: str | None = None
+    execution_id: str | None = None
+    agent_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
+            "schema_version": self.schema_version,
+            "event_id": self.event_id,
             "session_id": self.session_id,
             "turn_id": self.turn_id,
             "event_type": self.event_type,
             "timestamp": self.timestamp,
             "data": self.data,
-            "mode": self.mode,
         }
+        for name in (
+            "trace_key",
+            "invocation_id",
+            "execution_id",
+            "agent_id",
+            "mode",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                payload[name] = value
+        return payload
+
+
+def normalize_telemetry_event(event: TelemetryEvent) -> TelemetryEvent:
+    """Return the canonical v2 envelope without inventing correlation."""
+    data = dict(event.data or {})
+
+    def correlation(name: str) -> str | None:
+        value = getattr(event, name) or data.get(name)
+        normalized = str(value or "").strip()
+        return normalized or None
+
+    trace_key = correlation("trace_key")
+    if trace_key is None:
+        legacy_trace_id = str(data.get("trace_id") or "").strip()
+        trace_key = legacy_trace_id or None
+    mode = str(event.mode or data.get("mode") or "").strip().lower() or None
+    return TelemetryEvent(
+        session_id=str(event.session_id),
+        turn_id=str(event.turn_id),
+        event_type=str(event.event_type),
+        timestamp=float(event.timestamp),
+        data=data,
+        mode=mode,
+        schema_version=TELEMETRY_EVENT_SCHEMA_V2,
+        event_id=str(event.event_id or uuid.uuid4()),
+        trace_key=trace_key,
+        invocation_id=correlation("invocation_id"),
+        execution_id=correlation("execution_id"),
+        agent_id=correlation("agent_id"),
+    )
+
+
+@dataclass(frozen=True)
+class TelemetryDeletionResult:
+    invocation_id: str
+    database_rows_deleted: int
+    artifacts_deleted: int
+    pending_exports_deleted: int
+    external_collector_status: str = "accepted_data_not_retractable"
 
 
 @dataclass

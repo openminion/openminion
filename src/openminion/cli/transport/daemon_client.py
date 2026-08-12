@@ -232,27 +232,23 @@ def _build_sse_final_payload(
 
     if error is not None:
         payload: dict[str, Any] = {"ok": False, "error": error}
-        if trace_id:
-            payload["trace_id"] = trace_id
-        if chunks:
-            payload["chunks"] = chunks
-        return payload
-    if turn:
+    elif turn:
         payload = {"ok": True, "turn": turn}
-        if trace_id:
-            payload["trace_id"] = trace_id
-        if chunks:
-            payload["chunks"] = chunks
-        return payload
-    return {
-        "ok": False,
-        "error": {
-            "code": "missing_stream_response",
-            "message": "daemon stream ended without a final response",
-        },
-        "trace_id": trace_id,
-        "chunks": chunks,
-    }
+    else:
+        return {
+            "ok": False,
+            "error": {
+                "code": "missing_stream_response",
+                "message": "daemon stream ended without a final response",
+            },
+            "trace_id": trace_id,
+            "chunks": chunks,
+        }
+    if trace_id:
+        payload["trace_id"] = trace_id
+    if chunks:
+        payload["chunks"] = chunks
+    return payload
 
 
 def _parse_sse_response(

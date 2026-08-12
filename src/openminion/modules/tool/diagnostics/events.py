@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.telemetry.events.module import (
@@ -128,12 +129,14 @@ def emit_tool_invoke_operation(
 
 def _context_telemetry_fields(ctx: Any) -> tuple[Any, str, str]:
     extras = getattr(ctx, "extras", {}) or {}
+    metadata = getattr(ctx, "metadata", {}) or {}
     telemetryctl = getattr(ctx, "telemetryctl", None) or extras.get("telemetryctl")
     session_id = (
         str(getattr(ctx, "telemetry_session_id", "") or "").strip()
         or str(getattr(ctx, "session_id", "") or "").strip()
         or str(extras.get("telemetry_session_id", "") or "").strip()
         or str(extras.get("session_id", "") or "").strip()
+        or str(metadata.get("session_id", "") or "").strip()
     )
     turn_id = (
         str(getattr(ctx, "telemetry_turn_id", "") or "").strip()
@@ -141,6 +144,8 @@ def _context_telemetry_fields(ctx: Any) -> tuple[Any, str, str]:
         or str(extras.get("telemetry_turn_id", "") or "").strip()
         or str(extras.get("turn_id", "") or "").strip()
         or str(extras.get("trace_id", "") or "").strip()
+        or str(metadata.get("turn_id", "") or "").strip()
+        or str(metadata.get("trace_id", "") or "").strip()
     )
     return telemetryctl, session_id, turn_id
 
@@ -194,4 +199,34 @@ def emit_tool_invoke_operation_for_context(
         status=status,
         error_code=error_code,
         extra=extra,
+    )
+
+
+def emit_tool_execution_event(
+    *,
+    ctx: Any,
+    event_type: str,
+    payload: Mapping[str, Any],
+    status: str,
+    error: Mapping[str, Any] | None = None,
+) -> bool:
+    telemetryctl, session_id, turn_id = _context_telemetry_fields(ctx)
+    if telemetryctl is None or not session_id or not turn_id:
+        return False
+    metadata = getattr(ctx, "metadata", {}) or {}
+    event_payload = dict(payload)
+    for key in ("invocation_id", "execution_id", "agent_id"):
+        value = metadata.get(key)
+        if value:
+            event_payload[key] = str(value)
+    return emit_module_telemetry(
+        telemetryctl,
+        "emit_canonical_event",
+        session_id,
+        turn_id,
+        event_type,
+        event_payload,
+        trace_id=str(metadata.get("trace_id") or ""),
+        status=status,
+        error=dict(error) if error else None,
     )

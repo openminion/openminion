@@ -374,6 +374,17 @@ class RemoteMemoryStore:
             else {},
         )
 
+    def _parse_many(
+        self,
+        payload: dict[str, Any],
+        key: str,
+        parser: Callable[[dict[str, Any]], Any],
+    ) -> list[Any]:
+        rows = payload.get(key, payload)
+        if not isinstance(rows, list):
+            return []
+        return [parser(item) for item in rows if isinstance(item, dict)]
+
     def put(self, record: MemoryRecord) -> str:
         payload = self._transport.call(
             operation="put",
@@ -435,10 +446,7 @@ class RemoteMemoryStore:
                 "order_by": options.order_by.value if options.order_by else None,
             },
         )
-        rows = payload.get("records", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_record(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "records", self._parse_record)
 
     def search(self, options: SearchQueryOptions) -> list[MemoryRecord]:
         payload = self._transport.call(
@@ -454,10 +462,7 @@ class RemoteMemoryStore:
                 else None,
             },
         )
-        rows = payload.get("records", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_record(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "records", self._parse_record)
 
     def list_scopes(self) -> list[str]:
         payload = self._transport.call(
@@ -515,10 +520,7 @@ class RemoteMemoryStore:
                 "limit": limit,
             },
         )
-        rows = payload.get("records", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_record(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "records", self._parse_record)
 
     def transition_tier(
         self,
@@ -560,12 +562,7 @@ class RemoteMemoryStore:
                 "limit": limit,
             },
         )
-        rows = payload.get("transitions", payload)
-        if not isinstance(rows, list):
-            return []
-        return [
-            self._parse_tier_transition(item) for item in rows if isinstance(item, dict)
-        ]
+        return self._parse_many(payload, "transitions", self._parse_tier_transition)
 
     def put_tier_transition(self, transition: MemoryTierTransition) -> str:
         payload = self._transport.call(
@@ -605,10 +602,7 @@ class RemoteMemoryStore:
                 "limit": limit,
             },
         )
-        rows = payload.get("relations", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_relation(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "relations", self._parse_relation)
 
     def get_related_records(
         self,
@@ -627,10 +621,7 @@ class RemoteMemoryStore:
                 "limit": limit,
             },
         )
-        rows = payload.get("records", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_record(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "records", self._parse_record)
 
     def candidate_put(self, candidate: MemoryCandidate) -> str:
         payload = self._transport.call(
@@ -662,10 +653,7 @@ class RemoteMemoryStore:
                 "limit": options.limit,
             },
         )
-        rows = payload.get("candidates", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_candidate(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "candidates", self._parse_candidate)
 
     def candidate_update(
         self, candidate_id: str, patch: dict[str, Any]
@@ -734,10 +722,7 @@ class RemoteMemoryStore:
             operation="history",
             payload={"scope": scope, "type": type, "key": key},
         )
-        rows = payload.get("records", payload)
-        if not isinstance(rows, list):
-            return []
-        return [self._parse_record(item) for item in rows if isinstance(item, dict)]
+        return self._parse_many(payload, "records", self._parse_record)
 
 
 __all__ = [

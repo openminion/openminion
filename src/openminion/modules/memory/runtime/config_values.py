@@ -5,23 +5,23 @@ def is_mock_like(value: Any) -> bool:
     return value is not None and "unittest.mock" in type(value).__module__
 
 
+def _field(owner: Any, name: str, default: Any = None) -> Any:
+    if isinstance(owner, Mapping):
+        return owner.get(name, default)
+    return getattr(owner, name, default)
+
+
 def config_section(config: Any, name: str) -> Any | None:
     if config is None or is_mock_like(config):
         return None
-    if isinstance(config, Mapping):
-        section = config.get(name)
-    else:
-        section = getattr(config, name, None)
+    section = _field(config, name)
     return None if is_mock_like(section) else section
 
 
 def config_value(section: Any, name: str, default: Any) -> Any:
     if section is None:
         return default
-    if isinstance(section, Mapping):
-        value = section.get(name, default)
-    else:
-        value = getattr(section, name, default)
+    value = _field(section, name, default)
     return default if is_mock_like(value) else value
 
 
@@ -45,9 +45,7 @@ def coerce_int(value: Any, default: int, *, minimum: int | None = None) -> int:
         parsed = int(value)
     except (TypeError, ValueError):
         parsed = default
-    if minimum is not None:
-        parsed = max(minimum, parsed)
-    return parsed
+    return max(minimum, parsed) if minimum is not None else parsed
 
 
 def coerce_float(

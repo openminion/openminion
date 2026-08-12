@@ -95,13 +95,7 @@ def build_runtime_llm_handle(
     provider/model/tool-policy behavior used by `LLMCTLBridgeProvider`.
     """
     del provider_runtime_mode, registry
-    try:
-        _default_agent_id = resolve_default_agent_id(config)
-        provider_name = (
-            config.agents[_default_agent_id].provider or "echo"
-        ).strip().lower() or "echo"
-    except Exception:  # noqa: BLE001
-        provider_name = "echo"
+    provider_name = _resolve_default_provider_name(config)
 
     provider_env = _resolve_provider_env(config)
     if not llmctl_bridge_available(env=provider_env):
@@ -168,13 +162,7 @@ def build_provider(
 ) -> LLMProvider:
     """Build provider helper."""
     del registry  # no longer used
-    try:
-        _default_agent_id = resolve_default_agent_id(config)
-        provider_name = (
-            config.agents[_default_agent_id].provider or "echo"
-        ).strip().lower() or "echo"
-    except Exception:  # noqa: BLE001
-        provider_name = "echo"
+    provider_name = _resolve_default_provider_name(config)
 
     provider_env = _resolve_provider_env(config)
     if not llmctl_bridge_available(env=provider_env):
@@ -215,6 +203,14 @@ def _build_llmctl_bridge_provider(
         provider_config=provider_payload,
         env=env,
     )
+
+
+def _resolve_default_provider_name(config: OpenMinionConfig) -> str:
+    try:
+        agent_id = resolve_default_agent_id(config)
+        return (config.agents[agent_id].provider or "echo").strip().lower() or "echo"
+    except Exception:  # noqa: BLE001
+        return "echo"
 
 
 def _provider_settings_for_llmctl_bridge(
@@ -399,15 +395,5 @@ def _as_positive_int(value, *, default: int) -> int:
     except (TypeError, ValueError):
         return int(default)
     if parsed <= 0:
-        return int(default)
-    return parsed
-
-
-def _as_non_negative_int(value, *, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return int(default)
-    if parsed < 0:
         return int(default)
     return parsed

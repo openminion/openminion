@@ -214,13 +214,7 @@ def list_turn_inputs(
     except TurnInputQueueError as exc:
         return _queue_error_result(exc)
     except ValueError as exc:
-        return error_route_result(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message=str(exc),
-            details={"path": path},
-            retryable=False,
-        )
+        return _invalid_request(path=path, exc=exc)
     finally:
         close_api_runtime_if_owned(runtime, own_runtime=own_runtime)
 
@@ -387,8 +381,7 @@ def cancel_and_run_next(
     except TurnInputQueueError as exc:
         return _queue_error_result(exc)
     finally:
-        if own_runtime:
-            active_runtime.close()
+        close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)
 
 
 def _invalid_request(*, path: str, exc: ValueError) -> RouteResult:

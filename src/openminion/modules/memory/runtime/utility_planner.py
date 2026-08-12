@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -129,14 +129,9 @@ def stage_utility_plan(plan: UtilityPlan, service: Any) -> UtilityPlan:
                 "normalized_key": f"utility:{plan.source_run_id}:{item.case_id}",
             },
         )
-        staged_items.append(
-            UtilityPlanItem(**{**asdict(item), "staged_candidate_id": candidate_id})
-        )
-    return UtilityPlan(
-        schema_version=plan.schema_version,
-        source_report_version=plan.source_report_version,
-        source_run_id=plan.source_run_id,
-        source_artifact_sha256=plan.source_artifact_sha256,
+        staged_items.append(replace(item, staged_candidate_id=candidate_id))
+    return replace(
+        plan,
         dry_run=False,
         staged=True,
         items=tuple(staged_items),

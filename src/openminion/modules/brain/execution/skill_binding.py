@@ -39,15 +39,13 @@ def _canonical_active_skill_id(state: Any, skill_id: str) -> str | None:
     return None
 
 
-def _primary_active_skill_id(state: Any) -> str | None:
+def _sole_active_skill_id(state: Any) -> str | None:
     active_ids = active_skill_ids_for_state(state)
-    return active_ids[0] if active_ids else None
+    return active_ids[0] if len(active_ids) == 1 else None
 
 
 def _version_hash_for_skill(state: Any, skill_id: str) -> str | None:
     versions = getattr(state, "resolved_skill_versions", {}) or {}
-    if not isinstance(versions, dict):
-        return None
     for key, value in versions.items():
         if str(key or "").strip().lower() == skill_id.lower():
             text = str(value or "").strip()
@@ -79,11 +77,8 @@ def _bound_skill_from_sub_intents(state: Any, command: Any) -> str | None:
 def resolve_skill_id_for_command(state: Any, command: Any) -> str | None:
     explicit_skill_id = str(getattr(command, "skill_id", "") or "").strip()
     if explicit_skill_id:
-        canonical = _canonical_active_skill_id(state, explicit_skill_id)
-        return canonical or _primary_active_skill_id(state)
-    return _bound_skill_from_sub_intents(state, command) or _primary_active_skill_id(
-        state
-    )
+        return _canonical_active_skill_id(state, explicit_skill_id)
+    return _bound_skill_from_sub_intents(state, command) or _sole_active_skill_id(state)
 
 
 def activate_skill_for_command(state: Any, command: Any) -> str | None:

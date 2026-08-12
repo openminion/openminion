@@ -15,10 +15,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 @dataclass(slots=True)
 class _AfeConfigData:
-    text: str
     max_items: int
     initial_confidence: float
-    extraction_timeout_seconds: int
     model: str
     memory_service: Any
     llm_call_id: str
@@ -68,15 +66,11 @@ def _build_afe_config_data(
     )
 
     config = _afe_config(runner)
-    enabled = bool(getattr(config, "enabled", True)) if config is not None else True
+    enabled = bool(getattr(config, "enabled", True))
     if not enabled:
         return _emit_afe_skipped(logger=logger, state=state, reason="disabled")
     text = str(user_message or "").strip()
-    min_chars = (
-        max(1, int(getattr(config, "min_user_message_chars", 8) or 8))
-        if config is not None
-        else 8
-    )
+    min_chars = max(1, int(getattr(config, "min_user_message_chars", 8) or 8))
     if len(text) < min_chars:
         return _emit_afe_skipped(
             logger=logger,
@@ -98,11 +92,7 @@ def _build_afe_config_data(
             reason="memory_api_unavailable",
             status="warning",
         )
-    model_tier = (
-        str(getattr(config, "model_tier", "reflect") or "reflect")
-        if config is not None
-        else "reflect"
-    )
+    model_tier = str(getattr(config, "model_tier", "reflect") or "reflect")
     model = _afe_model(runner, tier=model_tier)
     if not model:
         return _emit_afe_skipped(
@@ -111,11 +101,7 @@ def _build_afe_config_data(
             reason="missing_model",
             status="warning",
         )
-    max_items = (
-        max(1, int(getattr(config, "max_items_per_turn", 5) or 5))
-        if config is not None
-        else 5
-    )
+    max_items = max(1, int(getattr(config, "max_items_per_turn", 5) or 5))
     initial_confidence = _resolve_initial_confidence(
         config=config, default_confidence=AFE_INITIAL_CONFIDENCE
     )
@@ -133,10 +119,8 @@ def _build_afe_config_data(
         trace_id=state.trace_id,
     )
     return _AfeConfigData(
-        text=text,
         max_items=max_items,
         initial_confidence=initial_confidence,
-        extraction_timeout_seconds=extraction_timeout_seconds,
         model=model,
         memory_service=runner.memory_api,
         llm_call_id=llm_call_id,
@@ -150,8 +134,6 @@ def _build_afe_config_data(
 
 
 def _resolve_initial_confidence(*, config: Any, default_confidence: float) -> float:
-    if config is None:
-        return default_confidence
     raw_initial_confidence = getattr(config, "initial_confidence", default_confidence)
     try:
         parsed_confidence = float(raw_initial_confidence)
@@ -163,8 +145,6 @@ def _resolve_initial_confidence(*, config: Any, default_confidence: float) -> fl
 
 
 def _resolve_timeout_seconds(*, config: Any, default_timeout: int) -> int:
-    if config is None:
-        return default_timeout
     raw_timeout = getattr(config, "timeout_seconds", default_timeout)
     try:
         return max(1, int(raw_timeout or default_timeout))

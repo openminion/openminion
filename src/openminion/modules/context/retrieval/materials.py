@@ -27,10 +27,10 @@ from ..schemas import (
 
 
 def _latest_user_message(session_slice: SessionSlice) -> str:
-    for turn in reversed(list(session_slice.recent_turns or [])):
-        if str(getattr(turn, "role", "") or "").strip().lower() != "user":
+    for turn in reversed(session_slice.recent_turns):
+        if turn.role.strip().lower() != "user":
             continue
-        content = str(getattr(turn, "content", "") or "").strip()
+        content = turn.content.strip()
         if content:
             return content
     return ""
@@ -171,7 +171,7 @@ class RetrievedContextMaterialsCollector:
     ) -> tuple[str | None, str | None]:
         skill_snippet_text = None
         skill_segment_id = constraints.skill_id
-        skill_refs = list(constraints.skill_refs or [])
+        skill_refs = constraints.skill_refs
         if not skill_refs and constraints.skill_id:
             skill_refs = [
                 SkillSnippetRef(
@@ -181,7 +181,7 @@ class RetrievedContextMaterialsCollector:
             ]
         if skill_refs and self._service._skillctl is not None:  # noqa: SLF001
             snippet_parts: list[str] = []
-            per_skill_budget = max(80, int(skills_tokens / max(1, len(skill_refs))))
+            per_skill_budget = max(80, skills_tokens // len(skill_refs))
             for ref in skill_refs:
                 try:
                     text, _ = self._service._skillctl.render_snippet(  # noqa: SLF001
@@ -206,7 +206,7 @@ class RetrievedContextMaterialsCollector:
         request: BuildPackRequest,
         turn_index: int,
     ) -> list[MemoryCard]:
-        if int(turn_index or 0) != 0:
+        if turn_index != 0:
             return []
         return _safe_memory_call(
             self._service._memctl.recall_session_start_memory,  # noqa: SLF001
@@ -224,11 +224,7 @@ class RetrievedContextMaterialsCollector:
         session_slice: SessionSlice,
         turn_index: int,
     ) -> MidSessionRecallSnapshot:
-        active_state = (
-            session_slice.active_state
-            if isinstance(session_slice.active_state, dict)
-            else {}
-        )
+        active_state = session_slice.active_state or {}
         intent_states: list[MidSessionIntentSnapshot] = []
         for item in list(active_state.get("intent_execution_states", []) or []):
             if not isinstance(item, dict):
@@ -255,7 +251,7 @@ class RetrievedContextMaterialsCollector:
         recent_tool_families: list[str] = []
         seen_families: set[str] = set()
         for event in list(session_slice.recent_tool_events or []):
-            tool_name = str(getattr(event, "tool_name", "") or "").strip()
+            tool_name = event.tool_name.strip()
             if not tool_name:
                 continue
             family = tool_name.split(".", 1)[0].strip()
@@ -265,7 +261,7 @@ class RetrievedContextMaterialsCollector:
             recent_tool_families.append(family)
         try:
             plan_cursor = int(active_state.get("cursor", 0) or 0)
-        except Exception:
+        except (TypeError, ValueError):
             plan_cursor = 0
         resolved_skill_ids = [
             str(item).strip()
@@ -274,7 +270,7 @@ class RetrievedContextMaterialsCollector:
         ]
         active_skill_id = str(active_state.get("active_skill_id", "") or "").strip()
         return MidSessionRecallSnapshot(
-            turn_index=max(0, int(turn_index or 0)),
+            turn_index=max(0, turn_index),
             intent_states=intent_states,
             latest_user_message=_latest_user_message(session_slice),
             active_skill_id=active_skill_id or None,
@@ -290,7 +286,7 @@ class RetrievedContextMaterialsCollector:
         request: BuildPackRequest,
         turn_index: int,
     ) -> list[RecentSessionArtifactRef]:
-        if int(turn_index or 0) != 0:
+        if turn_index != 0:
             return []
         return _safe_memory_call(
             self._service._memctl.recall_recent_session_artifacts,  # noqa: SLF001
@@ -308,7 +304,7 @@ class RetrievedContextMaterialsCollector:
         recall_state: MidSessionRecallSnapshot,
         prior_manifest: ContextManifest | None,
     ) -> bool:
-        turn_index = int(recall_state.turn_index or 0)
+        turn_index = recall_state.turn_index
         if turn_index <= 0:
             return False
         if turn_index % _MID_SESSION_RECALL_INTERVAL == 0:

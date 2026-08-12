@@ -14,6 +14,13 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 
+OPENMINION_ROOT = Path(__file__).resolve().parents[3]
+if str(OPENMINION_ROOT) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+
 def _now_utc() -> str:
     return (
         datetime.now(timezone.utc)
@@ -131,9 +138,9 @@ class AutonomySmokeSuite:
         self.env["PYTHONPATH"] = "src"
         self.env.setdefault("HOME", str(self.root))
         self.env["OPENMINION_HOME"] = str(self.openminion_home)
-        self.env.setdefault(
-            "OPENMINION_DATA_ROOT",
-            str(self.openminion_home / ".openminion"),
+        self.env["OPENMINION_DATA_ROOT"] = str(self.output_dir / "data")
+        self.env["OPENMINION_GENERATED_ROOT"] = str(
+            Path(self.env["OPENMINION_DATA_ROOT"]).expanduser().resolve() / "runtime"
         )
 
     def _write_text(self, relpath: str, content: str) -> str:
@@ -592,7 +599,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Output root for smoke artifacts (default: <root>/.tmp/autonomy-smoke).",
+        help="Output root for smoke artifacts (default: isolated system temp).",
     )
     parser.add_argument(
         "--session-id", default="autonomy-smoke", help="Session id for smoke commands."
@@ -647,6 +654,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    generated_root = isolate_runtime_roots(prefix="openminion-autonomy-smoke-")
     parser = _build_parser()
     args = parser.parse_args(argv)
     if bool(args.require_api) and not bool(args.with_api):
@@ -654,6 +662,6 @@ def main(argv: list[str] | None = None) -> int:
     if bool(args.require_mission_endpoints) and not bool(args.with_api):
         args.with_api = True
     if args.output_dir is None:
-        args.output_dir = str(Path(args.root).resolve() / ".tmp" / "autonomy-smoke")
+        args.output_dir = str(generated_root / "autonomy-smoke")
     suite = AutonomySmokeSuite(args)
     return suite.run()

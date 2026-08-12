@@ -1,5 +1,3 @@
-"""Typed rollout plan and result contracts."""
-
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -9,8 +7,6 @@ IsolationKind = Literal["worktree", "tempdir", "in_process"]
 
 @dataclass(frozen=True)
 class RolloutPlan:
-    """Typed plan for one parallel-rollout step."""
-
     step_id: str
     n_rollouts: int
     max_parallelism: int
@@ -29,8 +25,6 @@ class RolloutPlan:
 
 @dataclass(frozen=True)
 class RolloutResult:
-    """Typed per-rollout result."""
-
     rollout_id: str
     output: Any
     quality_score: float = 0.0

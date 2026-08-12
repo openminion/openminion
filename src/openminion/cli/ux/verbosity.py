@@ -28,10 +28,11 @@ def _read_env_value(key: str) -> str:
 
 def _resolve_preferences_file_path() -> Path:
     data_root_str = _read_env_value("OPENMINION_DATA_ROOT").strip()
-    if data_root_str:
-        data_root = Path(data_root_str).expanduser()
-    else:
-        data_root = Path.home() / ".openminion"
+    data_root = (
+        Path(data_root_str).expanduser()
+        if data_root_str
+        else Path.home() / ".openminion"
+    )
     return data_root / _PREFS_FILE_BASENAME
 
 
@@ -153,9 +154,7 @@ def _stdout_is_tty() -> bool:
 
 
 def _auto_detect_progress() -> ProgressLevel:
-    if _stdin_is_tty() and _stdout_is_tty():
-        return "full"
-    return "off"
+    return "full" if _stdin_is_tty() and _stdout_is_tty() else "off"
 
 
 def _resolve_progress_alias_flags(args: object) -> ProgressLevel | None:

@@ -178,7 +178,7 @@ def test_openai_provider_sanitizes_outbound_names_and_recovers_canonical_name() 
     assert response.telemetry["normalization"]["behavior_profile_id"] == "default"
     assert response.telemetry["normalization"]["request_dialect"] == "openai_default"
     assert response.telemetry["normalization"]["tool_schema_capability"] == (
-        "openai_dialect_safe_names"
+        "provider_safe_tool_names"
     )
 
 
@@ -211,5 +211,5 @@ def test_openrouter_provider_sanitizes_outbound_names_and_recovers_canonical_nam
     assert response.tool_calls[0].name == "web.search"
     assert response.telemetry["normalization"]["behavior_profile_id"] == "default"
     assert response.telemetry["normalization"]["tool_schema_capability"] == (
-        "openai_dialect_safe_names"
+        "provider_safe_tool_names"
     )

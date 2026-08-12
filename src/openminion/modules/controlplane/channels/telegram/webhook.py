@@ -489,7 +489,6 @@ class TelegramWebhookRunner:
             envelope=envelope,
         )
         pending_clarify = self._load_pending_clarify(
-            envelope=envelope,
             session_id=clarify_session_id,
         )
         extra_meta: dict[str, Any] = {}
@@ -554,7 +553,6 @@ class TelegramWebhookRunner:
                     else ""
                 )
                 self._store_pending_clarify(
-                    envelope=envelope,
                     session_id=clarify_session_id,
                     clarify_payload={
                         "clarify_id": str(
@@ -583,7 +581,6 @@ class TelegramWebhookRunner:
                 and str(payload.get("status", "")).strip().lower() != "waiting_user"
             ):
                 self._clear_pending_clarify(
-                    envelope=envelope,
                     session_id=clarify_session_id,
                 )
         self._answer_callback_if_needed(envelope)
@@ -605,10 +602,9 @@ class TelegramWebhookRunner:
     def _handle_local_command(
         self, envelope: TelegramInboundEnvelope, text: str
     ) -> bool:
-        if not text or not text.strip().startswith("/"):
-            return False
-
         stripped = text.strip()
+        if not stripped.startswith("/"):
+            return False
         cmd = stripped.split()[0].lower()
 
         if cmd == "/status":
@@ -796,7 +792,6 @@ class TelegramWebhookRunner:
     def _load_pending_clarify(
         self,
         *,
-        envelope: TelegramInboundEnvelope,
         session_id: str | None,
     ) -> dict[str, Any] | None:
         if not self._config.clarify.enabled:
@@ -809,7 +804,6 @@ class TelegramWebhookRunner:
     def _store_pending_clarify(
         self,
         *,
-        envelope: TelegramInboundEnvelope,
         session_id: str | None,
         clarify_payload: dict[str, Any],
     ) -> None:
@@ -819,7 +813,6 @@ class TelegramWebhookRunner:
     def _clear_pending_clarify(
         self,
         *,
-        envelope: TelegramInboundEnvelope,
         session_id: str | None,
     ) -> None:
         if self._clarify_store is not None and session_id:
@@ -906,6 +899,4 @@ class TelegramWebhookRunner:
 
 
 def _as_str_or_none(value: Any) -> str | None:
-    if value is None:
-        return None
     return str(value) if value else None

@@ -4,23 +4,124 @@ import ast
 import asyncio
 import inspect
 import io
+from pathlib import Path
+from types import SimpleNamespace
 
 from rich.console import Console
 
 from openminion.cli.interactive.terminal.shell import (
     _SLASH_COMMANDS,
     _handle_slash,
+    _handle_slash_input,
 )
 from openminion.cli.interactive.terminal.shell.actions import (
     _handle_session_slash,
     _handle_shell_preference_slash,
 )
+from openminion.cli.interactive.terminal.shell.slash_output import (
+    PROMPT_SAFE_OUTPUT_SLASHES,
+    handle_debug_output_slash,
+)
+from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 
 
 class _StubOverlay:
     pass
+
+
+class _ResumeOverlay:
+    def __init__(self, choice: str) -> None:
+        self.choice = choice
+        self.items: list[object] = []
+
+    def present_resume_picker(self, sessions: list[object]) -> str:
+        self.items = sessions
+        return self.choice
+
+
+class _VisibleRuntime:
+    agent_id = "minimax-m2-7"
+    provider_name = "openai"
+    model_name = "MiniMax-M2.7"
+    session_id = "session-1"
+    permission_mode = "default"
+    permission_overrides: dict[str, str] = {}
+
+    def list_models(self) -> list[tuple[str, str, bool]]:
+        return [("openai", "MiniMax-M2.7", True)]
+
+    def switch_model(self, arg: str) -> tuple[str, str]:
+        return arg, ""
+
+    def memory_report(self) -> str:
+        return ""
+
+    def list_memory_records(self) -> list[object]:
+        return []
+
+    def list_memory_candidates(self) -> list[object]:
+        return []
+
+    def list_tools(self) -> list[tuple[str, bool]]:
+        return [("file.read", True)]
+
+    def list_skill_rows(self) -> list[dict[str, str]]:
+        return [{"id": "demo-skill"}]
+
+    def list_sessions(self) -> list[object]:
+        return []
+
+    def list_agents(self) -> list[object]:
+        return []
+
+    def mcp_status_report(self) -> str:
+        return ""
+
+    def token_usage_snapshot(self) -> None:
+        return None
+
+    def effort_level(self) -> str:
+        return "default"
+
+    def set_effort_level(self, value: str) -> str:
+        return value
+
+    def statusline_command(self) -> str:
+        return ""
+
+    def set_statusline_command(self, value: str) -> str:
+        return value
+
+    def statusline_label(self) -> str:
+        return ""
+
+    def undo_last_turn(self) -> dict[str, object]:
+        return {"ok": False, "message": "nothing to undo"}
+
+    def set_permission_mode(self, value: str) -> str:
+        self.permission_mode = value
+        return value
+
+    def cycle_permission_mode(self) -> str:
+        self.permission_mode = "readonly"
+        return self.permission_mode
+
+    def set_permission_override(self, _tool: str, value: str) -> str:
+        return value
+
+    def read_only_mode(self) -> bool:
+        return False
+
+    def set_read_only_mode(self, value: bool) -> bool:
+        return value
+
+    def compact_history(self) -> dict[str, str]:
+        return {"reason": "no_session"}
+
+    def execute_goal_command(self, _text: str) -> tuple[str, str]:
+        return "ok", "goal ok"
 
 
 def _extract_implemented_slashes() -> set[str]:
@@ -30,6 +131,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
+        handle_debug_output_slash,
     )
     for dispatcher in dispatchers:
         tree = ast.parse(inspect.getsource(dispatcher))
@@ -165,3 +267,97 @@ def test_bare_slash_dispatch_prints_menu() -> None:
     assert "Slash commands:" in out
     assert "/help" in out
     assert "not yet implemented" not in out
+
+
+def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.interactive.terminal.shell import actions
+
+    monkeypatch.setattr(
+        actions,
+        "render_browser_command",
+        lambda _arg, *, working_dir: "Browser: providers=pinchtab sidecar=ready",
+    )
+
+    for slash in sorted(PROMPT_SAFE_OUTPUT_SLASHES):
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, width=160)
+        transcript = TerminalTranscript(console)
+        before = len(transcript._messages)
+
+        asyncio.run(
+            _handle_slash(
+                slash,
+                runtime=_VisibleRuntime(),
+                console=console,
+                transcript=transcript,
+                overlay=_StubOverlay(),  # type: ignore[arg-type]
+                status_line=TerminalStatusLine(),
+                working_dir=str(tmp_path),
+            )
+        )
+
+        assert buf.getvalue().strip() or len(transcript._messages) > before, (
+            f"{slash} accepted input but produced no visible terminal output"
+        )
+
+
+def test_prompt_loop_routes_output_slashes_through_transcript(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from openminion.cli.interactive.terminal.shell import actions
+
+    monkeypatch.setattr(
+        actions,
+        "render_browser_command",
+        lambda _arg, *, working_dir: "Browser: providers=pinchtab sidecar=ready",
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/model",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+        )
+    )
+
+    out = buf.getvalue()
+    assert "current model: MiniMax-M2.7" in out
+    assert "Configured model" in out
+    assert transcript._messages[-1].kind.value == "system"
+
+
+def test_resume_session_accepts_dict_session_message_count() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = SimpleNamespace(messages=[], set_messages=lambda rows: rows)
+    overlay = _ResumeOverlay("session-1")
+    bound: list[str] = []
+
+    runtime = SimpleNamespace(
+        list_directory_sessions=lambda limit=50: [
+            {"id": "session-1", "label": "Session 1", "message_count": 2}
+        ],
+        bind_session=lambda session_id: bound.append(session_id),
+        get_current_history=lambda: ["history"],
+    )
+
+    resume_session(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,  # type: ignore[arg-type]
+        overlay=overlay,  # type: ignore[arg-type]
+    )
+
+    assert bound == ["session-1"]
+    assert overlay.items == [
+        {"id": "session-1", "label": "Session 1", "message_count": 2}
+    ]
+    assert "resumed session: session-1" in buf.getvalue()

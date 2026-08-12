@@ -41,7 +41,6 @@ def _record_is_periodic(record: logging.LogRecord) -> bool:
     event_type = _extract_event_type(record)
     if event_type in _PERIODIC_EVENT_TYPES:
         return True
-    message = ""
     try:
         message = record.getMessage()
     except Exception:
@@ -93,10 +92,7 @@ def _clear_console_periodic_filter(handler: logging.Handler) -> None:
 
 def _apply_logger_level_overrides(overrides: Mapping[str, int]) -> None:
     for logger_name, logger_level in overrides.items():
-        if logger_name:
-            logging.getLogger(logger_name).setLevel(logger_level)
-            continue
-        logging.getLogger().setLevel(logger_level)
+        logging.getLogger(logger_name).setLevel(logger_level)
 
 
 def _normalize_logger_name(name: str | None) -> str:
@@ -196,7 +192,6 @@ def configure_logging(
             level=numeric_level,
             format=_DEFAULT_LOG_FORMAT,
         )
-        root_logger = logging.getLogger()
     _ensure_file_handler(root_logger, file_path)
 
     root_logger.setLevel(numeric_level)
@@ -210,8 +205,7 @@ def configure_logging(
             continue
 
         handler.setLevel(numeric_level)
-        if formatter is not None:
-            handler.setFormatter(formatter)
+        handler.setFormatter(formatter)
         if _is_console_handler(handler):
             _ensure_console_periodic_filter(handler)
         else:
@@ -224,11 +218,9 @@ def configure_logging(
 
 
 def _build_formatter(*, stream: TextIO) -> logging.Formatter:
-    base_format = _DEFAULT_LOG_FORMAT
-    colorize = _should_colorize_logs(stream=stream)
-    if not colorize:
-        return logging.Formatter(base_format)
-    return _ColorLogFormatter(base_format)
+    if not _should_colorize_logs(stream=stream):
+        return logging.Formatter(_DEFAULT_LOG_FORMAT)
+    return _ColorLogFormatter(_DEFAULT_LOG_FORMAT)
 
 
 def _should_colorize_logs(*, stream: TextIO) -> bool:

@@ -133,16 +133,16 @@ def test_tool_state_preserves_warning_glyph() -> None:
 # ── FocusScreen._tokens_severity helper ──────────────────────────────────────
 
 
-def test_screen_helper_returns_normal_when_snapshot_getter_missing() -> None:
+def test_screen_helper_returns_none_when_snapshot_getter_missing() -> None:
     from openminion.cli.interactive.screen import FocusScreen
 
-    assert FocusScreen._tokens_severity(None) == TOKENS_SEVERITY_NORMAL
+    assert FocusScreen._usage_snapshot(None) is None
 
 
-def test_screen_helper_returns_normal_when_snapshot_returns_none() -> None:
+def test_screen_helper_returns_none_when_snapshot_returns_none() -> None:
     from openminion.cli.interactive.screen import FocusScreen
 
-    assert FocusScreen._tokens_severity(lambda: None) == TOKENS_SEVERITY_NORMAL
+    assert FocusScreen._usage_snapshot(lambda: None) is None
 
 
 def test_screen_helper_classifies_from_real_snapshot() -> None:
@@ -153,12 +153,12 @@ def test_screen_helper_classifies_from_real_snapshot() -> None:
         context_used_tokens=170_000,
         context_limit_tokens=200_000,
     )
-    assert FocusScreen._tokens_severity(lambda: snap) == TOKENS_SEVERITY_WARN
+    assert FocusScreen._tokens_severity(snap) == TOKENS_SEVERITY_WARN
     snap_danger = TokenUsageSnapshot(
         context_used_tokens=199_000,
         context_limit_tokens=200_000,
     )
-    assert FocusScreen._tokens_severity(lambda: snap_danger) == TOKENS_SEVERITY_DANGER
+    assert FocusScreen._tokens_severity(snap_danger) == TOKENS_SEVERITY_DANGER
 
 
 def test_screen_helper_returns_normal_when_limit_absent() -> None:
@@ -166,7 +166,7 @@ def test_screen_helper_returns_normal_when_limit_absent() -> None:
     from openminion.cli.interactive.screen import FocusScreen
 
     snap = TokenUsageSnapshot(context_used_tokens=999_999)
-    assert FocusScreen._tokens_severity(lambda: snap) == TOKENS_SEVERITY_NORMAL
+    assert FocusScreen._tokens_severity(snap) == TOKENS_SEVERITY_NORMAL
 
 
 def test_screen_helper_handles_snapshot_exception() -> None:
@@ -175,7 +175,7 @@ def test_screen_helper_handles_snapshot_exception() -> None:
     def _boom():
         raise RuntimeError("snapshot exploded")
 
-    assert FocusScreen._tokens_severity(_boom) == TOKENS_SEVERITY_NORMAL
+    assert FocusScreen._usage_snapshot(_boom) is None
 
 
 def test_statusline_custom_label_handles_expected_getter_failures() -> None:

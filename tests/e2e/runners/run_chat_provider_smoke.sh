@@ -6,10 +6,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../../helpers/runtime_roots.sh"
+isolate_openminion_test_roots openminion-chat-provider-smoke
 FRAMEWORK_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 OPENMINION_DIR="${FRAMEWORK_ROOT}/openminion"
-OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"
-OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
 OPENMINION_CONFIG="${OPENMINION_CONFIG:-$FRAMEWORK_ROOT/.tmp/per-agent.json}"
 
 # Colors for output

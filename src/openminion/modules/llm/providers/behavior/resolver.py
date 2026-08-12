@@ -101,10 +101,9 @@ def resolve_behavior_profile(
     disabled, disabled_reason = provider_retry_overrides_disabled(
         metadata=metadata, env=env
     )
-    if disabled:
-        applicable_overrides: tuple = ()
-    else:
-        applicable_overrides = filter_provider_retry_overrides(provider_name)
+    applicable_overrides = (
+        () if disabled else filter_provider_retry_overrides(provider_name)
+    )
     retry_override_policy = RetryOverridePolicy(
         disabled=disabled,
         disabled_reason=disabled_reason,
@@ -204,26 +203,16 @@ def _resolve_heuristic_provider_identity(
         model=model_name,
         base_url=endpoint,
     )
-    if not translation:
-        return None
-    return ProviderIdentity(
-        transport_adapter=translation["transport_adapter"],
-        wire_protocol_family=translation["wire_protocol_family"],
-        service_vendor=translation["service_vendor"],
-        model_family=translation["model_family"],
-    )
+    return ProviderIdentity.from_mapping(translation)
 
 
 def _uses_minimax_openai_compat_lane(identity: ProviderIdentity | None) -> bool:
-    if identity is None:
-        return False
-    if identity.transport_adapter != OPENAI_CHAT_TRANSPORT_ADAPTER:
-        return False
-    if identity.wire_protocol_family != OPENAI_CHAT_COMPLETIONS_WIRE_PROTOCOL_FAMILY:
-        return False
-    if identity.model_family != MINIMAX_MODEL_FAMILY:
-        return False
-    return identity.service_vendor in {
-        MINIMAX_SERVICE_VENDOR,
-        DASHSCOPE_SERVICE_VENDOR,
-    }
+    return bool(
+        identity
+        and identity.transport_adapter == OPENAI_CHAT_TRANSPORT_ADAPTER
+        and identity.wire_protocol_family
+        == OPENAI_CHAT_COMPLETIONS_WIRE_PROTOCOL_FAMILY
+        and identity.model_family == MINIMAX_MODEL_FAMILY
+        and identity.service_vendor
+        in {MINIMAX_SERVICE_VENDOR, DASHSCOPE_SERVICE_VENDOR}
+    )

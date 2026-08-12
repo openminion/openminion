@@ -252,12 +252,11 @@ def _dispatch_entity_episode(store: Any, envelope: SubmissionEnvelope) -> str | 
     if envelope.payload_kind == "entity_candidate":
         from sophiagraph.models import Entity
 
-        prov = _model_authored_provenance(envelope)
         entity = Entity(
             entity_id=_generated_id(payload, "entity_id", "ent"),
             canonical_name=str(payload["canonical_name"]),
             namespace=namespace,
-            provenance=prov,
+            provenance=_model_authored_provenance(envelope),
             entity_type=str(payload.get("entity_type", "unspecified")),
             created_at=_timestamp(payload, "created_at"),
             updated_at=_timestamp(payload, "updated_at"),
@@ -268,7 +267,6 @@ def _dispatch_entity_episode(store: Any, envelope: SubmissionEnvelope) -> str | 
     if envelope.payload_kind == "entity_alias_candidate":
         from sophiagraph.models import EntityAlias
 
-        prov = _model_authored_provenance(envelope)
         alias = EntityAlias(
             alias_id=_generated_id(payload, "alias_id", "alias"),
             alias_name=str(payload["alias_name"]),
@@ -277,7 +275,7 @@ def _dispatch_entity_episode(store: Any, envelope: SubmissionEnvelope) -> str | 
                 payload.get("original_entity_id", payload["entity_id"])
             ),
             namespace=namespace,
-            provenance=prov,
+            provenance=_model_authored_provenance(envelope),
             created_at=_timestamp(payload, "created_at"),
             is_primary=bool(payload.get("is_primary", False)),
         )
@@ -286,7 +284,6 @@ def _dispatch_entity_episode(store: Any, envelope: SubmissionEnvelope) -> str | 
     if envelope.payload_kind == "fact_candidate":
         from sophiagraph.models import Fact
 
-        prov = _model_authored_provenance(envelope)
         fact = Fact(
             fact_id=_generated_id(payload, "fact_id", "fact"),
             namespace=namespace,
@@ -294,7 +291,7 @@ def _dispatch_entity_episode(store: Any, envelope: SubmissionEnvelope) -> str | 
             predicate=str(payload["predicate"]),
             object_entity_id=payload.get("object_entity_id"),
             object_literal=payload.get("object_literal"),
-            provenance=prov,
+            provenance=_model_authored_provenance(envelope),
             confidence=float(payload.get("confidence", 0.5)),
             valid_from=payload.get("valid_from"),
             valid_to=payload.get("valid_to"),
@@ -326,13 +323,12 @@ def _dispatch_entity_episode(store: Any, envelope: SubmissionEnvelope) -> str | 
     if envelope.payload_kind == "entity_summary":
         from sophiagraph.models import EntitySummary
 
-        prov = _model_authored_provenance(envelope)
         summary = EntitySummary(
             summary_id=_generated_id(payload, "summary_id", "esum"),
             entity_id=str(payload["entity_id"]),
             namespace=namespace,
             summary_text=str(payload["summary_text"]),
-            provenance=prov,
+            provenance=_model_authored_provenance(envelope),
             created_at=_timestamp(payload, "created_at"),
             updated_at=_timestamp(payload, "updated_at"),
         )

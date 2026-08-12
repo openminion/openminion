@@ -11,6 +11,22 @@ _KIND_COUNTER = "counter"
 _KIND_GAUGE = "gauge"
 _KIND_HISTOGRAM = "histogram"
 
+_GENERIC_METRIC_KINDS = {
+    "memory.scope_capacity.evicted": _KIND_COUNTER,
+    "memory.soft_deleted.purged": _KIND_COUNTER,
+    "tui.render": _KIND_HISTOGRAM,
+}
+_GENERIC_METRIC_VALUE_KEYS = (
+    "value",
+    "count",
+    "delta",
+    "total",
+    "size",
+    "depth",
+    "active",
+    "pool_size",
+)
+
 _ALLOWED_LABELS = frozenset(
     {
         "phase",
@@ -30,12 +46,24 @@ _ALLOWED_LABELS = frozenset(
         "error_family",
         "view_family",
         "process_family",
+        "decision",
+        "violation_category",
+        "business_domain",
+        "cost_source",
+        "gen_ai.token.type",
     }
 )
 _FORBIDDEN_LABELS = frozenset(
     {
         "session_id",
         "turn_id",
+        "invocation_id",
+        "execution_id",
+        "task_id",
+        "goal_id",
+        "handoff_id",
+        "customer_id",
+        "ticket_id",
         "prompt",
         "response",
         "raw_prompt",
@@ -54,12 +82,26 @@ _FORBIDDEN_LABELS = frozenset(
 
 
 def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]:
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     event_type = str(event.event_type or "").strip()
     if event_type == "chat.phase_timing":
         return _chat_phase_metrics(payload)
     if event_type in {"llm.call.completed", "llm_call"}:
         return _model_provider_metrics(payload)
+    if event_type.startswith("agent.invocation."):
+        return _lifecycle_metrics(payload, family="invocation", terminal=event_type)
+    if event_type.startswith("agent.execution."):
+        return _lifecycle_metrics(payload, family="execution", terminal=event_type)
+    if event_type.startswith("agent.turn."):
+        return _lifecycle_metrics(payload, family="turn", terminal=event_type)
+    if event_type.startswith("agent.handoff."):
+        return _lifecycle_metrics(payload, family="handoff", terminal=event_type)
+    if event_type == "policy.decision":
+        return _policy_metrics(payload)
+    if event_type == "safety.preempted":
+        return _safety_metrics(payload)
+    if event_type == "business.outcome.recorded":
+        return _business_metrics(payload)
     if event_type.startswith("tool."):
         return _tool_execution_metrics(payload)
     if event_type in {"storage.query", "storage.slow_query"}:
@@ -75,6 +117,20 @@ def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]
     if event_type == "tui.render":
         return _tui_render_metrics(payload)
     return []
+
+
+def generic_metric_projection(event: TelemetryEvent) -> tuple[str, str, float]:
+    payload = event.data
+    for key in _GENERIC_METRIC_VALUE_KEYS:
+        try:
+            return (
+                _GENERIC_METRIC_KINDS.get(event.event_type, _KIND_GAUGE),
+                "1",
+                float(payload[key]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return _GENERIC_METRIC_KINDS.get(event.event_type, _KIND_GAUGE), "1", 1.0
 
 
 def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -175,12 +231,44 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     )
     usage = payload.get("usage")
     usage_map = usage if isinstance(usage, dict) else {}
+    for token_type, keys in (
+        ("input", ("input_tokens", "prompt_tokens")),
+        ("output", ("output_tokens", "completion_tokens")),
+    ):
+        value = _first_present(usage_map, *keys)
+        _append_metric(
+            metrics,
+            "gen_ai.client.token.usage",
+            _KIND_HISTOGRAM,
+            value,
+            {"gen_ai.token.type": token_type},
+            unit="{token}",
+        )
+    duration_ms = _first_present(
+        payload,
+        "provider_round_trip_ms",
+        "round_trip_ms",
+        "latency_ms",
+        "elapsed_ms",
+    )
+    duration_seconds = (
+        float(duration_ms) / 1000.0 if isinstance(duration_ms, (int, float)) else None
+    )
+    _append_metric(
+        metrics,
+        "gen_ai.client.operation.duration",
+        _KIND_HISTOGRAM,
+        duration_seconds,
+        {
+            "transport": common["transport"],
+            "profile_kind": common["profile_kind"],
+            "outcome": common["outcome"],
+        },
+        unit="s",
+    )
     for metric_name, payload_key in (
         ("openminion_model_request_bytes", "request_bytes"),
         ("openminion_model_response_bytes", "response_bytes"),
-        ("openminion_model_input_tokens", "input_tokens"),
-        ("openminion_model_output_tokens", "output_tokens"),
-        ("openminion_model_cached_tokens", "cached_tokens"),
         ("openminion_context_bytes", "context_bytes"),
         ("openminion_context_tokens", "context_tokens"),
         ("openminion_context_segment_count", "context_segment_count"),
@@ -192,16 +280,104 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if value is None:
             value = usage_map.get(payload_key)
         _append_metric(metrics, metric_name, _KIND_HISTOGRAM, value, common)
+    cost = payload.get("cost_usd")
+    cost_source = str(payload.get("cost_source") or "").strip()
+    if cost_source:
+        _append_metric(
+            metrics,
+            "openminion_model_cost",
+            _KIND_COUNTER,
+            cost,
+            {"cost_source": _bounded_label(cost_source, default="unknown")},
+            unit="USD",
+        )
+    return metrics
+
+
+def _lifecycle_metrics(
+    payload: dict[str, Any],
+    *,
+    family: str,
+    terminal: str,
+) -> list[dict[str, Any]]:
+    if terminal.endswith(".started"):
+        return []
+    outcome = _outcome_label(payload)
+    metrics: list[dict[str, Any]] = []
     _append_metric(
         metrics,
-        "openminion_provider_round_trip_ms",
+        f"openminion_{family}_operations_total",
+        _KIND_COUNTER,
+        1,
+        {"segment_family": family, "outcome": outcome},
+        unit="{operation}",
+    )
+    _append_metric(
+        metrics,
+        f"openminion_{family}_duration_ms",
         _KIND_HISTOGRAM,
-        _first_present(payload, "round_trip_ms", "latency_ms", "elapsed_ms"),
+        payload.get("duration_ms"),
+        {"segment_family": family, "outcome": outcome},
+        unit="ms",
+    )
+    return metrics
+
+
+def _policy_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    _append_metric(
+        metrics,
+        "openminion_policy_decisions_total",
+        _KIND_COUNTER,
+        1,
         {
-            "transport": common["transport"],
-            "profile_kind": common["profile_kind"],
-            "outcome": common["outcome"],
+            "decision": _bounded_label(payload.get("decision"), default="unknown"),
+            "operation": _bounded_label(payload.get("action"), default="unknown"),
         },
+        unit="{decision}",
+    )
+    return metrics
+
+
+def _safety_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    _append_metric(
+        metrics,
+        "openminion_safety_preemptions_total",
+        _KIND_COUNTER,
+        1,
+        {
+            "operation": _bounded_label(payload.get("action"), default="unknown"),
+            "violation_category": _bounded_label(
+                payload.get("violation_category"), default="unknown"
+            ),
+        },
+        unit="{preemption}",
+    )
+    return metrics
+
+
+def _business_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    common = {
+        "business_domain": _bounded_label(payload.get("domain"), default="unknown"),
+        "outcome": _outcome_label(payload),
+    }
+    _append_metric(
+        metrics,
+        "openminion_business_outcomes_total",
+        _KIND_COUNTER,
+        1,
+        common,
+        unit="{outcome}",
+    )
+    _append_metric(
+        metrics,
+        "openminion_business_outcome_value",
+        _KIND_HISTOGRAM,
+        payload.get("value"),
+        common,
+        unit=str(payload.get("unit") or "1")[:16],
     )
     return metrics
 
@@ -411,6 +587,8 @@ def _append_metric(
     kind: str,
     value: Any,
     attributes: dict[str, str],
+    *,
+    unit: str | None = None,
 ) -> None:
     number = _optional_float(value)
     if number is None:
@@ -421,8 +599,21 @@ def _append_metric(
             "kind": kind,
             "value": number,
             "attributes": _metric_attributes(attributes),
+            "unit": unit or _unit_for_metric(name),
         }
     )
+
+
+def _unit_for_metric(name: str) -> str:
+    if name.endswith("_ms"):
+        return "ms"
+    if name.endswith("_bytes"):
+        return "By"
+    if name.endswith("_tokens"):
+        return "{token}"
+    if name.endswith("_total"):
+        return "{event}"
+    return "1"
 
 
 def _metric_attributes(attributes: dict[str, str]) -> dict[str, str]:

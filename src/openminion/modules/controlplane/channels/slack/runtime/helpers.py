@@ -102,11 +102,10 @@ def process_envelope(
 def process_slash_command(
     runner: Any, envelope: SlackSlashCommandEnvelope
 ) -> dict[str, Any] | None:
-    audit_logger = runner._audit_logger  # noqa: SLF001
     access = _evaluate_slash_access(runner, envelope)
     if not access.allowed:
         audit_event(
-            audit_logger,
+            runner._audit_logger,  # noqa: SLF001
             "cp.access.deny",
             outcome="denied",
             severity="warning",
@@ -170,10 +169,7 @@ def dispatch_and_deliver(
         enqueue_or_deliver(runner, payload=payload, envelope=envelope)
     elif slash_channel_id is not None and isinstance(payload, dict):
         runner._delivery.deliver(  # noqa: SLF001
-            payload,
-            {
-                "channel_id": slash_channel_id,
-            },
+            payload, {"channel_id": slash_channel_id}
         )
     return payload
 
@@ -272,8 +268,7 @@ def _deliver_pairing_reply(
         return
     if slash_channel_id is not None:
         runner._delivery.deliver(  # noqa: SLF001
-            payload,
-            {"channel_id": slash_channel_id},
+            payload, {"channel_id": slash_channel_id}
         )
 
 

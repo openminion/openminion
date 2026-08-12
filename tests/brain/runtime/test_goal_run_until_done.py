@@ -164,6 +164,7 @@ def test_replay_parser_rejects_prose_only_status() -> None:
         "continue:need tests,satisfied:done",
     )
     assert [item.outcome for item in parsed] == ["continue", "satisfied"]
+    assert parsed[0].next_instruction == ""
 
     try:
         parse_replay_evaluations("goal-run", "looks done maybe")

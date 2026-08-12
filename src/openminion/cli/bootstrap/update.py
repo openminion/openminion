@@ -32,9 +32,7 @@ class UpdateCheckResult:
 
 
 def default_update_cache_path(*, data_root: Path | None = None) -> Path:
-    root = Path(data_root).expanduser() if data_root is not None else Path.home()
-    if data_root is None:
-        root = root / ".openminion"
+    root = Path(data_root).expanduser() if data_root is not None else Path.home() / ".openminion"
     return root / "update-check.json"
 
 
@@ -90,15 +88,14 @@ def _fetch_latest_version(package_name: str, timeout_seconds: float) -> str:
 
 
 def _build_result(*, current_version: str, latest_version: str) -> UpdateCheckResult:
-    update_available = False
     current_parts = _version_parts(current_version)
     latest_parts = _version_parts(latest_version)
-    if current_parts and latest_parts:
-        update_available = latest_parts > current_parts
     return UpdateCheckResult(
         current_version=current_version,
         latest_version=latest_version,
-        update_available=update_available,
+        update_available=bool(
+            current_parts and latest_parts and latest_parts > current_parts
+        ),
         source="pypi",
     )
 

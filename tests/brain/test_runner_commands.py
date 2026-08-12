@@ -180,7 +180,9 @@ class RunnerCommandTests(unittest.TestCase):
             user_input="how about china?",
             tool_name="weather",
         )
-        self.assertIsNone(command)
+        self.assertIsNotNone(command)
+        assert command is not None
+        self.assertEqual(command.args, {})
 
     def test_build_forced_weather_command_accepts_bare_location_answer(self) -> None:
         from openminion.modules.brain.runner import BrainRunner
@@ -202,9 +204,11 @@ class RunnerCommandTests(unittest.TestCase):
             user_input="san francisco",
             tool_name="weather",
         )
-        self.assertIsNone(command)
+        self.assertIsNotNone(command)
+        assert command is not None
+        self.assertEqual(command.args, {})
 
-    def test_build_forced_weather_command_stays_fail_closed_without_typed_args(
+    def test_build_forced_weather_command_uses_explicit_location_when_available(
         self,
     ) -> None:
         from openminion.modules.brain.runner import BrainRunner
@@ -226,7 +230,9 @@ class RunnerCommandTests(unittest.TestCase):
             user_input="what is the weather in san francisco right now?",
             tool_name="weather",
         )
-        self.assertIsNone(command)
+        self.assertIsNotNone(command)
+        assert command is not None
+        self.assertEqual(command.args, {"location": "san francisco"})
 
     def test_build_forced_search_command_stays_fail_closed_without_explicit_args(
         self,
@@ -407,7 +413,7 @@ class RunnerCommandTests(unittest.TestCase):
         self.assertEqual(result.get("reason_code"), "search_query_required")
         self.assertEqual(command.args, {})
 
-    def test_validate_tool_args_requires_weather_location_when_unrecoverable(
+    def test_validate_tool_args_accepts_weather_current_location_fallback(
         self,
     ) -> None:
         from openminion.modules.brain.runner import BrainRunner
@@ -426,10 +432,7 @@ class RunnerCommandTests(unittest.TestCase):
         )
 
         result = runner._validate_tool_args(command=command)
-        self.assertIsInstance(result, dict)
-        assert isinstance(result, dict)
-        self.assertEqual(result.get("reason_code"), "weather_location_required")
-        self.assertIn("location", str(result.get("message", "")).lower())
+        self.assertIsNone(result)
 
     def test_validate_tool_args_accepts_valid_args(self) -> None:
         from openminion.modules.brain.runner import BrainRunner

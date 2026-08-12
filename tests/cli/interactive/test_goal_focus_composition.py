@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 
 import pytest
@@ -74,3 +76,13 @@ def test_goal_runtime_adapter_requires_bound_session() -> None:
         "No active session for /goal.",
     )
     assert runtime.goal_statusline_label() == ""
+
+
+def test_goal_runtime_adapter_uses_brain_runtime_db_not_session_db(
+    tmp_path: Path,
+) -> None:
+    runtime = OpenMinionRuntime.__new__(OpenMinionRuntime)
+    session_db = tmp_path / "state" / "brain" / "sessions.db"
+    runtime._rt = SimpleNamespace(storage_path=session_db)
+
+    assert runtime._goal_database_path() == tmp_path / "state" / "brain" / "brain.db"

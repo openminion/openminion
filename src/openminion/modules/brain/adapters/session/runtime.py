@@ -12,8 +12,6 @@ _LOG = logging.getLogger(__name__)
 
 
 class SessctlAdapter:
-    """Adapter for the real SQLiteSessionStore."""
-
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(
@@ -74,13 +72,8 @@ class SessctlAdapter:
         return None
 
     def _ensure_session_exists(self, session_id: str) -> None:
-        try:
-            current = self.store.get_session(session_id)
-        except Exception:
-            current = None
-        if current is not None:
-            return
-        self.store.create_session(session_id=session_id)
+        if self.store.get_session(session_id) is None:
+            self.store.create_session(session_id=session_id)
 
     def _emit_event_side_effects(
         self,
@@ -281,16 +274,7 @@ class SessctlAdapter:
         ]
 
     def list_events(self, session_id: str) -> list[dict[str, Any]]:
-        with self.store._lock:
-            rows = self.store._conn.execute(
-                "SELECT * FROM session_events WHERE session_id=? ORDER BY seq ASC",
-                (session_id,),
-            ).fetchall()
-            events = [self.store._row_to_session_event(r) for r in rows]
-            return [
-                e.model_dump(mode="json") if hasattr(e, "model_dump") else e
-                for e in events
-            ]
+        return self.store.list_events(session_id)
 
     def get_slice(
         self,
@@ -314,25 +298,15 @@ class SessctlAdapter:
         summary_long: str | None = None,
         based_on_seq: int | None = None,
     ) -> None:
-        """Update the session summary for continuity across restarts."""
         self._ensure_session_exists(session_id)
-        based_seq_value = based_on_seq
-        if based_seq_value is None:
-            based_seq_value = 0
-            latest_event_seq = getattr(self.store, "_latest_event_seq_tx", None)
-            lock = getattr(self.store, "_lock", None)
-            if callable(latest_event_seq):
-                try:
-                    if lock is not None:
-                        with lock:
-                            based_seq_value = int(latest_event_seq(session_id))
-                    else:
-                        based_seq_value = int(latest_event_seq(session_id))
-                except Exception:
-                    based_seq_value = 0
+        based_seq_value = (
+            based_on_seq
+            if based_on_seq is not None
+            else self.store.latest_event_seq(session_id)
+        )
         self.store.update_summary(
             session_id=session_id,
             summary_short=summary_short,
             summary_long=summary_long,
-            based_on_seq=int(based_seq_value or 0),
+            based_on_seq=based_seq_value,
         )

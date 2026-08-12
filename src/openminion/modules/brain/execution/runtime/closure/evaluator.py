@@ -6,17 +6,12 @@ from typing import TYPE_CHECKING, Any
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 
 from ....constants import (
-    BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_DISPOSITION_CLOSE,
     BRAIN_DISPOSITION_CONTINUE,
     BRAIN_DISPOSITION_REPLAN,
-    BRAIN_MISSION_JUDGMENT_ASK_USER,
-    BRAIN_MISSION_JUDGMENT_CONTINUE,
-    BRAIN_MISSION_ROUTE_FINISH,
     BRAIN_STATE_DONE,
 )
 from ....diagnostics.events import CanonicalEventLogger
-from ...mission import continue_message, mission_is_active
 from ....runtime.reconciliation import (
     apply_plan_reconciliation_to_judgment,
     evaluate_plan_reconciliation,
@@ -33,7 +28,7 @@ from ....runtime.verification.probe import (
     apply_verification_to_judgment,
     evaluate_verification,
 )
-from ....schemas import ActionResult, MissionJudgment, WorkingState, new_uuid
+from ....schemas import ActionResult, WorkingState, new_uuid
 from ....schemas.closure import ClosureJudgment
 from ... import closure as closure_api
 from ...closure.checks import (
@@ -141,7 +136,7 @@ def _prepare_closure_gate(
     logger: CanonicalEventLogger,
     completion_reason: str,
 ) -> ClosureGateContext | ClosureJudgment:
-    mission = getattr(state, "mission", None)
+    mission = state.mission
     finish_requested = (
         str(getattr(mission, "latest_route_action", "") or "").strip()
         if mission is not None
@@ -157,8 +152,6 @@ def _prepare_closure_gate(
         return _missing_llm_or_context_judgment(
             state=state,
             logger=logger,
-            mission=mission,
-            finish_requested=finish_requested,
         )
     closure_goal = _resolve_closure_goal(state)
     if not closure_goal:
@@ -202,37 +195,16 @@ def _missing_llm_or_context_judgment(
     *,
     state: WorkingState,
     logger: CanonicalEventLogger,
-    mission: Any | None,
-    finish_requested: str,
 ) -> ClosureJudgment:
-    if mission is not None and mission_is_active(state):
-        if finish_requested == BRAIN_MISSION_ROUTE_FINISH:
-            mission.latest_judgment = MissionJudgment(
-                outcome=BRAIN_MISSION_JUDGMENT_ASK_USER,
-                reason=(
-                    "I could not safely confirm that the mission is complete because "
-                    "mission judgment is unavailable in this runtime."
-                ),
-            )
-        else:
-            mission.latest_judgment = MissionJudgment(
-                outcome=BRAIN_MISSION_JUDGMENT_CONTINUE,
-                reason=continue_message(mission),
-            )
-        logger.emit(
-            "brain.mission_judge.completed",
-            {
-                "mission_id": mission.mission_id,
-                "outcome": mission.latest_judgment.outcome,
-                "finish_requested": (finish_requested == BRAIN_MISSION_ROUTE_FINISH),
-                "fallback": "missing_llm_or_context",
-            },
-            trace_id=state.trace_id,
-            status="warning",
-        )
+    logger.emit(
+        "brain.closure_gate.missing_context",
+        {"missing_fields": ["llm_api_or_context_api"]},
+        trace_id=state.trace_id,
+        status="warning",
+    )
     return ClosureJudgment(
-        satisfied=True,
-        reason="closure_gate_skipped_missing_llm_or_context",
+        satisfied=False,
+        reason="closure_gate_missing_llm_or_context",
         next_action=BRAIN_DISPOSITION_CLOSE,
     )
 
@@ -591,36 +563,14 @@ def _fail_closed_closure_judgment(
     context: ClosureGateContext,
     exc: Exception,
 ) -> ClosureJudgment:
-    fallback_action = BRAIN_DISPOSITION_REPLAN
-    fallback_reason = "closure_gate_failed_fallback_replan"
-    fallback_final_answer = None
-    decision_reason_code = str(getattr(state, "decision_reason_code", "") or "").strip()
-    explicit_success_reasons = {
-        "explicit_tool_command",
-        "explicit_agent_command",
-        "forced_tool_command",
-    }
-    single_step_success = (
-        action_result is not None
-        and str(getattr(action_result, "status", "") or "").strip().lower()
-        == BRAIN_ACTION_STATUS_SUCCESS
-        and bool(getattr(state, "plan", None) is not None)
-        and len(getattr(getattr(state, "plan", None), "steps", []) or []) == 1
-    )
-    if decision_reason_code in explicit_success_reasons and single_step_success:
-        fallback_action = BRAIN_DISPOSITION_CLOSE
-        fallback_reason = "closure_gate_failed_explicit_command_fallback_close"
-        fallback_final_answer = (
-            str(getattr(action_result, "summary", "") or "").strip() or None
-        )
+    del runner, action_result
     logger.emit(
         "brain.fail_closed.judge_invalid_output",
         {
             "phase": "judge",
-            "fallback_action": fallback_action,
+            "fallback_action": BRAIN_DISPOSITION_REPLAN,
             "reason": type(exc).__name__,
             "llm_call_id": context.llm_call_id,
-            "decision_reason_code": decision_reason_code or None,
         },
         trace_id=state.trace_id,
         status="warning",
@@ -638,10 +588,9 @@ def _fail_closed_closure_judgment(
             payload={"llm_call_id": context.llm_call_id, "error": str(exc)},
         )
     return ClosureJudgment(
-        satisfied=(fallback_action == BRAIN_DISPOSITION_CLOSE),
-        reason=fallback_reason,
-        next_action=fallback_action,
-        final_answer=fallback_final_answer,
+        satisfied=False,
+        reason="closure_gate_failed_fallback_replan",
+        next_action=BRAIN_DISPOSITION_REPLAN,
     )
 
 

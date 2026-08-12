@@ -36,7 +36,10 @@ def clarify_tool_spec() -> ToolSpec:
     return ToolSpec(
         name=ENTRY_CLARIFY_TOOL_NAME,
         description=(
-            "Ask the user a clarifying question when required information is missing."
+            "Ask only when required information blocks meaningful progress and "
+            "cannot be discovered with an available or inactive tool or a "
+            "documented default. If a tool can investigate it, call tool.request "
+            "before asking the user."
         ),
         input_schema={
             "type": "object",
@@ -247,7 +250,6 @@ def extract_response_text(response: Any) -> str:
 
 
 def detect_entry_path(response: Any) -> EntryPathDetection:
-    """Detect the typed entry path from provider response structure."""
     tool_calls = list(getattr(response, "tool_calls", []) or [])
     tool_call_names = tuple(
         str(getattr(call, "name", "") or "").strip() for call in tool_calls
@@ -275,8 +277,6 @@ def detect_entry_path(response: Any) -> EntryPathDetection:
             clarify_question = str(arguments.get("question", "") or "").strip()
         if not clarify_question:
             clarify_question = response_text
-        if not clarify_question:
-            clarify_question = "Please clarify your request."
         return EntryPathDetection(
             path="clarify",
             response_text=response_text,

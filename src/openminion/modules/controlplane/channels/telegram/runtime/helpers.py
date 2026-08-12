@@ -88,9 +88,7 @@ def _parse_chat_id(value: Any) -> int:
     if not raw:
         raise ValueError("missing chat_id for telegram delivery target")
     if raw.startswith("telegram:"):
-        parts = raw.split(":")
-        if len(parts) >= 2:
-            return int(parts[1])
+        return int(raw.split(":", 2)[1])
     return int(raw)
 
 
@@ -98,9 +96,7 @@ def _parse_optional_int(value: Any) -> int | None:
     if value is None:
         return None
     raw = str(value).strip()
-    if not raw:
-        return None
-    return int(raw)
+    return int(raw) if raw else None
 
 
 def _resolve_reply_target(

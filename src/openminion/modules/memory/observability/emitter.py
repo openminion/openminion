@@ -3,7 +3,7 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
 from openminion.modules.memory.observability.span import (
     MemorySpanRecord,
@@ -64,13 +64,8 @@ def _stamp_telemetry(logger: Any, span: MemorySpanRecord) -> None:
         pass
 
 
-def iter_spans(spans: Iterable[MemorySpanRecord]) -> Iterable[MemorySpanRecord]:
-    yield from spans
-
-
 __all__ = [
     "SpanEmitter",
     "SpanReadContext",
-    "iter_spans",
     "record_span_read",
 ]

@@ -25,31 +25,26 @@ from openminion.modules.runtime.project_instructions import (
 
 def run_project_learning(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
+    command = str(args.project_learning_command)
+    handler = {
+        "stage-opportunity": _stage_opportunity,
+        "stage-proposal": _stage_proposal,
+        "author-handoff": _author_handoff,
+        "list": _list_proposals,
+        "inspect": _inspect,
+        "approve": _approve,
+        "apply": _apply,
+        "reject": _reject,
+        "rollback": _rollback,
+    }.get(command)
+    if handler is None:
+        print_json_payload({"ok": False, "error": f"unknown command: {command}"})
+        return 2
     try:
-        command = str(args.project_learning_command)
-        if command == "stage-opportunity":
-            return _stage_opportunity(args, store)
-        if command == "stage-proposal":
-            return _stage_proposal(args, store)
-        if command == "author-handoff":
-            return _author_handoff(args, store)
-        if command == "list":
-            return _list_proposals(args, store)
-        if command == "inspect":
-            return _inspect(args, store)
-        if command == "approve":
-            return _approve(args, store)
-        if command == "apply":
-            return _apply(args, store)
-        if command == "reject":
-            return _reject(args, store)
-        if command == "rollback":
-            return _rollback(args, store)
+        return handler(args, store)
     except (KeyError, ValueError) as exc:
         print_json_payload({"ok": False, "error": str(exc)}, stream=sys.stderr)
         return 2
-    print_json_payload({"ok": False, "error": f"unknown command: {command}"})
-    return 2
 
 
 def _stage_opportunity(
@@ -159,7 +154,7 @@ def _author_handoff(args: argparse.Namespace, store: InstructionProposalStore) -
     return 0
 
 
-def _list_proposals(args: argparse.Namespace, store: InstructionProposalStore) -> int:
+def _list_proposals(_args: argparse.Namespace, store: InstructionProposalStore) -> int:
     proposals = store.list_proposals()
     print_json_payload(
         {

@@ -20,10 +20,8 @@ def deliver_cron_result(
     http_post: HttpPost | None = None,
 ) -> dict[str, Any]:
     delivery = job.get("delivery", {})
-    best_effort = (
-        bool(delivery.get("best_effort", False))
-        if isinstance(delivery, Mapping)
-        else False
+    best_effort = isinstance(delivery, Mapping) and bool(
+        delivery.get("best_effort", False)
     )
     normalized_mode = str(mode or "none").strip() or "none"
     target = str(to_value or "").strip()

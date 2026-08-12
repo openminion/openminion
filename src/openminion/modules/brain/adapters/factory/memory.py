@@ -82,19 +82,11 @@ def create_memory_adapter(
             telemetryctl=telemetryctl,
         )
         learning_cfg = _config_value(config, "candidate_learning")
-        if learning_cfg is not None and hasattr(
-            memory_service, "set_candidate_learning_config"
-        ):
-            try:
-                memory_service.set_candidate_learning_config(learning_cfg)
-            except Exception:
-                pass
+        if learning_cfg is not None:
+            memory_service.set_candidate_learning_config(learning_cfg)
         retention_cfg = _config_value(config, "retention")
-        if retention_cfg is not None and hasattr(memory_service, "set_tiering_config"):
-            try:
-                memory_service.set_tiering_config(retention_cfg)
-            except Exception:
-                pass
+        if retention_cfg is not None:
+            memory_service.set_tiering_config(retention_cfg)
         return MemctlAdapter(memory_service, agent_id=agent_id)
     except ImportError:
         raise_if_strict(mode)

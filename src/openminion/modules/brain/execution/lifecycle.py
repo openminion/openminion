@@ -106,9 +106,16 @@ def active_mode_result(
 
 
 def _normalized_mode_name(mode: Any) -> str | None:
-    if hasattr(mode, "value"):
-        mode = getattr(mode, "value", "")
+    mode = getattr(mode, "value", mode)
     return str(mode or "").strip().lower() or None
+
+
+def _status_emitter(host: Any) -> Any:
+    emitter = getattr(host, "emit_status", None)
+    if callable(emitter):
+        return emitter
+    fallback = getattr(host, "_emit_phase_status", None)
+    return fallback if callable(fallback) else None
 
 
 def emit_mode_status(
@@ -130,7 +137,7 @@ def emit_mode_status(
     event_type: str = "brain.execution_status",
 ) -> None:
     normalized_mode = _normalized_mode_name(mode)
-    emit_phase_status = getattr(host, "emit_status", None)
+    emit_phase_status = _status_emitter(host)
     if callable(emit_phase_status):
         emit_phase_status(
             state=state,
@@ -147,24 +154,6 @@ def emit_mode_status(
             mode_step_total=mode_step_total,
             log_event=False,
         )
-    else:
-        emit_phase_status = getattr(host, "_emit_phase_status", None)
-        if callable(emit_phase_status):
-            emit_phase_status(
-                state=state,
-                source_phase=source_phase,
-                source_event=source_event,
-                payload=payload,
-                runtime_status=runtime_status,
-                detail_text=detail_text,
-                terminal=terminal,
-                mode=normalized_mode,
-                mode_state=mode_state,
-                mode_label=mode_label,
-                mode_step_index=mode_step_index,
-                mode_step_total=mode_step_total,
-                log_event=False,
-            )
     if logger is None:
         return
     trace_id = str(
@@ -253,11 +242,7 @@ def set_phase(
             mode_step_total=mode_step_total,
         )
         return
-    emit_phase_status = getattr(host, "emit_status", None)
-    if callable(emit_phase_status):
-        emit_phase_status(state=state, source_phase=phase)
-        return
-    emit_phase_status = getattr(host, "_emit_phase_status", None)
+    emit_phase_status = _status_emitter(host)
     if callable(emit_phase_status):
         emit_phase_status(state=state, source_phase=phase)
 

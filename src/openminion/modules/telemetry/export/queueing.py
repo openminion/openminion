@@ -47,7 +47,7 @@ class NoncriticalExportQueue:
         event_type = str(event.event_type or "").strip()
         if event_type == "telemetry.queue.stats":
             return False
-        payload = event.data if isinstance(event.data, dict) else {}
+        payload = event.data
         criticality = str(payload.get("criticality", "") or "").strip().lower()
         return criticality in _QUEUED_CRITICALITIES
 
@@ -69,6 +69,23 @@ class NoncriticalExportQueue:
             "drops": int(self._drops),
             "flush_failures": int(self._flush_failures),
         }
+
+    def delete_pending_invocation(self, invocation_id: str) -> int:
+        queue_ref = self._queue
+        if queue_ref is None:
+            return 0
+        with queue_ref.mutex:
+            retained = [
+                event
+                for event in queue_ref.queue
+                if event.invocation_id != invocation_id
+            ]
+            removed = len(queue_ref.queue) - len(retained)
+            queue_ref.queue.clear()
+            queue_ref.queue.extend(retained)
+            queue_ref.unfinished_tasks -= removed
+            queue_ref.not_full.notify_all()
+        return removed
 
     def close(self) -> None:
         worker = self._worker

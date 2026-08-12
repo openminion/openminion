@@ -1,10 +1,15 @@
 """Memory-card text renderers for retrieval assembly."""
 
 from collections.abc import Callable
+from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 
 from ..schemas import MemoryCard
+
+
+def _nonempty_strings(values: Any) -> list[str]:
+    return [text for item in list(values or []) if (text := str(item).strip())]
 
 
 def _render_generic_card_lines(
@@ -28,11 +33,7 @@ def _render_decision_memory_cards(cards: list[MemoryCard]) -> str:
             f"route={str(meta.get('route_chosen') or '').strip() or 'unknown'}",
             f"reason_code={str(meta.get('reason_code') or '').strip() or 'unknown'}",
         ]
-        sub_intents = [
-            str(item).strip()
-            for item in list(meta.get("sub_intents") or [])
-            if str(item).strip()
-        ]
+        sub_intents = _nonempty_strings(meta.get("sub_intents"))
         if sub_intents:
             parts.append("sub_intents=" + ",".join(sub_intents[:5]))
         for label, meta_field in (
@@ -56,11 +57,7 @@ def _render_improvement_note_cards(cards: list[MemoryCard]) -> str:
         meta = dict(card.meta or {})
         parts = [f"status={str(meta.get('status') or '').strip() or 'unknown'}"]
         for field_name in ("tool_slugs", "error_slugs"):
-            values = [
-                str(item).strip()
-                for item in list(meta.get(field_name) or [])
-                if str(item).strip()
-            ]
+            values = _nonempty_strings(meta.get(field_name))
             if values:
                 parts.append(f"{field_name}=" + ",".join(values[:5]))
         occurrence_count = meta.get("occurrence_count")
@@ -116,18 +113,10 @@ def _render_post_completion_critique_cards(cards: list[MemoryCard]) -> str:
         route_chosen = str(meta.get("route_chosen") or "").strip()
         if route_chosen:
             parts.append(f"route={route_chosen}")
-        sub_intents = [
-            str(item).strip()
-            for item in list(meta.get("sub_intents") or [])
-            if str(item).strip()
-        ]
+        sub_intents = _nonempty_strings(meta.get("sub_intents"))
         if sub_intents:
             parts.append("sub_intents=" + ",".join(sub_intents[:5]))
-        lessons = [
-            str(item).strip()
-            for item in list(meta.get("lessons") or [])
-            if str(item).strip()
-        ]
+        lessons = _nonempty_strings(meta.get("lessons"))
         if lessons:
             parts.append("lessons=" + " | ".join(lessons[:3]))
         next_time_action = str(meta.get("next_time_action") or "").strip()

@@ -126,6 +126,7 @@ def _parse_telemetry_exporter_config(raw: Any) -> OTELExporterConfig:
             if not clean_key:
                 continue
             headers[clean_key] = str(value or "")
+    include_assistant_body = _as_bool(raw.get("include_assistant_body"), False)
     return OTELExporterConfig(
         enabled=_as_bool(raw.get("enabled"), False),
         endpoint=str(raw.get("endpoint", "") or "").strip(),
@@ -135,9 +136,21 @@ def _parse_telemetry_exporter_config(raw: Any) -> OTELExporterConfig:
             or "openminion"
         ),
         sample_rate=max(0.0, min(1.0, _as_float(raw.get("sample_rate"), 1.0))),
-        include_assistant_body=_as_bool(raw.get("include_assistant_body"), False),
+        include_assistant_body=include_assistant_body,
+        include_input_messages=_as_bool(raw.get("include_input_messages"), False),
+        include_output_messages=_as_bool(
+            raw.get("include_output_messages"), include_assistant_body
+        ),
+        include_tool_content=_as_bool(raw.get("include_tool_content"), False),
+        include_local_content=_as_bool(raw.get("include_local_content"), False),
         backend=str(raw.get("backend", "") or "").strip(),
         headers=headers,
+        noncritical_queue_capacity=max(
+            0, _as_int(raw.get("noncritical_queue_capacity"), 1024)
+        ),
+        queue_flush_timeout_seconds=max(
+            0.0, _as_float(raw.get("queue_flush_timeout_seconds"), 2.0)
+        ),
     )
 
 
@@ -325,18 +338,16 @@ def _system_runtime_mirror(config: RuntimeConfig) -> dict[str, Any]:
         "plugins": plugin_runtime_policy_to_dict(config.plugins),
         "ops": _config_value_to_payload(config.ops),
     }
-    brain_mirror: dict[str, Any] = {}
     if config.has_tool_schema_shortlisting_enabled:
-        brain_mirror["tool_schema_shortlisting_enabled"] = bool(
+        system_payload["tool_schema_shortlisting_enabled"] = bool(
             config.tool_schema_shortlisting_enabled
         )
     if config.has_allow_background_write_authorization:
-        brain_mirror["allow_background_write_authorization"] = bool(
+        system_payload["allow_background_write_authorization"] = bool(
             config.allow_background_write_authorization
         )
     if config.has_trailer_guidance_variant:
-        brain_mirror["trailer_guidance_variant"] = dict(
+        system_payload["trailer_guidance_variant"] = dict(
             config.trailer_guidance_variant or {}
         )
-    system_payload.update(brain_mirror)
     return {key: value for key, value in system_payload.items() if value}

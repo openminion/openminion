@@ -120,7 +120,7 @@ class DefaultConcurrencyPolicy(ConcurrencyPolicy):
     def max_workers(self, subtask_count: int) -> int:
         if not self.enabled:
             return 1
-        return max(1, min(int(subtask_count), int(self.max_workers_config)))
+        return max(1, min(subtask_count, self.max_workers_config))
 
 
 @dataclass(slots=True)
@@ -130,15 +130,15 @@ class ConservativeSideEffectPolicy(SideEffectIsolationPolicy):
     def is_safe_to_parallelize(self, subtask: SubtaskSpec) -> bool:
         raw_mode = str(subtask.suggested_mode or "").strip().lower()
         mode = public_mode_name_for_mode_name(raw_mode) or raw_mode
-        if mode in {BRAIN_DECISION_ROUTE_RESPOND}:
+        if mode == BRAIN_DECISION_ROUTE_RESPOND:
             return True
         if raw_mode in {
             BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
             BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE,
         }:
-            return bool(self.parallel_writes_enabled)
+            return self.parallel_writes_enabled
         if mode == BRAIN_DECISION_ROUTE_ACT:
-            return bool(self.parallel_writes_enabled)
+            return self.parallel_writes_enabled
         return False
 
 
@@ -155,18 +155,17 @@ class EvenSplitBudgetAllocator(ParallelBudgetAllocator):
             return []
 
         def _split(value: int) -> list[int]:
-            base = int(value // worker_count)
-            remainder = int(value % worker_count)
-            chunks = [base for _ in range(worker_count)]
-            if chunks:
-                chunks[0] += remainder
+            base = value // worker_count
+            remainder = value % worker_count
+            chunks = [base] * worker_count
+            chunks[0] += remainder
             return chunks
 
-        ticks = _split(int(total_budget.ticks))
-        tool_calls = _split(int(total_budget.tool_calls))
-        a2a_calls = _split(int(total_budget.a2a_calls))
-        tokens = _split(int(total_budget.tokens))
-        time_ms = _split(int(total_budget.time_ms))
+        ticks = _split(total_budget.ticks)
+        tool_calls = _split(total_budget.tool_calls)
+        a2a_calls = _split(total_budget.a2a_calls)
+        tokens = _split(total_budget.tokens)
+        time_ms = _split(total_budget.time_ms)
         return [
             BudgetCounters(
                 ticks=ticks[idx],
@@ -277,7 +276,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
         original_order = [item.subtask_id for item in subtasks]
         budget_by_id = {
             subtask.subtask_id: budget
-            for subtask, budget in zip(subtasks, budgets, strict=False)
+            for subtask, budget in zip(subtasks, budgets, strict=True)
         }
         index_by_id = {
             subtask.subtask_id: index for index, subtask in enumerate(subtasks, start=1)

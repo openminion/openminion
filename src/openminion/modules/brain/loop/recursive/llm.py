@@ -138,15 +138,6 @@ def _compress_with_external(
         compressed_blocks_raw, strategy="auto"
     )
 
-    if not compressed_blocks and blocks:
-        for item in blocks:
-            compressed_blocks.append(item)
-            if (
-                len(compressed_blocks)
-                >= self.config.compression_extractive_max_blocks_ok
-            ):
-                break
-
     in_tokens = sum(_estimate_tokens(item.text) for item in blocks)
     out_tokens = sum(_estimate_tokens(item.text) for item in compressed_blocks)
     ratio = float(out_tokens) / float(max(1, in_tokens))
@@ -248,7 +239,8 @@ def _normalize_messages(self, pack: Any) -> list[dict[str, str]]:
         else:
             role = str(getattr(item, "role", "user"))
             content = str(getattr(item, "content", ""))
-        role = role if role in {"system", "user", "assistant", "tool"} else "user"
+        if role not in {"system", "user", "assistant", "tool"}:
+            raise ValueError(f"unsupported message role: {role}")
         out.append({"role": role, "content": content})
 
     if not out:
@@ -335,55 +327,36 @@ def _pick_ensemble_candidate(self, payload: dict[str, Any]) -> dict[str, Any]:
     candidates = (
         payload.get("candidates") if isinstance(payload.get("candidates"), list) else []
     )
-    winner_id = None
     selection = payload.get("selection")
-    if isinstance(selection, dict):
-        winner_id = selection.get("winner_candidate_id")
-    if winner_id:
-        for item in candidates:
-            if isinstance(item, dict) and str(item.get("candidate_id")) == str(
-                winner_id
-            ):
-                return item
+    winner_id = (
+        selection.get("winner_candidate_id") if isinstance(selection, dict) else None
+    )
     for item in candidates:
-        if isinstance(item, dict) and str(item.get("status")) == "success":
+        if isinstance(item, dict) and str(item.get("candidate_id")) == str(winner_id):
             return item
-    if candidates and isinstance(candidates[0], dict):
-        return candidates[0]
-    return {"status": "failed", "text": "", "error": {"code": "NO_CANDIDATES"}}
+    return {
+        "status": "failed",
+        "text": "",
+        "error": {"code": "ENSEMBLE_SELECTION_MISSING"},
+    }
 
 
-def _parse_tick_output(
-    self, *, llm_result: dict[str, Any], fallback_query: str
-) -> TickOutput:
+def _parse_tick_output(self, *, llm_result: dict[str, Any]) -> TickOutput:
     json_output = llm_result.get("json")
     if not isinstance(json_output, dict):
         json_output = llm_result.get("json_output")
     if not isinstance(json_output, dict):
         json_output = self._extract_json_dict(str(llm_result.get("text") or ""))
+    if not isinstance(json_output, dict):
+        raise ValueError("recursive LLM response is missing structured tick output")
 
-    if isinstance(json_output, dict):
-        payload = dict(json_output)
-        if "answer" not in payload:
-            payload["answer"] = str(llm_result.get("text") or "")
-        if "next_query" not in payload and not payload.get("final"):
-            payload["next_query"] = fallback_query
-        try:
-            return TickOutput.model_validate(payload)
-        except Exception:  # noqa: BLE001
-            pass
-
-    text = str(llm_result.get("text") or "").strip()
-    return TickOutput(
-        final=True,
-        answer=text,
-        next_query=fallback_query,
-        episode_note=text[:600],
-        evidence_refs=[],
-        citations=[],
-        wm_update={},
-        memory_write_intents=[],
-    )
+    output = TickOutput.model_validate(json_output)
+    if output.final:
+        if not output.answer.strip() and output.structured_output is None:
+            raise ValueError("final recursive tick output is missing an answer")
+    elif not str(output.next_query or "").strip():
+        raise ValueError("non-final recursive tick output is missing next_query")
+    return output
 
 
 def _extract_json_dict(self, text: str) -> dict[str, Any] | None:

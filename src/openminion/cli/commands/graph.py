@@ -26,16 +26,7 @@ def run_graph(args: argparse.Namespace) -> int:
 
 
 def _run_graph_view(args: argparse.Namespace) -> int:
-    roots = resolve_cli_roots(
-        config_path=getattr(args, "config", None),
-        home_root=getattr(args, "home_root", None),
-        data_root=getattr(args, "data_root", None),
-    )
-    config = load_cli_config(
-        getattr(args, "config", None),
-        home_root=roots.home_root,
-        data_root=roots.data_root,
-    )
+    roots, config = _load_graph_context(args)
     result = launch_graph_viewer(
         config=config,
         roots=roots,
@@ -74,6 +65,17 @@ def _run_graph_view(args: argparse.Namespace) -> int:
 
 
 def _run_graph_status(args: argparse.Namespace) -> int:
+    roots, config = _load_graph_context(args)
+    report = inspect_graph_viewer_status(
+        config=config,
+        roots=roots,
+        provider=args.provider or "",
+        memory_db=args.memory_db or "",
+    )
+    return _print_success(report.to_dict(), as_json=bool(getattr(args, "json", False)))
+
+
+def _load_graph_context(args: argparse.Namespace):
     roots = resolve_cli_roots(
         config_path=getattr(args, "config", None),
         home_root=getattr(args, "home_root", None),
@@ -84,13 +86,7 @@ def _run_graph_status(args: argparse.Namespace) -> int:
         home_root=roots.home_root,
         data_root=roots.data_root,
     )
-    report = inspect_graph_viewer_status(
-        config=config,
-        roots=roots,
-        provider=args.provider or "",
-        memory_db=args.memory_db or "",
-    )
-    return _print_success(report.to_dict(), as_json=bool(getattr(args, "json", False)))
+    return roots, config
 
 
 def _print_success(payload: dict[str, object], *, as_json: bool) -> int:

@@ -13,7 +13,6 @@ from ...errors import (
     InvalidArgumentError,
     NotFoundError,
     PromotionDeniedError,
-    StoreWriteError,
 )
 from ...models import MemoryCandidate, MemoryNamespace, MemoryRecord, MemoryType
 
@@ -263,80 +262,74 @@ def upsert(
     record_patch: dict[str, Any],
 ) -> MemoryRecord:
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    removed_owner_id: str | None = None
     removed_ref_values: list[Any] = []
-    result_id: str | None = None
-    with store._write_lock:
-        with store._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+    with store._write_lock, store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = _sqlite_find_current_keyed_record(
+                conn,
+                scope,
+                record_type,
+                key,
+            )
+            supersedes_id = str(row["id"]) if row else None
+            if row is not None:
+                removed_ref_values = store._decode_evidence_ref_values(
+                    row["evidence_json"]
+                )
+            payload = _sqlite_upsert_payload(row, record_patch)
+            result_id = uuid.uuid4().hex
+            _sqlite_insert_upsert_record(
+                conn,
+                payload=payload,
+                record_id=result_id,
+                scope=scope,
+                record_type=record_type,
+                key=key,
+                supersedes_id=supersedes_id,
+                is_deleted=row is not None,
+                now=now,
+            )
+            if supersedes_id is not None:
+                store._apply_supersession(
+                    conn,
+                    old_record_id=supersedes_id,
+                    new_record_id=result_id,
+                    now_iso=now,
+                    valid_to_iso=now,
+                    reason="keyed_upsert",
+                )
+            _sqlite_insert_fts_row(
+                conn,
+                record_id=result_id,
+                scope=scope,
+                record_type=record_type,
+                key=key,
+                title=payload["title"],
+                content=payload["content"],
+                tags=payload["tags"],
+                entities=payload["entities"],
+            )
+            _sqlite_upsert_entities(
+                conn,
+                record_id=result_id,
+                scope=scope,
+                record_type=record_type,
+                entities=payload["entities"],
+                created_at=now,
+            )
+            conn.execute("COMMIT")
+        except Exception:  # noqa: BLE001 — transactional boundary: roll back any sqlite or in-block Python error and re-raise
             try:
-                row = _sqlite_find_current_keyed_record(
-                    conn,
-                    scope,
-                    record_type,
-                    key,
-                )
-                supersedes_id = str(row["id"]) if row else None
-                if row is not None:
-                    removed_owner_id = supersedes_id
-                    removed_ref_values = store._decode_evidence_ref_values(
-                        row["evidence_json"]
-                    )
-                payload = _sqlite_upsert_payload(row, record_patch)
-                result_id = uuid.uuid4().hex
-                _sqlite_insert_upsert_record(
-                    conn,
-                    payload=payload,
-                    record_id=result_id,
-                    scope=scope,
-                    record_type=record_type,
-                    key=key,
-                    supersedes_id=supersedes_id,
-                    is_deleted=row is not None,
-                    now=now,
-                )
-                if supersedes_id is not None:
-                    store._apply_supersession(
-                        conn,
-                        old_record_id=supersedes_id,
-                        new_record_id=result_id,
-                        now_iso=now,
-                        valid_to_iso=now,
-                        reason="keyed_upsert",
-                    )
-                _sqlite_insert_fts_row(
-                    conn,
-                    record_id=result_id,
-                    scope=scope,
-                    record_type=record_type,
-                    key=key,
-                    title=payload["title"],
-                    content=payload["content"],
-                    tags=payload["tags"],
-                    entities=payload["entities"],
-                )
-                _sqlite_upsert_entities(
-                    conn,
-                    record_id=result_id,
-                    scope=scope,
-                    record_type=record_type,
-                    entities=payload["entities"],
-                    created_at=now,
-                )
-                conn.execute("COMMIT")
-            except Exception:  # noqa: BLE001 — transactional boundary: roll back any sqlite or in-block Python error and re-raise
-                try:
-                    conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-                raise
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
 
-    if result_id is None:
-        raise StoreWriteError("failed to upsert memory record")
     result = _load_sqlite_record(store, result_id)
-    if removed_owner_id is not None:
+    if supersedes_id is not None:
         store._remove_artifact_refs(
-            owner_id=removed_owner_id,
+            owner_id=supersedes_id,
             ref_values=removed_ref_values,
         )
     if not result.is_deleted:
@@ -391,101 +384,99 @@ def promote_candidate(
     candidate_id: str,
     target_scope: str,
 ) -> MemoryRecord:
-    promoted_candidate: MemoryCandidate | None = None
     superseded_owner_id: str | None = None
     superseded_ref_values: list[Any] = []
     new_id = uuid.uuid4().hex
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    with store._write_lock:
-        with store._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                promoted_candidate = _load_approved_candidate(
-                    conn,
-                    store,
-                    candidate_id,
+    with store._write_lock, store._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            promoted_candidate = _load_approved_candidate(
+                conn,
+                store,
+                candidate_id,
+            )
+            existing = _sqlite_find_target_key_collision(
+                conn,
+                promoted_candidate,
+                target_scope,
+            )
+            if existing is not None:
+                superseded_owner_id = str(existing["id"])
+                superseded_ref_values = store._decode_evidence_ref_values(
+                    existing["evidence_json"]
                 )
-                existing = _sqlite_find_target_key_collision(
+            _sqlite_insert_record(
+                conn,
+                record_id=new_id,
+                scope=target_scope,
+                namespace=None,
+                record_type=promoted_candidate.type,
+                key=promoted_candidate.key,
+                title=promoted_candidate.title,
+                content=promoted_candidate.content,
+                tags=list(promoted_candidate.tags),
+                entities=list(promoted_candidate.entities),
+                source=promoted_candidate.source,
+                confidence=promoted_candidate.confidence,
+                evidence_refs=list(promoted_candidate.evidence_refs),
+                meta={},
+                last_hit_at=None,
+                event_time=now,
+                valid_to=None,
+                tier="working",
+                access_count=0,
+                expires_at=None,
+                created_at=now,
+                updated_at=now,
+                supersedes_id=superseded_owner_id,
+                superseded_by_id=None,
+                supersession_reason=None,
+                is_deleted=existing is not None,
+            )
+            if superseded_owner_id is not None:
+                store._apply_supersession(
                     conn,
-                    promoted_candidate,
-                    target_scope,
+                    old_record_id=superseded_owner_id,
+                    new_record_id=new_id,
+                    now_iso=now,
+                    valid_to_iso=now,
+                    reason="keyed_upsert",
                 )
-                if existing is not None:
-                    superseded_owner_id = str(existing["id"])
-                    superseded_ref_values = store._decode_evidence_ref_values(
-                        existing["evidence_json"]
-                    )
-                _sqlite_insert_record(
-                    conn,
-                    record_id=new_id,
-                    scope=target_scope,
-                    namespace=None,
-                    record_type=promoted_candidate.type,
-                    key=promoted_candidate.key,
-                    title=promoted_candidate.title,
-                    content=promoted_candidate.content,
-                    tags=list(promoted_candidate.tags),
-                    entities=list(promoted_candidate.entities),
-                    source=promoted_candidate.source,
-                    confidence=promoted_candidate.confidence,
-                    evidence_refs=list(promoted_candidate.evidence_refs),
-                    meta={},
-                    last_hit_at=None,
-                    event_time=now,
-                    valid_to=None,
-                    tier="working",
-                    access_count=0,
-                    expires_at=None,
-                    created_at=now,
-                    updated_at=now,
-                    supersedes_id=superseded_owner_id,
-                    superseded_by_id=None,
-                    supersession_reason=None,
-                    is_deleted=existing is not None,
-                )
-                if superseded_owner_id is not None:
-                    store._apply_supersession(
-                        conn,
-                        old_record_id=superseded_owner_id,
-                        new_record_id=new_id,
-                        now_iso=now,
-                        valid_to_iso=now,
-                        reason="keyed_upsert",
-                    )
-                _sqlite_insert_fts_row(
-                    conn,
-                    record_id=new_id,
-                    scope=target_scope,
-                    record_type=promoted_candidate.type,
-                    key=promoted_candidate.key,
-                    title=promoted_candidate.title,
-                    content=promoted_candidate.content,
-                    tags=list(promoted_candidate.tags),
-                    entities=list(promoted_candidate.entities),
-                )
-                _sqlite_upsert_entities(
-                    conn,
-                    record_id=new_id,
-                    scope=target_scope,
-                    record_type=promoted_candidate.type,
-                    entities=list(promoted_candidate.entities),
-                    created_at=now,
-                )
-                conn.execute(
-                    """
+            _sqlite_insert_fts_row(
+                conn,
+                record_id=new_id,
+                scope=target_scope,
+                record_type=promoted_candidate.type,
+                key=promoted_candidate.key,
+                title=promoted_candidate.title,
+                content=promoted_candidate.content,
+                tags=list(promoted_candidate.tags),
+                entities=list(promoted_candidate.entities),
+            )
+            _sqlite_upsert_entities(
+                conn,
+                record_id=new_id,
+                scope=target_scope,
+                record_type=promoted_candidate.type,
+                entities=list(promoted_candidate.entities),
+                created_at=now,
+            )
+            conn.execute(
+                """
                     UPDATE memory_candidates
                     SET status = 'promoted', updated_at = ?
                     WHERE candidate_id = ?
                     """,
-                    (now, candidate_id),
-                )
-                conn.execute("COMMIT")
-            except Exception:  # noqa: BLE001 — transactional boundary: roll back any sqlite or in-block Python error and re-raise
-                try:
-                    conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-                raise
+                (now, candidate_id),
+            )
+            conn.execute("COMMIT")
+        except Exception:  # noqa: BLE001 — transactional boundary: roll back any sqlite or in-block Python error and re-raise
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
 
     result = _load_sqlite_record(store, new_id)
     store._add_artifact_refs(owner_id=result.id, ref_values=result.evidence_refs)
@@ -494,11 +485,10 @@ def promote_candidate(
             owner_id=superseded_owner_id,
             ref_values=superseded_ref_values,
         )
-    if promoted_candidate is not None:
-        store._remove_artifact_refs(
-            owner_id=promoted_candidate.candidate_id,
-            ref_values=promoted_candidate.evidence_refs,
-        )
+    store._remove_artifact_refs(
+        owner_id=promoted_candidate.candidate_id,
+        ref_values=promoted_candidate.evidence_refs,
+    )
     return result
 
 
@@ -529,8 +519,6 @@ def supersede_by_contradiction(
     if old_record_id == new_record_id:
         raise InvalidArgumentError("old and new records must differ")
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    old_record: MemoryRecord | None = None
-    result: MemoryRecord | None = None
     with store._write_lock, store._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -556,20 +544,17 @@ def supersede_by_contradiction(
                 )
             row = store._get_required_record(conn, new_record_id)
             conn.execute("COMMIT")
-            result = store._create_record_from_row(row)
+            result: MemoryRecord = store._create_record_from_row(row)
         except Exception:
             try:
                 conn.execute("ROLLBACK")
             except sqlite3.Error:
                 pass
             raise
-    if result is None:
-        raise StoreWriteError("failed to supersede memory record")
-    if old_record is not None:
-        store._remove_artifact_refs(
-            owner_id=old_record_id,
-            ref_values=old_record.evidence_refs,
-        )
+    store._remove_artifact_refs(
+        owner_id=old_record_id,
+        ref_values=old_record.evidence_refs,
+    )
     store._add_artifact_refs(owner_id=result.id, ref_values=result.evidence_refs)
     return result
 
@@ -626,14 +611,14 @@ def apply_outcome_feedback(
                 meta["feedback_score"] = store._clamp01(
                     existing_feedback + feedback_delta_value
                 )
-                success_count = int(meta.get("outcome_success_count", 0) or 0)
-                failure_count = int(meta.get("outcome_failure_count", 0) or 0)
-                if outcome == "success":
-                    meta["outcome_success_count"] = success_count + 1
-                    meta.setdefault("outcome_failure_count", failure_count)
-                else:
-                    meta["outcome_failure_count"] = failure_count + 1
-                    meta.setdefault("outcome_success_count", success_count)
+                meta.setdefault("outcome_success_count", 0)
+                meta.setdefault("outcome_failure_count", 0)
+                counter_key = (
+                    "outcome_success_count"
+                    if outcome == "success"
+                    else "outcome_failure_count"
+                )
+                meta[counter_key] = int(meta[counter_key] or 0) + 1
                 meta["last_outcome_at"] = now_iso
                 meta["last_outcome_status"] = outcome
                 meta["last_outcome_command_id"] = normalized_command_id

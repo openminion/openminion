@@ -17,7 +17,12 @@ from openminion.modules.llm.providers.adapters import (
     OpenAIProvider,
     OpenRouterProvider,
 )
-from openminion.modules.llm.schemas import ImageContentPart, LLMRequest, TextContentPart
+from openminion.modules.llm.schemas import (
+    ImageContentPart,
+    LLMRequest,
+    Message,
+    TextContentPart,
+)
 
 _FIXTURES_ROOT = (
     Path(__file__).resolve().parent
@@ -1678,6 +1683,356 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertTrue(response.ok)
         self.assertEqual(response.output_text, "Hello from Anthropic")
         self.assertEqual(response.usage.total_tokens, 14)
+
+    def test_anthropic_two_turn_tools_round_trip_and_name_restore(self) -> None:
+        provider = AnthropicProvider()
+        tools = [
+            {
+                "name": "web.search",
+                "description": "Search the web",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
+            },
+            {"name": "weather", "description": "Weather", "input_schema": {}},
+        ]
+        first_request = LLMRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "lookup"}],
+                "tools": tools,
+                "tool_choice": "required",
+            }
+        )
+        first_payload = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "web_search",
+                    "input": {"query": "openminion"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "toolu_2",
+                    "name": "weather",
+                    "input": {"location": "SF"},
+                },
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 4},
+            "stop_reason": "tool_use",
+        }
+        captured: list[dict[str, Any]] = []
+
+        def _capture_first(http_request, timeout=None):
+            del timeout
+            captured.append(json.loads(http_request.data.decode("utf-8")))
+            return _FakeHTTPResponse(first_payload)
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            side_effect=_capture_first,
+        ):
+            first_response = provider.complete(
+                first_request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.anthropic.com/v1",
+                    "tool_call_strategy": "native",
+                },
+            )
+
+        self.assertEqual(
+            [tool["name"] for tool in captured[0]["tools"]], ["web_search", "weather"]
+        )
+        self.assertEqual(captured[0]["tool_choice"], {"type": "any"})
+        self.assertEqual(
+            [call.name for call in first_response.tool_calls],
+            ["web.search", "weather"],
+        )
+        self.assertEqual(first_response.tool_calls[0].id, "toolu_1")
+        self.assertEqual(first_response.tool_calls[0].arguments["query"], "openminion")
+
+        assistant = first_response.assistant_messages[0]
+        second_request = LLMRequest(
+            messages=[
+                assistant,
+                Message(
+                    role="tool",
+                    content="search result",
+                    meta={
+                        "tool_call_id": "toolu_1",
+                        "tool_name": "web.search",
+                        "tool_arguments": {"query": "openminion"},
+                    },
+                ),
+                Message(
+                    role="tool",
+                    content="weather failed",
+                    meta={
+                        "tool_call_id": "toolu_2",
+                        "tool_name": "weather",
+                        "tool_arguments": {"location": "SF"},
+                        "is_error": True,
+                    },
+                ),
+            ],
+            tools=first_request.tools,
+        )
+        final_payload = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{"type": "text", "text": "Final answer"}],
+            "usage": {"input_tokens": 14, "output_tokens": 3},
+            "stop_reason": "end_turn",
+        }
+
+        def _capture_second(http_request, timeout=None):
+            del timeout
+            captured.append(json.loads(http_request.data.decode("utf-8")))
+            return _FakeHTTPResponse(final_payload)
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            side_effect=_capture_second,
+        ):
+            final_response = provider.complete(
+                second_request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.anthropic.com/v1",
+                    "tool_call_strategy": "native",
+                },
+            )
+
+        self.assertEqual(final_response.output_text, "Final answer")
+        messages = captured[1]["messages"]
+        self.assertEqual(messages[0]["role"], "assistant")
+        self.assertEqual(
+            [block["name"] for block in messages[0]["content"]],
+            ["web_search", "weather"],
+        )
+        self.assertEqual(messages[1]["role"], "user")
+        tool_results = messages[1]["content"]
+        self.assertEqual(
+            [block["tool_use_id"] for block in tool_results], ["toolu_1", "toolu_2"]
+        )
+        self.assertTrue(tool_results[1]["is_error"])
+
+    def test_anthropic_tool_choice_mappings(self) -> None:
+        provider = AnthropicProvider()
+        payload = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        cases = [
+            ("auto", {"type": "auto"}),
+            ("required", {"type": "any"}),
+            ("none", {"type": "none"}),
+            ({"name": "web.search"}, {"type": "tool", "name": "web_search"}),
+        ]
+        for tool_choice, expected in cases:
+            with self.subTest(tool_choice=tool_choice):
+                captured: dict[str, Any] = {}
+
+                def _fake_urlopen(http_request, timeout=None):
+                    del timeout
+                    captured["body"] = json.loads(http_request.data.decode("utf-8"))
+                    return _FakeHTTPResponse(payload)
+
+                request = LLMRequest.model_validate(
+                    {
+                        "messages": [{"role": "user", "content": "lookup"}],
+                        "tools": [
+                            {
+                                "name": "web.search",
+                                "description": "Search",
+                                "input_schema": {},
+                            }
+                        ],
+                        "tool_choice": tool_choice,
+                    }
+                )
+                with patch(
+                    "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+                    side_effect=_fake_urlopen,
+                ):
+                    provider.complete(
+                        request,
+                        {
+                            "api_key": "test-key",
+                            "base_url": "https://api.anthropic.com/v1",
+                            "tool_call_strategy": "native",
+                        },
+                    )
+
+                self.assertEqual(captured["body"]["tool_choice"], expected)
+
+    def test_anthropic_rejects_dotted_tool_name_collision(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "lookup"}],
+                "tools": [
+                    {"name": "web.search", "description": "Search", "input_schema": {}},
+                    {"name": "web/search", "description": "Search", "input_schema": {}},
+                ],
+                "tool_choice": "auto",
+            }
+        )
+        with self.assertRaises(LLMCtlError) as error:
+            provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.anthropic.com/v1",
+                    "tool_call_strategy": "native",
+                },
+            )
+        self.assertEqual(error.exception.code, "INVALID_ARGUMENT")
+        self.assertEqual(error.exception.details["external_name"], "web_search")
+
+    def test_anthropic_malformed_tool_input_is_typed_tool_error(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "lookup"}],
+                "tools": [
+                    {"name": "weather", "description": "Weather", "input_schema": {}}
+                ],
+            }
+        )
+        payload = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_bad",
+                    "name": "weather",
+                    "input": "not-an-object",
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "stop_reason": "tool_use",
+        }
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(payload),
+        ):
+            response = provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.anthropic.com/v1",
+                    "tool_call_strategy": "native",
+                },
+            )
+        self.assertEqual(response.tool_calls[0].status, "error")
+        self.assertIn("must be an object", response.tool_calls[0].error)
+
+    def test_anthropic_stream_yields_text_deltas_and_ignores_unknown_events(
+        self,
+    ) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {"messages": [{"role": "user", "content": "hello"}]}
+        )
+        lines = [
+            "event: ping",
+            'data: {"type":"ping"}',
+            "event: content_block_delta",
+            'data: {"delta":{"type":"text_delta","text":"Hi"}}',
+            "event: content_block_delta",
+            'data: {"delta":{"type":"text_delta","text":"!"}}',
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+        ]
+        with patch(
+            "openminion.modules.llm.providers.anthropic.adapter.iter_sse_post_lines",
+            return_value=iter(lines),
+        ):
+            events = list(
+                provider.stream(
+                    request,
+                    {
+                        "api_key": "test-key",
+                        "base_url": "https://api.anthropic.com/v1",
+                    },
+                )
+            )
+        self.assertEqual(
+            [event.delta_text for event in events if event.delta_text], ["Hi", "!"]
+        )
+        self.assertEqual(events[-1].type, "done")
+
+    def test_anthropic_stream_malformed_recognized_event_has_stable_detail(
+        self,
+    ) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {"messages": [{"role": "user", "content": "hello"}]}
+        )
+        with patch(
+            "openminion.modules.llm.providers.anthropic.adapter.iter_sse_post_lines",
+            return_value=iter(["event: content_block_delta", "data: {bad-json"]),
+        ):
+            events = list(
+                provider.stream(
+                    request,
+                    {
+                        "api_key": "test-key",
+                        "base_url": "https://api.anthropic.com/v1",
+                    },
+                )
+            )
+        self.assertEqual([event.type for event in events], ["error", "done"])
+        assert events[0].error is not None
+        self.assertEqual(
+            events[0].error.details["stream_event_type"],
+            "content_block_delta",
+        )
+
+    def test_anthropic_tool_stream_uses_complete_to_stream_fallback(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "lookup"}],
+                "tools": [
+                    {"name": "weather", "description": "Weather", "input_schema": {}}
+                ],
+            }
+        )
+        payload = {
+            "model": "claude-3-5-sonnet-latest",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "weather",
+                    "input": {"location": "SF"},
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "stop_reason": "tool_use",
+        }
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(payload),
+        ):
+            events = list(
+                provider.stream(
+                    request,
+                    {
+                        "api_key": "test-key",
+                        "base_url": "https://api.anthropic.com/v1",
+                        "tool_call_strategy": "native",
+                    },
+                )
+            )
+        self.assertEqual([event.type for event in events], ["delta", "done"])
+        assert events[0].tool_call is not None
+        self.assertEqual(events[0].tool_call.name, "weather")
 
     def test_anthropic_sonnet_5_rejects_sampling_overrides(self) -> None:
         provider = AnthropicProvider()

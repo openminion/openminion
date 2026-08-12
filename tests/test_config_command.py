@@ -155,7 +155,6 @@ class ConfigCommandTests(unittest.TestCase):
                 mock.patch(
                     "builtins.input",
                     side_effect=[
-                        "1",
                         "2",
                         "claude-3-5-sonnet-latest",
                         "y",
@@ -184,8 +183,9 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertIn("Configuration saved", output)
             self.assertIn("Setup preview:", output)
             self.assertIn("local config <redacted>", output)
-            self.assertIn("service: Anthropic", output)
-            self.assertIn("API format: Anthropic Messages", output)
+            self.assertIn("provider: Anthropic", output)
+            self.assertIn("API adapter: Anthropic Messages API", output)
+            self.assertNotIn("service:", output)
             self.assertNotIn("runtime adapter:", output)
             self.assertNotIn("shared adapter:", output)
             self.assertNotIn("anthropic-test-key", output)
@@ -423,7 +423,7 @@ class ConfigCommandTests(unittest.TestCase):
             with mock.patch(
                 "builtins.input",
                 side_effect=[
-                    "2",
+                    "5",
                     "qwen2.5:14b",
                     "http://localhost:11434",
                     "y",
@@ -479,7 +479,7 @@ class ConfigCommandTests(unittest.TestCase):
             with (
                 mock.patch(
                     "builtins.input",
-                    side_effect=["3", str(import_path), "y"],
+                    side_effect=["7", str(import_path), "y"],
                 ),
                 mock.patch(
                     "openminion.cli.commands.setup._run_setup_doctor",
@@ -513,14 +513,17 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["9", "2", "", "", "y", "n"],
+                side_effect=["9", "5", "", "", "y", "n"],
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     code = run_setup(args)
 
             self.assertEqual(code, 0)
-            self.assertIn("Invalid selection. Choose one of: 1, 2, 3.", buf.getvalue())
+            self.assertIn(
+                "Invalid selection. Choose one of: 1, 2, 3, 4, 5, 6, 7.",
+                buf.getvalue(),
+            )
             payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["agents"]["ops-agent"]["provider"], "ollama")
             self.assertEqual(payload["providers"]["ollama"]["model"], "llama3.1")
@@ -540,7 +543,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with (
                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False),
-                mock.patch("builtins.input", side_effect=["1", "1", "", "n"]),
+                mock.patch("builtins.input", side_effect=["1", "", "n"]),
                 mock.patch(
                     "openminion.cli.commands.setup.getpass",
                     return_value="",
@@ -572,7 +575,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["3", str(missing_path)],
+                side_effect=["7", str(missing_path)],
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -597,7 +600,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with (
                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env"}),
-                mock.patch("builtins.input", side_effect=["1", "1", "", "y", "n"]),
+                mock.patch("builtins.input", side_effect=["1", "", "y", "n"]),
                 mock.patch(
                     "openminion.cli.commands.setup._run_setup_doctor",
                     return_value=0,
@@ -624,7 +627,7 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
 
     def test_setup_wizard_secondary_provider_menu_has_back_and_cancel(self) -> None:
-        with mock.patch("builtins.input", side_effect=["5", "b", "5", "c"]):
+        with mock.patch("builtins.input", side_effect=["6", "b", "6", "c"]):
             buf = io.StringIO()
             with (
                 redirect_stdout(buf),
@@ -633,7 +636,7 @@ class ConfigCommandTests(unittest.TestCase):
                     "cancelled before choosing provider",
                 ),
             ):
-                setup_command._prompt_provider_preset()
+                setup_command._prompt_setup_preset()
 
         output = buf.getvalue()
         self.assertIn("b. Back", output)
@@ -873,6 +876,25 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertEqual(code, 130)
         self.assertIn("Setup cancelled; configuration not written.", buf.getvalue())
 
+    def test_setup_treats_explicit_cancellation_as_expected(self) -> None:
+        args = Namespace(list_providers=False)
+
+        with mock.patch(
+            "openminion.cli.commands.setup._run_wizard",
+            side_effect=setup_command.SetupCancelledError(
+                "Setup cancelled before writing config."
+            ),
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = run_setup(args)
+
+        self.assertEqual(code, 130)
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "Setup cancelled; configuration not written.",
+        )
+
     def test_local_setup_runs_explicit_ollama_check_when_approved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -889,7 +911,7 @@ class ConfigCommandTests(unittest.TestCase):
                 mock.patch(
                     "builtins.input",
                     side_effect=[
-                        "2",
+                        "5",
                         "qwen2.5:14b",
                         "http://localhost:11434",
                         "y",

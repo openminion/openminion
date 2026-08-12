@@ -65,14 +65,7 @@ from .turn import (
     track_call_started as track_call_started_runner_logging,
     validate_call_order as validate_call_order_runner_logging,
 )
-from ..schemas import (
-    ActionResult,
-    AskUserCommand,
-    Command,
-    JobHandle,
-    PolicyDecision,
-    WorkingState,
-)
+from ..schemas import AskUserCommand, Command, PolicyDecision, WorkingState
 from ..constants import BRAIN_COMMAND_KIND_ASK_USER
 from ..tools.executor import execute_action
 from openminion.modules.tool.contracts.model_ids import (  # noqa: PLC0415
@@ -115,35 +108,6 @@ def _delegate_with_runner_keyword(func: Callable[..., Any]) -> Callable[..., Any
 
 def _normalize_decision_payload_delegate(runner: Any, raw: Any) -> Any:
     return normalize_decision_payload_flow(runner=runner, raw=raw)
-
-
-def _is_time_sensitive_tool_command_delegate(runner: Any, command: Command) -> bool:
-    return is_time_sensitive_tool_command_utils(runner, command=command)
-
-
-def _evaluate_post_action_judgment_delegate(
-    runner: Any,
-    *,
-    state: WorkingState,
-    logger,
-    fact_kind: str,
-    action_result: ActionResult | None = None,
-    current_command: Command | None = None,
-    current_step_index: int | None = None,
-    total_steps: int | None = None,
-    runtime_facts: dict[str, Any] | None = None,
-):
-    return evaluate_post_action_judgment_exec(
-        runner,
-        state=state,
-        logger=logger,
-        fact_kind=fact_kind,
-        action_result=action_result,
-        current_command=current_command,
-        current_step_index=current_step_index,
-        total_steps=total_steps,
-        runtime_facts=runtime_facts,
-    )
 
 
 def _format_confirmation_value(value: Any) -> str:
@@ -190,13 +154,10 @@ def _render_schedule_for_confirmation(schedule: Any) -> str:
 
 
 def _build_confirmation_question(*, command: Command, fallback: str) -> str:
-    if getattr(command, "kind", None) != "tool":
+    if command.kind != "tool":
         return fallback
-    tool_name = str(getattr(command, "tool_name", "") or "").strip()
-    args_raw = getattr(command, "args", {})
-    args = args_raw if isinstance(args_raw, Mapping) else {}
-    if not tool_name:
-        return fallback
+    tool_name = command.tool_name
+    args = command.args
 
     details: list[str] = []
     if tool_name == MODEL_TASK_SCHEDULE:
@@ -227,16 +188,6 @@ def _build_confirmation_question(*, command: Command, fallback: str) -> str:
     return f"{prefix}\n\n{header}\n" + "\n".join(details)
 
 
-def _act_delegate(
-    runner: Any,
-    *,
-    state: WorkingState,
-    command: Command,
-    logger: Any,
-) -> tuple[ActionResult, JobHandle | None]:
-    return execute_action(runner, state=state, command=command, logger=logger)
-
-
 def _approve_delegate(
     runner: Any,
     *,
@@ -248,7 +199,7 @@ def _approve_delegate(
         "session_id": state.session_id,
         "trace_id": state.trace_id,
         "constraints": state.constraints,
-        "mode_name": getattr(state, "active_mode_name", None),
+        "mode_name": state.active_mode_name,
     }
     if runner.policy_api is None:
         decision: PolicyDecision = PolicyDecision(
@@ -264,7 +215,7 @@ def _approve_delegate(
     payload: dict[str, Any] = {
         "outcome": decision.outcome,
         "explanation": decision.explanation,
-        "require_clarification": bool(decision.require_clarification),
+        "require_clarification": decision.require_clarification,
     }
     if decision.clarification_question:
         payload["clarification_question"] = decision.clarification_question
@@ -272,9 +223,7 @@ def _approve_delegate(
         payload["patched_command"] = decision.patched_command.model_dump(mode="json")
     logger.emit("policy.applied", payload, trace_id=state.trace_id)
 
-    if decision.outcome == "REQUIRE_CLARIFICATION" or bool(
-        decision.require_clarification
-    ):
+    if decision.outcome == "REQUIRE_CLARIFICATION" or decision.require_clarification:
         return AskUserCommand(
             kind=BRAIN_COMMAND_KIND_ASK_USER,
             title="Policy clarification required",
@@ -326,17 +275,17 @@ RUNNER_DELEGATES: dict[str, Callable[..., Any]] = {
         autonomous_requires_confirmation_utils
     ),
     "_approve": _approve_delegate,
-    "_act": _act_delegate,
+    "_act": execute_action,
     "_clarify": clarify_flow,
     "_decide": decide_flow,
     "_heuristic_decision": heuristic_decision_flow,
-    "_is_time_sensitive_tool_command": _is_time_sensitive_tool_command_delegate,
+    "_is_time_sensitive_tool_command": is_time_sensitive_tool_command_utils,
     "_build_time_sensitive_failure_response": build_time_sensitive_failure_response_events,
     "_build_tool_inventory_response": build_tool_inventory_response_events,
     "_improve": apply_improvements,
     "_compact": compact_state,
     "_advance_after_action": advance_after_action_exec,
-    "_evaluate_post_action_judgment": _evaluate_post_action_judgment_delegate,
+    "_evaluate_post_action_judgment": evaluate_post_action_judgment_exec,
     "_evaluate_turn_closure": evaluate_turn_closure_exec,
     "_apply_closure_judgment": apply_closure_judgment_exec,
     "_assess_plan_feasibility": assess_plan_feasibility,

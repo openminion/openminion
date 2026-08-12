@@ -1,8 +1,10 @@
 # ruff: noqa: E402
 
 import logging
+import os
 from pathlib import Path
 import sys
+import tempfile
 
 import pytest
 
@@ -11,8 +13,22 @@ _SOPHIAGRAPH_SRC = _REPO_ROOT / "sophiagraph" / "src"
 if _SOPHIAGRAPH_SRC.exists():
     sys.path.insert(0, str(_SOPHIAGRAPH_SRC))
 
+_COLLECTION_RUNTIME_TMP = tempfile.TemporaryDirectory(
+    prefix="openminion-pytest-collection-"
+)
+_COLLECTION_HOME = Path(_COLLECTION_RUNTIME_TMP.name).resolve()
+_COLLECTION_DATA_ROOT = _COLLECTION_HOME / ".openminion"
+os.environ["OPENMINION_HOME"] = str(_COLLECTION_HOME)
+os.environ["OPENMINION_DATA_ROOT"] = str(_COLLECTION_DATA_ROOT)
+os.environ["OPENMINION_GENERATED_ROOT"] = str(_COLLECTION_DATA_ROOT / "runtime")
+os.environ["OPENMINION_DATA_ROOT_ENFORCEMENT"] = "soft"
+
 from openminion.base.config import ConfigManager, OpenMinionConfig
 from openminion.services.bootstrap.config import bootstrap_config_manager
+
+
+def pytest_sessionfinish() -> None:
+    _COLLECTION_RUNTIME_TMP.cleanup()
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +106,9 @@ def fresh_config_manager(tmp_path):
 @pytest.fixture(autouse=True)
 def _force_isolated_test_roots(monkeypatch, tmp_path):
     """Point ordinary tests at temporary OpenMinion roots."""
+    data_root = tmp_path / ".openminion"
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
-    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
     # Allow tmp_path-backed databases inside isolated test roots.
     monkeypatch.setenv("OPENMINION_DATA_ROOT_ENFORCEMENT", "soft")

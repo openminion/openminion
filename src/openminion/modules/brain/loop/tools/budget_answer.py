@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
-
 from .budget_finalization import (
     _recover_budget_finalization_status,
     _reject_invalid_answer_only_final_text,
@@ -120,11 +118,7 @@ def answer_only_final_text_outcome(
     has_tool_evidence: bool,
     contract_requested: bool,
 ) -> AdaptiveToolLoopOutcome:
-    has_contract = finalization_status is not None or (
-        f"<{STATE_KEY_FINALIZATION_STATUS}>" in final_text
-        and f"</{STATE_KEY_FINALIZATION_STATUS}>" in final_text
-    )
-    if contract_requested and not has_contract:
+    if contract_requested and finalization_status is None:
         recovered_outcome = _recover_contract_outcome(
             loop_ctx=loop_ctx,
             profile=profile,

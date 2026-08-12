@@ -26,10 +26,7 @@ class BridgeIdentityClient:
     def _compose_identity_text(
         self, *, base_text: str, agent_id: str, purpose: str
     ) -> str:
-        normalized = str(base_text or "").strip()
-        if normalized:
-            return normalized
-        return f"agent_id={agent_id}\npurpose={purpose}"
+        return base_text.strip() or f"agent_id={agent_id}\npurpose={purpose}"
 
     def _resolve_identityctl(self) -> Any | None:
         return _lazy_resolve_service(
@@ -148,7 +145,7 @@ def _import_identity_dependencies() -> tuple[Any, Any] | None:
     try:
         from openminion.modules.identity.runtime.service import IdentityCtl
         from openminion.modules.identity.storage.store import SQLiteIdentityStore
-    except Exception:
+    except ImportError:
         return None
     return IdentityCtl, SQLiteIdentityStore
 

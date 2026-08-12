@@ -69,9 +69,7 @@ class CommandRegistrySessionMixin:
     def _session_use(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        if not command.args:
-            return CommandResult(ok=False, text="Usage: /session use <session_id>")
-        session_id = command.args[0].strip()
+        session_id = command.args[0].strip() if command.args else ""
         if not session_id:
             return CommandResult(ok=False, text="Usage: /session use <session_id>")
         is_admin = bool(
@@ -141,15 +139,10 @@ class CommandRegistrySessionMixin:
         if fmt not in {"md", "json"}:
             return CommandResult(ok=False, text="Usage: /export [md|json]")
         turns = self._list_turns(ctx.session_id)
-        if fmt == "json":
-            return CommandResult(
-                ok=True,
-                text=f"Exported {len(turns)} turns as JSON (stub).",
-                data={"format": fmt, "turns": len(turns)},
-            )
+        label = "JSON" if fmt == "json" else "Markdown"
         return CommandResult(
             ok=True,
-            text=f"Exported {len(turns)} turns as Markdown (stub).",
+            text=f"Exported {len(turns)} turns as {label} (stub).",
             data={"format": fmt, "turns": len(turns)},
         )
 

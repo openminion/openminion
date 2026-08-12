@@ -1,8 +1,6 @@
 from typing import Any
 
 from openminion.modules.brain.constants import (
-    BRAIN_ACT_PROFILE_CODING,
-    BRAIN_DECISION_ROUTE_ACT,
     BRAIN_STATE_ERROR,
     BRAIN_STATE_JOB_PENDING,
     BRAIN_STATE_WAITING_USER,
@@ -17,21 +15,9 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
-from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
-    missing_requested_file_artifact_labels,
-)
-from openminion.modules.brain.loop.tools.postprocess.rules import (
-    _looks_like_unexecutable_tool_payload_text,
-)
 from openminion.modules.llm.schemas import Message
 
-from .artifact_gates import (
-    stage_required_write_direct_tool,
-    suggest_missing_artifact_paths,
-    user_explicitly_requested_file_artifact,
-    write_missing_artifact_scaffolds,
-)
-from .closeout_salvage import salvage_final_answer_after_disallowed_writer
+from .artifact_gates import stage_required_write_direct_tool
 from .contracts import (
     CODING_TERM_BUDGET_EXHAUSTED,
     CODING_TERM_CONFIDENT_COMPLETE,
@@ -86,18 +72,6 @@ def _direct_termination_result(
             action_result=outcome.action_result,
         )
     if outcome.termination_reason == CODING_TERM_DISALLOWED_TOOL:
-        salvaged_final_text = salvage_final_answer_after_disallowed_writer(
-            runner, outcome=outcome
-        )
-        if salvaged_final_text is not None:
-            return _exit_final_text(
-                runner,
-                ctx,
-                loop,
-                salvaged_final_text,
-                allowed_tools,
-                build_blocked_result=build_blocked_result,
-            )
         if _maybe_continue_after_verify_disallowed_tool(
             runner, ctx, loop=loop, outcome=outcome
         ):
@@ -340,19 +314,16 @@ def _missing_write_gate_result(
         loop=loop,
         allowed_tools=allowed_tools,
         build_blocked_result=build_blocked_result,
-        final_text=getattr(outcome, "final_text", "") or "",
         outcome_state=getattr(outcome, "state", None),
     )
 
 
-def _plan_or_user_requires_file_change(runner: Any, loop_state: Any) -> bool:
+def _plan_or_state_requires_file_change(runner: Any, loop_state: Any) -> bool:
     plan = getattr(runner, "_coding_plan", None)
     if plan is not None and bool(getattr(plan, "requires_file_change", False)):
         return True
     scratchpad = getattr(loop_state, "scratchpad", {}) or {}
-    if bool(scratchpad.get("coding.requires_file_change")):
-        return True
-    return user_explicitly_requested_file_artifact(loop_state)
+    return bool(scratchpad.get("coding.requires_file_change"))
 
 
 def _maybe_retry_required_write_after_readonly_dead_end(
@@ -367,9 +338,9 @@ def _maybe_retry_required_write_after_readonly_dead_end(
         return None
     if bool(loop.scratchpad.get("coding.readonly_dead_end_write_retry_used")):
         return None
-    requires_file_change = _plan_or_user_requires_file_change(
+    requires_file_change = _plan_or_state_requires_file_change(
         runner, loop
-    ) or _plan_or_user_requires_file_change(runner, outcome_state)
+    ) or _plan_or_state_requires_file_change(runner, outcome_state)
     if not requires_file_change:
         return None
 
@@ -407,58 +378,33 @@ def _maybe_gate_missing_required_write(
     loop: Any,
     allowed_tools: frozenset[str],
     build_blocked_result,
-    final_text: str = "",
     outcome_state: Any | None = None,
 ) -> ExecutionResult | None:
     requires_file_change = (
         runner._coding_plan_requires_file_change()
-        or user_explicitly_requested_file_artifact(runner._loop_state)
-        or user_explicitly_requested_file_artifact(outcome_state)
+        or _plan_or_state_requires_file_change(runner, runner._loop_state)
+        or _plan_or_state_requires_file_change(runner, outcome_state)
     )
-    if not requires_file_change:
+    if not requires_file_change or runner._has_successful_mutating_file_result():
         return None
-    missing_artifacts = missing_requested_file_artifact_labels(runner._loop_state)
-    if runner._has_successful_mutating_file_result() and not missing_artifacts:
-        return None
-
-    rendered_missing, rendered_paths, failure_summary = _missing_write_details(
-        runner,
-        missing_artifacts=missing_artifacts,
+    failure_summary = (
+        "Coding plan requires a mutating implementation step before final "
+        "answer, but no successful file.write or code.patch result was recorded."
     )
-    _prepare_missing_write_retry(
-        runner,
+    if runner._coding_plan is not None:
+        runner._coding_plan.current_phase = "implement"
+        runner._coding_plan.record_open_issue(failure_summary)
+    stage_required_write_direct_tool(loop, allowed_tools=allowed_tools)
+    budgets = getattr(ctx.state, "budgets_remaining", None)
+    if budgets is not None:
+        budgets.tool_calls = max(budgets.tool_calls, 1)
+    attempt = runner._record_verify_gate_block(
         ctx,
-        loop=loop,
-        allowed_tools=allowed_tools,
-        missing_artifacts=missing_artifacts,
         failure_summary=failure_summary,
+        reason="missing_implementation_write",
+        required_tool="file.write or code.patch",
     )
-    if missing_artifacts:
-        attempt, correction_cap = _record_missing_artifact_attempt(
-            ctx,
-            loop=loop,
-            missing_artifacts=missing_artifacts,
-            rendered_missing=rendered_missing,
-            failure_summary=failure_summary,
-        )
-    else:
-        attempt = runner._record_verify_gate_block(
-            ctx,
-            failure_summary=failure_summary,
-            reason="missing_implementation_write",
-            required_tool="file.write or code.patch",
-        )
-        correction_cap = max(1, int(getattr(runner, "_max_self_corrections", 0) or 0))
-    if attempt > correction_cap:
-        scaffolded_result = _continue_after_scaffolded_missing_artifacts(
-            runner,
-            ctx,
-            loop=loop,
-            allowed_tools=allowed_tools,
-            missing_artifacts=missing_artifacts,
-        )
-        if scaffolded_result is not None:
-            return scaffolded_result
+    if attempt > max(1, runner._max_self_corrections):
         loop.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
         runner._sync_plan_telemetry()
         runner._emit_phase_status(ctx)
@@ -472,176 +418,19 @@ def _maybe_gate_missing_required_write(
             build_blocked_result=build_blocked_result,
         )
 
-    if runner._coding_plan is not None:
-        runner._sync_plan_telemetry()
-    retry_message = _missing_write_retry_message(
-        final_text=final_text,
-        missing_artifacts=missing_artifacts,
-        rendered_missing=rendered_missing,
-        rendered_paths=rendered_paths,
-    )
     loop.messages.append(
         Message(
-            role="system" if missing_artifacts else "user",
-            content=retry_message,
-        )
-    )
-    runner._emit_phase_status(ctx)
-    runner._sync_coding_module_state(ctx)
-    return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
-
-
-def _continue_after_scaffolded_missing_artifacts(
-    runner: Any,
-    ctx: ExecutionContext,
-    *,
-    loop: Any,
-    allowed_tools: frozenset[str],
-    missing_artifacts: tuple[str, ...],
-) -> ExecutionResult | None:
-    if not missing_artifacts or not write_missing_artifact_scaffolds(
-        runner,
-        ctx,
-        missing_artifacts=missing_artifacts,
-    ):
-        return None
-    loop.scratchpad["coding.verify_gate_reason"] = (
-        "missing_requested_file_artifacts_scaffolded"
-    )
-    loop.scratchpad.pop("coding.required_write_direct_tool", None)
-    loop.direct_tool_turn = None
-    loop.direct_tool_requested_batch_satisfied = False
-    loop.messages.append(
-        Message(
-            role="system",
+            role="user",
             content=(
-                "The missing ancillary coding artifacts have been created through "
-                "tool execution. Continue by running the requested validation from "
-                "disk before returning the final answer."
+                "Stay in implement and use a mutating implementation tool "
+                "(`file.write` or `code.patch`) before returning a final answer."
             ),
         )
     )
-    if runner._coding_plan is not None:
-        runner._sync_plan_telemetry()
+    runner._sync_plan_telemetry()
     runner._emit_phase_status(ctx)
     runner._sync_coding_module_state(ctx)
     return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
-
-
-def _missing_write_details(
-    runner: Any,
-    *,
-    missing_artifacts: tuple[str, ...],
-) -> tuple[str, str, str]:
-    if not missing_artifacts:
-        return (
-            "",
-            "",
-            "Coding plan requires a mutating implementation step before final "
-            "answer, but no successful file.write or code.patch result was recorded.",
-        )
-    rendered_missing = ", ".join(missing_artifacts)
-    suggested_paths = suggest_missing_artifact_paths(
-        loop_state=runner._loop_state,
-        missing_artifacts=missing_artifacts,
-    )
-    rendered_paths = ", ".join(f"`{path}`" for path in suggested_paths)
-    return (
-        rendered_missing,
-        rendered_paths,
-        "Coding request still requires these file artifacts before final "
-        f"answer: {rendered_missing}.",
-    )
-
-
-def _prepare_missing_write_retry(
-    runner: Any,
-    ctx: ExecutionContext,
-    *,
-    loop: Any,
-    allowed_tools: frozenset[str],
-    missing_artifacts: tuple[str, ...],
-    failure_summary: str,
-) -> None:
-    if runner._coding_plan is not None:
-        runner._coding_plan.current_phase = "implement"
-        runner._coding_plan.record_open_issue(failure_summary)
-    if missing_artifacts:
-        loop.direct_tool_turn = None
-        loop.direct_tool_requested_batch_satisfied = False
-        loop.scratchpad.pop("direct_tool_completed_tool_names", None)
-    stage_required_write_direct_tool(loop, allowed_tools=allowed_tools)
-    budgets = getattr(ctx.state, "budgets_remaining", None)
-    if budgets is not None:
-        budgets.tool_calls = max(int(getattr(budgets, "tool_calls", 0) or 0), 1)
-
-
-def _record_missing_artifact_attempt(
-    ctx: ExecutionContext,
-    *,
-    loop: Any,
-    missing_artifacts: tuple[str, ...],
-    rendered_missing: str,
-    failure_summary: str,
-) -> tuple[int, int]:
-    counts = dict(
-        loop.scratchpad.get("coding.missing_requested_artifact_retry_counts", {}) or {}
-    )
-    count_key = "|".join(missing_artifacts)
-    attempt = int(counts.get(count_key, 0) or 0) + 1
-    counts[count_key] = attempt
-    loop.scratchpad["coding.missing_requested_artifact_retry_counts"] = counts
-    loop.scratchpad["coding.verify_gate_reason"] = "missing_requested_file_artifacts"
-    loop.scratchpad["coding.verify_gate_required_tool"] = "file.write or code.patch"
-    loop.scratchpad["coding.last_failure_summary"] = failure_summary
-    ctx.emit_status(
-        source_phase="coding.verify_gate",
-        detail_text=(
-            f"[act:coding] missing requested file artifacts: {rendered_missing}"
-        ),
-        mode=BRAIN_DECISION_ROUTE_ACT,
-        mode_state="missing_requested_file_artifacts",
-        payload={
-            "act.profile": BRAIN_ACT_PROFILE_CODING,
-            "coding.verify_gate_reason": "missing_requested_file_artifacts",
-            "coding.missing_requested_artifacts": list(missing_artifacts),
-        },
-    )
-    return attempt, max(4, len(missing_artifacts) + 2)
-
-
-def _missing_write_retry_message(
-    *,
-    final_text: str,
-    missing_artifacts: tuple[str, ...],
-    rendered_missing: str,
-    rendered_paths: str,
-) -> str:
-    if missing_artifacts:
-        path_instruction = (
-            f" The next missing path candidates are: {rendered_paths}."
-            if rendered_paths
-            else ""
-        )
-        return (
-            "Stay in implement. The current tool evidence is missing requested "
-            f"file artifacts: {rendered_missing}. Use `file.write` or "
-            "`code.patch` to create the missing files now."
-            f"{path_instruction} Do not describe those files in prose instead of "
-            "calling the writer. After the missing files exist, run the requested "
-            "validation before returning a final answer."
-        )
-    if _looks_like_unexecutable_tool_payload_text(final_text):
-        return (
-            "Stay in implement. Do not print JSON tool payloads, path/content "
-            "objects, or file contents as prose. Call `file.write` or "
-            "`code.patch` as an actual tool with the target path and content, "
-            "then verify from disk before returning a final answer."
-        )
-    return (
-        "Stay in implement and use a mutating implementation tool "
-        "(`file.write` or `code.patch`) before returning a final answer."
-    )
 
 
 def _maybe_continue_after_tool_failure(

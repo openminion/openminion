@@ -28,7 +28,7 @@ class ToolSchemaNameMap:
         return bool(self.external_to_canonical)
 
     def external_name_for(self, canonical_name: str) -> str:
-        token = str(canonical_name or "").strip()
+        token = canonical_name.strip()
         return self.canonical_to_external.get(token, token)
 
     def expand_allowed_tool_names(
@@ -38,14 +38,14 @@ class ToolSchemaNameMap:
         ordered: list[str] = []
         seen: set[str] = set()
         for raw_name in allowed_tool_names or ():
-            canonical_name = str(raw_name or "").strip()
+            canonical_name = raw_name.strip()
             if not canonical_name:
                 continue
             for candidate in (
                 canonical_name,
                 self.canonical_to_external.get(canonical_name, ""),
             ):
-                token = str(candidate or "").strip()
+                token = candidate.strip()
                 if token and token not in seen:
                     seen.add(token)
                     ordered.append(token)
@@ -58,9 +58,9 @@ def resolve_tool_schema_capability(
     model_name: str | None,
 ) -> ToolSchemaCapability:
     provider = str(provider_name or "").strip().lower()
-    if provider in {"openai", "openrouter"}:
+    if provider in {"openai", "openrouter", "anthropic", "claude"}:
         return ToolSchemaCapability(
-            id="openai_dialect_safe_names",
+            id="provider_safe_tool_names",
             requires_external_name_normalization=True,
             allowed_name_pattern=r"^[A-Za-z0-9_-]{1,128}$",
             max_external_name_length=128,
@@ -88,7 +88,7 @@ def build_tool_schema_name_map(
     unique_canonical_names: list[str] = []
     seen_canonical: set[str] = set()
     for tool in tools:
-        canonical_name = str(getattr(tool, "name", "") or "").strip()
+        canonical_name = tool.name.strip()
         if canonical_name and canonical_name not in seen_canonical:
             seen_canonical.add(canonical_name)
             unique_canonical_names.append(canonical_name)
@@ -116,7 +116,7 @@ def build_tool_schema_name_map(
             )
             raise LLMCtlError(
                 "INVALID_ARGUMENT",
-                "OpenAI-dialect tool-name sanitization collision: "
+                "Provider tool-name sanitization collision: "
                 f"{canonical_name!r} and {colliding_name!r} both map to "
                 f"{external_name!r}",
                 {
@@ -150,7 +150,7 @@ def remap_provider_tool_call_name(
     *,
     external_to_canonical: dict[str, str] | None,
 ) -> str:
-    token = str(tool_name or "").strip()
+    token = tool_name.strip()
     if not token or not external_to_canonical:
         return token
     return external_to_canonical.get(token, token)
@@ -161,11 +161,11 @@ def _is_safe_external_tool_name(
     *,
     capability: ToolSchemaCapability,
 ) -> bool:
-    token = str(tool_name or "").strip()
+    token = tool_name.strip()
     if not token:
         return False
     max_length = capability.max_external_name_length
-    if isinstance(max_length, int) and max_length > 0 and len(token) > max_length:
+    if max_length is not None and max_length > 0 and len(token) > max_length:
         return False
     return bool(_SAFE_EXTERNAL_TOOL_NAME_RE.fullmatch(token))
 
@@ -180,7 +180,7 @@ def _build_external_tool_name(
 
 
 def _sanitize_external_tool_name(canonical_name: str) -> str:
-    token = _UNSAFE_EXTERNAL_TOOL_CHARS_RE.sub("_", str(canonical_name or "").strip())
+    token = _UNSAFE_EXTERNAL_TOOL_CHARS_RE.sub("_", canonical_name.strip())
     token = token.strip("_-")
     return token or "tool"
 
@@ -191,10 +191,6 @@ def _fit_external_tool_name_length(
     capability: ToolSchemaCapability,
 ) -> str:
     max_length = capability.max_external_name_length
-    if (
-        not isinstance(max_length, int)
-        or max_length <= 0
-        or len(candidate) <= max_length
-    ):
+    if max_length is None or max_length <= 0 or len(candidate) <= max_length:
         return candidate
     return candidate[:max_length].rstrip("_-") or candidate[:max_length]

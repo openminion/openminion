@@ -620,10 +620,7 @@ def _third_brain_provider_status(
     )
     reason = _third_brain_status_reason(
         provider_config=provider_config,
-        graphfakos_installed=graphfakos_installed,
-        pragmagraph_installed=pragmagraph_installed,
-        envelope_path=envelope_path,
-        snapshot_path=snapshot_path,
+        diagnostic_code=diagnostic_code,
     )
     if ready:
         command = (
@@ -691,29 +688,20 @@ def _third_brain_diagnostic_code(
 def _third_brain_status_reason(
     *,
     provider_config: KnowledgeGraphProviderConfig,
-    graphfakos_installed: bool,
-    pragmagraph_installed: bool,
-    envelope_path: Path | None,
-    snapshot_path: Path | None,
+    diagnostic_code: str,
 ) -> str:
-    if not graphfakos_installed:
+    if diagnostic_code == "graphfakos_missing":
         return "GraphFakos is not installed."
-    if not provider_config.enabled:
+    if diagnostic_code == "provider_disabled":
         return "Provider is disabled."
-    if envelope_path is not None:
-        return (
-            ""
-            if envelope_path.exists()
-            else "Viewer envelope path is configured but not found yet."
-        )
-    if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
-        if snapshot_path.exists() and not pragmagraph_installed:
-            return "PragmaGraph snapshot viewing requires the pragmagraph package."
-        return (
-            ""
-            if snapshot_path.exists()
-            else "PragmaGraph snapshot path is configured but not found yet."
-        )
+    if diagnostic_code == "viewer_envelope_missing":
+        return "Viewer envelope path is configured but not found yet."
+    if diagnostic_code == "snapshot_missing":
+        return "PragmaGraph snapshot path is configured but not found yet."
+    if diagnostic_code == "pragmagraph_missing":
+        return "PragmaGraph snapshot viewing requires the pragmagraph package."
+    if diagnostic_code == "ready":
+        return ""
     if provider_config.provider == PROVIDER_PRAGMAGRAPH:
         return "PragmaGraph viewer needs options.snapshot_path or options.viewer_envelope_path."
     return (

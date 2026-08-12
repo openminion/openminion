@@ -368,6 +368,19 @@ class SessionStore:
             event_type_prefix=event_type_prefix,
         )
 
+    def list_events_before_id(
+        self,
+        *,
+        session_id: str,
+        before_id: int,
+        limit: int = 100,
+    ) -> list[EventRecord]:
+        return self._lifecycle.list_events_before_id(
+            session_id=session_id,
+            before_id=before_id,
+            limit=limit,
+        )
+
     def touch_session_activity(
         self,
         *,

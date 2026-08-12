@@ -14,8 +14,7 @@ depends_on = None
 def upgrade() -> None:
     from alembic import op
 
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
+    if op.get_bind().dialect.name != "postgresql":
         return
 
     op.execute(

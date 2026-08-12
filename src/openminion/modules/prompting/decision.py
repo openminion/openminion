@@ -18,8 +18,9 @@ DECIDE_STYLE_OVERRIDES: dict[str, str] = {
         "workflow as direct one-shot file/tool calls."
     ),
     "entry_clarify_rule": (
-        "Use the clarify tool whenever a missing detail blocks meaningful progress, "
-        "including filename, path, location, or target details needed to continue. "
+        "Use the clarify tool only when a required detail blocks meaningful progress "
+        "and no available tool or documented default can resolve it. Do not clarify "
+        "for optional tool arguments or information an available tool can discover. "
         "Do not ask blocking clarifying questions in plain text when clarify(question=...) is available."
     ),
     "entry_no_routing_metadata_rule": (
@@ -43,6 +44,14 @@ BRAIN_FRESHNESS_POLICY_CONSTRAINT = (
     "FRESHNESS_POLICY: Do not fabricate stale real-time data"
 )
 
+ENTRY_CLARIFY_RECONSIDERATION_MESSAGE = (
+    "Reconsider the clarification before asking the user. Check the inactive tool "
+    "directory and the visible tools. If a tool can investigate the missing "
+    "information or make meaningful progress, call tool.request or that tool now. "
+    "Keep the clarify call only when no available tool or documented default can "
+    "resolve the required detail."
+)
+
 
 def fixed_profile_rewrites(default_act_profile: str) -> dict[str, str]:
     """Render decision prompt rewrites for a runtime-fixed act profile."""
@@ -59,5 +68,6 @@ def fixed_profile_rewrites(default_act_profile: str) -> dict[str, str]:
 __all__ = [
     "BRAIN_FRESHNESS_POLICY_CONSTRAINT",
     "DECIDE_STYLE_OVERRIDES",
+    "ENTRY_CLARIFY_RECONSIDERATION_MESSAGE",
     "fixed_profile_rewrites",
 ]

@@ -203,15 +203,14 @@ def _print_service_payload(payload: dict[str, Any], *, as_json: bool) -> None:
         print_json_payload(payload)
         return
     if "services" in payload:
-        services = payload.get("services", [])
-        print(f"services: count={len(services) if isinstance(services, list) else 0}")
-        for item in services if isinstance(services, list) else []:
-            if isinstance(item, dict):
-                print(
-                    f"- {item.get('id', 'unknown')}: "
-                    f"status={item.get('status', 'available')} "
-                    f"command={item.get('command', '')}"
-                )
+        services = payload["services"]
+        print(f"services: count={len(services)}")
+        for item in services:
+            print(
+                f"- {item.get('id', 'unknown')}: "
+                f"status={item.get('status', 'available')} "
+                f"command={item.get('command', '')}"
+            )
         return
     print(f"service {payload.get('service', '-')}: {payload.get('message', '')}")
 

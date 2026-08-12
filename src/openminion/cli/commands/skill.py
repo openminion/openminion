@@ -199,11 +199,7 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
             return 0
         finally:
             ctl.close()
-            if owns_retrieve_ctl:
-                try:
-                    retrieve_ctl.close()
-                except Exception:
-                    pass
+            _close_retrieve_ctl_if_owned(retrieve_ctl, owns_retrieve_ctl)
     except SkillError as exc:
         print_json_payload(
             {
@@ -346,11 +342,7 @@ def _run_skill_refresh(args, app: Any | None = None) -> int:
             return 0
         finally:
             ctl.close()
-            if owns_retrieve_ctl:
-                try:
-                    retrieve_ctl.close()
-                except Exception:
-                    pass
+            _close_retrieve_ctl_if_owned(retrieve_ctl, owns_retrieve_ctl)
     except SkillError as exc:
         print_json_payload(
             {

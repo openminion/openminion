@@ -16,7 +16,6 @@ class ParallelDispatchResult:
     parallel_fan_out_count: int
     tool_calls_parallel: int
     tool_calls_sequential: int
-    budget_managed_in_dispatch: bool = False
 
 
 def _tool_command_for_call(
@@ -27,14 +26,11 @@ def _tool_command_for_call(
         return tool_call.model_copy(deep=True)
     tool_name = str(getattr(tool_call, "name", "") or "").strip()
     inputs = getattr(tool_call, "inputs", None)
+    arguments = getattr(tool_call, "arguments", None)
     return ToolCommand(
         title=tool_name,
         tool_name=tool_name,
-        args=(
-            dict(getattr(tool_call, "arguments", {}) or {})
-            if isinstance(getattr(tool_call, "arguments", {}), dict)
-            else {}
-        ),
+        args=dict(arguments) if isinstance(arguments, dict) else {},
         inputs=dict(inputs) if isinstance(inputs, dict) else {},
     )
 
@@ -88,13 +84,13 @@ def _execute_parallel_tool_batch_without_prepared_dispatch(
     include_reflect: bool,
     provider_parallel_tool_capacity: int,
 ) -> ParallelDispatchResult:
-    causal_batch = classify_batch(list(tool_calls))
+    causal_batch = classify_batch(tool_calls)
     results_by_index: dict[int, tuple[Any, Any]] = {}
     parallel_fan_out_count = 0
     tool_calls_parallel = 0
     tool_calls_sequential = 0
 
-    capacity = max(0, int(provider_parallel_tool_capacity or 0))
+    capacity = max(0, provider_parallel_tool_capacity)
 
     for group in causal_batch.groups:
         if len(group) <= 1 or capacity == 1:
@@ -144,7 +140,6 @@ def _execute_parallel_tool_batch_without_prepared_dispatch(
         parallel_fan_out_count=parallel_fan_out_count,
         tool_calls_parallel=tool_calls_parallel,
         tool_calls_sequential=tool_calls_sequential,
-        budget_managed_in_dispatch=False,
     )
 
 
@@ -267,14 +262,13 @@ def execute_parallel_tool_batch(
             provider_parallel_tool_capacity=provider_parallel_tool_capacity,
         )
 
-    causal_batch = classify_batch(list(tool_calls))
+    causal_batch = classify_batch(tool_calls)
     results_by_index: dict[int, tuple[Any, Any]] = {}
-    prepared_by_index: dict[int, PreparedToolDispatch] = {}
     parallel_fan_out_count = 0
     tool_calls_parallel = 0
     tool_calls_sequential = 0
 
-    capacity = max(0, int(provider_parallel_tool_capacity or 0))
+    capacity = max(0, provider_parallel_tool_capacity)
 
     prepared_by_index = _collect_prepared_dispatches(
         loop_ctx=loop_ctx,
@@ -329,5 +323,4 @@ def execute_parallel_tool_batch(
         parallel_fan_out_count=parallel_fan_out_count,
         tool_calls_parallel=tool_calls_parallel,
         tool_calls_sequential=tool_calls_sequential,
-        budget_managed_in_dispatch=False,
     )

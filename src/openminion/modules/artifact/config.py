@@ -183,12 +183,8 @@ def load_config(
 def _as_str_list(value: Any, default: list[str]) -> list[str]:
     if not isinstance(value, list):
         return list(default)
-    out: list[str] = []
-    for item in value:
-        text = str(item).strip().lower()
-        if text:
-            out.append(text)
-    return out or list(default)
+    normalized = (str(item).strip().lower() for item in value)
+    return [item for item in normalized if item] or list(default)
 
 
 def _default_blob_root(home_root: Path | None, data_root: Path | None) -> str:

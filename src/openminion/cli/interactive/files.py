@@ -77,10 +77,7 @@ def build_file_index(
                     continue
                 if not entry.is_file():
                     continue
-                try:
-                    if entry.stat().st_size > max_file_size:
-                        continue
-                except OSError:
+                if entry.stat().st_size > max_file_size:
                     continue
             except OSError:
                 continue

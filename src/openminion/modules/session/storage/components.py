@@ -371,6 +371,8 @@ def create_run_record(
     run_type: str = "llm",
     *,
     run_id: str | None = None,
+    invocation_id: str | None = None,
+    thread_id: str | None = None,
     prompt_context_id: str | None = None,
     model_id: str | None = None,
     meta: dict[str, Any] | None = None,
@@ -381,6 +383,8 @@ def create_run_record(
         session_id,
         run_type,
         run_id=run_id,
+        invocation_id=invocation_id,
+        thread_id=thread_id,
         prompt_context_id=prompt_context_id,
         model_id=model_id,
         meta=meta,
@@ -439,6 +443,18 @@ def list_run_records(
     store: SQLiteSessionStore, session_id: str
 ) -> list[dict[str, Any]]:
     return store.run_store.list_run_records(session_id)
+
+
+def list_run_records_by_thread(
+    store: SQLiteSessionStore, session_id: str, thread_id: str
+) -> list[dict[str, Any]]:
+    return store.run_store.list_run_records_by_thread(session_id, thread_id)
+
+
+def list_run_records_by_invocation(
+    store: SQLiteSessionStore, invocation_id: str
+) -> list[dict[str, Any]]:
+    return store.run_store.list_run_records_by_invocation(invocation_id)
 
 
 def add_message_ref(

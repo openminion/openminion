@@ -81,13 +81,7 @@ def _run_inline_setup(args: Any) -> int:
 
 
 def _resolve_interactive_backend(args: argparse.Namespace) -> str:
-    if bool(getattr(args, "rich", False)):
-        return "textual"
-    return "terminal"
-
-
-def _resolve_plain_spinner(args: argparse.Namespace) -> bool:
-    return _resolve_focus_progress(args) in ("minimal", "off")
+    return "textual" if bool(getattr(args, "rich", False)) else "terminal"
 
 
 def _resolve_focus_verbosity(args: argparse.Namespace) -> str:
@@ -153,12 +147,14 @@ def _launch_terminal_focus(
     from openminion.cli.interactive.project_context import resolve_project_context
     from openminion.cli.interactive.runtime import OpenMinionRuntime
     from openminion.cli.interactive.terminal import run_terminal_focus
+    from openminion.cli.presentation.animation import resolve_focus_animation
 
+    requested_agent = str(getattr(args, "agent", "") or "").strip() or None
     requested_session = str(getattr(args, "session", "") or "").strip() or None
     terminal_runtime = OpenMinionRuntime(
         runtime,
         target="focus",
-        agent_id=str(getattr(args, "agent", "") or "").strip() or None,
+        agent_id=requested_agent,
         working_dir=working_dir,
         bind_immediately=False,
         session_id=requested_session,
@@ -167,13 +163,16 @@ def _launch_terminal_focus(
         terminal_runtime.create_new_session()
     if not bool(getattr(args, "no_context", False)):
         terminal_runtime.set_project_context(resolve_project_context(working_dir))
+    progress = _resolve_focus_progress(args)
     return run_terminal_focus(
         terminal_runtime,
         working_dir=working_dir,
-        agent=str(getattr(args, "agent", "") or "").strip() or None,
-        session=str(getattr(args, "session", "") or "").strip() or None,
-        plain_spinner=_resolve_plain_spinner(args),
+        agent=requested_agent,
+        session=requested_session,
+        plain_spinner=progress in ("minimal", "off"),
         verbosity=_resolve_focus_verbosity(args),
+        progress=progress,
+        animation=resolve_focus_animation(args),
         startup_notice=_build_update_notice_resolver(args),
     )
 
@@ -207,8 +206,7 @@ def _resolve_update_notice(args: argparse.Namespace) -> str:
                 )
             },
         )
-        notice = "" if result is None else result.render_notice()
-        return notice
+        return "" if result is None else result.render_notice()
     except Exception:
         return ""
 
@@ -219,10 +217,7 @@ def _build_update_notice_resolver(
     if bool(getattr(args, "no_update_check", False)):
         return None
 
-    def _resolve() -> str:
-        return _resolve_update_notice(args)
-
-    return _resolve
+    return lambda: _resolve_update_notice(args)
 
 
 def _maybe_print_update_notice(args: argparse.Namespace) -> None:

@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Any
 
 from .modes import mode_is_local, raise_if_strict
-from .environment import ensure_a2a_dependency_available
 
 
 def create_a2a_adapter(
@@ -20,7 +19,6 @@ def create_a2a_adapter(
     if mode_is_local(mode):
         return LocalA2AAdapter()
     try:
-        ensure_a2a_dependency_available()
         from ..a2a import A2actlAdapter
 
         return A2actlAdapter(

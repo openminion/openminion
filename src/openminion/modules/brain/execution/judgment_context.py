@@ -21,10 +21,6 @@ def build_live_state_overlay(
 
 
 def intent_execution_payload(state: WorkingState) -> list[dict[str, Any]]:
-    payload: list[dict[str, Any]] = []
-    for item in getattr(state, "intent_execution_states", []) or []:
-        try:
-            payload.append(item.model_dump(mode="json"))
-        except Exception:
-            continue
-    return payload
+    return [
+        item.model_dump(mode="json") for item in state.intent_execution_states
+    ]

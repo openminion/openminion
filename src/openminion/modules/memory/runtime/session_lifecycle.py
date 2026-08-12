@@ -1,9 +1,11 @@
 import hashlib
 import json
 import threading
+from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.memory.runtime.gc import (
     apply_confidence_decay,
     compress_old_summaries as compress_old_summaries_gc,
@@ -74,21 +76,6 @@ class SessionLifecycleMixin:
                 return dict(metadata)
         return {}
 
-    def _plan_snapshot_incomplete_reason(
-        self,
-        *,
-        brain_status: str,
-        termination_reason: str,
-        has_incomplete_intents: bool,
-    ) -> str:
-        normalized_reason = str(termination_reason or "").strip().lower()
-        if normalized_reason in self._PLAN_SNAPSHOT_ALLOWED_REASONS:
-            return normalized_reason
-        normalized_status = str(brain_status or "").strip().lower()
-        if normalized_status == "done" and has_incomplete_intents:
-            return "session_ended"
-        return "session_ended"
-
     def _plan_snapshot_content(
         self,
         *,
@@ -155,10 +142,11 @@ class SessionLifecycleMixin:
         last_work_summary = str(
             state_inline.get("session_work_summary", "") or ""
         ).strip()
-        incomplete_reason = self._plan_snapshot_incomplete_reason(
-            brain_status=brain_status,
-            termination_reason=termination_reason,
-            has_incomplete_intents=bool(incomplete_intents),
+        normalized_reason = str(termination_reason or "").strip().lower()
+        incomplete_reason = (
+            normalized_reason
+            if normalized_reason in self._PLAN_SNAPSHOT_ALLOWED_REASONS
+            else "session_ended"
         )
         payload: dict[str, Any] = {
             "plan_steps": plan_steps,
@@ -251,10 +239,6 @@ class SessionLifecycleMixin:
             },
         )
         return candidate_id
-
-    def _extract_topic_keywords(self, rolling_summary: str) -> list[str]:
-        del rolling_summary
-        return []
 
     def _normalize_summary_items(
         self,
@@ -381,22 +365,28 @@ class SessionLifecycleMixin:
         )
         if timeout_seconds <= 0:
             try:
-                result = structurer(safe_summary, max(0, int(turn_count)))
+                with active_chat_phase("memory_summary_structure"):
+                    result = structurer(safe_summary, max(0, int(turn_count)))
             except Exception:
                 return None
             return result if isinstance(result, dict) else None
 
         result_box: dict[str, Any] = {}
         error_box: dict[str, BaseException] = {}
+        active_context = copy_context()
 
         def _worker() -> None:
             try:
-                result_box["value"] = structurer(safe_summary, max(0, int(turn_count)))
+                with active_chat_phase("memory_summary_structure"):
+                    result_box["value"] = structurer(
+                        safe_summary,
+                        max(0, int(turn_count)),
+                    )
             except BaseException as exc:  # pragma: no cover - defensive
                 error_box["value"] = exc
 
         worker = threading.Thread(
-            target=_worker,
+            target=lambda: active_context.run(_worker),
             name="session-summary-structurer",
             daemon=True,
         )
@@ -821,6 +811,21 @@ class SessionLifecycleMixin:
         summary_section: list[str] | None = None
         if summary_preview:
             summary_section = [f"  Summary: {summary_preview}"]
+        other_recent_section = (
+            ["", "Other recent context:"] if len(eligible_entries) > 1 else None
+        )
+        if other_recent_section is not None:
+            for index in eligible_indices:
+                if index == preferred_index:
+                    continue
+                entry = entries[index]
+                label = self._truncate_session_summary_text(
+                    entry["title"] or "Session summary", max_chars=48
+                )
+                condensed = self._truncate_session_summary_text(
+                    entry["summary_text"] or label, max_chars=80
+                )
+                other_recent_section.append(f"  • {label} — {condensed or label}")
         prioritized_sections = (
             [
                 topic_section,
@@ -829,15 +834,17 @@ class SessionLifecycleMixin:
                 active_thread_section,
                 summary_section,
                 title_section,
+                other_recent_section,
             ]
             if current_session
             else [
-                title_section,
-                topic_section,
                 active_thread_section,
                 summary_section,
                 key_decision_section,
                 open_question_section,
+                title_section,
+                topic_section,
+                other_recent_section,
             ]
         )
         for section in prioritized_sections:
@@ -857,24 +864,6 @@ class SessionLifecycleMixin:
                     for item in prior_items[:3]
                 ]
             )
-        if len(eligible_entries) > 1:
-            remaining_entries = [
-                entry
-                for index, entry in enumerate(entries)
-                if index in eligible_indices and index != preferred_index
-            ]
-            other_lines = ["", "Other recent context:"]
-            for entry in remaining_entries:
-                label = self._truncate_session_summary_text(
-                    entry["title"] or "Session summary",
-                    max_chars=48,
-                )
-                condensed = self._truncate_session_summary_text(
-                    entry["summary_text"] or label,
-                    max_chars=80,
-                )
-                other_lines.append(f"  • {label} — {condensed or label}")
-            optional_sections.append(other_lines)
         omitted_sections = False
         for section in optional_sections:
             candidate = "\n".join(lines + section)
