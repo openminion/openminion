@@ -17,21 +17,20 @@ class BundleMarkdownExport:
 
 
 def export_profile_to_markdown_bundle(profile: AgentProfile) -> BundleMarkdownExport:
-    profile_obj = AgentProfile.model_validate(profile)
     docs = (
         BundleMarkdownDocument(
             relative_path="AGENT.md",
-            content=_render_agent_markdown(profile_obj),
+            content=_render_agent_markdown(profile),
         ),
         BundleMarkdownDocument(
             relative_path="SOUL.md",
-            content=_render_soul_markdown(profile_obj),
+            content=_render_soul_markdown(profile),
         ),
     )
     return BundleMarkdownExport(
-        agent_id=profile_obj.agent_id,
+        agent_id=profile.agent_id,
         documents=docs,
-        lossy_fields=_collect_lossy_fields(profile_obj),
+        lossy_fields=_collect_lossy_fields(profile),
     )
 
 
@@ -49,10 +48,9 @@ def _render_agent_markdown(profile: AgentProfile) -> str:
 
 
 def _render_soul_markdown(profile: AgentProfile) -> str:
-    voice_lines = [profile.personality.tone]
     return (
         "## Voice\n"
-        f"{_render_bullets(voice_lines)}\n\n"
+        f"{_render_bullets([profile.personality.tone])}\n\n"
         "## Values\n"
         f"{_render_bullets(profile.personality.interaction_style)}\n\n"
         "## Decision Bias\n"
@@ -61,7 +59,7 @@ def _render_soul_markdown(profile: AgentProfile) -> str:
 
 
 def _render_bullets(items: list[str]) -> str:
-    cleaned = [str(item).strip() for item in list(items or []) if str(item).strip()]
+    cleaned = [item.strip() for item in items if item.strip()]
     if not cleaned:
         return "- n/a"
     return "\n".join(f"- {line}" for line in cleaned)
@@ -71,21 +69,21 @@ def _collect_lossy_fields(profile: AgentProfile) -> tuple[str, ...]:
     fields: list[str] = []
     if profile.role.domain:
         fields.append("role.domain")
-    if str(profile.personality.verbosity) != "normal":
+    if profile.personality.verbosity != "normal":
         fields.append("personality.verbosity")
 
     if (
         profile.risk.risk_level != "medium"
-        or list(profile.risk.confirm_before) != ["destructive_actions"]
-        or bool(profile.risk.auto_proceed_rules)
+        or profile.risk.confirm_before != ["destructive_actions"]
+        or profile.risk.auto_proceed_rules
     ):
         fields.append("risk.*")
 
     if (
         profile.tool_posture.tool_use != "allowed"
-        or bool(profile.tool_posture.sandbox_root)
-        or bool(profile.tool_posture.blocked_patterns)
-        or bool(profile.tool_posture.allowed_tools)
+        or profile.tool_posture.sandbox_root
+        or profile.tool_posture.blocked_patterns
+        or profile.tool_posture.allowed_tools
     ):
         fields.append("tool_posture.*")
 

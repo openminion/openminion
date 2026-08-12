@@ -229,7 +229,6 @@ class IdentityCtl:
         provider_pref: str | None = None,
         query_text: str | None = None,
     ) -> IdentitySnippet:
-        _ = provider_pref
         profile_version = self._compute_profile_version(profile)
         return render_identity_snippet(
             profile,
@@ -259,9 +258,7 @@ class IdentityCtl:
         except ValidationError as exc:
             return ValidationResult(ok=False, errors=[str(exc)], warnings=[])
 
-        if not parsed.role.mission.strip():
-            errors.append("role.mission must be non-empty")
-        elif parsed.role.mission.count("\n") > 1:
+        if parsed.role.mission.count("\n") > 1:
             warnings.append("role.mission should be 1-2 lines")
         if not (3 <= len(parsed.role.responsibilities) <= 7):
             warnings.append("role.responsibilities recommended range is 3-7")
@@ -365,9 +362,7 @@ class IdentityCtl:
             merged_payload.setdefault("display_name", agent_id)
             merged_payload.setdefault("profile_revision", 1)
             existing_meta = merged_payload.get("meta")
-            meta_payload = (
-                dict(existing_meta) if isinstance(existing_meta, dict) else {}
-            )
+            meta_payload = dict(existing_meta or {})
             meta_payload["source"] = "yaml"
             merged_payload["meta"] = meta_payload
 
@@ -489,9 +484,7 @@ class IdentityCtl:
 
     def _sync_profile_version(self, *, agent_id: str, profile_version: str) -> None:
         row = self.store.get_profile(agent_id)
-        if row is None:
-            return
-        if row.profile_version != profile_version:
+        if row is not None and row.profile_version != profile_version:
             self.store.update_profile_version(agent_id, profile_version)
 
     def _resolve_profile(
