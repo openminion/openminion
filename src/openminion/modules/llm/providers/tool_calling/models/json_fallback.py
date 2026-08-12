@@ -1,5 +1,6 @@
 from typing import Any, Iterable
 
+from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.llm.providers.tool_calling.base import ToolCallParseResult
 from openminion.modules.llm.providers.tool_calling.contracts import (
     _decode_json,
@@ -61,11 +62,11 @@ class JsonFallbackToolCallParser:
         return ToolCallParseResult()
 
 
-def _tool_call_key(call: Any) -> tuple[str, str, str]:
+def _tool_call_key(call: ProviderToolCall) -> tuple[str, str, str]:
     return (
-        str(getattr(call, "id", "") or ""),
-        str(getattr(call, "name", "") or ""),
-        repr(sorted(dict(getattr(call, "arguments", {}) or {}).items())),
+        call.id,
+        call.name,
+        repr(sorted(call.arguments.items())),
     )
 
 
@@ -78,13 +79,4 @@ def _has_explicit_tool_envelope(payload: Any) -> bool:
             isinstance(payload.get(key), str)
             for key in ("name", "tool_name", "tool", ":op")
         )
-    )
-
-
-def _looks_like_complete_tool_payload(payload: Any) -> bool:
-    if isinstance(payload, list):
-        return True
-    return isinstance(payload, dict) and (
-        isinstance(payload.get("tool_calls"), list)
-        or isinstance(payload.get("name"), str)
     )
