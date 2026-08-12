@@ -32,22 +32,17 @@ def normalize_provider_tool_choice(value: Any) -> str | dict[str, Any]:
 
 
 def should_retry_with_auto_tool_choice(error: Any, tool_choice: Any) -> bool:
-    if tool_choice is None:
-        return False
-    if isinstance(tool_choice, str) and tool_choice in {"auto", "none"}:
+    if tool_choice is None or (
+        isinstance(tool_choice, str) and tool_choice in {"auto", "none"}
+    ):
         return False
     code = str(getattr(error, "code", "") or "").strip().upper()
     message = str(getattr(error, "message", "") or "").strip().lower()
     if code not in {"PROVIDER_ERROR", "INVALID_ARGUMENT", "BAD_REQUEST"}:
         return False
-    # Match both API-style ("tool_choice") and natural-language-style ("tool choice")
-    if (
-        "tool_choice" not in message
-        and "tool choice" not in message
-        and "chat setting" not in message
-    ):
-        return False
-    return True
+    return any(
+        token in message for token in ("tool_choice", "tool choice", "chat setting")
+    )
 
 
 def complete_with_provider_override_retry(
@@ -75,7 +70,7 @@ def complete_with_provider_override_retry(
     retry_override = resolve_provider_retry_override(
         provider_name=provider_name,
         model_name=model_name,
-        purpose=str(metadata_payload.get("purpose", "") or "").strip().lower(),
+        purpose=metadata_payload.get("purpose", "").strip().lower(),
         thinking=thinking,
         tool_choice=normalized_tool_choice,
         tool_names=[

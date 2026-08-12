@@ -22,10 +22,7 @@ class OpenRouterEnvelopeParser:
         *,
         allowed_tool_names: Iterable[str] | None = None,
     ) -> ToolCallParseResult:
-        raw = str(text or "").strip()
-        if not raw:
-            return ToolCallParseResult()
-
+        raw = text.strip()
         allowed = _normalize_allowed_tool_names(allowed_tool_names)
         parsed: list[ProviderToolCall] = []
         metadata: dict[str, Any] = {"fallback_parse_mode": "channel_envelope"}

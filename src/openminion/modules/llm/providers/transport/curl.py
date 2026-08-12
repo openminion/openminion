@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import uuid
 from collections.abc import Callable
+from functools import partial
 from typing import Any, Mapping
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
@@ -35,7 +36,7 @@ def curl_json_post(
 ) -> dict[str, Any]:
     env_owner = resolve_environment_config(env=env)
     request_headers = with_default_user_agent_fn(headers)
-    write_event = _curl_debug_writer(env_owner)
+    write_event: _DebugWriter = partial(write_llm_debug_event, env=env_owner)
     trace_id = uuid.uuid4().hex
     max_chars = llm_debug_max_chars(env=env_owner)
     serialized_body = body_json if body_json is not None else json.dumps(payload)
@@ -49,7 +50,7 @@ def curl_json_post(
         payload=payload,
         max_chars=max_chars,
     )
-    _trace_curl_request(
+    trace_http_json_request(
         trace_metadata=trace_metadata,
         provider_name=provider_name,
         url=url,
@@ -57,6 +58,7 @@ def curl_json_post(
         payload=payload,
         headers=request_headers,
         timeout_seconds=timeout_seconds,
+        transport="curl",
         env=env_owner,
     )
 
@@ -120,13 +122,6 @@ def curl_json_post(
     return parsed
 
 
-def _curl_debug_writer(env_owner: EnvironmentConfig) -> _DebugWriter:
-    def _write(event: dict[str, Any]) -> None:
-        write_llm_debug_event(event, env=env_owner)
-
-    return _write
-
-
 def _write_curl_request_event(
     *,
     write_event: _DebugWriter,
@@ -147,30 +142,6 @@ def _write_curl_request_event(
             "payload": truncate_debug_value(payload, max_chars),
             "transport": "curl",
         }
-    )
-
-
-def _trace_curl_request(
-    *,
-    trace_metadata: dict[str, Any] | None,
-    provider_name: str,
-    url: str,
-    body_json: str,
-    payload: dict[str, Any],
-    headers: dict[str, str],
-    timeout_seconds: int,
-    env: EnvironmentConfig,
-) -> None:
-    trace_http_json_request(
-        trace_metadata=trace_metadata,
-        provider_name=provider_name,
-        url=url,
-        body_json=body_json,
-        payload=payload,
-        headers=headers,
-        timeout_seconds=timeout_seconds,
-        transport="curl",
-        env=env,
     )
 
 

@@ -73,9 +73,9 @@ def _emit_transport_timeout_counter(
         value=1.0,
         status="error",
         extra={
-            "provider": str(provider_name or "").strip(),
-            "method": str(method or "").strip().upper(),
-            "reason": str(reason or "").strip(),
+            "provider": provider_name.strip(),
+            "method": method.strip().upper(),
+            "reason": reason.strip(),
         },
     )
 
@@ -114,8 +114,8 @@ def _emit_transport_performance(
         )
 
     extra = {
-        "provider": str(provider_name or "").strip(),
-        "method": str(method or "").strip().upper(),
+        "provider": provider_name.strip(),
+        "method": method.strip().upper(),
         "transport": "urllib",
         "request_build_ms": request_build_ms,
         "provider_round_trip_ms": round_trip_ms,
@@ -123,16 +123,16 @@ def _emit_transport_performance(
         "total_ms": total_ms,
         "request_bytes": request_bytes,
         "response_bytes": response_bytes,
-        "retry_count": int(retry_count),
+        "retry_count": retry_count,
     }
     if reason:
-        extra["reason"] = str(reason or "").strip()
+        extra["reason"] = reason.strip()
     emit_module_operation(
         emit_module_telemetry_fn=_emit,
         session_id="llm",
         turn_id="transport",
         module_id="openminion-llm",
-        operation=f"http_json_{str(method or '').strip().lower()}",
+        operation=f"http_json_{method.strip().lower()}",
         status=status,
         extra=extra,
     )
@@ -383,8 +383,6 @@ def http_json_get(
             details={"provider": provider_name, "url": url},
         ) from exc
 
-    parsed: dict[str, Any] | None = None
-    parse_error = ""
     try:
         parse_started = time.perf_counter()
         parsed = json.loads(raw)
@@ -756,8 +754,6 @@ def http_json_post(
             details={"provider": provider_name, "url": url},
         ) from exc
 
-    parsed: dict[str, Any] | None = None
-    parse_error = ""
     try:
         parse_started = time.perf_counter()
         parsed = json.loads(raw)
