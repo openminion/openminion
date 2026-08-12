@@ -110,8 +110,6 @@ def ensure_memory_contract_compatibility(
             f"{MEMORY_CONTRACT_VERSION}, got {declared_version or '<missing>'}"
         )
 
-    if errors:
-        if strict:
-            raise MemoryContractError(role=normalized_role, errors=errors)
-        return False, errors
-    return True, []
+    if errors and strict:
+        raise MemoryContractError(role=normalized_role, errors=errors)
+    return not errors, errors

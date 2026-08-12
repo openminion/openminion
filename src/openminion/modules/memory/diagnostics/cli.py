@@ -57,13 +57,13 @@ def emit_export(
 def render_trace_rows(events: list[dict[str, Any]]) -> str:
     if not events:
         return "No trace events found."
-    lines = []
-    for event in events:
-        lines.append(
+    return "\n".join(
+        (
             f"{event.get('ts', '')}  {event.get('event', '')}  {event.get('agent_id', '')}  "
             f"{summarize_trace_event(event)}"
         )
-    return "\n".join(lines)
+        for event in events
+    )
 
 
 def read_trace_events_or_warn(
@@ -81,10 +81,7 @@ def read_trace_events_or_warn(
     )
     if events:
         return events
-    typer.echo(
-        f"Warning: no trace events found at {trace_file}",
-        err=True,
-    )
+    typer.echo(f"Warning: no trace events found at {trace_file}", err=True)
     return []
 
 
