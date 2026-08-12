@@ -618,7 +618,7 @@ def _resolve_model(
 
 
 def _resolve_tool_names(request: LLMRequest) -> List[str]:
-    return [tool.name for tool in (request.tools or []) if str(tool.name).strip()]
+    return [tool.name for tool in request.tools or [] if tool.name.strip()]
 
 
 def _decode_nested_json_object(raw_value: Any) -> dict[str, Any] | None:
@@ -669,11 +669,9 @@ _DECISION_ALLOWED_KEYS = {
 
 
 def _sanitize_decision_like_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    args = _decode_json_like(dict(arguments or {}))
-    if not isinstance(args, dict):
-        return dict(arguments or {})
+    args = {key: _decode_json_like(value) for key, value in arguments.items()}
     if not ("mode" in args and "reason_code" in args and "confidence" in args):
-        return dict(args)
+        return args
 
     cleaned: dict[str, Any] = {
         key: args[key] for key in _DECISION_ALLOWED_KEYS if key in args
@@ -682,9 +680,6 @@ def _sanitize_decision_like_arguments(arguments: dict[str, Any]) -> dict[str, An
         cleaned["sub_intents"] = []
     if "rationale" not in cleaned:
         cleaned["rationale"] = ""
-    decoded_cleaned = _decode_json_like(cleaned)
-    if isinstance(decoded_cleaned, dict):
-        return decoded_cleaned
     return cleaned
 
 
@@ -715,7 +710,7 @@ def _normalize_submit_output_arguments(
 
 def _coerce_tool_calls(raw_calls: list[Any]) -> list[ToolCall]:
     normalized: list[ToolCall] = []
-    for call in raw_calls or []:
+    for call in raw_calls:
         if isinstance(call, ToolCall):
             normalized_args = _normalize_submit_output_arguments(
                 str(call.name or "").strip(),
@@ -755,7 +750,7 @@ def _coerce_tool_calls(raw_calls: list[Any]) -> list[ToolCall]:
 def _last_user_text(messages: List[Message]) -> str:
     for msg in reversed(messages):
         if msg.role == "user":
-            return str(msg.content or "")
+            return msg.content
     return ""
 
 

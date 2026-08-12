@@ -79,13 +79,8 @@ def _openai_stream_payload(
     }
     if request.temperature is not None:
         payload["temperature"] = request.temperature
-    if request.max_output_tokens is not None:
-        try:
-            max_tokens = int(request.max_output_tokens)
-            if max_tokens > 0:
-                payload["max_tokens"] = max_tokens
-        except (TypeError, ValueError):
-            pass
+    if request.max_output_tokens is not None and request.max_output_tokens > 0:
+        payload["max_tokens"] = request.max_output_tokens
     if request.stop:
         payload["stop"] = request.stop
     return payload
@@ -123,11 +118,9 @@ class OpenAIProvider:
         behavior_profile = self._resolve_behavior_profile(
             model=model,
             base_url=base_url,
-            provider_identity=(
-                config.get("provider_identity") if isinstance(config, dict) else None
-            ),
+            provider_identity=config.get("provider_identity"),
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         request_compat = resolve_openai_request_compat(
             provider_identity=(
@@ -210,7 +203,7 @@ class OpenAIProvider:
             ),
             "provider_name": self.name,
             "trace_metadata": request.metadata,
-            "env": config.get("__env__") if isinstance(config, dict) else None,
+            "env": config.get("__env__"),
         }
         while True:
             try:
@@ -296,7 +289,6 @@ class OpenAIProvider:
             )
             if tool_calls and tool_call_resolution.selected_source != "native":
                 text = ""
-                raw_text = ""
                 text_source = tool_call_resolution.selected_source
 
             if text or tool_calls:
@@ -314,13 +306,6 @@ class OpenAIProvider:
                 )
                 continue
 
-            # Classify into explicit error codes; CER-04: Tool-call-only is valid
-            if not first_choice or not message_payload:
-                raise LLMCtlError(
-                    "MALFORMED_PAYLOAD",
-                    f"{self.name} response has malformed or missing payload structure",
-                    details={"retryable": False},
-                )
             raise LLMCtlError(
                 "EMPTY_PAYLOAD",
                 f"{self.name} response did not include text or tool calls",
@@ -437,11 +422,9 @@ class OpenAIProvider:
         behavior_profile = self._resolve_behavior_profile(
             model=model,
             base_url=base_url,
-            provider_identity=(
-                config.get("provider_identity") if isinstance(config, dict) else None
-            ),
+            provider_identity=config.get("provider_identity"),
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         request_compat = resolve_openai_request_compat(
             provider_identity=(

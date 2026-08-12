@@ -77,11 +77,11 @@ _NORMALIZATION_PROFILES: list[ProviderResponseNormalizationProfile] = [
 
 
 def is_provider_recovery_fallback_text(text: str) -> bool:
-    normalized = str(text or "").strip().lower()
+    normalized = text.strip().lower()
     if not normalized:
         return False
     return any(
-        normalized == str(profile.fallback_text or "").strip().lower()
+        normalized == profile.fallback_text.strip().lower()
         for profile in _NORMALIZATION_PROFILES
     )
 
@@ -91,8 +91,8 @@ def resolve_normalization_profile(
     provider_name: str = "",
     model_name: str = "",
 ) -> ProviderResponseNormalizationProfile:
-    provider = str(provider_name or "").strip().lower()
-    model = str(model_name or "").strip().lower()
+    provider = provider_name.strip().lower()
+    model = model_name.strip().lower()
     for profile in _NORMALIZATION_PROFILES:
         if profile.matches(provider_name=provider, model_name=model):
             return profile
@@ -116,42 +116,32 @@ def normalize_provider_response(
     canonical_response = _coerce_provider_response(response)
     if profile is None:
         profile = resolve_normalization_profile(
-            provider_name=str(provider_name or canonical_response.model or ""),
-            model_name=str(model_name or canonical_response.model or ""),
+            provider_name=provider_name or canonical_response.model,
+            model_name=model_name or canonical_response.model,
         )
     effective_recover_empty_payload = (
         profile.recover_empty_payload
         if recover_empty_payload is None
-        else bool(recover_empty_payload)
+        else recover_empty_payload
     )
     effective_fallback_text = (
-        str(profile.fallback_text or _EMPTY_PROVIDER_RESPONSE_TEXT)
+        profile.fallback_text or _EMPTY_PROVIDER_RESPONSE_TEXT
         if fallback_text is None
-        else str(fallback_text or _EMPTY_PROVIDER_RESPONSE_TEXT)
+        else fallback_text or _EMPTY_PROVIDER_RESPONSE_TEXT
     )
 
-    text = str(canonical_response.text or "").strip()
-    model = (
-        str(canonical_response.model or "").strip()
-        or str(provider_name or "").strip()
-        or "unknown-model"
-    )
+    text = canonical_response.text.strip()
+    model = canonical_response.model.strip() or provider_name.strip() or "unknown-model"
     usage = _normalize_usage(canonical_response.usage)
     finish_reason = _canonical_finish_reason(
-        str(canonical_response.finish_reason or "").strip(),
+        canonical_response.finish_reason.strip(),
         aliases=profile.finish_reason_aliases or DEFAULT_FINISH_REASON_ALIASES,
     )
-    normalization = (
-        dict(canonical_response.normalization)
-        if isinstance(canonical_response.normalization, dict)
-        else {}
-    )
+    normalization = dict(canonical_response.normalization)
 
     tool_calls = _normalize_tool_calls(canonical_response.tool_calls)
     if _thinking_passthrough_enabled():
-        thinking = _coerce_thinking_blocks(
-            getattr(canonical_response, "thinking", None)
-        )
+        thinking = _coerce_thinking_blocks(canonical_response.thinking)
     else:
         thinking = []
 
@@ -476,7 +466,7 @@ def _coerce_depends_on(raw_depends_on: Any) -> list[str]:
 
 
 def _canonical_finish_reason(raw_value: str, *, aliases: dict[str, str]) -> str:
-    value = str(raw_value or "").strip()
+    value = raw_value.strip()
     if not value:
         return ""
     key = value.lower()
