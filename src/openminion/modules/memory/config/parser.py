@@ -168,13 +168,12 @@ def _parse_store(
         raise ConfigError(
             "store.backend must be 'sqlite', 'mock', 'remote', 'postgres', or 'custom'"
         )
-    sqlite_section = data.get("sqlite")
     sqlite_path: Path | None = None
     postgres_url = ""
     remote_endpoint = ""
     remote_timeout_seconds = 5.0
     remote_max_retries = 1
-    sqlite_section = _require_mapping(sqlite_section or {}, "store.sqlite")
+    sqlite_section = _require_mapping(data.get("sqlite") or {}, "store.sqlite")
     if backend == "sqlite":
         raw_path = data.get("sqlite_path")
         if not isinstance(raw_path, str) or not raw_path.strip():
@@ -344,16 +343,6 @@ def _parse_retrieval(value: Any) -> RetrievalConfig:
 
 def _parse_ranking(value: Any, *, retrieval: RetrievalConfig) -> RankingConfig:
     data = dict(value or {}) if isinstance(value, MutableMapping) else {}
-    retrieval_type_boost_correction = object.__getattribute__(
-        retrieval, "type_boost_correction"
-    )
-    retrieval_type_boost_user_preference = object.__getattribute__(
-        retrieval, "type_boost_user_preference"
-    )
-    retrieval_type_boost_pin = object.__getattribute__(retrieval, "type_boost_pin")
-    retrieval_type_boost_project_convention = object.__getattribute__(
-        retrieval, "type_boost_project_convention"
-    )
     return RankingConfig(
         w_relevance=_coerce_non_negative_float(
             data.get("w_relevance", 0.45), "ranking.w_relevance"
@@ -383,22 +372,23 @@ def _parse_ranking(value: Any, *, retrieval: RetrievalConfig) -> RankingConfig:
             data.get("feedback_max", 1.0), "ranking.feedback_max"
         ),
         type_boost_correction=_coerce_positive_float(
-            data.get("type_boost_correction", retrieval_type_boost_correction),
+            data.get("type_boost_correction", retrieval.type_boost_correction),
             "ranking.type_boost_correction",
         ),
         type_boost_user_preference=_coerce_positive_float(
             data.get(
-                "type_boost_user_preference", retrieval_type_boost_user_preference
+                "type_boost_user_preference", retrieval.type_boost_user_preference
             ),
             "ranking.type_boost_user_preference",
         ),
         type_boost_pin=_coerce_positive_float(
-            data.get("type_boost_pin", retrieval_type_boost_pin),
+            data.get("type_boost_pin", retrieval.type_boost_pin),
             "ranking.type_boost_pin",
         ),
         type_boost_project_convention=_coerce_positive_float(
             data.get(
-                "type_boost_project_convention", retrieval_type_boost_project_convention
+                "type_boost_project_convention",
+                retrieval.type_boost_project_convention,
             ),
             "ranking.type_boost_project_convention",
         ),

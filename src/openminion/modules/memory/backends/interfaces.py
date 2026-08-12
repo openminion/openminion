@@ -176,19 +176,9 @@ def ensure_backend_compatibility(
         return True, []
 
     errors: list[str] = []
-    for item in raw_errors:
-        text = str(item or "")
-        if text.startswith("missing member: "):
-            errors.append(
-                "Missing required backend method: "
-                + text.split("missing member: ", 1)[1]
-            )
-            continue
-        if text.startswith("non-callable member: "):
-            errors.append(
-                "Missing required backend method: "
-                + text.split("non-callable member: ", 1)[1]
-            )
+    for text in raw_errors:
+        if text.startswith(("missing member: ", "non-callable member: ")):
+            errors.append("Missing required backend method: " + text.split(": ", 1)[1])
             continue
         if text.startswith("version mismatch:"):
             declared = getattr(backend, "contract_version", "")

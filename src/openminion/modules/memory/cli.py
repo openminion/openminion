@@ -79,6 +79,7 @@ def _get_service(db: Optional[str] = None) -> MemoryService:
         )
         store = resolved.store
     else:
+        cfg = load_config(env=dict(os.environ))
         env_owner = resolve_environment_config()
         data_root_env = env_owner.get(OPENMINION_DATA_ROOT_ENV, "").strip()
         if data_root_env:
@@ -86,12 +87,11 @@ def _get_service(db: Optional[str] = None) -> MemoryService:
             data_root = resolve_data_root(home_root, data_root=data_root_env)
             resolved_db_path = Path(data_root) / DEFAULT_INTEGRATED_SQLITE_SUBPATH
             resolved = resolve_memory_backend(
-                config=load_config(env=dict(os.environ)).store,
+                config=cfg.store,
                 db_path=resolved_db_path,
             )
             store = resolved.store
         else:
-            cfg = load_config(env=dict(os.environ))
             resolved_db_path = Path(
                 cfg.store.sqlite_path
                 or (Path.home() / DEFAULT_STANDALONE_SQLITE_SUBPATH)
@@ -163,12 +163,11 @@ def _run_storage_command(
 def _output(data, as_json: bool):
     if as_json:
         typer.echo(json.dumps(serialize_for_json(data), default=str))
+    elif isinstance(data, list):
+        for item in data:
+            typer.echo(str(item))
     else:
-        if isinstance(data, list):
-            for item in data:
-                typer.echo(str(item))
-        else:
-            typer.echo(str(data))
+        typer.echo(str(data))
 
 
 def _fail_memory_command(command: str, error: Exception) -> None:
@@ -432,7 +431,6 @@ def _register_read_commands(app: typer.Typer) -> None:
 
 
 def _register_memory_read_command_handlers(app: typer.Typer) -> None:
-
     @app.command("get")
     def cmd_get(
         record_id: str = typer.Argument(..., help="Record ID"),
@@ -570,16 +568,14 @@ def _register_memory_read_command_handlers(app: typer.Typer) -> None:
         svc = _get_service(db)
         rewrites: dict[str, str] = {}
         for item in scope_rewrite:
-            raw = str(item or "").strip()
+            raw = item.strip()
             if not raw or "=" not in raw:
                 typer.echo(
                     "Error: --scope-rewrite must use source=target format",
                     err=True,
                 )
                 raise typer.Exit(1)
-            src, dst = raw.split("=", 1)
-            src = src.strip()
-            dst = dst.strip()
+            src, dst = (part.strip() for part in raw.split("=", 1))
             if not src or not dst:
                 typer.echo(
                     "Error: --scope-rewrite must use source=target format",
@@ -593,10 +589,10 @@ def _register_memory_read_command_handlers(app: typer.Typer) -> None:
                 snapshot,
                 MemoryBundleImportOptions(
                     scope_rewrites=rewrites,
-                    trust_mode=cast(Any, str(trust or "direct")),
-                    conflict_mode=cast(Any, str(conflict or "skip")),
-                    id_mode=cast(Any, str(id_mode or "preserve")),
-                    dry_run=bool(dry_run),
+                    trust_mode=cast(Any, trust),
+                    conflict_mode=cast(Any, conflict),
+                    id_mode=cast(Any, id_mode),
+                    dry_run=dry_run,
                 ),
             )
         except Exception as exc:  # noqa: BLE001

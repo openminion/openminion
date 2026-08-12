@@ -20,18 +20,15 @@ class ResolvedKnowledgeBackendFactory:
 _BACKEND_FACTORIES: dict[str, KnowledgeBackendFactory] = {}
 
 
-def register_backend_factory(
-    provider: str,
-    factory: KnowledgeBackendFactory,
-) -> None:
-    normalized = str(provider or "").strip().lower()
+def register_backend_factory(provider: str, factory: KnowledgeBackendFactory) -> None:
+    normalized = provider.strip().lower()
     if not normalized:
         raise InvalidArgumentError("backend provider name is required")
     _BACKEND_FACTORIES[normalized] = factory
 
 
 def get_registered_backend_factory(provider: str) -> KnowledgeBackendFactory:
-    normalized = str(provider or "").strip().lower()
+    normalized = provider.strip().lower()
     try:
         return _BACKEND_FACTORIES[normalized]
     except KeyError as exc:
@@ -46,8 +43,7 @@ def list_registered_backend_factories() -> tuple[str, ...]:
 
 
 def resolve_backend_factory(
-    *,
-    config: KnowledgeBackendConfig,
+    *, config: KnowledgeBackendConfig
 ) -> ResolvedKnowledgeBackendFactory:
     return ResolvedKnowledgeBackendFactory(
         provider=config.provider,
@@ -57,9 +53,7 @@ def resolve_backend_factory(
 
 
 def instantiate_backend(
-    *,
-    config: KnowledgeBackendConfig,
-    **kwargs: Any,
+    *, config: KnowledgeBackendConfig, **kwargs: Any
 ) -> KnowledgeBackend:
     backend = get_registered_backend_factory(config.provider)(config=config, **kwargs)
     ensure_backend_compatibility(backend, strict=True)

@@ -289,17 +289,11 @@ def merge_ranking_config(
     default_ranking = RankingConfig()
 
     if retrieval is not None:
-        retrieval_type_boosts = {
-            "type_boost_correction": object.__getattribute__(
-                retrieval, "type_boost_correction"
-            ),
-            "type_boost_user_preference": object.__getattribute__(
-                retrieval, "type_boost_user_preference"
-            ),
-            "type_boost_pin": object.__getattribute__(retrieval, "type_boost_pin"),
-            "type_boost_project_convention": object.__getattribute__(
-                retrieval, "type_boost_project_convention"
-            ),
+        retrieval_type_boosts: dict[str, Any] = {
+            "type_boost_correction": retrieval.type_boost_correction,
+            "type_boost_user_preference": retrieval.type_boost_user_preference,
+            "type_boost_pin": retrieval.type_boost_pin,
+            "type_boost_project_convention": retrieval.type_boost_project_convention,
         }
         override_payload = {
             name: value
