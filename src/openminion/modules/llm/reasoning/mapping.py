@@ -30,11 +30,9 @@ def resolve_provider_effort_support(
     model_name: str | None,
     provider_effort: str | None,
 ) -> tuple[bool, str | None, str | None]:
-    normalized_provider = str(provider_name or "").strip().lower()
+    normalized_provider = (provider_name or "").strip().lower()
     del model_name
-    if provider_effort is None:
-        return True, None, None
-    if not normalized_provider:
+    if provider_effort is None or not normalized_provider:
         return True, provider_effort, None
     if normalized_provider in THINKING_SUPPORTED_PROVIDER_NAMES:
         return True, provider_effort, None
