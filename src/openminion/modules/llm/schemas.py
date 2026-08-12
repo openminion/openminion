@@ -154,7 +154,6 @@ class LLMResponse(BaseModel):
     memory_consolidation: Optional[dict[str, Any]] = None
     watch_outcome: Optional[dict[str, Any]] = None
     session_work_summary: Optional[dict[str, Any]] = None
-    # model-authored goal declaration. Populated when the
     goal_declaration: Optional[dict[str, Any]] = None
     goal_revision: Optional[dict[str, Any]] = None
     delegation_context: Optional[dict[str, Any]] = None

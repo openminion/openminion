@@ -81,14 +81,12 @@ def _response_with_assistant_message(normalized: LLMResponse) -> LLMResponse:
 
 
 def _response_with_valid_tool_statuses(normalized: LLMResponse) -> LLMResponse:
-    fixed_calls: List[ToolCall] = []
-    for call in normalized.tool_calls:
-        if call.status in LLM_TOOL_CALL_STATUS_CHOICES:
-            fixed_calls.append(call)
-            continue
-        fixed_calls.append(
-            call.model_copy(update={"status": LLM_TOOL_CALL_STATUS_REQUESTED})
-        )
+    fixed_calls = [
+        call
+        if call.status in LLM_TOOL_CALL_STATUS_CHOICES
+        else call.model_copy(update={"status": LLM_TOOL_CALL_STATUS_REQUESTED})
+        for call in normalized.tool_calls
+    ]
     if fixed_calls == normalized.tool_calls:
         return normalized
     return normalized.model_copy(update={"tool_calls": fixed_calls})
@@ -97,7 +95,7 @@ def _response_with_valid_tool_statuses(normalized: LLMResponse) -> LLMResponse:
 def _normalized_allowed_tool_names(
     allowed_tool_names: Iterable[str] | None,
 ) -> list[str]:
-    return [str(name).strip() for name in allowed_tool_names or [] if str(name).strip()]
+    return [name.strip() for name in allowed_tool_names or [] if name.strip()]
 
 
 def _response_with_inline_tool_calls(
@@ -132,8 +130,8 @@ def _response_with_inline_tool_calls(
                 "assistant_messages": [],
                 "tool_calls": [
                     ToolCall(
-                        id=str(call.id).strip() or None,
-                        name=str(call.name).strip(),
+                        id=call.id.strip() or None,
+                        name=call.name.strip(),
                         arguments=dict(call.arguments or {}),
                         status=LLM_TOOL_CALL_STATUS_PARSED,
                     )
@@ -496,7 +494,7 @@ class LLMClient:
                 details={"errors": exc.errors()},
             )
 
-        if bool(req.stream):
+        if req.stream:
             return self._error_response(
                 provider=req.provider or "",
                 model=req.model or "",

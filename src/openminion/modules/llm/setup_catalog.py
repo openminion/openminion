@@ -298,16 +298,15 @@ def first_screen_presets() -> tuple[ProviderSetupPreset, ...]:
 
 
 def more_screen_presets() -> tuple[ProviderSetupPreset, ...]:
-    first = set(_FIRST_SCREEN_IDS)
     return tuple(
         preset
         for preset in list_setup_presets()
-        if preset.preset_id not in first and not preset.is_local
+        if preset.preset_id not in _FIRST_SCREEN_IDS and not preset.is_local
     )
 
 
 def get_setup_preset(preset_id: str) -> ProviderSetupPreset:
-    normalized = str(preset_id or "").strip().lower()
+    normalized = preset_id.strip().lower()
     try:
         return _PRESET_BY_ID[normalized]
     except KeyError as exc:
@@ -324,7 +323,7 @@ def resolve_model_choice(
     manual_model: str = "",
     list_models: Callable[[ProviderSetupPreset], Iterable[str]] | None = None,
 ) -> ModelChoiceResult:
-    manual = str(manual_model or "").strip()
+    manual = manual_model.strip()
     if manual:
         return ModelChoiceResult(
             preset_id=preset.preset_id,
@@ -337,7 +336,7 @@ def resolve_model_choice(
         try:
             live_models = tuple(
                 model
-                for model in (str(item or "").strip() for item in list_models(preset))
+                for model in (item.strip() for item in list_models(preset))
                 if model
             )
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -358,7 +357,7 @@ def resolve_model_choice(
         duration = 0.0
         warning = ""
 
-    configured = str(configured_model or "").strip()
+    configured = configured_model.strip()
     if configured:
         return ModelChoiceResult(
             preset_id=preset.preset_id,

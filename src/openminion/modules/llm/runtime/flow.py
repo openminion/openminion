@@ -146,12 +146,10 @@ def _merge_generation_params(
     }
 
     for key in ("temperature", "top_p", "max_output_tokens", "stop"):
-        if getattr(global_defaults, key) is not None:
-            merged[key] = getattr(global_defaults, key)
-        if getattr(agent_defaults, key) is not None:
-            merged[key] = getattr(agent_defaults, key)
-        if getattr(request, key) is not None:
-            merged[key] = getattr(request, key)
+        for source in (global_defaults, agent_defaults, request):
+            value = getattr(source, key)
+            if value is not None:
+                merged[key] = value
         if key in overrides and overrides[key] is not None:
             merged[key] = overrides[key]
 
@@ -268,7 +266,7 @@ def _retry_config(client: Any, overrides: Dict[str, Any]) -> Tuple[int, int]:
     if overrides.get("backoff_ms") is not None:
         backoff_ms = int(overrides["backoff_ms"])
 
-    return max(0, int(max_retries)), max(0, int(backoff_ms))
+    return max(0, max_retries), max(0, backoff_ms)
 
 
 def _emit_operation(
@@ -331,7 +329,7 @@ def _request_logical_call_id(request: LLMRequest) -> str:
 
 
 def _attempt_posture(*, attempt: int) -> str:
-    return "initial" if int(attempt or 1) <= 1 else "retry"
+    return "initial" if attempt <= 1 else "retry"
 
 
 def _provider_attempt_extra(
@@ -409,9 +407,9 @@ def _complete_provider_attempt(
                 provider_name,
                 model_name,
                 allowed_tool_names={
-                    str(getattr(tool, "name", "") or "").strip()
+                    tool.name.strip()
                     for tool in call_request.tools or []
-                    if str(getattr(tool, "name", "") or "").strip()
+                    if tool.name.strip()
                 },
             )
     except LLMCtlError as exc:
@@ -585,7 +583,6 @@ def _call_with_retries(
     route_posture: str = "primary",
 ) -> LLMResponse:
     max_retries, backoff_ms = client._retry_config(overrides)
-    last_response: Optional[LLMResponse] = None
 
     for attempt in range(max_retries + 1):
         started = time.perf_counter()
@@ -647,7 +644,6 @@ def _call_with_retries(
             )
             return response
 
-        last_response = response
         err_code = (
             response.error.code if response.error is not None else "PROVIDER_ERROR"
         )
@@ -684,14 +680,7 @@ def _call_with_retries(
             continue
         return response
 
-    if last_response is not None:
-        return last_response
-    return client._error_response(
-        provider=provider_name,
-        model=model_name,
-        code="INTERNAL_ERROR",
-        message="Provider call failed without response",
-    )
+    raise AssertionError("retry loop must execute")
 
 
 def _apply_tool_policy_post(
@@ -795,7 +784,7 @@ def _apply_cost_budget(client: Any, response: LLMResponse) -> LLMResponse:
 
 
 def _resolve_provider_cost_hint(client: Any, provider_name: str) -> Any:
-    resolved_name = str(provider_name or client.profile.default_provider or "").strip()
+    resolved_name = (provider_name or client.profile.default_provider or "").strip()
     if not resolved_name:
         return None
     provider_cfg = client.llmctl.config.providers.get(resolved_name)
@@ -866,12 +855,11 @@ def _error_response(
 
 
 def parse_call_payload(payload: Optional[str]) -> Tuple[LLMRequest, Dict[str, Any]]:
-    raw = payload
-    if raw is None:
+    if payload is None:
         raise LLMCtlError("INVALID_ARGUMENT", "Empty call payload")
 
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise LLMCtlError("INVALID_ARGUMENT", f"Invalid JSON payload: {exc}") from exc
 
