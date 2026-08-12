@@ -66,14 +66,12 @@ def _feedback_update_values(
     meta = dict(_json_loads(row.get("meta_json"), {}))
     existing_feedback = _clamp01(float(meta.get("feedback_score", 0.0) or 0.0))
     meta["feedback_score"] = _clamp01(existing_feedback + float(feedback_delta))
-    success_count = int(meta.get("outcome_success_count", 0) or 0)
-    failure_count = int(meta.get("outcome_failure_count", 0) or 0)
-    if outcome == "success":
-        meta["outcome_success_count"] = success_count + 1
-        meta.setdefault("outcome_failure_count", failure_count)
-    else:
-        meta["outcome_failure_count"] = failure_count + 1
-        meta.setdefault("outcome_success_count", success_count)
+    meta.setdefault("outcome_success_count", 0)
+    meta.setdefault("outcome_failure_count", 0)
+    counter_key = (
+        "outcome_success_count" if outcome == "success" else "outcome_failure_count"
+    )
+    meta[counter_key] = int(meta[counter_key] or 0) + 1
     meta["last_outcome_at"] = updated_at
     meta["last_outcome_status"] = outcome
     meta["last_outcome_command_id"] = str(command_id or "").strip()

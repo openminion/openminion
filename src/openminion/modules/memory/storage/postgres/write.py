@@ -235,7 +235,6 @@ def upsert(
     record_patch: dict[str, Any],
 ) -> MemoryRecord:
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    removed_owner_id: str | None = None
     removed_ref_values: list[Any] = []
     result_id = uuid.uuid4().hex
     with store._lock:
@@ -256,7 +255,6 @@ def upsert(
             supersedes_id = str(row["id"]) if row else None
             payload = _upsert_payload(store, row, record_patch)
             if row:
-                removed_owner_id = supersedes_id
                 removed_ref_values = store._decode_evidence_ref_values(
                     row.get("evidence_json")
                 )
@@ -310,9 +308,9 @@ def upsert(
     if row is None:
         raise StoreWriteError("failed to upsert memory record")
     result = store._create_record_from_row(row)
-    if removed_owner_id is not None:
+    if supersedes_id is not None:
         store._remove_artifact_refs(
-            owner_id=removed_owner_id,
+            owner_id=supersedes_id,
             ref_values=removed_ref_values,
         )
     if not result.is_deleted:

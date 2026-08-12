@@ -76,22 +76,21 @@ def candidate_get(store: Any, candidate_id: str) -> MemoryCandidate | None:
 
 
 def candidate_delete(store: Any, candidate_id: str) -> None:
-    candidate: MemoryCandidate | None = None
     with store._connect() as conn:
         row = conn.execute(
             "SELECT * FROM memory_candidates WHERE candidate_id = ?",
             (candidate_id,),
         ).fetchone()
-        if row is not None:
-            candidate = store._create_candidate_from_row(row)
         conn.execute(
             "DELETE FROM memory_candidates WHERE candidate_id = ?", (candidate_id,)
         )
-    if candidate is not None:
-        store._remove_artifact_refs(
-            owner_id=candidate_id,
-            ref_values=candidate.evidence_refs,
-        )
+        if row is None:
+            return
+        candidate = store._create_candidate_from_row(row)
+    store._remove_artifact_refs(
+        owner_id=candidate_id,
+        ref_values=candidate.evidence_refs,
+    )
 
 
 def candidate_list(store: Any, options: CandidateListOptions) -> list[MemoryCandidate]:
