@@ -19,10 +19,6 @@ from openminion.modules.llm.providers.tool_calling.capabilities import (
 )
 
 
-def _default_normalization_profile() -> ProviderResponseNormalizationProfile:
-    return resolve_normalization_profile()
-
-
 @dataclass(frozen=True)
 class ProviderIdentity:
     """Resolved PTVC identity facts for one provider call."""
@@ -103,7 +99,7 @@ class ProviderBehaviorProfile:
         default_factory=RetryOverridePolicy
     )
     normalization_profile: ProviderResponseNormalizationProfile = field(
-        default_factory=_default_normalization_profile
+        default_factory=resolve_normalization_profile
     )
     fallback_parser_policy: str = DEFAULT_FALLBACK_PARSER_POLICY
     parser_plugin_selection: tuple[str, ...] = field(default_factory=tuple)

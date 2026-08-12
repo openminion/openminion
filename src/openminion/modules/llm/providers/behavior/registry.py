@@ -35,16 +35,10 @@ def register_behavior_profile(profile: ProviderBehaviorProfile) -> None:
     default_registry.register(profile)
 
 
-def _seed_default_profiles() -> None:
-    """Pre-register the two seed profiles described in the module docstring."""
-
-    register_behavior_profile(ProviderBehaviorProfile(profile_id="default"))
-    register_behavior_profile(
-        ProviderBehaviorProfile(
-            profile_id="minimax_openai_compat",
-            telemetry_labels=("minimax", "openai_dialect"),
-        )
+register_behavior_profile(ProviderBehaviorProfile(profile_id="default"))
+register_behavior_profile(
+    ProviderBehaviorProfile(
+        profile_id="minimax_openai_compat",
+        telemetry_labels=("minimax", "openai_dialect"),
     )
-
-
-_seed_default_profiles()
+)

@@ -146,7 +146,7 @@ class LLMCTLBridgeProvider(LLMProvider):
             provider_name=self.name,
             provider_config=self._provider_config,
         )
-        max_retries = _resolve_bridge_max_retries(provider_name=self.name)
+        max_retries = 0 if self.name == "cortensor" else 2
 
         llmctl_config = {
             "version": 1,
@@ -406,12 +406,6 @@ def _resolve_bridge_request_timeout_seconds(
     payload_timeout_floor = precommit_timeout + timeout_headroom
     transport_timeout_floor = payload_timeout_floor + timeout_buffer
     return max(base_timeout, transport_timeout_floor, 1)
-
-
-def _resolve_bridge_max_retries(*, provider_name: str) -> int:
-    if provider_name == "cortensor":
-        return 0
-    return 2
 
 
 def _as_positive_int(value: Any, *, default: int) -> int:
