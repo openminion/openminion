@@ -51,6 +51,11 @@ def _derive_toolspec_summary(
                 return synthesized
         _log.warning("tool.summary.generic_fallback tool=%s", tool_name)
         return "Tool executed successfully"
+    for key in ("summary", "content", "message"):
+        for mapping in mappings:
+            token = _normalized_summary_token(mapping.get(key))
+            if token:
+                return token
     raw_error = payload.get("error")
     if isinstance(raw_error, Mapping):
         error_message = _normalized_summary_token(
@@ -62,11 +67,6 @@ def _derive_toolspec_summary(
         error_message = _normalized_summary_token(raw_error)
         if error_message:
             return error_message
-    for key in ("summary", "content", "message"):
-        for mapping in mappings:
-            token = _normalized_summary_token(mapping.get(key))
-            if token:
-                return token
     return "Tool execution failed"
 
 
