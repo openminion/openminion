@@ -36,7 +36,10 @@ def clarify_tool_spec() -> ToolSpec:
     return ToolSpec(
         name=ENTRY_CLARIFY_TOOL_NAME,
         description=(
-            "Ask the user a clarifying question when required information is missing."
+            "Ask only when required information blocks meaningful progress and "
+            "cannot be discovered with an available or inactive tool or a "
+            "documented default. If a tool can investigate it, call tool.request "
+            "before asking the user."
         ),
         input_schema={
             "type": "object",

@@ -207,6 +207,16 @@ class _RecordingEntryLLM:
         return self.response
 
 
+class _SequencedEntryLLM(_RecordingEntryLLM):
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        super().__init__(responses[-1])
+        self.responses = responses
+
+    def call(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        return self.responses[len(self.requests) - 1]
+
+
 def _build_runner(
     tmp_path: Path,
     *,
@@ -372,6 +382,46 @@ def test_unified_entry_clarify_path_returns_waiting_question(tmp_path: Path) -> 
     assert decision.respond_kind == "clarify"
     assert decision.reason_code == "entry_clarify"
     assert decision.question == "Which city should I use?"
+
+
+def test_unified_entry_reconsiders_clarify_before_requesting_tool(
+    tmp_path: Path,
+) -> None:
+    llm = _SequencedEntryLLM(
+        [
+            _tool_response(
+                "clarify",
+                {"question": "How should I inspect the target environment?"},
+            ),
+            _tool_response(
+                "tool.request",
+                {"name": "exec.run", "terminal_after_success": False},
+            ),
+        ]
+    )
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-clarify-reconsideration")
+
+    decision = runner._decide(
+        state=state,
+        user_input="inspect the target environment and report its state",
+        logger=fake_logger(),
+    )
+
+    assert decision.mode == "act"
+    assert decision.reason_code == "entry_tool_call"
+    assert len(llm.requests) == 2
+    retry_system_text = "\n".join(
+        str(message.content or "")
+        for message in llm.requests[1].messages
+        if message.role == "system"
+    )
+    assert "Reconsider the clarification before asking the user" in retry_system_text
+    assert "inactive tool directory" in retry_system_text
+    response = getattr(decision, "_entry_response", None)
+    assert response is not None
+    assert response.tool_calls[0].name == "tool.request"
+    assert response.tool_calls[0].arguments["name"] == "exec.run"
 
 
 def test_unified_entry_act_path_attaches_seed_response(tmp_path: Path) -> None:

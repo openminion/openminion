@@ -12,6 +12,7 @@ from ..state import clear_clarify_state, stale_clarify_state_should_clear
 from ..schemas import (
     ActionResult,
     AskUserCommand,
+    ClarifyContext,
     ClarifyRequest,
     Decision,
     StepOutput,
@@ -173,17 +174,25 @@ def sync_llm_clarify_context_from_decision(
     respond_kind = str(decision.respond_kind if decision else "").strip()
     replacement = decision.clarify_context if decision else None
 
-    if (
-        decision_mode == "respond"
-        and respond_kind == "clarify"
-        and replacement is not None
-    ):
+    if decision_mode == "respond" and respond_kind == "clarify":
+        if replacement is None:
+            replacement = _structural_clarify_context(
+                existing=existing,
+                question=str(decision.question or "") if decision else "",
+                user_input=user_input,
+            )
+        if replacement is None:
+            return
         state.pending_llm_clarify_context = replacement.model_copy(deep=True)
         logger.emit(
             "brain.clarify.context_stored",
             _llm_clarify_event_payload(
                 state,
-                reason="decision_sidecar",
+                reason=(
+                    "decision_sidecar"
+                    if decision and decision.clarify_context is not None
+                    else "decision_structural_context"
+                ),
                 user_reply=user_input,
             ),
             trace_id=state.trace_id,
@@ -197,6 +206,46 @@ def sync_llm_clarify_context_from_decision(
             reason="consumed_without_refresh",
             user_reply=user_input,
         )
+
+
+def clarification_followup_goal(*, state: WorkingState, user_reply: str | None) -> str:
+    reply = str(user_reply or "").strip()
+    pending = state.pending_llm_clarify_context
+    if pending is None or not reply:
+        return reply
+
+    original = str(pending.original_user_input or "").strip()
+    if not original:
+        return reply
+    question = str(
+        pending.clarify_question or pending.unresolved_question or ""
+    ).strip()
+    parts = [f"Original request: {original}"]
+    if question:
+        parts.append(f"Clarification question: {question}")
+    parts.append(f"Clarification answer: {reply}")
+    return "\n".join(parts)
+
+
+def _structural_clarify_context(
+    *,
+    existing: ClarifyContext | None,
+    question: str,
+    user_input: str | None,
+) -> ClarifyContext | None:
+    normalized_question = str(question or "").strip()
+    original_user_input = str(
+        existing.original_user_input if existing else user_input or ""
+    ).strip()
+    if not normalized_question or not original_user_input:
+        return None
+    return ClarifyContext(
+        original_user_input=original_user_input,
+        inferred_goal=str(existing.inferred_goal if existing else "").strip(),
+        known_context=dict(existing.known_context if existing else {}),
+        unresolved_question=normalized_question,
+        clarify_question=normalized_question,
+    )
 
 
 def _llm_clarify_event_payload(

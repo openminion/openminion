@@ -44,6 +44,9 @@ from openminion.modules.brain.schemas import (
     new_uuid,
 )
 from openminion.modules.brain.retry import build_entry_retry_message
+from openminion.modules.prompting.decision import (
+    ENTRY_CLARIFY_RECONSIDERATION_MESSAGE,
+)
 from .entry_routing import (
     _bypass_decision_for_route,
     _entry_coding_decision,
@@ -561,9 +564,10 @@ def decide(
         hints["entry_tool_restriction"] = "clarify_only"
     if state.step_outputs:
         hints["has_prior_results"] = True
-    if requestable_tool_specs and any(
+    can_request_investigation_tool = bool(requestable_tool_specs) and any(
         spec.name == "tool.request" for spec in tool_specs
-    ):
+    )
+    if can_request_investigation_tool:
         style_overrides = hints.setdefault("style_overrides", {})
         if isinstance(style_overrides, dict):
             style_overrides["entry_inactive_tool_directory"] = (
@@ -660,6 +664,8 @@ def decide(
         tool_specs=tool_specs,
     )
 
+    reconsider_clarification = False
+    clarification_reconsidered = False
     for attempt in range(max_retries + 1):
         logger.emit(
             "llm.identity_audit",
@@ -678,8 +684,13 @@ def decide(
         if attempt:
             messages = _insert_retry_system_message(
                 messages,
-                retry_message=build_entry_retry_message(has_real_tools=has_real_tools),
+                retry_message=(
+                    ENTRY_CLARIFY_RECONSIDERATION_MESSAGE
+                    if reconsider_clarification
+                    else build_entry_retry_message(has_real_tools=has_real_tools)
+                ),
             )
+        reconsider_clarification = False
         try:
             response = runtime.complete(
                 messages=messages,
@@ -725,6 +736,24 @@ def decide(
                 return RespondDecision.model_validate(provider_payload)
             raise
         last_detection = detect_entry_path(response)
+        if (
+            last_detection.path == "clarify"
+            and can_request_investigation_tool
+            and not clarification_reconsidered
+            and attempt < max_retries
+        ):
+            clarification_reconsidered = True
+            reconsider_clarification = True
+            logger.emit(
+                "llm.call.retry",
+                {
+                    "llm_call_id": llm_call_id,
+                    "attempt": attempt + 1,
+                    "reason": "clarify_before_tool_investigation",
+                },
+                trace_id=state.trace_id,
+            )
+            continue
         if not _is_empty_entry_response(response):
             break
         if (

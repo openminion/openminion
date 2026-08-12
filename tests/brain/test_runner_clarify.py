@@ -657,7 +657,7 @@ class TestRunnerClarify(unittest.TestCase):
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")
     @patch("openminion.modules.brain.runner.BrainRunner._decide")
-    def test_llm_clarify_question_without_sidecar_does_not_infer_context(
+    def test_llm_clarify_question_without_sidecar_preserves_structural_context(
         self, mock_decide, mock_save, mock_load
     ):
         state = WorkingState(
@@ -667,7 +667,10 @@ class TestRunnerClarify(unittest.TestCase):
         )
         mock_load.return_value = state
         question = "Which location's weather would you like to know about?"
-        mock_decide.return_value = self._clarify_decision(question=question)
+        mock_decide.side_effect = [
+            self._clarify_decision(question=question),
+            self._answer_decision(answer="Weather follow-up handled."),
+        ]
 
         first = self.runner.step(
             session_id="sess_123",
@@ -675,7 +678,21 @@ class TestRunnerClarify(unittest.TestCase):
         )
 
         self.assertEqual(first.status, "waiting_user")
-        self.assertIsNone(state.pending_llm_clarify_context)
+        self.assertIsNotNone(state.pending_llm_clarify_context)
+        self.assertEqual(
+            state.pending_llm_clarify_context.original_user_input,
+            "what's weather?",
+        )
+        self.assertEqual(state.pending_llm_clarify_context.inferred_goal, "")
+        self.assertEqual(state.pending_llm_clarify_context.known_context, {})
+        self.assertEqual(
+            state.pending_llm_clarify_context.unresolved_question,
+            question,
+        )
+        self.assertEqual(
+            state.pending_llm_clarify_context.clarify_question,
+            question,
+        )
 
         self.context_api.build.reset_mock()
         self.runner._build_context(
@@ -687,10 +704,35 @@ class TestRunnerClarify(unittest.TestCase):
         )
 
         kwargs = self.context_api.build.call_args.kwargs
-        self.assertNotIn(
-            "pending_conversational_clarification",
-            kwargs["hints"],
+        self.assertEqual(
+            kwargs["hints"]["pending_conversational_clarification"],
+            {
+                "original_user_input": "what's weather?",
+                "inferred_goal": "",
+                "known_context": {},
+                "unresolved_question": question,
+                "clarify_question": question,
+                "user_reply": "china",
+            },
         )
+
+        second = self.runner.step(
+            session_id="sess_123",
+            user_input="china",
+        )
+
+        self.assertEqual(second.status, "done")
+        self.assertEqual(
+            state.goal,
+            "\n".join(
+                [
+                    "Original request: what's weather?",
+                    f"Clarification question: {question}",
+                    "Clarification answer: china",
+                ]
+            ),
+        )
+        self.assertIsNone(state.pending_llm_clarify_context)
 
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")
