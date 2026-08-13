@@ -287,6 +287,7 @@ print(json.dumps(results, sort_keys=True))
                 "--session",
                 "session-123",
                 "--stream",
+                "--jsonl",
                 "--json",
             ]
         )
@@ -296,6 +297,7 @@ print(json.dumps(results, sort_keys=True))
         self.assertEqual(args.agent, "ops")
         self.assertEqual(args.session, "session-123")
         self.assertTrue(args.stream)
+        self.assertTrue(args.jsonl)
         self.assertTrue(args.json)
         self.assertTrue(callable(args.handler))
 

@@ -10,7 +10,9 @@ from openminion.base.config.core import resolve_default_agent_id
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.runtime_source import call_daemon_or_inproc
 from openminion.cli.transport.daemon_client import (
+    DaemonStreamEvent,
     daemon_request,
+    daemon_stream_request,
 )
 from openminion.cli.config import load_cli_config_from_args, resolve_cli_roots
 from openminion.cli.parser.flags import (
@@ -54,7 +56,37 @@ def run_openminion(args: Any) -> int:
     if mode == "single-process":
         setattr(args, "runtime_source", "inproc")
 
-    path = "/v1/turn/stream" if bool(getattr(args, "stream", False)) else "/v1/turn"
+    jsonl = bool(getattr(args, "jsonl", False))
+    stream = bool(getattr(args, "stream", False)) or jsonl
+    path = "/v1/turn/stream" if stream else "/v1/turn"
+    stream_event_count = 0
+
+    def emit_stream_event(event: DaemonStreamEvent) -> None:
+        nonlocal stream_event_count
+        stream_event_count += 1
+        print_json_payload(
+            {"event": event.event, "data": event.data},
+            indent=None,
+        )
+
+    def call_daemon(endpoint: Any) -> tuple[int, dict[str, Any]]:
+        if stream:
+            return daemon_stream_request(
+                endpoint=endpoint,
+                method="POST",
+                path=path,
+                payload=request_payload,
+                timeout_s=60,
+                on_event=emit_stream_event if jsonl else None,
+            )
+        return daemon_request(
+            endpoint=endpoint,
+            method="POST",
+            path=path,
+            payload=request_payload,
+            timeout_s=60,
+        )
+
     previous_disable_level = logging.root.manager.disable
     roots = resolve_cli_roots(
         config_path=getattr(args, "config", None),
@@ -68,13 +100,7 @@ def run_openminion(args: Any) -> int:
         result = call_daemon_or_inproc(
             args=args,
             auto_start=auto_start,
-            daemon_call=lambda endpoint: daemon_request(
-                endpoint=endpoint,
-                method="POST",
-                path=path,
-                payload=request_payload,
-                timeout_s=60,
-            ),
+            daemon_call=call_daemon,
             inproc_call=lambda: _run_inproc(args, request_payload),
         )
     finally:
@@ -86,6 +112,9 @@ def run_openminion(args: Any) -> int:
         response.setdefault("runtime_fallback_reason", result.fallback_reason)
     if not response.get("ok", False):
         raise RuntimeError(_format_api_error(response, 500))
+    if jsonl and stream_event_count == 0:
+        print_json_payload({"event": "response", "data": response}, indent=None)
+        print_json_payload({"event": "done", "data": {"ok": True}}, indent=None)
     _print_output(args, response)
     return 0
 
@@ -137,6 +166,8 @@ def _load_run_config(args: Any) -> Any:
 
 
 def _print_output(args: Any, payload: dict[str, Any]) -> None:
+    if bool(getattr(args, "jsonl", False)):
+        return
     if bool(getattr(args, "json", False)):
         print_json_payload(payload)
         return
@@ -191,6 +222,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     run.add_argument("--purpose", default="", help="Optional purpose tag")
     run.add_argument("--file", default="", help="Read prompt body from file")
     run.add_argument("--stream", action="store_true", help="Use /v1/turn/stream")
+    run.add_argument(
+        "--jsonl",
+        action="store_true",
+        help="Write stream events as one JSON object per line",
+    )
     add_runtime_source_flag(run)
     from openminion.cli.ux.verbosity import (
         add_progress_flag,
