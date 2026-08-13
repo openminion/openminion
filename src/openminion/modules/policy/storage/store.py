@@ -25,7 +25,7 @@ def _parse_json(raw: str | None, fallback: Any) -> Any:
     if raw in {None, ""}:
         return fallback
     try:
-        return json.loads(str(raw))
+        return json.loads(raw)
     except json.JSONDecodeError:
         return fallback
 
@@ -228,9 +228,7 @@ class _PolicyStoreMixin(PolicyStore):
             "SELECT * FROM policy_grants WHERE grant_id = ?",
             (grant_id,),
         )
-        if not rows:
-            return None
-        return self._row_to_grant(rows[0])
+        return self._row_to_grant(rows[0]) if rows else None
 
     def consume_grant_use(self, grant_id: str) -> Optional[PolicyGrant]:
         now = utc_now_iso()
@@ -399,9 +397,7 @@ class _PolicyStoreMixin(PolicyStore):
             "SELECT value FROM policy_settings WHERE key = ?",
             (key,),
         )
-        if not rows:
-            return None
-        return str(rows[0]["value"])
+        return str(rows[0]["value"]) if rows else None
 
     def _row_to_grant(self, row: Mapping[str, Any]) -> PolicyGrant:
         payload = dict(row)

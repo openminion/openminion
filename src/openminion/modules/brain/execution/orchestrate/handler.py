@@ -450,7 +450,9 @@ class OrchestrateMode:
             str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
             == ORCHESTRATE_MODE
         ):
-            raise ValueError("Orchestrate subtasks cannot recursively select orchestrate")
+            raise ValueError(
+                "Orchestrate subtasks cannot recursively select orchestrate"
+            )
         return decision
 
     def _result_from_mode_output(

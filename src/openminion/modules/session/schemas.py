@@ -1,5 +1,3 @@
-"""Typed contracts for explicit session continuation."""
-
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -137,7 +135,7 @@ class SessionContinuationPayload(BaseModel):
     def _normalize_refs(cls, value: Any) -> list[str]:
         seen: set[str] = set()
         result: list[str] = []
-        for raw in list(value or []):
+        for raw in value or []:
             item = str(raw or "").strip()
             if item and item not in seen:
                 seen.add(item)

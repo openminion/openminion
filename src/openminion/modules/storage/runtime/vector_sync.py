@@ -1,17 +1,13 @@
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class VectorSyncScheduler:
-    """Background scheduler for vector embedding sync.
-
-    Processes pending records in configurable batch size without blocking
-    the main turn path.
-    """
+    """Run vector embedding sync in a background thread."""
 
     def __init__(
         self,
@@ -24,8 +20,9 @@ class VectorSyncScheduler:
         self._interval = interval_seconds
         self._batch_size = batch_size
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._stop_event = threading.Event()
         self._stats = {
             "records_processed": 0,
             "failures": 0,
@@ -39,6 +36,7 @@ class VectorSyncScheduler:
                 return
 
             self._running = True
+            self._stop_event.clear()
             self._thread = threading.Thread(
                 target=self._run_loop,
                 name="vector-sync",
@@ -58,17 +56,16 @@ class VectorSyncScheduler:
                 return
 
             self._running = False
-            if self._thread:
-                self._thread.join(timeout=5.0)
-                self._thread = None
+            self._stop_event.set()
+            thread = self._thread
+            self._thread = None
 
-            logger.info("Vector sync scheduler stopped")
+        if thread:
+            thread.join(timeout=5.0)
+        logger.info("Vector sync scheduler stopped")
 
-    def sync_now(self, *, limit: Optional[int] = None) -> int:
-        """Trigger an immediate sync.
-
-        Returns the number of records processed.
-        """
+    def sync_now(self, *, limit: int | None = None) -> int:
+        """Sync pending records and return the number processed."""
         if self._vector_adapter is None:
             return 0
 
@@ -84,8 +81,8 @@ class VectorSyncScheduler:
                 logger.debug("Vector sync completed: processed=%d", processed)
 
             return processed
-        except Exception as e:
-            logger.warning("Vector sync failed: %s", e)
+        except Exception as exc:
+            logger.warning("Vector sync failed: %s", exc)
             with self._lock:
                 self._stats["failures"] += 1
             return 0
@@ -98,9 +95,5 @@ class VectorSyncScheduler:
     def _run_loop(self) -> None:
         """Main sync loop running in background thread."""
         while self._running:
-            try:
-                self.sync_now()
-            except Exception as e:
-                logger.warning("Vector sync loop error: %s", e)
-
-            time.sleep(self._interval)
+            self.sync_now()
+            self._stop_event.wait(self._interval)

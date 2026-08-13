@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
+from openminion.modules.llm.client_call import provider_history_payload
 from openminion.modules.llm.reasoning import (
     ThinkingCtl,
     ThinkingRequest,
@@ -237,22 +238,14 @@ class LLMCTLBridgeProvider(LLMProvider):
 
     async def generate(self, request: ProviderRequest) -> ProviderResponse:
         request = self._normalize_request_thinking(request)
-        messages: list[dict[str, str]] = []
+        messages: list[dict[str, Any]] = []
         if str(request.system_prompt or "").strip():
             messages.append({"role": "system", "content": str(request.system_prompt)})
 
         for item in request.history:
-            role = str(item.role or "").strip().lower()
-            if role not in {"system", "user", "assistant", "tool"}:
-                role = "user"
-            content = str(item.content or "").strip()
-            if not content:
-                continue
-            payload = {"role": role, "content": content}
-            meta = dict(getattr(item, "meta", {}) or {})
-            if meta:
-                payload["meta"] = meta
-            messages.append(payload)
+            payload = provider_history_payload(item)
+            if payload is not None:
+                messages.append(payload)
 
         messages.append({"role": "user", "content": str(request.user_message)})
 

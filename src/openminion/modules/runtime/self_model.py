@@ -191,9 +191,7 @@ def _redact_secrets(value: Any) -> Any:
             else:
                 cleaned[key_text] = _redact_secrets(item)
         return cleaned
-    if isinstance(value, list):
-        return [_redact_secrets(item) for item in value]
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         return [_redact_secrets(item) for item in value]
     return value
 

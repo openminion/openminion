@@ -7,8 +7,10 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_AGENT_LIST,
     MODEL_TASK_DELEGATE,
 )
+from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.environment import (
     storage_path_from_context,
@@ -107,14 +109,12 @@ class TaskDelegateArgs(BaseModel):
                 raise ValueError(
                     "agent_id and instruction are required for sync/async delegation"
                 )
-            return self
-        if normalized_mode in {"accept", "reject"}:
+        elif normalized_mode in {"accept", "reject"}:
             if not self.child_artifact:
                 raise ValueError("child_artifact is required for accept/reject")
             if normalized_mode == "accept" and not self.workspace_root.strip():
                 raise ValueError("workspace_root is required for accept")
-            return self
-        if not self.task_id.strip():
+        elif not self.task_id.strip():
             raise ValueError("task_id is required for status/resume/cancel")
         return self
 
@@ -145,9 +145,7 @@ def _agent_record_to_dict(record: Any) -> dict[str, Any]:
 
 
 def _agent_payload_matches_status(agent: dict[str, Any], status: str) -> bool:
-    if not status:
-        return True
-    normalized = status.strip().lower()
+    normalized = status.lower()
     if not normalized:
         return True
     state = str(agent.get("state") or agent.get("status") or "").strip().lower()
@@ -177,7 +175,6 @@ def _agents_from_runtime_query(ctx: RuntimeContext) -> list[dict[str, Any]] | No
 
 
 def _resolve_agent_registry(ctx: RuntimeContext) -> Any | None:
-    """Resolve an ``AgentRegistryStore`` from runtime context."""
     storage_path = storage_path_from_context(ctx)
     if not storage_path:
         return None
@@ -289,28 +286,27 @@ def _h_agent_get(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
-_A2A_NOT_FOUND_CODES = frozenset(
+_TASK_DELEGATE_NOT_FOUND_CODES = frozenset(
     {
         "AGENT_NOT_FOUND",
         "ROUTE_NOT_FOUND",
         "A2A_ROUTE_NOT_FOUND",
         "TARGET_NOT_FOUND",
         "NO_ROUTE",
+        "A2A_JOB_NOT_FOUND",
+        "A2A_JOB_POLL_FAILED",
+        "A2A_JOB_CANCEL_FAILED",
     }
 )
 
 
-def _task_delegate_error_code(result_error_code: str, *, status: str) -> str:
-    code = str(result_error_code or "").strip()
-    if code in _A2A_NOT_FOUND_CODES or code in {
-        "A2A_JOB_NOT_FOUND",
-        "A2A_JOB_POLL_FAILED",
-        "A2A_JOB_CANCEL_FAILED",
-    }:
+def _task_delegate_error_code(result_error_code: str, *, status: str) -> ErrorCode:
+    code = result_error_code.strip()
+    if code in _TASK_DELEGATE_NOT_FOUND_CODES:
         return "NOT_FOUND"
     if code == "TASK_DELEGATE_INVALID_ARGS":
         return "INVALID_ARGUMENT"
-    if str(status or "").strip() == "running":
+    if status.strip() == "running":
         return "EXEC_ERROR"
     return "UPSTREAM_ERROR"
 
@@ -359,7 +355,7 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         delegate_kwargs = {
             "agent_id": validated.agent_id,
             "instruction": validated.instruction,
-            "timeout_seconds": int(validated.timeout_seconds),
+            "timeout_seconds": validated.timeout_seconds,
             "permission_mode": str(getattr(ctx, "permission_mode", "ask") or "ask"),
             "workspace_root": str(getattr(ctx, "workspace", "") or "").strip(),
             "cwd": str(getattr(ctx, "workspace", "") or "").strip(),

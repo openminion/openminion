@@ -276,6 +276,9 @@ class SessctlAdapter:
     def list_events(self, session_id: str) -> list[dict[str, Any]]:
         return self.store.list_events(session_id)
 
+    def get_tool_transcript(self, session_id: str) -> dict[str, Any]:
+        return self.store.get_tool_transcript(session_id)
+
     def get_slice(
         self,
         session_id: str,

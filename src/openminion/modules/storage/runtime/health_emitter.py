@@ -34,7 +34,7 @@ class PoolHealthEmitter:
             raise ValueError(f"interval_seconds must be > 0; got {interval_seconds!r}")
         self._record_store = record_store
         self._hook = hook
-        self._interval_seconds = float(interval_seconds)
+        self._interval_seconds = interval_seconds
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -62,11 +62,7 @@ class PoolHealthEmitter:
         thread.start()
 
     def stop(self, *, timeout: float | None = None) -> None:
-        """Signal shutdown and join the background thread.
-
-        ``timeout`` defaults to ``interval_seconds + 1.0`` to give the
-        loop a full cycle to observe the stop signal.
-        """
+        """Signal shutdown and allow one full interval to join by default."""
 
         thread = self._thread
         if thread is None:

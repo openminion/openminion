@@ -53,8 +53,8 @@ class AgentRegistry:
 
     def load(self) -> None:
         manifest_agents = load_manifest(self.manifest_path)
-        self._merge_source(manifest_agents, source="manifest", cleanup=True)
-        self._merge_source(self._builtin_agents, source="builtin", cleanup=True)
+        self._merge_source(manifest_agents, source="manifest")
+        self._merge_source(self._builtin_agents, source="builtin")
 
     def reload(self) -> None:
         self.load()
@@ -88,14 +88,12 @@ class AgentRegistry:
             )
 
         existing = self.store.get_agent_record(parsed.agent_id)
-        if existing is not None and not overwrite:
-            if source == "runtime" and self.allow_runtime_override:
-                pass
-            else:
-                raise AgentRegError(
-                    "ALREADY_EXISTS",
-                    f"Agent {parsed.agent_id} already exists from source={existing.source}",
-                )
+        runtime_override = source == "runtime" and self.allow_runtime_override
+        if existing is not None and not overwrite and not runtime_override:
+            raise AgentRegError(
+                "ALREADY_EXISTS",
+                f"Agent {parsed.agent_id} already exists from source={existing.source}",
+            )
 
         self.store.upsert_agent(parsed, source=source)
 
@@ -262,9 +260,7 @@ class AgentRegistry:
             "selected": selected,
         }
 
-    def _merge_source(
-        self, descriptors: list[AgentDescriptor], *, source: str, cleanup: bool
-    ) -> None:
+    def _merge_source(self, descriptors: list[AgentDescriptor], *, source: str) -> None:
         existing_source_ids = {
             row.agent_id
             for row in self.store.list_agent_records(filters={"source": source})
@@ -287,11 +283,10 @@ class AgentRegistry:
 
             self.store.upsert_agent(descriptor, source=source)
 
-        if cleanup:
-            for stale in sorted(existing_source_ids - incoming_ids):
-                existing = self.store.get_agent_record(stale)
-                if existing is not None and existing.source == source:
-                    self.store.delete_agent(stale)
+        for stale in sorted(existing_source_ids - incoming_ids):
+            existing = self.store.get_agent_record(stale)
+            if existing is not None and existing.source == source:
+                self.store.delete_agent(stale)
 
     def _agent_matches_constraints(
         self,

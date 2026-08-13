@@ -803,8 +803,7 @@ async def test_focus_app_mounts_single_screen_without_dashboard_chrome() -> None
         # runtime label moved from `#focus-header-runtime` into
         # the consolidated `FocusStatusLine` `model:` segment.
         status_text = app.screen.query_one(FocusStatusLine)._text()
-        assert "openai" in status_text
-        assert "gpt-4.1-mini" in status_text
+        assert "model: gpt-4.1-mini" in status_text
         assert list(app.screen.query("TabbedContent")) == []
         assert list(app.screen.query("#sidebar")) == []
 

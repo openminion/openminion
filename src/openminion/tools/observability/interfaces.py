@@ -1,6 +1,3 @@
-from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
-
-OBSERVABILITY_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
 TOOL_OBSERVABILITY_PROM_RULES = "observability.prometheus.rules"
 TOOL_OBSERVABILITY_PROM_ALERTS = "observability.prometheus.alerts"
 TOOL_OBSERVABILITY_PROM_QUERY = "observability.prometheus.query"

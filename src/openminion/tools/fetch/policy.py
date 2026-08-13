@@ -11,8 +11,6 @@ _SCHEME_ALLOWLIST = {"http", "https"}
 
 
 class FetchPolicyError(Exception):
-    """Raised when shared URL/SSRF policy rejects a fetch request."""
-
     def __init__(
         self, code: str, message: str, details: dict[str, Any] | None = None
     ) -> None:
@@ -26,13 +24,11 @@ def _fail(code: str, message: str, details: dict[str, Any] | None = None) -> Non
     raise FetchPolicyError(code=code, message=message, details=details)
 
 
-def _is_forbidden_ip(ip: ipaddress._BaseAddress) -> bool:  # type: ignore[attr-defined]
-    return _is_forbidden_ip_impl(ip)
+def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(_is_forbidden_ip_impl(ip))
 
 
 def extract_fetch_policy(ctx: Any | None) -> dict[str, Any]:
-    """Return the `tools.fetch` policy block from a runtime context, if any."""
-
     if ctx is None:
         return {}
     policy = getattr(ctx, "policy", None)
@@ -51,8 +47,6 @@ def extract_fetch_policy(ctx: Any | None) -> dict[str, Any]:
 def enforce_url_policy(
     url: str, *, allow_private_hosts: bool
 ) -> urllib.parse.ParseResult:
-    """Validate a URL against scheme allowlist and SSRF rules."""
-
     parsed = urllib.parse.urlparse(str(url or "").strip())
     if parsed.scheme.lower() not in _SCHEME_ALLOWLIST:
         _fail("SCHEME_NOT_ALLOWED", "Only http/https URLs are allowed", {"url": url})
@@ -133,8 +127,6 @@ def enforce_url_policy(
 def resolve_allow_private_hosts(
     request: dict[str, Any] | None, ctx: Any | None
 ) -> bool:
-    """Derive the effective `allow_private_hosts` flag for a request."""
-
     policy_cfg = extract_fetch_policy(ctx)
     allow_private_hosts = bool(policy_cfg.get("allow_private_hosts", False))
     if isinstance(request, dict) and bool(request.get("allow_private_hosts", False)):

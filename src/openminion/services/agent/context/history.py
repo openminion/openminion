@@ -24,6 +24,7 @@ def _history_role(role: str) -> str:
         "inbound": "user",
         "assistant": "assistant",
         "outbound": "assistant",
+        "tool": "tool",
     }.get(str(role).lower(), "system")
 
 
@@ -40,13 +41,20 @@ def _loop_tool_feedback(tool_results: list[Any], max_chars: int | None = None) -
 
 
 def _map_history_to_provider(history: list[Message]) -> list[ProviderHistoryMessage]:
-    return [
-        ProviderHistoryMessage(
-            role=_history_role(message.metadata.get("role") or "user"),
-            content=message.body,
+    mapped: list[ProviderHistoryMessage] = []
+    for message in history:
+        metadata = dict(message.metadata)
+        role = _history_role(metadata.pop("role", "user"))
+        mapped.append(
+            ProviderHistoryMessage(
+                role=role,
+                content=message.body,
+                meta=metadata,
+                tool_call_id=metadata.get("tool_call_id") if role == "tool" else None,
+                tool_status=metadata.get("tool_status") if role == "tool" else None,
+            )
         )
-        for message in history
-    ]
+    return mapped
 
 
 def _looks_like_tool_call_envelope_text(text: str) -> bool:

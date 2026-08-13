@@ -36,7 +36,7 @@ def run_verification(
     engine: Engine | None = None,
     connection: VerificationConnection | None = None,
 ) -> VerificationReport:
-    normalized = str(level or "quick").strip().lower()
+    normalized = level.strip().lower()
     if normalized not in {"quick", "full"}:
         normalized = "quick"
 
@@ -89,9 +89,7 @@ def run_verification(
                     )
 
         if verifier_hook is not None:
-            hook_findings = verifier_hook(connection)
-            for finding in hook_findings:
-                findings.append(finding)
+            findings.extend(verifier_hook(connection))
     elif engine is not None:
         from sqlalchemy import text
 
@@ -108,9 +106,7 @@ def run_verification(
                     )
                 )
             if verifier_hook is not None:
-                hook_findings = verifier_hook(conn)
-                for finding in hook_findings:
-                    findings.append(finding)
+                findings.extend(verifier_hook(conn))
     else:
         with sqlite3.connect(str(db_path)) as conn:
             quick_result = _run_pragma(conn, "quick_check")
@@ -138,9 +134,7 @@ def run_verification(
                     )
 
             if verifier_hook is not None:
-                hook_findings = verifier_hook(conn)
-                for finding in hook_findings:
-                    findings.append(finding)
+                findings.extend(verifier_hook(conn))
 
     fatal_count = sum(1 for finding in findings if finding.severity == "fatal")
     report = VerificationReport(
@@ -155,14 +149,8 @@ def run_verification(
 
     if raise_on_fatal and not report.ok:
         first_fatal = next(
-            (finding for finding in report.findings if finding.severity == "fatal"),
-            None,
+            finding for finding in report.findings if finding.severity == "fatal"
         )
-        message = (
-            first_fatal.message
-            if first_fatal
-            else "Verification failed with fatal findings."
-        )
-        raise VerificationError(message)
+        raise VerificationError(first_fatal.message)
 
     return report

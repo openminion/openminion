@@ -35,12 +35,11 @@ def _call_reporter(method: Callable[..., Any], **kwargs: Any) -> bool:
     return True
 
 
-def _close_record_store(record_store: RecordStore) -> bool:
+def _close_record_store(record_store: RecordStore) -> None:
     try:
         record_store.close()
     except Exception:  # noqa: BLE001
-        return False
-    return True
+        return
 
 
 def _utc_now_iso() -> str:
@@ -183,7 +182,6 @@ def _stream_table_rows_via_record_store(
     where_clause: str | None,
     where_params: list[Any],
 ) -> Iterator[dict[str, Any]]:
-    """Stream rows for ``table`` with the resolved filter."""
     sql = f'SELECT * FROM "{table}"'
     if where_clause:
         sql = f"{sql} WHERE {where_clause}"
@@ -337,12 +335,12 @@ def _export_via_record_store(
     manifest = OmxManifest(
         format="openminion-omx",
         format_version="1",
-        module_id=str(module_id),
-        module_application_id=int(module_application_id),
+        module_id=module_id,
+        module_application_id=module_application_id,
         created_at=_utc_now_iso(),
         source=OmxSource(
-            db_path=str(db_path_hint),
-            user_version=int(user_version),
+            db_path=db_path_hint,
+            user_version=user_version,
             schema_head=om_meta.get("schema_head"),
             export_notes=export_notes,
         ),
@@ -461,8 +459,6 @@ def _import_via_record_store(
     error: str | None = None
     exported_rows = sum(table.row_count for table in manifest.tables)
     imported_rows = 0
-    verification = None
-
     _reporter_started = False
     if reporter is not None:
         _reporter_started = _call_reporter(
@@ -505,7 +501,6 @@ def _import_via_record_store(
         success=success,
         exported_rows=exported_rows,
         imported_rows=imported_rows,
-        verification=verification,
         error=error,
     )
 
@@ -521,9 +516,7 @@ def _import_omx_tables_sqlite(
     imported_rows = 0
     target.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(target)) as conn:
-        schema_map: dict[str, str] = {}
-        if manifest.blobs:
-            schema_map = manifest.blobs.get("schemas", {}) or {}
+        schema_map = manifest.blobs.get("schemas", {}) if manifest.blobs else {}
         for table in manifest.tables:
             _ensure_table_schema_sqlite(conn, schema_map, table.name)
         for table in manifest.tables:

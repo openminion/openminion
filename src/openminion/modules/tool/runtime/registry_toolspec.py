@@ -6,8 +6,7 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
 
-from openminion.base.config.env import EnvironmentConfig
-from openminion.base.config.env import resolve_environment_config
+from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
@@ -197,14 +196,15 @@ def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionR
         else str(raw_error or "")
     )
     data_field = payload_dict.get("data")
-    if isinstance(data_field, Mapping):
-        data = dict(data_field)
-    else:
-        data = {
+    data = (
+        dict(data_field)
+        if isinstance(data_field, Mapping)
+        else {
             key: value
             for key, value in payload_dict.items()
             if key not in {"ok", "verified", "content", "error", "source"}
         }
+    )
     data = strip_tool_result_noise(data)
     if not content and data:
         try:
@@ -309,17 +309,13 @@ def invoke_tool_spec_handler(
         if second_is_ctx and not first_is_ctx:
             return handler(arguments, runtime_ctx)
 
-    first_error: Exception | None = None
     try:
         return handler(arguments, runtime_ctx)
-    except Exception as exc:
-        first_error = exc
-    try:
-        return handler(runtime_ctx, arguments)
-    except Exception:
-        if first_error is not None:
+    except Exception as first_error:
+        try:
+            return handler(runtime_ctx, arguments)
+        except Exception:
             raise first_error
-        raise
 
 
 def resolve_workspace(*, context: ToolExecutionContext) -> Path:
@@ -371,7 +367,7 @@ def resolve_runtime_env(*, context: ToolExecutionContext) -> dict[str, Any]:
         if token:
             try:
                 decoded = json.loads(token)
-            except Exception:
+            except json.JSONDecodeError:
                 decoded = None
             if isinstance(decoded, Mapping):
                 return dict(decoded)
@@ -388,11 +384,12 @@ def resolve_artifactctl() -> Any | None:
 def resolve_run_root(*, workspace: Path, context: ToolExecutionContext) -> Path:
     del workspace
     session = str(context.session_id or "default").strip() or "default"
-    safe_session = "".join(
-        ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in session
-    ).strip("-")
-    if not safe_session:
-        safe_session = "default"
+    safe_session = (
+        "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in session
+        ).strip("-")
+        or "default"
+    )
     home_root = resolve_home_root()
     env_config = resolve_environment_config(
         runtime_env=resolve_runtime_env(context=context)

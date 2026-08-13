@@ -42,7 +42,7 @@ class RuntimeSessionTurnBusyError(RuntimeError):
         expires_at: str = "",
     ) -> None:
         self.session_id = session_id
-        self.retry_after_s = max(1, int(retry_after_s))
+        self.retry_after_s = max(1, retry_after_s)
         self.active_owner = active_owner
         self.expires_at = expires_at
         super().__init__(
@@ -56,14 +56,10 @@ class RuntimeSessionTurnFenceError(RuntimeError):
 
 
 def _parse_iso_datetime(value: str) -> datetime:
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _to_iso_utc(value: datetime) -> str:
@@ -71,16 +67,16 @@ def _to_iso_utc(value: datetime) -> str:
 
 
 def _lease_expiry(now_iso: str | None, ttl_s: int) -> tuple[str, str]:
-    now_dt = _parse_iso_datetime(now_iso) if now_iso else _utc_now()
+    now_dt = _parse_iso_datetime(now_iso) if now_iso else datetime.now(timezone.utc)
     now = _to_iso_utc(now_dt)
-    expires = _to_iso_utc(now_dt + timedelta(seconds=max(1, int(ttl_s))))
+    expires = _to_iso_utc(now_dt + timedelta(seconds=max(1, ttl_s)))
     return now, expires
 
 
 def _retry_after_seconds(expires_at: str, now_iso: str | None) -> int:
     try:
         expires_dt = _parse_iso_datetime(expires_at)
-        now_dt = _parse_iso_datetime(now_iso) if now_iso else _utc_now()
+        now_dt = _parse_iso_datetime(now_iso) if now_iso else datetime.now(timezone.utc)
     except (TypeError, ValueError, OverflowError):
         return 1
     return max(1, int((expires_dt - now_dt).total_seconds()))
@@ -99,9 +95,9 @@ class RuntimeSessionTurnLeases:
         ttl_s: int = 60,
         now_iso: str | None = None,
     ) -> RuntimeSessionTurnLease:
-        sid = str(session_id or "").strip()
-        lease_owner = str(owner or "").strip()
-        request = str(request_id or "").strip()
+        sid = session_id.strip()
+        lease_owner = owner.strip()
+        request = request_id.strip()
         if not sid:
             raise ValueError("session_id is required")
         if not lease_owner:
@@ -176,9 +172,9 @@ class RuntimeSessionTurnLeases:
         now, expires = _lease_expiry(now_iso, ttl_s)
         with self._backend.transaction():
             return self._renew_locked(
-                session_id=str(session_id or "").strip(),
-                owner=str(owner or "").strip(),
-                fence_token=int(fence_token),
+                session_id=session_id.strip(),
+                owner=owner.strip(),
+                fence_token=fence_token,
                 now_iso=now,
                 expires_at=expires,
             )
@@ -191,8 +187,8 @@ class RuntimeSessionTurnLeases:
         fence_token: int,
         now_iso: str | None = None,
     ) -> bool:
-        sid = str(session_id or "").strip()
-        lease_owner = str(owner or "").strip()
+        sid = session_id.strip()
+        lease_owner = owner.strip()
         now, _expires = _lease_expiry(now_iso, 1)
         with self._backend.transaction():
             return (
@@ -205,16 +201,16 @@ class RuntimeSessionTurnLeases:
                       AND fence_token = ?
                       AND released_at IS NULL
                     """,
-                    (now, now, sid, lease_owner, int(fence_token)),
+                    (now, now, sid, lease_owner, fence_token),
                 )
                 > 0
             )
 
     def assert_fence(self, session_id: str, *, fence_token: int) -> None:
-        row = self._row(session_id=str(session_id or "").strip())
+        row = self._row(session_id=session_id.strip())
         if row is None or row["released_at"] is not None:
             raise RuntimeSessionTurnFenceError("session turn lease is not active")
-        if int(row["fence_token"]) != int(fence_token):
+        if int(row["fence_token"]) != fence_token:
             raise RuntimeSessionTurnFenceError("stale session turn fence")
 
     def _row(self, *, session_id: str) -> dict[str, Any] | None:
@@ -265,7 +261,7 @@ class RuntimeSessionTurnLeases:
                   AND fence_token = ?
                   AND released_at IS NULL
                 """,
-                (now_iso, expires_at, session_id, owner, int(fence_token)),
+                (now_iso, expires_at, session_id, owner, fence_token),
             )
             > 0
         )

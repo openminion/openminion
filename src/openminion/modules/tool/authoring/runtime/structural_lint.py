@@ -53,10 +53,8 @@ def structural_lint(
             "source_code must define exactly one function or one matching the tool name",
         )
 
-    properties = (
-        args_schema.get("properties", {}) if isinstance(args_schema, dict) else {}
-    )
-    required = args_schema.get("required", []) if isinstance(args_schema, dict) else []
+    properties = args_schema.get("properties", {})
+    required = args_schema.get("required", [])
     required_names = [
         str(item).strip()
         for item in (required if isinstance(required, list) else [])
@@ -108,14 +106,9 @@ def _collect_imports(tree: ast.AST) -> set[str]:
     imports: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                token = str(alias.name or "").split(".", 1)[0].strip()
-                if token:
-                    imports.add(token)
-        elif isinstance(node, ast.ImportFrom):
-            token = str(node.module or "").split(".", 1)[0].strip()
-            if token:
-                imports.add(token)
+            imports.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module.split(".", 1)[0])
     return imports
 
 
@@ -123,7 +116,7 @@ def _count_tests(tree: ast.AST) -> int:
     return sum(
         1
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and str(node.name).startswith("test_")
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
     )
 
 

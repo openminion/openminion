@@ -255,9 +255,7 @@ class RecordStore(ABC):
         batch_size: int = 500,
     ) -> Iterator[dict[str, Any]]:
         """Stream rows for *sql* one dict at a time."""
-        rows = self.query_dicts(sql, params)
-        for row in rows:
-            yield row
+        yield from self.query_dicts(sql, params)
 
     def stream_rows(
         self,
@@ -267,9 +265,7 @@ class RecordStore(ABC):
         batch_size: int = 500,
     ) -> Iterator[dict[str, Any]]:
         """Stream rows for ``table`` matching ``where`` one dict at a time."""
-        rows = self.query_rows(table, where=where, order=order)
-        for row in rows:
-            yield row
+        yield from self.query_rows(table, where=where, order=order)
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

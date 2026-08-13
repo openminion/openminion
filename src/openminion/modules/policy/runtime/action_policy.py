@@ -8,26 +8,15 @@ def policy_config_from_action_policy(
     action_policy: ActionPolicyConfig,
 ) -> PolicyConfig:
     defaults = PolicyConfig()
+    default_action = action_policy.default_action or defaults.default_action
     return PolicyConfig(
         mode=map_action_policy_mode(action_policy.mode),  # type: ignore[arg-type]
-        default_action=str(
-            getattr(action_policy, "default_action", defaults.default_action)
-            or defaults.default_action
-        ),  # type: ignore[arg-type]
-        allow_read_only_without_prompt=bool(
-            getattr(
-                action_policy,
-                "allow_read_only_without_prompt",
-                defaults.allow_read_only_without_prompt,
-            )
-        ),
+        default_action=default_action,  # type: ignore[arg-type]
+        allow_read_only_without_prompt=action_policy.allow_read_only_without_prompt,
         affirmative_tokens=list(
-            getattr(action_policy, "affirmative_tokens", [])
-            or defaults.affirmative_tokens
+            action_policy.affirmative_tokens or defaults.affirmative_tokens
         ),
-        negative_tokens=list(
-            getattr(action_policy, "negative_tokens", []) or defaults.negative_tokens
-        ),
+        negative_tokens=list(action_policy.negative_tokens or defaults.negative_tokens),
     )
 
 

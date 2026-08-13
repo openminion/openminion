@@ -40,9 +40,7 @@ class ProjectDomainVerificationEvidence(BaseModel):
     prose_only_completion: bool = False
 
     @model_validator(mode="after")
-    def _evidence_refs_required_with_evidence_kinds(
-        self,
-    ) -> "ProjectDomainVerificationEvidence":
+    def _require_evidence_refs(self) -> "ProjectDomainVerificationEvidence":
         if self.evidence_kinds and not self.evidence_refs:
             raise ValueError(
                 "evidence_refs are required when evidence_kinds are present"
@@ -73,7 +71,7 @@ def evaluate_project_verification_closure(
             reason="malformed_or_prose_only_evidence",
             evidence_refs=evidence.evidence_refs,
         )
-    unsupported_reason = str(evidence.unsupported_reason or "").strip()
+    unsupported_reason = (evidence.unsupported_reason or "").strip()
     if unsupported_reason:
         return ProjectVerificationClosure(
             domain=contract.domain,
@@ -81,7 +79,7 @@ def evaluate_project_verification_closure(
             reason=f"unsupported_verification:{unsupported_reason}",
             evidence_refs=evidence.evidence_refs,
         )
-    needs_user_reason = str(evidence.needs_user_reason or "").strip()
+    needs_user_reason = (evidence.needs_user_reason or "").strip()
     if needs_user_reason:
         return ProjectVerificationClosure(
             domain=contract.domain,

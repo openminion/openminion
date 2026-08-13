@@ -7,6 +7,8 @@ import pytest
 
 from .assert_collector_evidence import assert_collector_evidence
 
+pytestmark = pytest.mark.e2e
+
 
 def _write_probe(root: Path, *, copies: int = 1) -> None:
     root.mkdir(parents=True, exist_ok=True)

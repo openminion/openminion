@@ -136,21 +136,14 @@ def _create_task_indexes(store: RecordStore) -> None:
 
 
 def _ensure_task_optional_columns(store: RecordStore) -> None:
-    _ensure_optional_column(
-        store, table="tasks", column="created_by_mode", column_sql="TEXT"
-    )
-    _ensure_optional_column(
-        store, table="tasks", column="executing_mode", column_sql="TEXT"
-    )
-    _ensure_optional_column(
-        store, table="plans", column="created_by_mode", column_sql="TEXT"
-    )
-    _ensure_optional_column(
-        store, table="plans", column="root_goal_id", column_sql="TEXT"
-    )
-    _ensure_optional_column(
-        store, table="plan_steps", column="executing_mode", column_sql="TEXT"
-    )
+    for table, column in (
+        ("tasks", "created_by_mode"),
+        ("tasks", "executing_mode"),
+        ("plans", "created_by_mode"),
+        ("plans", "root_goal_id"),
+        ("plan_steps", "executing_mode"),
+    ):
+        _ensure_optional_column(store, table=table, column=column, column_sql="TEXT")
 
 
 def migrate_v2_to_v3(store: RecordStore) -> None:

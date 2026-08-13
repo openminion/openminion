@@ -74,16 +74,15 @@ class PolicyAccessMixin:
         dangerous_default: bool,
     ) -> None:
         tool_name_canonical = canonical_tool_name(tool_name)
-        required = False
-        reason: dict[str, Any] = {}
         confirm_cfg = cast(dict[str, Any], self.raw.get("confirm", {}))
 
         required_tools = {
             canonical_tool_name(str(name))
             for name in confirm_cfg.get("required_tools", [])
         }
-        if tool_name_canonical in required_tools or dangerous_default:
-            required = True
+        required = tool_name_canonical in required_tools or dangerous_default
+        reason: dict[str, Any] = {}
+        if required:
             reason = {"rule": "confirm.required_tools", "tool": tool_name_canonical}
 
         for rule in confirm_cfg.get("required_when", []):

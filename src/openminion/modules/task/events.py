@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
+from datetime import datetime, timezone
 
-from .schemas import TaskEvent
+from .schemas import TaskEvent, TaskStatus
 
 
 class TaskEventPublisher:
-    """Handles publication of task/plan-related events for observability and audit."""
+    """Publish task and plan events without coupling handlers."""
 
     def __init__(self) -> None:
         self._handlers: list[EventHandler] = []
@@ -48,9 +49,6 @@ MISSION_CURSOR_UPDATED = "mission.cursor_updated"
 def create_task_created_event(
     task_id: str, title: str, trace_id: str | None = None
 ) -> TaskEvent:
-    from datetime import datetime, timezone
-    from .schemas import TaskStatus
-
     return TaskEvent(
         type=TASK_CREATED,
         at=datetime.now(timezone.utc),
@@ -63,8 +61,6 @@ def create_task_created_event(
 def create_plan_created_event(
     task_id: str, plan_id: str, plan_name: str | None, trace_id: str | None = None
 ) -> TaskEvent:
-    from datetime import datetime, timezone
-
     return TaskEvent(
         type=PLAN_CREATED,
         at=datetime.now(timezone.utc),
@@ -78,8 +74,6 @@ def create_plan_created_event(
 def create_mission_cursor_updated_event(
     task_id: str, plan_id: str, step_id: str | None, trace_id: str | None = None
 ) -> TaskEvent:
-    from datetime import datetime, timezone
-
     return TaskEvent(
         type=MISSION_CURSOR_UPDATED,
         at=datetime.now(timezone.utc),
@@ -99,8 +93,6 @@ def create_mission_paused_event(
     reason: str | None = None,
     trace_id: str | None = None,
 ) -> TaskEvent:
-    from datetime import datetime, timezone
-
     return TaskEvent(
         type=MISSION_PAUSED,
         at=datetime.now(timezone.utc),
@@ -124,8 +116,6 @@ def create_mission_resumed_event(
     decision_id: str,
     trace_id: str | None = None,
 ) -> TaskEvent:
-    from datetime import datetime, timezone
-
     return TaskEvent(
         type=MISSION_RESUMED,
         at=datetime.now(timezone.utc),

@@ -99,9 +99,8 @@ def _redirection_end(command: str, index: int, command_end: int) -> int | None:
         return None
     if command.startswith(">/dev/null", index):
         redirect_end = index + len(">/dev/null")
-        if redirect_end == command_end or command[redirect_end].isspace() or command[
-            redirect_end
-        ] in {";", "|", "&"}:
+        next_char = command[redirect_end : redirect_end + 1]
+        if not next_char or next_char.isspace() or next_char in {";", "|", "&"}:
             return redirect_end
     raise CommandParseError(
         code="unsupported_redirection",

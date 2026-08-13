@@ -47,10 +47,6 @@ class LocalStorageBackend:
         self.workspace_root = workspace_root
 
     @staticmethod
-    def _path(path: str) -> Path:
-        return Path(path)
-
-    @staticmethod
     def _open_leaf_no_symlink(
         target: Path,
         *,
@@ -76,7 +72,7 @@ class LocalStorageBackend:
         max_entries: int = 200,
         include_hidden: bool = False,
     ) -> ListResult:
-        target = self._path(path)
+        target = Path(path)
         if not target.exists():
             raise ToolRuntimeError("NOT_FOUND", f"path does not exist: {path}")
         if not target.is_dir():
@@ -124,8 +120,6 @@ class LocalStorageBackend:
                         break
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
-        except ToolRuntimeError:
-            raise
         except Exception as exc:
             raise ToolRuntimeError(_LEGACY_ERROR_CODE, str(exc)) from exc
 
@@ -138,7 +132,7 @@ class LocalStorageBackend:
         max_chars: int = 12000,
         offset: int = 0,
     ) -> ReadResult:
-        target = self._path(path)
+        target = Path(path)
         if not target.exists():
             raise ToolRuntimeError("NOT_FOUND", f"path does not exist: {path}")
         if not target.is_file():
@@ -193,7 +187,7 @@ class LocalStorageBackend:
         append: bool = False,
         create_dirs: bool = True,
     ) -> WriteResult:
-        target = self._path(path)
+        target = Path(path)
 
         try:
             if create_dirs:
@@ -234,7 +228,7 @@ class LocalStorageBackend:
         max_entries: int = 200,
         include_hidden: bool = False,
     ) -> FindResult:
-        target = self._path(path)
+        target = Path(path)
         if not target.exists():
             raise ToolRuntimeError("NOT_FOUND", f"path does not exist: {path}")
         if not target.is_dir():
@@ -265,8 +259,6 @@ class LocalStorageBackend:
                     break
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
-        except ToolRuntimeError:
-            raise
         except Exception as exc:
             raise ToolRuntimeError(_LEGACY_ERROR_CODE, str(exc)) from exc
 
@@ -285,7 +277,7 @@ class LocalStorageBackend:
         file_glob: str = "**/*",
         path_filter: Callable[[str], bool] | None = None,
     ) -> SearchResult:
-        target = self._path(path)
+        target = Path(path)
         if not target.exists():
             raise ToolRuntimeError("NOT_FOUND", f"path does not exist: {path}")
         if not target.is_dir():
@@ -335,10 +327,7 @@ class LocalStorageBackend:
                     if b"\x00" in raw:
                         continue
                     scanned_files += 1
-                    try:
-                        text = raw.decode("utf-8", errors="replace")
-                    except Exception:
-                        continue
+                    text = raw.decode("utf-8", errors="replace")
                     lines = text.splitlines()
                     for line_no, line in enumerate(lines, start=1):
                         if not _matches(line):
@@ -361,8 +350,6 @@ class LocalStorageBackend:
                     break
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
-        except ToolRuntimeError:
-            raise
         except Exception as exc:
             raise ToolRuntimeError(_LEGACY_ERROR_CODE, str(exc)) from exc
         return SearchResult(
@@ -379,7 +366,7 @@ class LocalStorageBackend:
         *,
         dry_run: bool = False,
     ) -> EditResult:
-        target = self._path(path)
+        target = Path(path)
         if not target.exists():
             raise ToolRuntimeError("NOT_FOUND", f"file does not exist: {path}")
         if not target.is_file():
@@ -387,7 +374,7 @@ class LocalStorageBackend:
 
         try:
             content = target.read_text(encoding="utf-8")
-        except Exception as exc:
+        except (OSError, UnicodeError) as exc:
             raise ToolRuntimeError("EXEC_ERROR", str(exc)) from exc
 
         operations_applied = 0
@@ -428,7 +415,7 @@ class LocalStorageBackend:
 
         try:
             target.write_text(content, encoding="utf-8")
-        except Exception as exc:
+        except (OSError, UnicodeError) as exc:
             raise ToolRuntimeError("EXEC_ERROR", str(exc)) from exc
 
         return EditResult(
@@ -439,7 +426,7 @@ class LocalStorageBackend:
         )
 
     def trash(self, path: str) -> bool:
-        target = self._path(path)
+        target = Path(path)
         if not target.exists():
             raise ToolRuntimeError("NOT_FOUND", f"path does not exist: {path}")
 
@@ -455,18 +442,16 @@ class LocalStorageBackend:
                 target.unlink()
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
-        except ToolRuntimeError:
-            raise
         except Exception as exc:
             raise ToolRuntimeError(_LEGACY_ERROR_CODE, str(exc)) from exc
 
         return True
 
     def exists(self, path: str) -> bool:
-        return self._path(path).exists()
+        return Path(path).exists()
 
     def is_file(self, path: str) -> bool:
-        return self._path(path).is_file()
+        return Path(path).is_file()
 
     def is_dir(self, path: str) -> bool:
-        return self._path(path).is_dir()
+        return Path(path).is_dir()

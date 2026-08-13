@@ -336,15 +336,7 @@ def build_raptor_tree(service: Any, doc_id: str) -> dict[str, Any]:
         )
 
         leaf_ids = [str(row["unit_id"]) for row in rows]
-        clusters: list[list[Any]] = []
-        current: list[Any] = []
-        for row in rows:
-            current.append(row)
-            if len(current) >= 4:
-                clusters.append(current)
-                current = []
-        if current:
-            clusters.append(current)
+        clusters = [rows[start : start + 4] for start in range(0, len(rows), 4)]
 
         internal_nodes: list[tuple[str, str, list[str]]] = []
         for idx, cluster in enumerate(clusters):
@@ -352,10 +344,12 @@ def build_raptor_tree(service: Any, doc_id: str) -> dict[str, Any]:
                 "retrievectl-raptor", f"{normalized_doc_id}:internal:{idx}"
             )
             cluster_leaf_ids = [str(item["unit_id"]) for item in cluster]
-            summary_lines = []
-            for item in cluster:
-                leaf_text = service._read_text_blob(str(item["text_ref"]))
-                summary_lines.append(service._summarize_text(leaf_text, max_tokens=60))
+            summary_lines = [
+                service._summarize_text(
+                    service._read_text_blob(str(item["text_ref"])), max_tokens=60
+                )
+                for item in cluster
+            ]
             summary_text = "\n".join(line for line in summary_lines if line)
             summary_ref = service._write_text_blob(summary_text)
 

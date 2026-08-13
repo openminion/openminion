@@ -12,13 +12,13 @@ class WorkflowShapeMiner:
     """Group evidence by structural fields, not prose similarity."""
 
     def __init__(self, *, min_success_count: int = 2) -> None:
-        self.min_success_count = max(1, int(min_success_count))
+        self.min_success_count = max(1, min_success_count)
 
     def mine(self, bundles: Iterable[WorkflowEvidenceBundle]) -> list[WorkflowShape]:
         grouped: dict[tuple[object, ...], list[WorkflowEvidenceBundle]] = defaultdict(
             list
         )
-        for bundle in bundles or []:
+        for bundle in bundles:
             if not self._has_structural_signal(bundle):
                 continue
             grouped[self._key(bundle)].append(bundle)
@@ -35,21 +35,20 @@ class WorkflowShapeMiner:
     def is_skill_ready(self, shape: WorkflowShape) -> bool:
         return (
             shape.success_count >= self.min_success_count
-            or shape.explicit_save_count >= 1
+            or shape.explicit_save_count > 0
         )
 
     @staticmethod
     def _has_structural_signal(bundle: WorkflowEvidenceBundle) -> bool:
-        return bool(
-            bundle.intent_category
-            and bundle.capability_category
-            and bundle.strategy_id
-            and (
-                bundle.tool_names
-                or bundle.command_fingerprints
-                or bundle.test_fingerprints
-                or bundle.artifact_types
-                or bundle.explicit_save
+        return all(
+            (bundle.intent_category, bundle.capability_category, bundle.strategy_id)
+        ) and any(
+            (
+                bundle.tool_names,
+                bundle.command_fingerprints,
+                bundle.test_fingerprints,
+                bundle.artifact_types,
+                bundle.explicit_save,
             )
         )
 

@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ctl = Skill(args.config, home_root=home_root_path)
     try:
-        _dispatch(ctl, args)
+        _dispatch_skill_command(ctl, args)
     except SkillError as exc:
         _print_json({"ok": False, "error": exc.to_dict()})
         raise SystemExit(1)
@@ -110,7 +110,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _add_skill_cli_subcommands(sub: Any) -> None:
-
     ingest = sub.add_parser("ingest", help="Ingest a markdown skill file")
     ingest.add_argument("--name", required=True)
     ingest.add_argument("--file", required=True)
@@ -415,10 +414,6 @@ def _add_learning_subcommands(sub: Any) -> None:
     learning_trust.add_argument("--shape-id", required=True)
 
 
-def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
-    _dispatch_skill_command(ctl, args)
-
-
 def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
     if args.cmd == "ingest":
         skill_id, version_hash, warnings = ctl.ingest_file(
@@ -429,14 +424,7 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
             trust=getattr(args, "trust", None),
             promotion_path="operator",
         )
-        _print_json(
-            {
-                "ok": True,
-                "skill_id": skill_id,
-                "version_hash": version_hash,
-                "warnings": warnings,
-            }
-        )
+        _print_ingest_result(skill_id, version_hash, warnings)
         return
 
     if args.cmd == "ingest-text":
@@ -448,17 +436,10 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
             trust=getattr(args, "trust", None),
             promotion_path="operator",
         )
-        _print_json(
-            {
-                "ok": True,
-                "skill_id": skill_id,
-                "version_hash": version_hash,
-                "warnings": warnings,
-            }
-        )
+        _print_ingest_result(skill_id, version_hash, warnings)
         return
 
-    if args.cmd == "show":
+    if args.cmd in {"show", "inspect"}:
         package = ctl.get_skill(args.skill_id, args.version)
         _print_json({"ok": True, "skill": package.to_dict()})
         return
@@ -478,9 +459,9 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "match":
-        status_filter = None
-        if args.status_filter:
-            status_filter = split_comma_tokens(args.status_filter)
+        status_filter = (
+            split_comma_tokens(args.status_filter) if args.status_filter else None
+        )
 
         step_hint: dict[str, Any] = {
             "risk": args.risk,
@@ -510,8 +491,8 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "lint":
-        report = ctl.lint(args.skill_id, args.version)
-        _print_json({"ok": True, "report": report})
+        lint_report = ctl.lint(args.skill_id, args.version)
+        _print_json({"ok": True, "report": lint_report})
         return
 
     if args.cmd == "validate":
@@ -521,23 +502,23 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
 
         package = ctl.get_skill(args.skill_id, args.version)
         lint_report = ctl.lint(args.skill_id, args.version)
-        report = build_skill_validation_report(
+        validation_report = build_skill_validation_report(
             package,
             lint_report=lint_report,
             harness_result=None,
         )
-        _print_json({"ok": True, "report": report.to_dict()})
+        _print_json({"ok": True, "report": validation_report.to_dict()})
         return
 
     if args.cmd == "test":
         from openminion.modules.skill.authoring import build_skill_test_report
 
-        report = build_skill_test_report(
+        test_report = build_skill_test_report(
             args.skill_root,
             harness_report=None,
             regression_refs=tuple(args.regression_ref or ()),
         )
-        _print_json({"ok": True, "report": report.to_dict()})
+        _print_json({"ok": True, "report": test_report.to_dict()})
         return
 
     if args.cmd == "debug":
@@ -557,11 +538,6 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
             debug_payload=debug_payload,
         )
         _print_json({"ok": True, "view": view.to_dict()})
-        return
-
-    if args.cmd == "inspect":
-        package = ctl.get_skill(args.skill_id, args.version)
-        _print_json({"ok": True, "skill": package.to_dict()})
         return
 
     if args.cmd == "disable":
@@ -766,9 +742,7 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
                 review_policy_id=args.review_policy_id,
                 criterion_decisions=criteria,
             )
-        except ProposalQueueError as exc:
-            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-        except ValueError as exc:
+        except (ProposalQueueError, ValueError) as exc:
             raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
         _print_json(
             {
@@ -902,8 +876,7 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
 
 
 def _read_json_path(path: str) -> Any:
-    text = Path(path).read_text(encoding="utf-8")
-    return json.loads(text)
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _learning_replay_proof_from_args(
@@ -916,13 +889,12 @@ def _learning_replay_proof_from_args(
 ) -> Any:
     from openminion.modules.skill.learning import ReplayProof
 
-    evidence_refs = split_comma_tokens(evidence)
     return ReplayProof(
         proof_id=proof_id,
         proposal_id=proposal_id,
         shape_id=shape_id,
         status=status,
-        evidence_refs=evidence_refs,
+        evidence_refs=split_comma_tokens(evidence),
     )
 
 
@@ -968,6 +940,21 @@ def _parse_criterion_args(raw_values: list[str]) -> list[dict[str, str]]:
 
 def _print_json(payload: dict[str, Any]) -> None:
     print_json_payload(payload, sort_keys=False, ensure_ascii=True)
+
+
+def _print_ingest_result(
+    skill_id: str,
+    version_hash: str,
+    warnings: list[str],
+) -> None:
+    _print_json(
+        {
+            "ok": True,
+            "skill_id": skill_id,
+            "version_hash": version_hash,
+            "warnings": warnings,
+        }
+    )
 
 
 if __name__ == "__main__":

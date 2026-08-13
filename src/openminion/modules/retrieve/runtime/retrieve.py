@@ -23,7 +23,6 @@ from ..interfaces import (
     ensure_retrieve_storage_compatibility,
 )
 from .retrieval import (
-    RetrievalContext,
     RetrievalExecution,
     resolve_retrieval_strategy,
 )
@@ -158,8 +157,8 @@ class RetrieveCtl:
         )
 
     def status(self) -> dict[str, Any]:
-        sqlite_path = Path(self.config.storage.sqlite_path)
-        blob_root = Path(self.config.storage.blob_root)
+        sqlite_path = self.config.storage.sqlite_path
+        blob_root = self.config.storage.blob_root
         return {
             "ok": True,
             "storage": {
@@ -723,18 +722,6 @@ class RetrieveCtl:
             k=k,
         )
 
-    def _select_candidates_semantic(
-        self,
-        *,
-        candidates: list[dict[str, Any]],
-        k: int,
-    ) -> list[dict[str, Any]]:
-        return retrieval_ops.select_candidates_semantic(
-            self,
-            candidates=candidates,
-            k=k,
-        )
-
     def _to_retrieved_item(
         self, *, candidate: dict[str, Any], strategy: RetrievalStrategy
     ) -> RetrievedItem:
@@ -743,37 +730,6 @@ class RetrieveCtl:
             candidate=candidate,
             strategy=strategy,
         )
-
-    def _search_rows(
-        self,
-        *,
-        tokens: list[str],
-        allowed_scopes: list[str],
-        filters: RetrievalFilters,
-        limit: int,
-    ) -> list[Mapping[str, Any]]:
-        return retrieval_ops.search_rows(
-            self,
-            tokens=tokens,
-            allowed_scopes=allowed_scopes,
-            filters=filters,
-            limit=limit,
-        )
-
-    def _recent_rows(
-        self, *, allowed_scopes: list[str], filters: RetrievalFilters, limit: int
-    ) -> list[Mapping[str, Any]]:
-        return retrieval_ops.recent_rows(
-            self,
-            allowed_scopes=allowed_scopes,
-            filters=filters,
-            limit=limit,
-        )
-
-    def _candidate_from_row(
-        self, row: Mapping[str, Any], inherited_score: float
-    ) -> dict[str, Any]:
-        return retrieval_ops.candidate_from_row(self, row, inherited_score)
 
     def _lookup_unit_row(self, unit_id: str) -> Mapping[str, Any] | None:
         return expansion_ops.lookup_unit_row(self, unit_id)
@@ -898,20 +854,12 @@ class RetrieveCtl:
         scope: dict[str, Any],
         filters: RetrievalFilters,
     ) -> RetrievalStrategy:
-        ctx = RetrievalContext(
-            query=query,
-            purpose=purpose,
+        return resolve_retrieval_strategy(
             requested_strategy=strategy,
+            purpose=purpose,
+            query=query,
             scope=scope,
             filters=filters,
-            k=1,
-        )
-        return resolve_retrieval_strategy(
-            requested_strategy=ctx.requested_strategy,
-            purpose=ctx.purpose,
-            query=ctx.query,
-            scope=ctx.scope,
-            filters=ctx.filters,
             default_strategy=str(self.config.defaults.strategy),
             vector_adapter_enabled=self.vector_adapter is not None,
             embeddings_enabled=self.config.defaults.embeddings_enabled,

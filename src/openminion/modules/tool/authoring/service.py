@@ -38,7 +38,7 @@ from .constants import (
 )
 from .interfaces import ToolAuthoringServiceInterface
 from .runtime.dispatcher import AuthoredToolDispatcher
-from .runtime.static import inspect_source, rollup_risk_level
+from .runtime.static import inspect_source
 from .runtime.tests import run_tool_tests
 from .runtime.grants import issue_power_user_grant, revoke_grant
 from .runtime.structural_lint import StructuralLintError, structural_lint
@@ -76,7 +76,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         self._sandbox_runner = sandbox_runner
         self._tool_registry = tool_registry
         self._policy_ctl = policy_ctl
-        self._allowed_dependencies = set(allowed_dependencies or set())
+        self._allowed_dependencies = set(allowed_dependencies or ())
         self._dispatcher = AuthoredToolDispatcher(
             store=store,
             sandbox_runner=sandbox_runner,
@@ -107,7 +107,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 source_code=parsed.source_code,
                 unit_tests_source=parsed.unit_tests_source,
                 args_schema=parsed.args_schema,
-                dependencies=list(parsed.dependencies),
+                dependencies=parsed.dependencies,
                 allowed_dependencies=self._allowed_dependencies,
             )
         except StructuralLintError as exc:
@@ -122,8 +122,8 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             unit_tests_source=parsed.unit_tests_source,
             args_schema_json=_json(parsed.args_schema),
             returns_schema_json=_json(parsed.returns_schema),
-            requirements_json=_json(list(parsed.requirements)),
-            dependencies_json=_json(list(parsed.dependencies)),
+            requirements_json=_json(parsed.requirements),
+            dependencies_json=_json(parsed.dependencies),
             proposed_scope_tier=parsed.proposed_scope_tier,
             status=TOOL_AUTHORING_STATUS_DRAFTED,
             inspect_result_json=None,
@@ -169,14 +169,11 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             draft_row.unit_tests_source if draft_row else ""
         )
         local_name = draft_row.local_name if draft_row else "adhoc_tool"
-        static_risk_level, static_findings = inspect_source(
+        risk_level, static_findings = inspect_source(
             source_code,
             target_scope_tier=parsed.target_scope_tier,
             allowed_deps=self._allowed_dependencies,
         )
-        risk_level = rollup_risk_level(static_findings)
-        if static_risk_level and static_risk_level != risk_level:
-            risk_level = static_risk_level
         test_results = {"ran": 0, "passed": 0, "failed": 0, "errors": []}
         if parsed.run_tests and self._sandbox_runner is not None:
             run = run_tool_tests(
@@ -295,7 +292,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             policy_grant_id = issue_power_user_grant(
                 policy_ctl=self._policy_ctl,
                 tool_name=tool_name,
-                subject_id=str(agent_id or "local"),
+                subject_id=agent_id or "local",
             )
         except Exception as exc:
             return _error("POLICY_GRANT_FAILED", str(exc))
@@ -446,8 +443,8 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         risk_level = str(inspect_result.get("risk_level", "") or "").strip().lower()
         if risk_level not in {"low", "medium"}:
             return _error("PROMOTION_REJECTED", f"re-inspect risk={risk_level}")
-        total = max(0, int(row.success_count) + int(row.failure_count))
-        failure_rate = (int(row.failure_count) / total) if total else 1.0
+        total = max(0, row.success_count + row.failure_count)
+        failure_rate = (row.failure_count / total) if total else 1.0
         if (
             row.success_count < TOOL_AUTHORING_MIN_SUCCESS_COUNT
             or failure_rate > TOOL_AUTHORING_MAX_FAILURE_RATE
@@ -600,17 +597,17 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
         spec = ToolSpec(
             name=row.tool_name,
             args_model=args_model,
-            min_scope=str(row.min_scope or TOOL_AUTHORING_SCOPE_POWER_USER),
+            min_scope=row.min_scope or TOOL_AUTHORING_SCOPE_POWER_USER,
             handler=_handler,
             dangerous=False,
             idempotent=False,
             tags=(
                 "authored",
                 "origin:authored",
-                str(row.tier),
+                row.tier,
                 f"v{row.version_number}",
             ),
-            capabilities=("authored", str(row.tier)),
+            capabilities=("authored", row.tier),
             prompt_visible_runtime_name=True,
         )
         spec.description = str(row.description or "").strip()
@@ -657,14 +654,10 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
 
 
 def build_args_model(*, tool_name: str, args_schema: dict[str, Any]) -> type[BaseModel]:
-    properties = (
-        args_schema.get("properties", {}) if isinstance(args_schema, dict) else {}
-    )
+    properties = args_schema.get("properties", {})
     required = {
         str(item).strip()
-        for item in (
-            args_schema.get("required", []) if isinstance(args_schema, dict) else []
-        )
+        for item in (args_schema.get("required", []))
         if str(item).strip()
     }
     fields: dict[str, tuple[Any, Any]] = {}
@@ -766,7 +759,7 @@ def _registration_payload(
 
 def _authored_exposure_profile_id(tool_name: str) -> str:
     normalized = "".join(
-        char if char.isalnum() else "_" for char in str(tool_name or "").strip()
+        char if char.isalnum() else "_" for char in tool_name.strip()
     ).strip("_")
     return f"authored_{normalized or 'tool'}"
 
@@ -810,12 +803,12 @@ def _json(value: Any) -> str:
 
 
 def _parse_json_object(raw: str) -> dict[str, Any]:
-    payload = json.loads(str(raw or "{}"))
+    payload = json.loads(raw or "{}")
     return dict(payload) if isinstance(payload, dict) else {}
 
 
 def _parse_json_array(raw: str) -> list[Any]:
-    payload = json.loads(str(raw or "[]"))
+    payload = json.loads(raw or "[]")
     return list(payload) if isinstance(payload, list) else []
 
 

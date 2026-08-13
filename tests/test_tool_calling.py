@@ -2,6 +2,7 @@ import unittest
 from typing import Any
 
 from openminion.modules.llm.providers.message_payloads import _messages_openai_like
+from openminion.modules.llm.errors import LLMCtlError
 from openminion.modules.llm.providers.base import ProviderToolCall, ProviderToolSpec
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.llm.providers.tool_calling import (
@@ -465,6 +466,7 @@ class ToolCallingHelpersTests(unittest.TestCase):
                     role="tool",
                     content='{"status":"success","summary":"listed files"}',
                     meta={
+                        "transcript_lane": "legacy_history",
                         "tool_call_id": "call-1",
                         "tool_name": "file.list_dir",
                         "tool_arguments": {"path": "/tmp"},
@@ -513,12 +515,8 @@ class ToolCallingHelpersTests(unittest.TestCase):
             ]
         )
 
-        messages = _messages_openai_like(request, include_fallback_instruction=False)
-
-        self.assertEqual(messages[0], {"role": "user", "content": "inspect project"})
-        self.assertEqual(messages[1]["role"], "system")
-        self.assertIn("Tool result (file.list_dir):", messages[1]["content"])
-        self.assertNotEqual(messages[1]["role"], "assistant")
+        with self.assertRaisesRegex(LLMCtlError, "missing tool_call_id"):
+            _messages_openai_like(request, include_fallback_instruction=False)
 
     def test_extract_fallback_tool_calls_from_text_json_block(self) -> None:
         text = """```json

@@ -1,5 +1,3 @@
-"""Session storage exports."""
-
 from .base import SessionStore
 from .store import PostgresSessionStore, SQLiteSessionStore, SliceLimits
 from .events import EventStore

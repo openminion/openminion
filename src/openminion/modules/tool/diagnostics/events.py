@@ -43,6 +43,20 @@ def emit_module_telemetry(
     )
 
 
+def _operation_extra(
+    tool_name: str,
+    error_code: str | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    payload: dict[str, Any] = {}
+    if tool_token := tool_name.strip():
+        payload["tool"] = tool_token
+    if error_token := (error_code or "").strip().upper():
+        payload["error_code"] = error_token
+    payload.update(extra or {})
+    return payload or None
+
+
 def emit_tool_exec_operation(
     *,
     telemetryctl: Any,
@@ -55,19 +69,9 @@ def emit_tool_exec_operation(
     error_code: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> bool:
-    normalized = str(operation or "").strip().lower()
+    normalized = operation.strip().lower()
     if normalized not in _ALLOWED_EXEC_OPERATIONS:
         return False
-
-    payload_extra: dict[str, Any] = {}
-    tool_token = str(tool_name or "").strip()
-    if tool_token:
-        payload_extra["tool"] = tool_token
-    error_token = str(error_code or "").strip().upper()
-    if error_token:
-        payload_extra["error_code"] = error_token
-    if extra:
-        payload_extra.update(extra)
 
     return _emit_module_operation_impl(
         emit_module_telemetry_fn=lambda *args, **kwargs: emit_module_telemetry(
@@ -81,7 +85,7 @@ def emit_tool_exec_operation(
         operation=normalized,
         count=count,
         status=status,
-        extra=payload_extra or None,
+        extra=_operation_extra(tool_name, error_code, extra),
     )
 
 
@@ -97,19 +101,9 @@ def emit_tool_invoke_operation(
     error_code: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> bool:
-    normalized = str(operation or "").strip().lower()
+    normalized = operation.strip().lower()
     if normalized not in _ALLOWED_INVOKE_OPERATIONS:
         return False
-
-    payload_extra: dict[str, Any] = {}
-    tool_token = str(tool_name or "").strip()
-    if tool_token:
-        payload_extra["tool"] = tool_token
-    error_token = str(error_code or "").strip().upper()
-    if error_token:
-        payload_extra["error_code"] = error_token
-    if extra:
-        payload_extra.update(extra)
 
     return _emit_module_operation_impl(
         emit_module_telemetry_fn=lambda *args, **kwargs: emit_module_telemetry(
@@ -123,7 +117,7 @@ def emit_tool_invoke_operation(
         operation=normalized,
         count=count,
         status=status,
-        extra=payload_extra or None,
+        extra=_operation_extra(tool_name, error_code, extra),
     )
 
 

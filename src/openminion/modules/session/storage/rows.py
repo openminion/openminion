@@ -1,5 +1,3 @@
-"""Session storage row decoders."""
-
 import sqlite3
 from typing import Any
 from collections.abc import Mapping

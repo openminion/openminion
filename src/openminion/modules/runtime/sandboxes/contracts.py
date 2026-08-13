@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -14,11 +14,7 @@ class SandboxExecResult:
     exit_code: int
     stdout: str
     stderr: str
-    meta: dict[str, object] | None = None
-
-    def __post_init__(self) -> None:
-        if self.meta is None:
-            self.meta = {}
+    meta: dict[str, object] = field(default_factory=dict)
 
 
 class SandboxAdapter(Protocol):

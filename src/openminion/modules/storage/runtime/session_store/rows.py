@@ -32,18 +32,14 @@ def metadata_json(metadata: Mapping[str, Any] | None) -> str:
 
 def parse_json_object(raw: str) -> dict[str, Any]:
     parsed = json.loads(raw)
-    if isinstance(parsed, dict):
-        return parsed
-    return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def normalize_nullable_text(raw: object) -> str | None:
     if raw is None:
         return None
     value = str(raw).strip()
-    if not value:
-        return None
-    return value
+    return value or None
 
 
 def normalize_optional_text(raw: object) -> str:
@@ -95,30 +91,30 @@ def build_session_context_update_values(
     version: int | None = None,
 ) -> tuple[object, ...]:
     return (
-        current.pinned_context if pinned_context is None else str(pinned_context),
-        current.summary_short if summary_short is None else str(summary_short),
-        current.rolling_summary if rolling_summary is None else str(rolling_summary),
+        current.pinned_context if pinned_context is None else pinned_context,
+        current.summary_short if summary_short is None else summary_short,
+        current.rolling_summary if rolling_summary is None else rolling_summary,
         (
             current.compacted_until_rowid
             if compacted_until_rowid is None
-            else max(0, int(compacted_until_rowid))
+            else max(0, compacted_until_rowid)
         ),
         (
             current.compacted_until_created_at
             if compacted_until_created_at is None
-            else str(compacted_until_created_at)
+            else compacted_until_created_at
         ),
         (
             current.compacted_until_message_id
             if compacted_until_message_id is None
-            else str(compacted_until_message_id)
+            else compacted_until_message_id
         ),
         (
             current.compacted_message_count
             if compacted_message_count is None
-            else max(0, int(compacted_message_count))
+            else max(0, compacted_message_count)
         ),
-        current.version if version is None else max(1, int(version)),
+        current.version if version is None else max(1, version),
     )
 
 

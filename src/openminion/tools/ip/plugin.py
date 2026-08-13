@@ -3,7 +3,7 @@
 import ipaddress
 import json
 import socket
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -19,7 +19,7 @@ from openminion.tools.env import (
 
 from .constants import DEFAULT_IP_PROVIDER_ID
 from .interfaces import TOOL_IP_LOCAL, TOOL_IP_PUBLIC
-from .providers import provider_registry, register_provider
+from .providers import IpProvider, provider_registry, register_provider
 from .schemas import IpLocalArgs, IpPublicArgs
 
 
@@ -63,14 +63,14 @@ def _error(
     return {
         "ok": False,
         "error": {
-            "code": str(code),
-            "message": str(message),
+            "code": code,
+            "message": message,
             "details": dict(details or {}),
         },
         "data": {
             "source": "openminion-tool-ip",
             "method": method,
-            "reason_code": str(code).lower(),
+            "reason_code": code.lower(),
         },
     }
 
@@ -130,7 +130,7 @@ def _lookup_timeout_seconds(
 
 
 def _extract_ip_candidate(payload_text: str) -> str | None:
-    token = str(payload_text or "").strip()
+    token = payload_text.strip()
     if not token:
         return None
 
@@ -152,7 +152,7 @@ def _extract_ip_candidate(payload_text: str) -> str | None:
 
 def _parse_ip(candidate: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
-        parsed = ipaddress.ip_address(str(candidate or "").strip())
+        parsed = ipaddress.ip_address(candidate.strip())
     except ValueError:
         return None
     return parsed
@@ -160,7 +160,7 @@ def _parse_ip(candidate: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address |
 
 def _fetch_public_ip(url: str, *, timeout_seconds: float) -> str | None:
     req = urllib_request.Request(
-        url=str(url),
+        url=url,
         headers={
             "Accept": "application/json,text/plain;q=0.9,*/*;q=0.8",
             "User-Agent": "openminion-ip-tool/1.0",
@@ -206,7 +206,7 @@ def _builtin_public(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             warnings.append(f"{url}: {exc.__class__.__name__}")
             continue
 
-        parsed = _parse_ip(str(candidate or ""))
+        parsed = _parse_ip(candidate or "")
         if parsed is None:
             warnings.append(f"{url}: invalid ip payload")
             continue
@@ -224,8 +224,8 @@ def _builtin_public(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
                 "method": TOOL_IP_PUBLIC,
                 "ip": ip_text,
                 "version": int(parsed.version),
-                "lookup_url": str(url),
-                "timeout_seconds": float(timeout_seconds),
+                "lookup_url": url,
+                "timeout_seconds": timeout_seconds,
                 "warnings": list(warnings),
             },
             "warnings": list(warnings),
@@ -368,7 +368,13 @@ def _merge_chain_warnings(
     return payload
 
 
-def _dispatch_public(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+def _dispatch(
+    *,
+    resolve: Callable[[IpProvider], Mapping[str, Any]],
+    method: str,
+    unavailable_code: str,
+    unavailable_message: str,
+) -> dict[str, Any]:
     _ensure_default_provider_registered()
     registry = provider_registry()
     chain_warnings: list[str] = []
@@ -379,22 +385,16 @@ def _dispatch_public(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         if provider is None:
             continue
 
-        healthcheck = getattr(provider, "healthcheck", None)
-        if callable(healthcheck):
-            try:
-                if not bool(healthcheck()):
-                    chain_warnings.append(
-                        f"provider '{provider_id}' reported unhealthy"
-                    )
-                    continue
-            except Exception as exc:
-                chain_warnings.append(
-                    f"provider '{provider_id}' healthcheck failed: {exc}"
-                )
+        try:
+            if not provider.healthcheck():
+                chain_warnings.append(f"provider '{provider_id}' reported unhealthy")
                 continue
+        except Exception as exc:
+            chain_warnings.append(f"provider '{provider_id}' healthcheck failed: {exc}")
+            continue
 
         try:
-            payload = provider.resolve_public(args=args, ctx=ctx)
+            payload = resolve(provider)
         except Exception as exc:
             chain_warnings.append(f"provider '{provider_id}' failed: {exc}")
             continue
@@ -412,70 +412,31 @@ def _dispatch_public(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     if last_non_ok is not None:
         return _merge_chain_warnings(last_non_ok, chain_warnings)
     return _error(
-        "PUBLIC_IP_UNAVAILABLE",
-        "Unable to resolve public IP from provider chain",
-        method=TOOL_IP_PUBLIC,
-        details={"warnings": chain_warnings},
-    )
-
-
-def _dispatch_local(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    _ensure_default_provider_registered()
-    registry = provider_registry()
-    chain_warnings: list[str] = []
-    last_non_ok: dict[str, Any] | None = None
-
-    for provider_id in registry.list_provider_ids():
-        provider = registry.get(provider_id)
-        if provider is None:
-            continue
-
-        healthcheck = getattr(provider, "healthcheck", None)
-        if callable(healthcheck):
-            try:
-                if not bool(healthcheck()):
-                    chain_warnings.append(
-                        f"provider '{provider_id}' reported unhealthy"
-                    )
-                    continue
-            except Exception as exc:
-                chain_warnings.append(
-                    f"provider '{provider_id}' healthcheck failed: {exc}"
-                )
-                continue
-
-        try:
-            payload = provider.resolve_local(args=args, ctx=ctx)
-        except Exception as exc:
-            chain_warnings.append(f"provider '{provider_id}' failed: {exc}")
-            continue
-
-        if not isinstance(payload, Mapping):
-            chain_warnings.append(f"provider '{provider_id}' returned invalid payload")
-            continue
-
-        result = dict(payload)
-        if bool(result.get("ok", False)):
-            return _merge_chain_warnings(result, chain_warnings)
-        chain_warnings.append(f"provider '{provider_id}' returned non-ok payload")
-        last_non_ok = result
-
-    if last_non_ok is not None:
-        return _merge_chain_warnings(last_non_ok, chain_warnings)
-    return _error(
-        "LOCAL_IP_UNAVAILABLE",
-        "Unable to resolve local IP from provider chain",
-        method=TOOL_IP_LOCAL,
+        unavailable_code,
+        unavailable_message,
+        method=method,
         details={"warnings": chain_warnings},
     )
 
 
 def _h_public(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    return _dispatch_public(dict(args or {}), ctx)
+    payload = dict(args)
+    return _dispatch(
+        resolve=lambda provider: provider.resolve_public(args=payload, ctx=ctx),
+        method=TOOL_IP_PUBLIC,
+        unavailable_code="PUBLIC_IP_UNAVAILABLE",
+        unavailable_message="Unable to resolve public IP from provider chain",
+    )
 
 
 def _h_local(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    return _dispatch_local(dict(args or {}), ctx)
+    payload = dict(args)
+    return _dispatch(
+        resolve=lambda provider: provider.resolve_local(args=payload, ctx=ctx),
+        method=TOOL_IP_LOCAL,
+        unavailable_code="LOCAL_IP_UNAVAILABLE",
+        unavailable_message="Unable to resolve local IP from provider chain",
+    )
 
 
 def register(registry: ToolRegistry) -> None:

@@ -117,9 +117,7 @@ def test_undo_rewinds_current_inbound_outbound_messages() -> None:
     assert result["ok"] is True
     assert "rewound latest turn" in str(result["message"])
     assert runtime.bound == ["session-2"]
-    assert [
-        (item["role"], item["body"]) for item in runtime._rt.sessions.appended
-    ] == [
+    assert [(item["role"], item["body"]) for item in runtime._rt.sessions.appended] == [
         ("user", "turn one"),
         ("assistant", "reply one"),
     ]

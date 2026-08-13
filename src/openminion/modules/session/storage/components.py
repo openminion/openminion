@@ -560,6 +560,10 @@ def get_replay_events(
     )
 
 
+def get_tool_transcript(store: Any, session_id: str) -> dict[str, Any]:
+    return store._replay_helper.get_tool_transcript(session_id)
+
+
 def get_resume_state(store: Any, session_id: str) -> dict[str, Any]:
     return store._replay_helper.get_resume_state(session_id)
 
@@ -587,6 +591,7 @@ __all__ = [
     "get_latest_checkpoint",
     "get_latest_seed_bundle",
     "get_replay_events",
+    "get_tool_transcript",
     "get_resume_state",
     "get_run_record",
     "get_slice",

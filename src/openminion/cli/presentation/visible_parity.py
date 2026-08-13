@@ -18,6 +18,7 @@ STATUSLINE_PRESETS: dict[str, str] = {
 
 def render_context_report(runtime: Any) -> str:
     snapshot = _safe_call(getattr(runtime, "token_usage_snapshot", None))
+    budget = _safe_call(getattr(runtime, "context_budget_snapshot", None)) or {}
     lines = ["Context usage:"]
     if snapshot is None:
         lines.append("  tokens   unavailable")
@@ -28,6 +29,22 @@ def render_context_report(runtime: Any) -> str:
         limit = getattr(snapshot, "context_limit_tokens", None)
         if used is not None and limit:
             lines.append(f"  grid     {_usage_grid(int(used), int(limit))}")
+    if budget:
+        max_tokens = int(budget.get("max_tokens", 0) or 0)
+        source = str(budget.get("budget_source", "") or "unavailable")
+        limit_label = f"{max_tokens} tokens" if max_tokens > 0 else "count fallback"
+        lines.append(f"  budget   {limit_label} ({source})")
+        selected_count = int(budget.get("selected_recent_count", 0) or 0)
+        selected_tokens = int(budget.get("selected_recent_tokens", 0) or 0)
+        lines.append(f"  recent   {selected_count} messages · {selected_tokens} tokens")
+        lines.append("  allocation summary/retrieval unavailable")
+        reason = str(budget.get("compaction_reason") or budget.get("trim_reason") or "")
+        if reason:
+            count = int(budget.get("compacted_count", 0) or 0)
+            suffix = f" · {count} compacted" if count else ""
+            lines.append(f"  action   {reason}{suffix}")
+        if budget.get("overflow"):
+            lines.append("  status   overflow")
     lines.extend(_context_inventory_lines(runtime))
     return "\n".join(lines)
 
@@ -137,16 +154,16 @@ def _memory_record_title(row: Any) -> str:
         or _memory_text(row, "id")
         or "Untitled record"
     )
-    first_line = next((line.strip() for line in title.splitlines() if line.strip()), title)
+    first_line = next(
+        (line.strip() for line in title.splitlines() if line.strip()), title
+    )
     return first_line.removeprefix("- ")[:120]
 
 
 def _summary_user_questions(row: Any) -> list[str]:
     content = _memory_value(row, "content")
     summary_text = (
-        str(content.get("summary_text", "") or "")
-        if isinstance(content, dict)
-        else ""
+        str(content.get("summary_text", "") or "") if isinstance(content, dict) else ""
     )
     source = summary_text or _memory_text(row, "title")
     questions: list[str] = []

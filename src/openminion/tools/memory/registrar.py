@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from openminion.modules.tool.contracts import (
     ModelToolDef,
@@ -37,7 +37,7 @@ class MemoryRegistrar:
 
         register(registry)
 
-    def get_manifest(self, ctx: "ToolRegisterContext") -> Any:
+    def get_manifest(self, ctx: "ToolRegisterContext") -> ToolBindingManifest:
         del ctx
         return ToolBindingManifest(
             module_id=self.module_id,
@@ -46,19 +46,16 @@ class MemoryRegistrar:
                     model_tool_id=MODEL_MEMORY_WRITE,
                     description="Store an explicit structured memory record",
                     parameters={},
-                    aliases=(),
                 ),
                 ModelToolDef(
                     model_tool_id=MODEL_MEMORY_SEARCH,
                     description="Search explicit memory records by typed query and scope",
                     parameters={},
-                    aliases=(),
                 ),
                 ModelToolDef(
                     model_tool_id=MODEL_MEMORY_FORGET,
                     description="Soft-delete a memory record by explicit record id",
                     parameters={},
-                    aliases=(),
                 ),
             ),
             runtime_bindings=(

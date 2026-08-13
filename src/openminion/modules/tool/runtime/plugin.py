@@ -133,20 +133,18 @@ class ToolRuntime:
                 continue
 
     def list_tools(self) -> List[ToolDescriptor]:
-        rows: List[ToolDescriptor] = []
-        for tool_name, (plugin_id, plugin_version, tool) in sorted(
-            self._tools.items(), key=lambda item: item[0]
-        ):
-            rows.append(
-                ToolDescriptor(
-                    plugin_id=plugin_id,
-                    plugin_version=plugin_version,
-                    tool=tool_name,
-                    methods=sorted(tool.methods.keys()),
-                    capabilities=tool.capabilities,
-                )
+        return [
+            ToolDescriptor(
+                plugin_id=plugin_id,
+                plugin_version=plugin_version,
+                tool=tool_name,
+                methods=sorted(tool.methods),
+                capabilities=tool.capabilities,
             )
-        return rows
+            for tool_name, (plugin_id, plugin_version, tool) in sorted(
+                self._tools.items()
+            )
+        ]
 
     def get_tool_schema(self, tool_name: str) -> Dict[str, Any]:
         if tool_name not in self._tools:
@@ -157,13 +155,11 @@ class ToolRuntime:
             raise TypeError(  # allow-bare-raise: defensive type guard on schema bundle return type
                 f"Tool '{tool_name}' returned invalid schema bundle type: {type(bundle).__name__}"
             )
-        return bundle.model_dump()
+        return dict(bundle.model_dump())
 
     def plugin_health(self) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
-        for plugin_id, plugin in sorted(
-            self._plugins.items(), key=lambda item: item[0]
-        ):
+        for plugin_id, plugin in sorted(self._plugins.items()):
             health = plugin.healthcheck()
             if isinstance(health, HealthStatus):
                 payload = health.model_dump()
@@ -483,7 +479,6 @@ class ToolRuntime:
 
     def _emit_requested(self, inv: ToolInvocation, ctx: ToolContext) -> None:
         payload = self._base_event_payload(inv, ctx)
-        payload["args_sanitized"] = self._sanitize_args(inv.args)
         self._emit(
             f"tool.{inv.tool}.{inv.method}.requested",
             payload,
@@ -495,7 +490,6 @@ class ToolRuntime:
         self, inv: ToolInvocation, ctx: ToolContext, result: ToolResult
     ) -> None:
         payload = self._base_event_payload(inv, ctx)
-        payload["args_sanitized"] = self._sanitize_args(inv.args)
         payload["artifacts"] = [artifact.model_dump() for artifact in result.artifacts]
         payload["metrics"] = dict(result.metrics)
         self._emit(
@@ -513,7 +507,6 @@ class ToolRuntime:
         error: ToolError,
     ) -> None:
         payload = self._base_event_payload(inv, ctx)
-        payload["args_sanitized"] = self._sanitize_args(inv.args)
         payload["artifacts"] = []
         payload["metrics"] = dict(metrics)
         payload["error"] = error.model_dump()
@@ -534,6 +527,7 @@ class ToolRuntime:
             "invocation_id": inv.invocation_id,
             "tool": inv.tool,
             "method": inv.method,
+            "args_sanitized": self._sanitize_args(inv.args),
         }
         orchestration = ctx.extras.get("orchestration")
         if isinstance(orchestration, dict):
@@ -601,8 +595,6 @@ class ToolRuntime:
 
 
 class AllowAllPolicyHook:
-    """Default permissive policy hook for local development and tests."""
-
     def check(
         self,
         *,
@@ -615,11 +607,6 @@ class AllowAllPolicyHook:
 
 
 class DenyHighRiskWithoutTagPolicyHook:
-    """
-    Example policy hook:
-    denies high-risk operations unless invocation tags include `approved=true`.
-    """
-
     def check(
         self,
         *,

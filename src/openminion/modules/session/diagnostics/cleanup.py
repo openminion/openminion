@@ -31,8 +31,7 @@ class SessionCleanupUtility:
             return None
 
     def _is_error_text(self, value: str) -> bool:
-        text = str(value or "").strip().lower()
-        return bool(text and "state machine error:" in text)
+        return "state machine error:" in value.strip().lower()
 
     def scan_session(self, session_id: str) -> dict[str, Any]:
         store = self._get_store()
@@ -53,25 +52,20 @@ class SessionCleanupUtility:
             turns = store.list_turns(session_id)
             result["total_turns"] = len(turns)
             for idx, turn in enumerate(turns):
-                if isinstance(turn, dict):
-                    content = str(
-                        turn.get("content", turn.get("text", "")) or ""
-                    ).strip()
-                    if self._is_error_text(content):
-                        contaminated_turns.append(
-                            {
-                                "index": idx,
-                                "turn_id": turn.get(
-                                    "turn_id", turn.get("id", f"turn-{idx}")
-                                ),
-                                "role": turn.get(
-                                    "role", turn.get("turn_type", "unknown")
-                                ),
-                                "preview": content[:100] + "..."
-                                if len(content) > 100
-                                else content,
-                            }
-                        )
+                content = str(turn.get("content", turn.get("text", "")) or "").strip()
+                if self._is_error_text(content):
+                    contaminated_turns.append(
+                        {
+                            "index": idx,
+                            "turn_id": turn.get(
+                                "turn_id", turn.get("id", f"turn-{idx}")
+                            ),
+                            "role": turn.get("role", turn.get("turn_type", "unknown")),
+                            "preview": content[:100] + "..."
+                            if len(content) > 100
+                            else content,
+                        }
+                    )
         except Exception as exc:
             logger.warning("Failed to scan turns: %s", exc)
 
@@ -79,23 +73,20 @@ class SessionCleanupUtility:
             events = store.list_events(session_id)
             result["total_events"] = len(events)
             for idx, event in enumerate(events):
-                if isinstance(event, dict):
-                    content = str(
-                        event.get("content", event.get("text", "")) or ""
-                    ).strip()
-                    if self._is_error_text(content):
-                        contaminated_events.append(
-                            {
-                                "index": idx,
-                                "event_id": event.get(
-                                    "event_id", event.get("id", f"event-{idx}")
-                                ),
-                                "event_type": event.get("event_type", "unknown"),
-                                "preview": content[:100] + "..."
-                                if len(content) > 100
-                                else content,
-                            }
-                        )
+                content = str(event.get("content", event.get("text", "")) or "").strip()
+                if self._is_error_text(content):
+                    contaminated_events.append(
+                        {
+                            "index": idx,
+                            "event_id": event.get(
+                                "event_id", event.get("id", f"event-{idx}")
+                            ),
+                            "event_type": event.get("event_type", "unknown"),
+                            "preview": content[:100] + "..."
+                            if len(content) > 100
+                            else content,
+                        }
+                    )
         except Exception as exc:
             logger.warning("Failed to scan events: %s", exc)
 
@@ -129,20 +120,16 @@ class SessionCleanupUtility:
         if store is None:
             return {"error": "Store not available"}
 
-        turns_removed = 0
-        events_removed = 0
         for turn in scan_result["contaminated_turns"]:
             logger.info("Removing contaminated turn: %s", turn["turn_id"])
-            turns_removed += 1
             details.append({"type": "turn", "id": turn["turn_id"]})
 
         for event in scan_result["contaminated_events"]:
             logger.info("Removing contaminated event: %s", event["event_id"])
-            events_removed += 1
             details.append({"type": "event", "id": event["event_id"]})
 
-        result["turns_removed"] = turns_removed
-        result["events_removed"] = events_removed
+        result["turns_removed"] = len(scan_result["contaminated_turns"])
+        result["events_removed"] = len(scan_result["contaminated_events"])
         return result
 
     def list_sessions(self) -> list[str]:

@@ -126,7 +126,6 @@ def load_config(
         data_root=resolved_data_root,
         path_mode=path_mode,
         default_path_source=default_path_source,
-        explicit_config=True,
     )
 
 
@@ -152,7 +151,6 @@ def config_from_dict(
         data_root=resolved_data_root,
         path_mode=path_mode,
         default_path_source=default_path_source,
-        explicit_config=True,
     )
 
 
@@ -202,7 +200,6 @@ def _resolve_paths(
     data_root: Path | None,
     path_mode: str,
     default_path_source: str,
-    explicit_config: bool,
 ) -> AgentRegistryConfig:
     default_sqlite, default_manifest = _default_paths(home_root, data_root, path_mode)
     resolve_base = (
@@ -237,10 +234,10 @@ def _resolve_paths(
             manifest_path, data_root, label="registry_manifest_path"
         )
 
-    explicit_override = explicit_config and (
-        raw_sqlite not in {"", str(DEFAULT_STANDALONE_SQLITE_SUBPATH)}
-        or raw_manifest not in {"", str(DEFAULT_STANDALONE_MANIFEST_SUBPATH)}
-    )
+    explicit_override = raw_sqlite not in {
+        "",
+        str(DEFAULT_STANDALONE_SQLITE_SUBPATH),
+    } or raw_manifest not in {"", str(DEFAULT_STANDALONE_MANIFEST_SUBPATH)}
     path_source = "explicit_override" if explicit_override else default_path_source
 
     return cfg.model_copy(

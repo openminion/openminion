@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 def copy_to_clipboard(text: str) -> bool:
     import subprocess
 

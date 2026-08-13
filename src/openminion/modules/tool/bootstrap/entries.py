@@ -39,7 +39,7 @@ _MCP_TOOL_BOOTSTRAP_ENTRY = _ToolBootstrapEntry(
 
 
 def _entry_enabled(entry: _ToolBootstrapEntry) -> bool:
-    gate = str(entry.gate or TOOL_BOOTSTRAP_GATE_ALWAYS).strip().lower()
+    gate = entry.gate.strip().lower()
     if gate == TOOL_BOOTSTRAP_GATE_ALWAYS:
         return True
     if gate == TOOL_BOOTSTRAP_GATE_NEVER:
@@ -56,12 +56,6 @@ def _entry_enabled_for_runtime_config(
     entry: _ToolBootstrapEntry,
     config: Any | None,
 ) -> bool:
-    """Apply runtime-config gating for tool modules that can be disabled.
-
-    Today this is only used for channel reactions, which should disappear from
-    runtime inventories when explicitly disabled.
-    """
-
     if entry.module_name != "openminion.tools.reaction":
         return True
     runtime_cfg = getattr(config, "runtime", config)
@@ -130,7 +124,6 @@ def _apply_dynamic_runtime_ownership(
     registry: Any,
     prepared_state: Any | None,
 ) -> None:
-    """Attach runtime-owned handles after registrar-based tool registration."""
     from openminion.tools.mcp.interfaces import MCPToolRegistrationState
 
     if isinstance(prepared_state, MCPToolRegistrationState):
@@ -395,7 +388,6 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
         label="Git",
         required=False,
     ),
-    # agent delegation family
     _ToolBootstrapEntry(
         kind="tool",
         module_name="openminion.tools.agent",

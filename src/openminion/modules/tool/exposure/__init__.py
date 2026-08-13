@@ -170,13 +170,12 @@ def resolve_forced_provider_tool_name(registry: Any, raw_name: str) -> str:
     if not token:
         return ""
     specs, _dispatch_map = get_visible_tool_specs_and_dispatch_map(registry)
-    visible_names = {spec.name for spec in specs if str(spec.name or "").strip()}
+    visible_names = {spec.name for spec in specs if spec.name}
     candidates = (normalize_raw_model_tool_name(token) or "", token)
-    for candidate in candidates:
-        if candidate and visible_names and candidate in visible_names:
-            return candidate
     if visible_names:
-        return ""
+        return next(
+            (candidate for candidate in candidates if candidate in visible_names), ""
+        )
     provider_specs = getattr(registry, "provider_specs", None)
     if not callable(provider_specs):
         return ""
@@ -235,7 +234,7 @@ def apply_model_exposure(request: Any, registry: Any) -> None:
     metadata = getattr(request, "metadata", {}) or {}
     service = getattr(registry, "exposure_service", None)
     if request.tools:
-        requested_tools = list(request.tools or [])
+        requested_tools = list(request.tools)
         if isinstance(service, ToolExposureService):
             filtered = service.filter_specs(
                 requested_tools,

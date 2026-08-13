@@ -17,8 +17,6 @@ class ToolExecutionContext:
     memory_service: MemoryToolRuntimeService | None = None
     sandbox_runner: Any | None = None
     authored_tools_api: Any | None = None
-    # optional A2A delegation seam threaded to RuntimeContext so the
-    # task.delegate handler can perform a real sub-agent delegation.
     a2a_delegate_api: A2ADelegateApi | None = None
     agent_query: Callable[[], list[dict[str, Any]]] | None = None
     blast_radius_adapter: Any | None = None

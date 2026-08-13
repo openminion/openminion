@@ -12,8 +12,9 @@ from openminion.modules.tool.contracts.manifest import (
     RuntimeBindingDef,
     ToolBindingManifest,
 )
-from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.registry import Scope, ToolRegistry
+from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime.registrar import (
     ToolModuleRegistrar,
     ToolRegisterContext,
@@ -28,13 +29,11 @@ Handler = Callable[[dict[str, Any], Any], Any]
 
 @dataclass(frozen=True)
 class ToolDecl:
-    """A single tool declaration inside a `ToolFamilySpec`."""
-
     name: str
     args_model: type[BaseModel]
     handler: Handler
     description: str = ""
-    min_scope: str | None = None
+    min_scope: Scope | None = None
     dangerous: bool = False
     idempotent: bool = False
     tags: tuple[str, ...] = ()
@@ -45,11 +44,9 @@ class ToolDecl:
 
 @dataclass(frozen=True)
 class ToolFamilySpec:
-    """Declarative spec for one `tools/<family>/` module."""
-
     module_id: str
     tools: tuple[ToolDecl, ...] = ()
-    min_scope_default: str = "WRITE_SAFE"
+    min_scope_default: Scope = "WRITE_SAFE"
     common_tags: tuple[str, ...] = ()
     common_capabilities: tuple[str, ...] = ()
     is_provider_only: bool = False
@@ -144,8 +141,6 @@ def derive_manifest(family: ToolFamilySpec) -> ToolBindingManifest:
 
 @dataclass
 class GeneratedRegistrar:
-    """`ToolModuleRegistrar` adapter for a `ToolFamilySpec`."""
-
     module_id: str
     is_provider_only: bool
     _family: ToolFamilySpec = field(repr=False)

@@ -107,13 +107,12 @@ def normalize_delivery(delivery: Mapping[str, Any] | None) -> dict[str, Any]:
     mode = str(raw.get("mode", "none")).strip() or "none"
     if mode not in ALLOWED_DELIVERY_MODES:
         raise ValueError(f"unsupported delivery.mode: {mode}")
-    result: dict[str, Any] = {
+    return {
         "mode": mode,
         "channel": str(raw.get("channel", "") or "").strip(),
         "to": str(raw.get("to", "") or "").strip(),
         "best_effort": bool(raw.get("best_effort", False)),
     }
-    return result
 
 
 def normalize_schedule(schedule: Mapping[str, Any]) -> dict[str, Any]:
@@ -248,8 +247,6 @@ def compute_next_due(
     if kind == "every":
         every_ms = int(normalized["every_ms"])
         base = (last_due or after).astimezone(timezone.utc)
-        if last_due is None:
-            base = after.astimezone(timezone.utc)
         next_due = base + timedelta(milliseconds=every_ms)
         jitter_ms = int(normalized.get("jitter_ms", 0) or 0)
         if jitter_ms > 0:

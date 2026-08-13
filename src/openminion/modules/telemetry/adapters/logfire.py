@@ -14,16 +14,12 @@ def build_logfire_otel_config(
     token: str | None = None,
     env: dict[str, str] | None = None,
 ) -> OTELExporterConfig | None:
-    """Build logfire otel config helper."""
-
     env_dict = env if env is not None else os.environ
     resolved_token = (token or env_dict.get(_LOGFIRE_TOKEN_ENV, "")).strip()
     if not resolved_token:
         return None
 
-    # Forward the bearer token to the OTLP SDK via the OTel standard envvar.
-    # This is the documented Logfire integration path for OTLP-compatible
-    # exporters that do not surface a `headers=` kwarg themselves.
+    # The OTLP SDK reads bearer authentication from its standard header variable.
     env_dict[_OTLP_HEADERS_ENV] = f"Authorization=Bearer {resolved_token}"
 
     return OTELExporterConfig(

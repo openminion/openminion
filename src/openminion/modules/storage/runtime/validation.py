@@ -26,11 +26,7 @@ def validate_postgres_config(
     check_connection: bool = True,
     check_migrations: bool = True,
 ) -> None:
-    """Validate Postgres backend configuration at boot time.
-
-    Raises StorageConfigError with actionable messages on failure.
-    Does NOT log or include the raw postgres_url — uses _redact_url().
-    """
+    """Validate Postgres boot configuration without exposing its URL."""
     if not postgres_url.strip():
         raise StorageConfigError(
             "storage.postgres_url is required when storage.backend is 'postgres'. "
@@ -39,7 +35,7 @@ def validate_postgres_config(
         )
 
     try:
-        import sqlalchemy  # noqa: F401
+        import sqlalchemy as sa
     except ImportError:
         raise StorageConfigError(
             "The 'sqlalchemy' package is required for Postgres storage. "
@@ -58,8 +54,6 @@ def validate_postgres_config(
 
     redacted = _redact_url(postgres_url)
     try:
-        import sqlalchemy as sa
-
         engine = sa.create_engine(postgres_url, pool_pre_ping=True)
         with engine.connect() as conn:
             conn.execute(sa.text("SELECT 1"))
@@ -81,7 +75,6 @@ def validate_postgres_config(
             MODULE_APPLICATION_IDS,
         )
         from openminion.modules.storage.migrations.runner import MigrationRunner
-        import sqlalchemy as sa
 
         engine = sa.create_engine(postgres_url)
         for module_id in POSTGRES_VALIDATED_MODULES:
@@ -118,11 +111,7 @@ def validate_storage_config(
     check_connection: bool = True,
     check_migrations: bool = True,
 ) -> None:
-    """Entry point for boot-time storage config validation.
-
-    For SQLite: no-op (always valid).
-    For Postgres: validates URL, extras, connection, migrations.
-    """
+    """Validate Postgres configuration; SQLite requires no boot check."""
     if backend != "postgres":
         return
     validate_postgres_config(

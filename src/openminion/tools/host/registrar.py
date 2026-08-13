@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from openminion.modules.tool.contracts import (
     ModelToolDef,
@@ -22,13 +22,11 @@ class HostRegistrar:
     is_provider_only = False
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        del ctx
         from .plugin import register
 
         register(registry)
 
-    def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        del ctx
+    def get_manifest(self, ctx: ToolRegisterContext) -> ToolBindingManifest:
         return ToolBindingManifest(
             module_id=self.module_id,
             model_tools=(

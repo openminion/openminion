@@ -59,19 +59,12 @@ def migrate_data_root(
     if not dry_run:
         data_root.mkdir(parents=True, exist_ok=True)
 
-    nested_openminion = data_root / ".openminion"
-    if nested_openminion.exists() and nested_openminion.is_dir():
+    for legacy_name in (".openminion", ".openminion-data"):
+        nested_root = data_root / legacy_name
+        if not nested_root.exists() or not nested_root.is_dir():
+            continue
         _migrate_openminion_dir(
-            source=nested_openminion,
-            data_root=data_root,
-            items=items,
-            dry_run=dry_run,
-            logger=log,
-        )
-    nested_openminion_data = data_root / ".openminion-data"
-    if nested_openminion_data.exists() and nested_openminion_data.is_dir():
-        _migrate_openminion_dir(
-            source=nested_openminion_data,
+            source=nested_root,
             data_root=data_root,
             items=items,
             dry_run=dry_run,

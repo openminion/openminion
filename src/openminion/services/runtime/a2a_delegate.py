@@ -21,7 +21,6 @@ def build_a2a_delegate_api(
     approval_callback: Any | None = None,
     telemetryctl: Any | None = None,
 ) -> A2ADelegateApi | None:
-    """Build a2a delegate api helper."""
     try:
         from openminion.modules.brain.adapters.factory.a2a import create_a2a_adapter
     except Exception as exc:  # noqa: BLE001
@@ -32,7 +31,7 @@ def build_a2a_delegate_api(
             mode,
             home_root=home_root,
             config=config,
-            agent_id=str(agent_id or "").strip() or None,
+            agent_id=agent_id.strip() or None,
             env=env,
             runtime_resolver=runtime_resolver,
             approval_callback=approval_callback,
@@ -40,12 +39,11 @@ def build_a2a_delegate_api(
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("A2A delegate adapter construction failed: %s", exc)
         return None
-    call = getattr(a2actl, "call", None)
-    if not callable(call):
+    if not callable(call := getattr(a2actl, "call", None)):
         return None
     return A2aRuntimeDelegateAdapter(
         a2a_call=call,
-        parent_agent_id=str(agent_id or ""),
+        parent_agent_id=agent_id,
         telemetryctl=telemetryctl,
     )
 

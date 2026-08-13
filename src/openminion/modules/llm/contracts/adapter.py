@@ -71,15 +71,29 @@ def _normalize_response_telemetry(response: LLMResponse) -> LLMResponse:
 
 def adapter_result_to_llm_response(result: ProviderAdapterResult) -> LLMResponse:
     assistant_messages = list(result.assistant_messages)
-    if result.output_text and not assistant_messages:
+    if result.tool_calls:
+        if assistant_messages:
+            call_owner = assistant_messages[-1]
+            if call_owner.role == "assistant" and not call_owner.tool_calls:
+                assistant_messages[-1] = call_owner.model_copy(
+                    update={"tool_calls": list(result.tool_calls)}
+                )
+        else:
+            assistant_messages = [
+                Message(
+                    role="assistant",
+                    content=result.output_text,
+                    tool_calls=list(result.tool_calls),
+                )
+            ]
+    elif result.output_text and not assistant_messages:
         assistant_messages = [Message(role="assistant", content=result.output_text)]
 
     usage = result.usage
     if usage.total_tokens is None:
         usage = usage.model_copy(
             update={
-                "total_tokens": (usage.input_tokens or 0)
-                + (usage.output_tokens or 0),
+                "total_tokens": (usage.input_tokens or 0) + (usage.output_tokens or 0),
                 "total_source": "derived",
             }
         )

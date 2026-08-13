@@ -30,10 +30,7 @@ def normalize_memory_provider(raw: Any) -> str:
 
 
 def build_memory_policy_snapshot(*, config: OpenMinionConfig) -> dict[str, Any]:
-    runtime = getattr(config, "runtime", None)
-    if runtime is None:
-        raise ValueError("runtime config is unavailable")
-
+    runtime = config.runtime
     memory_enabled = bool(getattr(runtime, "memory_enabled", True))
     capsule_strategy = normalize_memory_capsule_strategy(
         getattr(
@@ -53,11 +50,7 @@ def build_memory_policy_snapshot(*, config: OpenMinionConfig) -> dict[str, Any]:
         MEMORY_CAPSULE_STRATEGY_FROZEN_SESSION: "refresh_once_per_session",
         MEMORY_CAPSULE_STRATEGY_REFRESH_ON_WRITE: "refresh_on_memory_change",
         MEMORY_CAPSULE_STRATEGY_OFF: "disabled",
-    }.get(capsule_strategy, "refresh_each_turn")
-
-    session_vs_cross_session = (
-        "session_plus_cross_session" if memory_enabled else "session_only"
-    )
+    }[capsule_strategy]
 
     return {
         "policy_version": MEMORY_POLICY_SNAPSHOT_VERSION,
@@ -68,7 +61,9 @@ def build_memory_policy_snapshot(*, config: OpenMinionConfig) -> dict[str, Any]:
         "dynamic_retrieval_enabled": dynamic_retrieval_enabled,
         "memory_provider": memory_provider,
         "retention_days": retention_days,
-        "session_vs_cross_session": session_vs_cross_session,
+        "session_vs_cross_session": (
+            "session_plus_cross_session" if memory_enabled else "session_only"
+        ),
         "cross_session_memory_enabled": memory_enabled,
     }
 

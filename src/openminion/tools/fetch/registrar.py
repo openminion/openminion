@@ -11,8 +11,6 @@ if TYPE_CHECKING:
 
 
 class FetchRegistrar:
-    """Registrar with manifest for fetch."""
-
     module_id = "fetch"
     is_provider_only = False
 

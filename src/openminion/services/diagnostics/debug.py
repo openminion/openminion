@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from openminion.base.debug import (
     DebugProvider,
@@ -19,21 +19,20 @@ class ToolSelectionDebugPayload:
     mode: str = "hybrid"
     shortlist_size: int = 0
     token_estimate: int = 0
-    selected_tool: Optional[str] = None
-    category: Optional[str] = None
-    binding_source: Optional[str] = None
+    selected_tool: str | None = None
+    category: str | None = None
+    binding_source: str | None = None
     fallback_used: bool = False
     reason_codes: list[str] = field(default_factory=list)
     validation_retry_count: int = 0
     schema_expanded: bool = False
 
-    # Capability-related debug fields from CBGF-10
-    capability_category: Optional[str] = None
-    capability_primary: Optional[str] = None
-    capability_fallback_chain: Optional[list[str]] = field(default_factory=list)
-    capability_attempted_tools: Optional[list[str]] = field(default_factory=list)
-    capability_fallback_trigger_reason: Optional[str] = None
-    capability_final_tool: Optional[str] = None
+    capability_category: str | None = None
+    capability_primary: str | None = None
+    capability_fallback_chain: list[str] | None = field(default_factory=list)
+    capability_attempted_tools: list[str] | None = field(default_factory=list)
+    capability_fallback_trigger_reason: str | None = None
+    capability_final_tool: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -69,11 +68,11 @@ def create_tool_selection_debug_payload(
     mode: str = "hybrid",
     shortlist_size: int = 0,
     token_estimate: int = 0,
-    selected_tool: Optional[str] = None,
-    category: Optional[str] = None,
-    binding_source: Optional[str] = None,
+    selected_tool: str | None = None,
+    category: str | None = None,
+    binding_source: str | None = None,
     fallback_used: bool = False,
-    reason_codes: Optional[list[str]] = None,
+    reason_codes: list[str] | None = None,
     validation_retry_count: int = 0,
     schema_expanded: bool = False,
     **capability_kwargs: Any,
@@ -105,11 +104,9 @@ def _load_debug_provider_module(module_path: str) -> None:
 
 def load_debug_providers() -> None:
     get_debug_registry()
-    # Controlplane telegram debug provider
     _load_debug_provider_module(
         "openminion.modules.controlplane.channels.telegram.debug_provider"
     )
-    # Execution-boundary policy posture
     _load_debug_provider_module("openminion.modules.policy.diagnostics.debug_provider")
 
 
@@ -129,15 +126,11 @@ def is_debug_surface_enabled(
     def _get_runtime_flag(key: str, default: bool = True) -> bool:
         if isinstance(runtime, dict):
             return bool(runtime.get(key, default))
-        return (
-            bool(getattr(runtime, key, default))
-            if runtime is not None
-            else bool(default)
-        )
+        return bool(getattr(runtime, key, default))
 
     if not _get_runtime_flag("debug_enabled", True):
         return False
-    normalized = str(surface or "").strip().lower()
+    normalized = surface.strip().lower()
     if normalized == "api":
         return _get_runtime_flag("debug_api_enabled", True)
     if normalized == "cli":

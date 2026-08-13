@@ -151,7 +151,9 @@ class TelegramInteractionChannel(InteractionChannel):
                 if 0 <= selected_index < len(options):
                     selected_item = options[selected_index]
                     selected_value = (
-                        selected_item if isinstance(selected_item, str) else selected_item.value
+                        selected_item
+                        if isinstance(selected_item, str)
+                        else selected_item.value
                     )
                     return ChoiceResponse(
                         value=selected_value, index=selected_index, cancelled=False

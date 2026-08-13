@@ -1,8 +1,8 @@
 """Browser payload and selector normalization."""
 
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
-from collections.abc import Mapping
 
 from openminion.modules.tool.runtime.resource_selectors import ResourceSelectors
 
@@ -79,46 +79,35 @@ def to_payload(value: Any) -> dict[str, Any]:
     return {"result": value}
 
 
-def extract_tabs(payload: Any, *, to_tab_info) -> list[TabInfo]:  # type: ignore[no-untyped-def]
-    rows: list[Any] = []
+def _extract_rows(payload: Any, keys: tuple[str, ...]) -> list[Any]:
     if isinstance(payload, list):
-        rows = payload
-    elif isinstance(payload, Mapping):
-        for key in ("tabs", "items", "data", "result"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                rows = value
-                break
-            if isinstance(value, Mapping):
-                nested = value.get("items")
-                if isinstance(nested, list):
-                    rows = nested
-                    break
+        return payload
+    if not isinstance(payload, Mapping):
+        return []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+        nested = value.get("items") if isinstance(value, Mapping) else None
+        if isinstance(nested, list):
+            return nested
+    return []
+
+
+def extract_tabs(
+    payload: Any, *, to_tab_info: Callable[[Mapping[str, Any]], TabInfo]
+) -> list[TabInfo]:
     return [
         to_tab_info(row)
-        for row in rows
+        for row in _extract_rows(payload, ("tabs", "items", "data", "result"))
         if isinstance(row, Mapping)
         and str(row.get("id") or row.get("tabId") or row.get("tab_id") or "").strip()
     ]
 
 
 def extract_instances(payload: Any) -> list[InstanceInfo]:
-    rows: list[Any] = []
-    if isinstance(payload, list):
-        rows = payload
-    elif isinstance(payload, Mapping):
-        for key in ("instances", "items", "data", "result"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                rows = value
-                break
-            if isinstance(value, Mapping):
-                nested = value.get("items")
-                if isinstance(nested, list):
-                    rows = nested
-                    break
     out: list[InstanceInfo] = []
-    for row in rows:
+    for row in _extract_rows(payload, ("instances", "items", "data", "result")):
         if not isinstance(row, Mapping):
             continue
         instance_id = str(
@@ -138,23 +127,21 @@ def extract_instances(payload: Any) -> list[InstanceInfo]:
     return out
 
 
-def extract_instance_id(payload: Mapping[str, Any]) -> str:
-    instance = payload.get("instance")
-    if isinstance(instance, Mapping):
-        value = (
-            instance.get("id")
-            or instance.get("instance_id")
-            or instance.get("instanceId")
-        )
-        if value is not None:
-            return str(value).strip()
-    for key in ("instance_id", "instanceId", "id"):
-        value = payload.get(key)
+def _extract_id(
+    payload: Mapping[str, Any], group: str, aliases: tuple[str, str, str]
+) -> str:
+    values = (
+        payload.get(group),
+        payload.get(aliases[1]),
+        payload.get(aliases[2]),
+        payload.get(aliases[0]),
+    )
+    for value in values:
         if value is None:
             continue
         if isinstance(value, Mapping):
             nested = (
-                value.get("id") or value.get("instance_id") or value.get("instanceId")
+                value.get(aliases[0]) or value.get(aliases[1]) or value.get(aliases[2])
             )
             if nested is not None:
                 return str(nested).strip()
@@ -163,23 +150,12 @@ def extract_instance_id(payload: Mapping[str, Any]) -> str:
     return ""
 
 
+def extract_instance_id(payload: Mapping[str, Any]) -> str:
+    return _extract_id(payload, "instance", ("id", "instance_id", "instanceId"))
+
+
 def extract_tab_id(payload: Mapping[str, Any]) -> str:
-    tab = payload.get("tab")
-    if isinstance(tab, Mapping):
-        value = tab.get("id") or tab.get("tab_id") or tab.get("tabId")
-        if value is not None:
-            return str(value).strip()
-    for key in ("tab_id", "tabId", "id"):
-        value = payload.get(key)
-        if value is None:
-            continue
-        if isinstance(value, Mapping):
-            nested = value.get("id") or value.get("tab_id") or value.get("tabId")
-            if nested is not None:
-                return str(nested).strip()
-            continue
-        return str(value).strip()
-    return ""
+    return _extract_id(payload, "tab", ("id", "tab_id", "tabId"))
 
 
 def is_stale_recoverable_error(exc: Exception) -> bool:

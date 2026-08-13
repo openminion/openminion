@@ -58,6 +58,20 @@ def _print_json(payload: dict[str, Any]) -> None:
 
 
 @contextmanager
+def _command_errors():
+    try:
+        yield
+    except AgentRegError as exc:
+        _print_json({"ok": False, "error": exc.to_dict()})
+        raise typer.Exit(code=1)
+    except ValidationError as exc:
+        _print_json(
+            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
+        )
+        raise typer.Exit(code=1)
+
+
+@contextmanager
 def _open_registry(config_path: Path):
     cfg = load_config(config_path, env=dict(os.environ))
 
@@ -176,7 +190,7 @@ def ls_cmd(
         None, "--name", help="Substring in display name or agent_id"
     ),
 ) -> None:
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             filters: dict[str, Any] = {}
             if tag:
@@ -192,14 +206,6 @@ def ls_cmd(
                     "agents": [agent.model_dump(mode="json") for agent in agents],
                 }
             )
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("show")
@@ -207,20 +213,12 @@ def show_cmd(
     agent_id: str,
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config"),
 ) -> None:
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             agent = registry.get(agent_id)
             if agent is None:
                 raise AgentRegError("NOT_FOUND", f"Agent not found: {agent_id}")
             _print_json({"ok": True, "agent": agent.model_dump(mode="json")})
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("find")
@@ -235,7 +233,7 @@ def find_cmd(
     if not method and not capability:
         raise typer.BadParameter("Provide --method and/or --capability")
 
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             filters: dict[str, Any] = {"tags": tag} if tag else {}
 
@@ -254,14 +252,6 @@ def find_cmd(
             _print_json(
                 {"ok": True, "agents": [row.model_dump(mode="json") for row in rows]}
             )
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("resolve")
@@ -280,7 +270,7 @@ def resolve_cmd(
     if not method and not agent:
         raise typer.BadParameter("Provide --method or --agent")
 
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             constraints = _constraints(
                 require_tag=require_tag,
@@ -307,14 +297,6 @@ def resolve_cmd(
                     "constraints": constraints.model_dump(mode="json"),
                 }
             )
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("status")
@@ -322,7 +304,7 @@ def status_cmd(
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config"),
     agent: Optional[str] = typer.Option(None, "--agent"),
 ) -> None:
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             if agent:
                 status = registry.get_status(agent)
@@ -335,14 +317,6 @@ def status_cmd(
                 for row in agents
             ]
             _print_json({"ok": True, "status": rows})
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("heartbeat")
@@ -351,38 +325,22 @@ def heartbeat_cmd(
     state: str = typer.Option("healthy", "--state"),
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config"),
 ) -> None:
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             registry.heartbeat(agent_id, {"state": state})
             status = registry.get_status(agent_id)
             _print_json({"ok": True, "status": status.model_dump(mode="json")})
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("reload")
 def reload_cmd(
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config"),
 ) -> None:
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             registry.reload()
             agents = registry.list()
             _print_json({"ok": True, "count": len(agents)})
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 @app.command("explain")
@@ -397,7 +355,7 @@ def explain_cmd(
     require_transport: Optional[str] = typer.Option(None, "--require-transport"),
     allow_agent: list[str] = typer.Option([], "--allow-agent"),
 ) -> None:
-    try:
+    with _command_errors():
         with _open_registry(config) as registry:
             constraints = _constraints(
                 require_tag=require_tag,
@@ -410,14 +368,6 @@ def explain_cmd(
             )
             report = registry.explain_resolution(method, constraints=constraints)
             _print_json({"ok": True, "report": report})
-    except AgentRegError as exc:
-        _print_json({"ok": False, "error": exc.to_dict()})
-        raise typer.Exit(code=1)
-    except ValidationError as exc:
-        _print_json(
-            {"ok": False, "error": {"code": "INVALID_ARGUMENT", "message": str(exc)}}
-        )
-        raise typer.Exit(code=1)
 
 
 register_storage_commands(

@@ -1,6 +1,6 @@
-from dataclasses import dataclass
-from typing import Any, Optional
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 from openminion.modules.tool.contracts import (
     normalize_raw_model_tool_name,
@@ -20,7 +20,7 @@ from openminion.modules.tool.runtime.manager import (
     build_default_tool_registry_manager,
 )
 
-_REGISTRY_MANAGER: Optional[ToolRegistryManager] = None
+_REGISTRY_MANAGER: ToolRegistryManager | None = None
 _REGISTRY: Any | None = None
 
 
@@ -72,14 +72,12 @@ def resolve_binding_for_call(
     *,
     raw_tool_name: str,
     available_tool_names: Sequence[str],
-    manager: Optional[ToolRegistryManager] = None,
+    manager: ToolRegistryManager | None = None,
     allow_runtime_direct: bool = True,
 ) -> BindingResolution | None:
     """Resolve binding for a tool call."""
     mgr = manager if manager is not None else _get_registry_manager()
-    available = {
-        str(item).strip() for item in available_tool_names if str(item).strip()
-    }
+    available = {token for item in available_tool_names if (token := str(item).strip())}
     raw = str(raw_tool_name or "").strip()
     if not raw:
         return None
@@ -109,11 +107,11 @@ def resolve_binding_for_call(
 
     # Explicit runtime tool calls remain valid only for explicitly allowed internal lanes.
     if allow_runtime_direct and raw in available:
-        runtime_binding_id = mgr.resolve_binding(model_tool_id or raw) or ""
+        direct_binding_id = mgr.resolve_binding(model_tool_id or raw) or ""
         return BindingResolution(
             raw_tool_name=raw_tool_name,
             model_tool_id=model_tool_id or raw,
-            runtime_binding_id=runtime_binding_id,
+            runtime_binding_id=direct_binding_id,
             runtime_tool_name=raw,
             runtime_fallback_chain=(raw,),
             source="runtime_direct",
@@ -215,7 +213,6 @@ def adapt_arguments_for_runtime_call(
                 arguments=args,
             )
 
-        # Provider-specific browser tools.
         if runtime_binding_id.endswith(".tab.close"):
             tab_id = _first_non_empty(args, "tab_id", "id")
             if tab_id is not None:
@@ -274,15 +271,9 @@ def _browser_op_for_binding(*, runtime_binding_id: str) -> str:
 
 def _first_non_empty(arguments: Mapping[str, Any], *keys: str) -> Any:
     for key in keys:
-        if key not in arguments:
-            continue
         value = arguments.get(key)
-        if value is None:
-            continue
         if isinstance(value, str):
-            token = value.strip()
-            if token:
-                return token
-            continue
-        return value
+            value = value.strip()
+        if value is not None and value != "":
+            return value
     return None

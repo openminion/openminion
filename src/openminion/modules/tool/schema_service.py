@@ -85,15 +85,13 @@ class ToolSchemaService:
                 except Exception:
                     parameters = {}
             if (
-                isinstance(parameters, dict)
-                and parameters.get("type") == "object"
+                parameters.get("type") == "object"
                 and not isinstance(parameters.get("properties"), dict)
                 and parameters.get("additionalProperties") is True
             ):
                 parameters = {}
             if (
-                isinstance(parameters, dict)
-                and parameters.get("type") == "object"
+                parameters.get("type") == "object"
                 and isinstance(parameters.get("properties"), dict)
                 and not parameters.get("properties")
                 and parameters.get("additionalProperties") is True
@@ -276,33 +274,17 @@ class ToolSchemaService:
             "properties": {},
             "additionalProperties": False,
         }
-        if structured_schema is not None and callable(
-            getattr(structured_schema, "flat_json_schema", None)
-        ):
+        for method_name in ("flat_json_schema", "json_schema", "model_json_schema"):
+            schema_factory = getattr(structured_schema, method_name, None)
+            if not callable(schema_factory):
+                continue
             try:
-                maybe = structured_schema.flat_json_schema()
+                maybe = schema_factory()
                 if isinstance(maybe, dict):
                     parameters = dict(maybe)
             except Exception:
                 pass
-        elif structured_schema is not None and callable(
-            getattr(structured_schema, "json_schema", None)
-        ):
-            try:
-                maybe = structured_schema.json_schema()
-                if isinstance(maybe, dict):
-                    parameters = dict(maybe)
-            except Exception:
-                pass
-        elif structured_schema is not None and callable(
-            getattr(structured_schema, "model_json_schema", None)
-        ):
-            try:
-                maybe = structured_schema.model_json_schema()
-                if isinstance(maybe, dict):
-                    parameters = dict(maybe)
-            except Exception:
-                pass
+            break
         return [
             {
                 "name": "submit_output",
@@ -381,12 +363,6 @@ class ToolSchemaService:
         feasibility_descriptors: list[str] = []
         metadata_warnings: list[str] = []
         risk_level = "unknown"
-        agent_visibility = "local"
-        auth_status = "unknown"
-        runtime_status = "available"
-        rate_limit_state = "ok"
-        config_status = "configured"
-
         if tool is not None:
             category_info = getattr(tool, "category_info", None)
             if callable(category_info):
@@ -429,11 +405,11 @@ class ToolSchemaService:
         return {
             "capability_tags": capability_tags,
             "feasibility_descriptors": feasibility_descriptors,
-            "agent_visibility": agent_visibility,
-            "auth_status": auth_status,
-            "runtime_status": runtime_status,
-            "rate_limit_state": rate_limit_state,
-            "config_status": config_status,
+            "agent_visibility": "local",
+            "auth_status": "unknown",
+            "runtime_status": "available",
+            "rate_limit_state": "ok",
+            "config_status": "configured",
             "risk_level": risk_level,
             "metadata_complete": not metadata_warnings,
             "metadata_warnings": metadata_warnings,
@@ -468,10 +444,9 @@ class ToolSchemaService:
 
         display_keys = list(required)
         if not display_keys and properties:
-            for key in properties:
-                display_keys.append(str(key))
-                if len(display_keys) >= _PROMPT_TOOL_REQUIRED_ARG_LIMIT:
-                    break
+            display_keys = [str(key) for key in properties][
+                :_PROMPT_TOOL_REQUIRED_ARG_LIMIT
+            ]
 
         stub_props: dict[str, Any] = {}
         for key in display_keys:

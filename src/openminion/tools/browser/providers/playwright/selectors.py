@@ -54,9 +54,7 @@ class SelectorAdapter:
 
     @staticmethod
     def _normalize_selector(selector: str | None) -> str | None:
-        if selector is None:
-            return None
-        token = str(selector).strip()
+        token = (selector or "").strip()
         if not token:
             return None
         if token.startswith("//") or token.startswith("("):

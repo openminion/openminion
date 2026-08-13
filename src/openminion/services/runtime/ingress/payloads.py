@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable, Mapping
 
 _NO_INTENT_CATEGORY = "none"
@@ -90,7 +90,7 @@ def resolve_deliver(raw: Any) -> bool:
     return True
 
 
-def parse_forced_tools(raw: Any) -> Optional[list[str]]:
+def parse_forced_tools(raw: Any) -> list[str] | None:
     if raw is None:
         return None
     if isinstance(raw, str):
@@ -113,19 +113,16 @@ def parse_forced_tools(raw: Any) -> Optional[list[str]]:
 def resolve_capability_category(
     *,
     explicit_category: Any = None,
-) -> Optional[str]:
+) -> str | None:
     explicit = None
     if isinstance(explicit_category, str):
         explicit = explicit_category.strip()
     elif explicit_category is not None:
         explicit = str(explicit_category).strip()
 
-    if explicit:
-        if explicit and explicit.lower() != _NO_INTENT_CATEGORY:
-            return explicit
+    if not explicit or explicit.lower() == _NO_INTENT_CATEGORY:
         return None
-
-    return None
+    return explicit
 
 
 def apply_managed_meta(

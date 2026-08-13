@@ -53,27 +53,26 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _apply_policy_cli_roots(args: argparse.Namespace) -> tuple[str, str]:
-    home_root = str(getattr(args, "home_root", "") or "").strip()
-    data_root = str(getattr(args, "data_root", "") or "").strip()
+    home_root = str(args.home_root or "").strip()
+    data_root = str(args.data_root or "").strip()
     apply_home_data_root_env(home_root=home_root, data_root=data_root)
     return home_root, data_root
 
 
 def _resolve_policy_db_path(args: argparse.Namespace) -> str:
-    db_path = str(getattr(args, "db", "") or "").strip()
+    db_path = str(args.db or "").strip()
     if db_path:
         return db_path
-    env_map = os.environ
-    if is_module_standalone_mode(env_map):
+    if is_module_standalone_mode(os.environ):
         return str((Path.home() / DEFAULT_STANDALONE_SQLITE_SUBPATH).resolve())
     resolved_home_root = resolve_module_home_root(
         None,
-        env_map,
+        os.environ,
         fallback_to_cwd=True,
     )
     resolved_data_root = resolve_module_data_root(
         home_root=resolved_home_root,
-        env=env_map,
+        env=os.environ,
     )
     return str((resolved_data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve())
 
@@ -164,14 +163,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     set_mode = sub.add_parser("set-mode", help="Persist policy mode")
-    set_mode.add_argument("value", choices=list(POLICY_MODE_CHOICES))
+    set_mode.add_argument("value", choices=POLICY_MODE_CHOICES)
 
     sub.add_parser("mode", help="Show effective mode")
 
     list_grants = sub.add_parser("list-grants", help="List grants")
     list_grants.add_argument("--subject-id", default=None)
     list_grants.add_argument(
-        "--effect", default=None, choices=list(POLICY_GRANT_EFFECT_CHOICES)
+        "--effect", default=None, choices=POLICY_GRANT_EFFECT_CHOICES
     )
     list_grants.add_argument("--tool", default=None)
     list_grants.add_argument("--method", default=None)
@@ -183,16 +182,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("cleanup", help="Revoke expired grants")
 
     create = sub.add_parser("create-grant", help="Create grant")
-    create.add_argument(
-        "--effect", required=True, choices=list(POLICY_GRANT_EFFECT_CHOICES)
-    )
+    create.add_argument("--effect", required=True, choices=POLICY_GRANT_EFFECT_CHOICES)
     create.add_argument("--subject-id", default=POLICY_SUBJECT_ID_LOCAL)
     create.add_argument("--tool", default="*")
     create.add_argument("--method", default="*")
     create.add_argument(
         "--duration-type",
         default=POLICY_DURATION_FOREVER,
-        choices=list(POLICY_DURATION_CHOICES),
+        choices=POLICY_DURATION_CHOICES,
     )
     create.add_argument("--expires-at", default=None)
     create.add_argument("--session-id", default=None)
@@ -218,7 +215,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _parse_json_object(raw: str) -> dict[str, Any]:
     try:
-        payload = json.loads(str(raw))
+        payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON: {exc}") from exc
     if not isinstance(payload, dict):

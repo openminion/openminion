@@ -96,13 +96,12 @@ class PluginHookRunner:
                 futures[future] = plugin
 
             for future in as_completed(futures):
-                plugin = futures[future]
                 try:
                     future.result()
                 except Exception:
                     context.logger.exception(
                         "plugin inbound side-effect hook failed plugin=%s",
-                        plugin_label(plugin),
+                        plugin_label(futures[future]),
                     )
 
     def _run_side_effect_outbound(
@@ -129,13 +128,12 @@ class PluginHookRunner:
                 futures[future] = plugin
 
             for future in as_completed(futures):
-                plugin = futures[future]
                 try:
                     future.result()
                 except Exception:
                     context.logger.exception(
                         "plugin outbound side-effect hook failed plugin=%s",
-                        plugin_label(plugin),
+                        plugin_label(futures[future]),
                     )
 
 

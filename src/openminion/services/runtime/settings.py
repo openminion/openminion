@@ -1,7 +1,6 @@
 from collections.abc import Mapping
 from typing import Any
 from dataclasses import dataclass, field
-import os
 from pathlib import Path
 
 from openminion.base.config import OpenMinionConfig
@@ -70,11 +69,11 @@ class RuntimeConfig:
 
     @classmethod
     def from_yaml(cls, path: str = DEFAULT_CONFIG_FILENAME) -> "RuntimeConfig":
-        if not os.path.exists(path):
+        if not Path(path).exists():
             return cls()
 
         try:
-            import yaml  # type: ignore[import-untyped]
+            import yaml
 
             with open(path, encoding="utf-8") as fh:
                 raw = yaml.safe_load(fh) or {}
@@ -151,10 +150,9 @@ def _parse_simple_yaml(path: str) -> dict[str, Any]:
                     else:
                         result[k] = _coerce(v)
                         current_section = None
-            else:
-                if current_section is not None and ":" in stripped:
-                    k, _, v = stripped.strip().partition(":")
-                    current_section[k.strip()] = _coerce(v.strip())
+            elif current_section is not None and ":" in stripped:
+                k, _, v = stripped.strip().partition(":")
+                current_section[k.strip()] = _coerce(v.strip())
 
     return result
 
@@ -169,12 +167,10 @@ def _coerce(value: str) -> object:
     try:
         return int(value)
     except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    return value
+        try:
+            return float(value)
+        except ValueError:
+            return value
 
 
 ManagerConfig = RuntimeConfig

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,7 +22,7 @@ class RetrievalDiagnostics:
     filters: dict
     score_bands: dict
     vector_enabled: bool
-    fallback_reason: Optional[str]
+    fallback_reason: str | None
 
 
 class HybridRetrievalRanker:
@@ -39,9 +39,9 @@ class HybridRetrievalRanker:
         query: str,
         records: list[Any],
         top_k: int = 10,
-        scope_filter: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        project_id: Optional[str] = None,
+        scope_filter: str | None = None,
+        agent_id: str | None = None,
+        project_id: str | None = None,
     ) -> tuple[list[RetrievalResult], RetrievalDiagnostics]:
         filters = {}
         if scope_filter:
@@ -62,7 +62,7 @@ class HybridRetrievalRanker:
             except Exception:
                 vector_results = []
 
-        vector_enabled = len(vector_results) > 0
+        vector_enabled = bool(vector_results)
         fallback_reason = None if vector_enabled else "vector_index_unavailable"
         vector_scores = {vec_id: float(score) for vec_id, score, _ in vector_results}
 
@@ -129,12 +129,11 @@ class HybridRetrievalRanker:
             day_seconds = 86400
             if age_seconds < day_seconds:
                 return 1.0
-            elif age_seconds < 7 * day_seconds:
+            if age_seconds < 7 * day_seconds:
                 return 0.8
-            elif age_seconds < 30 * day_seconds:
+            if age_seconds < 30 * day_seconds:
                 return 0.5
-            else:
-                return 0.2
+            return 0.2
         except Exception:
             return 0.5
 
@@ -143,7 +142,7 @@ class HybridRetrievalRanker:
             return {"high": 0, "medium": 0, "low": 0}
 
         scores = [score for _, score, _ in scored]
-        max_score = max(scores) if scores else 1.0
+        max_score = max(scores)
 
         high = sum(1 for s in scores if s >= max_score * 0.8)
         medium = sum(1 for s in scores if max_score * 0.4 <= s < max_score * 0.8)
@@ -158,8 +157,8 @@ class RetrievalService:
     def __init__(
         self,
         memory_store: Any,
-        vector_index_adapter: Optional[Any] = None,
-        ranker: Optional[HybridRetrievalRanker] = None,
+        vector_index_adapter: Any | None = None,
+        ranker: HybridRetrievalRanker | None = None,
         enabled: bool = True,
     ) -> None:
         self._record_store = memory_store
@@ -172,11 +171,11 @@ class RetrievalService:
     def retrieve(
         self,
         query: str,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         top_k: int = 10,
-        scope: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        project_id: Optional[str] = None,
+        scope: str | None = None,
+        agent_id: str | None = None,
+        project_id: str | None = None,
     ) -> tuple[list[RetrievalResult], RetrievalDiagnostics]:
         if not self._enabled:
             return [], RetrievalDiagnostics(
@@ -217,7 +216,7 @@ class RetrievalService:
 
 def create_retrieval_service(
     db_path: str,
-    vector_index_adapter: Optional[Any] = None,
+    vector_index_adapter: Any | None = None,
     enabled: bool = True,
 ) -> RetrievalService:
     from .memory_store import create_memory_record_store

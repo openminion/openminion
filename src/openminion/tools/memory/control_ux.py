@@ -66,42 +66,56 @@ def run_memory_control_scenario(
 ) -> MemoryControlScenarioResult:
     """Run explicit write/search/correction/forget without inferring semantics."""
 
-    original_id = _write_record(
+    original_payload = _execute_memory_call(
         registry=registry,
         context=context,
+        name="memory.write",
+        arguments={
+            "scope": scenario.scope,
+            "record_type": scenario.record_type,
+            "title": scenario.title,
+            "content": scenario.content,
+            "tags": list(scenario.tags),
+        },
         call_id="mcux-write-original",
-        scope=scenario.scope,
-        record_type=scenario.record_type,
-        title=scenario.title,
-        content=scenario.content,
-        tags=list(scenario.tags),
     )
-    search_payload = _search_records(
+    original_id = str(original_payload["record_id"])
+    search_payload = _execute_memory_call(
         registry=registry,
         context=context,
-        query=scenario.search_query,
-        scope=scenario.scope,
-        record_type=scenario.record_type,
+        name="memory.search",
+        arguments={
+            "query": scenario.search_query,
+            "scopes": [scenario.scope],
+            "types": [scenario.record_type],
+            "limit": 5,
+        },
+        call_id="mcux-search-original",
     )
     correction_content = _correction_payload(
         scenario.correction_content,
         corrects_record_id=original_id,
     )
-    correction_id = _write_record(
+    correction_payload = _execute_memory_call(
         registry=registry,
         context=context,
+        name="memory.write",
+        arguments={
+            "scope": scenario.scope,
+            "record_type": scenario.record_type,
+            "title": scenario.correction_title,
+            "content": correction_content,
+            "tags": [*scenario.tags, "correction"],
+        },
         call_id="mcux-write-correction",
-        scope=scenario.scope,
-        record_type=scenario.record_type,
-        title=scenario.correction_title,
-        content=correction_content,
-        tags=[*scenario.tags, "correction"],
     )
-    forget_payload = _forget_record(
+    correction_id = str(correction_payload["record_id"])
+    forget_payload = _execute_memory_call(
         registry=registry,
         context=context,
-        record_id=original_id,
-        reason=scenario.forget_reason,
+        name="memory.forget",
+        arguments={"record_id": original_id, "reason": scenario.forget_reason},
+        call_id="mcux-forget-original",
     )
     audit_events = _memory_audit_events(context)
     return MemoryControlScenarioResult(
@@ -144,81 +158,20 @@ def format_memory_control_summary(result: MemoryControlScenarioResult) -> str:
     return "\n".join(lines)
 
 
-def _write_record(
+def _execute_memory_call(
     *,
     registry: ToolRegistry,
     context: ToolExecutionContext,
+    name: str,
+    arguments: dict[str, Any],
     call_id: str,
-    scope: str,
-    record_type: str,
-    title: str,
-    content: dict[str, Any] | str,
-    tags: list[str],
-) -> str:
+) -> dict[str, Any]:
     result = registry.execute_calls(
         [
             ProviderToolCall(
-                name="memory.write",
-                arguments={
-                    "scope": scope,
-                    "record_type": record_type,
-                    "title": title,
-                    "content": content,
-                    "tags": tags,
-                },
+                name=name,
+                arguments=arguments,
                 id=call_id,
-                source="memory-control-ux",
-            )
-        ],
-        context=context,
-    ).results[0]
-    if not result.ok:
-        raise RuntimeError(result.content or result.error)
-    return str(result.data["record_id"])
-
-
-def _search_records(
-    *,
-    registry: ToolRegistry,
-    context: ToolExecutionContext,
-    query: str,
-    scope: str,
-    record_type: str,
-) -> dict[str, Any]:
-    result = registry.execute_calls(
-        [
-            ProviderToolCall(
-                name="memory.search",
-                arguments={
-                    "query": query,
-                    "scopes": [scope],
-                    "types": [record_type],
-                    "limit": 5,
-                },
-                id="mcux-search-original",
-                source="memory-control-ux",
-            )
-        ],
-        context=context,
-    ).results[0]
-    if not result.ok:
-        raise RuntimeError(result.content or result.error)
-    return dict(result.data)
-
-
-def _forget_record(
-    *,
-    registry: ToolRegistry,
-    context: ToolExecutionContext,
-    record_id: str,
-    reason: str,
-) -> dict[str, Any]:
-    result = registry.execute_calls(
-        [
-            ProviderToolCall(
-                name="memory.forget",
-                arguments={"record_id": record_id, "reason": reason},
-                id="mcux-forget-original",
                 source="memory-control-ux",
             )
         ],
@@ -238,7 +191,7 @@ def _correction_payload(
         payload = dict(content)
     else:
         payload = {"text": str(content)}
-    payload["corrects_record_id"] = str(corrects_record_id)
+    payload["corrects_record_id"] = corrects_record_id
     return payload
 
 

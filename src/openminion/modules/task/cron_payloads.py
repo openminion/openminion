@@ -61,8 +61,7 @@ def watch_terminal_state(
     summary: str,
 ) -> dict[str, Any]:
     terminal_reason = ""
-    deliver = bool(condition_met)
-    terminal = bool(condition_met)
+    deliver = terminal = condition_met
     if checks_completed >= _int_or_default(
         watch.get("max_checks"),
         DEFAULT_WATCH_MAX_CHECKS,
@@ -138,9 +137,11 @@ def _resolved_payload(*, job: dict[str, Any], payload: dict[str, Any] | None) ->
 
 
 def _request_session_id(*, payload: Any, run: dict[str, Any]) -> str:
-    payload_session_id = ""
-    if isinstance(payload, dict):
-        payload_session_id = str(payload.get("session_id", "") or "").strip()
+    payload_session_id = (
+        str(payload.get("session_id", "") or "").strip()
+        if isinstance(payload, dict)
+        else ""
+    )
     isolated_session_id = str(run.get("isolated_session_id", "") or "").strip()
     return payload_session_id or isolated_session_id or "cron-session"
 
@@ -188,23 +189,26 @@ def _add_consolidation_cron_meta(
     cron_meta["memory_consolidation_target_scope"] = str(
         consolidation.get("target_scope", "") or ""
     ).strip()
-    cron_meta["memory_consolidation_batch_limit"] = str(
-        _int_or_default(
-            consolidation.get("batch_limit"), DEFAULT_CONSOLIDATION_BATCH_LIMIT
-        )
-    )
-    cron_meta["memory_consolidation_max_iterations"] = str(
-        _int_or_default(
-            consolidation.get("max_iterations"),
+    for metadata_key, source_key, default in (
+        (
+            "memory_consolidation_batch_limit",
+            "batch_limit",
+            DEFAULT_CONSOLIDATION_BATCH_LIMIT,
+        ),
+        (
+            "memory_consolidation_max_iterations",
+            "max_iterations",
             DEFAULT_CONSOLIDATION_MAX_ITERATIONS,
-        )
-    )
-    cron_meta["memory_consolidation_timeout_seconds"] = str(
-        _int_or_default(
-            consolidation.get("timeout_seconds"),
+        ),
+        (
+            "memory_consolidation_timeout_seconds",
+            "timeout_seconds",
             DEFAULT_CONSOLIDATION_TIMEOUT_SECONDS,
+        ),
+    ):
+        cron_meta[metadata_key] = str(
+            _int_or_default(consolidation.get(source_key), default)
         )
-    )
 
 
 def _add_watch_cron_meta(cron_meta: dict[str, str], watch: dict[str, Any]) -> None:
@@ -236,16 +240,11 @@ def _add_watch_cron_meta(cron_meta: dict[str, str], watch: dict[str, Any]) -> No
 
 
 def _watch_allowed_tools_text(watch: dict[str, Any]) -> str:
-    return ",".join(
-        [
-            str(item).strip()
-            for item in list(
-                watch.get("allowed_tools", WATCH_DEFAULT_ALLOWED_TOOLS)
-                or WATCH_DEFAULT_ALLOWED_TOOLS
-            )
-            if str(item).strip()
-        ]
+    items = (
+        watch.get("allowed_tools", WATCH_DEFAULT_ALLOWED_TOOLS)
+        or WATCH_DEFAULT_ALLOWED_TOOLS
     )
+    return ",".join(str(item).strip() for item in items if str(item).strip())
 
 
 def _request_timeout_seconds(payload: Any, watch_metadata: MetadataResolver) -> int:

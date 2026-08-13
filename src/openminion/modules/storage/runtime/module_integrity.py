@@ -10,7 +10,6 @@ def _resolve(path: str | Path) -> Path:
 
 
 def _report_to_dict(report: Any) -> dict[str, Any]:
-    """Serialize storage reports through their explicit model contract."""
     if hasattr(report, "to_dict"):
         return report.to_dict()
     if hasattr(report, "model_dump"):

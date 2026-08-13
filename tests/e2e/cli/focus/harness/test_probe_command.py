@@ -51,6 +51,7 @@ def test_focus_probe_does_not_add_demo_flag_for_real_provider(tmp_path: Path) ->
 
     assert probe.uses_echo_agent() is False
     assert "--demo" not in probe.command()
+    assert "--allow-unsandboxed-exec" in probe.command()
 
 
 def test_focus_probe_child_home_is_outside_package_checkout(tmp_path: Path) -> None:

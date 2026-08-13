@@ -31,6 +31,15 @@ from .selectors import SelectorAdapter
 from .snapshots import SnapshotAdapter
 
 
+def _close_safely(resource: Any | None) -> None:
+    if resource is None:
+        return
+    try:
+        resource.close()
+    except Exception:
+        pass
+
+
 class PlaywrightProvider:
     provider_id = BROWSER_PROVIDER_PLAYWRIGHT
     provider_version = "1"
@@ -182,20 +191,9 @@ class PlaywrightProvider:
         del ctx
         inst = self._instances.remove(instance_id)
         for tab in self._tabs.clear_for_instance(instance_id):
-            try:
-                tab.page.close()
-            except Exception:
-                pass
-
-        try:
-            inst.context.close()
-        except Exception:
-            pass
-        if inst.browser is not None:
-            try:
-                inst.browser.close()
-            except Exception:
-                pass
+            _close_safely(tab.page)
+        _close_safely(inst.context)
+        _close_safely(inst.browser)
 
         if len(self._instances) == 0:
             self._shutdown_playwright()
@@ -213,10 +211,8 @@ class PlaywrightProvider:
         self, ctx: BrowserProviderContext | None = None
     ) -> dict[str, Any]:
         del ctx
-        rows = self._instances.list()
-        instances: list[dict[str, str | bool | None]] = []
-        for row in rows:
-            instances.append(
+        return {
+            "instances": [
                 {
                     "id": row.id,
                     "profile": row.profile,
@@ -224,8 +220,9 @@ class PlaywrightProvider:
                     "browser": row.browser_name,
                     "persistent": row.persistent,
                 }
-            )
-        return {"instances": instances}
+                for row in self._instances.list()
+            ]
+        }
 
     def instance_kill(
         self, ctx: BrowserProviderContext | None = None, instance_id: str = ""
@@ -261,23 +258,19 @@ class PlaywrightProvider:
         del ctx
         if instance_id:
             self._instances.get(instance_id)
-        rows = self._tabs.list(instance_id=instance_id)
-        tabs: list[dict[str, str]] = []
-        for row in rows:
-            tabs.append(
+        return {
+            "tabs": [
                 {"id": row.id, "url": safe_url(row.page), "title": safe_title(row.page)}
-            )
-        return {"tabs": tabs}
+                for row in self._tabs.list(instance_id=instance_id)
+            ]
+        }
 
     def tab_close(
         self, ctx: BrowserProviderContext | None = None, tab_id: str = ""
     ) -> dict[str, Any]:
         del ctx
         tab = self._tabs.remove(tab_id)
-        try:
-            tab.page.close()
-        except Exception:
-            pass
+        _close_safely(tab.page)
         return {
             "tab": {
                 "id": tab.id,
@@ -290,8 +283,7 @@ class PlaywrightProvider:
     def navigate(self, *, tab_id: str, url: str) -> dict[str, Any]:
         tab = self._tabs.get(tab_id)
         self._enforce_network_policy(url)
-        key = self._lock_key(tab_id)
-        with self._locks.action_lock(key):
+        with self._locks.action_lock(self._lock_key(tab_id)):
             response = tab.page.goto(url, timeout=self.config.timeouts.navigation_ms)
         return {
             "tab": {

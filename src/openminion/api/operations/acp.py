@@ -101,7 +101,7 @@ class OpenMinionACPAgent:
         session_id = uuid4().hex
         self._runtime.sessions.resolve_session(
             agent_id=resolve_default_agent_id(self._runtime.config),
-            channel=_SURFACE,
+            channel=_runtime_channel(self._runtime),
             target="local-client",
             session_id=session_id,
             metadata={"surface": _SURFACE, "workspace_root": str(workspace)},

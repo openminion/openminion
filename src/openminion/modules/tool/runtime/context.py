@@ -24,7 +24,6 @@ from .delegation import A2ADelegateApi
 from .memory import MemoryToolRuntimeService
 from .policy import Policy
 from .repositories import (
-    LazyRepositoryHandle,
     RuntimeRepositories,
     build_runtime_repositories,
 )
@@ -368,7 +367,3 @@ class RuntimeContext:
             audit_repo.append_event(payload, run_root=self.run_root)
         except Exception:
             return
-
-
-# Suppress "imported but unused" — LazyRepositoryHandle re-exported via __init__.
-_ = LazyRepositoryHandle

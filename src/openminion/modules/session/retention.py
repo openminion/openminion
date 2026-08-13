@@ -116,9 +116,10 @@ class SessionRetentionService:
         )
         if not rows:
             return False
-        now = _to_iso(_utc_now())
         changed = self._record_store.update_rows(
-            "session_retention_holds", {"hold_id": hold_id}, {"released_at": now}
+            "session_retention_holds",
+            {"hold_id": hold_id},
+            {"released_at": _to_iso(_utc_now())},
         )
         session_id = str(rows[0]["session_id"])
         self.store.append_event(
@@ -156,8 +157,7 @@ class SessionRetentionService:
             raise SessionRetentionSnapshotChangedError(
                 "retention candidate snapshot changed"
             )
-        blocked = [item for item in fresh.candidates if item.blockers]
-        if blocked and not override_blockers:
+        if any(item.blockers for item in fresh.candidates) and not override_blockers:
             raise SessionRetentionBlockedError("retention purge has active blockers")
         deleted: dict[str, int] = {}
         for candidate in fresh.candidates:
@@ -166,7 +166,7 @@ class SessionRetentionService:
             "schema_version": SESSION_RETENTION_PLAN_VERSION,
             "purged_session_count": len(fresh.candidates),
             "deleted_rows": deleted,
-            "override_blockers": bool(override_blockers),
+            "override_blockers": override_blockers,
         }
 
     def _candidate_rows(
@@ -296,9 +296,7 @@ def _retention_reason(
 
 
 def _snapshot_hash(candidates: list[dict[str, Any]]) -> str:
-    return hashlib.sha256(
-        json.dumps(candidates, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(candidates, sort_keys=True).encode()).hexdigest()
 
 
 def _utc_now() -> datetime:
@@ -310,7 +308,7 @@ def _to_iso(value: datetime) -> str:
 
 
 def _parse_iso(value: str) -> datetime:
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)

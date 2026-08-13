@@ -358,15 +358,41 @@ def _append_openai_like_message(
         enable_vision_input=enable_vision_input,
         supports_vision_input=supports_vision_input,
     )
+    role = msg.role if msg.role in {"system", "user", "assistant", "tool"} else "user"
+    if role == "assistant" and msg.tool_calls:
+        messages.append(
+            {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {
+                        "id": str(call.id or ""),
+                        "type": "function",
+                        "function": {
+                            "name": (
+                                str(
+                                    tool_name_overrides.get(call.name, call.name)
+                                ).strip()
+                                if tool_name_overrides
+                                else call.name
+                            ),
+                            "arguments": json.dumps(call.arguments, sort_keys=True),
+                        },
+                    }
+                    for call in msg.tool_calls
+                ],
+            }
+        )
+        return
     if isinstance(content, str) and not content:
         return
-    role = msg.role if msg.role in {"system", "user", "assistant", "tool"} else "user"
     if role != "tool":
         messages.append({"role": role, "content": content})
         return
     _append_openai_like_tool_message(
         messages,
         content=content,
+        tool_call_id=msg.tool_call_id,
         meta=dict(getattr(msg, "meta", {}) or {}),
         tool_name_overrides=tool_name_overrides,
     )
@@ -376,13 +402,24 @@ def _append_openai_like_tool_message(
     messages: list[dict[str, Any]],
     *,
     content: str | list[dict[str, Any]],
+    tool_call_id: str | None,
     meta: Mapping[str, Any],
     tool_name_overrides: Mapping[str, str] | None,
 ) -> None:
-    tool_call_id = str(meta.get("tool_call_id", "") or "").strip()
+    tool_call_id = str(tool_call_id or meta.get("tool_call_id", "") or "").strip()
     tool_name = str(meta.get("tool_name", "") or "").strip()
     tool_arguments = meta.get("tool_arguments", {})
+    if tool_call_id and not tool_name:
+        messages.append(
+            {"role": "tool", "content": content, "tool_call_id": tool_call_id}
+        )
+        return
     if not tool_call_id or not tool_name:
+        if meta.get("transcript_lane") != "legacy_history":
+            raise LLMCtlError(
+                "INVALID_ARGUMENT",
+                "Canonical tool result is missing tool_call_id",
+            )
         messages.append(
             {
                 "role": "system",

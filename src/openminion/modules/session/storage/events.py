@@ -88,13 +88,34 @@ class EventStore:
         event_id: str | None = None,
         timestamp: str | None = None,
     ) -> str:
+        event_id_value = event_id or uuid4().hex
+        existing = self.get_event_by_id(event_id_value)
+        if existing is not None:
+            expected = {
+                "session_id": session_id,
+                "event_type": event_type,
+                "actor_type": actor_type,
+                "actor_id": actor_id,
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "task_id": task_id,
+                "parent_event_id": parent_event_id,
+                "payload": dict(payload or {}),
+                "refs": dict(refs or {}),
+                "importance": max(0, min(importance, 3)),
+                "redaction": redaction,
+            }
+            observed = {key: existing.get(key) for key in expected}
+            if observed == expected:
+                return event_id_value
+            raise ValueError(f"session event idempotency conflict: {event_id_value}")
+
         rows = self._rs.query_dicts(
             "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM session_events WHERE session_id = ?",
             (session_id,),
         )
         row = rows[0] if rows else None
         next_seq = int(row["max_seq"]) + 1 if row is not None else 1
-        event_id_value = event_id or uuid4().hex
         timestamp_value = timestamp or datetime.now(timezone.utc).isoformat()
         self._rs.execute_count(
             """
@@ -119,7 +140,7 @@ class EventStore:
                 parent_event_id,
                 to_json(dict(payload or {})),
                 to_json(dict(refs or {})) if refs is not None else None,
-                self._clamp_importance(importance),
+                max(0, min(importance, 3)),
                 redaction,
             ),
         )
@@ -398,7 +419,6 @@ class EventStore:
         return active_plan.model_dump(mode="json")
 
     def get_pending_trailer_feedback(self, session_id: str) -> dict[str, Any] | None:
-        """Return the latest unconsumed trailer.feedback_pending payload."""
         rows = self._rs.query_dicts(
             """
             SELECT event_id, session_id, seq, timestamp, event_type, actor_type, actor_id,
@@ -415,7 +435,6 @@ class EventStore:
             event = row_to_session_event(row)
             event_type = str(event.get("event_type") or "")
             if event_type == "trailer.feedback_surfaced":
-                # Most recent feedback event is already consumed.
                 return None
             if event_type == "trailer.feedback_pending":
                 payload = event.get("payload")
@@ -620,10 +639,4 @@ class EventStore:
             items.append(item)
 
         items.reverse()
-        if len(items) > safe_limit:
-            return items[-safe_limit:]
-        return items
-
-    @staticmethod
-    def _clamp_importance(value: int) -> int:
-        return max(0, min(int(value), 3))
+        return items[-safe_limit:]

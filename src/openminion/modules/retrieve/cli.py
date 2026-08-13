@@ -24,6 +24,20 @@ from openminion.modules.storage.module_cli import (
 _STRATEGY_CHOICES = ["auto", "contextual", "semantic", "raptor", "longrag_doc_group"]
 
 
+def _add_query_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--query", required=True)
+    parser.add_argument(
+        "--purpose",
+        default="act",
+        choices=["plan", "act", "verify", "summarize", "decide"],
+    )
+    parser.add_argument("--k", type=int, default=8)
+    parser.add_argument("--strategy", default="auto", choices=_STRATEGY_CHOICES)
+    for name in ("scope", "tags", "types"):
+        parser.add_argument(f"--{name}", default="")
+    parser.add_argument("--time-window-hours", type=int, default=None)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="retrievectl", description="openminion-retrieve local-first CLI"
@@ -56,41 +70,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--unit-kind", default="chunk", choices=["chunk", "doc_group", "document"]
     )
 
-    retrieve = sub.add_parser("retrieve", help="Run retrieval")
-    retrieve.add_argument("--query", required=True)
-    retrieve.add_argument(
-        "--purpose",
-        default="act",
-        choices=["plan", "act", "verify", "summarize", "decide"],
-    )
-    retrieve.add_argument("--k", type=int, default=8)
-    retrieve.add_argument(
-        "--strategy",
-        default="auto",
-        choices=_STRATEGY_CHOICES,
-    )
-    retrieve.add_argument("--scope", default="")
-    retrieve.add_argument("--tags", default="")
-    retrieve.add_argument("--types", default="")
-    retrieve.add_argument("--time-window-hours", type=int, default=None)
-
-    diagnose = sub.add_parser("diagnose", help="Explain a retrieval query pipeline")
-    diagnose.add_argument("--query", required=True)
-    diagnose.add_argument(
-        "--purpose",
-        default="act",
-        choices=["plan", "act", "verify", "summarize", "decide"],
-    )
-    diagnose.add_argument("--k", type=int, default=8)
-    diagnose.add_argument(
-        "--strategy",
-        default="auto",
-        choices=_STRATEGY_CHOICES,
-    )
-    diagnose.add_argument("--scope", default="")
-    diagnose.add_argument("--tags", default="")
-    diagnose.add_argument("--types", default="")
-    diagnose.add_argument("--time-window-hours", type=int, default=None)
+    for name, help_text in (
+        ("retrieve", "Run retrieval"),
+        ("diagnose", "Explain a retrieval query pipeline"),
+    ):
+        _add_query_arguments(sub.add_parser(name, help=help_text))
 
     build = sub.add_parser("build-raptor", help="Build RAPTOR tree for a doc")
     build.add_argument("--doc-id", required=True)
@@ -171,20 +155,10 @@ def _run_retrieve_or_diagnose(
 ) -> int:
     scope = _scope_from_arg(args.scope)
     filters = _retrieval_filters_from_args(args)
-    if args.command == "diagnose":
-        print_json_payload(
-            service.diagnose_retrieval(
-                query=args.query,
-                purpose=args.purpose,
-                scope=scope,
-                k=args.k,
-                strategy=args.strategy,
-                filters=filters,
-            )
-        )
-        return 0
-
-    rows = service.retrieve(
+    operation = (
+        service.diagnose_retrieval if args.command == "diagnose" else service.retrieve
+    )
+    payload = operation(
         query=args.query,
         purpose=args.purpose,
         scope=scope,
@@ -192,7 +166,7 @@ def _run_retrieve_or_diagnose(
         strategy=args.strategy,
         filters=filters,
     )
-    print_json_payload(rows)
+    print_json_payload(payload)
     return 0
 
 

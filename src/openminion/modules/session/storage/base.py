@@ -456,6 +456,9 @@ class SessionStore(ABC):
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
+    def get_tool_transcript(self, session_id: str) -> dict[str, Any]: ...
+
+    @abstractmethod
     def get_resume_state(self, session_id: str) -> dict[str, Any]: ...
 
     @abstractmethod

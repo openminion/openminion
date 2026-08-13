@@ -5,7 +5,7 @@ import hashlib
 import json
 import sys
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import (
@@ -183,8 +183,8 @@ def _request_hash(
     channel: str,
     target: str,
     body: str,
-    session_id: Optional[str],
-    inbound_metadata: Optional[dict[str, str]],
+    session_id: str | None,
+    inbound_metadata: dict[str, str] | None,
     typed_turn_intent: object | None = None,
 ) -> str:
     serialized_typed_turn_intent: object | None = None
@@ -209,8 +209,8 @@ def _request_hash(
 
 
 def _response_has_tool_activity(metadata: dict[str, str]) -> bool:
-    raw_tool_calls = str(metadata.get("tool_calls_count", "")).strip()
-    raw_tool_exec = str(metadata.get("tool_execution_count", "")).strip()
+    raw_tool_calls = metadata.get("tool_calls_count", "").strip()
+    raw_tool_exec = metadata.get("tool_execution_count", "").strip()
 
     tool_calls = int(raw_tool_calls) if raw_tool_calls.isdigit() else 0
     tool_exec = int(raw_tool_exec) if raw_tool_exec.isdigit() else 0
@@ -220,7 +220,7 @@ def _response_has_tool_activity(metadata: dict[str, str]) -> bool:
 def _correlation_payload(
     *,
     request_id: str,
-    payload: Optional[dict[str, Any]] = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     merged = dict(payload or {})
     if request_id:
@@ -228,15 +228,15 @@ def _correlation_payload(
     return merged
 
 
-def _normalize_metadata(metadata: Optional[dict[str, str]]) -> dict[str, str]:
-    if not isinstance(metadata, dict):
+def _normalize_metadata(metadata: dict[str, str] | None) -> dict[str, str]:
+    if metadata is None:
         return {}
     normalized: dict[str, str] = {}
     for raw_key, raw_value in metadata.items():
-        key = str(raw_key or "").strip()
+        key = raw_key.strip()
         if not key:
             continue
-        normalized[key] = str(raw_value or "").strip()
+        normalized[key] = raw_value.strip()
     return dict(sorted(normalized.items()))
 
 
@@ -244,8 +244,6 @@ def _extract_ephemeral_prompt_metadata(
     inbound_metadata: dict[str, str],
 ) -> dict[str, str]:
     """Return inbound metadata keys safe for prompt-time only hints."""
-    if not isinstance(inbound_metadata, dict):
-        return {}
     allowed_keys = {
         "cwd",
         "workspace_root",
@@ -262,7 +260,7 @@ def _extract_ephemeral_prompt_metadata(
     }
     extracted: dict[str, str] = {}
     for key in allowed_keys:
-        value = str(inbound_metadata.get(key, "") or "").strip()
+        value = inbound_metadata.get(key, "").strip()
         if value:
             extracted[key] = value
     return extracted

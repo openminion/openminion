@@ -124,7 +124,7 @@ class SessionContinuationService:
         state = _state_from_resume(resume)
         plan = _dict(self._store.get_active_task_plan(source_session_id))
         latest_seq = int(resume.get("latest_seq") or 0)
-        now = int(self._now_ms())
+        now = self._now_ms()
         checkpoint = _dict(resume.get("latest_checkpoint"))
         checkpoint_ref = str(
             checkpoint.get("checkpoint_id") or checkpoint.get("id") or ""
@@ -229,7 +229,7 @@ class SessionContinuationService:
         except ValueError as exc:
             code = (
                 "unsupported_continuation_schema"
-                if ("unsupported_continuation_schema" in str(exc))
+                if "unsupported_continuation_schema" in str(exc)
                 else "invalid_continuation_packet"
             )
             raise ContinuationError(code) from exc
@@ -439,8 +439,7 @@ class SessionContinuationService:
 
 
 def _optional_text(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
+    return str(value or "").strip() or None
 
 
 def _optional_ref(
@@ -460,12 +459,12 @@ def _preview_inputs(
     expires_in_seconds: int,
 ) -> tuple[str, str, int]:
     source_agent_id = str(source.get("active_agent_id") or "").strip()
-    target_agent = str(target_agent_id or "").strip()
+    target_agent = target_agent_id.strip()
     if not source_agent_id:
         raise ContinuationError("continuation_source_agent_missing")
     if not target_agent:
         raise ContinuationError("continuation_target_agent_required")
-    ttl = int(expires_in_seconds)
+    ttl = expires_in_seconds
     if ttl <= 0 or ttl > MAX_CONTINUATION_TTL_SECONDS:
         raise ContinuationError("invalid_continuation_expiry")
     return source_agent_id, target_agent, ttl
@@ -520,8 +519,7 @@ def _optional_nonnegative_int(value: Any) -> int | None:
 
 
 def working_version(resume: dict[str, Any]) -> str:
-    working = _dict(resume.get(STATE_KEY_WORKING))
-    return str(working.get("version") or "unknown")
+    return str(_dict(resume.get(STATE_KEY_WORKING)).get("version") or "unknown")
 
 
 def _ref_count(payload: SessionContinuationPayload) -> int:

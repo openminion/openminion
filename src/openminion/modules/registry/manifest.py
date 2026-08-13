@@ -53,9 +53,7 @@ def load_manifest(path: str | Path) -> list[AgentDescriptor]:
     for index, item in enumerate(agents):
         try:
             out.append(AgentDescriptor.model_validate(item))
-        except (
-            Exception
-        ) as exc:  # pragma: no cover - pydantic details carry line context
+        except Exception as exc:  # pragma: no cover - pydantic details carry context
             raise AgentRegError(
                 "INVALID_MANIFEST",
                 f"Invalid agent descriptor at index {index}",

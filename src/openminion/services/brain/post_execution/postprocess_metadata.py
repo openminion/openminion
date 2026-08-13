@@ -39,7 +39,7 @@ def _build_turn_response_metadata(
         runner=runner,
         session_id=session_id,
         trace_id=request_id,
-        fallback_total_llm_calls=max(0, int(llm_steps)),
+        fallback_total_llm_calls=max(0, llm_steps),
     )
     action_outputs = getattr(getattr(step_out, "action_result", None), "outputs", None)
     if not isinstance(action_outputs, dict):
@@ -61,11 +61,10 @@ def _build_turn_response_metadata(
         session_id=session_id,
         trace_id=request_id,
     )
-    if total_tokens_used <= 0:
-        if event_total_tokens > 0:
-            total_input_tokens_used = event_input_tokens
-            total_output_tokens_used = event_output_tokens
-            total_tokens_used = event_total_tokens
+    if total_tokens_used <= 0 and event_total_tokens > 0:
+        total_input_tokens_used = event_input_tokens
+        total_output_tokens_used = event_output_tokens
+        total_tokens_used = event_total_tokens
     tool_calls_count = int(action_outputs.get("tool_calls_count", 0) or 0)
     _default_agent_id = resolve_default_agent_id(self._config)
     return {
@@ -79,7 +78,7 @@ def _build_turn_response_metadata(
         "turn_duration_ms": str(int(elapsed_ms)),
         "brain_status": str(getattr(step_out, "status", "completed")),
         "llm_call_counts_by_purpose": json.dumps(llm_call_counts, sort_keys=True),
-        "llm_calls_count": str(sum(int(v) for v in llm_call_counts.values())),
+        "llm_calls_count": str(sum(llm_call_counts.values())),
         "tool_calls_count": str(tool_calls_count),
         "total_input_tokens_used": str(total_input_tokens_used),
         "total_output_tokens_used": str(total_output_tokens_used),
@@ -147,7 +146,6 @@ def _attach_tool_result_metadata(
     if not tool_results_payload:
         return
     metadata["tool_contract_version"] = CONTRACT_VERSION_V2
-    ok_all = all(bool(item.get("ok")) for item in tool_results_payload)
     metadata["tool_calls_count"] = str(len(tool_results_payload))
     metadata["tool_execution_count"] = str(len(tool_results_payload))
     metadata["tool_verified"] = str(
@@ -158,7 +156,7 @@ def _attach_tool_result_metadata(
         sort_keys=True,
         default=str,
     )
-    if not ok_all:
+    if not all(bool(item.get("ok")) for item in tool_results_payload):
         metadata["tool_loop_termination_reason"] = (
             termination_reason
             if termination_reason

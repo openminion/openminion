@@ -11,10 +11,7 @@ def theme_variables_dict(theme: Theme) -> dict[str, str]:
 def as_tcss_preamble(theme: Theme) -> str:
     lines = [
         f"/* OpenMinion shared theme: {theme.name} */",
-        *(
-            f"${name}: {value};"
-            for name, value in theme_variables_dict(theme).items()
-        ),
+        *(f"${name}: {value};" for name, value in theme_variables_dict(theme).items()),
     ]
     return "\n".join(lines) + "\n"
 

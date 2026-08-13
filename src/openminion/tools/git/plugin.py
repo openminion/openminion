@@ -160,10 +160,6 @@ class GitCheckoutArgs(_StrictModel):
     )
 
 
-# NGT-03 index + commit + stash. Args models stay strict (`extra="forbid"`)
-# so the model can't sneak unsupported flags into the call.
-
-
 class GitAddArgs(_StrictModel):
     paths: list[str] = Field(
         ...,
@@ -228,9 +224,6 @@ class GitStashArgs(_StrictModel):
     )
 
 
-# NGT-04 recovery ops.
-
-
 class GitResetArgs(_StrictModel):
     ref: str = Field(
         ...,
@@ -266,11 +259,7 @@ class GitReflogArgs(_StrictModel):
 
 
 def _scoped_path(ctx: RuntimeContext, raw_path: str | None, operation: str) -> str:
-    """Resolve `raw_path` against the workspace boundary. Raises a
-    `ToolRuntimeError(GIT_PATH_OUTSIDE_WORKSPACE)` if the path escapes the
-    workspace — even though the underlying file-plugin resolver raises
-    `POLICY_DENIED`, we re-wrap so the catalog code reflects the git
-    family. Paths that are `None` or empty pass through unchanged."""
+    """Resolve a path within the workspace and translate policy denial to Git."""
 
     if raw_path is None:
         return ""
@@ -423,8 +412,10 @@ def _h_branch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     if action == "list":
         result = run_git(("branch",), cwd=cwd)
         _require_success(result)
-        entries = branch_list_to_dict(parse_branch_list(result.stdout))
-        parsed: dict[str, Any] = {"action": "list", "branches": entries}
+        parsed: dict[str, Any] = {
+            "action": "list",
+            "branches": branch_list_to_dict(parse_branch_list(result.stdout)),
+        }
         return _ok_result(result=result, parsed=parsed)
 
     if action == "create":
@@ -454,7 +445,6 @@ def _h_branch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
     confirm = bool(args.get("confirm", False))
     if force and not confirm:
-        # force-delete is destructive. Require explicit `confirm=True`;
         raise ToolRuntimeError(
             GIT_DESTRUCTIVE_NOT_APPROVED,
             (
@@ -484,8 +474,6 @@ VALID_STASH_ACTIONS: tuple[str, ...] = (
     "drop",
     "clear",
 )
-# Stash actions that require explicit `confirm=True` because they destroy
-# stash entries (or all of them) without a working-tree reflection.
 _STASH_DESTRUCTIVE_ACTIONS: tuple[str, ...] = ("drop", "clear")
 VALID_RESET_MODES: tuple[str, ...] = ("mixed", "soft", "hard")
 
@@ -514,12 +502,9 @@ def _resolve_explicit_paths(args: dict[str, Any], ctx: RuntimeContext) -> list[s
 def _h_add(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     resolved_paths = _resolve_explicit_paths(args, ctx)
 
-    cmd: list[str] = ["add", "--"] + resolved_paths
-    result = run_git(tuple(cmd), cwd=_workspace_cwd(ctx))
+    result = run_git(("add", "--", *resolved_paths), cwd=_workspace_cwd(ctx))
     _require_success(result)
-    parsed = {
-        "added_paths": resolved_paths,
-    }
+    parsed = {"added_paths": resolved_paths}
     return _ok_result(result=result, parsed=parsed)
 
 
@@ -651,45 +636,17 @@ def _h_stash(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             },
         )
 
-    if action == "apply":
-        apply_cmd: list[str] = ["stash", "apply"]
+    if action in ("apply", "pop", "drop"):
+        stash_ref = f"stash@{{{index}}}" if isinstance(index, int) else "stash@{0}"
+        cmd = ["stash", action]
         if isinstance(index, int) and index >= 0:
-            apply_cmd.append(f"stash@{{{index}}}")
-        result = run_git(tuple(apply_cmd), cwd=cwd)
-        if result.exit_code != 0:
-            raise classify_git_failure(result)
-        parsed = {
-            "action": "apply",
-            "ref": f"stash@{{{index}}}" if isinstance(index, int) else "stash@{0}",
-        }
-        return _ok_result(result=result, parsed=parsed)
-
-    if action == "pop":
-        pop_cmd: list[str] = ["stash", "pop"]
-        if isinstance(index, int) and index >= 0:
-            pop_cmd.append(f"stash@{{{index}}}")
-        result = run_git(tuple(pop_cmd), cwd=cwd)
-        if result.exit_code != 0:
-            raise classify_git_failure(result)
-        parsed = {
-            "action": "pop",
-            "ref": f"stash@{{{index}}}" if isinstance(index, int) else "stash@{0}",
-        }
-        return _ok_result(result=result, parsed=parsed)
-
-    if action == "drop":
-        drop_cmd: list[str] = ["stash", "drop"]
-        if isinstance(index, int) and index >= 0:
-            drop_cmd.append(f"stash@{{{index}}}")
-        result = run_git(tuple(drop_cmd), cwd=cwd)
-        if result.exit_code != 0:
-            raise classify_git_failure(result)
-        parsed = {
-            "action": "drop",
-            "ref": f"stash@{{{index}}}" if isinstance(index, int) else "stash@{0}",
-            "confirmed": True,
-        }
-        return _ok_result(result=result, parsed=parsed)
+            cmd.append(stash_ref)
+        result = run_git(tuple(cmd), cwd=cwd)
+        _require_success(result)
+        entry_parsed: dict[str, Any] = {"action": action, "ref": stash_ref}
+        if action == "drop":
+            entry_parsed["confirmed"] = True
+        return _ok_result(result=result, parsed=entry_parsed)
 
     result = run_git(("stash", "clear"), cwd=cwd)
     if result.exit_code != 0:
@@ -731,8 +688,7 @@ def _h_reset(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
     cmd: tuple[str, ...] = ("reset", f"--{mode}", ref)
     result = run_git(cmd, cwd=_workspace_cwd(ctx))
-    if result.exit_code != 0:
-        raise classify_git_failure(result)
+    _require_success(result)
     parsed = {
         "ref": ref,
         "mode": mode,
@@ -762,8 +718,7 @@ def _h_checkout(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
     cwd = _workspace_cwd(ctx)
     result = run_git(("checkout", ref), cwd=cwd)
-    if result.exit_code != 0:
-        raise classify_git_failure(result)
+    _require_success(result)
 
     head_probe = run_git(("rev-parse", "--abbrev-ref", "HEAD"), cwd=cwd)
     detached = False

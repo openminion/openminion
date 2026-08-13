@@ -168,8 +168,7 @@ class HybridStore:
         archive_root: str | Path | None = None,
         namespace: str | None = None,
     ) -> ReindexReport:
-        report = ReindexReport()
-        report.dry_run = bool(dry_run)
+        report = ReindexReport(dry_run=bool(dry_run))
         if not from_fs:
             return report
 
@@ -200,11 +199,9 @@ class HybridStore:
                     "skipped": 0,
                 }
                 report.file_reports.append(file_report)
-                line_no = 0
                 try:
                     with file_path.open("r", encoding="utf-8") as fh:
-                        for line in fh:
-                            line_no += 1
+                        for line_no, line in enumerate(fh, start=1):
                             file_report["scanned_lines"] += 1
                             report.scanned_lines += 1
                             if not line.strip():
@@ -696,9 +693,7 @@ class HybridStore:
         self, namespace: str | None, *, apply_default: bool
     ) -> str | None:
         if namespace is None:
-            if apply_default:
-                return self.default_namespace
-            return None
+            return self.default_namespace if apply_default else None
         return normalize_namespace(namespace)
 
     def _namespace_storage_value(self, namespace: str | None) -> str:

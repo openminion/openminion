@@ -4,8 +4,6 @@ from typing import Any
 
 @dataclass
 class BranchEntry:
-    """Single line of `git branch` output."""
-
     name: str
     is_current: bool
 
@@ -35,8 +33,6 @@ def branch_list_to_dict(entries: list[BranchEntry]) -> list[dict[str, Any]]:
 
 @dataclass
 class ReflogEntry:
-    """A single line of `git reflog` (default format)."""
-
     sha: str
     ref: str
     action: str
@@ -90,13 +86,8 @@ def reflog_to_dict(entries: list[ReflogEntry]) -> list[dict[str, Any]]:
     ]
 
 
-# git stash list
-
-
 @dataclass
 class StashEntry:
-    """A single line of `git stash list` output."""
-
     index: int
     ref: str
     branch: str
@@ -104,8 +95,6 @@ class StashEntry:
 
 
 def parse_stash_list(stdout: str) -> list[StashEntry]:
-    """Parse `git stash list` output."""
-
     entries: list[StashEntry] = []
     for line in stdout.splitlines():
         if not line:
@@ -159,8 +148,6 @@ def stash_list_to_dict(entries: list[StashEntry]) -> list[dict[str, Any]]:
 
 @dataclass
 class StatusEntry:
-    """A single file entry in `git status --porcelain=v2 --branch` output."""
-
     path: str
     index_status: str
     worktree_status: str
@@ -177,8 +164,6 @@ class StatusOutput:
 
 
 def parse_status_porcelain_v2(stdout: str) -> StatusOutput:
-    """Parse `git status --porcelain=v2 --branch` output."""
-
     branch = ""
     upstream = ""
     ahead = 0
@@ -311,10 +296,9 @@ def parse_log_output(stdout: str) -> list[LogEntry]:
     """Parse the stdout produced by `git log --pretty=format:LOG_PRETTY_FORMAT_ARG`."""
 
     entries: list[LogEntry] = []
-    raw = stdout
-    if not raw:
+    if not stdout:
         return entries
-    records = raw.split(LOG_RECORD_SEP)
+    records = stdout.split(LOG_RECORD_SEP)
     for record in records:
         record = record.strip("\n")
         if not record:
@@ -374,8 +358,7 @@ def parse_blame_porcelain(stdout: str) -> list[BlameLine]:
     author_date_unix = 0
     line_number = 0
 
-    iter_lines = iter(stdout.splitlines())
-    for line in iter_lines:
+    for line in stdout.splitlines():
         if not line:
             continue
         if line[0] in "0123456789abcdef" and len(line) >= 40 and " " in line:

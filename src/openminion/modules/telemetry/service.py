@@ -52,8 +52,6 @@ def build_execution_traceparent(invocation_id: str, execution_id: str) -> str:
 
 
 class TelemetryService:
-    """Service for recording and retrieving telemetry events."""
-
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -108,7 +106,6 @@ class TelemetryService:
 
     @property
     def contract_version(self) -> str:
-        """Interface contract version for this implementation."""
         return TELEMETRY_INTERFACE_VERSION
 
     async def close(self) -> None:
@@ -120,7 +117,6 @@ class TelemetryService:
         self._store.close()
 
     async def record_event(self, event: TelemetryEvent) -> bool:
-        """Record a telemetry event."""
         normalized = normalize_telemetry_event(event)
         local_event = self._content_policy_event(
             normalized, allow_sensitive_content=self._include_local_content
@@ -139,7 +135,6 @@ class TelemetryService:
         return created
 
     def record_event_sync(self, event: TelemetryEvent) -> bool:
-        """Record a telemetry event from sync runtime hooks."""
         normalized = normalize_telemetry_event(event)
         created = self._store.insert_event_if_absent(
             self._content_policy_event(
@@ -223,7 +218,6 @@ class TelemetryService:
     async def record_metric(
         self, name: str, value: float, tags: Optional[dict[str, str]] = None
     ) -> None:
-        """Record a metric event."""
         event = TelemetryEvent(
             session_id="metric",
             turn_id="metric",
@@ -233,7 +227,6 @@ class TelemetryService:
         await self.record_event(event)
 
     async def get_session_summary(self, session_id: str) -> SessionTelemetry:
-        """Get aggregated telemetry for a session."""
         rows = await asyncio.to_thread(self._store.fetch_session_events, session_id)
 
         tick_count = 0
@@ -288,8 +281,7 @@ class TelemetryService:
                 self._aggregate_module_operations(stats, data)
                 self._aggregate_module_counters(stats, data)
 
-                success = self._is_success_status(data)
-                if success:
+                if self._is_success_status(data):
                     stats.success_count += 1
                 else:
                     stats.error_count += 1
@@ -349,7 +341,6 @@ class TelemetryService:
         )
 
     async def get_module_summary(self, session_id: str) -> dict[str, dict[str, Any]]:
-        """Get module-level aggregated telemetry stats for a session."""
         summary = await self.get_session_summary(session_id)
         return {mid: stats.to_dict() for mid, stats in summary.module_stats.items()}
 
@@ -359,7 +350,6 @@ class TelemetryService:
         provider: str = "default",
         model: str = "default",
     ) -> CostSummary:
-        """Get cost summary for a session."""
         summary = await self.get_session_summary(session_id)
         cost = calculate_cost(
             summary.total_input_tokens,
@@ -510,8 +500,6 @@ class TelemetryService:
 
 
 class TelemetryCtl:
-    """Control interface for telemetry adapter wiring."""
-
     def __init__(self, service: TelemetryService) -> None:
         self._service = service
         self._execution_contexts: dict[tuple[str, str], dict[str, str]] = {}
@@ -576,7 +564,6 @@ class TelemetryCtl:
         elapsed_ms: float,
         mode: str | None = None,
     ) -> None:
-        """Emit a tick event."""
         await self._service.record_event(
             self._event(
                 session_id=session_id,
@@ -600,7 +587,6 @@ class TelemetryCtl:
         success: bool,
         mode: str | None = None,
     ) -> None:
-        """Emit a tool call event."""
         await self._service.record_event(
             self._event(
                 session_id=session_id,
@@ -625,7 +611,6 @@ class TelemetryCtl:
         cached_tokens: int = 0,
         mode: str | None = None,
     ) -> None:
-        """Emit an LLM call event with token usage."""
         await self._service.record_event(
             self._event(
                 session_id=session_id,
@@ -649,7 +634,6 @@ class TelemetryCtl:
         tokens: int,
         mode: str | None = None,
     ) -> None:
-        """Emit a context pack event."""
         await self._service.record_event(
             self._event(
                 session_id=session_id,
@@ -680,7 +664,6 @@ class TelemetryCtl:
         extra: Optional[dict[str, Any]] = None,
         mode: str | None = None,
     ) -> None:
-        """Emit module-level stats for one module invocation within a turn."""
         payload: dict[str, Any] = {
             "module_id": module_id,
             "status": status,
@@ -717,17 +700,15 @@ class TelemetryCtl:
         extra: Optional[dict[str, Any]] = None,
         mode: str | None = None,
     ) -> None:
-        """Emit a module operation count (for example run/stop/kill)."""
         op = str(operation or "").strip()
         if not op:
             raise ValueError("operation must be non-empty")
-        delta = int(count)
-        if delta < 0:
+        if count < 0:
             raise ValueError("operation_count must be non-negative")
 
         payload_extra: dict[str, Any] = {
             "operation": op,
-            "operation_count": delta,
+            "operation_count": count,
         }
         if extra:
             payload_extra.update(extra)
@@ -754,17 +735,15 @@ class TelemetryCtl:
         extra: Optional[dict[str, Any]] = None,
         mode: str | None = None,
     ) -> None:
-        """Emit a generic module counter/sum metric."""
         name = str(counter_name or "").strip()
         if not name:
             raise ValueError("counter_name must be non-empty")
-        numeric_value = float(value)
-        if numeric_value < 0:
+        if value < 0:
             raise ValueError("counter_value must be non-negative")
 
         payload_extra: dict[str, Any] = {
             "counter_name": name,
-            "counter_value": numeric_value,
+            "counter_value": value,
         }
         if extra:
             payload_extra.update(extra)
@@ -790,7 +769,6 @@ class TelemetryCtl:
         extra: Optional[dict[str, Any]] = None,
         mode: str | None = None,
     ) -> None:
-        """Convenience emitter for tool exec operations."""
         await self.emit_module_operation(
             session_id=session_id,
             turn_id=turn_id,
@@ -889,7 +867,6 @@ class TelemetryCtl:
 
     @property
     def contract_version(self) -> str:
-        """Interface contract version for this implementation."""
         return TELEMETRY_INTERFACE_VERSION
 
 
@@ -983,7 +960,6 @@ def create_telemetry_adapter(
     otel_exporter_config: OTELExporterConfig | None = None,
     external_exporter: TelemetryExporter | None = None,
 ) -> TelemetryCtl:
-    """Factory function to create a telemetry adapter."""
     service = TelemetryService(
         db_path,
         home_root=home_root,

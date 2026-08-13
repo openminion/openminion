@@ -46,9 +46,8 @@ class ContextCtlGatewayAdapter:
         self._enabled = True
         self._dual_render = contextctl_dual_render
         self._agent_id = agent_id
-        self._runtime_token_budget = max(0, int(runtime_token_budget))
+        self._runtime_token_budget = max(0, runtime_token_budget)
         self._session_client = session_client
-        # accept an injected memory client so the adapter does
         self._memory_client = memory_client
         self._log = logger or _logger
         if self._dual_render:
@@ -110,7 +109,6 @@ class ContextCtlGatewayAdapter:
     ) -> list[object]:
         """C-09: Select which history to pass to the agent."""
         if self._dual_render and contextctl_messages is not None:
-            # log parity diff for monitoring
             self._log_parity(
                 history_count=len(history),
                 contextctl_count=len(contextctl_messages),
@@ -119,8 +117,6 @@ class ContextCtlGatewayAdapter:
             )
 
         if contextctl_messages is not None:
-            # contextctl is default path
-
             converted = self._contextctl_to_history(contextctl_messages)
             self._log.debug(
                 "context_adapter: using contextctl messages count=%d session_id=%s",
@@ -141,13 +137,12 @@ class ContextCtlGatewayAdapter:
     ) -> Optional[list[ContextCtlMessage]]:
         """C-08: Attempt to build context pack via ctxctl."""
         try:
-            messages = self._call_ctxctl(
+            return self._call_ctxctl(
                 session_id=session_id,
                 agent_id=agent_id,
                 query=query,
                 purpose=purpose,
             )
-            return messages
         except Exception as exc:
             self._log.warning(
                 "context_adapter: ctxctl build_pack failed session_id=%s error=%s; "
@@ -245,17 +240,15 @@ class ContextCtlGatewayAdapter:
     def _contextctl_to_history(self, messages: list[ContextCtlMessage]) -> list[object]:
         from openminion.base.types import Message
 
-        result: list[Message] = []
-        for msg in messages:
-            result.append(
-                Message(
-                    channel="contextctl",
-                    target="",
-                    body=msg.content,
-                    metadata={"role": msg.role, "source": "contextctl"},
-                )
+        return [
+            Message(
+                channel="contextctl",
+                target="",
+                body=msg.content,
+                metadata={"role": msg.role, "source": "contextctl"},
             )
-        return result  # type: ignore[return-value]
+            for msg in messages
+        ]
 
     def _log_parity(
         self,
@@ -265,7 +258,6 @@ class ContextCtlGatewayAdapter:
         session_id: str,
         agent_id: str,
     ) -> None:
-        """C-08: Emit parity log for dual-render comparison monitoring."""
         self._log.info(
             "context_adapter dual_render: "
             "session_id=%s agent_id=%s history_count=%d contextctl_count=%d delta=%d",
@@ -275,9 +267,6 @@ class ContextCtlGatewayAdapter:
             contextctl_count,
             abs(history_count - contextctl_count),
         )
-
-
-# Session mapping + fallback stubs
 
 
 class _EchoIdentityClient:
@@ -318,11 +307,7 @@ class _RuntimeMappedSessionClient:
         self._store: Any | None = None
 
     def _ensure_ready(self) -> Any:
-        """Ensure migration has run and the connection/store are open.
-
-        Idempotent. Migration runs once per instance. The connection and
-        SessionStore are reused across `get_slice` calls.
-        """
+        """Open the migrated session store once."""
         from openminion.modules.storage.runtime.migrations import migrate_database
         from openminion.modules.storage.runtime.session_store import SessionStore
         from openminion.modules.storage.runtime.sqlite import connect_database
@@ -352,7 +337,6 @@ class _RuntimeMappedSessionClient:
         )
 
     def close(self) -> None:
-        """Close the cached connection if open. Idempotent."""
         if self._connection is not None:
             try:
                 self._connection.close()

@@ -7,34 +7,20 @@ from pathlib import Path
 from typing import Any
 
 from openminion.base.config.parse import split_comma_tokens
-from openminion.modules.tool.contracts.model_ids import (
-    MODEL_EXEC_CLEAR,
-    MODEL_EXEC_KILL,
-    MODEL_EXEC_LIST,
-    MODEL_EXEC_PASTE,
-    MODEL_EXEC_POLL,
-    MODEL_EXEC_RUN,
-    MODEL_EXEC_SEND_KEYS,
-    MODEL_EXEC_SUBMIT,
-)
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.context import RuntimeContext
 from openminion.modules.tool.family.events import emit_family_event
-from openminion.modules.brain.runtime.escalation import (
-    ActionRiskTier,
-)
 from openminion.tools.exec.hints import READ_ONLY_DISCOVERY_HINTS
 
 from .command_parser import (
     CommandParseError,
     ParseResult,
+    is_read_only_exec_command,
     parse_command,
 )
 from .constants import (
     EXEC_AGENT_ID_ENV,
     EXEC_ALLOWLIST_PATHS_ENV,
-    EXEC_APPROVAL_PENDING_STATUSES,
-    EXEC_ARTIFACT_THRESHOLD_BYTES,
     EXEC_DEBUG_PARSE_EVENT_ENV,
     EXEC_DENY_HOST_ENV_PREFIXES,
     EXEC_ENABLE_HOST_EXEC_ENV,
@@ -44,35 +30,6 @@ from .constants import (
     EXEC_SAFE_BIN_TRUSTED_DIRS_ENV,
 )
 from .process import ShellFamily, resolve_shell_family
-
-_ARTIFACT_THRESHOLD_BYTES = EXEC_ARTIFACT_THRESHOLD_BYTES
-_APPROVAL_PENDING_STATUSES = EXEC_APPROVAL_PENDING_STATUSES
-
-
-_KEY_ALIASES = {
-    "ENTER": b"\r",
-    "RETURN": b"\r",
-    "TAB": b"\t",
-    "BACKSPACE": b"\x7f",
-    "ESC": b"\x1b",
-    "UP": b"\x1b[A",
-    "DOWN": b"\x1b[B",
-    "LEFT": b"\x1b[D",
-    "RIGHT": b"\x1b[C",
-    "C-C": b"\x03",
-    "C-D": b"\x04",
-    "C-Z": b"\x1a",
-}
-_DECLARED_EXEC_RISK_TIERS: dict[str, ActionRiskTier] = {
-    MODEL_EXEC_RUN: "approve",
-    MODEL_EXEC_POLL: "silent",
-    MODEL_EXEC_SEND_KEYS: "approve",
-    MODEL_EXEC_SUBMIT: "approve",
-    MODEL_EXEC_PASTE: "approve",
-    MODEL_EXEC_KILL: "approve",
-    MODEL_EXEC_CLEAR: "approve",
-    MODEL_EXEC_LIST: "silent",
-}
 
 _CANONICAL_EXECUTABLE_ALIASES: dict[str, str] = {
     "python3": "python3.11",
@@ -327,6 +284,31 @@ def _is_under_trusted_dir(path: str, trusted_dirs: Iterable[str]) -> bool:
     return False
 
 
+def _direct_discovery_allowlist_details(
+    command: str,
+    *,
+    parsed: ParseResult,
+    shell_family: ShellFamily,
+) -> dict[str, Any] | None:
+    if (
+        len(parsed.segments) != 1
+        or parsed.operators
+        or parsed.segments[0].argv[0] not in {"command", "which"}
+        or not is_read_only_exec_command(command, shell_family=shell_family)
+    ):
+        return None
+    segment = parsed.segments[0]
+    return {
+        "checked": [
+            {
+                "segment": segment.raw,
+                "exec": segment.argv[0],
+                "path": "shell-discovery-builtin",
+            }
+        ]
+    }
+
+
 def _validate_host_allowlist(
     command: str,
     ctx: RuntimeContext,
@@ -365,6 +347,12 @@ def _validate_host_allowlist(
         parsed=parsed,
         validator="allowlist",
     )
+
+    discovery_details = _direct_discovery_allowlist_details(
+        command, parsed=parsed, shell_family=shell_family
+    )
+    if discovery_details is not None:
+        return True, "", discovery_details
 
     allowed_paths = _parse_allowlist_paths_from_env(ctx)
     safe_bins = _parse_safe_bins_from_env(ctx)

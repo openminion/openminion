@@ -80,9 +80,7 @@ def _normalize_result_to_dict(result: Any) -> dict[str, Any]:
     try:
         return cast(dict[str, Any], dict(result))
     except (TypeError, ValueError):
-        pass
-
-    return {"metadata": {}, "_warning": "Could not normalize result to dict"}
+        return {"metadata": {}, "_warning": "Could not normalize result to dict"}
 
 
 __all__ = [

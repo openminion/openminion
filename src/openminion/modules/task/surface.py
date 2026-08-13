@@ -75,14 +75,13 @@ class TaskSurface:
         _, pending_by_id = _pending_actions_index(
             self.source, event_limit=self.event_limit
         )
-        pending = list(pending_by_id.values())
-        pending.sort(
+        return sorted(
+            pending_by_id.values(),
             key=lambda item: (
                 str(item.get("task_id", "")),
                 str(item.get("decision_id", "")),
-            )
+            ),
         )
-        return pending
 
     def apply_action(
         self, *, task_id: str, action: str, decision_id: str = ""
@@ -124,8 +123,6 @@ def build_task_surface(
 def resolve_task_surface_source(runtime: Any | None) -> Any | None:
     """Resolve the best task owner without creating a parallel task service."""
 
-    if runtime is None:
-        return None
     direct = _first_task_owner(runtime)
     if direct is not None:
         return direct
@@ -146,8 +143,6 @@ def resolve_task_surface_source(runtime: Any | None) -> Any | None:
 
 
 def _first_task_owner(obj: Any | None) -> Any | None:
-    if obj is None:
-        return None
     for attr in ("task_manager", "task_ctl", "_task_ctl"):
         owner = getattr(obj, attr, None)
         if _looks_like_task_owner(owner):
@@ -167,8 +162,6 @@ def _first_task_owner(obj: Any | None) -> Any | None:
 
 
 def _looks_like_task_owner(owner: Any | None) -> bool:
-    if owner is None:
-        return False
     return any(
         callable(getattr(owner, method, None))
         for method in ("get_digest", "get_task", "list_scheduled_jobs")
@@ -249,8 +242,6 @@ def _safe_get_digest(
 
 
 def _iter_digest_tasks(digest: Any | None) -> list[Any]:
-    if digest is None:
-        return []
     tasks: list[Any] = []
     for attr in ("tasks_active", "tasks_ready"):
         value = _value(digest, attr, [])

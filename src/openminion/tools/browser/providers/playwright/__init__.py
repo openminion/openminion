@@ -1,12 +1,10 @@
 """Public exports for tools browser providers playwright."""
 
-from openminion.modules.tool.runtime.registrar import ToolModuleRegistrar
-
-from .registrar import REGISTRAR
+from .registrar import BrowserPlaywrightRegistrar, REGISTRAR as _REGISTRAR
 from .plugin import provider_from_config, register
 from .provider import PlaywrightProvider, PlaywrightProviderConfig
 
-REGISTRAR: ToolModuleRegistrar
+REGISTRAR: BrowserPlaywrightRegistrar = _REGISTRAR
 
 __all__ = [
     "REGISTRAR",

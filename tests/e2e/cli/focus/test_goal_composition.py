@@ -11,7 +11,7 @@ from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.interactive.terminal.shell import _handle_slash
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
-from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+from openminion.modules.brain.paths import resolve_brain_runtime_db_path
 from openminion.modules.brain.runtime.goal.ledger import SQLiteGoalRunStepLedger
 from openminion.modules.brain.runtime.goal.loop import SQLiteGoalRunStore
 from openminion.modules.brain.schemas import Deliverable, Goal, SuccessCriterion
@@ -33,7 +33,7 @@ def _runtime(*, storage_path, session_id: str) -> OpenMinionRuntime:
 
 
 def _seed_goal(*, storage_path, session_id: str) -> tuple[str, str]:
-    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    db_path = resolve_brain_runtime_db_path(storage_path=storage_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     goal_id = "goal-focus-e2e"
     store = SQLiteGoalStore(db_path)
@@ -101,7 +101,7 @@ def test_default_terminal_goal_run_persists_two_steps_and_renders_card(
     assert "status=completed" in completed
     assert "turns=2/3" in completed
 
-    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    db_path = resolve_brain_runtime_db_path(storage_path=storage_path)
     state = SQLiteGoalRunStore(db_path).latest_for_session(session_id)
     assert state is not None
     assert state.run_id
@@ -206,7 +206,7 @@ def test_default_terminal_goal_create_then_live_run_persists_steps(tmp_path) -> 
     assert "status=completed" in completed
     assert "turns=2/3" in completed
 
-    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    db_path = resolve_brain_runtime_db_path(storage_path=storage_path)
     state = SQLiteGoalRunStore(db_path).latest_for_session(session_id)
     assert state is not None
     steps = SQLiteGoalRunStepLedger(db_path).list_for_run(state.run_id)

@@ -1,11 +1,6 @@
-from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Literal,
-    Optional,
-)
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
@@ -40,20 +35,17 @@ class ToolSpec:
     dangerous: bool = False
     idempotent: bool = True
     tags: tuple[str, ...] = ("core",)
-    capabilities: Optional[tuple[str, ...]] = None
+    capabilities: tuple[str, ...] | None = None
     sidecar: str | None = None
     parameters_schema: dict[str, Any] | None = None
     prompt_visible_runtime_name: bool = False
     runtime_binding_id: str = ""
     block_under_readonly: bool = False
-    # TSBR-01a / TSBR-01b: declared blast radius + sandbox kind for the
-    blast_radius: Optional[ToolBlastRadius] = None
-    sandbox_kind: Optional[SandboxKind] = None
+    blast_radius: ToolBlastRadius | None = None
+    sandbox_kind: SandboxKind | None = None
 
     def resolved_capabilities(self) -> tuple[str, ...]:
-        if self.capabilities:
-            return self.capabilities
-        return self.tags
+        return self.capabilities or self.tags
 
 
 @dataclass
@@ -91,19 +83,15 @@ def index_tool_category(registry: "ToolRegistry", tool_name: str, tool: Tool) ->
         info = ToolCategoryInfo()
     normalized = _normalize_category_info(tool_name, info)
     primary = normalized.primary_category or "general_assistance"
-    if primary not in registry._category_index:
-        registry._category_index[primary] = set()
-    registry._category_index[primary].add(tool_name)
+    registry._category_index.setdefault(primary, set()).add(tool_name)
     for secondary in normalized.secondary_categories:
-        if secondary not in registry._category_index:
-            registry._category_index[secondary] = set()
-        registry._category_index[secondary].add(tool_name)
+        registry._category_index.setdefault(secondary, set()).add(tool_name)
 
 
 def tools_by_category(registry: "ToolRegistry", category: str) -> list[str]:
     names = set(registry._category_index.get(category, set()))
     if not names:
-        for tool_name in registry._tools.keys():
+        for tool_name in registry._tools:
             mapped = _mapped_category_for_tool_name(tool_name)
             if mapped is None:
                 continue
@@ -163,7 +151,7 @@ def category_for_tool(registry: "ToolRegistry", tool_name: str) -> ToolCategoryE
 
 
 def all_categories(registry: "ToolRegistry") -> list[str]:
-    return sorted(registry._category_index.keys())
+    return sorted(registry._category_index)
 
 
 def infer_categories_from_index(
@@ -243,13 +231,9 @@ def add_tool_spec(registry: "ToolRegistry", spec: Any) -> None:
             fallback = _heuristic_category_for_tool_name(spec.name)
             primary = fallback.primary_category or "general_assistance"
             secondary = list(fallback.secondary_categories)
-        if primary not in registry._category_index:
-            registry._category_index[primary] = set()
-        registry._category_index[primary].add(spec.name)
+        registry._category_index.setdefault(primary, set()).add(spec.name)
         for cat in secondary:
-            if cat not in registry._category_index:
-                registry._category_index[cat] = set()
-            registry._category_index[cat].add(spec.name)
+            registry._category_index.setdefault(cat, set()).add(spec.name)
         return
     raise TypeError(  # allow-bare-raise: defensive type guard on add() payload
         f"Unsupported add() payload: {type(spec).__name__}; expected ToolSpec"

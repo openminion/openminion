@@ -16,6 +16,7 @@ from openminion.modules.brain.runtime.reasoning import (
     ThinkingResolutionInput,
 )
 from openminion.modules.llm.client_call import (
+    provider_history_payload,
     usage_payload_from_response_usage as _provider_usage_payload,
 )
 from openminion.modules.llm.providers.base import (
@@ -469,19 +470,15 @@ class AgentService(AgentTurnFlowMixin):
 
     def _provider_request_to_llm_payload(
         self, request: ProviderRequest
-    ) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, str]]:
-        messages: list[dict[str, str]] = []
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
+        messages: list[dict[str, Any]] = []
         if str(request.system_prompt or "").strip():
             messages.append({"role": "system", "content": str(request.system_prompt)})
 
         for item in list(request.history or []):
-            role = str(getattr(item, "role", "") or "").strip().lower()
-            if role not in {"system", "user", "assistant", "tool"}:
-                role = "user"
-            content = str(getattr(item, "content", "") or "").strip()
-            if not content:
-                continue
-            messages.append({"role": role, "content": content})
+            payload = provider_history_payload(item)
+            if payload is not None:
+                messages.append(payload)
 
         # PIDF: route user_message through the typed boundary owner.
         _user_rendered, _ = _pidf_route_and_ledger(

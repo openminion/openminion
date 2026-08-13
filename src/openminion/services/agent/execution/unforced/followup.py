@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
@@ -28,7 +29,6 @@ from ..prompts import (
     build_finalization_status_retry_feedback,
     build_plain_text_retry_feedback,
     build_plain_text_retry_user_message,
-    build_pre_tool_draft_message_text,
     build_tool_execution_results_message,
 )
 
@@ -72,34 +72,67 @@ def build_follow_up_request(
     require_typed_finalization: bool = False,
     extra_tool_feedback: str | None = None,
 ) -> ProviderRequest:
-    tool_feedback_payload = deps.tool_batch_metadata(
-        batch=batch,
-        tool_calls_count=len(response.tool_calls or []),
-    ).get("tool_results", "[]")
-    tool_feedback_message = build_tool_execution_results_message(
-        payload=str(tool_feedback_payload),
+    calls = list(response.tool_calls or [])
+    assistant_call = ProviderHistoryMessage(
+        role="assistant",
+        content=str(getattr(response, "text", "") or ""),
+        tool_calls=calls,
+    )
+    tool_results_by_id = {
+        str(result.call_id or ""): result for result in list(batch.results or [])
+    }
+    result_messages: list[ProviderHistoryMessage] = []
+    for index, call in enumerate(calls):
+        call_id = str(
+            (call.get("id") if isinstance(call, dict) else call.id)
+            or f"call_{index + 1}"
+        )
+        result = tool_results_by_id.get(call_id)
+        if result is None and index < len(batch.results):
+            result = batch.results[index]
+        if result is None:
+            continue
+        status = "success" if result.ok else "error"
+        result_messages.append(
+            ProviderHistoryMessage(
+                role="tool",
+                content=json.dumps(
+                    {
+                        "status": status,
+                        "output": result.content if result.ok else None,
+                        "error": result.error if not result.ok else None,
+                    },
+                    ensure_ascii=False,
+                ),
+                tool_call_id=call_id,
+                tool_status=status,
+                tool_output=result.data if result.ok else None,
+                tool_error=(
+                    {"code": "TOOL_EXECUTION_ERROR", "message": result.error}
+                    if not result.ok
+                    else None
+                ),
+            )
+        )
+    guidance = build_tool_execution_results_message(
+        payload="",
         extra_feedback=str(extra_tool_feedback or ""),
         finalization_guidance=(
             FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE if require_typed_finalization else ""
         ),
-    )
-    tool_history_entry = ProviderHistoryMessage(
-        role="user",
-        content=tool_feedback_message,
+    ).strip()
+    guidance_history = (
+        [ProviderHistoryMessage(role="system", content=guidance)] if guidance else []
     )
     return ProviderRequest(
         user_message=DEFAULT_TOOL_LOOP_CONTINUE_PROMPT,
         system_prompt=runner.runtime.system_prompt,
-        history=runner.runtime.provider_history
-        + [
-            ProviderHistoryMessage(
-                role="assistant",
-                content=build_pre_tool_draft_message_text(
-                    response_text=str(getattr(response, "text", "") or "")
-                ),
-            ),
-            tool_history_entry,
-        ],
+        history=(
+            runner.runtime.provider_history
+            + [assistant_call]
+            + result_messages
+            + guidance_history
+        ),
         tools=available_follow_up_tools(runner),
         metadata={
             "identity_context": "retained",

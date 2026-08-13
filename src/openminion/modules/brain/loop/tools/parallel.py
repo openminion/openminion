@@ -144,6 +144,8 @@ def _execute_parallel_tool_batch_without_prepared_dispatch(
 
 
 def _supports_prepared_parallel_dispatch(loop_ctx: Any) -> bool:
+    if getattr(loop_ctx, "prepared_parallel_dispatch_supported", True) is False:
+        return False
     return all(
         callable(getattr(loop_ctx, attr, None))
         for attr in (

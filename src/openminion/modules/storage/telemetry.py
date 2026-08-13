@@ -1,5 +1,5 @@
-from typing import Any, Protocol, runtime_checkable
 from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 
 
 SQL_LOG_PREFIX_CHARS = 200
@@ -75,18 +75,12 @@ class StorageTelemetryHook(Protocol):
 
 
 class NoopStorageTelemetryHook:
-    """Default no-op `StorageTelemetryHook` implementation.
-
-    Used when no telemetry adapter is wired (e.g. CLI tools, standalone
-    storage tests). All Protocol methods are silent no-ops.
-    """
+    """Silent hook used when no storage telemetry adapter is wired."""
 
     def on_pool_stats(self, stats: Mapping[str, Any]) -> None:
-        del stats
         return None
 
     def on_query_start(self, sql: str, params: Any) -> Any:
-        del sql, params
         return None
 
     def on_query_end(
@@ -95,7 +89,6 @@ class NoopStorageTelemetryHook:
         duration_ms: float,
         error: str | None,
     ) -> None:
-        del token, duration_ms, error
         return None
 
     def on_error_class(
@@ -105,7 +98,6 @@ class NoopStorageTelemetryHook:
         operation: str,
         error: str,
     ) -> None:
-        del error_class, operation, error
         return None
 
     def on_slow_query(
@@ -114,11 +106,9 @@ class NoopStorageTelemetryHook:
         duration_ms: float,
         threshold_ms: int,
     ) -> None:
-        del sql, duration_ms, threshold_ms
         return None
 
     def on_migration_start(self, module_id: str, operation: str) -> Any:
-        del module_id, operation
         return None
 
     def on_migration_end(
@@ -130,7 +120,6 @@ class NoopStorageTelemetryHook:
         success: bool,
         error: str | None,
     ) -> None:
-        del token, module_id, operation, duration_ms, success, error
         return None
 
 

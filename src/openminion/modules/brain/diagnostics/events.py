@@ -1,6 +1,8 @@
 import logging
 from typing import Any
 
+from openminion.base.redaction import redact_mapping
+
 _log = logging.getLogger(__name__)
 
 PLAN_REVIEW_REQUESTED_EVENT = "brain.plan_review.requested"
@@ -97,17 +99,18 @@ class CanonicalEventLogger:
         importance: int | None = None,
         redaction: str | None = None,
     ) -> str:
+        safe_payload, redacted_count = redact_mapping(payload)
         return self._session_api.append_event(
             self._session_id,
             event_type,
-            payload,
+            safe_payload,
             actor_type=derive_actor_type(event_type),
             actor_id=self._agent_id,
             trace={"trace_id": trace_id, "span_id": span_id} if trace_id else None,
             importance=(
                 importance if importance is not None else derive_importance(event_type)
             ),
-            redaction=redaction or "none",
+            redaction="bounded" if redacted_count else (redaction or "none"),
             trace_id=trace_id,
             task_id=task_id,
             parent_id=parent_id,

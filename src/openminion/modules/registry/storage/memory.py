@@ -22,22 +22,15 @@ class InMemoryRegistryStore(RegistryStore):
         self._agents_by_method: dict[str, set[str]] = {}
 
     def upsert_agent(self, descriptor: AgentDescriptor, source: RegistrySource) -> None:
-        now = iso_now()
         rec = AgentRecord(
             agent_id=descriptor.agent_id,
             descriptor=descriptor,
             source=source,
-            updated_at=now,
+            updated_at=iso_now(),
         )
         self._agents[descriptor.agent_id] = rec
 
-        old_rows = self._methods_by_agent.pop(descriptor.agent_id, {})
-        for method in old_rows:
-            ids = self._agents_by_method.get(method)
-            if ids is not None:
-                ids.discard(descriptor.agent_id)
-                if not ids:
-                    self._agents_by_method.pop(method, None)
+        self._remove_method_rows(descriptor.agent_id)
 
         rows = {row.method: row for row in extract_method_rows(descriptor)}
         self._methods_by_agent[descriptor.agent_id] = rows
@@ -47,8 +40,10 @@ class InMemoryRegistryStore(RegistryStore):
     def delete_agent(self, agent_id: str) -> None:
         self._agents.pop(agent_id, None)
         self._status.pop(agent_id, None)
-        old_rows = self._methods_by_agent.pop(agent_id, {})
-        for method in old_rows:
+        self._remove_method_rows(agent_id)
+
+    def _remove_method_rows(self, agent_id: str) -> None:
+        for method in self._methods_by_agent.pop(agent_id, {}):
             ids = self._agents_by_method.get(method)
             if ids is not None:
                 ids.discard(agent_id)
@@ -57,15 +52,11 @@ class InMemoryRegistryStore(RegistryStore):
 
     def get_agent(self, agent_id: str) -> AgentDescriptor | None:
         rec = self._agents.get(agent_id)
-        if rec is None:
-            return None
-        return rec.descriptor.model_copy(deep=True)
+        return None if rec is None else rec.descriptor.model_copy(deep=True)
 
     def get_agent_record(self, agent_id: str) -> AgentRecord | None:
         rec = self._agents.get(agent_id)
-        if rec is None:
-            return None
-        return rec.model_copy(deep=True)
+        return None if rec is None else rec.model_copy(deep=True)
 
     def list_agent_records(
         self, filters: dict[str, Any] | None = None
@@ -93,9 +84,7 @@ class InMemoryRegistryStore(RegistryStore):
 
     def get_status(self, agent_id: str) -> AgentStatus | None:
         status = self._status.get(agent_id)
-        if status is None:
-            return None
-        return status.model_copy(deep=True)
+        return None if status is None else status.model_copy(deep=True)
 
     def list_status(self, filters: dict[str, Any] | None = None) -> list[AgentStatus]:
         filters = filters or {}

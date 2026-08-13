@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 
 
 class ExecRegistrar:
-    """Registrar with manifest for exec tool module."""
-
     module_id = "exec"
     is_provider_only = False
 

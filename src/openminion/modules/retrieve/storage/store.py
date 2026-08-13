@@ -24,7 +24,7 @@ _STORAGE_LOGGER = logging.getLogger("openminion.storage")
 
 
 def _is_read_sql(sql: str) -> bool:
-    normalized = str(sql or "").lstrip().lower()
+    normalized = sql.lstrip().lower()
     return normalized.startswith("select") or normalized.startswith("with")
 
 
@@ -102,16 +102,14 @@ class _RetrieveStoreMixin:
             FROM retrievectl_units
             WHERE unit_id IN ({placeholders})
         """.format(placeholders=",".join("?" for _ in normalized))
-        rows = self.fetchall(sql, tuple(normalized))
-        out: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            unit_id = str(row["unit_id"])
-            out[unit_id] = {
+        return {
+            str(row["unit_id"]): {
                 "hit_count": int(row["hit_count"] or 0),
                 "last_hit_at": str(row["last_hit_at"]) if row["last_hit_at"] else None,
                 "feedback_score": float(row["feedback_score"] or 0.0),
             }
-        return out
+            for row in self.fetchall(sql, tuple(normalized))
+        }
 
     def record_hits(self, unit_ids: Sequence[str], *, observed_at: str) -> int:
         normalized = self._normalize_unit_ids(unit_ids)
@@ -127,7 +125,7 @@ class _RetrieveStoreMixin:
                 """,
                 (str(observed_at), unit_id),
             )
-            updated += int(getattr(cursor, "rowcount", 0) or 0)
+            updated += int(cursor.rowcount or 0)
         self.commit()
         return updated
 
@@ -146,7 +144,7 @@ class _RetrieveStoreMixin:
                 """,
                 (score, key),
             )
-            updated += int(getattr(cursor, "rowcount", 0) or 0)
+            updated += int(cursor.rowcount or 0)
         self.commit()
         return updated
 
@@ -351,9 +349,7 @@ class SQLiteRetrieveStore(_RetrieveStoreMixin, BaseModuleSQLiteStore, RetrieveSt
             """
         )
 
-    def execute(
-        self, sql: str, params: Sequence[Any] | tuple[Any, ...] = ()
-    ) -> sqlite3.Cursor:
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Cursor:
         try:
             return self.connection.execute(sql, tuple(params))
         except sqlite3.Error as exc:
@@ -364,14 +360,10 @@ class SQLiteRetrieveStore(_RetrieveStoreMixin, BaseModuleSQLiteStore, RetrieveSt
                 error=exc,
             )
 
-    def fetchone(
-        self, sql: str, params: Sequence[Any] | tuple[Any, ...] = ()
-    ) -> sqlite3.Row | None:
+    def fetchone(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Row | None:
         return self.execute(sql, params).fetchone()
 
-    def fetchall(
-        self, sql: str, params: Sequence[Any] | tuple[Any, ...] = ()
-    ) -> list[sqlite3.Row]:
+    def fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
         return self.execute(sql, params).fetchall()
 
     def commit(self) -> None:
@@ -525,12 +517,9 @@ class PostgresRetrieveStore(_RetrieveStoreMixin, BaseModuleStore, RetrieveStore)
         self.record_store = self._record_store
 
     def _init_schema(self) -> None:
-        # Constructor metadata bootstrapping is handled by BaseModuleStore.
-        return None
+        pass
 
-    def execute(
-        self, sql: str, params: Sequence[Any] | tuple[Any, ...] = ()
-    ) -> _CompatCursor:
+    def execute(self, sql: str, params: Sequence[Any] = ()) -> _CompatCursor:
         try:
             if _is_read_sql(sql):
                 rows = self._record_store.query_dicts(sql, tuple(params))
@@ -545,14 +534,10 @@ class PostgresRetrieveStore(_RetrieveStoreMixin, BaseModuleStore, RetrieveStore)
                 error=exc,
             )
 
-    def fetchone(
-        self, sql: str, params: Sequence[Any] | tuple[Any, ...] = ()
-    ) -> dict[str, Any] | None:
+    def fetchone(self, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
         return self.execute(sql, params).fetchone()
 
-    def fetchall(
-        self, sql: str, params: Sequence[Any] | tuple[Any, ...] = ()
-    ) -> list[dict[str, Any]]:
+    def fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         return self.execute(sql, params).fetchall()
 
     def commit(self) -> None:

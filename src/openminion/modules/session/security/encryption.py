@@ -1,5 +1,3 @@
-"""Optional session encryption helpers with key-ring rotation support."""
-
 from __future__ import annotations
 
 import base64
@@ -135,7 +133,7 @@ class FernetSessionKeyRing:
         self._active_key_id = normalized
 
     def can_remove_key(self, key_id: str, referenced_key_ids: set[str]) -> bool:
-        return str(key_id) not in {str(item) for item in referenced_key_ids}
+        return key_id not in referenced_key_ids
 
 
 @dataclass(frozen=True)
@@ -209,9 +207,9 @@ def build_migration_checkpoint(
 ) -> SessionEncryptionMigrationCheckpoint:
     return SessionEncryptionMigrationCheckpoint(
         checkpoint_id=checkpoint_id,
-        migrated_count=max(0, int(migrated_count)),
+        migrated_count=max(0, migrated_count),
         last_record_id=last_record_id,
-        complete=bool(complete),
+        complete=complete,
     )
 
 

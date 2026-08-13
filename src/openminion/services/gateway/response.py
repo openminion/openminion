@@ -13,17 +13,14 @@ def envelope_truncation_payload(
 ) -> tuple[bool, str]:
     envelope_reasons: set[str] = set()
     for meta in (memory_context_meta, memory_retrieval_meta):
-        raw_reasons = str(
-            meta.get("memory_envelope_truncation_reasons", "") or ""
-        ).strip()
+        raw_reasons = meta.get("memory_envelope_truncation_reasons", "").strip()
         if not raw_reasons:
             continue
         envelope_reasons.update(split_comma_tokens(raw_reasons))
 
     envelope_truncated = (
-        str(memory_context_meta.get("memory_envelope_truncated", "false")).lower()
-        == "true"
-        or str(memory_retrieval_meta.get("memory_envelope_truncated", "false")).lower()
+        memory_context_meta.get("memory_envelope_truncated", "false").lower() == "true"
+        or memory_retrieval_meta.get("memory_envelope_truncated", "false").lower()
         == "true"
     )
     return envelope_truncated, ",".join(sorted(envelope_reasons))
@@ -66,12 +63,12 @@ def build_outbound_message(
     if memory_context_meta:
         outbound.metadata.setdefault(
             "memory_capsule_envelope_limit_chars",
-            str(memory_context_meta.get("memory_envelope_limit_chars", "") or ""),
+            memory_context_meta.get("memory_envelope_limit_chars", ""),
         )
     if memory_retrieval_meta:
         outbound.metadata.setdefault(
             "memory_retrieval_envelope_limit_chars",
-            str(memory_retrieval_meta.get("memory_envelope_limit_chars", "") or ""),
+            memory_retrieval_meta.get("memory_envelope_limit_chars", ""),
         )
     if outbound.stats is not None and outbound.stats.has_any_data:
         outbound.metadata["run_stats_json"] = json.dumps(

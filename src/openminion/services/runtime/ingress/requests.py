@@ -31,10 +31,6 @@ def runtime_turn_request_from_payload(
     if not message:
         raise TurnRequestError("`message` is required and must be a non-empty string.")
 
-    explicit_category_raw = payload.get("capability_category")
-    explicit_category = (
-        str(explicit_category_raw).strip() if explicit_category_raw is not None else ""
-    )
     agent_id_raw = payload.get("agent_id")
     requested_agent_id = (
         str(agent_id_raw).strip() if isinstance(agent_id_raw, str) else None
@@ -73,7 +69,7 @@ def runtime_turn_request_from_payload(
         deliver=resolve_deliver(payload.get("deliver")),
         forced_tools=tuple(parse_forced_tools(payload.get("forced_tools")) or ()),
         capability_category=resolve_capability_category(
-            explicit_category=explicit_category if explicit_category else None,
+            explicit_category=payload.get("capability_category"),
         ),
         run_profile_overrides=run_profile_overrides,
     )

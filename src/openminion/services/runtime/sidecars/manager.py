@@ -39,15 +39,11 @@ from openminion.base.time import utc_now_iso as _iso_now
 
 def _truthy(value: str | None) -> bool:
     raw = str(value or "").strip().lower()
-    if not raw:
-        return False
     return raw in {"1", "true", "yes", "on", "allow"}
 
 
 def _parse_env_pairs(raw: str | None) -> dict[str, str]:
-    if raw is None:
-        return {}
-    cleaned = str(raw).strip()
+    cleaned = str(raw or "").strip()
     if not cleaned:
         return {}
     env: dict[str, str] = {}
@@ -233,7 +229,7 @@ class SidecarManager:
         self._event_sink = event_sink
 
     def list(self) -> list[str]:
-        return sorted(self._specs.keys())
+        return sorted(self._specs)
 
     def specs(self) -> List[SidecarSpec]:
         return [self._specs[name] for name in self.list()]
@@ -283,12 +279,12 @@ class SidecarManager:
 
         cfg_val = self._runtime_env.get(spec.autostart_env_key)
         if _truthy(cfg_val):
-            self._process_env.update({spec.autostart_env_key: str(cfg_val)})
+            self._process_env[spec.autostart_env_key] = str(cfg_val)
             return {"enabled": True, "source": "config.runtime.env", "value": cfg_val}
 
         consent = self._store.get(spec.name)
         if consent and consent.approved:
-            self._process_env.update({spec.autostart_env_key: "1"})
+            self._process_env[spec.autostart_env_key] = "1"
             return {
                 "enabled": True,
                 "source": "consent_store",
@@ -323,7 +319,7 @@ class SidecarManager:
                 scope="persistent",
             )
         )
-        self._process_env.update({spec.autostart_env_key: "1"})
+        self._process_env[spec.autostart_env_key] = "1"
         return {"enabled": True, "source": "prompt"}
 
     def ensure_started(
@@ -652,14 +648,14 @@ def ensure_sidecars_autostart(
         context=context,
         logger=logger,
     )
-    results: dict[str, Any] = {}
-    for name in manager.list():
-        results[name] = manager.ensure_autostart(
+    return {
+        name: manager.ensure_autostart(
             name=name,
             interactive=interactive,
             prompt_fn=prompt_fn,
         )
-    return results
+        for name in manager.list()
+    }
 
 
 def _decision_payload(decision: SecurityPolicyDecision) -> dict[str, Any]:

@@ -36,10 +36,9 @@ class StorageModuleOps:
         alembic_script_location: str | Path | None = None,
         target_user_version: int | None = None,
     ) -> None:
-        self.module_id = str(module_id).strip()
-        self.module_application_id = int(module_application_id)
+        self.module_id = module_id.strip()
+        self.module_application_id = module_application_id
         self._db_path = Path(db_path).expanduser().resolve(strict=False)
-        self._migrations_fn = migrations_fn
         self._runner = MigrationRunner(
             module_id=self.module_id,
             db_path=self._db_path,
@@ -236,10 +235,7 @@ def build_module_ops(
     migrations_fn: Callable[[], list[str]] | None = None,
     verifier_hook: VerifierHook | None = None,
 ) -> StorageModuleOps:
-    """Factory: build a StorageModuleOps for a given module_id.
-
-    Resolves module_application_id from the canonical registry.
-    """
+    """Build module operations with the canonical application ID."""
     from openminion.modules.storage.migrations.module_ids import (
         get_module_application_id,
     )

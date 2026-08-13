@@ -38,11 +38,33 @@ from tests.brain.runner_test_support import _profile
 
 
 @dataclass
+class _StructuredLLM:
+    def call_structured(self, *, model, purpose, context, schema):
+        del model, purpose, context, schema
+        return {
+            "answer": "Mock research synthesis.",
+            "status": "complete",
+            "remaining_work": "",
+        }
+
+
+@dataclass
 class _FakeRunner:
     task_manager: TaskManager
+    llm_api: Any = field(default_factory=_StructuredLLM)
     profile: Any = field(
-        default_factory=lambda: SimpleNamespace(agent_id="router-agent")
+        default_factory=lambda: SimpleNamespace(
+            agent_id="router-agent",
+            llm_profiles=SimpleNamespace(summarize_model="mock-summarizer"),
+        )
     )
+
+    def _build_context(self, *, state, purpose, budget, hints, logger, mode_name=None):
+        del state, logger, mode_name
+        return {"purpose": purpose, "budget": budget, "user_input": hints["user_input"]}
+
+    def _debit_tokens(self, state, raw, logger) -> None:
+        del state, raw, logger
 
 
 @dataclass
@@ -284,8 +306,17 @@ def _make_mode(max_iterations: int = 3) -> ResearchMode:
 # Regression: core loop runs all iterations and completes
 
 
-def test_research_mode_runs_all_iterations_and_completes() -> None:
+def test_research_mode_runs_all_iterations_and_completes(monkeypatch) -> None:
     """Canonical execution: runs max_iterations iterations and returns done."""
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.strategies.research.handler.invoke_decision_direct",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="done",
+            message="Evidence gathered by the child research turn.",
+            action_result=None,
+            working_state=None,
+        ),
+    )
     with tempfile.TemporaryDirectory() as tmp:
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, services = _ctx(task_manager)
@@ -295,7 +326,7 @@ def test_research_mode_runs_all_iterations_and_completes() -> None:
 
         assert result.status == "done"
         # Failed child iterations are not repaired into synthetic plan findings.
-        assert len(services.plan_calls) == 1
+        assert services.plan_calls == []
         task_id = str(ctx.state.task_backed_task_id)
         assert task_id
         checkpoints = task_manager.list_checkpoints(task_id)
@@ -311,8 +342,17 @@ def test_research_mode_runs_all_iterations_and_completes() -> None:
         assert record.metadata["progress"]["phase"] == "iteration_2"
 
 
-def test_research_mode_resume_continues_from_latest_checkpoint() -> None:
+def test_research_mode_resume_continues_from_latest_checkpoint(monkeypatch) -> None:
     """Pause after budget exhaustion; resume picks up at the correct iteration."""
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.strategies.research.handler.invoke_decision_direct",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="done",
+            message="Evidence gathered by the child research turn.",
+            action_result=None,
+            working_state=None,
+        ),
+    )
     with tempfile.TemporaryDirectory() as tmp:
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         initial_state = _state(ticks=1)
@@ -338,11 +378,12 @@ def test_research_mode_resume_continues_from_latest_checkpoint() -> None:
             resumed_ctx,
             checkpoint_id,
         )
+        resumed_ctx.decision.research_query = ""
 
         resumed = mode.execute(resumed_ctx)
 
         assert resumed.status == "done"
-        assert len(resumed_services.plan_calls) == 1
+        assert resumed_services.plan_calls == []
         loaded = task_manager.get_task(str(ctx.state.task_backed_task_id))
         assert loaded is not None
         assert loaded.state == TaskLifecycleState.DONE

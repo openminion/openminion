@@ -55,6 +55,7 @@ def test_recent_large_assistant_artifact_is_compacted_not_dropped() -> None:
     assert "print(get_weather('Tokyo'))" in compacted
     assert "Yes, I can write files." in assistant_messages[1].body
     assert budgeted.telemetry.overflow is False
+    assert budgeted.telemetry.trimmed_count == 2
 
 
 def test_budgeter_prefers_newest_history_when_system_context_uses_budget() -> None:
@@ -78,3 +79,19 @@ def test_budgeter_prefers_newest_history_when_system_context_uses_budget() -> No
     assert "new answer" in bodies
     assert all("old question" not in body for body in bodies)
     assert _total_chars(budgeted.messages) <= 260
+
+
+def test_unset_budget_reports_bounded_count_fallback_without_trimming() -> None:
+    history = [_message("inbound", "hello"), _message("outbound", "world")]
+
+    budgeted = assemble_budgeted_context(
+        system_messages=[],
+        history_messages=history,
+        budget=ContextBudgetConfig(max_tokens=0),
+    )
+
+    assert budgeted.messages == history
+    payload = budgeted.telemetry.to_dict()
+    assert payload["budget_source"] == "count_fallback"
+    assert payload["trim_reason"] == "count_fallback"
+    assert payload["selected_recent_count"] == 2

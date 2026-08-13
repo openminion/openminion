@@ -106,9 +106,7 @@ def _identity_location_from_meta(meta: Mapping[str, Any]) -> dict[str, Any] | No
         "lon": meta.get("location_lon", meta.get("lon")),
     }
     record = _normalize_location_record(flattened)
-    if _has_location_data(record):
-        return record
-    return None
+    return record if _has_location_data(record) else None
 
 
 def _location_from_identity_profile(ctx: RuntimeContext) -> dict[str, Any] | None:
@@ -125,10 +123,7 @@ def _location_from_identity_profile(ctx: RuntimeContext) -> dict[str, Any] | Non
     meta = getattr(profile, "meta", None)
     if not isinstance(meta, Mapping):
         return None
-    record = _identity_location_from_meta(meta)
-    if record is not None:
-        return record
-    return None
+    return _identity_location_from_meta(meta)
 
 
 def _identity_dependency_error(ctx: RuntimeContext) -> ToolRuntimeError:
@@ -204,7 +199,7 @@ def _set_identity_default_location(
     country: str | None,
     timezone_name: str | None,
     privacy_level: str,
-) -> tuple[dict[str, Any], str]:
+) -> dict[str, Any]:
     repository = resolve_identity_repository(ctx)
     if repository is None:
         raise _identity_dependency_error(ctx)
@@ -260,7 +255,7 @@ def _set_identity_default_location(
     )
     record["identity_hash"] = identity_hash
     record["agent_id"] = agent_id
-    return record, profile_version
+    return record
 
 
 def _location_from_session_override(ctx: RuntimeContext) -> dict[str, Any] | None:
@@ -294,9 +289,7 @@ def _location_from_session_override(ctx: RuntimeContext) -> dict[str, Any] | Non
         if value not in (None, ""):
             flat_payload[target_key] = value
     record = _normalize_location_record(flat_payload)
-    if _has_location_data(record):
-        return record
-    return None
+    return record if _has_location_data(record) else None
 
 
 def _lookup_ip_location_with_error(
@@ -651,9 +644,9 @@ def _persist_default_location_result(
     country: str | None,
     timezone_name: str | None,
     privacy_level: str,
-) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     try:
-        record, profile_version = _set_identity_default_location(
+        record = _set_identity_default_location(
             ctx,
             city=city,
             region=region,
@@ -668,7 +661,6 @@ def _persist_default_location_result(
             payload={"method": "location.set_default", "code": exc.code},
         )
         return (
-            None,
             None,
             _error(
                 exc.code,
@@ -686,7 +678,6 @@ def _persist_default_location_result(
         )
         return (
             None,
-            None,
             _error(
                 "EXEC_ERROR",
                 "Failed to persist default location",
@@ -698,7 +689,7 @@ def _persist_default_location_result(
                 },
             ),
         )
-    return record, profile_version, None
+    return record, None
 
 
 def _h_set_default(_args: dict[str, Any], _ctx: Any) -> dict[str, Any]:
@@ -722,7 +713,7 @@ def _h_set_default(_args: dict[str, Any], _ctx: Any) -> dict[str, Any]:
             "privacy_level": privacy_level,
         },
     )
-    record, profile_version, persist_error = _persist_default_location_result(
+    record, persist_error = _persist_default_location_result(
         ctx,
         city=city,
         region=region,
@@ -732,17 +723,11 @@ def _h_set_default(_args: dict[str, Any], _ctx: Any) -> dict[str, Any]:
     )
     if persist_error is not None:
         return persist_error
-    assert record is not None and profile_version is not None
+    assert record is not None
 
-    identity_version = int(record.get("identity_version", 0) or 0)
-    identity_hash = str(record.get("identity_hash", "") or "")
-    if not identity_hash:
-        identity_hash = (
-            profile_version
-            if str(profile_version).startswith("sha256:")
-            else f"sha256:{profile_version}"
-        )
-    agent_id = str(record.get("agent_id", "") or _agent_id_from_context(ctx))
+    identity_version = int(record["identity_version"])
+    identity_hash = str(record["identity_hash"])
+    agent_id = str(record["agent_id"])
     _emit_event(
         ctx,
         event_name="location.default.updated",
@@ -754,7 +739,7 @@ def _h_set_default(_args: dict[str, Any], _ctx: Any) -> dict[str, Any]:
         },
     )
     return _success_set_default(
-        city=str(record.get("city", city) or city),
+        city=str(record["city"]),
         region=record.get("region"),
         country=record.get("country"),
         timezone_name=record.get("timezone"),

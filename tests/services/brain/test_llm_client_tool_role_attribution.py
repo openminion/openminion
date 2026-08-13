@@ -4,6 +4,7 @@ from typing import Any
 
 from openminion.modules.llm.providers.base import ProviderRequest
 from openminion.modules.llm.schemas import LLMRequest, Message
+from openminion.modules.prompting.continuation import ACTIVE_TASK_CONTINUATION_PROMPT
 from openminion.services.brain.client import OpenMinionLLMClient
 
 
@@ -79,7 +80,6 @@ def test_tool_role_message_survives_brain_llm_client_normalization() -> None:
         "PTFI-03 v2: tool envelope content must round-trip unchanged"
     )
     assert tool_history_items[0].meta == {
-        "tool_call_id": "call-1",
         "tool_name": "file.list_dir",
     }, "Tool-call replay metadata must survive into ProviderRequest.history"
     # And the tool envelope must NEVER appear in user_message — that
@@ -162,12 +162,16 @@ def test_tool_message_as_only_trailing_history_routes_to_history_not_prompt() ->
 
     client.call(req)
     pr = provider.captured[-1]
-    # The most recent user-role message becomes the prompt.
-    assert pr.user_message == "explore the project", (
-        "PTFI-03 v2: when the trailing message is role='tool', the "
-        "BrainLLMClient must walk back to the most recent user-role "
-        "message for `user_message`, never promote the tool envelope"
+    assert pr.user_message == ACTIVE_TASK_CONTINUATION_PROMPT, (
+        "PTFI-03 v2: a completed tool exchange must remain ordered in history "
+        "and use a continuation request as the new provider prompt"
     )
+    assert [str(item.role).lower() for item in pr.history] == [
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert pr.history[0].content == "explore the project"
     # The tool envelope sits in history with role='tool'.
     tool_items = [item for item in pr.history if str(item.role).lower() == "tool"]
     assert len(tool_items) == 1

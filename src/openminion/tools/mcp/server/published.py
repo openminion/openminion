@@ -179,6 +179,7 @@ def build_runtime_published_tools(
             continue
         provider_spec = _provider_spec_for_runtime_tool(registry, runtime_name, tool)
         published_name = _published_tool_name(runtime_name, prefix=config.name_prefix)
+        dangerous, min_scope = _tool_posture(registry, runtime_name)
         published.append(
             PublishedTool(
                 name=published_name,
@@ -195,8 +196,8 @@ def build_runtime_published_tools(
                 ),
                 tags=["openminion", "runtime"],
                 runtime_tool_name=runtime_name,
-                dangerous=_tool_is_dangerous(registry, runtime_name),
-                min_scope=_tool_min_scope(registry, runtime_name),
+                dangerous=dangerous,
+                min_scope=min_scope,
             )
         )
     return published
@@ -213,21 +214,23 @@ def _resolve_publish_config(
 
 
 def _runtime_tools_for_publish(registry: Any) -> dict[str, Any]:
+    runtime_tools: Any
     list_fn = getattr(registry, "list", None)
     if callable(list_fn):
         listed = list_fn()
         if isinstance(listed, dict):
-            return {
-                str(name).strip(): tool
-                for name, tool in listed.items()
-                if str(name).strip()
-            }
-    raw = getattr(registry, "_tools", None)
-    if isinstance(raw, dict):
-        return {
-            str(name).strip(): tool for name, tool in raw.items() if str(name).strip()
-        }
-    return {}
+            runtime_tools = listed
+        else:
+            runtime_tools = getattr(registry, "_tools", None)
+    else:
+        runtime_tools = getattr(registry, "_tools", None)
+    if not isinstance(runtime_tools, dict):
+        return {}
+    return {
+        str(name).strip(): tool
+        for name, tool in runtime_tools.items()
+        if str(name).strip()
+    }
 
 
 def _tool_allowed_by_publish_config(
@@ -282,7 +285,7 @@ def _published_tool_name(runtime_name: str, *, prefix: str) -> str:
 
 
 def rejoin_tool_name(runtime_name: str) -> str:
-    return str(runtime_name or "").strip().replace(" ", "_")
+    return runtime_name.strip().replace(" ", "_")
 
 
 def _runtime_tool_handler(
@@ -346,22 +349,16 @@ def _runtime_tool_handler(
     return _handler
 
 
-def _tool_is_dangerous(registry: Any, runtime_name: str) -> bool:
+def _tool_posture(registry: Any, runtime_name: str) -> tuple[bool, str]:
     try:
-        return str(getattr(registry.policy_for(runtime_name), "risk", "")) == "high"
+        policy = registry.policy_for(runtime_name)
     except Exception:
-        return False
-
-
-def _tool_min_scope(registry: Any, runtime_name: str) -> str:
-    try:
-        scopes = getattr(registry.policy_for(runtime_name), "required_scopes_all", ())
-    except Exception:
-        return "READ_ONLY"
+        return False, "READ_ONLY"
+    dangerous = str(getattr(policy, "risk", "")) == "high"
+    scopes = getattr(policy, "required_scopes_all", ())
     scope_tokens = {str(item) for item in scopes}
-    if "tool.execute.elevated" in scope_tokens:
-        return "POWER_USER"
-    return "READ_ONLY"
+    min_scope = "POWER_USER" if "tool.execute.elevated" in scope_tokens else "READ_ONLY"
+    return dangerous, min_scope
 
 
 def build_contract_fixture_published_tools() -> list[PublishedTool]:
@@ -398,7 +395,7 @@ def build_contract_fixture_published_tools() -> list[PublishedTool]:
                 "required": ["session_id"],
                 "additionalProperties": False,
             },
-            handler=_default_plan_show_handler,
+            handler=_default_stub_handler,
             tags=["plan"],
         ),
         PublishedTool(
@@ -409,7 +406,7 @@ def build_contract_fixture_published_tools() -> list[PublishedTool]:
                 "properties": {"agent_id": {"type": "string"}},
                 "additionalProperties": False,
             },
-            handler=_default_todo_list_handler,
+            handler=_default_stub_handler,
             tags=["todo"],
         ),
         PublishedTool(
@@ -429,7 +426,7 @@ def build_contract_fixture_published_tools() -> list[PublishedTool]:
                 "required": ["query"],
                 "additionalProperties": False,
             },
-            handler=_default_search_handler,
+            handler=_default_stub_handler,
             tags=["search"],
         ),
         PublishedTool(
@@ -444,7 +441,7 @@ def build_contract_fixture_published_tools() -> list[PublishedTool]:
                 "required": ["url"],
                 "additionalProperties": False,
             },
-            handler=_default_fetch_handler,
+            handler=_default_stub_handler,
             tags=["fetch"],
         ),
     ]
@@ -473,17 +470,5 @@ def _default_memory_export_handler(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _default_plan_show_handler(args: dict[str, Any]) -> dict[str, Any]:
-    return {"status": "stub", "request": dict(args)}
-
-
-def _default_todo_list_handler(args: dict[str, Any]) -> dict[str, Any]:
-    return {"status": "stub", "request": dict(args)}
-
-
-def _default_search_handler(args: dict[str, Any]) -> dict[str, Any]:
-    return {"status": "stub", "request": dict(args)}
-
-
-def _default_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
+def _default_stub_handler(args: dict[str, Any]) -> dict[str, Any]:
     return {"status": "stub", "request": dict(args)}

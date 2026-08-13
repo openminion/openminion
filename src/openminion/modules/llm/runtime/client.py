@@ -39,6 +39,8 @@ from ..schemas import (
     UsageInfo,
 )
 from ..streaming import response_stream_events, stream_error_event
+from ..transcript import ToolTranscriptError, validate_tool_transcript
+from ..diagnostics import emit_module_telemetry
 from .flow import (
     ToolPolicyContext as _ToolPolicyContext,
     _apply_budgets,
@@ -124,19 +126,22 @@ def _response_with_inline_tool_calls(
             normalized_fallback.metadata
         )
         telemetry["normalization"] = normalization_meta
+        tool_calls = [
+            ToolCall(
+                id=call.id.strip() or None,
+                name=call.name.strip(),
+                arguments=dict(call.arguments or {}),
+                status=LLM_TOOL_CALL_STATUS_PARSED,
+            )
+            for call in normalized_fallback.calls
+        ]
         return normalized.model_copy(
             update={
                 "output_text": "",
-                "assistant_messages": [],
-                "tool_calls": [
-                    ToolCall(
-                        id=call.id.strip() or None,
-                        name=call.name.strip(),
-                        arguments=dict(call.arguments or {}),
-                        status=LLM_TOOL_CALL_STATUS_PARSED,
-                    )
-                    for call in normalized_fallback.calls
+                "assistant_messages": [
+                    Message(role="assistant", tool_calls=tool_calls)
                 ],
+                "tool_calls": tool_calls,
                 "telemetry": telemetry,
             }
         )
@@ -174,7 +179,12 @@ def _response_without_unexecutable_envelope(normalized: LLMResponse) -> LLMRespo
         and normalized.output_text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
     ):
         return normalized.model_copy(
-            update={"output_text": "", "assistant_messages": []}
+            update={
+                "output_text": "",
+                "assistant_messages": [
+                    Message(role="assistant", tool_calls=normalized.tool_calls)
+                ],
+            }
         )
     return normalized
 
@@ -184,6 +194,48 @@ def _response_with_total_usage(normalized: LLMResponse) -> LLMResponse:
     if usage.total_tokens is not None:
         return normalized
     return normalized.model_copy(update={"usage": _usage_with_derived_total(usage)})
+
+
+def _validate_request_transcript(
+    telemetryctl: Any,
+    request: LLMRequest,
+) -> ResponseError | None:
+    session_id = str(request.metadata.get("session_id", "") or "")
+    turn_id = str(
+        request.metadata.get("turn_id") or request.metadata.get("request_id") or ""
+    )
+    try:
+        transcript_lane = validate_tool_transcript(request)
+    except ToolTranscriptError as exc:
+        emit_module_telemetry(
+            telemetryctl,
+            "emit_canonical_event",
+            session_id,
+            turn_id,
+            "llm.tool_transcript.rejected",
+            {
+                "module_id": "openminion-llm",
+                "reason_code": exc.reason_code,
+                "transcript_lane": "canonical_events",
+            },
+        )
+        return ResponseError(
+            code="INVALID_ARGUMENT",
+            message="Tool transcript invariant failed",
+            details={"reason_code": exc.reason_code},
+        )
+    emit_module_telemetry(
+        telemetryctl,
+        "emit_canonical_event",
+        session_id,
+        turn_id,
+        "llm.tool_transcript.validated",
+        {
+            "module_id": "openminion-llm",
+            "transcript_lane": transcript_lane,
+        },
+    )
+    return None
 
 
 class LLMCTL:
@@ -348,7 +400,6 @@ class LLMClient:
         tools: Optional[List[Union[ToolSpec, Dict[str, Any]]]] = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
-        """Stream helper."""
         req_data = self._build_request_data(
             messages=messages,
             tools=tools,
@@ -367,6 +418,11 @@ class LLMClient:
                     details={"errors": exc.errors()},
                 ),
             )
+            yield LLMStreamEvent(type="done")
+            return
+        request_error = _validate_request_transcript(self._telemetryctl, request)
+        if request_error is not None:
+            yield LLMStreamEvent(type="error", error=request_error)
             yield LLMStreamEvent(type="done")
             return
 
@@ -492,6 +548,16 @@ class LLMClient:
                 code="INVALID_ARGUMENT",
                 message="Request schema validation failed",
                 details={"errors": exc.errors()},
+            )
+
+        transcript_error = _validate_request_transcript(self._telemetryctl, req)
+        if transcript_error is not None:
+            return self._error_response(
+                provider=req.provider or "",
+                model=req.model or "",
+                code=transcript_error.code,
+                message=transcript_error.message,
+                details=transcript_error.details,
             )
 
         if req.stream:

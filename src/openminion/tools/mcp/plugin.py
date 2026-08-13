@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
@@ -373,11 +372,10 @@ def build_mcp_resource_spec(
 
     def _handler(arguments: dict[str, Any], _runtime_ctx: Any) -> dict[str, Any]:
         try:
-            validated = validate_mcp_arguments(
+            validate_mcp_arguments(
                 schema=parameters_schema,
                 arguments=arguments,
             )
-            assert isinstance(validated, dict)
             return manager.read_resource(
                 server_name=resource.server_name,
                 resource_uri=resource.resource_uri,
@@ -557,10 +555,7 @@ def describe_mcp_tool(
         server_name=tool.server_name,
         remote_name=tool.remote_name,
     )
-    runtime_binding_id = build_mcp_runtime_binding_id(
-        runtime_tool_name=runtime_tool_name
-    )
-    return runtime_tool_name, runtime_binding_id
+    return _describe_runtime_tool_name(runtime_tool_name)
 
 
 def describe_mcp_prompt(
@@ -571,10 +566,7 @@ def describe_mcp_prompt(
         server_name=prompt.server_name,
         remote_name=prompt.remote_name,
     )
-    runtime_binding_id = build_mcp_runtime_binding_id(
-        runtime_tool_name=runtime_tool_name
-    )
-    return runtime_tool_name, runtime_binding_id
+    return _describe_runtime_tool_name(runtime_tool_name)
 
 
 def describe_mcp_resource(
@@ -586,10 +578,7 @@ def describe_mcp_resource(
         resource_uri=resource.resource_uri,
         resource_name=resource.resource_name,
     )
-    runtime_binding_id = build_mcp_runtime_binding_id(
-        runtime_tool_name=runtime_tool_name
-    )
-    return runtime_tool_name, runtime_binding_id
+    return _describe_runtime_tool_name(runtime_tool_name)
 
 
 def describe_mcp_resource_template(
@@ -601,10 +590,13 @@ def describe_mcp_resource_template(
         uri_template=template.uri_template,
         template_name=template.template_name,
     )
-    runtime_binding_id = build_mcp_runtime_binding_id(
+    return _describe_runtime_tool_name(runtime_tool_name)
+
+
+def _describe_runtime_tool_name(runtime_tool_name: str) -> tuple[str, str]:
+    return runtime_tool_name, build_mcp_runtime_binding_id(
         runtime_tool_name=runtime_tool_name
     )
-    return runtime_tool_name, runtime_binding_id
 
 
 def register(registry: ToolRegistry, ctx: ToolRegisterContext | None = None) -> None:
@@ -642,8 +634,7 @@ def _mcp_error_details(
     auth_challenge = getattr(exc, "auth_challenge", None)
     if isinstance(auth_challenge, dict) and auth_challenge:
         details["auth_challenge"] = dict(auth_challenge)
-    for key, value in extra.items():
-        details[key] = value
+    details.update(extra)
     return details
 
 

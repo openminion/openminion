@@ -84,7 +84,7 @@ class MCPCallError(MCPManagerError):
         details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
-        self.reason_code = str(reason_code or "").strip()
+        self.reason_code = reason_code.strip()
         self.details = dict(details or {})
 
 
@@ -338,20 +338,18 @@ class MCPServerSession:
     ) -> dict[str, Any]:
         if not self._initialized:
             self.start()
+        remote_name = remote_name.strip()
         params = {
-            "name": str(remote_name or "").strip(),
+            "name": remote_name,
             "arguments": dict(arguments),
         }
         if progress_token:
-            params["_meta"] = {"progressToken": str(progress_token).strip()}
+            params["_meta"] = {"progressToken": progress_token.strip()}
         result = self._request_with_recovery(
             method=MCP_TOOLS_CALL_METHOD,
             params=self._with_client_meta(params),
         )
-        return self._normalize_call_result(
-            remote_name=str(remote_name or "").strip(),
-            result=result,
-        )
+        return self._normalize_call_result(remote_name=remote_name, result=result)
 
     def get_prompt(
         self,
@@ -361,38 +359,34 @@ class MCPServerSession:
     ) -> dict[str, Any]:
         if not self._initialized:
             self.start()
+        remote_name = remote_name.strip()
         result = self._request_with_recovery(
             method=MCP_PROMPTS_GET_METHOD,
             params=self._with_client_meta(
                 {
-                    "name": str(remote_name or "").strip(),
+                    "name": remote_name,
                     "arguments": dict(arguments),
                 }
             ),
         )
-        return self._normalize_prompt_result(
-            remote_name=str(remote_name or "").strip(),
-            result=result,
-        )
+        return self._normalize_prompt_result(remote_name=remote_name, result=result)
 
     def read_resource(self, *, resource_uri: str) -> dict[str, Any]:
         if not self._initialized:
             self.start()
+        resource_uri = resource_uri.strip()
         result = self._request_with_recovery(
             method=MCP_RESOURCES_READ_METHOD,
-            params=self._with_client_meta({"uri": str(resource_uri or "").strip()}),
+            params=self._with_client_meta({"uri": resource_uri}),
         )
-        return self._normalize_resource_result(
-            resource_uri=str(resource_uri or "").strip(),
-            result=result,
-        )
+        return self._normalize_resource_result(resource_uri=resource_uri, result=result)
 
     def subscribe_resource(self, *, resource_uri: str) -> None:
         if not self._initialized:
             self.start()
         self._request_with_recovery(
             method=MCP_RESOURCES_SUBSCRIBE_METHOD,
-            params=self._with_client_meta({"uri": str(resource_uri or "").strip()}),
+            params=self._with_client_meta({"uri": resource_uri.strip()}),
         )
 
     def unsubscribe_resource(self, *, resource_uri: str) -> None:
@@ -400,7 +394,7 @@ class MCPServerSession:
             self.start()
         self._request_with_recovery(
             method=MCP_RESOURCES_UNSUBSCRIBE_METHOD,
-            params=self._with_client_meta({"uri": str(resource_uri or "").strip()}),
+            params=self._with_client_meta({"uri": resource_uri.strip()}),
         )
 
     def complete(
@@ -419,12 +413,12 @@ class MCPServerSession:
             params=self._with_client_meta(
                 {
                     "ref": {
-                        "type": str(ref_type or "").strip(),
-                        "name": str(ref_name or "").strip(),
+                        "type": ref_type.strip(),
+                        "name": ref_name.strip(),
                     },
                     "argument": {
-                        "name": str(argument_name or "").strip(),
-                        "value": str(argument_value or ""),
+                        "name": argument_name.strip(),
+                        "value": argument_value,
                     },
                     "context": {
                         "arguments": dict(context_arguments or {}),
@@ -443,7 +437,7 @@ class MCPServerSession:
         )
 
     def set_log_level(self, level: str) -> None:
-        normalized = str(level or "").strip().lower()
+        normalized = level.strip().lower()
         if not normalized:
             raise MCPProtocolError(
                 f"MCP server '{self.server_name}' logging level is required.",
@@ -631,8 +625,7 @@ class MCPServerSession:
             "notifications/resources/list_changed",
             "notifications/prompts/list_changed",
         }:
-            parts = normalized.split("/")
-            primitive = parts[1] if len(parts) >= 2 else ""
+            primitive = normalized.split("/")[1]
             handler = self._capability_change_handler
             if callable(handler):
                 handler(server_name=self.server_name, primitive=primitive)
@@ -685,7 +678,6 @@ class MCPServerSession:
                     )
                 )
             return
-        return
 
     def _normalize_call_result(
         self, *, remote_name: str, result: dict[str, Any]
@@ -931,22 +923,20 @@ def _resolve_mcp_tool_posture(
         dangerous = True
         idempotent = False
 
-    for override in getattr(server, "tool_risk_overrides", []) or []:
+    for override in server.tool_risk_overrides:
         if not _mcp_risk_override_matches(
-            pattern=str(getattr(override, "pattern", "") or ""),
+            pattern=override.pattern,
             server_name=server.name,
             remote_name=remote_name,
         ):
             continue
-        override_scope = str(getattr(override, "min_scope", "") or "").strip().upper()
+        override_scope = override.min_scope.strip().upper()
         if override_scope:
             min_scope = override_scope
-        override_dangerous = getattr(override, "dangerous", None)
-        if override_dangerous is not None:
-            dangerous = bool(override_dangerous)
-        override_idempotent = getattr(override, "idempotent", None)
-        if override_idempotent is not None:
-            idempotent = bool(override_idempotent)
+        if override.dangerous is not None:
+            dangerous = override.dangerous
+        if override.idempotent is not None:
+            idempotent = override.idempotent
 
     return MCPToolPosture(
         min_scope=min_scope,

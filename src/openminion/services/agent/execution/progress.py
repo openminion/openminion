@@ -117,9 +117,7 @@ def observe_tool_loop(runtime: Any, tool_calls: list[ProviderToolCall]) -> None:
     )
     if not observations:
         return
-    runtime_observations = getattr(runtime, "tool_loop_observations", None)
-    if isinstance(runtime_observations, list):
-        runtime_observations.extend(observations)
+    runtime.tool_loop_observations.extend(observations)
     callback = getattr(runtime, "progress_callback", None)
     if not callable(callback):
         return

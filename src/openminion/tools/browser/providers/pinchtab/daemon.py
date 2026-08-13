@@ -55,14 +55,8 @@ def _normalize_launch_cmd(
 
 def _read_pid(pid_file: Path) -> int | None:
     try:
-        raw = pid_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not raw:
-        return None
-    try:
-        pid = int(raw)
-    except ValueError:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
         return None
     return pid if pid > 0 else None
 

@@ -47,13 +47,6 @@ class CronStore:
         rows = self._record_store.query_dicts(sql, params)
         return rows[0] if rows else None
 
-    def _query_all(
-        self,
-        sql: str,
-        params: tuple[Any, ...] | list[Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        return self._record_store.query_dicts(sql, params)
-
     def _execute_count(
         self,
         sql: str,
@@ -107,8 +100,8 @@ class CronStore:
             else bool(delete_after_run)
         )
         policy = normalize_misfire_policy(misfire_policy)
-        lateness = max(0, int(max_lateness_s))
-        concurrency = max(1, int(max_concurrency))
+        lateness = max(0, max_lateness_s)
+        concurrency = max(1, max_concurrency)
 
         jid = (job_id or "").strip() or uuid4().hex
         now_dt = utc_now()
@@ -173,7 +166,7 @@ class CronStore:
     def list_cron_jobs(
         self, *, enabled: bool | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
-        safe_limit = max(1, min(int(limit), 1000))
+        safe_limit = max(1, min(limit, 1000))
         clauses: list[str] = []
         params: list[Any] = []
         if enabled is not None:
@@ -181,7 +174,7 @@ class CronStore:
             params.append(1 if enabled else 0)
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
-            rows = self._query_all(
+            rows = self._record_store.query_dicts(
                 f"""
                 SELECT *
                 FROM cron_jobs
@@ -201,7 +194,7 @@ class CronStore:
         now_dt = utc_now()
         now = to_iso_utc(now_dt)
         next_due: str | None = None
-        if bool(enabled):
+        if enabled:
             schedule = normalize_schedule(job["schedule"])
             if str(schedule["kind"]) == "at":
                 next_due = str(schedule["at"])
@@ -296,7 +289,7 @@ class CronStore:
         due_dt = parse_iso_datetime(due_at) if due_at else now_dt
         expires_dt = now_dt
         if lease_owner:
-            expires_dt = now_dt + timedelta(seconds=max(1, int(lease_ttl_s)))
+            expires_dt = now_dt + timedelta(seconds=max(1, lease_ttl_s))
         run_id = uuid4().hex
         with self._lock, self._record_store.transaction():
             self._execute_count(
@@ -327,7 +320,7 @@ class CronStore:
         limit: int = 100,
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        safe_limit = max(1, min(int(limit), 2000))
+        safe_limit = max(1, min(limit, 2000))
         clauses: list[str] = []
         params: list[Any] = []
         if job_id is not None:
@@ -343,7 +336,7 @@ class CronStore:
                 params.extend(normalized_states)
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
-            rows = self._query_all(
+            rows = self._record_store.query_dicts(
                 f"""
                 SELECT *
                 FROM cron_runs
@@ -366,14 +359,14 @@ class CronStore:
         owner = str(daemon_id or "").strip()
         if not owner:
             raise ValueError("daemon_id is required")
-        safe_limit = max(1, min(int(max_jobs), 500))
+        safe_limit = max(1, min(max_jobs, 500))
         now_dt = parse_iso_datetime(now_iso) if now_iso else utc_now()
         now = to_iso_utc(now_dt)
-        lease_expires = to_iso_utc(now_dt + timedelta(seconds=max(1, int(lease_ttl_s))))
+        lease_expires = to_iso_utc(now_dt + timedelta(seconds=max(1, lease_ttl_s)))
 
         queued: list[dict[str, Any]] = []
         with self._lock, self._record_store.transaction():
-            rows = self._query_all(
+            rows = self._record_store.query_dicts(
                 """
                 SELECT *
                 FROM cron_jobs
@@ -386,7 +379,7 @@ class CronStore:
                 (now, safe_limit),
             )
             if not rows:
-                fallback_rows = self._query_all(
+                fallback_rows = self._record_store.query_dicts(
                     """
                     SELECT *
                     FROM cron_jobs
@@ -502,14 +495,14 @@ class CronStore:
         owner = str(daemon_id or "").strip()
         if not owner:
             raise ValueError("daemon_id is required")
-        safe_limit = max(1, min(int(limit), 500))
+        safe_limit = max(1, min(limit, 500))
         now_dt = parse_iso_datetime(now_iso) if now_iso else utc_now()
         now = to_iso_utc(now_dt)
-        lease_expires = to_iso_utc(now_dt + timedelta(seconds=max(1, int(lease_ttl_s))))
+        lease_expires = to_iso_utc(now_dt + timedelta(seconds=max(1, lease_ttl_s)))
 
         acquired: list[dict[str, Any]] = []
         with self._lock, self._record_store.transaction():
-            candidates = self._query_all(
+            candidates = self._record_store.query_dicts(
                 """
                 SELECT *
                 FROM cron_runs
@@ -569,7 +562,7 @@ class CronStore:
             raise ValueError("daemon_id is required")
         now_dt = parse_iso_datetime(now_iso) if now_iso else utc_now()
         now = to_iso_utc(now_dt)
-        lease_expires = to_iso_utc(now_dt + timedelta(seconds=max(1, int(lease_ttl_s))))
+        lease_expires = to_iso_utc(now_dt + timedelta(seconds=max(1, lease_ttl_s)))
         with self._lock, self._record_store.transaction():
             updated = self._execute_count(
                 """

@@ -205,7 +205,7 @@ class InMemoryTaskCtl:
         next_step = _next_actionable_step(updated_steps)
         next_step_id = next_step.step_id if next_step is not None else None
 
-        task_status = _derive_task_status(task.status, updated_steps, input.status)
+        task_status = _derive_task_status(updated_steps, input.status)
         updated_task = task.model_copy(
             update={
                 "status": task_status,
@@ -456,7 +456,6 @@ def _next_actionable_step(steps: Iterable[PlanStepRecord]) -> PlanStepRecord | N
 
 
 def _derive_task_status(
-    previous: TaskStatus,
     steps: list[PlanStepRecord],
     last_step_status: PlanStepStatus,
 ) -> TaskStatus:
@@ -464,10 +463,6 @@ def _derive_task_status(
         return TaskStatus.WAITING
     if all(step.status == PlanStepStatus.DONE for step in steps):
         return TaskStatus.DONE
-    if any(step.status == PlanStepStatus.ACTIVE for step in steps):
-        return TaskStatus.ACTIVE
-    if previous == TaskStatus.WAITING:
-        return TaskStatus.ACTIVE
     return TaskStatus.ACTIVE
 
 

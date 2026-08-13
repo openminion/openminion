@@ -19,18 +19,10 @@ def _infer_forced_tools_from_message(
     canonical_tool_name: Canonicalize,
 ) -> list[str]:
     stripped = str(user_message or "").strip()
-    lowered = stripped.lower()
-    if not stripped:
+    if not stripped.lower().startswith("tool "):
         return []
-
-    if lowered.startswith("tool "):
-        parts = stripped.split(maxsplit=2)
-        if len(parts) >= 2:
-            token = canonical_tool_name(parts[1])
-            if token:
-                return [token]
-
-    return []
+    token = canonical_tool_name(stripped.split(maxsplit=2)[1])
+    return [token] if token else []
 
 
 def _resolve_explicit_forced_tools(
@@ -117,9 +109,7 @@ def build_tool_plan(
     intent_category = capability_category if capability_category else None
 
     explicit_forced_tools = bool(effective_forced_tools)
-    explicit_capability = bool(
-        capability_category and str(capability_category).strip().lower() != ""
-    )
+    explicit_capability = bool(str(capability_category or "").strip())
 
     requested_forced_tools = list(effective_forced_tools)
     fallback_chain: list[str] = []
@@ -148,7 +138,7 @@ def build_tool_plan(
             intent_category=intent_category,
             canonical_tool_chain=canonical_tool_chain,
         )
-        if not effective_forced_tools and intent_category is not None:
+        if not effective_forced_tools:
             logger = service_port.logger
             if logger is not None:
                 logger.info(

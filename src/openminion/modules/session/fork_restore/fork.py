@@ -75,7 +75,7 @@ class SessionForkAPI:
             new_session_id=new_session_id,
             snapshot_id=snapshot_id,
             forked_at=datetime.now(timezone.utc).isoformat(),
-            name=str(new_name or "").strip(),
+            name=new_name.strip(),
         )
         self.conn.execute(
             "INSERT INTO session_forks(fork_id, parent_session_id, "
@@ -100,7 +100,7 @@ class SessionForkAPI:
             "ORDER BY forked_at ASC",
             (session_id,),
         )
-        return [_record_from_row(row) for row in cur.fetchall()]
+        return [_record_from_row(row) for row in cur]
 
     def lookup_fork(self, new_session_id: str) -> SessionForkRecord | None:
         cur = self.conn.execute(
@@ -109,9 +109,7 @@ class SessionForkAPI:
             (new_session_id,),
         )
         row = cur.fetchone()
-        if row is None:
-            return None
-        return _record_from_row(row)
+        return _record_from_row(row) if row is not None else None
 
 
 def _record_from_row(row: tuple[str, str, str, str, str, str]) -> SessionForkRecord:
@@ -128,5 +126,4 @@ def _record_from_row(row: tuple[str, str, str, str, str, str]) -> SessionForkRec
 __all__ = [
     "SessionForkAPI",
     "SessionForkRecord",
-    "_SnapshotCreator",
 ]

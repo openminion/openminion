@@ -294,9 +294,7 @@ def h_fs_search(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     for path in _iter_search_files(root, file_glob):
         if len(matches) >= max_matches:
             break
-        if not path.is_file():
-            continue
-        if path.is_symlink():
+        if not path.is_file() or path.is_symlink():
             continue
         try:
             _resolve_path(ctx, str(path), "read")

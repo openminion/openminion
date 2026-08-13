@@ -46,6 +46,18 @@ def normalize_text_list(value: Any) -> list[str]:
     return _unique_texts(value)
 
 
+def _optional_text(value: Any) -> str | None:
+    return str(value) if value else None
+
+
+def _mapping_or_empty(value: Any) -> dict[Any, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def slugify(text: str, fallback: str = "skill") -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", text.strip().lower())
     normalized = normalized.strip("_")
@@ -107,7 +119,7 @@ class RecipeStep:
         return cls(
             step_id=str(raw.get("step_id", "")),
             instruction=str(raw.get("instruction", "")),
-            tool_id=str(raw.get("tool_id")) if raw.get("tool_id") else None,
+            tool_id=_optional_text(raw.get("tool_id")),
             input_schema=raw.get("input_schema")
             if isinstance(raw.get("input_schema"), dict)
             else None,
@@ -240,9 +252,7 @@ class ToolRecipe:
             verification=normalize_text_list(raw.get("verification")),
             rollback=normalize_text_list(raw.get("rollback")),
             stop_conditions=normalize_text_list(raw.get("stop_conditions")),
-            idempotency_notes=str(raw.get("idempotency_notes"))
-            if raw.get("idempotency_notes")
-            else None,
+            idempotency_notes=_optional_text(raw.get("idempotency_notes")),
             safety_notes=normalize_text_list(raw.get("safety_notes")),
         )
 
@@ -408,43 +418,19 @@ class SkillPackage:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "SkillPackage":
-        applies_raw = (
-            raw.get("applies_to") if isinstance(raw.get("applies_to"), dict) else {}
-        )
+        applies_raw = _mapping_or_empty(raw.get("applies_to"))
         recipe_raw = raw.get("recipe") if isinstance(raw.get("recipe"), dict) else None
-        snippets_raw = (
-            raw.get("snippets") if isinstance(raw.get("snippets"), dict) else {}
-        )
-        sections_raw = (
-            raw.get("sections") if isinstance(raw.get("sections"), dict) else {}
-        )
-        inputs_raw = (
-            raw.get("inputs_schema")
-            if isinstance(raw.get("inputs_schema"), list)
-            else []
-        )
+        snippets_raw = _mapping_or_empty(raw.get("snippets"))
+        sections_raw = _mapping_or_empty(raw.get("sections"))
+        inputs_raw = _list_or_empty(raw.get("inputs_schema"))
         return cls(
             skill_id=str(raw.get("skill_id", "")),
             name=str(raw.get("name", "")),
-            display_name=str(raw.get("display_name"))
-            if raw.get("display_name")
-            else None,
-            short_description=str(raw.get("short_description"))
-            if raw.get("short_description")
-            else None,
-            default_prompt=str(raw.get("default_prompt"))
-            if raw.get("default_prompt")
-            else None,
-            dependency_hints=(
-                raw.get("dependency_hints")
-                if isinstance(raw.get("dependency_hints"), dict)
-                else {}
-            ),
-            bundle_metadata=(
-                raw.get("bundle_metadata")
-                if isinstance(raw.get("bundle_metadata"), dict)
-                else {}
-            ),
+            display_name=_optional_text(raw.get("display_name")),
+            short_description=_optional_text(raw.get("short_description")),
+            default_prompt=_optional_text(raw.get("default_prompt")),
+            dependency_hints=_mapping_or_empty(raw.get("dependency_hints")),
+            bundle_metadata=_mapping_or_empty(raw.get("bundle_metadata")),
             status=normalize_status(str(raw.get("status", SKILL_STATUS_DRAFT))),
             version_hash=str(raw.get("version_hash", "")),
             source_artifact_ref=str(raw.get("source_artifact_ref", "")),
@@ -472,10 +458,8 @@ class SkillPackage:
                 if isinstance(value, str)
             },
             scope=str(raw.get("scope", "global") or "global"),
-            agent_id=str(raw.get("agent_id")) if raw.get("agent_id") else None,
-            source_version=str(raw.get("source_version"))
-            if raw.get("source_version")
-            else None,
+            agent_id=_optional_text(raw.get("agent_id")),
+            source_version=_optional_text(raw.get("source_version")),
             created_at=str(raw.get("created_at", "")),
             updated_at=str(raw.get("updated_at", "")),
             source=normalize_source(

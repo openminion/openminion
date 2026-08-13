@@ -20,9 +20,9 @@ def narrow_catalog_by_bm25(
         return []
     if not catalog:
         return []
-    top_catalog = list(catalog[:top_k])
+    top_catalog = catalog[:top_k]
 
-    if not (query or "").strip():
+    if not query.strip():
         return top_catalog
 
     query_tokens = _tokenize(query)
@@ -32,16 +32,13 @@ def narrow_catalog_by_bm25(
     doc_tokens: list[list[str]] = [_tokenize(_doc_text(entry)) for entry in catalog]
     doc_lengths = [len(tokens) for tokens in doc_tokens]
     total_docs = len(catalog)
-    avg_doc_length = (sum(doc_lengths) / total_docs) if total_docs else 0.0
+    avg_doc_length = sum(doc_lengths) / total_docs
 
     unique_query_tokens = set(query_tokens)
     doc_freq: dict[str, int] = {token: 0 for token in unique_query_tokens}
     for tokens in doc_tokens:
-        seen_in_doc: set[str] = set()
-        for tok in tokens:
-            if tok in doc_freq and tok not in seen_in_doc:
-                doc_freq[tok] += 1
-                seen_in_doc.add(tok)
+        for token in set(tokens) & unique_query_tokens:
+            doc_freq[token] += 1
 
     idf: dict[str, float] = {}
     for token in unique_query_tokens:
@@ -66,11 +63,7 @@ def narrow_catalog_by_bm25(
         score = 0.0
         for token, tf in tf_counts.items():
             numerator = tf * (_BM25_K1 + 1)
-            denominator = tf + _BM25_K1 * (
-                1 - _BM25_B + _BM25_B * (dl / avg_doc_length if avg_doc_length else 0.0)
-            )
-            if denominator <= 0:
-                continue
+            denominator = tf + _BM25_K1 * (1 - _BM25_B + _BM25_B * dl / avg_doc_length)
             score += idf[token] * (numerator / denominator)
         scored.append((score, idx, entry))
 
@@ -88,4 +81,4 @@ def _doc_text(entry: dict[str, Any]) -> str:
 
 
 def _tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall((text or "").lower())
+    return _TOKEN_RE.findall(text.lower())

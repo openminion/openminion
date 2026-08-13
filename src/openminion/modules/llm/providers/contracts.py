@@ -52,6 +52,11 @@ class ProviderHistoryMessage:
     role: str
     content: str
     meta: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[ProviderToolCall] = field(default_factory=list)
+    tool_call_id: str | None = None
+    tool_status: str | None = None
+    tool_output: Any = None
+    tool_error: dict[str, Any] | None = None
 
     @property
     def body(self) -> str:

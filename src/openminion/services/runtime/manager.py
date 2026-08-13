@@ -117,9 +117,7 @@ class _ConcurrencyLimiter:
     def acquire(self, cancel_event: Event) -> bool:
         with self._cv:
             while True:
-                if self._closed:
-                    return False
-                if cancel_event.is_set():
+                if self._closed or cancel_event.is_set():
                     return False
                 if self._active < self._limit:
                     self._active += 1
@@ -194,7 +192,7 @@ class TurnHandle:
 
     def cancel(self) -> bool:
         self._cancel_event.set()
-        return bool(self._on_cancel(self.trace_id))
+        return self._on_cancel(self.trace_id)
 
     def stream(self, timeout_s: float | None = None) -> Iterator[TurnChunk]:
         while True:
@@ -745,7 +743,7 @@ class AgentRuntimeManager:
                 leftover = instance.queue.get_nowait()
             except Empty:
                 break
-            if leftover is None or not hasattr(leftover, "handle"):
+            if leftover is None:
                 continue
             cancelled_response = TurnResponse(
                 final_text="",
@@ -784,7 +782,7 @@ class AgentRuntimeManager:
                 "error_count": len(response.errors),
             },
         )
-        if int(getattr(response.telemetry, "retries", 0) or 0) > 0:
+        if response.telemetry.retries > 0:
             self._emit_runtime_operation(
                 session_id=request.session_id,
                 turn_id=request.trace_id,
@@ -853,12 +851,12 @@ class AgentRuntimeManager:
         return build_runtime_manager_component_identity()
 
     def _agent_runtime_component(self, agent_id: str) -> dict[str, Any]:
-        return build_agent_runtime_component_identity(str(agent_id or "").strip())
+        return build_agent_runtime_component_identity(agent_id.strip())
 
 
 def _iso_to_monotonic_delta(ts: str, now_mono: float) -> float:
     try:
-        value = datetime.fromisoformat(str(ts))
+        value = datetime.fromisoformat(ts)
     except ValueError:
         return now_mono
     now_utc = datetime.now(timezone.utc)

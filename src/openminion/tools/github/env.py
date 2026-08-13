@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openminion.base.config import EnvironmentConfig
 
@@ -23,7 +23,6 @@ def get_github_token(
     context: Any | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> str:
-    """Resolve the GitHub PAT through the centralized env helper."""
     name = (token_env or "").strip() or GITHUB_TOKEN_ENV
     return get_tool_env(name, default="", context=context, env=env)
 
@@ -33,7 +32,6 @@ def get_github_api_base_url(
     context: Any | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> str:
-    """Resolve the GitHub API base URL (defaults to ``api.github.com``)."""
     value = get_tool_env(
         GITHUB_API_BASE_URL_ENV,
         default=DEFAULT_GITHUB_API_BASE_URL,
@@ -48,7 +46,6 @@ def get_github_timeout_seconds(
     context: Any | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> float:
-    """Resolve the per-call timeout in seconds."""
     return get_tool_env_float(
         GITHUB_TIMEOUT_SECONDS_ENV,
         default=DEFAULT_GITHUB_TIMEOUT_SECONDS,
@@ -69,7 +66,6 @@ def resolve_github_pat_through_credential_boundary(
     context: Any | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> tuple[str, "CredentialRef"]:
-    """Canonical GitHub PAT resolution through the CRES boundary owner."""
     from openminion.modules.runtime.credentials import (
         resolve_credential_ref,
     )
@@ -97,7 +93,7 @@ def resolve_github_pat_through_credential_boundary(
     return value, ref
 
 
-if False:  # pragma: no cover - typing-only import to avoid cycles
+if TYPE_CHECKING:
     from openminion.modules.runtime.credentials import (
         CredentialAuditLog,
         CredentialRef,

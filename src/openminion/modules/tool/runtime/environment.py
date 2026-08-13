@@ -1,6 +1,6 @@
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.constants import OPENMINION_DATA_ROOT_ENV
@@ -42,26 +42,31 @@ def resolve_env_from_context(ctx: Any | None = None) -> EnvironmentConfig:
     return resolve_tool_env()
 
 
-def agent_id_from_context(ctx: Any) -> str:
-    """Resolve agent_id from runtime context, policy metadata, or env."""
+def _policy_value_from_context(ctx: Any, key: str) -> str:
     raw = getattr(getattr(ctx, "policy", None), "raw", {}) or {}
-    if isinstance(raw, Mapping):
-        context_meta = raw.get("context_metadata")
-        if isinstance(context_meta, Mapping):
-            token = str(context_meta.get("agent_id", "")).strip()
-            if token:
-                return token
-        token = str(raw.get("agent_id", "")).strip()
+    if not isinstance(raw, Mapping):
+        return ""
+    context_meta = raw.get("context_metadata")
+    if isinstance(context_meta, Mapping):
+        token = str(context_meta.get(key, "")).strip()
         if token:
             return token
-    env_token = resolve_env_from_context(ctx).get("OPENMINION_AGENT_ID", "").strip()
+    return str(raw.get(key, "")).strip()
+
+
+def agent_id_from_context(ctx: Any) -> str:
+    token = _policy_value_from_context(ctx, "agent_id")
+    if token:
+        return token
+    env_token = str(
+        resolve_env_from_context(ctx).get("OPENMINION_AGENT_ID", "")
+    ).strip()
     if env_token:
         return env_token
     return "openminion"
 
 
 def identity_db_candidates(*, env: EnvironmentConfig | None = None) -> tuple[Path, ...]:
-    """Resolve identity database candidates."""
     candidates: list[Path] = []
     resolved_env = env or resolve_tool_env()
     env_identity_db = resolved_env.get("OPENMINION_IDENTITY_DB", "").strip()
@@ -76,29 +81,15 @@ def identity_db_candidates(*, env: EnvironmentConfig | None = None) -> tuple[Pat
     except Exception:
         pass
 
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        token = str(candidate.resolve(strict=False))
-        if token in seen:
-            continue
-        seen.add(token)
-        deduped.append(Path(token))
-    return tuple(deduped)
+    return tuple(
+        dict.fromkeys(candidate.resolve(strict=False) for candidate in candidates)
+    )
 
 
 def storage_path_from_context(ctx: Any) -> str | None:
-    """Resolve task storage path from context metadata or env."""
-    raw = getattr(getattr(ctx, "policy", None), "raw", {}) or {}
-    if isinstance(raw, Mapping):
-        context_meta = raw.get("context_metadata")
-        if isinstance(context_meta, Mapping):
-            token = str(context_meta.get("storage_path", "")).strip()
-            if token:
-                return token
-        token = str(raw.get("storage_path", "")).strip()
-        if token:
-            return token
+    token = _policy_value_from_context(ctx, "storage_path")
+    if token:
+        return token
     env_storage_path = (
         resolve_env_from_context(ctx).get("OPENMINION_STORAGE_PATH", "").strip()
     )

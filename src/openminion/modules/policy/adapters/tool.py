@@ -70,14 +70,11 @@ class ExecutionBoundaryPolicyAdapter(PolicyAdapter):
     ) -> PolicyDecision:
         requires_confirm = decision.decision == DECISION_REQUIRE_APPROVAL
         allowed = decision.decision == DECISION_ALLOW
-        code = (
-            "require_approval"
-            if requires_confirm
-            else str(decision.reason_code or "policy_denied")
-        )
+        reason_code = str(decision.reason_code or "policy_denied")
+        code = "require_approval" if requires_confirm else reason_code
         return PolicyDecision(
             allowed=allowed,
-            reason=str(decision.reason_code or "policy_denied"),
+            reason=reason_code,
             code=code,
             requires_confirm=requires_confirm,
             details={
@@ -168,21 +165,23 @@ class ExecutionBoundaryPolicyAdapter(PolicyAdapter):
 def _read_only_exec_denial_hint(
     *, tool_name: str, args: dict[str, Any]
 ) -> tuple[str, str] | None:
-    if str(tool_name or "").strip() not in _EXEC_RUN_TOOL_NAMES:
-        return None
-    command = str(args.get("command", "") or "").strip()
-    if not command:
-        return None
-    return read_only_discovery_hint_for_command(command)
+    command = _read_only_exec_command(tool_name=tool_name, args=args)
+    return read_only_discovery_hint_for_command(command) if command else None
 
 
 def _read_only_exec_allowed(*, tool_name: str, args: dict[str, Any]) -> bool:
+    command = _read_only_exec_command(tool_name=tool_name, args=args)
+    return bool(
+        command
+        and is_read_only_exec_command(command, shell_family=resolve_shell_family())
+    )
+
+
+def _read_only_exec_command(*, tool_name: str, args: dict[str, Any]) -> str | None:
     if str(tool_name or "").strip() not in _EXEC_RUN_TOOL_NAMES:
-        return False
+        return None
     command = str(args.get("command", "") or "").strip()
-    if not command:
-        return False
-    return is_read_only_exec_command(command, shell_family=resolve_shell_family())
+    return command or None
 
 
 def build_execution_boundary_policy_adapter(

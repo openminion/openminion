@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.services.runtime.interfaces import RuntimeFacade
@@ -24,7 +24,7 @@ _ACTIVE_RUN_STATES = frozenset(
 
 
 def build_owner_status(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     runtime: RuntimeFacade,
     session_limit: int = 20,
@@ -65,7 +65,7 @@ def _default_owner_bindings(active_runtime: RuntimeFacade) -> tuple[str, str]:
     default_agent_id = resolve_default_agent_id(active_runtime.config)
     default_profile = active_runtime.config.agents[default_agent_id]
     provider_name = (default_profile.provider or "echo").strip().lower() or "echo"
-    default_channel = str(default_profile.default_channel or "").strip() or "console"
+    default_channel = (default_profile.default_channel or "").strip() or "console"
     return provider_name, default_channel
 
 
@@ -81,7 +81,7 @@ def _summarize_owner_runs(
     recent_failures: list[dict[str, str]] = []
     session_summaries: list[dict[str, Any]] = []
     runs_total = 0
-    latest_activity_at: Optional[datetime] = None
+    latest_activity_at: datetime | None = None
     for session in sessions:
         summary = _summarize_session_runs(
             active_runtime,
@@ -124,7 +124,7 @@ def _summarize_session_runs(
     recent_failures: list[dict[str, str]] = []
     active_runs = 0
     failed_runs = 0
-    latest_activity_at: Optional[datetime] = None
+    latest_activity_at: datetime | None = None
     for run in recent_runs:
         state = str(run.state or "").strip() or "unknown"
         state_counts[state] = state_counts.get(state, 0) + 1
@@ -163,11 +163,11 @@ def _owner_status_payload(
     recent_failures: list[dict[str, str]],
     session_summaries: list[dict[str, Any]],
     runs_total: int,
-    latest_activity_at: Optional[datetime],
+    latest_activity_at: datetime | None,
 ) -> dict[str, Any]:
-    failed_runs = int(state_counts.get(RUN_STATE_FAILED, 0))
-    completed_runs = int(state_counts.get(RUN_STATE_COMPLETED, 0))
-    active_runs = sum(int(state_counts.get(state, 0)) for state in _ACTIVE_RUN_STATES)
+    failed_runs = state_counts.get(RUN_STATE_FAILED, 0)
+    completed_runs = state_counts.get(RUN_STATE_COMPLETED, 0)
+    active_runs = sum(state_counts.get(state, 0) for state in _ACTIVE_RUN_STATES)
     success_denominator = completed_runs + failed_runs
     alerts = _owner_alerts(failed_runs, active_runs, runs_total, safe_window_hours)
     return {
@@ -230,22 +230,20 @@ def _initial_run_state_counts() -> dict[str, int]:
 
 def _merge_state_counts(target: dict[str, int], source: dict[str, int]) -> None:
     for state, count in source.items():
-        target[state] = target.get(state, 0) + int(count)
+        target[state] = target.get(state, 0) + count
 
 
-def _run_activity_at(run) -> Optional[datetime]:
+def _run_activity_at(run) -> datetime | None:
     return _parse_timestamp(run.ended_at) or _parse_timestamp(run.started_at)
 
 
 def _latest_timestamp(
-    current: Optional[datetime],
-    candidate: Optional[datetime],
-) -> Optional[datetime]:
+    current: datetime | None,
+    candidate: datetime | None,
+) -> datetime | None:
     if candidate is None:
         return current
-    if current is None or candidate > current:
-        return candidate
-    return current
+    return candidate if current is None or candidate > current else current
 
 
 def _failure_payload(run) -> dict[str, str]:
@@ -324,7 +322,7 @@ def _summary_payload(
     failed_runs: int,
     completed_runs: int,
     state_counts: dict[str, int],
-    latest_activity_at: Optional[datetime],
+    latest_activity_at: datetime | None,
     sessions_with_recent_runs: set[str],
     success_denominator: int,
 ) -> dict[str, Any]:
@@ -407,8 +405,8 @@ def _component_vocabulary(provider_name: str, default_channel: str) -> dict[str,
     }
 
 
-def _parse_timestamp(raw_value: str) -> Optional[datetime]:
-    candidate = str(raw_value or "").strip()
+def _parse_timestamp(raw_value: str) -> datetime | None:
+    candidate = (raw_value or "").strip()
     if not candidate:
         return None
     normalized = candidate[:-1] + "+00:00" if candidate.endswith("Z") else candidate
@@ -422,4 +420,4 @@ def _parse_timestamp(raw_value: str) -> Optional[datetime]:
 
 
 def _clamp_int(value: int, *, minimum: int, maximum: int) -> int:
-    return max(minimum, min(maximum, int(value)))
+    return max(minimum, min(maximum, value))

@@ -55,24 +55,23 @@ class SessionStoreTests(unittest.TestCase):
         self.assertIsNone(first.expires_at)
         self.assertTrue(first.last_activity_at)
 
-    def test_explicit_session_id_override_wins(self) -> None:
+    def test_explicit_session_id_requires_matching_surface(self) -> None:
         session = self.store.resolve_session(
             agent_id="main",
             channel="console",
             target="team-a",
             session_id="manual-session-1",
         )
-        resolved_again = self.store.resolve_session(
-            agent_id="main",
-            channel="console",
-            target="team-b",
-            session_id="manual-session-1",
-        )
 
         self.assertEqual(session.id, "manual-session-1")
-        self.assertEqual(resolved_again.id, "manual-session-1")
-        self.assertEqual(session.id, resolved_again.id)
         self.assertIn("agent:main|", session.session_key)
+        with self.assertRaisesRegex(ValueError, "belongs to target"):
+            self.store.resolve_session(
+                agent_id="main",
+                channel="console",
+                target="team-b",
+                session_id="manual-session-1",
+            )
 
     def test_explicit_session_id_rejects_cross_agent_resume(self) -> None:
         session = self.store.resolve_session(
@@ -731,6 +730,51 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(len(closed_events), 1)
         self.assertEqual(closed_events[0].payload.get("reason"), "finished")
 
+    def test_explicit_resume_reactivates_closed_session_and_keeps_history(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="resume-closed",
+            session_id="resume-closed-session",
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="inbound",
+            body="durable history",
+        )
+        self.store.close_session(session_id=session.id, reason="finished")
+
+        resumed = self.store.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="resume-closed",
+            session_id=session.id,
+        )
+
+        self.assertEqual(resumed.status, "active")
+        self.assertIsNone(resumed.closed_at)
+        self.assertEqual(
+            [item.body for item in self.store.list_messages(session_id=session.id)],
+            ["durable history"],
+        )
+        resumed_events = self.store.list_events(
+            session_id=session.id,
+            event_type_prefix="session.resumed",
+        )
+        self.assertEqual(len(resumed_events), 1)
+        self.assertEqual(resumed_events[0].payload["previous_status"], "closed")
+
+    def test_implicit_resolution_does_not_reopen_closed_session(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="implicit-closed"
+        )
+        self.store.close_session(session_id=session.id)
+
+        with self.assertRaisesRegex(ValueError, "resume it explicitly"):
+            self.store.resolve_session(
+                agent_id="main", channel="console", target="implicit-closed"
+            )
+
     def test_expire_session_emits_expired_event(self) -> None:
         session = self.store.resolve_session(
             agent_id="main", channel="console", target="expire"
@@ -752,6 +796,14 @@ class SessionStoreTests(unittest.TestCase):
         payload = expired_events[0].payload
         self.assertEqual(payload.get("expires_at"), "2026-03-17T00:00:00Z")
         self.assertEqual(payload.get("reason"), "ttl")
+
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.store.resolve_session(
+                agent_id="main",
+                channel="console",
+                target="expire",
+                session_id=session.id,
+            )
 
     def test_set_session_status_rejects_invalid_status(self) -> None:
         session = self.store.resolve_session(

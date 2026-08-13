@@ -26,7 +26,17 @@ from openminion.services.brain.post_execution.constants import (
     PRIOR_TURN_TOOL_EVENT_LIMIT,
 )
 
-_TURN_SIGNATURE_WINDOW = 16
+_HYDRATION_METADATA_KEYS = frozenset(
+    {
+        "conversation_id",
+        "message_id",
+        "request_id",
+        "run_id",
+        "thread_id",
+        "trace_id",
+        "turn_id",
+    }
+)
 _LLM_PURPOSES = (
     "act decide entry judge plan reflect self_compaction "
     "skill_selection summarize tool_shortlist"
@@ -366,12 +376,12 @@ def _pending_history_turns_to_hydrate(
     runner: BrainRunner,
     session_id: str,
     history: list[Message],
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, dict[str, str]]]:
     existing_signatures = self._runner_turn_signatures(
         runner=runner,
         session_id=session_id,
     )
-    pending: list[tuple[str, str]] = []
+    pending: list[tuple[str, str, dict[str, str]]] = []
     for item in history:
         role = _history_role(item.metadata.get("role", ""))
         if role not in {"user", "assistant"}:
@@ -384,7 +394,13 @@ def _pending_history_turns_to_hydrate(
         signature = self._turn_signature(role=role, content=content)
         if signature in existing_signatures:
             continue
-        pending.append((role, content))
+        metadata = {
+            key: str(item.metadata.get(key, "") or "").strip()
+            for key in _HYDRATION_METADATA_KEYS
+            if str(item.metadata.get(key, "") or "").strip()
+        }
+        metadata["source"] = "gateway_history_bridge"
+        pending.append((role, content, metadata))
         existing_signatures.add(signature)
     return pending
 
@@ -398,7 +414,7 @@ def _hydrate_runner_session_context(
     system_prompt: str | None = None,
 ) -> None:
     del system_prompt
-    for role, content in self._pending_history_turns_to_hydrate(
+    for role, content, metadata in self._pending_history_turns_to_hydrate(
         runner=runner,
         session_id=session_id,
         history=history,
@@ -408,7 +424,7 @@ def _hydrate_runner_session_context(
                 session_id=session_id,
                 role=role,
                 content=content,
-                meta={"source": "gateway_history_bridge"},
+                meta=metadata,
             )
         except Exception:  # noqa: BLE001
             break
@@ -657,9 +673,6 @@ def _runner_turn_signatures(self, *, runner: BrainRunner, session_id: str) -> se
         turns = runner.session_api.list_turns(session_id)
     except Exception:  # noqa: BLE001
         return signatures
-
-    if isinstance(turns, list) and len(turns) > _TURN_SIGNATURE_WINDOW:
-        turns = turns[-_TURN_SIGNATURE_WINDOW:]
 
     for item in turns:
         if not isinstance(item, dict):

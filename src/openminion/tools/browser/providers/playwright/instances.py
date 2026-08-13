@@ -65,7 +65,7 @@ class PlaywrightInstanceManager:
         return self._instances.pop(key)
 
     def list(self) -> list[PlaywrightInstance]:
-        return [self._instances[key] for key in sorted(self._instances.keys())]
+        return [self._instances[key] for key in sorted(self._instances)]
 
     def __len__(self) -> int:
         return len(self._instances)
@@ -95,7 +95,7 @@ class PlaywrightTabManager:
         return self._tabs.pop(key)
 
     def list(self, *, instance_id: str | None = None) -> list[PlaywrightTab]:
-        rows = [self._tabs[key] for key in sorted(self._tabs.keys())]
+        rows = [self._tabs[key] for key in sorted(self._tabs)]
         if instance_id:
             token = str(instance_id).strip()
             rows = [row for row in rows if row.instance_id == token]
@@ -103,10 +103,7 @@ class PlaywrightTabManager:
 
     def clear_for_instance(self, instance_id: str) -> List[PlaywrightTab]:
         token = str(instance_id).strip()
-        deleted: list[PlaywrightTab] = []
-        for tab_id in list(self._tabs.keys()):
-            tab = self._tabs[tab_id]
-            if tab.instance_id != token:
-                continue
-            deleted.append(self._tabs.pop(tab_id))
-        return deleted
+        tab_ids = [
+            tab_id for tab_id, tab in self._tabs.items() if tab.instance_id == token
+        ]
+        return [self._tabs.pop(tab_id) for tab_id in tab_ids]

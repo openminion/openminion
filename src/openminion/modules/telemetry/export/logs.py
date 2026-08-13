@@ -50,16 +50,15 @@ def log_projection_for_event(
     ):
         return None
     if event_type in _DIAGNOSTIC_EVENTS:
+        severity = "ERROR"
+        if event_type == "telemetry.export.probe":
+            severity = "INFO"
+        elif event_type == "telemetry.propagation.invalid":
+            severity = "WARN"
         return OTelLogProjection(
             record_type="LogRecord",
             event_name=event_type,
-            severity=(
-                "INFO"
-                if event_type == "telemetry.export.probe"
-                else "WARN"
-                if event_type == "telemetry.propagation.invalid"
-                else "ERROR"
-            ),
+            severity=severity,
             body=event_type,
             attributes=attributes,
         )

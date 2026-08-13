@@ -1,6 +1,6 @@
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -27,31 +27,28 @@ def build_file_checkpoint(
     files: dict[str, str],
 ) -> FileCheckpoint:
     return FileCheckpoint(
-        checkpoint_id=str(checkpoint_id or "").strip(),
-        files=dict(files or {}),
+        checkpoint_id=checkpoint_id.strip(),
+        files=dict(files),
         created_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
 def restore_file_checkpoint(
-    checkpoint: FileCheckpoint, *, root: str = ""
+    checkpoint: FileCheckpoint, *, root: str | Path = ""
 ) -> FileRestoreResult:
     """Restore checkpoint files under root and report the outcome."""
 
     restored: list[str] = []
     missing: list[str] = []
+    root_path = Path(root or ".").resolve()
     for relpath, content in checkpoint.files.items():
-        path = os.path.join(root, relpath) if root else relpath
-        directory = os.path.dirname(path)
-        if directory and not os.path.isdir(directory):
-            try:
-                os.makedirs(directory, exist_ok=True)
-            except OSError:
-                missing.append(relpath)
-                continue
+        path = (root_path / relpath).resolve()
+        if not path.is_relative_to(root_path):
+            missing.append(relpath)
+            continue
         try:
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(content)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
             restored.append(relpath)
         except OSError:
             missing.append(relpath)

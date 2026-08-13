@@ -40,6 +40,7 @@ from ..messages import action_result_to_tool_message
 from ..plan_control import is_plan_family_tool_name
 from ..reflection import detect_anomaly
 from ..status import emit_adaptive_status
+from ..transcript import persist_terminal_tool_result
 
 
 MICRO_CORRECTION_ANOMALY_THRESHOLD = 0.5
@@ -150,6 +151,13 @@ def execute_iteration_results(
 
         action_result = command_outcome.action_result or build_missing_action_result(
             tool_name
+        )
+        persist_terminal_tool_result(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            tool_call=tool_call,
+            action_result=action_result,
         )
         append_tool_result_payload(
             loop_state,

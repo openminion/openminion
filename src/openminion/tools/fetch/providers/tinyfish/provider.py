@@ -4,7 +4,6 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from .config import (
-    DEFAULT_TINYFISH_FETCH_API_URL,
     DEFAULT_TINYFISH_FETCH_TIMEOUT_SECONDS,
     TinyFishFetchProviderConfig,
     resolve_tinyfish_api_key,
@@ -44,8 +43,7 @@ def _error_code_for_status(status: int) -> str:
 
 
 def _error_code_for_row(error_code: str) -> str:
-    normalized = str(error_code or "").strip().lower()
-    if normalized == "invalid_url":
+    if error_code.strip().lower() == "invalid_url":
         return "INVALID_REQUEST"
     return "UPSTREAM_ERROR"
 
@@ -71,10 +69,7 @@ class TinyFishFetchProvider(FetchProviderProtocol):
         if self.config.endpoint and self.config.endpoint.strip():
             return self.config.endpoint.strip()
         runtime_env = getattr(ctx, "env", None) if ctx is not None else None
-        return (
-            resolve_tinyfish_fetch_api_url(env=runtime_env)
-            or DEFAULT_TINYFISH_FETCH_API_URL
-        )
+        return resolve_tinyfish_fetch_api_url(env=runtime_env)
 
     def _timeout_seconds(
         self,
@@ -126,7 +121,7 @@ class TinyFishFetchProvider(FetchProviderProtocol):
         )
         try:
             options = TinyFishProviderOptions.model_validate(tinyfish_payload)
-        except Exception as exc:
+        except ValueError as exc:
             return _error_result(
                 "INVALID_ARGUMENT",
                 f"invalid tinyfish provider options: {exc}",
@@ -153,8 +148,8 @@ class TinyFishFetchProvider(FetchProviderProtocol):
         body = {
             "urls": [str(request.get("url", "") or "").strip()],
             "format": options.format,
-            "links": bool(options.links),
-            "image_links": bool(options.image_links),
+            "links": options.links,
+            "image_links": options.image_links,
         }
 
         req = urllib_request.Request(
@@ -206,7 +201,7 @@ class TinyFishFetchProvider(FetchProviderProtocol):
             return _error_result(
                 _error_code_for_row(row_error),
                 f"TinyFish fetch returned per-url error: {row_error}",
-                details={"row": dict(row) if isinstance(row, Mapping) else {}},
+                details={"row": dict(row)},
             )
 
         results = payload.get("results")

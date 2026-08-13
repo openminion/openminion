@@ -78,13 +78,21 @@ class SessionStore:
         session_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> SessionRecord:
-        return self._sessions.resolve_session(
+        resolved = self._sessions.resolve_session(
             agent_id=agent_id,
             channel=channel,
             target=target,
             session_id=session_id,
             metadata=metadata,
         )
+        if session_id:
+            return self._lifecycle.resume_session(session_id=resolved.id)
+        if resolved.status != "active":
+            raise ValueError(
+                f"Session {resolved.id!r} is {resolved.status}; "
+                "resume it explicitly or create a new session"
+            )
+        return resolved
 
     def create_room(
         self,
@@ -440,6 +448,17 @@ class SessionStore:
         reason: str | None = None,
     ) -> SessionRecord:
         return self._lifecycle.close_session(
+            session_id=session_id,
+            reason=reason,
+        )
+
+    def resume_session(
+        self,
+        *,
+        session_id: str,
+        reason: str | None = None,
+    ) -> SessionRecord:
+        return self._lifecycle.resume_session(
             session_id=session_id,
             reason=reason,
         )

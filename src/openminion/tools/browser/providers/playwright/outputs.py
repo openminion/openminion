@@ -10,8 +10,7 @@ def screenshot(
     provider: Any, *, tab_id: str, output_path: str | None = None
 ) -> dict[str, Any]:
     tab = provider._tabs.get(tab_id)
-    key = provider._lock_key(tab_id)
-    with provider._locks.action_lock(key):
+    with provider._locks.action_lock(provider._lock_key(tab_id)):
         blob = tab.page.screenshot(full_page=True)
     artifact = provider._artifact_writer.write_screenshot(blob, output_path=output_path)
     return {"artifact": artifact}
@@ -33,8 +32,7 @@ def pdf(
     if not provider.config.browser_is_chromium:
         raise RuntimeError("pdf_not_supported")
     tab = provider._tabs.get(tab_id)
-    key = provider._lock_key(tab_id)
-    with provider._locks.action_lock(key):
+    with provider._locks.action_lock(provider._lock_key(tab_id)):
         blob = tab.page.pdf()
     artifact = provider._artifact_writer.write_pdf(blob, output_path=output_path)
     return {"artifact": artifact}
@@ -64,8 +62,7 @@ def upload(
         raise ValueError("upload requires at least one file")
     resolved = [str(resolve_workspace_file(provider, path)) for path in files]
 
-    key = provider._lock_key(tab_id)
-    with provider._locks.action_lock(key):
+    with provider._locks.action_lock(provider._lock_key(tab_id)):
         locator = provider._selector_adapter.resolve_locator(
             page=tab.page,
             selector=selector,
@@ -94,14 +91,10 @@ def resolve_workspace_file(provider: Any, raw_path: str) -> str:
 
 
 def to_workspace_relative(provider: Any, path: str) -> str:
-    try:
-        return str(
-            provider._artifact_writer.resolve_output_path(path).relative_to(
-                provider.config.workspace_path
-            )
-        )
-    except Exception:
-        return path
+    resolved = provider._artifact_writer.resolve_output_path(path)
+    if resolved.is_relative_to(provider.config.workspace_path):
+        return str(resolved.relative_to(provider.config.workspace_path))
+    return str(resolved)
 
 
 def resolve_profile_dir(provider: Any, profile: str | None) -> str:
@@ -112,10 +105,8 @@ def resolve_profile_dir(provider: Any, profile: str | None) -> str:
     if not token:
         base.mkdir(parents=True, exist_ok=True)
         return str(base)
-    if base.name == "default":
-        target = (base.parent / token).resolve(strict=False)
-    else:
-        target = (base / token).resolve(strict=False)
+    profile_root = base.parent if base.name == "default" else base
+    target = (profile_root / token).resolve(strict=False)
     provider._artifact_writer.resolve_output_path(str(target))
     target.mkdir(parents=True, exist_ok=True)
     return str(target)

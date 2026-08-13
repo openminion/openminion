@@ -23,15 +23,13 @@ class CronDeliveryBridge:
     ) -> None:
         result_dict = self._result_dict(result)
         origin = self._origin_from_job(job)
-        resolved_to_value = str(to_value or "").strip()
+        resolved_to_value = to_value.strip()
         if mode == "announce" and resolved_to_value == "last":
             origin_session_id = origin.get("session_id", "")
             if origin_session_id:
                 resolved_to_value = f"session:{origin_session_id}"
 
         def _outbound(payload: dict[str, Any]) -> None:
-            if not isinstance(payload, dict):
-                return
             if str(payload.get("type", "")).strip() != "cron.announce":
                 return
             target = str(payload.get("target", "") or "").strip()
@@ -131,7 +129,7 @@ class CronDeliveryBridge:
         return origin
 
     def _result_dict(self, result: Any) -> dict[str, Any]:
-        if is_dataclass(result):
+        if is_dataclass(result) and not isinstance(result, type):
             return asdict(result)
         if isinstance(result, dict):
             return dict(result)

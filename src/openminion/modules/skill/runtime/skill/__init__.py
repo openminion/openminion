@@ -96,11 +96,9 @@ class Skill(SkillIngestMixin, SkillCatalogMixin, SkillMatchingMixin):
         self._telemetry_turn_id = str(turn_id or "").strip() or None
 
     def _telemetry_context_ids(self) -> tuple[str, str] | None:
-        session_id = str(self._telemetry_session_id or "").strip()
-        turn_id = str(self._telemetry_turn_id or "").strip()
-        if not session_id or not turn_id:
-            return None
-        return session_id, turn_id
+        if self._telemetry_session_id and self._telemetry_turn_id:
+            return self._telemetry_session_id, self._telemetry_turn_id
+        return None
 
     def _emit_skill_operation(
         self,

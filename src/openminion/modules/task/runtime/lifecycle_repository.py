@@ -205,9 +205,7 @@ class TaskLifecycleRepository(
         if record.state == normalized_to_state:
             return record
 
-        if normalized_to_state not in _ALLOWED_STATE_TRANSITIONS.get(
-            record.state, set()
-        ):
+        if normalized_to_state not in _ALLOWED_STATE_TRANSITIONS[record.state]:
             raise ValueError(
                 "invalid task state transition: "
                 f"{record.state.value} -> {normalized_to_state.value}"

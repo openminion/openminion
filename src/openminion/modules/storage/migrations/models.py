@@ -54,9 +54,7 @@ class VerificationReport:
     ok: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["findings"] = [finding.to_dict() for finding in self.findings]
-        return payload
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -102,8 +100,4 @@ class RehydrateReport:
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["verification"] = (
-            self.verification.to_dict() if self.verification else None
-        )
-        return payload
+        return asdict(self)

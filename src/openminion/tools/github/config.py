@@ -21,9 +21,7 @@ def _coerce_str_tuple(value: object, *, default: tuple[str, ...]) -> tuple[str, 
     return tokens or default
 
 
-def _coerce_bool(value: object, *, default: bool) -> bool:
-    if value is None:
-        return default
+def _coerce_bool(value: object) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
@@ -31,8 +29,6 @@ def _coerce_bool(value: object, *, default: bool) -> bool:
 
 @dataclass
 class GithubToolProfileConfig:
-    """Per-profile github tool-family config (V1)."""
-
     token_env: str = ""
     allowed_repositories: tuple[str, ...] = DEFAULT_GITHUB_WRITE_ALLOWED_REPOSITORIES
     allowed_branch_prefixes: tuple[str, ...] = (
@@ -72,24 +68,14 @@ class GithubToolProfileConfig:
                 default=DEFAULT_GITHUB_WRITE_ALLOWED_BASE_BRANCHES,
             ),
             allow_default_branch_writes=_coerce_bool(
-                payload.get("allow_default_branch_writes"),
-                default=False,
+                payload.get("allow_default_branch_writes")
             ),
-            allow_force_push=_coerce_bool(
-                payload.get("allow_force_push"),
-                default=False,
-            ),
-            allow_merge=_coerce_bool(payload.get("allow_merge"), default=False),
-            allow_delete_branch=_coerce_bool(
-                payload.get("allow_delete_branch"),
-                default=False,
-            ),
+            allow_force_push=_coerce_bool(payload.get("allow_force_push")),
+            allow_merge=_coerce_bool(payload.get("allow_merge")),
+            allow_delete_branch=_coerce_bool(payload.get("allow_delete_branch")),
         )
 
     def resolved_token_env(self) -> str | None:
-        """Returns the override env name, or ``None`` to fall back to
-        :data:`GITHUB_TOKEN_ENV`.
-        """
         return self.token_env or None
 
 

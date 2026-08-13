@@ -205,35 +205,41 @@ class IntegrationBrainV1Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             session = LocalSessionStore(root / "sessions")
+            clarify_response = LLMResponse(
+                ok=True,
+                provider="test",
+                model="test-model",
+                tool_calls=[
+                    ToolCall(
+                        id="clarify-1",
+                        name="clarify",
+                        arguments={
+                            "question": "What exactly should I do?",
+                            "freshness": {
+                                "domain": "general",
+                                "time_sensitive": False,
+                                "needs_live_data": False,
+                                "needs_sources": False,
+                                "needs_exact_date": False,
+                                "answer_mode": "local_only",
+                            },
+                        },
+                        status="requested",
+                    )
+                ],
+                usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+                finish_reason="tool_calls",
+                provider_raw={},
+                telemetry={},
+            )
             runner = BrainRunner(
                 profile=_profile(),
                 session_api=session,
                 llm_api=SimpleNamespace(
                     call=MagicMock(
                         side_effect=[
-                            LLMResponse(
-                                ok=True,
-                                provider="test",
-                                model="test-model",
-                                tool_calls=[
-                                    ToolCall(
-                                        id="clarify-1",
-                                        name="clarify",
-                                        arguments={
-                                            "question": "What exactly should I do?"
-                                        },
-                                        status="requested",
-                                    )
-                                ],
-                                usage=UsageInfo(
-                                    input_tokens=1,
-                                    output_tokens=1,
-                                    total_tokens=2,
-                                ),
-                                finish_reason="tool_calls",
-                                provider_raw={},
-                                telemetry={},
-                            ),
+                            clarify_response,
+                            clarify_response,
                             LLMResponse(
                                 ok=True,
                                 provider="test",

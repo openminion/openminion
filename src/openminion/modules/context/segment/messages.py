@@ -33,9 +33,7 @@ def protected_decide_recent_turn_indexes(
             return protected
         return set()
 
-    if any(
-        map_turn_role(turn.role) == "assistant" for turn in recent_turns
-    ):
+    if any(map_turn_role(turn.role) == "assistant" for turn in recent_turns):
         return set()
     user_indexes = [
         idx

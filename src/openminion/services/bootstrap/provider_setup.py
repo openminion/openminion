@@ -106,13 +106,11 @@ def resolve_setup_credential(
     env_var = preset.credential_env
     if not env_var:
         return CredentialResolution(env_var="", source="not_required")
-    env_snapshot = (
-        dict(resolve_environment_config().snapshot()) if env is None else dict(env)
-    )
-    env_value = str(env_snapshot.get(env_var, "") or "").strip()
+    env_snapshot = resolve_environment_config().snapshot() if env is None else env
+    env_value = (env_snapshot.get(env_var) or "").strip()
     if env_value:
         return CredentialResolution(env_var=env_var, source="env")
-    local_value = str(stored_api_key or "").strip()
+    local_value = stored_api_key.strip()
     if local_value and allow_local_api_key:
         return CredentialResolution(
             env_var=env_var,
@@ -150,7 +148,7 @@ def build_provider_setup(
         stored_api_key=request.stored_api_key,
         allow_local_api_key=request.allow_local_api_key,
     )
-    if preset.discovery_posture == "manual" and not str(request.model or "").strip():
+    if preset.discovery_posture == "manual" and not request.model.strip():
         raise ProviderSetupError(
             f"{preset.display_label} requires an explicit model id."
         )
@@ -294,14 +292,14 @@ def _copy_config(config: OpenMinionConfig) -> OpenMinionConfig:
 
 
 def _normalize_agent_id(agent_id: str) -> str:
-    normalized = str(agent_id or "").strip() or "openminion"
+    normalized = agent_id.strip() or "openminion"
     if any(char.isspace() for char in normalized):
         raise ProviderSetupError("Agent id must not contain whitespace.")
     return normalized
 
 
 def _resolve_base_url(*, preset: ProviderSetupPreset, base_url: str) -> str:
-    value = str(base_url or "").strip() or preset.default_base_url
+    value = base_url.strip() or preset.default_base_url
     if preset.requires_base_url and not value:
         raise ProviderSetupError(f"{preset.display_label} requires --base-url.")
     if value:
@@ -364,11 +362,11 @@ def _configured_model(
 
 
 def _same_endpoint(left: str, right: str) -> bool:
-    return str(left or "").rstrip("/").lower() == str(right or "").rstrip("/").lower()
+    return left.rstrip("/").lower() == right.rstrip("/").lower()
 
 
 def _canonical_provider_name(provider_name: str) -> str:
-    normalized = str(provider_name or "").strip().lower()
+    normalized = provider_name.strip().lower()
     return _PROVIDER_ALIASES.get(normalized, normalized)
 
 
@@ -454,9 +452,9 @@ def _unmanaged_provider_overrides(
     overrides: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     return {
-        str(key): value
+        key: value
         for key, value in dict(overrides or {}).items()
-        if str(key) not in _MANAGED_PROVIDER_OVERRIDE_KEYS
+        if key not in _MANAGED_PROVIDER_OVERRIDE_KEYS
     }
 
 

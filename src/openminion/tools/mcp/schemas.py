@@ -162,7 +162,7 @@ def build_mcp_runtime_resource_name(
     resource_uri: str,
     resource_name: str = "",
 ) -> str:
-    display_token = str(resource_name or "").strip() or str(resource_uri or "").strip()
+    display_token = resource_name.strip() or resource_uri.strip()
     return f"mcp.{server_name}.resource.{normalize_mcp_tool_segment(display_token)}"
 
 
@@ -172,7 +172,7 @@ def build_mcp_runtime_resource_template_name(
     uri_template: str,
     template_name: str = "",
 ) -> str:
-    display_token = str(template_name or "").strip() or str(uri_template or "").strip()
+    display_token = template_name.strip() or uri_template.strip()
     return (
         f"mcp.{server_name}.resource_template."
         f"{normalize_mcp_tool_segment(display_token)}"
@@ -180,7 +180,7 @@ def build_mcp_runtime_resource_template_name(
 
 
 def build_mcp_runtime_binding_id(*, runtime_tool_name: str) -> str:
-    token = str(runtime_tool_name or "").strip()
+    token = runtime_tool_name.strip()
     return f"runtime.{token}" if token else ""
 
 
@@ -260,7 +260,7 @@ def render_mcp_resource_template_uri(
         key = match.group(1)
         return str(arguments.get(key, "") or "")
 
-    return _RESOURCE_TEMPLATE_VARIABLE_RE.sub(_replace, str(uri_template or ""))
+    return _RESOURCE_TEMPLATE_VARIABLE_RE.sub(_replace, uri_template)
 
 
 def _passthrough_parameters_schema() -> dict[str, Any]:
@@ -420,7 +420,6 @@ def _validate_value(
             return _validate_value(schema=nested_schema, value=value, path=path)
         if strategy[0] == "tagged_union":
             return _validate_tagged_union_value(
-                schema=schema,
                 value=value,
                 path=path,
                 discriminator=strategy[1],
@@ -520,13 +519,11 @@ def _validate_object_value(
 
 def _validate_tagged_union_value(
     *,
-    schema: Mapping[str, Any],
     value: Any,
     path: str,
     discriminator: str,
     branches: dict[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    del schema
     if not isinstance(value, Mapping):
         raise MCPArgumentValidationError(f"{path} must be an object.")
     token = value.get(discriminator)

@@ -30,12 +30,10 @@ _DEFAULT_MAX_PROMOTIONS: dict[MemorySourceClass, int | None] = {
 
 
 def _coerce_dt(value: datetime | str) -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-    parsed = datetime.fromisoformat(str(value))
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+    parsed = (
+        value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    )
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)

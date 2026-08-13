@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from openminion.base.config.runtime.tools import (
@@ -59,29 +59,23 @@ def resolve_runtime_tool_family_config(
     return getattr(config, normalized_family, None)
 
 
+def _normalized_tokens(values: Iterable[str]) -> list[str]:
+    tokens = (str(item or "").strip().lower() for item in values)
+    return list(dict.fromkeys(token for token in tokens if token))
+
+
 def resolve_runtime_provider_chain(
     *,
     available: list[str] | tuple[str, ...],
     family_config: ToolFamilyRuntimeConfig | None,
     hinted_order: list[str] | tuple[str, ...] = (),
 ) -> list[str]:
-    normalized_available: list[str] = []
-    seen_available: set[str] = set()
-    for item in available:
-        token = str(item or "").strip().lower()
-        if not token or token in seen_available:
-            continue
-        seen_available.add(token)
-        normalized_available.append(token)
+    normalized_available = _normalized_tokens(available)
     available_set = set(normalized_available)
 
     allowed = list(normalized_available)
     if family_config is not None and family_config.enabled_providers:
-        enabled = {
-            str(item or "").strip().lower()
-            for item in family_config.enabled_providers
-            if str(item or "").strip()
-        }
+        enabled = set(_normalized_tokens(family_config.enabled_providers))
         allowed = [item for item in normalized_available if item in enabled]
 
     ordered: list[str] = []

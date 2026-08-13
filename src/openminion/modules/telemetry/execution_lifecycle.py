@@ -47,7 +47,9 @@ class AgentExecutionTelemetry:
         self._invocation_scope = str(inbound.metadata.get("invocation_scope") or "")
         inbound.metadata["turn_id"] = self._turn_id
         self._started_at = time.monotonic()
-        self._active = bool(self._session_id and service._telemetryctl is not None)
+        self._active = bool(
+            self._session_id and getattr(service, "_telemetryctl", None) is not None
+        )
 
     async def start(self) -> None:
         if not self._active:

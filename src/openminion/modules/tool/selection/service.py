@@ -88,16 +88,10 @@ class ToolSelectionService:
             return {}
         if isinstance(schema, dict):
             normalized = dict(schema)
+            properties = normalized.get("properties")
             if (
                 normalized.get("type") == "object"
-                and isinstance(normalized.get("properties"), dict)
-                and not normalized.get("properties")
-                and normalized.get("additionalProperties") is True
-            ):
-                return {}
-            if (
-                normalized.get("type") == "object"
-                and not isinstance(normalized.get("properties"), dict)
+                and (not isinstance(properties, dict) or not properties)
                 and normalized.get("additionalProperties") is True
             ):
                 return {}
@@ -119,10 +113,7 @@ class ToolSelectionService:
         filter_outcome: _FilterOutcome | None = None
         filter_cache_hit = False
         if filter_payload:
-            filter_cache = getattr(self, "_identity_filter_cache", None)
-            if filter_cache is None:
-                filter_cache = {}
-                self._identity_filter_cache = filter_cache
+            filter_cache = self.__dict__.setdefault("_identity_filter_cache", {})
             source_specs = (
                 list(specs)
                 if specs is not None
@@ -240,18 +231,10 @@ class ToolSelectionService:
         if not token:
             return []
 
-        keys: list[str] = []
-
-        def _add(candidate: str) -> None:
-            normalized = str(candidate or "").strip()
-            if normalized and normalized not in keys:
-                keys.append(normalized)
-
-        _add(token)
-
+        keys = [token]
         canonical_model = self._normalize_model_tool_token(token)
-        if canonical_model:
-            _add(canonical_model)
+        if canonical_model and canonical_model != token:
+            keys.append(canonical_model)
         return keys
 
     def runtime_binding_policies(self) -> dict[str, dict[str, Any]]:
@@ -414,20 +397,15 @@ class ToolSelectionService:
         source_specs = (
             list(specs) if specs is not None else self._registry_specs(self._registry)
         )
-        available: set[str] = set()
-        for spec in source_specs:
-            token = str(spec.name or "").strip()
-            if token:
-                available.add(token)
+        available = {str(spec.name or "").strip() for spec in source_specs}
+        available.discard("")
         if available:
             return available
 
         runtime_tools = getattr(self._registry, "_tools", None)
         if isinstance(runtime_tools, dict):
-            for runtime_name in runtime_tools.keys():
-                token = str(runtime_name or "").strip()
-                if token:
-                    available.add(token)
+            available = {str(name or "").strip() for name in runtime_tools}
+            available.discard("")
         return available
 
     def _model_tools_for_category(
@@ -526,15 +504,8 @@ class ToolSelectionService:
             raw_tools = tools_by_category(category_token)
         except Exception:
             return []
-        runtime_tools: list[str] = []
-        seen: set[str] = set()
-        for item in raw_tools or []:
-            token = str(item or "").strip()
-            if not token or token in seen:
-                continue
-            seen.add(token)
-            runtime_tools.append(token)
-        return runtime_tools
+        runtime_tools = (str(item or "").strip() for item in raw_tools or [])
+        return list(dict.fromkeys(tool for tool in runtime_tools if tool))
 
     def _normalize_model_tool_token(self, token: str) -> str | None:
         global _REGISTRY_MANAGER_WARMED
@@ -558,15 +529,11 @@ class ToolSelectionService:
         return normalize_raw_model_tool_name(normalized)
 
     def _canonicalize_tool_chain(self, tool_names: list[str]) -> list[str]:
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in tool_names:
-            canonical = self._canonical_model_tool_name(str(item or "").strip())
-            if not canonical or canonical in seen:
-                continue
-            seen.add(canonical)
-            out.append(canonical)
-        return out
+        canonical_names = (
+            self._canonical_model_tool_name(str(item or "").strip())
+            for item in tool_names
+        )
+        return list(dict.fromkeys(name for name in canonical_names if name))
 
     def _apply_identity_tool_filter(
         self, tools: list[ProviderToolSpec], identity_tool_filter: dict[str, Any]
@@ -583,16 +550,13 @@ class ToolSelectionService:
             tools = [tool for tool in tools if tool.name in allowed_tools]
 
         if blocked_patterns:
-            filtered_tools = []
-            for tool in tools:
-                should_include = True
-                for pattern in blocked_patterns:
-                    if fnmatch.fnmatch(tool.name, pattern):
-                        should_include = False
-                        break
-                if should_include:
-                    filtered_tools.append(tool)
-            tools = filtered_tools
+            tools = [
+                tool
+                for tool in tools
+                if not any(
+                    fnmatch.fnmatch(tool.name, pattern) for pattern in blocked_patterns
+                )
+            ]
 
         unresolved_category_count = 0
         if tool_use_type == "read_only":
@@ -780,9 +744,7 @@ class ToolSelectionService:
                         if len(required_args) >= 6:
                             break
 
-        example: Dict[str, Any] = {}
-        for arg in required_args[:3]:
-            example[arg] = f"<{arg}>"
+        example: Dict[str, Any] = {arg: f"<{arg}>" for arg in required_args[:3]}
 
         return ToolStub(
             name=tool_name,
@@ -806,16 +768,11 @@ class ToolSelectionService:
         tool_name: str,
         validation_error: Optional[ValidationError] = None,
     ) -> bool:
-        if self._schema_exposure == SchemaExposure.FULL:
-            return False
-
-        if validation_error is None:
-            return False
-
-        if self._config.validation_retry_max <= 0:
-            return False
-
-        return True
+        return (
+            self._schema_exposure != SchemaExposure.FULL
+            and validation_error is not None
+            and self._config.validation_retry_max > 0
+        )
 
     def get_full_schema(self, tool_name: str) -> Optional[ProviderToolSpec]:
         spec: ProviderToolSpec | None = None

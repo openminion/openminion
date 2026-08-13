@@ -45,7 +45,7 @@ class ExecutionResult:
             else RESPOND_KIND_ASSISTANT
         )
         return cls(
-            status=output.status,
+            status=str(getattr(output.status, "value", output.status)),
             working_state=output.working_state,
             message=output.message,
             action_result=output.action_result,

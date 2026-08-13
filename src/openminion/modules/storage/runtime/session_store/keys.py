@@ -12,32 +12,31 @@ def normalize_identity(value: str) -> str:
 
 
 def normalize_session_status(raw: str) -> str:
-    value = str(raw or "").strip().lower()
+    value = raw.strip().lower()
     if value not in VALID_SESSION_STATUSES:
         raise ValueError(f"Invalid session status: {raw!r}")
     return value
 
 
 def normalize_participant_type(raw: str) -> str:
-    value = str(raw or "").strip().lower()
+    value = raw.strip().lower()
     if value not in VALID_PARTICIPANT_TYPES:
         raise ValueError(f"Invalid participant type: {raw!r}")
     return value
 
 
 def normalize_participant_role(raw: str) -> str:
-    value = str(raw or "").strip().lower()
-    return value or "participant"
+    return raw.strip().lower() or "participant"
 
 
 def is_room_session_key(session_key: str) -> bool:
-    return str(session_key or "").strip().lower().startswith(ROOM_SESSION_KEY_PREFIX)
+    return session_key.strip().lower().startswith(ROOM_SESSION_KEY_PREFIX)
 
 
 def agent_id_from_session_key(session_key: str) -> str:
     if is_room_session_key(session_key):
         return ""
-    for part in (session_key or "").split("|"):
+    for part in session_key.split("|"):
         if part.startswith("agent:"):
             return unquote(part[len("agent:") :])
     return ""
@@ -57,7 +56,7 @@ def build_explicit_session_key(
     target: str,
     session_id: str,
 ) -> str:
-    normalized_session_id = quote(str(session_id or "").strip(), safe="")
+    normalized_session_id = quote(session_id.strip(), safe="")
     return (
         f"{build_session_key(agent_id=agent_id, channel=channel, target=target)}"
         f"|session:{normalized_session_id}"
@@ -65,7 +64,7 @@ def build_explicit_session_key(
 
 
 def build_room_session_key(*, session_id: str) -> str:
-    normalized_session_id = quote(str(session_id or "").strip(), safe="")
+    normalized_session_id = quote(session_id.strip(), safe="")
     if not normalized_session_id:
         raise ValueError("room session_id is required")
     return f"{ROOM_SESSION_KEY_PREFIX}{normalized_session_id}"

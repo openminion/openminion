@@ -107,23 +107,21 @@ def grounding_block_budget_tokens() -> int:
 
 
 def _render_grounding_block(*, facts: GroundingFacts) -> str:
-    lines = [_GROUNDING_BLOCK_HEADER]
-    lines.extend(
-        [
-            "facts:",
-            f"- cwd: {facts.cwd}",
-            f"- workspace_root: {facts.workspace_root}",
-            f"- enabled_tools: {', '.join(facts.enabled_tool_names) or 'none'}",
-            "- current_session_history_available: "
-            f"{_bool_text(facts.current_session_history_available)}",
-            "- prior_session_history_available: "
-            f"{_bool_text(facts.prior_session_history_available)}",
-            f"- prior_context_present: {_bool_text(facts.prior_context_present)}",
-            f"- prior_turn_present: {_bool_text(facts.prior_turn_present)}",
-            "- session_working_state_available: "
-            f"{_bool_text(facts.session_working_state_available)}",
-        ]
-    )
+    lines = [
+        _GROUNDING_BLOCK_HEADER,
+        "facts:",
+        f"- cwd: {facts.cwd}",
+        f"- workspace_root: {facts.workspace_root}",
+        f"- enabled_tools: {', '.join(facts.enabled_tool_names) or 'none'}",
+        "- current_session_history_available: "
+        f"{_bool_text(facts.current_session_history_available)}",
+        "- prior_session_history_available: "
+        f"{_bool_text(facts.prior_session_history_available)}",
+        f"- prior_context_present: {_bool_text(facts.prior_context_present)}",
+        f"- prior_turn_present: {_bool_text(facts.prior_turn_present)}",
+        "- session_working_state_available: "
+        f"{_bool_text(facts.session_working_state_available)}",
+    ]
     if facts.recalled_memory_count > 0:
         lines.append(f"- recalled_memory_cards: {facts.recalled_memory_count}")
     rendered_recent_artifacts = _render_recent_artifacts(facts.recent_artifacts)
@@ -151,7 +149,6 @@ def _render_grounding_block(*, facts: GroundingFacts) -> str:
 
 
 def _render_memory_capability_text(facts: GroundingFacts) -> str:
-    base = ""
     if facts.recalled_memory_count > 0:
         base = (
             "memory_capability: You have cross-session memory provided by the "
@@ -327,13 +324,11 @@ def _render_recent_artifacts(
 ) -> str:
     entries: list[str] = []
     for artifact in recent_artifacts[:3]:
-        bits: list[str] = []
-        if artifact.ref:
-            bits.append(f"ref={artifact.ref}")
-        if artifact.path:
-            bits.append(f"path={artifact.path}")
-        if artifact.kind:
-            bits.append(f"kind={artifact.kind}")
+        bits = [
+            f"{field}={value}"
+            for field in ("ref", "path", "kind")
+            if (value := getattr(artifact, field))
+        ]
         if bits:
             entries.append("{" + ", ".join(bits) + "}")
     return " | ".join(entries)

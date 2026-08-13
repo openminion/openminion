@@ -1,6 +1,3 @@
-from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
-
-K8S_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
 TOOL_K8S_WORKLOAD_GET = "k8s.workload.get"
 TOOL_K8S_WORKLOAD_LIST = "k8s.workload.list"
 TOOL_K8S_EVENTS_LIST = "k8s.events.list"

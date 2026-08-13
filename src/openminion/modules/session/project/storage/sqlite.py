@@ -1,5 +1,3 @@
-"""SQLite project storage."""
-
 from __future__ import annotations
 
 import json
@@ -45,6 +43,9 @@ class SQLiteProjectStore(ProjectStore):
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
+    def close(self) -> None:
+        self._conn.close()
+
     def _init_schema(self) -> None:
         self._conn.execute(_DDL_PROJECTS)
         self._conn.execute(_DDL_BINDINGS)
@@ -60,8 +61,8 @@ class SQLiteProjectStore(ProjectStore):
                 project.project_id,
                 project.name,
                 project.master_instruction,
-                json.dumps(list(project.skill_set)),
-                json.dumps(list(project.scheduled_triggers)),
+                json.dumps(project.skill_set),
+                json.dumps(project.scheduled_triggers),
                 project.created_at,
             ),
         )
@@ -73,13 +74,11 @@ class SQLiteProjectStore(ProjectStore):
             "SELECT * FROM projects WHERE project_id = ?", (project_id,)
         )
         row = cur.fetchone()
-        if row is None:
-            return None
-        return _row_to_project(row)
+        return _row_to_project(row) if row is not None else None
 
     def list(self) -> list[Project]:
         cur = self._conn.execute("SELECT * FROM projects ORDER BY created_at ASC")
-        return [_row_to_project(r) for r in cur.fetchall()]
+        return [_row_to_project(row) for row in cur]
 
     def delete(self, project_id: str) -> bool:
         cur = self._conn.execute(
@@ -123,9 +122,7 @@ class SQLiteProjectStore(ProjectStore):
             (session_id,),
         )
         row = cur.fetchone()
-        if row is None:
-            return None
-        return self.get(row["project_id"])
+        return self.get(row["project_id"]) if row is not None else None
 
 
 def _row_to_project(row: sqlite3.Row) -> Project:

@@ -388,17 +388,13 @@ class PolicyCtlBrainAdapter:
     def _extract_details(raw: Any) -> dict[str, Any]:
         if isinstance(raw, dict):
             return dict(raw)
-        if isinstance(raw, str):
-            text = raw.strip()
-            if not text:
-                return {}
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                return {}
-            if isinstance(parsed, dict):
-                return dict(parsed)
-        return {}
+        if not isinstance(raw, str) or not (text := raw.strip()):
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return dict(parsed) if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _first_non_empty(*values: Any) -> str:

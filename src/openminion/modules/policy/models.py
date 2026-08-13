@@ -62,15 +62,13 @@ def sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
             for token in ("token", "secret", "password", "key", "authorization")
         ):
             sanitized[key] = "[REDACTED]"
-            continue
-        if isinstance(value, (str, int, float, bool)) or value is None:
+        elif isinstance(value, (str, int, float, bool)) or value is None:
             sanitized[key] = value
-            continue
-        if isinstance(value, (list, dict)):
+        elif isinstance(value, (list, dict)):
             kind = "array" if isinstance(value, list) else "object"
             sanitized[key] = {"_type": kind, "size": len(value)}
-            continue
-        sanitized[key] = {"_type": type(value).__name__}
+        else:
+            sanitized[key] = {"_type": type(value).__name__}
     return sanitized
 
 

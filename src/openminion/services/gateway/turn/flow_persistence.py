@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 
 from openminion.base.types import Message
@@ -111,7 +111,7 @@ class GatewayTurnPersistenceDeliveryMixin:
         )
         outbound.metadata["run_state"] = RUN_STATE_COMPLETED
         if (
-            str(outbound.metadata.get("respond_kind", "") or "").strip()
+            outbound.metadata.get("respond_kind", "").strip()
             == RESPOND_KIND_POLICY_CONFIRMATION_PROMPT
         ):
             outbound_record: Any = self._sessions.append_event(
@@ -169,26 +169,20 @@ class GatewayTurnPersistenceDeliveryMixin:
         attach_id = routing.attach_id
         normalized_request_id = routing.normalized_request_id
 
-        policy_route = str(
-            outbound.metadata.get("memory_policy_route", "") or ""
-        ).strip()
+        policy_route = outbound.metadata.get("memory_policy_route", "").strip()
         if policy_route:
             policy_payload = {
                 "run_id": run_id,
                 "request_id": normalized_request_id,
                 "route": policy_route,
-                "source": str(
-                    outbound.metadata.get("memory_policy_source", "runtime.config")
-                    or "runtime.config"
-                ),
-                "version": str(
-                    outbound.metadata.get("memory_policy_version", "") or ""
-                ),
-                "reason_code": str(outbound.metadata.get("reason_code", "") or ""),
+                "source": outbound.metadata.get(
+                    "memory_policy_source", "runtime.config"
+                )
+                or "runtime.config",
+                "version": outbound.metadata.get("memory_policy_version", ""),
+                "reason_code": outbound.metadata.get("reason_code", ""),
             }
-            policy_error = str(
-                outbound.metadata.get("memory_policy_error", "") or ""
-            ).strip()
+            policy_error = outbound.metadata.get("memory_policy_error", "").strip()
             if policy_error:
                 policy_payload["error"] = policy_error
             self._lifecycle_ops.emit_memory_event(
@@ -234,9 +228,7 @@ class GatewayTurnPersistenceDeliveryMixin:
         outbound: Message,
         outbound_record: Any,
         deliver: bool,
-        typed_terminal_resolver: Optional[
-            Callable[..., Optional[tuple[Any, ...]]]
-        ] = None,
+        typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
     ) -> None:
         session_id = routing.session.id
         conversation_id = routing.conversation_id

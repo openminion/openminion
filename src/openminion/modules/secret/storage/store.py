@@ -43,7 +43,7 @@ ON CONFLICT(key, namespace) DO UPDATE SET
 
 class _SecretStoreOps(SecretStore):
     def close(self) -> None:
-        super().close()
+        BaseModuleStore.close(self)
 
     def _list_migrations(self) -> list[str]:
         return list_migrations()
@@ -71,9 +71,7 @@ class _SecretStoreOps(SecretStore):
             where={"key": key, "namespace": namespace},
             limit=1,
         )
-        if not rows:
-            return None
-        return str(rows[0]["value"])
+        return str(rows[0]["value"]) if rows else None
 
     def delete(self, *, key: str, namespace: str) -> None:
         self._record_store.delete_rows(

@@ -20,7 +20,6 @@ class TelemetryExportProbeResult:
 
 
 def ensure_telemetry_interface_compatibility(actual_version: str) -> bool:
-    """Validate that actual interface version is compatible with expected version."""
     if actual_version == TELEMETRY_INTERFACE_VERSION:
         return True
     raise ValueError(
@@ -30,16 +29,12 @@ def ensure_telemetry_interface_compatibility(actual_version: str) -> bool:
 
 @dataclass
 class TelemetryContractConfig:
-    """Configuration for telemetry service contract."""
-
     db_path: Optional[str] = None
     home_root: Optional[str | Path] = None
     env: Optional[Mapping[str, str]] = None
 
 
 class TelemetryContract(Protocol):
-    """Protocol defining the telemetry interface contract."""
-
     def __init__(
         self,
         db_path: Optional[str] = ...,
@@ -93,8 +88,6 @@ class TelemetryExporter(Protocol):
 
 
 class TelemetryAdapterContract(Protocol):
-    """Protocol defining the telemetry adapter interface contract."""
-
     def __init__(self, service: TelemetryContract) -> None: ...
 
     def bind_execution(

@@ -42,7 +42,7 @@ class SupervisionService:
             last_exit_reason=observation.last_exit_reason,
         )
 
-        event_type = str(observation.latest_event_type or "").strip()
+        event_type = observation.latest_event_type.strip()
         stale_seconds = self._stale_heartbeat_seconds(
             observation=observation,
             observed_at=now,
@@ -112,7 +112,7 @@ class SupervisionService:
                 reason="component_crashed",
                 alert_level="critical",
                 restart_attempts=restart_decision.attempt,
-                consecutive_failures=max(1, state.consecutive_failures + 1),
+                consecutive_failures=state.consecutive_failures + 1,
                 restart=restart_decision,
             )
 
@@ -128,7 +128,7 @@ class SupervisionService:
                 reason="component_degraded",
                 alert_level="warn",
                 restart_attempts=restart_decision.attempt,
-                consecutive_failures=max(0, state.consecutive_failures),
+                consecutive_failures=state.consecutive_failures,
                 restart=restart_decision,
             )
 
@@ -166,8 +166,7 @@ class SupervisionService:
                 attempt=attempt,
             )
         backoff_seconds = min(
-            policy.restart_initial_backoff_seconds
-            * (2 ** max(0, backoff_state.restart_attempts)),
+            policy.restart_initial_backoff_seconds * 2**backoff_state.restart_attempts,
             policy.restart_max_backoff_seconds,
         )
         if backoff_seconds <= 0:
@@ -243,8 +242,7 @@ class SupervisionService:
 
     @staticmethod
     def _parse_timestamp(value: str | None) -> datetime | None:
-        normalized = str(value or "").strip()
-        if not normalized:
+        if not (normalized := str(value or "").strip()):
             return None
         try:
             parsed = datetime.fromisoformat(normalized)
@@ -256,8 +254,7 @@ class SupervisionService:
 
     @staticmethod
     def _scheduler_lag_seconds(observation: SupervisionObservation) -> float | None:
-        raw_lag = observation.metrics.get("lag_seconds")
-        if raw_lag is None:
+        if (raw_lag := observation.metrics.get("lag_seconds")) is None:
             return None
         try:
             return max(0.0, float(raw_lag))

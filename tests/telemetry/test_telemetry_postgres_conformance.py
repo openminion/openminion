@@ -26,6 +26,8 @@ from tests.storage.postgres_test_utils import (
     schema_url,
 )
 
+pytestmark = pytest.mark.postgres
+
 
 def _backend_params():
     return [

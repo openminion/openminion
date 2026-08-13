@@ -1,5 +1,3 @@
-"""File backend search helpers."""
-
 import re
 from collections.abc import Callable
 

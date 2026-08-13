@@ -77,7 +77,6 @@ def build_project_operator_inbox_item(
         blocker=project_run.blocked_reason,
         resume_action=_resume_action(project_run.status),
         resume_hint=_resume_hint(
-            state,
             task_record=task_record,
             next_resume_action=next_resume_action,
             blocked_reason=project_run.blocked_reason,
@@ -129,21 +128,18 @@ def _resume_action(status: AutonomyRunStatus) -> ProjectOperatorResumeAction:
 
 
 def _resume_hint(
-    state: ProjectOperatorWorkState,
     *,
     task_record: TaskLifecycleRecord | None,
     next_resume_action: str | None,
     blocked_reason: str | None,
 ) -> str | None:
-    explicit = str(next_resume_action or "").strip()
+    explicit = (next_resume_action or "").strip()
     if explicit:
         return explicit
-    blocker = str(blocked_reason or "").strip()
+    blocker = (blocked_reason or "").strip()
     if blocker:
         return blocker
-    if state == ProjectOperatorWorkState.WAITING and (
-        task_record is not None and task_record.state == TaskLifecycleState.PAUSED
-    ):
+    if task_record is not None and task_record.state == TaskLifecycleState.PAUSED:
         return "resume project task"
     return None
 

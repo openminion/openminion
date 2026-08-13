@@ -7,17 +7,13 @@ from openminion.services.bootstrap.paths import SERVICES_MEMORY_DB_FILENAME
 
 
 def _resolve_vector_config(config: Any) -> tuple[bool, Any | None]:
-    enabled = False
-    vector_cfg = None
-    try:
-        vector_cfg = getattr(config, "vector", None)
-        if vector_cfg is not None:
-            enabled = getattr(vector_cfg, "enabled", False)
-        elif hasattr(config, "extra") and isinstance(config.extra, dict):
-            enabled = config.extra.get("vector", {}).get("enabled", False)
-    except Exception:
-        enabled = False
-    return bool(enabled), vector_cfg
+    vector_cfg = getattr(config, "vector", None)
+    if vector_cfg is not None:
+        return bool(getattr(vector_cfg, "enabled", False)), vector_cfg
+    extra = getattr(config, "extra", None)
+    legacy_config = extra.get("vector") if isinstance(extra, dict) else None
+    enabled = legacy_config.get("enabled") if isinstance(legacy_config, dict) else False
+    return bool(enabled), None
 
 
 def init_vector_adapter(

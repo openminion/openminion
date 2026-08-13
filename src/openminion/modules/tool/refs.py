@@ -20,10 +20,8 @@ def tool_result_artifact_refs(
         if isinstance(candidates, list):
             seen: set[str] = set()
             for item in candidates:
-                if isinstance(item, dict):
-                    ref = str(item.get("ref", "") or "").strip()
-                else:
-                    ref = str(item or "").strip()
+                value = item.get("ref", "") if isinstance(item, dict) else item
+                ref = str(value or "").strip()
                 if not ref or ref in seen:
                     continue
                 seen.add(ref)

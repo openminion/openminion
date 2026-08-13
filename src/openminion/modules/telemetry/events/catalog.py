@@ -42,6 +42,7 @@ CLIENT_EXIT_CLEAN = "client.exit_clean"
 SESSION_CLOSED = "session.closed"
 SESSION_COMPACTION_ARCHIVE = "session.compaction.archive"
 SESSION_CONTEXT_BUDGET = "session.context.budget"
+SESSION_CONTEXT_COMPACTION = "session.context.compaction"
 SESSION_CREATED = "session.created"
 SESSION_EXPIRED = "session.expired"
 SESSION_RESUMED = "session.resumed"
@@ -266,6 +267,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         SESSION_CLOSED,
         SESSION_COMPACTION_ARCHIVE,
         SESSION_CONTEXT_BUDGET,
+        SESSION_CONTEXT_COMPACTION,
         SESSION_CREATED,
         SESSION_EXPIRED,
         SESSION_RESUMED,
@@ -512,6 +514,7 @@ __all__ = [
     "SESSION_CLOSED",
     "SESSION_COMPACTION_ARCHIVE",
     "SESSION_CONTEXT_BUDGET",
+    "SESSION_CONTEXT_COMPACTION",
     "SESSION_CREATED",
     "SESSION_EXPIRED",
     "SESSION_RESUMED",

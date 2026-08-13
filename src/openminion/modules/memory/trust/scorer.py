@@ -37,9 +37,7 @@ def _record_value(record: Any, key: str, default: Any = None) -> Any:
 
 def _record_meta(record: Any) -> dict[str, Any]:
     raw = _record_value(record, "meta", {})
-    if isinstance(raw, Mapping):
-        return dict(raw)
-    return {}
+    return dict(raw) if isinstance(raw, Mapping) else {}
 
 
 def _record_text(record: Any, *keys: str, meta_key: str | None = None) -> str | None:

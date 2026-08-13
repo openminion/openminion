@@ -28,10 +28,10 @@ class InMemoryMCPTokenStore:
     values: dict[str, str]
 
     def get(self, ref: str) -> str:
-        return str(self.values.get(ref, "") or "")
+        return self.values.get(ref, "")
 
     def set(self, ref: str, value: str) -> None:
-        self.values[str(ref or "").strip()] = str(value or "")
+        self.values[ref] = value
 
 
 @dataclass(frozen=True)
@@ -185,10 +185,8 @@ def register_oauth_client(
         )
     payload = json.dumps(
         {
-            "client_name": str(client_name or "openminion").strip() or "openminion",
-            "redirect_uris": [
-                str(item).strip() for item in redirect_uris if str(item).strip()
-            ],
+            "client_name": client_name.strip() or "openminion",
+            "redirect_uris": [item.strip() for item in redirect_uris if item.strip()],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",

@@ -1,5 +1,3 @@
-"""Session storage slice assembly."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -314,7 +312,6 @@ class SliceStore:
             if scan_limit >= MAX_TASK_ANCHOR_SCAN_TURNS:
                 return recent_turns
             scan_limit = min(scan_limit * 2, MAX_TASK_ANCHOR_SCAN_TURNS)
-        return recent_turns
 
     def get_slice(
         self,

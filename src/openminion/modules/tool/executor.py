@@ -41,9 +41,7 @@ class ToolExecutionBatch:
     @property
     def all_verified(self) -> bool:
         successful = [item for item in self.results if item.ok]
-        if not successful:
-            return False
-        return all(item.verified for item in successful)
+        return bool(successful) and all(item.verified for item in successful)
 
     @property
     def has_success(self) -> bool:
@@ -561,7 +559,11 @@ def execute_single_call(
             resolution.model_tool_id or raw_tool_name,
             **scope,
         )
-    if decision is not None and decision.state != "visible":
+    if (
+        decision is not None
+        and exposure_service is not None
+        and decision.state != "visible"
+    ):
         exposure_service.record_refusal(decision, **scope)
         result = _hidden_tool_result(call=call, decision=decision)
         _emit_tool_execution_counter(
@@ -602,11 +604,7 @@ def execute_single_call(
             started_at=started_at,
         )
 
-    raw_arguments: Mapping[str, Any]
-    if isinstance(call.arguments, dict):
-        raw_arguments = call.arguments
-    else:
-        raw_arguments = {}
+    raw_arguments = call.arguments if isinstance(call.arguments, dict) else {}
     env_owner = resolve_tool_env(
         runtime_env=_runtime_env_from_metadata(
             context.metadata if isinstance(context.metadata, Mapping) else None
@@ -708,7 +706,7 @@ def execute_single_call(
             ),
             started_at=started_at,
         )
-    if decision is not None:
+    if decision is not None and exposure_service is not None:
         exposure_service.record_invocation(decision, **scope)
     return _stamp_and_emit_tool_result(
         context,
@@ -954,12 +952,12 @@ def execute_calls(
     if not normalized_calls:
         return ToolExecutionBatch(results=[])
 
-    available_tool_names = tuple(registry._tools.keys())
+    available_tool_names = tuple(registry._tools)
     runtime_binding_policies = None
     if isinstance(getattr(context, "metadata", None), Mapping):
         runtime_binding_policies = context.metadata.get("runtime_binding_policies")
     duplicate_results = _duplicate_call_id_results(normalized_calls)
-    if not any(bool(getattr(call, "depends_on", [])) for call in normalized_calls):
+    if not any(call.depends_on for call in normalized_calls):
         results = []
         for idx, call in enumerate(normalized_calls):
             duplicate_result = duplicate_results.get(idx)

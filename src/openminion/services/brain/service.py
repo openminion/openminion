@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from openminion.base.config import (
+    ConfigManager,
     OpenMinionConfig,
     bootstrap_home_paths,
     resolve_module_storage_path,
 )
-from openminion.base.config import ConfigManager
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
 from openminion.services.runtime.plugins import PluginRegistry
@@ -88,7 +88,6 @@ class _SessionSummaryStructureReport(BaseModel):
     active_threads: list[ActiveThread] = Field(default_factory=list)
 
 
-# replaced 9 pass-through wrappers with module-attribute aliases.
 create_session_adapter = create_session_api
 create_context_adapter = create_context_api
 create_tool_adapter = create_tool_api
@@ -104,47 +103,34 @@ create_compress_adapter = create_compress_api
 def _runtime_mode_config_from_agent(
     config: OpenMinionConfig,
 ) -> dict[str, ModeProfileConfig]:
-
-    raw_modes: dict[str, Any] = {}
-    try:
-        default_agent_id = resolve_default_agent_id(config)
-        profile = config.agents.get(default_agent_id)
-        if profile is not None:
-            raw_modes = dict(getattr(profile, "modes", {}) or {})
-    except Exception:  # noqa: BLE001
-        raw_modes = {}
+    default_agent_id = resolve_default_agent_id(config)
+    profile = config.agents.get(default_agent_id)
+    if profile is None:
+        return {}
     mode_config: dict[str, ModeProfileConfig] = {}
-    if not isinstance(raw_modes, dict):
-        return mode_config
-    for mode_name, entry in raw_modes.items():
-        normalized_name = str(mode_name or "").strip().lower()
+    for mode_name, entry in profile.modes.items():
+        normalized_name = mode_name.strip().lower()
         if not normalized_name:
             continue
         mode_config[normalized_name] = ModeProfileConfig(
-            enabled=bool(getattr(entry, "enabled", True)),
-            parallel_enabled=getattr(entry, "parallel_enabled", None),
-            parallel_writes_enabled=getattr(entry, "parallel_writes_enabled", None),
-            max_parallel_workers=getattr(entry, "max_parallel_workers", None),
-            checkpoint_interval=getattr(entry, "checkpoint_interval", None),
-            max_resume_count=getattr(entry, "max_resume_count", None),
-            max_depth=getattr(entry, "max_depth", None),
-            priority_hint=getattr(entry, "priority_hint", None),
-            max_commands_per_turn=getattr(entry, "max_commands_per_turn", None),
-            max_adaptive_iterations=getattr(entry, "max_adaptive_iterations", None),
-            max_adaptive_tool_calls_per_loop=getattr(
-                entry, "max_adaptive_tool_calls_per_loop", None
-            ),
-            max_adaptive_llm_calls_per_loop=getattr(
-                entry, "max_adaptive_llm_calls_per_loop", None
-            ),
-            adaptive_include_reflect=getattr(entry, "adaptive_include_reflect", None),
-            max_self_corrections=getattr(entry, "max_self_corrections", None),
-            max_subtasks=getattr(entry, "max_subtasks", None),
-            max_decompose_depth=getattr(entry, "max_decompose_depth", None),
-            max_research_iterations=getattr(entry, "max_research_iterations", None),
-            tool_schema_shortlisting_enabled=getattr(
-                entry, "tool_schema_shortlisting_enabled", None
-            ),
+            enabled=entry.enabled,
+            parallel_enabled=entry.parallel_enabled,
+            parallel_writes_enabled=entry.parallel_writes_enabled,
+            max_parallel_workers=entry.max_parallel_workers,
+            checkpoint_interval=entry.checkpoint_interval,
+            max_resume_count=entry.max_resume_count,
+            max_depth=entry.max_depth,
+            priority_hint=entry.priority_hint,
+            max_commands_per_turn=entry.max_commands_per_turn,
+            max_adaptive_iterations=entry.max_adaptive_iterations,
+            max_adaptive_tool_calls_per_loop=entry.max_adaptive_tool_calls_per_loop,
+            max_adaptive_llm_calls_per_loop=entry.max_adaptive_llm_calls_per_loop,
+            adaptive_include_reflect=entry.adaptive_include_reflect,
+            max_self_corrections=entry.max_self_corrections,
+            max_subtasks=entry.max_subtasks,
+            max_decompose_depth=entry.max_decompose_depth,
+            max_research_iterations=entry.max_research_iterations,
+            tool_schema_shortlisting_enabled=entry.tool_schema_shortlisting_enabled,
         )
     return mode_config
 
@@ -197,6 +183,7 @@ def _session_summary_structure_context(
     summary_text: str,
     turn_count: int,
 ) -> dict[str, Any]:
+    turn_count = max(0, turn_count)
     return {
         "messages": [
             {
@@ -226,7 +213,7 @@ def _session_summary_structure_context(
                 "role": "user",
                 "content": (
                     f"Rolling summary text:\n{summary_text}\n\n"
-                    f"Turn count: {max(0, int(turn_count))}\n\n"
+                    f"Turn count: {turn_count}\n\n"
                     "Return structured session-summary fields for later recall."
                 ),
             },
@@ -234,7 +221,7 @@ def _session_summary_structure_context(
         "hints": {
             "user_input": summary_text,
             "mode_name": "session_summary_structure",
-            "session_summary_turn_count": max(0, int(turn_count)),
+            "session_summary_turn_count": turn_count,
         },
     }
 
@@ -245,7 +232,7 @@ def _structure_session_summary(
     rolling_summary: str,
     turn_count: int,
 ) -> dict[str, Any] | None:
-    summary_text = str(rolling_summary or "").strip()
+    summary_text = rolling_summary.strip()
     if not summary_text:
         return None
     llm_api, model = _session_summary_model(service._get_runner())
@@ -281,10 +268,7 @@ class _RuntimeProviderAdapter:
 
 
 class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
-    """
-    A bridge adapter that implements the `AgentService` interface
-    and processes turns using the `openminion-brain` `BrainRunner`.
-    """
+    """Process AgentService turns through a BrainRunner."""
 
     def __init__(
         self,
@@ -359,13 +343,11 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._config_manager = config_manager
         self._retrieve_service = retrieve_service
         self._action_policy_service = action_policy_service
-        runtime_env = getattr(getattr(config, "runtime", None), "env", {})
+        runtime_env = config.runtime.env
         self._env = (
             config_manager.env
             if config_manager is not None
-            else resolve_services_env(
-                runtime_env=runtime_env if isinstance(runtime_env, dict) else {}
-            )
+            else resolve_services_env(runtime_env=runtime_env)
         )
         self._home_paths = _bootstrap_bridge_home_paths(
             config=config,
@@ -395,7 +377,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         telemetryctl: TelemetryCtl | None,
     ) -> None:
         self._telemetryctl = telemetryctl
-        self._telemetry_enabled = getattr(config.runtime, "telemetry_enabled", False)
+        self._telemetry_enabled = config.runtime.telemetry_enabled
         if (
             self._telemetryctl is None
             and self._telemetry_enabled
@@ -404,11 +386,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             telemetry_path = self._resolve_telemetry_db_path(config)
             self._telemetryctl = create_telemetry_adapter(
                 db_path=telemetry_path,
-                otel_exporter_config=getattr(
-                    config.runtime,
-                    "telemetry_exporter",
-                    None,
-                ),
+                otel_exporter_config=config.runtime.telemetry_exporter,
             )
             self._logger.info(
                 "Telemetry enabled for BrainBridgeService: db_path=%s",
@@ -416,16 +394,11 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             )
 
     def _resolve_telemetry_db_path(self, config: OpenMinionConfig) -> str | None:
-        """RRPCU-03: Resolve telemetry DB path from OpenMinion Home or explicit config."""
-        explicit_path = getattr(config.runtime, "telemetry_db_path", "")
-        if explicit_path and str(explicit_path).strip():
-            # Explicit override takes precedence
+        explicit_path = str(config.runtime.telemetry_db_path).strip()
+        if explicit_path:
             if Path(explicit_path).is_absolute():
-                return str(explicit_path)
-            # Relative explicit path - resolve from OpenMinion Home
+                return explicit_path
             return str(self._home_paths.home_root / explicit_path)
-
-        # Default: use OpenMinion Home-derived path
         return str(
             resolve_module_storage_path(
                 self._home_paths.home_root,
@@ -451,14 +424,12 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runtime_handle = runtime_handle
 
     def bridge_diagnostics(self) -> dict[str, Any]:
-        """BBSE-07: expose bridge canonical-parts posture for operators."""
         return {
             "config_manager_present": self._config_manager is not None,
             "retrieve_service_present": self._retrieve_service is not None,
             "action_policy_service_present": (self._action_policy_service is not None),
             "home_paths": self._home_paths.to_debug_dict(),
             "runner_assembled": self._runner is not None,
-            # BBSE-04 regression: bridge ships zero behavior-changing
             "runner_method_overrides_present": False,
             "mode": self.mode,
         }
@@ -492,17 +463,17 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
     def _resolve_override_bool(self, key: str, *, default: bool) -> bool:
         raw = self._resolve_override_value(key).lower()
         if not raw:
-            return bool(default)
+            return default
         return raw in {"1", "true", "yes", "on"}
 
     def _resolve_override_int(self, key: str, *, default: int) -> int:
         raw = self._resolve_override_value(key)
         if not raw:
-            return int(default)
+            return default
         try:
             return max(0, int(raw))
         except ValueError:
-            return int(default)
+            return default
 
     def build_session_summary_structurer(self) -> Any:
         def _structure_summary(
@@ -518,9 +489,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         return _structure_summary
 
     def _get_runner(self) -> BrainRunner:
-        # delegate adapter-graph + runner assembly to the canonical
         if self._runner is not None:
-            if not hasattr(self, "_llm_wrapper") or self._llm_wrapper is None:
+            if self._llm_wrapper is None:
                 llm_config = self._get_manager_config("llm")
                 llm_payload = llm_config if llm_config is not None else {}
                 llm_api = create_llm_adapter(
@@ -607,5 +577,3 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
                 if strict:
                     raise RuntimeError(message) from exc
                 self._logger.warning("%s", message)
-
-        return

@@ -59,7 +59,7 @@ class _DummySessionApi:
 class _CaptureSessionApi(_DummySessionApi):
     def __init__(self) -> None:
         super().__init__()
-        self.turns: dict[str, list[dict[str, str]]] = {}
+        self.turns: dict[str, list[dict[str, object]]] = {}
 
     def append_turn(
         self,
@@ -69,8 +69,10 @@ class _CaptureSessionApi(_DummySessionApi):
         attachments=None,
         meta=None,
     ):
-        del attachments, meta
-        self.turns.setdefault(session_id, []).append({"role": role, "content": content})
+        del attachments
+        self.turns.setdefault(session_id, []).append(
+            {"role": role, "content": content, "meta": dict(meta or {})}
+        )
         return f"{session_id}-{len(self.turns[session_id])}"
 
     def list_turns(self, session_id: str):
@@ -2108,7 +2110,13 @@ def test_brain_hydrates_gateway_history_into_runner_session():
             channel="console",
             target="me",
             body="user prior question",
-            metadata={"role": "user", "session_id": "s-hydrate"},
+            metadata={
+                "role": "user",
+                "session_id": "s-hydrate",
+                "trace_id": "trace-1",
+                "run_id": "run-1",
+                "untrusted_detail": "must-not-cross",
+            },
         ),
         Message(
             channel="console",
@@ -2140,6 +2148,12 @@ def test_brain_hydrates_gateway_history_into_runner_session():
     assert ("system", "Agent canonical memory block") not in hydrated_pairs
     assert ("user", "user prior question") in hydrated_pairs
     assert ("assistant", "assistant prior response") in hydrated_pairs
+    user_turn = next(item for item in hydrated if item["role"] == "user")
+    assert user_turn["meta"] == {
+        "run_id": "run-1",
+        "source": "gateway_history_bridge",
+        "trace_id": "trace-1",
+    }
 
 
 def test_brain_hydration_dedupes_prefixed_assistant_content():

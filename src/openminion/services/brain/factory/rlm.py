@@ -4,16 +4,12 @@ from openminion.modules.brain.adapters.factory import create_rlm_adapter
 
 
 def _is_rlm_enabled(config: Any) -> bool:
-    enabled = False
-    try:
-        rlm_cfg = getattr(config, "rlm", None)
-        if rlm_cfg is not None:
-            enabled = getattr(rlm_cfg, "enabled", False)
-        elif hasattr(config, "extra") and isinstance(config.extra, dict):
-            enabled = config.extra.get("rlm", {}).get("enabled", False)
-    except Exception:
-        enabled = False
-    return bool(enabled)
+    rlm_cfg = getattr(config, "rlm", None)
+    if rlm_cfg is not None:
+        return bool(getattr(rlm_cfg, "enabled", False))
+    extra = getattr(config, "extra", None)
+    legacy_config = extra.get("rlm") if isinstance(extra, dict) else None
+    return isinstance(legacy_config, dict) and bool(legacy_config.get("enabled"))
 
 
 def init_rlm_adapter(
@@ -28,11 +24,8 @@ def init_rlm_adapter(
     retrieve_api: Any | None,
     logger: Any,
 ) -> Any:
-    rlm_enabled = _is_rlm_enabled(config)
-
-    if rlm_enabled:
+    if _is_rlm_enabled(config):
         try:
-            # wire through the canonical recursive-family owner
             from openminion.modules.brain.loop.recursive.service import RLMService
             from openminion.modules.brain.adapters.factory import (
                 RLMBridgeSessionClient,
@@ -52,9 +45,8 @@ def init_rlm_adapter(
                 retrievectl=retrieve_api,
             )
 
-            rlm_api = create_rlm_adapter(mode=mode, service=rlm_service)
             logger.info("RLMService wired with real bridge clients")
-            return rlm_api
+            return create_rlm_adapter(mode=mode, service=rlm_service)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "RLMService unavailable; falling back to local adapter: %s",

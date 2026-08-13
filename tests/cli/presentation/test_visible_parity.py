@@ -26,6 +26,18 @@ class _Runtime:
             context_limit_tokens=100,
         )
 
+    def context_budget_snapshot(self):
+        return {
+            "max_tokens": 8000,
+            "budget_source": "runtime_cap",
+            "selected_recent_count": 12,
+            "selected_recent_tokens": 640,
+            "trim_reason": "token_budget",
+            "compacted_count": 3,
+            "compaction_reason": "token_pressure",
+            "overflow": False,
+        }
+
     def list_tools(self):
         return [("file.read", True), ("exec.run", True)]
 
@@ -59,6 +71,11 @@ def test_render_context_report_includes_grid_and_inventory() -> None:
     assert "tools    2" in body
     assert "memory   1" in body
     assert "skills   1" in body
+    assert "budget   8000 tokens (runtime_cap)" in body
+    assert "recent   12 messages · 640 tokens" in body
+    assert "allocation summary/retrieval unavailable" in body
+    assert "action   token_pressure · 3 compacted" in body
+    assert max(map(len, body.splitlines())) <= 80
 
 
 def test_render_memory_report_uses_runtime_rows() -> None:

@@ -75,14 +75,14 @@ class OpenMinionLLMClient:
 
     @staticmethod
     def _is_function_tool_choice(value: Any) -> bool:
-        if not isinstance(value, dict):
-            return False
-        if str(value.get("type", "")).strip().lower() != "function":
+        if not isinstance(value, dict) or (
+            str(value.get("type", "")).strip().lower() != "function"
+        ):
             return False
         function_payload = value.get("function")
-        if not isinstance(function_payload, dict):
-            return False
-        return bool(str(function_payload.get("name", "")).strip())
+        return isinstance(function_payload, dict) and bool(
+            str(function_payload.get("name", "")).strip()
+        )
 
     def generate(self, provider_request: ProviderRequest) -> Any:
         return run_async_compat(self._invoke(provider_request))
@@ -99,7 +99,7 @@ class OpenMinionLLMClient:
         trace_label: str,
         trace_turn_id: str,
     ) -> dict[str, str]:
-        provider_req.metadata = dict(getattr(provider_req, "metadata", {}) or {})
+        provider_req.metadata = dict(provider_req.metadata)
         if self._session_id and not provider_req.metadata.get("session_id"):
             provider_req.metadata["session_id"] = str(self._session_id)
         if self._home_root is not None:
@@ -233,26 +233,24 @@ class OpenMinionLLMClient:
             _token_usage_values(usage_payload)
         )
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            self._emit_llm_usage_in_background(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cached_tokens=cached_tokens,
-                mode_name=mode_name,
+            asyncio.run(
+                self._telemetryctl.emit_llm_call(
+                    self._session_id,
+                    self._turn_id,
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens,
+                    mode_name,
+                )
             )
             return
-        asyncio.run(
-            self._telemetryctl.emit_llm_call(
-                self._session_id,
-                self._turn_id,
-                input_tokens,
-                output_tokens,
-                cached_tokens,
-                mode_name,
-            )
+        self._emit_llm_usage_in_background(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+            mode_name=mode_name,
         )
 
     def _emit_llm_usage_in_background(

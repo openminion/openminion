@@ -21,7 +21,6 @@ class RepeatedFailureTracker:
     )
 
     def record(self, *, tool_name: str, args_signature: str, error_code: str) -> int:
-        """Record one failed triple and return its cumulative count."""
         key = (
             str(tool_name or "").strip(),
             str(args_signature or "").strip(),
@@ -39,17 +38,15 @@ class RepeatedFailureTracker:
         return self._counts.get(key, 0)
 
     def stalled_triple(self) -> tuple[str, str, str] | None:
-        """Return the first triple whose count >= threshold, or None."""
-        for key, count in self._counts.items():
-            if count >= self.threshold:
-                return key
-        return None
+        return next(
+            (key for key, count in self._counts.items() if count >= self.threshold),
+            None,
+        )
 
     def is_stalled(self) -> bool:
         return self.stalled_triple() is not None
 
     def snapshot(self) -> dict[str, int]:
-        """Return a sortable snapshot for telemetry / metadata."""
         return {
             f"{tool}|{args}|{err}": count
             for (tool, args, err), count in sorted(self._counts.items())
@@ -59,7 +56,6 @@ class RepeatedFailureTracker:
 def build_repeated_failure_metadata(
     tracker: RepeatedFailureTracker,
 ) -> dict[str, str]:
-    """Return typed metadata for a `repeated_failure_stalled` outcome."""
     triple = tracker.stalled_triple()
     metadata: dict[str, str] = {
         "tool_loop_termination_reason": AR09_VOCABULARY_VALUE,

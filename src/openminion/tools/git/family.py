@@ -1,5 +1,3 @@
-"""Git tool family declaration."""
-
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
 from .plugin import (
@@ -31,13 +29,10 @@ from .plugin import (
 
 GIT_FAMILY = ToolFamilySpec(
     module_id="git",
-    # Default for the bulk of the family; READ_ONLY tools override and
-    # `git.reset` overrides to POWER_USER.
     min_scope_default="WRITE_SAFE",
     common_tags=("plugin", "git"),
     common_capabilities=("git",),
     tools=(
-        # ---- READ_ONLY surface (NGT-01) -----------------------------------
         ToolDecl(
             name="git.status",
             args_model=GitStatusArgs,
@@ -83,7 +78,6 @@ GIT_FAMILY = ToolFamilySpec(
             idempotent=True,
             capabilities=("read_only",),
         ),
-        # ---- WRITE_SAFE surface (NGT-02 + NGT-03) -------------------------
         ToolDecl(
             name="git.branch",
             args_model=GitBranchArgs,
@@ -147,7 +141,6 @@ GIT_FAMILY = ToolFamilySpec(
             capabilities=("write_safe",),
             block_under_readonly=True,
         ),
-        # ---- POWER_USER surface (NGT-04) ----------------------------------
         ToolDecl(
             name="git.reset",
             args_model=GitResetArgs,

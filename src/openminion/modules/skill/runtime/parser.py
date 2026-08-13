@@ -180,12 +180,6 @@ def build_recipe(
     idempotency_notes: str | None = None
     if isinstance(front_matter.get("idempotency_notes"), str):
         idempotency_notes = str(front_matter.get("idempotency_notes")).strip() or None
-    if idempotency_notes is None:
-        combined = "\n".join([procedure_text, sections.get("pitfalls", "")]).lower()
-        if "idempot" in combined:
-            idempotency_notes = (
-                "Procedure may be idempotent; verify command semantics before retries."
-            )
 
     if not any(
         [preflight, steps, verification, rollback, stop_conditions, safety_notes]

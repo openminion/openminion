@@ -164,6 +164,21 @@ def test_provider_only_switch_inherits_provider_default_model() -> None:
     assert rt.model_name == "gpt-4.1-mini"
 
 
+def test_profile_provider_override_sets_active_model() -> None:
+    rt = _make_runtime()
+    profile = rt._rt.config.agents["default-agent"]
+    profile.provider = "openai"
+    profile.model = ""
+    profile.provider_config_overrides = {"model": "openai/gpt-oss-20b"}
+
+    assert rt.model_name == "openai/gpt-oss-20b"
+    assert next(row for row in rt.list_models() if row[0] == "openai") == (
+        "openai",
+        "openai/gpt-oss-20b",
+        True,
+    )
+
+
 def test_provider_identity_separates_service_and_transport_adapter() -> None:
     rt = _make_runtime()
     rt.switch_model("openai/google/gemma-4-31b-it")

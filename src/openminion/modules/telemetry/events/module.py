@@ -55,10 +55,9 @@ def emit_module_telemetry(
     run_telemetry_result_fn: Callable[[Any], bool] | None = None,
     **kwargs: Any,
 ) -> bool:
-    ctl = telemetryctl
-    if ctl is None:
+    if telemetryctl is None:
         return False
-    emitter = getattr(ctl, method_name, None)
+    emitter = getattr(telemetryctl, method_name, None)
     if not callable(emitter):
         return False
     try:
@@ -85,7 +84,7 @@ def emit_module_operation(
     op = str(operation or "").strip()
     if not op:
         return False
-    if int(count) <= 0:
+    if count <= 0:
         return False
     return emit_module_telemetry_fn(
         "emit_module_operation",
@@ -93,7 +92,7 @@ def emit_module_operation(
         turn_id,
         module_id,
         op,
-        count=int(count),
+        count=count,
         status=status,
         extra=extra,
     )
@@ -119,7 +118,7 @@ def emit_module_counter(
         turn_id,
         module_id,
         name,
-        float(value),
+        value,
         status=status,
         extra=extra,
     )

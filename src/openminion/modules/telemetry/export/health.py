@@ -21,13 +21,12 @@ def build_debug_export_health(
         protocol = None
     if not enabled:
         state, source = "disabled", "disabled"
-    elif not endpoint_configured:
+    elif not endpoint_configured or protocol is None:
         state, source = "incomplete", "no_runtime_connection"
-    elif protocol is None:
-        state, source = "incomplete", "no_runtime_connection"
-        diagnostics.append(
-            TelemetryDebugDiagnostic("UNKNOWN_EXPORT_PROTOCOL", "warning")
-        )
+        if endpoint_configured and protocol is None:
+            diagnostics.append(
+                TelemetryDebugDiagnostic("UNKNOWN_EXPORT_PROTOCOL", "warning")
+            )
     elif live_queue_stats is not None:
         drops = int(live_queue_stats.get("drops", 0))
         failures = int(live_queue_stats.get("flush_failures", 0))

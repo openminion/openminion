@@ -171,7 +171,7 @@ class BrowserProviderRegistry:
         self._loaded_entry_points: set[str] = set()
 
     def register(self, provider: BrowserProvider) -> None:
-        provider_id = str(getattr(provider, "provider_id", "")).strip()
+        provider_id = provider.provider_id.strip()
         if not provider_id:
             raise ValueError("provider_id is required")
         if provider_id in self._providers:
@@ -180,8 +180,6 @@ class BrowserProviderRegistry:
 
     def get(self, provider_id: str) -> BrowserProvider:
         key = str(provider_id).strip()
-        if key not in self._providers:
-            raise KeyError(key)
         return self._providers[key]
 
     def items(self) -> list[tuple[str, BrowserProvider]]:
@@ -194,11 +192,11 @@ class BrowserProviderRegistry:
         required = str(capability or "").strip()
         if not required:
             return []
-        out: list[str] = []
-        for provider_id, provider in self.items():
-            if bool(getattr(provider.capabilities, required, False)):
-                out.append(provider_id)
-        return out
+        return [
+            provider_id
+            for provider_id, provider in self.items()
+            if bool(getattr(provider.capabilities, required, False))
+        ]
 
     def load_entry_points(
         self, *, group: str = "openminion.browser_providers"

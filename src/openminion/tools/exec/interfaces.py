@@ -18,20 +18,18 @@ is_compatible = ContractValidator.is_compatible
 
 
 class ExecRequestEnvelope(ToolRequestEnvelope):
-    """Specialized request envelope for exec plugin methods."""
+    pass
 
 
 class ExecResultEnvelope(ToolResultEnvelope):
-    """Specialized result envelope for exec plugin methods."""
+    pass
 
 
 class ExecErrorEnvelope(ToolErrorEnvelope):
-    """Specialized error envelope for exec plugin methods."""
+    pass
 
 
 class ExecOperationSchema(BaseModel):
-    """Schema definition specifically for exec operations."""
-
     operation: str
     parameters: dict[str, Any]
     contract_version: str = EXEC_PLUGIN_INTERFACE_VERSION

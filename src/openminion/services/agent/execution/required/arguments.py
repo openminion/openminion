@@ -94,9 +94,6 @@ async def phase_validate_args(
             state_updates={"termination_reason": "required_tool_call_missing"},
         )
 
-    request = state.request
-    arg_retry_attempted = bool(state.arg_retry_attempted)
-
     ctx = runner.runtime_ops._build_tool_execution_context()
     if config.allow_runtime_direct_fallback and isinstance(ctx.metadata, dict):
         ctx.metadata.setdefault("allow_runtime_direct", "false")
@@ -116,7 +113,7 @@ async def phase_validate_args(
             }
         )
 
-    if arg_retry_attempted:
+    if state.arg_retry_attempted:
         return _invalid_args_result(
             runner,
             state=state,
@@ -127,7 +124,7 @@ async def phase_validate_args(
         )
 
     retry_response = await runner.runtime_ops.call_provider(
-        request,
+        state.request,
         tool_call_strategy=config.tool_call_strategy,
     )
     retry_missing = collect_missing_required_args(

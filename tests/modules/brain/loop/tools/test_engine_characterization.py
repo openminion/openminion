@@ -419,9 +419,7 @@ def test_structured_final_answer_recovery_preserves_answer_and_status() -> None:
 
     result = _recover_finalized_answer(
         loop_ctx=loop_ctx,
-        profile=_profile(
-            profile_name="general_adaptive_v1", allowed_tools=frozenset()
-        ),
+        profile=_profile(profile_name="general_adaptive_v1", allowed_tools=frozenset()),
         loop_state=AdaptiveToolLoopState(messages=[]),
         runtime=runtime,
         model="m",
@@ -6411,7 +6409,9 @@ def test_loop_plan_tool_declare_action_records_used() -> None:
     )
     state = _state()
     session_api = SimpleNamespace(events=[])
-    session_api.append_event = lambda *a, **kw: session_api.events.append(a)
+    session_api.append_event = lambda *a, **kw: (
+        session_api.events.append(a) or f"event-{len(session_api.events)}"
+    )
     session_api.get_active_task_plan = lambda sid: None
     loop_ctx = _LoopContext(state=state, outcomes=[], session_api=session_api)
     outcome = run_adaptive_tool_loop(
@@ -7545,7 +7545,7 @@ def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> Non
     }
 
 
-def test_loop_fails_closed_when_typed_finalization_contract_is_missing() -> None:
+def test_loop_preserves_evidence_answer_with_conservative_incomplete_status() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7622,8 +7622,10 @@ def test_loop_fails_closed_when_typed_finalization_contract_is_missing() -> None
         tool_specs=_tool_specs("web.search"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
-    assert outcome.finalization_status is None
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    assert outcome.final_text.startswith("PEP 621")
+    assert outcome.finalization_status is not None
+    assert outcome.finalization_status["status"] == "incomplete"
 
 
 def test_unexecutable_tool_payload_detects_embedded_json_after_prose() -> None:

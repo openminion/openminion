@@ -43,17 +43,13 @@ class LocalPolicyAdapter(PolicyAdapter):
                 confirm=self.confirm,
                 workspace=self.workspace,
             )
-        except (
-            ToolRuntimeError
-        ) as exc:  # pragma: no cover - exercised in higher-level tests
-            requires_confirm = (
-                str(exc.code or "").upper() == TOOL_ERROR_CONFIRM_REQUIRED
-            )
+        except ToolRuntimeError as exc:  # pragma: no cover - higher-level tests
             return PolicyDecision(
                 allowed=False,
                 reason=exc.message,
                 code=exc.code,
-                requires_confirm=requires_confirm,
+                requires_confirm=str(exc.code or "").upper()
+                == TOOL_ERROR_CONFIRM_REQUIRED,
                 details=exc.details,
             )
         return PolicyDecision(

@@ -114,7 +114,6 @@ def ensure_retrieve_compatibility(
     """Validate retrieve control implements the required interface."""
     errors: list[str] = []
 
-    # Check contract version
     if not hasattr(retrieve_ctl, "contract_version"):
         errors.append("Missing contract_version attribute")
     elif retrieve_ctl.contract_version != RETRIEVE_INTERFACE_VERSION:
@@ -123,7 +122,6 @@ def ensure_retrieve_compatibility(
             f"got {retrieve_ctl.contract_version}"
         )
 
-    # Check required methods
     required_methods = [
         "close",
         "retrieve",
@@ -139,20 +137,15 @@ def ensure_retrieve_compatibility(
     ]
 
     for method in required_methods:
-        if not hasattr(retrieve_ctl, method) or not callable(
-            getattr(retrieve_ctl, method)
-        ):
+        if not callable(getattr(retrieve_ctl, method, None)):
             errors.append(f"Missing required method: {method}")
 
-    if errors:
-        if strict:
-            raise RetrieveCtlError(
-                "RETRIEVE_CTL_INTERFACE_VIOLATION",
-                f"Retrieve controller incompatible: {errors}",
-            )
-        return False, errors
-
-    return True, []
+    if errors and strict:
+        raise RetrieveCtlError(
+            "RETRIEVE_CTL_INTERFACE_VIOLATION",
+            f"Retrieve controller incompatible: {errors}",
+        )
+    return not errors, errors
 
 
 def ensure_retrieve_storage_compatibility(
@@ -178,8 +171,6 @@ def ensure_retrieve_storage_compatibility(
             f"{RETRIEVE_STORAGE_INTERFACE_VERSION}, got {version or '<missing>'}"
         )
 
-    if errors:
-        if strict:
-            raise TypeError("Retrieve storage incompatible: " + "; ".join(errors))
-        return False, errors
-    return True, []
+    if errors and strict:
+        raise TypeError("Retrieve storage incompatible: " + "; ".join(errors))
+    return not errors, errors

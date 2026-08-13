@@ -83,15 +83,13 @@ class BrowserTabResolver:
         details["reuse_existing"] = reuse_existing
         details["reuse_policy"] = reuse_policy
         if reuse_existing:
-            meaningful = [tab for tab in candidates if self._is_meaningful_tab(tab)]
-            if reuse_policy == "single_non_blank":
-                if len(meaningful) == 1:
-                    details["strategy"] = "single_non_blank"
-                    return meaningful[0].id, meaningful[0], details
-            elif reuse_policy == "first_non_blank":
-                if meaningful:
-                    details["strategy"] = "first_non_blank"
-                    return meaningful[0].id, meaningful[0], details
+            meaningful = [tab for tab in candidates if is_meaningful_url(tab.url)]
+            if reuse_policy == "single_non_blank" and len(meaningful) == 1:
+                details["strategy"] = "single_non_blank"
+                return meaningful[0].id, meaningful[0], details
+            if reuse_policy == "first_non_blank" and meaningful:
+                details["strategy"] = "first_non_blank"
+                return meaningful[0].id, meaningful[0], details
             elif reuse_policy == "first_any":
                 details["strategy"] = "first_any"
                 return candidates[0].id, candidates[0], details
@@ -148,9 +146,6 @@ class BrowserTabResolver:
         if token in {"0", "false", "no", "off"}:
             return False
         return default
-
-    def _is_meaningful_tab(self, tab: TabInfo) -> bool:
-        return is_meaningful_url(tab.url)
 
     def _host(self, value: str) -> str:
         token = str(value or "").strip()

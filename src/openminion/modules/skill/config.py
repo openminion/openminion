@@ -95,22 +95,13 @@ def load_config(
         else None
     )
 
-    default_sqlite, default_blob, default_fallback = _default_storage_paths(
-        home_root=resolved_home_root,
+    default_sqlite, default_root = _default_storage_paths(
         data_root=resolved_data_root,
         standalone_mode=standalone_mode,
     )
-    default_mode = (
-        "module_standalone"
-        if standalone_mode
-        else "integrated_runtime"
-        if resolved_home_root
-        else "module_standalone"
-    )
+    default_mode = "integrated_runtime" if resolved_home_root else "module_standalone"
     default_source = (
-        "standalone_default"
-        if standalone_mode or not resolved_home_root
-        else "default_integrated"
+        "default_integrated" if resolved_home_root else "standalone_default"
     )
 
     if isinstance(path, dict):
@@ -122,8 +113,8 @@ def load_config(
             return SkillConfig(
                 provider="sqlite",
                 sqlite_path=str(default_sqlite),
-                blob_root=str(default_blob),
-                fallback_root=str(default_fallback),
+                blob_root=str(default_root),
+                fallback_root=str(default_root),
                 known_tools_state=SKILL_TOOL_REGISTRY_UNAVAILABLE,
                 path_mode=default_mode,
                 path_source=default_source,
@@ -185,7 +176,6 @@ def load_config(
         for value in (sqlite_path_raw, blob_root_raw, fallback_root_raw)
     )
     path_source = "explicit_override" if explicit_override else default_source
-    path_mode = default_mode
     known_tools = _as_str_list(root.get("known_tools"), [])
     if "known_tools" not in root:
         known_tools_state = SKILL_TOOL_REGISTRY_UNAVAILABLE
@@ -219,7 +209,7 @@ def load_config(
         trust_tier=str(root.get("trust_tier", "disabled")),
         ingest_enabled=bool(root.get("ingest_enabled", True)),
         skill_blob_retention=skill_blob_retention,
-        path_mode=path_mode,
+        path_mode=default_mode,
         path_source=path_source,
         home_root=str(resolved_home_root) if resolved_home_root else None,
     )
@@ -261,22 +251,19 @@ def _resolve_storage_path(
 
 def _default_storage_paths(
     *,
-    home_root: Path | None,
     data_root: Path | None,
     standalone_mode: bool,
-) -> tuple[Path, Path, Path]:
+) -> tuple[Path, Path]:
     if data_root is not None and not standalone_mode:
         skill_root = (data_root / DEFAULT_INTEGRATED_ROOT_SUBPATH).resolve(strict=False)
         return (
             (data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve(strict=False),
-            skill_root,
             skill_root,
         )
 
     skill_root = (Path.home() / DEFAULT_STANDALONE_ROOT_SUBPATH).resolve(strict=False)
     return (
         (Path.home() / DEFAULT_STANDALONE_SQLITE_SUBPATH).resolve(strict=False),
-        skill_root,
         skill_root,
     )
 
@@ -293,10 +280,7 @@ def _as_str_list(value: Any, default: list[str]) -> list[str]:
 
 
 def _parse_yaml_like_mapping(text: str) -> dict[str, Any] | None:
-    """
-    Tiny YAML-like parser for environments without PyYAML.
-    Supports nested maps, inline lists, and scalar booleans/numbers/strings.
-    """
+    """Parse the supported YAML subset when PyYAML is unavailable."""
 
     lines = text.splitlines()
     root: dict[str, Any] = {}

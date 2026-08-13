@@ -733,6 +733,8 @@ def test_context_adapter_dispatch_fallbacks_and_confirmation_paths() -> None:
     ctx = _ctx(state=state, command_executor=_FakeCommandExecutor())
     adapter = _AdaptiveLoopContextAdapter(ctx)
 
+    assert adapter.session_api is ctx._services.runner.session_api
+
     outcome = adapter.execute_command(command=command, include_reflect=True)
     assert outcome.action_result.status == "success"
     assert ctx.command_executor.calls[0].tool_name == "file.read"

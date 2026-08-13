@@ -16,16 +16,9 @@ validate_contract_version_browser = ContractValidator.validate_contract_version
 is_compatible_browser = ContractValidator.is_compatible
 
 
-class BrowserRequestEnvelope(ToolRequestEnvelope):
-    pass
-
-
-class BrowserResultEnvelope(ToolResultEnvelope):
-    pass
-
-
-class BrowserErrorEnvelope(ToolErrorEnvelope):
-    pass
+BrowserRequestEnvelope = ToolRequestEnvelope
+BrowserResultEnvelope = ToolResultEnvelope
+BrowserErrorEnvelope = ToolErrorEnvelope
 
 
 class BrowserOperationSchema(BaseModel):

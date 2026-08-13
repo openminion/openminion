@@ -31,19 +31,17 @@ from .sharing import SessionShareService
 from .storage.store import SQLiteSessionStore
 
 
-def _json_arg(raw: str | None, *, default: Any) -> Any:
-    if raw is None:
-        return default
+def _json_arg(raw: str) -> Any:
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON: {exc}") from exc
 
 
-def _optional_json_arg(raw: str | None, *, default: Any = None) -> Any:
+def _optional_json_arg(raw: str | None) -> Any:
     if raw is None:
         return None
-    return _json_arg(raw, default=default)
+    return _json_arg(raw)
 
 
 def _print_result(payload: Any) -> int:
@@ -52,7 +50,7 @@ def _print_result(payload: Any) -> int:
 
 
 def _resolve_db_path(args: argparse.Namespace) -> Path:
-    db_raw = str(getattr(args, "db", "") or "").strip()
+    db_raw = (args.db or "").strip()
     if db_raw:
         return Path(db_raw).expanduser().resolve()
 
@@ -361,8 +359,8 @@ def _add_session_cli_subcommands(sub: Any, add_db_arg: Any) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    home_root = str(getattr(args, "home_root", "") or "").strip()
-    data_root = str(getattr(args, "data_root", "") or "").strip()
+    home_root = (args.home_root or "").strip()
+    data_root = (args.data_root or "").strip()
     apply_home_data_root_env(home_root=home_root, data_root=data_root)
     db_path = _resolve_db_path(args)
     if args.command == "storage":
@@ -393,8 +391,8 @@ def _handle_session_store_command(
         return _print_result({"ok": True, "db_path": str(store.database_path)})
 
     if args.command == "create-session":
-        meta = _json_arg(args.meta_json, default={})
-        tags = _json_arg(args.tags_json, default=[])
+        meta = _json_arg(args.meta_json)
+        tags = _json_arg(args.tags_json)
         session_id = store.create_session(
             title=args.title,
             status=args.status,
@@ -472,8 +470,8 @@ def _handle_session_store_command(
             args.session_id,
             role=args.role,
             content=args.content,
-            attachments=_json_arg(args.attachments_json, default=[]),
-            meta=_json_arg(args.meta_json, default={}),
+            attachments=_json_arg(args.attachments_json),
+            meta=_json_arg(args.meta_json),
         )
         return _print_result({"turn_id": turn_id})
 
@@ -489,7 +487,7 @@ def _handle_session_store_command(
         event_id = store.append_event(
             args.session_id,
             event_type=args.event_type,
-            payload=_json_arg(args.payload_json, default={}),
+            payload=_json_arg(args.payload_json),
             actor_type=args.actor_type,
             actor_id=args.actor_id,
             trace=trace,
@@ -502,10 +500,10 @@ def _handle_session_store_command(
             span_id=args.span_id,
             task_id=args.task_id,
             parent_id=args.parent_id,
-            artifact_refs=_json_arg(args.artifact_refs_json, default=[]),
-            memory_refs=_json_arg(args.memory_refs_json, default=[]),
+            artifact_refs=_json_arg(args.artifact_refs_json),
+            memory_refs=_json_arg(args.memory_refs_json),
             status=args.status,
-            error=_optional_json_arg(args.error_json, default={}),
+            error=_optional_json_arg(args.error_json),
         )
         return _print_result({"event_id": event_id})
 
@@ -526,7 +524,7 @@ def _handle_session_store_command(
             store.get_events(
                 args.session_id,
                 after_seq=args.after_seq,
-                types=_optional_json_arg(args.types_json, default=[]),
+                types=_optional_json_arg(args.types_json),
                 limit=args.limit,
             )
         )
@@ -535,7 +533,7 @@ def _handle_session_store_command(
         return _print_result(store.get_recent_tool_events(args.session_id, args.limit))
 
     if args.command == "put-working-state":
-        inline = _optional_json_arg(args.state_inline_json, default={})
+        inline = _optional_json_arg(args.state_inline_json)
         version = store.put_working_state(
             args.session_id,
             state_ref=args.state_ref,
@@ -615,11 +613,11 @@ def _handle_session_store_command(
             description=args.description,
             enabled=args.enabled,
             agent_id=args.agent_id,
-            schedule=_json_arg(args.schedule_json, default={}),
+            schedule=_json_arg(args.schedule_json),
             session_target=args.session_target,
             wake_mode=args.wake_mode,
-            payload=_json_arg(args.payload_json, default={}),
-            delivery=_json_arg(args.delivery_json, default={"mode": "none"}),
+            payload=_json_arg(args.payload_json),
+            delivery=_json_arg(args.delivery_json),
             delete_after_run=args.delete_after_run,
             misfire_policy=args.misfire_policy,
             max_lateness_s=args.max_lateness_s,
@@ -628,13 +626,7 @@ def _handle_session_store_command(
         )
         return _print_result({"ok": True, "job_id": created_job_id})
     if args.command == "cron-list":
-        enabled_filter: bool | None
-        if args.enabled == "true":
-            enabled_filter = True
-        elif args.enabled == "false":
-            enabled_filter = False
-        else:
-            enabled_filter = None
+        enabled_filter = {"true": True, "false": False}.get(args.enabled)
         return _print_result(
             store.list_cron_jobs(enabled=enabled_filter, limit=args.limit)
         )
@@ -658,7 +650,7 @@ def _handle_session_store_command(
         return _print_result({"ok": True, "job_id": args.job_id, "run_id": run_id})
 
     if args.command == "cron-runs":
-        states = _optional_json_arg(args.states_json, default=[])
+        states = _optional_json_arg(args.states_json)
         return _print_result(
             store.list_cron_runs(job_id=args.job_id, states=states, limit=args.limit)
         )
@@ -670,7 +662,6 @@ def _handle_session_store_command(
         return _print_result(store.reindex_sidecars(since_ts=args.since_ts))
 
     parser.error(f"unsupported command: {args.command}")
-    return 2
 
 
 def _add_reliability_subcommands(sub: Any, add_db_arg: Any) -> None:
@@ -753,7 +744,7 @@ def _handle_reliability_command(
             store,
             source_session_id=args.source_session_id,
             target_parent_session_id=args.target_parent_session_id,
-            fields=_json_arg(args.fields_json, default=[]),
+            fields=_json_arg(args.fields_json),
             title=args.title,
         )
         return _print_result(result)

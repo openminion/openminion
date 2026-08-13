@@ -1,16 +1,14 @@
-"""Project storage protocol."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from openminion.modules.session.project.schemas import (
-    Project,
-    ProjectSessionBinding,
-)
+from openminion.modules.session.project.schemas import Project, ProjectSessionBinding
 
 
 class ProjectStore(ABC):
+    @abstractmethod
+    def close(self) -> None: ...
+
     @abstractmethod
     def create(self, project: Project) -> Project: ...
 

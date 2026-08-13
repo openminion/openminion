@@ -14,9 +14,7 @@ RUNTIME_CODE_REPO_INDEX = "runtime.code.repo_index"
 RUNTIME_CODE_SYMBOL_FIND = "runtime.code.symbol_find"
 
 RUNTIME_TOOL_LIST = "runtime.tool.list"
-RUNTIME_TOOL_SEARCH = (
-    "runtime.tool.search"  # compatibility alias; prefer RUNTIME_TOOL_LIST
-)
+RUNTIME_TOOL_SEARCH = "runtime.tool.search"  # Prefer RUNTIME_TOOL_LIST.
 RUNTIME_TOOL_GET = "runtime.tool.get"
 RUNTIME_TOOL_AUTHOR = "runtime.tool.author"
 RUNTIME_TOOL_INSPECT = "runtime.tool.inspect"
@@ -131,7 +129,6 @@ RUNTIME_GITHUB_COMMIT_FILES = "runtime.github.commit_files"
 RUNTIME_GITHUB_OPEN_PR = "runtime.github.open_pr"
 RUNTIME_GITHUB_POST_PR_REVIEW = "runtime.github.post_pr_review"
 RUNTIME_GITHUB_POST_PR_COMMENT = "runtime.github.post_pr_comment"
-# task / agent delegation tool family
 RUNTIME_TASK_DELEGATE = "runtime.task.delegate"
 RUNTIME_AGENT_LIST = "runtime.agent.list"
 RUNTIME_AGENT_GET = "runtime.agent.get"
@@ -235,9 +232,7 @@ _DYNAMIC_RUNTIME_BINDING_PREFIXES: tuple[str, ...] = ("runtime.mcp.",)
 
 
 def is_valid_runtime_binding_id(runtime_binding_id: str) -> bool:
-    token = str(runtime_binding_id or "").strip()
-    if not token:
-        return False
-    if token in ALL_RUNTIME_BINDING_IDS_SET:
-        return True
-    return any(token.startswith(prefix) for prefix in _DYNAMIC_RUNTIME_BINDING_PREFIXES)
+    token = runtime_binding_id.strip()
+    return token in ALL_RUNTIME_BINDING_IDS_SET or any(
+        token.startswith(prefix) for prefix in _DYNAMIC_RUNTIME_BINDING_PREFIXES
+    )

@@ -5,7 +5,7 @@ from typing import cast
 import uuid
 
 from openminion.base.runtime.sandbox import ExecSpec, ExecutionSandboxSpec
-from .client import DaytonaClient, DaytonaClientError
+from .client import DaytonaClient, DaytonaClientError, DaytonaSessionPollResult
 
 _SESSION_PREFIX = "execsandbox_"
 
@@ -79,7 +79,7 @@ class DaytonaSessionManager:
                 "net_mode": sandbox.net_mode,
                 "allowed_domains": list(sandbox.allowed_domains),
                 "idempotency_key": sandbox.idempotency_key,
-                "pty": bool(use_pty),
+                "pty": use_pty,
             },
         )
         started = self._client.start_session(
@@ -102,16 +102,16 @@ class DaytonaSessionManager:
             host=host,
             shell_family=shell_family,
             use_pty=use_pty,
-            timeout_s=int(timeout_s),
+            timeout_s=timeout_s,
             started_at_unix=now,
-            deadline_unix=now + float(timeout_s),
+            deadline_unix=now + timeout_s,
         )
         with self._lock:
             self._sessions[session_id] = record
         return record
 
     def wait(self, *, session_id: str, agent_id: str, wait_seconds: float) -> bool:
-        deadline = time.time() + max(0.0, float(wait_seconds))
+        deadline = time.time() + max(0.0, wait_seconds)
         while True:
             with self._lock:
                 entry = self._sessions.get(session_id)
@@ -211,7 +211,7 @@ class DaytonaSessionManager:
                 )
             except DaytonaClientError as exc:
                 return False, exc.message, entry
-            self._apply_poll_result_locked(entry, result.stdout, result.stderr, result)
+            self._apply_poll_result_locked(entry, result)
             return True, "session terminated", entry
 
     def clear(self, *, session_id: str, agent_id: str) -> tuple[bool, str]:
@@ -259,32 +259,29 @@ class DaytonaSessionManager:
         return rows
 
     def owns_session_id(self, session_id: str) -> bool:
-        return str(session_id or "").startswith(_SESSION_PREFIX)
+        return session_id.startswith(_SESSION_PREFIX)
 
     def _refresh_locked(self, entry: DaytonaSessionRecord) -> None:
         result = self._client.poll_session(
             workspace_id=entry.workspace_id,
             session_id=entry.remote_session_id,
         )
-        self._apply_poll_result_locked(entry, result.stdout, result.stderr, result)
+        self._apply_poll_result_locked(entry, result)
 
     def _apply_poll_result_locked(
         self,
         entry: DaytonaSessionRecord,
-        stdout: str,
-        stderr: str,
-        result: object,
+        result: DaytonaSessionPollResult,
     ) -> None:
-        stdout_bytes = stdout.encode("utf-8", errors="replace")
-        stderr_bytes = stderr.encode("utf-8", errors="replace")
+        stdout_bytes = result.stdout.encode("utf-8", errors="replace")
+        stderr_bytes = result.stderr.encode("utf-8", errors="replace")
         entry.stdout_buffer = bytearray(stdout_bytes)
         entry.stderr_buffer = bytearray(stderr_bytes)
-        running = bool(getattr(result, "running", False))
-        if running:
+        if result.running:
             return
-        entry.exit_code = int(getattr(result, "exit_code", 0) or 0)
-        entry.timed_out = bool(getattr(result, "timed_out", False))
-        entry.killed = bool(getattr(result, "killed", False)) or entry.exit_code < 0
+        entry.exit_code = result.exit_code or 0
+        entry.timed_out = result.timed_out
+        entry.killed = result.killed or entry.exit_code < 0
         entry.stopped_at_unix = time.time()
 
     def _status_locked(self, entry: DaytonaSessionRecord) -> str:

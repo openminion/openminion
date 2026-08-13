@@ -1,9 +1,8 @@
 from collections.abc import Iterable
-from typing import Any
 
 from openminion.modules.tool.errors import ToolRuntimeError
 
-from .config import GithubToolProfileConfig, profile_config_from_context
+from .config import GithubToolProfileConfig
 from .constants import (
     GITHUB_POLICY_DENIED_BASE_BRANCH,
     GITHUB_POLICY_DENIED_BRANCH_PREFIX,
@@ -15,10 +14,6 @@ from .constants import (
     GITHUB_POLICY_DENIED_PR_HEAD,
     GITHUB_POLICY_DENIED_REPO,
 )
-
-
-def github_write_policy_from_context(ctx: Any | None) -> GithubToolProfileConfig:
-    return profile_config_from_context(ctx)
 
 
 def _deny(reason_code: str, message: str, **details: object) -> None:
@@ -74,10 +69,6 @@ def ensure_base_branch_allowed(
     base_branch: str,
     config: GithubToolProfileConfig,
 ) -> None:
-    """Per RWPRS §5.2: ``github.open_pr`` base branches are allowlisted, not
-    inferred. Any base branch outside ``config.allowed_base_branches`` is
-    denied with ``POLICY_DENIED_BASE_BRANCH`` before any network mutation.
-    """
     if base_branch in config.allowed_base_branches:
         return
     _deny(
@@ -93,7 +84,6 @@ def ensure_pr_head_allowed(
     head_ref: str,
     config: GithubToolProfileConfig,
 ) -> None:
-    """Per RWPRS §5.3: ``github.post_pr_review`` and ``github.post_pr_comment``"""
     if any(head_ref.startswith(prefix) for prefix in config.allowed_branch_prefixes):
         return
     _deny(
@@ -164,7 +154,6 @@ def ensure_delete_allowed(
 
 
 __all__ = [
-    "github_write_policy_from_context",
     "ensure_repository_allowed",
     "ensure_branch_allowed",
     "ensure_base_branch_allowed",

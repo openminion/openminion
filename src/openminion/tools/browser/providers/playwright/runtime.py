@@ -28,8 +28,9 @@ def resource_selectors(provider: Any, args: Mapping[str, Any]) -> ResourceSelect
     reads: list[str] = []
     op = str(args.get("op", "")).strip()
     if op in {"upload", "tab.upload"}:
-        options = (
-            args.get("options") if isinstance(args.get("options"), Mapping) else {}
+        raw_options = args.get("options")
+        options: Mapping[str, Any] = (
+            raw_options if isinstance(raw_options, Mapping) else {}
         )
         files = options.get("files", options.get("file"))
         if isinstance(files, str) and files.strip():
@@ -160,20 +161,18 @@ def shutdown_playwright(provider: Any) -> None:
     provider._playwright = None
 
 
-def provider_version(provider: Any) -> str:
-    del provider
+def provider_version(_provider: Any) -> str:
     try:
         return importlib.metadata.version("playwright")
-    except Exception:
+    except importlib.metadata.PackageNotFoundError:
         return "unknown"
 
 
 def lock_key(provider: Any, tab_id: str) -> str:
     token = str(tab_id).strip()
-    instance_id = ""
     try:
         instance_id = provider._tabs.get(token).instance_id
-    except Exception:
+    except KeyError:
         instance_id = "unknown"
     return f"{provider.provider_id}:{instance_id}:{token}"
 

@@ -727,7 +727,8 @@ def test_coding_loop_preserves_tool_transcript_shape_for_follow_up_round() -> No
         message for message in reversed(second_call_messages) if message.role == "tool"
     )
     assert tool_message.role == "tool"
-    assert tool_message.meta["tool_name"] == "file.read"
+    assert "tool_name" not in tool_message.meta
+    assert tool_message.tool_call_id == "tc-1"
     assert tool_message.content == (
         '{"status": "success", "summary": "ok", "outputs": {"content": "file content"}}'
     )

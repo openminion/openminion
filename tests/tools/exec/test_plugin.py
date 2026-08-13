@@ -289,6 +289,40 @@ def test_exec_run_accepts_cmd_alias(tmp_path):
     assert "hello" in str(result.get("stdout_preview") or "")
 
 
+def test_exec_run_defaults_to_allowlisted_gateway_when_host_exec_is_enabled(
+    tmp_path,
+) -> None:
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+        ),
+    )
+
+    result = exec_plugin._h_exec_run({"command": "whoami"}, ctx)
+
+    assert result["status"] == "ok"
+    assert str(result["stdout_preview"] or "").strip()
+
+
+def test_exec_run_falls_back_from_unavailable_sandbox_when_host_exec_is_enabled(
+    tmp_path,
+) -> None:
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+        ),
+    )
+
+    result = exec_plugin._h_exec_run(
+        {"command": "whoami", "host": "sandbox"},
+        ctx,
+    )
+
+    assert result["status"] == "ok"
+
+
 def test_exec_run_uses_shared_sandbox_runner_for_foreground_sandbox(tmp_path):
     runner = _RecordingSandboxRunner(
         ExecResult(returncode=0, stdout="runner hello\n", stderr="")
@@ -981,6 +1015,17 @@ def test_validate_command_against_policy_allows_direct_toolchain_discovery(
     assert allowed
     assert message == ""
     assert details["checked"][0]["exec"] == "command"
+
+
+def test_validate_host_allowlist_allows_direct_toolchain_discovery(tmp_path) -> None:
+    allowed, message, details = _validate_host_allowlist(
+        "command -v nasm",
+        _ctx(tmp_path),
+    )
+
+    assert allowed
+    assert message == ""
+    assert details["checked"][0]["path"] == "shell-discovery-builtin"
 
 
 def test_validate_command_against_policy_denies_non_discovery_toolchain_shapes(

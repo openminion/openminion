@@ -33,8 +33,6 @@ def issue_power_user_grant(
                 effect="allow",
                 subject_id=subject_id,
                 tool=tool_name,
-                method="*",
-                duration_type="forever",
                 reason=TOOL_AUTHORING_REGISTER_REASON,
             )
         )

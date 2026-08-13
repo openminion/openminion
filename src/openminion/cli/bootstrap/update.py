@@ -32,7 +32,11 @@ class UpdateCheckResult:
 
 
 def default_update_cache_path(*, data_root: Path | None = None) -> Path:
-    root = Path(data_root).expanduser() if data_root is not None else Path.home() / ".openminion"
+    root = (
+        Path(data_root).expanduser()
+        if data_root is not None
+        else Path.home() / ".openminion"
+    )
     return root / "update-check.json"
 
 

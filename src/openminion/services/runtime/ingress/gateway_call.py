@@ -28,7 +28,6 @@ async def run_gateway_once_impl(
         "message": message,
         "session_id": session_id,
         "idempotency_key": idempotency_key,
-        "inbound_metadata": inbound_metadata,
         "deliver": bool(deliver),
         "forced_tools": list(forced_tools or []),
         "capability_category": capability_category,
@@ -37,8 +36,8 @@ async def run_gateway_once_impl(
         run_once_kwargs["progress_callback"] = progress_callback
     if approval_callback is not None:
         run_once_kwargs["approval_callback"] = approval_callback
-    if inbound_metadata is None:
-        run_once_kwargs.pop("inbound_metadata", None)
+    if inbound_metadata is not None:
+        run_once_kwargs["inbound_metadata"] = inbound_metadata
     if request_id is not None:
         run_once_kwargs["request_id"] = request_id
 

@@ -236,8 +236,7 @@ class CommandRegistryMemorySkillMixin:
                 lines.append(f"  - {mod}: {msg} [at {timestamp}]")
 
         if not any(
-            module_info[key]
-            for key in ("built_in", "loaded", "shadowed", "broken")
+            module_info[key] for key in ("built_in", "loaded", "shadowed", "broken")
         ):
             lines.append("\nNo modules detected.")
 

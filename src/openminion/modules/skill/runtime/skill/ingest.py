@@ -569,11 +569,7 @@ class SkillIngestMixin:
                 step.instruction for step in package.recipe.steps
             )
             combined += "\n" + "\n".join(package.recipe.rollback)
-        dangerous_hits: list[str] = []
-        for pattern in _DANGEROUS_PATTERNS:
-            if pattern.search(combined):
-                dangerous_hits.append(pattern.pattern)
-        if dangerous_hits:
+        if any(pattern.search(combined) for pattern in _DANGEROUS_PATTERNS):
             issues.append(
                 LintIssue(
                     severity="warning",
@@ -582,9 +578,10 @@ class SkillIngestMixin:
                 )
             )
 
-        has_verification = bool(package.verification_rules)
-        if package.recipe and package.recipe.verification:
-            has_verification = True
+        has_verification = bool(
+            package.verification_rules
+            or (package.recipe and package.recipe.verification)
+        )
 
         if package.risk_class in HIGH_RISK_CLASSES and not has_verification:
             issues.append(
@@ -780,13 +777,11 @@ class SkillIngestMixin:
 
 
 def _source_ref_to_digest(ref: str) -> str | None:
-    text = str(ref or "").strip()
+    text = ref.strip()
     if not text.startswith(_ARTIFACT_REF_PREFIX):
         return None
     digest = text[len(_ARTIFACT_REF_PREFIX) :].strip()
-    if not digest:
-        return None
-    return digest
+    return digest or None
 
 
 def _source_ref_from_payload(payload: dict[str, Any] | None) -> str | None:
@@ -798,7 +793,7 @@ def _source_ref_from_payload(payload: dict[str, Any] | None) -> str | None:
 
 def _extract_lines(text: str) -> list[str]:
     out: list[str] = []
-    for raw in (text or "").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
@@ -835,7 +830,7 @@ def _promote_procedure_from_freeform_sections(sections: dict[str, str]) -> str:
             continue
         blocks.append(f"{key.replace('_', ' ').title()}:\n{text}")
 
-    return "\n\n".join(block for block in blocks if block.strip()).strip()
+    return "\n\n".join(blocks).strip()
 
 
 def _front_matter_description(front_matter: dict[str, Any]) -> str:
@@ -850,16 +845,14 @@ def _front_matter_short_description(front_matter: dict[str, Any]) -> str:
 
 
 def _summary_needs_fallback(summary: str) -> bool:
-    stripped = str(summary or "").strip()
-    if not stripped:
-        return True
-    if "\n" in stripped:
-        return False
-    return bool(_BARE_HEADING_RE.match(stripped))
+    stripped = summary.strip()
+    return (
+        not stripped or "\n" not in stripped and bool(_BARE_HEADING_RE.match(stripped))
+    )
 
 
 def _is_probable_reference_hint(value: str) -> bool:
-    text = str(value or "").strip()
+    text = value.strip()
     if not text:
         return True
     lowered = text.lower()
@@ -881,17 +874,15 @@ def _is_high_confidence_runtime_tool(
     authoritative_tools: Iterable[str],
     known_tools: Iterable[str],
 ) -> bool:
-    text = str(value or "").strip()
+    text = value.strip()
     if not text:
         return False
-    authoritative = {
-        str(item).strip() for item in authoritative_tools if str(item).strip()
-    }
+    authoritative = {item.strip() for item in authoritative_tools if item.strip()}
     if text in authoritative:
         return True
     if _is_probable_reference_hint(text):
         return False
-    known = {str(item).strip() for item in known_tools if str(item).strip()}
+    known = {item.strip() for item in known_tools if item.strip()}
     return text in known
 
 

@@ -33,7 +33,7 @@ class RuntimeSessionStoreMessages:
     ) -> None:
         if session_turn_fence_token is None or self._assert_session_turn_fence is None:
             return
-        self._assert_session_turn_fence(session_id, int(session_turn_fence_token))
+        self._assert_session_turn_fence(session_id, session_turn_fence_token)
 
     def append_message(
         self,
@@ -151,7 +151,7 @@ class RuntimeSessionStoreMessages:
         return records
 
     def latest_conversation_id(self, *, session_id: str) -> str | None:
-        normalized_session_id = str(session_id or "").strip()
+        normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return None
         row = self._backend.query_one(
@@ -186,9 +186,7 @@ class RuntimeSessionStoreMessages:
             f"SELECT COUNT(*) AS count FROM messages {where_clause}",
             params,
         )
-        if row is None:
-            return 0
-        return int(row["count"])
+        return 0 if row is None else int(row["count"])
 
     def list_messages_after_rowid(
         self,

@@ -8,8 +8,6 @@ if TYPE_CHECKING:
 
 
 class FetchScraplingRegistrar:
-    """Registrar with manifest for fetch_scrapling."""
-
     module_id = "fetch_scrapling"
     is_provider_only = True
 
@@ -28,5 +26,4 @@ class FetchScraplingRegistrar:
         )
 
 
-# Module registrar (required by bootstrap)
 REGISTRAR = FetchScraplingRegistrar()

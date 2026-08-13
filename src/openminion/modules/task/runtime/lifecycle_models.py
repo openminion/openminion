@@ -101,8 +101,7 @@ def _dump_state_blob(state: Mapping[str, Any] | None) -> str:
 
 
 def _load_state_blob(raw: Any) -> dict[str, Any]:
-    loaded = _load_metadata(raw)
-    return loaded if isinstance(loaded, dict) else {}
+    return _load_metadata(raw)
 
 
 @dataclass(frozen=True)
@@ -129,18 +128,16 @@ class _NullCronRepository:
         raise NotImplementedError("Cron scheduling is unavailable for linked tasks")
 
     def delete_cron_job(self, job_id: str) -> None:
-        del job_id
+        pass
 
     def get_cron_job(self, job_id: str) -> dict[str, Any] | None:
-        del job_id
         return None
 
     def list_cron_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        del limit
         return []
 
     def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None:
-        del job_id, enabled
+        pass
 
     def list_cron_runs(
         self,
@@ -149,7 +146,6 @@ class _NullCronRepository:
         limit: int = 100,
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        del job_id, limit, states
         return []
 
 

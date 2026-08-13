@@ -2110,6 +2110,38 @@ def test_hydrate_runner_session_context_skips_duplicates_and_error_turns() -> No
     ]
 
 
+def test_hydrate_runner_session_context_dedupes_older_persisted_turns() -> None:
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()  # type: ignore[attr-defined]
+    _csc_install_default_agent(bridge._config)  # type: ignore[attr-defined]
+    runner = SimpleNamespace(session_api=_DummySessionAPI({}))
+    runner.session_api.turns = [
+        {
+            "session_id": "s1",
+            "role": "user",
+            "content": f"persisted question {index}",
+        }
+        for index in range(20)
+    ]
+    history = [
+        Message(
+            channel="console",
+            target="user",
+            body="persisted question 0",
+            metadata={"role": "user"},
+        )
+    ]
+
+    bridge._hydrate_runner_session_context(
+        runner=runner,
+        session_id="s1",
+        history=history,
+        system_prompt="BASE SYSTEM",
+    )
+
+    assert len(runner.session_api.turns) == 20
+
+
 def test_follow_up_after_tool_uses_fallback_for_embedded_tool_call_text() -> None:
     bridge = DummyBridge()
     bridge._config = OpenMinionConfig()

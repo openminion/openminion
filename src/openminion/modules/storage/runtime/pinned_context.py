@@ -24,7 +24,7 @@ DEFAULT_PINNED_CONTEXT_POLICY = PinnedContextPolicy()
 
 
 def normalize_pin_source(source: str) -> str:
-    normalized = str(source or "").strip().lower()
+    normalized = source.strip().lower()
     if normalized not in ALLOWED_PIN_SOURCES:
         raise ValueError(f"Invalid pin source: {source!r}")
     return normalized
@@ -40,7 +40,7 @@ def normalize_pin_entries(
     total_chars = 0
     for index, entry in enumerate(entries):
         source = normalize_pin_source(entry.source)
-        text = str(entry.text or "").strip()
+        text = entry.text.strip()
         if not text:
             continue
         if len(text) > policy.max_chars_per_pin:
@@ -51,8 +51,8 @@ def normalize_pin_entries(
         if key in dedupe_keys:
             continue
         dedupe_keys.add(key)
-        pin_id = str(entry.pin_id or "").strip() or f"pin-{len(normalized) + 1}"
-        created_at = str(entry.created_at or "").strip()
+        pin_id = entry.pin_id.strip() or f"pin-{len(normalized) + 1}"
+        created_at = entry.created_at.strip()
         normalized.append(
             PinnedContextEntry(
                 pin_id=pin_id,
@@ -97,7 +97,7 @@ def encode_pinned_context(
 
 
 def decode_pinned_context(raw: str) -> list[PinnedContextEntry]:
-    value = str(raw or "").strip()
+    value = raw.strip()
     if not value:
         return []
     try:
@@ -147,7 +147,7 @@ def decode_pinned_context(raw: str) -> list[PinnedContextEntry]:
 
 
 def render_pinned_context(raw: str) -> str:
-    value = str(raw or "").strip()
+    value = raw.strip()
     if not value:
         return ""
     entries = decode_pinned_context(value)
@@ -160,5 +160,4 @@ def render_pinned_context(raw: str) -> str:
         and entries[0].pin_id.startswith("legacy-")
     ):
         return entries[0].text
-    lines = [f"- [{entry.source}] {entry.text}" for entry in entries]
-    return "\n".join(lines)
+    return "\n".join(f"- [{entry.source}] {entry.text}" for entry in entries)

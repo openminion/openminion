@@ -122,9 +122,7 @@ class _RegistryStoreMixin(RegistryStore):
 
     def get_agent(self, agent_id: str) -> AgentDescriptor | None:
         rec = self.get_agent_record(agent_id)
-        if rec is None:
-            return None
-        return rec.descriptor
+        return None if rec is None else rec.descriptor
 
     def get_agent_record(self, agent_id: str) -> AgentRecord | None:
         rows = self._record_store.query_dicts(
@@ -136,9 +134,7 @@ class _RegistryStoreMixin(RegistryStore):
             """,
             (agent_id,),
         )
-        if not rows:
-            return None
-        return _agent_record_from_row(rows[0])
+        return _agent_record_from_row(rows[0]) if rows else None
 
     def list_agent_records(
         self, filters: dict[str, Any] | None = None
@@ -207,9 +203,7 @@ class _RegistryStoreMixin(RegistryStore):
             """,
             (agent_id,),
         )
-        if not rows:
-            return None
-        return _status_from_row(rows[0])
+        return _status_from_row(rows[0]) if rows else None
 
     def list_status(self, filters: dict[str, Any] | None = None) -> list[AgentStatus]:
         filters = filters or {}

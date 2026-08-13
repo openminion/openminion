@@ -170,21 +170,17 @@ class ChatPhaseTimingPayload:
         """Render as a JSON-friendly dict for `emit_canonical_event`."""
 
         payload: dict[str, object] = {
-            "cold_start": bool(self.cold_start),
-            "total_turn_ms": int(self.total_turn_ms),
-            "time_to_first_text_ms": (
-                None
-                if self.time_to_first_text_ms is None
-                else int(self.time_to_first_text_ms)
-            ),
+            "cold_start": self.cold_start,
+            "total_turn_ms": self.total_turn_ms,
+            "time_to_first_text_ms": self.time_to_first_text_ms,
             "provider_token_ttft_ms": self.provider_token_ttft_ms,
             "phases_instrumented": list(self.phases_instrumented),
-            "turn_id": str(self.turn_id),
-            "session_id": str(self.session_id),
-            "agent_id": str(self.agent_id),
-            "process_mode": str(self.process_mode),
-            "transport": str(self.transport),
-            "provider_calls_total": int(self.provider_calls_total),
+            "turn_id": self.turn_id,
+            "session_id": self.session_id,
+            "agent_id": self.agent_id,
+            "process_mode": self.process_mode,
+            "transport": self.transport,
+            "provider_calls_total": self.provider_calls_total,
             "provider_call_purposes": list(self.provider_call_purposes),
             "provider_call_latency_ms": list(self.provider_call_latency_ms),
             "provider_attempts": [dict(item) for item in self.provider_attempts],
@@ -228,10 +224,7 @@ class ChatPhaseTimer:
 
     @contextmanager
     def phase(self, name: str) -> Iterator[None]:
-        if name not in CHAT_PHASES:
-            raise ValueError(
-                f"Unknown chat phase: {name!r}. Allowed: {sorted(CHAT_PHASES)}"
-            )
+        _validate_phase_name(name)
         start = time.perf_counter_ns()
         with self._lock:
             self._instrumented.add(name)
@@ -245,11 +238,7 @@ class ChatPhaseTimer:
                 )
 
     def mark_first_text(self) -> None:
-        """Record the wall-clock moment the first text byte became visible.
-
-        Called by the CLI render layer (CRTL-09) once streaming lands.
-        Idempotent — the first call wins; subsequent calls are no-ops.
-        """
+        """Record the first visible-text timestamp; the first call wins."""
 
         with self._lock:
             if self._first_text_ns is None:
@@ -342,8 +331,6 @@ class ChatPhaseTimer:
             self._provider_attempts.append(payload)
 
     def stop(self) -> int:
-        """Return total wall-clock ms since timer construction."""
-
         return int((time.perf_counter() - self._turn_start) * 1000)
 
     def build_payload(
@@ -355,8 +342,6 @@ class ChatPhaseTimer:
         process_mode: str = "",
         transport: str = "",
     ) -> ChatPhaseTimingPayload:
-        """Assemble the typed payload from accumulated checkpoints."""
-
         total_ms = self.stop()
         with self._lock:
             per_phase_ms: dict[str, int] = {
@@ -529,8 +514,6 @@ def record_chat_phase_timing_payload(
     telemetry_service: object,
     payload: ChatPhaseTimingPayload,
 ) -> bool:
-    """Persist the canonical timing event through a synchronous telemetry owner."""
-
     record_sync = getattr(telemetry_service, "record_event_sync", None)
     if not callable(record_sync):
         return False

@@ -17,6 +17,9 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "tool.request",
     "tool.completed",
     "tool.error",
+    "tool.call.requested",
+    "tool.call.completed",
+    "tool.call.blocked",
     "job.started",
     "job.completed",
     "job.failed",
@@ -84,6 +87,58 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "memory.delegation.candidate_handed_back",
     "memory.delegation.grant_revoked",
 }
+
+
+def build_tool_transcript(events: list[dict[str, Any]]) -> dict[str, Any]:
+    canonical = [
+        event
+        for event in events
+        if event["event_type"]
+        in {
+            "tool.call.requested",
+            "tool.call.completed",
+            "tool.call.blocked",
+        }
+        and isinstance(event.get("payload"), dict)
+        and event["payload"].get("schema_version") == 1
+    ]
+    if not canonical:
+        return {
+            "transcript_lane": "legacy_history",
+            "causal_fidelity": "best_effort",
+            "events": [
+                event
+                for event in events
+                if str(event.get("event_type", "")).startswith("tool.")
+            ],
+        }
+
+    requested_by_id: dict[str, dict[str, Any]] = {}
+    terminal_parent_ids: set[str] = set()
+    for event in canonical:
+        event_type = event["event_type"]
+        payload = event["payload"]
+        if event_type == "tool.call.requested":
+            requested_by_id[event["event_id"]] = event
+            continue
+        parent_id = str(event.get("parent_event_id", "") or "")
+        parent = requested_by_id.get(parent_id)
+        if parent is None:
+            raise ValueError("tool transcript replay error: orphan terminal result")
+        parent_payload = parent.get("payload")
+        if not isinstance(parent_payload, dict) or (
+            parent_payload.get("call_id") != payload.get("call_id")
+            or parent_payload.get("turn_scope_id") != payload.get("turn_scope_id")
+        ):
+            raise ValueError("tool transcript replay error: conflicting linkage")
+        if parent_id in terminal_parent_ids:
+            raise ValueError("tool transcript replay error: duplicate terminal result")
+        terminal_parent_ids.add(parent_id)
+    return {
+        "transcript_lane": "canonical_events",
+        "causal_fidelity": "exact",
+        "events": canonical,
+    }
 
 
 class SessionReplayHelper:
@@ -201,6 +256,9 @@ class SessionReplayHelper:
             events = [event for event in events if event["event_type"] in event_types]
         return events
 
+    def get_tool_transcript(self, session_id: str) -> dict[str, Any]:
+        return build_tool_transcript(self.get_replay_events(session_id))
+
     def get_resume_state(self, session_id: str) -> dict[str, Any]:
         session = self._get_session(session_id)
         if not session:
@@ -213,9 +271,7 @@ class SessionReplayHelper:
         raw_state_inline = (
             latest_state.get("state_inline") if isinstance(latest_state, dict) else None
         )
-        state_inline: dict[str, Any] = (
-            raw_state_inline if isinstance(raw_state_inline, dict) else {}
-        )
+        state_inline = raw_state_inline if isinstance(raw_state_inline, dict) else {}
         unresolved = state_inline.get("unresolved_clarify_items", [])
         clarify_responses = state_inline.get("clarify_responses", {})
         pending_llm_clarify_context = state_inline.get("pending_llm_clarify_context")

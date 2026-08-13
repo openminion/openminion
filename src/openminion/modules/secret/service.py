@@ -5,16 +5,9 @@ from collections.abc import Mapping
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from .constants import DEFAULT_SQLITE_FILENAME, OPENMINION_SECRET_KEY_ENV
 from .interfaces import SECRET_INTERFACE_VERSION
-from .constants import (
-    DEFAULT_SQLITE_FILENAME,
-    OPENMINION_SECRET_KEY_ENV,
-)
-from .schemas import (
-    SecretKeyError,
-    SecretNotFoundError,
-    SecretEncryptionError,
-)
+from .schemas import SecretEncryptionError, SecretKeyError, SecretNotFoundError
 from openminion.base.config import (
     resolve_module_storage_path,
     resolve_home_root,
@@ -65,11 +58,11 @@ class SecretService:
                     filename=DEFAULT_SQLITE_FILENAME,
                 )
             )
+        elif db_path.strip() == ":memory:":
+            self._db_path = ":memory:"
+            self._store = SQLiteSecretStore(self._db_path)
+            return
         else:
-            if str(db_path).strip() == ":memory:":
-                self._db_path = ":memory:"
-                self._store = SQLiteSecretStore(self._db_path)
-                return
             candidate = Path(db_path).expanduser()
             if not candidate.is_absolute():
                 candidate = data_root / candidate

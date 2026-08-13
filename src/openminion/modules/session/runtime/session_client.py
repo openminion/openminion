@@ -1,5 +1,3 @@
-"""Session runtime context adapter."""
-
 import logging
 from typing import Any
 

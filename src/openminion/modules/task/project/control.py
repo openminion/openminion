@@ -48,7 +48,7 @@ def apply_project_control(
             to_state=TaskLifecycleState.CANCELLED,
         )
     elif action == ProjectControlAction.REPRIORITIZE:
-        normalized_priority = str(priority or "").strip()
+        normalized_priority = (priority or "").strip()
         if not normalized_priority:
             raise ValueError("priority is required for reprioritize")
         metadata = dict(record.metadata)
@@ -58,8 +58,8 @@ def apply_project_control(
             metadata=metadata,
         )
     elif action == ProjectControlAction.ANSWER_INPUT:
-        request_id = str(input_request_id or "").strip()
-        normalized_answer = str(answer or "").strip()
+        request_id = (input_request_id or "").strip()
+        normalized_answer = (answer or "").strip()
         if not request_id:
             raise ValueError("input_request_id is required for answer-input-request")
         if not normalized_answer:
@@ -77,15 +77,12 @@ def apply_project_control(
             raise ValueError("extend-budget requires a positive budget delta")
         metadata = dict(record.metadata)
         current = dict(metadata.get("budget_extensions", {}) or {})
-        current["extra_iterations"] = int(current.get("extra_iterations") or 0) + max(
-            0, int(extra_iterations)
-        )
-        current["extra_wall_clock_ms"] = int(
-            current.get("extra_wall_clock_ms") or 0
-        ) + max(0, int(extra_wall_clock_ms))
-        current["extra_tool_calls"] = int(current.get("extra_tool_calls") or 0) + max(
-            0, int(extra_tool_calls)
-        )
+        for key, delta in (
+            ("extra_iterations", extra_iterations),
+            ("extra_wall_clock_ms", extra_wall_clock_ms),
+            ("extra_tool_calls", extra_tool_calls),
+        ):
+            current[key] = int(current.get(key) or 0) + max(0, delta)
         metadata["budget_extensions"] = current
         record = task_manager.update_task_metadata(
             task_id=record.task_id,

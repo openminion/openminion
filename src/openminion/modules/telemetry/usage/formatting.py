@@ -20,30 +20,23 @@ def format_run_stats_footer(stats: RunStats | None) -> str:
     if stats is None or not stats.has_any_data:
         return ""
     cache_segment = (
-        f" cache {int(stats.cache_read_tokens)}"
-        if int(stats.cache_read_tokens) > 0
-        else ""
+        f" cache {stats.cache_read_tokens}" if stats.cache_read_tokens > 0 else ""
     )
     return (
         "[tokens "
-        f"{int(stats.input_tokens)}/{int(stats.output_tokens)}"
-        f"{cache_segment} | calls {int(stats.llm_calls)} llm, "
-        f"{int(stats.tool_calls)} tools ({int(stats.tool_errors)} err) | "
-        f"{_format_duration_ms(int(stats.duration_ms))}]"
+        f"{stats.input_tokens}/{stats.output_tokens}"
+        f"{cache_segment} | calls {stats.llm_calls} llm, "
+        f"{stats.tool_calls} tools ({stats.tool_errors} err) | "
+        f"{_format_duration_ms(stats.duration_ms)}]"
     )
 
 
 def format_session_stats_summary(summary: SessionStatsSummary) -> str:
     lines = [
         f"session {summary.session_id}",
-        f"turns {int(summary.turn_count)}",
+        f"turns {summary.turn_count}",
         "totals " + format_run_stats_footer(summary.stats).strip("[]"),
     ]
-    if summary.top_tools:
-        top_tools = ", ".join(
-            f"{item.name} {int(item.calls)}" for item in summary.top_tools
-        )
-        lines.append(f"top tools {top_tools}")
-    else:
-        lines.append("top tools -")
+    top_tools = ", ".join(f"{item.name} {item.calls}" for item in summary.top_tools)
+    lines.append(f"top tools {top_tools}" if top_tools else "top tools -")
     return "\n".join(lines)

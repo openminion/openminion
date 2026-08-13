@@ -21,6 +21,7 @@ class FocusScenario:
     expected_file_patterns: tuple[str, ...] = ()
     forbidden_transcript_markers: tuple[str, ...] = ()
     validation_commands: tuple[tuple[str, ...], ...] = ()
+    max_auto_continuations: int = 0
 
 
 SCRATCH_RELATIVE_PATH_RULE = (
@@ -54,6 +55,9 @@ TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         ),
         expected_markers=("nasm",),
         timeout=240,
+        requires_approval=True,
+        max_auto_approvals=4,
+        approval_reply="session",
     ),
     FocusScenario(
         scenario_id="browser_tool_status",
@@ -106,6 +110,7 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         ),
         expected_markers=("next steps",),
         timeout=1500,
+        max_auto_continuations=4,
     ),
 )
 

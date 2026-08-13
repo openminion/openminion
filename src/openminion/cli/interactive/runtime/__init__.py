@@ -28,6 +28,10 @@ from openminion.cli.interactive.project_context import (
     build_project_context_metadata,
 )
 from openminion.modules.telemetry.trace import phase_timing
+from openminion.modules.telemetry.events.catalog import (
+    SESSION_CONTEXT_BUDGET,
+    SESSION_CONTEXT_COMPACTION,
+)
 from openminion.base.config.settings import SettingsResolver
 from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
 from .agent_sidebar import build_agent_sidebar_items
@@ -259,6 +263,37 @@ class OpenMinionRuntime(
             updated_at_monotonic=self._usage_updated_at_monotonic,
         )
 
+    def context_budget_snapshot(self) -> dict[str, Any]:
+        if not self.is_bound:
+            return {}
+        events = self._rt.sessions.list_events(
+            session_id=self.session_id,
+            limit=20,
+            newest_first=True,
+            event_type_prefix="session.context.",
+        )
+        budget = next(
+            (
+                event.payload
+                for event in events
+                if event.event_type == SESSION_CONTEXT_BUDGET
+            ),
+            {},
+        )
+        compaction = next(
+            (
+                event.payload
+                for event in events
+                if event.event_type == SESSION_CONTEXT_COMPACTION
+            ),
+            {},
+        )
+        snapshot = dict(budget)
+        if compaction:
+            snapshot["compacted_count"] = int(compaction.get("compacted_count", 0) or 0)
+            snapshot["compaction_reason"] = str(compaction.get("reason", "") or "")
+        return snapshot
+
     def get_current_history(self) -> list[ChatMessage]:
         if not self.is_bound:
             return []
@@ -457,11 +492,12 @@ class OpenMinionRuntime(
         normalized_session_id = str(session_id or "").strip()
         if not normalized_session_id:
             raise ValueError("session_id is required")
-        record = self._rt.sessions.get_session(normalized_session_id)
-        if record is None:
-            raise ValueError(f"unknown session_id: {normalized_session_id}")
-        if str(getattr(record, "target", "") or "").strip() != self._target:
-            raise ValueError(f"session target mismatch: {record.target}")
+        record = self._rt.sessions.resolve_session(
+            agent_id=self.agent_id,
+            channel=self._channel,
+            target=self._target,
+            session_id=normalized_session_id,
+        )
         self._session_id = record.id
         self._sync_conversation_id()
         self._project_context_pending = False

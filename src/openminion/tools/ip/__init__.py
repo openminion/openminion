@@ -1,23 +1,19 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from .providers import register_provider
 from .registrar import REGISTRAR as _REGISTRAR
 
 if TYPE_CHECKING:
+    from openminion.modules.tool.registry import ToolRegistry
     from openminion.modules.tool.runtime.registrar import ToolModuleRegistrar
 
 REGISTRAR: "ToolModuleRegistrar" = _REGISTRAR
 
 
-def register(*args: Any, **kwargs: Any):
+def register(registry: "ToolRegistry") -> None:
     from .plugin import register as register_impl
 
-    return register_impl(*args, **kwargs)
-
-
-def register_provider(*args: Any, **kwargs: Any):
-    from .providers import register_provider as register_provider_impl
-
-    return register_provider_impl(*args, **kwargs)
+    register_impl(registry)
 
 
 __all__ = ["REGISTRAR", "register", "register_provider"]

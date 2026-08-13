@@ -119,9 +119,7 @@ def project_action_to_cost_attribution(
     """Project a structural action into ``CostAttribution``."""
 
     try:
-        action_id = action.action_id
-        cost_unit = action.cost_unit
-        amount = action.amount
+        action_id, cost_unit, amount = action.action_id, action.cost_unit, action.amount
     except AttributeError as exc:
         raise TypeError(
             "project_action_to_cost_attribution requires action_id, "

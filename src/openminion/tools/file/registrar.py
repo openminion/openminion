@@ -124,8 +124,6 @@ FILE_RUNTIME_BINDINGS = (
 
 
 class FileRegistrar:
-    """Registrar with manifest for file tool module."""
-
     module_id = "file"
     is_provider_only = False
 

@@ -139,18 +139,17 @@ def consume_required_phase_result(
 
 def first_fallback_reason(results: list[ToolExecutionResult]) -> str | None:
     for result in results:
-        reason = str(getattr(result, "error", "") or "")
-        if reason:
-            return reason
+        if result.error:
+            return result.error
     return None
 
 
 def resolved_tool_name(default_name: str, batch: ToolExecutionBatch) -> str:
     resolved = str(default_name or "").strip()
-    for result in list(batch.results or []):
-        if getattr(result, "tool_name", ""):
-            resolved = str(getattr(result, "tool_name", "") or "").strip() or resolved
-            if getattr(result, "ok", False):
+    for result in batch.results:
+        if result.tool_name:
+            resolved = result.tool_name.strip() or resolved
+            if result.ok:
                 break
     return resolved
 

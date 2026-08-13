@@ -40,9 +40,7 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
     errors: list[str] = []
 
     plugin_id = _required_non_empty_string(payload.get("id"), "id", errors)
-    name = _optional_string(payload.get("name"))
-    if not name:
-        name = plugin_id or "plugin"
+    name = _optional_string(payload.get("name")) or plugin_id or "plugin"
     version = _optional_string(payload.get("version")) or OPENMINION_VERSION
     description = _optional_string(payload.get("description"))
 

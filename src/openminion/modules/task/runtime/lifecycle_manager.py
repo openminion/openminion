@@ -197,9 +197,7 @@ class TaskManager(TaskManagerProgressMixin, TaskManagerScheduleMixin):
         )
         if record.state in _TERMINAL_TASK_STATES:
             self._cleanup_linked_cron_job(task_id=record.task_id)
-            refreshed = self.get_task(record.task_id)
-            if refreshed is not None:
-                return refreshed
+            return self.get_task(record.task_id) or record
         return record
 
 

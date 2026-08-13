@@ -50,14 +50,13 @@ def create_proposal(
     proposal_payload = proposal_obj.model_copy(
         update={"proposed_at": proposed_at}
     ).model_dump(mode="json")
-    created_at = utc_now_iso()
     inserted = store.create_proposal(
         proposal_id=proposal_id,
         source_task_shape_ref=str(proposal_obj.source_task_shape_ref or ""),
         proposer_policy_id=str(proposal_obj.proposer_policy_id or ""),
         proposed_at=proposed_at,
         proposal_json=canonical_json(proposal_payload),
-        created_at=created_at,
+        created_at=utc_now_iso(),
     )
     record = store.get_proposal(proposal_id=proposal_id)
     if record is None:
@@ -79,7 +78,7 @@ def list_proposals(
             f"queue_state must be one of {sorted(_VALID_QUEUE_STATES)}; "
             f"got {queue_state!r}"
         )
-    return store.list_proposals(queue_state=queue_state, limit=int(limit))
+    return store.list_proposals(queue_state=queue_state, limit=limit)
 
 
 def get_proposal(
@@ -167,7 +166,7 @@ def apply_proposal(
     draft: SkillProposalDraft = proposal.proposed_skill_definition
     addition, _new_catalog = apply_emergent_skill(
         review,
-        catalog=list(current_catalog or []),
+        catalog=list(current_catalog),
         skill_definition=draft,
     )
     store.apply_proposal(

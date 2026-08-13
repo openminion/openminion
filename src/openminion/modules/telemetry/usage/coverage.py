@@ -178,11 +178,12 @@ def coverage_from_session_events(
         for event in events
         if _coverage_event_text(event, "event_type") == "llm.call.completed"
     ]
+    llm_payloads = [_coverage_payload(event) for event in llm_events]
 
     def _dimension(keys: tuple[str, ...]) -> TokenUsageDimensionCoverage:
         reported = missing = invalid = 0
-        for event in llm_events:
-            usage = _coverage_payload(event).get("usage")
+        for payload in llm_payloads:
+            usage = payload.get("usage")
             usage_payload = usage if isinstance(usage, Mapping) else {}
             if (
                 keys == TOTAL_TOKEN_KEYS
@@ -207,12 +208,10 @@ def coverage_from_session_events(
         context_manifest_events=event_types.count("context.manifest.created"),
         cache_metric_events=event_types.count("llm.cache.metrics"),
         provider_identified_llm_call_events=sum(
-            bool(_coverage_text(_coverage_payload(event), "provider"))
-            for event in llm_events
+            bool(_coverage_text(payload, "provider")) for payload in llm_payloads
         ),
         model_identified_llm_call_events=sum(
-            bool(_coverage_text(_coverage_payload(event), "model"))
-            for event in llm_events
+            bool(_coverage_text(payload, "model")) for payload in llm_payloads
         ),
         run_id_present_events=sum(
             bool(_coverage_text(payload, "run_id")) for payload in payloads

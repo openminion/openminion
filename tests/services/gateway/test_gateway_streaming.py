@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import threading
 import time
 from unittest import mock
 
@@ -265,6 +267,36 @@ class GatewayServiceStreamingTests(GatewayServiceTestCase):
         assert approval_calls == ["file.write"]
         assert events[-1].final_message is not None
         assert events[-1].final_message["body"] == "approved=True"
+
+    def test_handle_message_streaming_cancels_worker_turn(self) -> None:
+        started = threading.Event()
+        cancelled = threading.Event()
+
+        async def _fake_handle_message(**kwargs):  # type: ignore[no-untyped-def]
+            del kwargs
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        async def _cancel_stream() -> None:
+            stream = self.gateway.handle_message_streaming(
+                channel="console",
+                target="cli-chat",
+                body="wait",
+            )
+            pending = asyncio.create_task(anext(stream))
+            assert await asyncio.to_thread(started.wait, 1.0)
+            pending.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pending
+            assert await asyncio.to_thread(cancelled.wait, 1.0)
+
+        with mock.patch.object(
+            self.gateway, "handle_message", side_effect=_fake_handle_message
+        ):
+            asyncio.run(_cancel_stream())
 
 
 async def _collect_stream(stream):  # noqa: ANN001, ANN201

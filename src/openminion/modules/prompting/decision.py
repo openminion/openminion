@@ -39,7 +39,6 @@ DECIDE_STYLE_OVERRIDES: dict[str, str] = {
     ),
 }
 
-# Constraint emitted when a time-sensitive tool path fails freshness checks.
 BRAIN_FRESHNESS_POLICY_CONSTRAINT = (
     "FRESHNESS_POLICY: Do not fabricate stale real-time data"
 )
@@ -54,8 +53,6 @@ ENTRY_CLARIFY_RECONSIDERATION_MESSAGE = (
 
 
 def fixed_profile_rewrites(default_act_profile: str) -> dict[str, str]:
-    """Render decision prompt rewrites for a runtime-fixed act profile."""
-
     return {
         "entry_fixed_profile_rule": (
             "Runtime already resolved the working act profile to "

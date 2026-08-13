@@ -21,15 +21,9 @@ from openminion.modules.task.run import (
     resolve_run_terminal_persistence,
 )
 
-# Canonical provenance tag for events emitted by the binding. Named here
 TERMINAL_STATE_PROVENANCE_TYPED = "typed_verifier_reduction"
 TERMINAL_STATE_PROVENANCE_FIELD = "terminal_state_provenance"
 
-
-# Pure derivation: VerifierResult[] -> RunTerminalState
-
-
-# Closed map from ``FailureConditionKind`` to ``RunTerminalState``. Total
 _FAILURE_KIND_TO_TERMINAL: dict[str, RunTerminalState] = {
     "deliverable_missing": RUN_TERMINAL_FAILED,
     "success_criterion_unmet": RUN_TERMINAL_FAILED,
@@ -46,20 +40,13 @@ def derive_run_terminal_state(
     *,
     fired_failure_conditions: Sequence[FailureCondition] = (),
 ) -> RunTerminalState:
-    """Reduce typed ``VerifierResult`` rows (plus optional fired"""
-
     if fired_failure_conditions:
-        # Precedence: first fired condition wins. The structural mapping
-        first = fired_failure_conditions[0]
-        return _FAILURE_KIND_TO_TERMINAL[first.kind]
+        return _FAILURE_KIND_TO_TERMINAL[fired_failure_conditions[0].kind]
 
     if is_run_completion_confirmed(goal=goal, results=list(verifier_results)):
         return RUN_TERMINAL_COMPLETED
 
     return RUN_TERMINAL_FAILED
-
-
-# Bind: persist typed checkpoint + emit run.<state> with typed provenance
 
 
 def bind_run_terminal_event(
@@ -78,7 +65,6 @@ def bind_run_terminal_event(
     attach_id: str | None = None,
     extra_payload: dict[str, object] | None = None,
 ) -> EventRecord:
-    """Bind a typed ``Run`` to its terminal state via the typed verifier"""
     _validate_run_goal_binding(run=run, goal=goal)
 
     terminal_state = derive_run_terminal_state(
@@ -88,12 +74,11 @@ def bind_run_terminal_event(
     )
     persisted_state = resolve_run_terminal_persistence(terminal_state)
 
-    # 1) Persist the typed RunCheckpoint first so the typed snapshot is
     checkpoint = RunCheckpoint(
         checkpoint_id=checkpoint_id,
         run_id=run.run_id,
         goal_id=goal.goal_id,
-        sequence=int(sequence),
+        sequence=sequence,
         state_snapshot=_build_checkpoint_snapshot(
             terminal_state=terminal_state,
             verifier_results=verifier_results,
@@ -109,7 +94,6 @@ def bind_run_terminal_event(
         thread_id=thread_id,
     )
 
-    # provenance carried in the payload.
     payload = _build_terminal_event_payload(
         checkpoint_id=checkpoint_id,
         goal=goal,
@@ -118,10 +102,8 @@ def bind_run_terminal_event(
         fired_failure_conditions=fired_failure_conditions,
     )
     if extra_payload:
-        # Caller-provided routing/correlation fields. Caller is
-        # responsible for the keys; we do not invent any.
         for key, value in extra_payload.items():
-            payload.setdefault(str(key), value)
+            payload.setdefault(key, value)
 
     return append_run_state_event(
         sessions,

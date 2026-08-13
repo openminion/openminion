@@ -55,46 +55,34 @@ def trace_context_payload(
     home_root: Path | None = None,
 ) -> dict[str, Any]:
     trace_root = resolve_trace_root(home_root=home_root)
-    _, http_rel = build_trace_file_path(
-        trace_root,
-        session_id=session_id,
-        turn_id=turn_id,
-        inference_step=inference_step,
-        label=label,
-        suffix="-http.json",
-    )
-    _, http_response_rel = build_trace_file_path(
-        trace_root,
-        session_id=session_id,
-        turn_id=turn_id,
-        inference_step=inference_step,
-        label=label,
-        suffix="-http-response.json",
-    )
-    _, structured_rel = build_trace_file_path(
-        trace_root,
-        session_id=session_id,
-        turn_id=turn_id,
-        inference_step=inference_step,
-        label=label,
-        suffix="-structured.json",
-    )
+    relative_paths: dict[str, str] = {}
+    for field, suffix in (
+        ("http_trace_filename", "-http.json"),
+        ("http_response_trace_filename", "-http-response.json"),
+        ("structured_trace_filename", "-structured.json"),
+    ):
+        _, relative_paths[field] = build_trace_file_path(
+            trace_root,
+            session_id=session_id,
+            turn_id=turn_id,
+            inference_step=inference_step,
+            label=label,
+            suffix=suffix,
+        )
     return {
-        "session_id": str(session_id or ""),
-        "turn_id": str(turn_id or ""),
-        "inference_step": int(inference_step),
-        "label": str(label or ""),
-        "trace_id": str(trace_id or ""),
-        "agent_id": str(agent_id or ""),
-        "run_id": str(run_id or ""),
-        "invocation_id": str(invocation_id or ""),
-        "execution_id": str(execution_id or ""),
-        "provider": str(provider or ""),
-        "model": str(model or ""),
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "inference_step": inference_step,
+        "label": label,
+        "trace_id": trace_id,
+        "agent_id": agent_id,
+        "run_id": run_id,
+        "invocation_id": invocation_id,
+        "execution_id": execution_id,
+        "provider": provider,
+        "model": model,
         "home_root": str(home_root) if home_root is not None else "",
-        "http_trace_filename": http_rel,
-        "http_response_trace_filename": http_response_rel,
-        "structured_trace_filename": structured_rel,
+        **relative_paths,
     }
 
 
@@ -137,7 +125,7 @@ def write_structured_trace(
         except Exception:
             payload = {}
 
-    trace_patch = dict(patch or {})
+    trace_patch = dict(patch)
     trace_patch.setdefault(
         "trace",
         {
@@ -170,7 +158,7 @@ def write_structured_trace(
 
 def _merge_dicts(base: Mapping[str, Any], patch: Mapping[str, Any]) -> dict[str, Any]:
     merged = dict(base)
-    for key, value in dict(patch).items():
+    for key, value in patch.items():
         current = merged.get(key)
         if isinstance(current, dict) and isinstance(value, Mapping):
             merged[key] = _merge_dicts(current, value)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,6 +12,7 @@ from .errors import ErrorCode
 
 Role = Literal["system", "user", "assistant", "tool"]
 ToolCallStatus = Literal["requested", "parsed", "blocked", "error"]
+ToolResultStatus = Literal["success", "error", "blocked", "timeout"]
 ImageSourceType = Literal["path", "url", "base64"]
 ImageDetailLevel = Literal["auto", "low", "high"]
 TotalTokensSource = Literal["provider", "derived"]
@@ -70,6 +73,11 @@ class Message(BaseModel):
     name: Optional[str] = None
     cache_control: Optional[dict[str, Any]] = None
     content_parts: list[MessageContentPart] = Field(default_factory=list)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    tool_call_id: Optional[str] = None
+    tool_status: Optional[ToolResultStatus] = None
+    tool_output: Any = None
+    tool_error: Optional[dict[str, Any]] = None
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -94,6 +102,8 @@ class ToolCall(BaseModel):
     raw_arguments: Optional[str] = None
     status: ToolCallStatus = LLM_TOOL_CALL_STATUS_REQUESTED
     error: Optional[str] = None
+    batch_index: int = Field(default=0, ge=0)
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class UsageInfo(BaseModel):

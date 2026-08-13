@@ -127,7 +127,10 @@ def test_compact_history_delegates_to_session_context_service() -> None:
     ):
         result = rt.compact_history()
 
-    fake_service.compact_session.assert_called_once_with(session_id="sess-1")
+    fake_service.compact_session.assert_called_once_with(
+        session_id="sess-1",
+        force=True,
+    )
     assert result["compacted_count"] == 5
     assert result["summary_updated"] is True
     assert result["archive_relative_path"] == "archives/2026-05-23/sess-1.jsonl"

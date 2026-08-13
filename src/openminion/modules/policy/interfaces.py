@@ -107,12 +107,9 @@ def ensure_policy_compatibility(
         if not hasattr(ctl, method) or not callable(getattr(ctl, method)):
             errors.append(f"Missing required method: {method}")
 
-    if errors:
-        if strict:
-            raise PolicyCompatibilityError(
-                "POLICY_CTL_INTERFACE_VIOLATION",
-                f"Policy controller incompatible: {errors}",
-            )
-        return False, errors
-
-    return True, []
+    if errors and strict:
+        raise PolicyCompatibilityError(
+            "POLICY_CTL_INTERFACE_VIOLATION",
+            f"Policy controller incompatible: {errors}",
+        )
+    return not errors, errors

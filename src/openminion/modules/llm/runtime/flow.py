@@ -722,7 +722,21 @@ def _apply_tool_policy_post(
             )
         )
 
-    response = response.model_copy(update={"tool_calls": updated_calls})
+    assistant_messages = list(response.assistant_messages)
+    for index in range(len(assistant_messages) - 1, -1, -1):
+        if assistant_messages[index].role != "assistant":
+            continue
+        if assistant_messages[index].tool_calls:
+            assistant_messages[index] = assistant_messages[index].model_copy(
+                update={"tool_calls": updated_calls}
+            )
+            break
+    response = response.model_copy(
+        update={
+            "tool_calls": updated_calls,
+            "assistant_messages": assistant_messages,
+        }
+    )
     if blocked_any and ctx.block_on_disallowed_tool_call:
         return client._error_response(
             provider=response.provider,

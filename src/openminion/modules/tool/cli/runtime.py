@@ -287,7 +287,6 @@ def print_envelope(env: ResultEnvelope, json_out: bool) -> None:
 
 
 def _validate_request_args(spec: Any, req: CallRequest) -> dict[str, Any]:
-    """Validate request args against the spec, raising INVALID_ARGUMENT on failure."""
     try:
         return cast(
             dict[str, Any], spec.args_model.model_validate(req.args).model_dump()
@@ -301,9 +300,8 @@ def _validate_request_args(spec: Any, req: CallRequest) -> dict[str, Any]:
 
 
 def _resolve_outer_timeout(pol: Policy, timeout_sec: Optional[int]) -> int:
-    """Resolve the outer timeout from the explicit option or policy default."""
     configured_outer = pol.limit_int("outer_timeout_sec", 60)
-    outer_timeout = int(timeout_sec) if timeout_sec is not None else configured_outer
+    outer_timeout = timeout_sec if timeout_sec is not None else configured_outer
     if outer_timeout <= 0:
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",
@@ -314,12 +312,11 @@ def _resolve_outer_timeout(pol: Policy, timeout_sec: Optional[int]) -> int:
 
 
 def _apply_cmd_run_timeout(validated_args: dict[str, Any], outer_timeout: int) -> None:
-    """For `cmd.run`, fold the outer timeout into the args' `timeout_sec` field."""
     existing = validated_args.get("timeout_sec")
     if existing is None:
         validated_args["timeout_sec"] = outer_timeout
     else:
-        validated_args["timeout_sec"] = min(int(existing), outer_timeout)
+        validated_args["timeout_sec"] = min(existing, outer_timeout)
 
 
 def _enforce_safety_and_policy(
@@ -330,8 +327,6 @@ def _enforce_safety_and_policy(
     safety_adapter: AllowAllSafetyAdapter,
     policy_adapter: LocalPolicyAdapter,
 ) -> tuple[Any, Any, dict[str, Any]]:
-    """Run safety + policy adapter chain. Returns updated args after any policy
-    `modified_args` rewrite. Raises via `raise_if_denied` on denial."""
     safety_decision = safety_adapter.evaluate(tool=req.tool, args=validated_args)
     if not safety_decision.allowed:
         raise_if_denied(
@@ -360,7 +355,6 @@ def _enforce_safety_and_policy(
 def _maybe_autostart_sidecar_for_spec(
     spec: Any, env_owner: Any, registry: ToolRegistry
 ) -> None:
-    """If spec carries a sidecar, ensure autostart and raise on failure/disabled."""
     if not (isinstance(spec, ToolSpec) and getattr(spec, "sidecar", None)):
         return
     try:
@@ -463,14 +457,12 @@ def _run_handler_with_timeout(
     outer_timeout: int,
     req: CallRequest,
 ) -> Any:
-    """Run the handler in a thread with `outer_timeout` budget. Emits a
-    `tool_exec` telemetry event for `exec.*` timeouts before raising."""
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(spec.handler, validated_args, ctx)
             return future.result(timeout=outer_timeout)
     except FuturesTimeoutError as exc:
-        if req.tool.startswith("exec.") and ctx is not None:
+        if req.tool.startswith("exec."):
             emit_tool_exec_operation_for_context(
                 ctx=ctx,
                 operation="timeout",

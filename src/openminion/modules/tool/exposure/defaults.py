@@ -9,12 +9,9 @@ from openminion.modules.tool.contracts import (
 
 def requires_explicit_exposure_profile(tool_name: str) -> bool:
     name = str(tool_name or "").strip()
-    if not name:
-        return True
-    if name in MODEL_CONTROL_TOOL_IDS:
-        return False
-    return (
-        name not in DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET
+    return name not in MODEL_CONTROL_TOOL_IDS and (
+        not name
+        or name not in DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET
         and not is_dynamic_model_tool_id(name)
     )
 

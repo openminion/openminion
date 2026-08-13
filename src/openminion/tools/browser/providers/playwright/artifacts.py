@@ -19,12 +19,8 @@ class ArtifactWriter:
         self.screenshots_dir = Path(screenshots_dir).resolve(strict=False)
         self.pdf_dir = Path(pdf_dir).resolve(strict=False)
         self.traces_dir = Path(traces_dir).resolve(strict=False)
-        if allowed_roots:
-            self.allowed_roots = tuple(
-                Path(root).resolve(strict=False) for root in allowed_roots
-            )
-        else:
-            self.allowed_roots = (self.workspace_root,)
+        roots = allowed_roots or (workspace_root,)
+        self.allowed_roots = tuple(Path(root).resolve(strict=False) for root in roots)
 
     def ensure_dirs(self) -> None:
         for path in (

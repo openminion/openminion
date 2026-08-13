@@ -1,13 +1,15 @@
 import hashlib
 import json
+import logging
 import math
 import re
 import struct
+import time
 from abc import ABC, abstractmethod
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional
-import time
+from typing import Any
 
 from openminion.base.config.env import (
     EnvironmentConfig,
@@ -15,18 +17,18 @@ from openminion.base.config.env import (
 )
 from ..config import VECTOR_INDEX_CHAR_NGRAM_MAX, VECTOR_INDEX_CHAR_NGRAM_MIN
 from .sqlite import connect_database
-from .migrations import run_migrations
+from . import migrations
 
 
 @dataclass
 class EmbeddingResult:
     """Represents an embedding result."""
 
-    vector: List[float]
+    vector: list[float]
     provider: str
     model: str
     timestamp: str = ""
-    token_usage: Optional[Dict[str, int]] = None
+    token_usage: dict[str, int] | None = None
 
 
 class EmbeddingProvider(ABC):
@@ -38,7 +40,7 @@ class EmbeddingProvider(ABC):
         pass
 
     @abstractmethod
-    def embed_batch(self, texts: List[str]) -> "EmbeddingBatchResult":
+    def embed_batch(self, texts: list[str]) -> "EmbeddingBatchResult":
         """Generate embeddings for a batch of texts."""
         pass
 
@@ -47,15 +49,15 @@ class EmbeddingProvider(ABC):
 class EmbeddingBatchResult:
     """Results of a batch embedding operation."""
 
-    results: List[EmbeddingResult]
+    results: list[EmbeddingResult]
 
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SENTENCE_TRANSFORMERS_ENV = "OPENMINION_ENABLE_SENTENCE_TRANSFORMERS"
 
 
-def _tokenize(text: str) -> List[str]:
-    return _TOKEN_RE.findall((text or "").lower())
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall(text.lower())
 
 
 def _normalized_text(text: str) -> str:
@@ -92,13 +94,20 @@ def _iter_embedding_features(text: str) -> Iterator[str]:
                 yield f"char:{size}:{gram}"
 
 
-def _l2_normalize(values: List[float]) -> List[float]:
+def _l2_normalize(values: list[float]) -> list[float]:
     norm = math.sqrt(sum(v * v for v in values))
     if norm <= 0.0:
         if values:
             values[0] = 1.0
         return values
     return [v / norm for v in values]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    dot_product = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    return dot_product / (left_norm * right_norm) if left_norm and right_norm else 0.0
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):
@@ -113,7 +122,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
     ):
         self.model = model
         self.provider = "local"
-        self.dimension = int(dimension)
+        self.dimension = dimension
         self._env = resolve_environment_config_with_explicit_env(env)
         self._st_model: Any = None
         self._st_checked = False
@@ -137,7 +146,7 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             self._st_model = None
         return self._st_model is not None
 
-    def _embed_fallback(self, text: str) -> List[float]:
+    def _embed_fallback(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
         for feature in _iter_embedding_features(text):
             index, sign = _feature_hash_index(feature, self.dimension)
@@ -146,9 +155,9 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         return _l2_normalize(vector)
 
     def embed(self, text: str) -> EmbeddingResult:
-        vector: List[float]
+        vector: list[float]
         if self._ensure_sentence_transformer():
-            encoded = self._st_model.encode(text or "", normalize_embeddings=True)
+            encoded = self._st_model.encode(text, normalize_embeddings=True)
             vector = [float(v) for v in encoded]
             if len(vector) != self.dimension:
                 if len(vector) > self.dimension:
@@ -165,9 +174,8 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             model=self.model,
         )
 
-    def embed_batch(self, texts: List[str]) -> EmbeddingBatchResult:
-        results = [self.embed(text) for text in texts]
-        return EmbeddingBatchResult(results=results)
+    def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
+        return EmbeddingBatchResult(results=[self.embed(text) for text in texts])
 
 
 class APIEmbeddingProvider(EmbeddingProvider):
@@ -187,8 +195,6 @@ class APIEmbeddingProvider(EmbeddingProvider):
         # Deterministic fallback until a real HTTP client is wired here.
 
     def embed(self, text: str) -> EmbeddingResult:
-        import hashlib
-
         text_hash = hashlib.md5((text + self.model).encode()).hexdigest()
 
         vector = []
@@ -204,9 +210,8 @@ class APIEmbeddingProvider(EmbeddingProvider):
             model=self.model,
         )
 
-    def embed_batch(self, texts: List[str]) -> EmbeddingBatchResult:
-        results = [self.embed(text) for text in texts]
-        return EmbeddingBatchResult(results=results)
+    def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
+        return EmbeddingBatchResult(results=[self.embed(text) for text in texts])
 
 
 class InMemoryVectorIndex:
@@ -214,14 +219,14 @@ class InMemoryVectorIndex:
 
     def __init__(self, dim: int = 384):
         self.dim = dim
-        self.vectors: Dict[str, List[float]] = {}
-        self.metadata: Dict[str, dict] = {}
+        self.vectors: dict[str, list[float]] = {}
+        self.metadata: dict[str, dict] = {}
 
     def add_vectors(
         self,
-        ids: List[str],
-        vectors: List[List[float]],
-        metadata_list: Optional[List[dict]] = None,
+        ids: list[str],
+        vectors: list[list[float]],
+        metadata_list: list[dict] | None = None,
     ) -> None:
         if metadata_list is None:
             metadata_list = [{} for _ in ids]
@@ -236,10 +241,10 @@ class InMemoryVectorIndex:
 
     def search(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[tuple[str, float, dict]]:
+        filters: dict | None = None,
+    ) -> list[tuple[str, float, dict]]:
         if len(query_vector) != self.dim:
             raise ValueError(
                 f"Query vector has dimension {len(query_vector)}, expected {self.dim}"
@@ -248,25 +253,11 @@ class InMemoryVectorIndex:
         # Calculate cosine similarity scores
         results = []
         for vector_id, stored_vector in self.vectors.items():
-            # Apply cosine similarity
-            dot_product = sum(q * s for q, s in zip(query_vector, stored_vector))
-            magn_query = sum(q * q for q in query_vector) ** 0.5
-            magn_stored = sum(s * s for s in stored_vector) ** 0.5
-
-            if magn_query == 0 or magn_stored == 0:
-                similarity = 0.0
-            else:
-                similarity = dot_product / (magn_query * magn_stored)
+            similarity = _cosine_similarity(query_vector, stored_vector)
 
             if filters:
                 meta = self.metadata[vector_id]
-                matches_filter = True
-                for key, value in filters.items():
-                    current_value = meta.get(key)
-                    if current_value != value:
-                        matches_filter = False
-                        break
-                if not matches_filter:
+                if any(meta.get(key) != value for key, value in filters.items()):
                     continue
 
             results.append((vector_id, similarity, self.metadata[vector_id]))
@@ -274,13 +265,13 @@ class InMemoryVectorIndex:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
-    def get_vector(self, vector_id: str) -> Optional[List[float]]:
+    def get_vector(self, vector_id: str) -> list[float] | None:
         return self.vectors.get(vector_id)
 
     def has_vector(self, vector_id: str) -> bool:
         return vector_id in self.vectors
 
-    def delete_vectors(self, ids: List[str]) -> None:
+    def delete_vectors(self, ids: list[str]) -> None:
         for vector_id in ids:
             self.vectors.pop(vector_id, None)
             self.metadata.pop(vector_id, None)
@@ -296,9 +287,9 @@ class VectorIndexBackend(ABC):
     @abstractmethod
     def add_vectors(
         self,
-        ids: List[str],
-        vectors: List[List[float]],
-        metadata_list: Optional[List[dict]] = None,
+        ids: list[str],
+        vectors: list[list[float]],
+        metadata_list: list[dict] | None = None,
     ) -> None:
         """Add vectors to the index."""
         pass
@@ -306,20 +297,20 @@ class VectorIndexBackend(ABC):
     @abstractmethod
     def search(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[tuple[str, float, dict]]:
+        filters: dict | None = None,
+    ) -> list[tuple[str, float, dict]]:
         """Search for similar vectors."""
         pass
 
     @abstractmethod
-    def get_vector(self, vector_id: str) -> Optional[List[float]]:
+    def get_vector(self, vector_id: str) -> list[float] | None:
         """Get a single vector by ID."""
         pass
 
     @abstractmethod
-    def delete_vectors(self, ids: List[str]) -> None:
+    def delete_vectors(self, ids: list[str]) -> None:
         """Delete vectors by IDs."""
         pass
 
@@ -342,7 +333,7 @@ class SQLiteVecBackend(VectorIndexBackend):
         self.conn = connect_database(self.db_path, env=self._env)
 
         # Run shared migrations before creating vector-specific tables.
-        run_migrations(self.conn)
+        migrations.run_migrations(self.conn)
 
         self._init_tables()
 
@@ -379,9 +370,9 @@ class SQLiteVecBackend(VectorIndexBackend):
 
     def add_vectors(
         self,
-        ids: List[str],
-        vectors: List[List[float]],
-        metadata_list: Optional[List[dict]] = None,
+        ids: list[str],
+        vectors: list[list[float]],
+        metadata_list: list[dict] | None = None,
     ) -> None:
         if metadata_list is None:
             metadata_list = [{} for _ in ids]
@@ -408,10 +399,10 @@ class SQLiteVecBackend(VectorIndexBackend):
 
     def search(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[tuple[str, float, dict]]:
+        filters: dict | None = None,
+    ) -> list[tuple[str, float, dict]]:
         """Search using cosine similarity with SQLite (naive implementation)."""
         if len(query_vector) != self.dimension:
             raise ValueError(
@@ -428,37 +419,27 @@ class SQLiteVecBackend(VectorIndexBackend):
             (self.collection_name,),
         )
 
-        query_norm = sum(q * q for q in query_vector) ** 0.5
         results = []
 
         for row in cursor.fetchall():
             vector_id, embedding_blob, metadata_json = row
             stored_vector = self._blob_to_vector(embedding_blob)
 
-            dot_product = sum(q * s for q, s in zip(query_vector, stored_vector))
-            stored_norm = sum(s * s for s in stored_vector) ** 0.5
-            if query_norm == 0 or stored_norm == 0:
-                similarity = 0.0
-            else:
-                similarity = dot_product / (query_norm * stored_norm)
+            similarity = _cosine_similarity(query_vector, stored_vector)
 
             metadata = json.loads(metadata_json)
 
-            if filters:
-                valid = True
-                for key, value in filters.items():
-                    if metadata.get(key) != value:
-                        valid = False
-                        break
-                if not valid:
-                    continue
+            if filters and any(
+                metadata.get(key) != value for key, value in filters.items()
+            ):
+                continue
 
             results.append((vector_id, similarity, metadata))
 
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
-    def get_vector(self, vector_id: str) -> Optional[List[float]]:
+    def get_vector(self, vector_id: str) -> list[float] | None:
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -469,11 +450,9 @@ class SQLiteVecBackend(VectorIndexBackend):
         )
 
         row = cursor.fetchone()
-        if row:
-            return self._blob_to_vector(row[0])
-        return None
+        return self._blob_to_vector(row[0]) if row else None
 
-    def delete_vectors(self, ids: List[str]) -> None:
+    def delete_vectors(self, ids: list[str]) -> None:
         if not ids:
             return
 
@@ -491,11 +470,11 @@ class SQLiteVecBackend(VectorIndexBackend):
         self.conn.commit()
 
     @staticmethod
-    def _vector_to_blob(vector: List[float]) -> bytes:
+    def _vector_to_blob(vector: list[float]) -> bytes:
         return struct.pack(f"{len(vector)}f", *vector)
 
     @staticmethod
-    def _blob_to_vector(blob: bytes) -> List[float]:
+    def _blob_to_vector(blob: bytes) -> list[float]:
         float_count = len(blob) // 4  # 4 bytes per float
         return list(struct.unpack(f"{float_count}f", blob))
 
@@ -507,7 +486,7 @@ class QdrantVectorBackend(VectorIndexBackend):
         self,
         collection_name: str,
         url: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         dimension: int = 384,
     ):
         self.collection_name = collection_name
@@ -566,11 +545,10 @@ class QdrantVectorBackend(VectorIndexBackend):
     def _ensure_collection(self):
         """Ensure the collection exists with correct vector settings."""
         from qdrant_client.http import models
-        from grpc import RpcError
 
         try:
             self._client.get_collection(self.collection_name)
-        except (RpcError, Exception):
+        except Exception:
             self._client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=models.VectorParams(
@@ -580,9 +558,9 @@ class QdrantVectorBackend(VectorIndexBackend):
 
     def add_vectors(
         self,
-        ids: List[str],
-        vectors: List[List[float]],
-        metadata_list: Optional[List[dict]] = None,
+        ids: list[str],
+        vectors: list[list[float]],
+        metadata_list: list[dict] | None = None,
     ) -> None:
         self._ensure_client()
 
@@ -608,10 +586,10 @@ class QdrantVectorBackend(VectorIndexBackend):
 
     def search(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[tuple[str, float, dict]]:
+        filters: dict | None = None,
+    ) -> list[tuple[str, float, dict]]:
         """Search in Qdrant."""
         self._ensure_client()
 
@@ -644,21 +622,17 @@ class QdrantVectorBackend(VectorIndexBackend):
             for result in search_results
         ]
 
-    def get_vector(self, vector_id: str) -> Optional[List[float]]:
+    def get_vector(self, vector_id: str) -> list[float] | None:
         self._ensure_client()
 
         results = self._client.retrieve(
             collection_name=self.collection_name, ids=[vector_id], with_vectors=True
         )
 
-        if results:
-            result = results[0]
-            if hasattr(result, "vector") and result.vector:
-                return result.vector
+        result = results[0] if results else None
+        return getattr(result, "vector", None) or None
 
-        return None
-
-    def delete_vectors(self, ids: List[str]) -> None:
+    def delete_vectors(self, ids: list[str]) -> None:
         self._ensure_client()
 
         from qdrant_client.http import models
@@ -699,7 +673,7 @@ class VectorIndexAdapter:
 
         return vector_id
 
-    def index_records_batch(self, records: List[Any], contents: List[str]):
+    def index_records_batch(self, records: list[Any], contents: list[str]) -> None:
         if len(records) != len(contents):
             raise ValueError("Records and contents must have the same length")
 
@@ -727,8 +701,8 @@ class VectorIndexAdapter:
             self.__vector_index.add_vectors(vector_ids, vectors, metadata)
 
     def search(
-        self, query: str, top_k: Optional[int] = None
-    ) -> List[tuple[Any, float, Dict]]:
+        self, query: str, top_k: int | None = None
+    ) -> list[tuple[Any, float, dict]]:
         query_embedding = self.embedding_provider.embed(query)
 
         search_results = self.__vector_index.search(
@@ -746,10 +720,8 @@ def create_vector_index_adapter(
     env: EnvironmentConfig | Mapping[str, Any] | None = None,
 ) -> VectorIndexAdapter:
     """Create a vector index adapter after storage migrations are current."""
-    from .migrations import run_migrations
-
     conn = connect_database(db_path, env=env)
-    run_migrations(conn)
+    migrations.run_migrations(conn)
     conn.close()
 
     return VectorIndexAdapter(
@@ -762,8 +734,6 @@ class MockEmbeddingProvider(EmbeddingProvider):
     """Mock embedding provider for testing."""
 
     def embed(self, text: str) -> EmbeddingResult:
-        import hashlib
-
         text_hash = hashlib.md5(text.encode()).hexdigest()
         seed = int(text_hash[:16], 16)
 
@@ -775,9 +745,8 @@ class MockEmbeddingProvider(EmbeddingProvider):
             model="mock-model",
         )
 
-    def embed_batch(self, texts: List[str]) -> EmbeddingBatchResult:
-        results = [self.embed(text) for text in texts]
-        return EmbeddingBatchResult(results=results)
+    def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
+        return EmbeddingBatchResult(results=[self.embed(text) for text in texts])
 
 
 def reindex_vectors(
@@ -787,7 +756,6 @@ def reindex_vectors(
     env: EnvironmentConfig | Mapping[str, Any] | None = None,
 ) -> int:
     """Reindex all memory_records to memory_vectors in batches."""
-    import logging
     from .memory_store import _row_to_memory_record
 
     logger = logging.getLogger(__name__)
@@ -795,7 +763,6 @@ def reindex_vectors(
     conn = connect_database(db_path, env=env)
     cursor = conn.cursor()
 
-    # Stable ordering keeps vector rebuilds deterministic.
     cursor.execute("""
         SELECT * FROM memory_records
         WHERE content IS NOT NULL
@@ -813,21 +780,17 @@ def reindex_vectors(
     contents = []
     total_processed = 0
 
-    # Process records in batches of 32
     batch_size = 32
 
-    logger.info(f"Starting reindex of {len(rows)} memory_records")
+    logger.info("Starting reindex of %d memory_records", len(rows))
 
-    for i, row in enumerate(rows):
-        # Convert row to MemoryRecord object
+    for row in rows:
         record = _row_to_memory_record(row)
 
         records.append(record)
         contents.append(record.content)
 
-        # Process batch when it reaches the size threshold
         if len(records) >= batch_size:
-            # Index the records batch
             vector_adapter.index_records_batch(records, contents)
 
             total_processed += len(records)
@@ -835,11 +798,9 @@ def reindex_vectors(
                 f"Processed {total_processed}/{len(rows)} records for reindexing"
             )
 
-            # Reset for next batch
             records = []
             contents = []
 
-    # Process remaining records if any
     if records:
         vector_adapter.index_records_batch(records, contents)
         total_processed += len(records)

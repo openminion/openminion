@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping, Protocol, Sequence, cast
+from typing import Any, Mapping, Sequence, cast
 
 from openminion.modules.memory.runtime.scorer import clamp01
 
@@ -27,9 +27,7 @@ def _title_identity_boost(
     title_tokens = list(dict.fromkeys(_tokenize(title)))
     if not title_tokens:
         return 0.0
-    query_token_set = {
-        str(token).strip().lower() for token in query_tokens if str(token).strip()
-    }
+    query_token_set = set(query_tokens)
     if not query_token_set:
         return 0.0
     matched = sum(1 for token in title_tokens if token in query_token_set)
@@ -96,16 +94,6 @@ def _candidate_type(tags: Sequence[str]) -> str:
 
 
 @dataclass(frozen=True)
-class RetrievalContext:
-    query: str
-    purpose: str
-    requested_strategy: str
-    scope: Mapping[str, Any]
-    filters: RetrievalFilters
-    k: int
-
-
-@dataclass(frozen=True)
 class RetrievalExecution:
     k: int
     filters: RetrievalFilters
@@ -113,10 +101,6 @@ class RetrievalExecution:
     candidates: list[dict[str, Any]]
     scored_candidate_count: int
     selected: list[dict[str, Any]]
-
-
-class RetrievalStrategyResolver(Protocol):
-    def resolve(self, ctx: RetrievalContext) -> RetrievalStrategy: ...
 
 
 def resolve_retrieval_strategy(
@@ -499,11 +483,7 @@ def select_candidates_semantic(
     if not candidates or not service.vector_adapter:
         return candidates[:k]
 
-    query_text = ""
-    try:
-        query_text = candidates[0].get("query", "") if candidates else ""
-    except Exception as exc:
-        _LOGGER.debug("semantic query extraction fallback: %s", exc, exc_info=True)
+    query_text = candidates[0].get("query", "")
     if not query_text:
         return candidates[:k]
 
@@ -702,18 +682,9 @@ def candidate_from_row(
     service: Any, row: Mapping[str, Any], inherited_score: float
 ) -> dict[str, Any]:
     tags = _safe_json_loads(str(row["tags_json"]), [])
-    try:
-        hit_count_raw = row["hit_count"]
-    except Exception:
-        hit_count_raw = None
-    try:
-        last_hit_raw = row["last_hit_at"]
-    except Exception:
-        last_hit_raw = None
-    try:
-        feedback_raw = row["feedback_score"]
-    except Exception:
-        feedback_raw = None
+    hit_count_raw = _optional_row_value(row, "hit_count")
+    last_hit_raw = _optional_row_value(row, "last_hit_at")
+    feedback_raw = _optional_row_value(row, "feedback_score")
     return {
         "unit_id": str(row["unit_id"]),
         "doc_id": str(row["doc_id"]),
@@ -749,3 +720,10 @@ def candidate_from_row(
         },
         "why": "raptor_expand",
     }
+
+
+def _optional_row_value(row: Mapping[str, Any], key: str) -> Any:
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None

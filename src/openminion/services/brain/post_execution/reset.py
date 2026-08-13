@@ -25,7 +25,6 @@ from openminion.modules.brain.schemas import WorkingState
 from .contracts import _MissionResetPreview, _TurnResetPreservation
 from openminion.modules.brain.constants import STATE_KEY_TASK_BACKED_RESUME
 
-# BBPC: telemetry event name emitted by `_reset_state_for_new_input(...)`
 BRAIN_BRIDGE_CONFIRMATION_RESET_PRESERVED_EVENT = (
     "brain.bridge.confirmation_reset_preserved"
 )
@@ -39,12 +38,10 @@ _RESUME_LIKE_INPUTS = frozenset(
         "continue with previous plan",
     }
 )
-# Resume-control vocabulary only. Policy-confirmation tokens
 _FOLLOWUP_CONTROL_INPUTS = _RESUME_LIKE_INPUTS.union(
     {"retry", "retry plan", "skip", "cancel"}
 )
 _CONFIRMATION_SESSION_REPLY = "session"
-# BBPC: parser verdicts that should preserve a pending confirmation
 _CONFIRMATION_PRESERVING_REPLIES = frozenset(
     {"affirm", "deny", _CONFIRMATION_SESSION_REPLY}
 )
@@ -669,7 +666,6 @@ def _emit_confirmation_reset_preserved(
     session_id: str,
     preservation: _TurnResetPreservation,
 ) -> None:
-    """BBPC: emit `brain.bridge.confirmation_reset_preserved` from the"""
     session_api = getattr(runner, "session_api", None)
     if session_api is None or not hasattr(session_api, "append_event"):
         return
@@ -698,7 +694,7 @@ def _emit_confirmation_reset_preserved(
 def _reset_state_for_new_input(
     self: Any, *, runner: BrainRunner, session_id: str, user_input: str
 ) -> None:
-    if not str(user_input or "").strip():
+    if not user_input.strip():
         return
     state_inline = self._latest_working_state_inline(
         runner=runner,
@@ -714,16 +710,13 @@ def _reset_state_for_new_input(
         state_inline=state_inline,
         user_input=user_input,
     )
-    # BBPC: when there is a pending confirmation, ask the policy parser
     parsed_confirmation_reply = ""
     if state_inline.get("pending_confirmation_command") is not None:
         try:
-            parsed_confirmation_reply = _parse_confirmation_response(
-                runner, str(user_input)
-            )
+            parsed_confirmation_reply = _parse_confirmation_response(runner, user_input)
         except Exception:  # noqa: BLE001
             parsed_confirmation_reply = ""
-        if is_session_confirmation_response(str(user_input)):
+        if is_session_confirmation_response(user_input):
             parsed_confirmation_reply = _CONFIRMATION_SESSION_REPLY
     preservation = self._turn_reset_preservation(
         state_inline=state_inline,
@@ -740,7 +733,6 @@ def _reset_state_for_new_input(
         state_inline=state_inline,
         preservation=preservation,
     )
-    # BBPC: emit telemetry when the new parser-driven path is what
     if (
         preservation.preserve_pending_confirmation
         and preservation.parsed_confirmation_reply in _CONFIRMATION_PRESERVING_REPLIES

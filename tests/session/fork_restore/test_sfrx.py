@@ -113,6 +113,30 @@ def test_restore_file_checkpoint_creates_intermediate_dirs(tmp_path: Path):
     assert "deep/nested/path/c.txt" in result.restored_paths
 
 
+def test_restore_file_checkpoint_rejects_paths_outside_root(tmp_path: Path):
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "link").symlink_to(outside, target_is_directory=True)
+    absolute_path = tmp_path / "absolute.txt"
+    checkpoint = build_file_checkpoint(
+        checkpoint_id="cp",
+        files={
+            "../parent.txt": "parent",
+            "link/symlink.txt": "symlink",
+            str(absolute_path): "absolute",
+        },
+    )
+
+    result = restore_file_checkpoint(checkpoint, root=root)
+
+    assert set(result.missing_paths) == set(checkpoint.files)
+    assert not (tmp_path / "parent.txt").exists()
+    assert not (outside / "symlink.txt").exists()
+    assert not absolute_path.exists()
+
+
 def test_dispatch_restore_command_with_none_checkpoint():
     result = dispatch_restore_command(None)
     assert result["ok"] is False

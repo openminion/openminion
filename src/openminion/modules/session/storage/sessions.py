@@ -112,7 +112,7 @@ class SessionLifecycleHelper:
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY updated_at DESC, session_id DESC LIMIT ?"
-        params.append(max(1, int(limit)))
+        params.append(max(1, limit))
 
         with self._lock:
             rows = self._record_store.query_dicts(query, tuple(params))
@@ -153,7 +153,6 @@ class SessionLifecycleHelper:
             current = self.get_session(session_id)
             if current is None:
                 raise ValueError(f"session not found: {session_id}")
-            now = self._utc_now_iso()
             from_agent_id = current.get("active_agent_id")
             self._record_store.execute_count(
                 """
@@ -161,7 +160,7 @@ class SessionLifecycleHelper:
                 SET active_agent_id = ?, active_profile_version = ?, updated_at = ?
                 WHERE session_id = ?
                 """,
-                (agent_id, profile_version, now, session_id),
+                (agent_id, profile_version, self._utc_now_iso(), session_id),
             )
             self._invalidate_slice_cache(session_id)
 
@@ -201,7 +200,6 @@ class SessionLifecycleHelper:
                 raise ValueError(f"session not found: {session_id}")
             updated = dict(current)
             updated.update(patch)
-            now = self._utc_now_iso()
             self._record_store.execute_count(
                 """
                 UPDATE sessions
@@ -211,7 +209,7 @@ class SessionLifecycleHelper:
                 WHERE session_id = ?
                 """,
                 (
-                    now,
+                    self._utc_now_iso(),
                     updated.get("title"),
                     updated.get("status", "active"),
                     updated.get("active_agent_id"),

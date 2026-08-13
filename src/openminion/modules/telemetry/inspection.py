@@ -31,8 +31,10 @@ from openminion.modules.telemetry.schemas import (
     TelemetryDebugReport,
     TelemetryDebugSelection,
 )
-from openminion.modules.telemetry.service import resolve_telemetry_db_path
-from openminion.modules.telemetry.service import TelemetryService
+from openminion.modules.telemetry.service import (
+    TelemetryService,
+    resolve_telemetry_db_path,
+)
 from openminion.modules.telemetry.storage.base import (
     TelemetryEventPageRow,
     TelemetryStore,
@@ -68,14 +70,13 @@ TELEMETRY_INSPECTION_EXCEPTIONS = (
 
 def build_catalog_report() -> dict[str, Any]:
     dispositions = event_export_dispositions()
-    rows = []
-    for event_type in sorted(EVENT_TYPES):
-        rows.append(
-            {
-                "event_type": event_type,
-                "otel_disposition": dispositions.get(event_type, "log"),
-            }
-        )
+    rows = [
+        {
+            "event_type": event_type,
+            "otel_disposition": dispositions.get(event_type, "log"),
+        }
+        for event_type in sorted(EVENT_TYPES)
+    ]
     return {
         "event_count": len(rows),
         "events": rows,
@@ -727,7 +728,6 @@ def _trace_facts(
     diagnostics: list[TelemetryDebugDiagnostic],
 ) -> tuple[int | None, list[str]]:
     calls: dict[str, list[TelemetryEventPageRow]] = {}
-    started_only = False
     for row in rows:
         if row.event.event_type not in {
             "llm.call.started",
@@ -748,7 +748,6 @@ def _trace_facts(
             if row.event.event_type in {"llm.call.completed", "llm.call.failed"}
         ]
         if not terminals:
-            started_only = True
             complete = False
             continue
         winner = max(terminals, key=telemetry_event_sort_key)
@@ -763,10 +762,6 @@ def _trace_facts(
                 paths.add(raw_path)
             else:
                 complete = False
-    if started_only:
-        diagnostics.append(
-            TelemetryDebugDiagnostic("INCOMPLETE_TRACE_FACTS", "warning")
-        )
     if len(paths) > 1000:
         diagnostics.append(
             TelemetryDebugDiagnostic(
