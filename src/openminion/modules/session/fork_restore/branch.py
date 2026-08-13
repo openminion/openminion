@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 from collections.abc import Mapping
@@ -13,8 +15,6 @@ from openminion.modules.session.interfaces import (
     SESSION_BRANCH_DIFF_SCHEMA_VERSION,
 )
 
-BRANCH_DIFF_SCHEMA_VERSION = SESSION_BRANCH_DIFF_SCHEMA_VERSION
-BRANCH_CARRY_FORWARD_SCHEMA_VERSION = SESSION_BRANCH_CARRY_FORWARD_SCHEMA_VERSION
 _ALLOWED_CARRY_FIELDS = {"summary", STATE_KEY_WORKING, "message_refs"}
 _FORBIDDEN_CARRY_FIELDS = {"raw_transcript", "secret", "encrypted_content"}
 
@@ -48,7 +48,7 @@ class BranchDiffResult:
     left_session_id: str
     right_session_id: str
     items: tuple[BranchDiffItem, ...]
-    schema_version: str = BRANCH_DIFF_SCHEMA_VERSION
+    schema_version: str = SESSION_BRANCH_DIFF_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,7 +82,7 @@ def carry_forward_branch_fields(
     fields: list[str],
     title: str | None = None,
 ) -> dict[str, Any]:
-    normalized = {str(field).strip() for field in fields if str(field).strip()}
+    normalized = {field.strip() for field in fields if field.strip()}
     forbidden = normalized & _FORBIDDEN_CARRY_FIELDS
     unknown = normalized - _ALLOWED_CARRY_FIELDS - _FORBIDDEN_CARRY_FIELDS
     if forbidden or unknown:
@@ -93,7 +93,7 @@ def carry_forward_branch_fields(
         session_id=f"branch-{uuid4().hex[:12]}",
         title=title or f"Carry-forward from {source_session_id}",
         meta={
-            "schema_version": BRANCH_CARRY_FORWARD_SCHEMA_VERSION,
+            "schema_version": SESSION_BRANCH_CARRY_FORWARD_SCHEMA_VERSION,
             "source_session_id": source_session_id,
             "target_parent_session_id": target_parent_session_id,
             "carried_fields": sorted(normalized),
@@ -109,7 +109,7 @@ def carry_forward_branch_fields(
         child_session_id,
         event_type="session.branch.carry_forward.created",
         payload={
-            "schema_version": BRANCH_CARRY_FORWARD_SCHEMA_VERSION,
+            "schema_version": SESSION_BRANCH_CARRY_FORWARD_SCHEMA_VERSION,
             "source_session_id": source_session_id,
             "target_parent_session_id": target_parent_session_id,
             "fields": sorted(normalized),
@@ -117,7 +117,7 @@ def carry_forward_branch_fields(
         actor_type="system",
     )
     return {
-        "schema_version": BRANCH_CARRY_FORWARD_SCHEMA_VERSION,
+        "schema_version": SESSION_BRANCH_CARRY_FORWARD_SCHEMA_VERSION,
         "child_session_id": child_session_id,
         "source_session_id": source_session_id,
         "target_parent_session_id": target_parent_session_id,
@@ -212,16 +212,13 @@ def _message_ref_rows(record_store: Any, session_id: str) -> list[dict[str, Any]
 
 
 def _message_ref_refs(record_store: Any, session_id: str) -> list[dict[str, Any]]:
-    refs: list[dict[str, Any]] = []
-    for row in _message_ref_rows(record_store, session_id):
-        refs.append({"role": row.get("role"), "content_ref": row.get("content_ref")})
-    return refs
+    return [
+        {"role": row.get("role"), "content_ref": row.get("content_ref")}
+        for row in _message_ref_rows(record_store, session_id)
+    ]
 
 
 def _stable_ref(value: Mapping[str, Any] | list[dict[str, Any]]) -> str:
-    import hashlib
-    import json
-
     if not value:
         return "empty"
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode("utf-8")).hexdigest()

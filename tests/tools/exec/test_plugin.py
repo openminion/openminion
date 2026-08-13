@@ -8,6 +8,7 @@ from typing import get_args
 import pytest
 
 from openminion.base.runtime.sandbox import ExecResult
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.brain.runtime.escalation import ApprovalResponse
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.registry import ToolRegistry
@@ -18,7 +19,6 @@ import openminion.tools.exec.plugin as exec_plugin
 from openminion.tools.exec.plugin import (
     _artifactize_output,
     register,
-    _h_exec_run,
     _h_process_poll,
     _h_process_send_keys,
     _validate_command_against_policy,
@@ -84,6 +84,21 @@ def _ctx(tmp_path, *, sandbox_runner=None, env=None):
         sandbox_runner=sandbox_runner,
         **kwargs,
     )
+
+
+def _h_exec_run(args, ctx):
+    payload = dict(args)
+    if "host" not in payload and ctx.sandbox_runner is None:
+        payload["host"] = "gateway"
+        payload["security"] = "full"
+        payload["ask"] = "off"
+        ctx.env = EnvironmentConfig.from_sources(
+            process_env={
+                **ctx.env.values,
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+            }
+        )
+    return exec_plugin._h_exec_run(payload, ctx)
 
 
 class _RecordingSandboxRunner:
@@ -272,6 +287,40 @@ def test_exec_run_accepts_cmd_alias(tmp_path):
     assert result["status"] == "ok"
     assert result["exit_code"] == 0
     assert "hello" in str(result.get("stdout_preview") or "")
+
+
+def test_exec_run_defaults_to_allowlisted_gateway_when_host_exec_is_enabled(
+    tmp_path,
+) -> None:
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+        ),
+    )
+
+    result = exec_plugin._h_exec_run({"command": "whoami"}, ctx)
+
+    assert result["status"] == "ok"
+    assert str(result["stdout_preview"] or "").strip()
+
+
+def test_exec_run_falls_back_from_unavailable_sandbox_when_host_exec_is_enabled(
+    tmp_path,
+) -> None:
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={"OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1"}
+        ),
+    )
+
+    result = exec_plugin._h_exec_run(
+        {"command": "whoami", "host": "sandbox"},
+        ctx,
+    )
+
+    assert result["status"] == "ok"
 
 
 def test_exec_run_uses_shared_sandbox_runner_for_foreground_sandbox(tmp_path):
@@ -798,8 +847,7 @@ def test_validate_command_against_policy_accepts_windows_shell_family_path(
 
 def test_validate_command_against_policy_accepts_read_only_identity_probe(tmp_path):
     allowed, message, details = _validate_command_against_policy(
-        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || "
-        "cat ~/.ssh/id_ed25519.pub",
+        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || cat ~/.ssh/id_ed25519.pub",
         _ctx(tmp_path),
     )
 
@@ -967,6 +1015,17 @@ def test_validate_command_against_policy_allows_direct_toolchain_discovery(
     assert allowed
     assert message == ""
     assert details["checked"][0]["exec"] == "command"
+
+
+def test_validate_host_allowlist_allows_direct_toolchain_discovery(tmp_path) -> None:
+    allowed, message, details = _validate_host_allowlist(
+        "command -v nasm",
+        _ctx(tmp_path),
+    )
+
+    assert allowed
+    assert message == ""
+    assert details["checked"][0]["path"] == "shell-discovery-builtin"
 
 
 def test_validate_command_against_policy_denies_non_discovery_toolchain_shapes(

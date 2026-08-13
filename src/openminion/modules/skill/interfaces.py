@@ -15,12 +15,11 @@ SKILL_INTERFACE_VERSION = "v1"
 
 
 def ensure_skill_interface_compatibility(actual_version: str) -> bool:
-    """Validate that actual interface version is compatible with expected version."""
-    if actual_version == SKILL_INTERFACE_VERSION:
-        return True
-    raise ValueError(
-        f"Skill interface version mismatch: expected {SKILL_INTERFACE_VERSION}, got {actual_version}"
-    )
+    if actual_version != SKILL_INTERFACE_VERSION:
+        raise ValueError(
+            f"Skill interface version mismatch: expected {SKILL_INTERFACE_VERSION}, got {actual_version}"
+        )
+    return True
 
 
 ArtifactIngestor = Callable[[str, str], str]

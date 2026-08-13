@@ -79,9 +79,9 @@ class RuntimeControlsMixin:
             if provider_cfg is None:
                 continue
             configured_model = str(getattr(provider_cfg, "model", "") or "").strip()
-            is_active = provider_name == active_provider and (
-                not active_model or configured_model == active_model
-            )
+            is_active = provider_name == active_provider
+            if is_active and active_model:
+                configured_model = active_model
             result.append((provider_name, configured_model, is_active))
         return result
 
@@ -449,13 +449,15 @@ class RuntimeControlsMixin:
             data_root=self._rt.data_root,
             retrieve_ctl=getattr(self._rt, "retrieve_ctl", None),
         )
-        result = service.compact_session(session_id=self.session_id)
+        result = service.compact_session(session_id=self.session_id, force=True)
         payload: dict[str, Any] = {
             "compacted_count": int(getattr(result, "compacted_count", 0) or 0),
             "summary_updated": bool(getattr(result, "summary_updated", False)),
             "archive_relative_path": str(
                 getattr(result, "archive_relative_path", "") or ""
             ),
+            "reason": str(getattr(result, "reason", "") or ""),
+            "budget_source": str(getattr(result, "budget_source", "") or ""),
         }
         try:
             snap = self.token_usage_snapshot()
@@ -518,6 +520,9 @@ class RuntimeControlsMixin:
             profile = agents.get(self.agent_id) if isinstance(agents, Mapping) else None
         provider_name = str(getattr(profile, "provider", "") or "").strip()
         model_name = str(getattr(profile, "model", "") or "").strip()
+        profile_provider_overrides = getattr(profile, "provider_config_overrides", None)
+        if not model_name and isinstance(profile_provider_overrides, Mapping):
+            model_name = str(profile_provider_overrides.get("model", "") or "").strip()
         if not provider_name and profile is None:
             if self._model_override_provider or self._model_override_model:
                 return (

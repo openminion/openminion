@@ -254,7 +254,8 @@ def test_runtime_client_recovers_minimax_bracket_tool_calls_from_output_text() -
 
     assert response.ok is True
     assert response.output_text == ""
-    assert response.assistant_messages == []
+    assert len(response.assistant_messages) == 1
+    assert response.assistant_messages[0].tool_calls == response.tool_calls
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0].name == "web.search"
     assert response.tool_calls[0].arguments == {
@@ -332,7 +333,8 @@ def test_runtime_client_recovers_single_quoted_hyphenated_minimax_bracket_tool_c
 
     assert response.ok is True
     assert response.output_text == ""
-    assert response.assistant_messages == []
+    assert len(response.assistant_messages) == 1
+    assert response.assistant_messages[0].tool_calls == response.tool_calls
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0].name == "web.search"
     assert response.tool_calls[0].arguments == {
@@ -463,7 +465,8 @@ def test_runtime_client_recovers_minimax_function_calls_search_alias() -> None:
 
     assert response.ok is True
     assert response.output_text == ""
-    assert response.assistant_messages == []
+    assert len(response.assistant_messages) == 1
+    assert response.assistant_messages[0].tool_calls == response.tool_calls
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0].name == "web.search"
     assert response.tool_calls[0].arguments == {

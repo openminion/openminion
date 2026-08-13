@@ -28,6 +28,7 @@ from openminion.modules.storage.migrations.models import (
     MigrationReport,
     RehydrateReport,
 )
+from openminion.modules.storage.migrations.meta_rows import rows_to_meta
 from openminion.modules.storage.migrations.verify import VerifierHook, run_verification
 from openminion.modules.storage.telemetry import (
     NoopStorageTelemetryHook,
@@ -59,9 +60,9 @@ class MigrationRunner:
         engine: Engine | None = None,
         telemetry_hook: StorageTelemetryHook | None = None,
     ) -> None:
-        self.module_id = str(module_id).strip()
+        self.module_id = module_id.strip()
         self.db_path = Path(db_path).expanduser().resolve(strict=False)
-        self.module_application_id = int(module_application_id)
+        self.module_application_id = module_application_id
         self.snapshot_root = (
             Path(snapshot_root).expanduser().resolve(strict=False)
             if snapshot_root is not None
@@ -84,7 +85,7 @@ class MigrationRunner:
         self.sqlite3_bin = sqlite3_bin
         self.target_user_version = target_user_version
         self.verifier_hook = verifier_hook
-        self.backend_type = str(backend_type or "sqlite").strip().lower()
+        self.backend_type = backend_type.strip().lower() or "sqlite"
         self.engine = engine
         self._telemetry_hook = (
             telemetry_hook if telemetry_hook is not None else NoopStorageTelemetryHook()
@@ -138,8 +139,8 @@ class MigrationRunner:
             )
 
         with sqlite3.connect(str(self.db_path)) as conn:
-            application_id = int(self._pragma_int(conn, "application_id", default=0))
-            user_version = int(self._pragma_int(conn, "user_version", default=0))
+            application_id = self._pragma_int(conn, "application_id", default=0)
+            user_version = self._pragma_int(conn, "user_version", default=0)
             om_meta = self._read_om_meta(conn)
             revision = self._read_alembic_revision(conn)
 
@@ -498,7 +499,7 @@ class MigrationRunner:
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.execute(f"PRAGMA application_id={self.module_application_id}")
             if self.target_user_version is not None:
-                conn.execute(f"PRAGMA user_version={int(self.target_user_version)}")
+                conn.execute(f"PRAGMA user_version={self.target_user_version}")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS om_meta (
@@ -577,10 +578,7 @@ class MigrationRunner:
             return {}
 
         rows = conn.execute("SELECT key, value FROM om_meta").fetchall()
-        payload: dict[str, str] = {}
-        for key, value in rows:
-            payload[str(key)] = "" if value is None else str(value)
-        return payload
+        return rows_to_meta(rows)
 
     @classmethod
     def _read_alembic_revision(cls, conn: sqlite3.Connection) -> str | None:
@@ -598,11 +596,11 @@ class MigrationRunner:
     ) -> int:
         row = conn.execute(f"PRAGMA {pragma_name}").fetchone()
         if row is None or row[0] is None:
-            return int(default)
+            return default
         return int(row[0])
 
     def _resolve_target_revision(self, target: str) -> str | None:
-        normalized = str(target or "").strip()
+        normalized = target.strip()
         if normalized and normalized != "head":
             return normalized
         if self.alembic_script_location is None:

@@ -538,7 +538,7 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         )
         self.assertTrue(
             any(
-                "Tool execution results" in history_item.content
+                history_item.role == "tool" and history_item.tool_call_id
                 for request in provider.requests[1:]
                 for history_item in request.history
             )
@@ -551,10 +551,9 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         )
         self.assertTrue(
             any(
-                "not the final answer" in history_item.content
+                history_item.role == "assistant" and history_item.tool_calls
                 for request in provider.requests[1:]
                 for history_item in request.history
-                if str(getattr(history_item, "role", "")).lower() == "assistant"
             )
         )
 

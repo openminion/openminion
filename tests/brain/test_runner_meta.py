@@ -205,7 +205,11 @@ class RunnerMetaTests(unittest.TestCase):
                 user_input='tool echo {"msg":"hi"}',
                 trace_id="trace-meta-act",
             )
-            self.assertEqual(output.status, "done")
+            self.assertEqual(output.status, "waiting_user")
+            self.assertIn(
+                "post-action judgment is unavailable",
+                str(output.message or "").lower(),
+            )
             application = runner.get_last_meta_application()
             self.assertIsNotNone(application)
             assert application is not None

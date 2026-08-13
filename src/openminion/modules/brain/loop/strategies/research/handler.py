@@ -55,15 +55,13 @@ from openminion.modules.brain.runtime.budget.strategy import (
     resolve_research_budget_settings,
 )
 from openminion.modules.brain.loop.services import runner_from_context
-from openminion.modules.brain.loop.tools.structured_llm import (
-    structured_mode_response,
-)
 from openminion.modules.brain.checkpoint.contracts import TaskProgress
 from openminion.modules.brain.runner.resume import (
     ExponentialBackoffResumePolicy,
     schedule_backoff_resume,
     schedule_recurring_resume,
 )
+from openminion.modules.brain.retry import call_structured_with_retry
 from .checkpoint import (
     build_checkpoint_state as _build_checkpoint_state,
     normalize_checkpoint_state as _normalize_checkpoint_state,
@@ -518,7 +516,13 @@ class ResearchMode(SimpleCheckpointMixin):
         )
 
     def _query_from_context(self, ctx: ExecutionContext) -> str:
-        return _normalized_text(getattr(ctx.decision, "research_query", "") or "")
+        decision_query = _normalized_text(
+            getattr(ctx.decision, "research_query", "") or ""
+        )
+        if decision_query:
+            return decision_query
+        resume_state = dict(getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {})
+        return _normalized_text(resume_state.get("query"))
 
     def _scope_from_context(self, ctx: ExecutionContext) -> str:
         return _normalized_text(getattr(ctx.decision, "research_scope", "") or "")
@@ -749,28 +753,19 @@ class ResearchMode(SimpleCheckpointMixin):
         query: str,
         findings: list[dict[str, Any]],
     ) -> ExecutionResult:
-        synthesis = self._build_synthesis(
-            ctx,
-            query=query,
-            findings=findings,
+        synthesis = (
+            self._build_synthesis(ctx, query=query, findings=findings)
+            if findings
+            else None
         )
-        if synthesis is None:
+        answer = _normalized_text(synthesis.answer if synthesis is not None else "")
+        if not answer:
             self._pause_incomplete_research(ctx, task_id=task_id)
             return ExecutionResult.from_step_output(
                 ctx.respond(
                     message=self._build_no_synthesis_closeout(query=query),
                     status=BRAIN_STATE_WAITING_USER,
                 )
-            )
-
-        answer = synthesis.answer.strip()
-        if synthesis.status != "complete":
-            remaining_work = synthesis.remaining_work.strip()
-            if remaining_work:
-                answer = f"{answer}\n\nRemaining work: {remaining_work}"
-            self._pause_incomplete_research(ctx, task_id=task_id)
-            return ExecutionResult.from_step_output(
-                ctx.respond(message=answer, status=BRAIN_STATE_WAITING_USER)
             )
 
         transition(ctx.state, "task_completed", logger=ctx.logger)
@@ -814,8 +809,6 @@ class ResearchMode(SimpleCheckpointMixin):
         query: str,
         findings: list[dict[str, Any]],
     ) -> ResearchSynthesis | None:
-        if not findings:
-            return None
         synthesis_prompt = (
             "\n".join(_render_temporal_fact_lines(findings))
             + "\n"
@@ -825,19 +818,37 @@ class ResearchMode(SimpleCheckpointMixin):
                 f"- Iteration {f.get('iteration', '?')}: {_normalized_text(f.get('content', ''))[:400]}"
                 for f in findings
             )
-            + "\n\nSynthesize these findings into a comprehensive, coherent answer. "
-            "Use only the supplied evidence, preserve any exact labels or output "
-            "shape requested in the research query, and report incomplete or "
-            "blocked status when the evidence cannot support a complete answer."
+            + "\n\nSynthesize these findings into a comprehensive, coherent answer."
         )
-        structured = structured_mode_response(
-            ctx,
-            prompt=synthesis_prompt,
-            schema=ResearchSynthesis,
-            purpose="summarize",
-            max_tokens=RESEARCH_SYNTHESIS_MAX_TOKENS,
-        )
-        return structured if isinstance(structured, ResearchSynthesis) else None
+        runner = runner_from_context(ctx)
+        llm_api = getattr(runner, "llm_api", None) if runner is not None else None
+        profile = getattr(runner, "profile", None) if runner is not None else None
+        llm_profiles = getattr(profile, "llm_profiles", None)
+        model = _normalized_text(getattr(llm_profiles, "summarize_model", ""))
+        if runner is None or llm_api is None or not model:
+            return None
+        try:
+            context = runner._build_context(
+                state=ctx.state,
+                purpose="summarize",
+                budget={"max_tokens": RESEARCH_SYNTHESIS_MAX_TOKENS},
+                hints={"user_input": synthesis_prompt},
+                logger=ctx.logger,
+                mode_name=RESEARCH_MODE,
+            )
+            raw = call_structured_with_retry(
+                llm_api,
+                model=model,
+                purpose="summarize",
+                context=context,
+                schema=ResearchSynthesis,
+            )
+            ctx.state.llm_calls_used += 1
+            if isinstance(raw, dict):
+                runner._debit_tokens(ctx.state, raw, ctx.logger)
+            return ResearchSynthesis.model_validate(raw)
+        except (RuntimeError, TypeError, ValueError):
+            return None
 
     def _pause_incomplete_research(
         self,

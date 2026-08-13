@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable
 
 from openminion.base.channel import ChannelRegistry
@@ -43,9 +43,7 @@ class GatewayTurnRunnerFlowMixin(
         memory_dynamic_retrieval_enabled: bool,
         emit_run_state: Callable[..., Any],
         knowledge_graphs: Any | None = None,
-        typed_terminal_resolver: Optional[
-            Callable[..., Optional[tuple[Any, ...]]]
-        ] = None,
+        typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
         emit_invocation_lifecycle: Callable[[InvocationLifecycleFact], bool]
         | None = None,
     ) -> None:
@@ -83,13 +81,11 @@ class GatewayTurnRunnerFlowMixin(
         run_id: str,
         legacy_state: str,
         current_step: str,
-        payload: Optional[dict[str, Any]] = None,
+        payload: dict[str, Any] | None = None,
         conversation_id: str | None = None,
         thread_id: str | None = None,
         attach_id: str | None = None,
-        typed_terminal_resolver: Optional[
-            Callable[..., Optional[tuple[Any, ...]]]
-        ] = None,
+        typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
     ) -> Any:
         return self._lifecycle_ops.emit_terminal_run_state(
             session_id=session_id,

@@ -100,6 +100,4 @@ class TurnContext:
 
 
 def freeze_metadata(metadata: dict[str, str] | None) -> Mapping[str, str] | None:
-    if metadata is None:
-        return None
-    return MappingProxyType(dict(metadata))
+    return MappingProxyType(dict(metadata)) if metadata is not None else None

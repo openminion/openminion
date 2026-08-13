@@ -91,12 +91,11 @@ class BrowserSessionStateStore:
             return None
         self.load_persisted_session_state(workspace_root=workspace, env=env)
         instance_candidate: tuple[str, SessionBrowserState] | None = None
-        for state_workspace, provider_id, state_session in sorted(
-            self._session_state.keys()
+        for (state_workspace, provider_id, state_session), state in sorted(
+            self._session_state.items()
         ):
             if state_workspace != workspace or state_session != session:
                 continue
-            state = self._session_state[(state_workspace, provider_id, state_session)]
             if state.tab_id:
                 return provider_id, state
             if state.instance_id and instance_candidate is None:
@@ -279,8 +278,7 @@ class BrowserSessionStateStore:
             return
         workspace_key = key[0]
         self.load_persisted_session_state(workspace_root=workspace_key, env=env)
-        if key in self._session_state:
-            self._session_state.pop(key, None)
+        if self._session_state.pop(key, None) is not None:
             self.persist_session_state(workspace_root=workspace_key, env=env)
 
     def load_persisted_session_state(
@@ -298,9 +296,7 @@ class BrowserSessionStateStore:
         path = self._session_state_path(workspace_root=workspace_key, env=env)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return
-        except Exception:
+        except (OSError, UnicodeError, json.JSONDecodeError):
             return
         if not isinstance(payload, Mapping):
             return
@@ -360,7 +356,7 @@ class BrowserSessionStateStore:
                 encoding="utf-8",
             )
             tmp_path.replace(path)
-        except Exception:
+        except OSError:
             return
 
     def _session_state_path(

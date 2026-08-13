@@ -177,8 +177,6 @@ class CronTurnExecutor:
     ) -> tuple[bool, str, tuple[dict[str, Any], ...], str]:
         if terminal_reason != "condition_met":
             return False, "", (), summary
-        action_summary = ""
-        write_audit_entries: tuple[dict[str, Any], ...] = ()
         action_result = self._execute_watch_action_turn(
             job=job,
             run=run,
@@ -402,14 +400,12 @@ class CronTurnExecutor:
             except Exception:
                 pass
         cron_job_id = str(job.get("job_id", "") or "").strip()
-        last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             request = self._request_builder(request_payload, agent_id)
             handle = manager.submit_turn(request)
             try:
                 result = handle.result(timeout_s=self._timeout_s)
             except Exception as exc:  # noqa: BLE001
-                last_error = exc
                 _CRON_LOGGER.warning(
                     format_structured_event(
                         "cron.turn.attempt_failed",
@@ -422,7 +418,7 @@ class CronTurnExecutor:
                 if attempt < self._max_attempts:
                     continue
                 return {
-                    "summary": f"Agent turn failed after {self._max_attempts} attempt(s): {last_error}",
+                    "summary": f"Agent turn failed after {self._max_attempts} attempt(s): {exc}",
                     "error": True,
                 }
             summary = (
@@ -435,11 +431,7 @@ class CronTurnExecutor:
                 "isolated_session_id": request.session_id,
                 "metadata": dict(metadata) if isinstance(metadata, dict) else {},
             }
-
-        return {
-            "summary": f"Agent turn exhausted {self._max_attempts} attempts",
-            "error": True,
-        }
+        raise AssertionError("unreachable: max attempts is at least one")
 
     def _execute_idle_tick_turn(
         self,
@@ -510,14 +502,12 @@ class CronTurnExecutor:
         cron_job_id: str,
         session_id: str,
     ) -> dict[str, Any]:
-        last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             request = self._request_builder(request_payload, agent_id)
             handle = manager.submit_turn(request)
             try:
                 result = handle.result(timeout_s=self._timeout_s)
             except Exception as exc:  # noqa: BLE001
-                last_error = exc
                 _CRON_LOGGER.warning(
                     format_structured_event(
                         "pae.idle_tick.attempt_failed",
@@ -533,7 +523,7 @@ class CronTurnExecutor:
                 return {
                     "summary": (
                         f"PAE idle tick failed after {self._max_attempts} "
-                        f"attempt(s): {last_error}"
+                        f"attempt(s): {exc}"
                     ),
                     "error": True,
                 }
@@ -553,10 +543,7 @@ class CronTurnExecutor:
                 "summary": summary,
                 "metadata": metadata_dict,
             }
-        return {
-            "summary": f"PAE idle tick exhausted {self._max_attempts} attempts",
-            "error": True,
-        }
+        raise AssertionError("unreachable: max attempts is at least one")
 
     def _check_idle_tick_user_activity_gate(
         self,

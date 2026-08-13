@@ -13,7 +13,7 @@ def _protocol_error(*args: Any, **kwargs: Any) -> Exception:
 
 
 def parse_www_authenticate(value: str) -> dict[str, str]:
-    raw = str(value or "").strip()
+    raw = value.strip()
     if not raw:
         return {}
     scheme, _, rest = raw.partition(" ")
@@ -143,22 +143,13 @@ def build_server_request_response(
     params: dict[str, Any],
     request_id: Any,
 ) -> dict[str, Any]:
-    if handler is None:
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {
-                "code": -32601,
-                "message": f"Unsupported MCP client method: {method}",
-            },
-        }
-    request_handler = getattr(handler, "handle_request", None)
-    if callable(request_handler):
-        call = request_handler
-    elif callable(handler):
-        call = handler
-    else:
-        call = None
+    call = None
+    if handler is not None:
+        request_handler = getattr(handler, "handle_request", None)
+        if callable(request_handler):
+            call = request_handler
+        elif callable(handler):
+            call = handler
     if call is None:
         return {
             "jsonrpc": "2.0",

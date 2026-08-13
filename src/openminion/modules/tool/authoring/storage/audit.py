@@ -1,6 +1,5 @@
 """Append-only audit sink for authored-tool lifecycle events."""
 
-from dataclasses import asdict
 import json
 from pathlib import Path
 import sqlite3
@@ -53,7 +52,6 @@ class SQLiteToolAuthoringAuditSink:
 
     def append_event(self, event: AuthoredToolAuditEventRow) -> None:
         conn = self._connect()
-        payload = asdict(event)
         with self._lock:
             conn.execute(
                 """
@@ -63,15 +61,15 @@ class SQLiteToolAuthoringAuditSink:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["event_id"],
-                    payload["timestamp"],
-                    payload["event_type"],
-                    payload["target_kind"],
-                    payload["target_id"],
-                    payload["agent_id"],
-                    payload["session_id"],
-                    payload["version_hash"],
-                    payload["details_json"],
+                    event.event_id,
+                    event.timestamp,
+                    event.event_type,
+                    event.target_kind,
+                    event.target_id,
+                    event.agent_id,
+                    event.session_id,
+                    event.version_hash,
+                    event.details_json,
                 ),
             )
             conn.commit()

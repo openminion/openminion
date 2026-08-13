@@ -168,8 +168,6 @@ class OpenTelemetryTraceExporter:
         if not _is_sampled(trace_key, self._config.sample_rate):
             return False
         event_type = str(event.event_type or "").strip()
-        # explicit exclusion check before any work — METRIC/MESSAGE
-        # generic catchalls (OTEL-02 §4.3 item 12) do not reach the sink.
         if _EVENT_CLASSIFICATION.get(event_type) == _CLASS_EXCLUDED:
             return False
         if self._export_queue is not None and self._export_queue.should_queue(event):
@@ -402,9 +400,7 @@ class OpenTelemetryTraceExporter:
         return True
 
     def _pending_execution_id(self, event: TelemetryEvent) -> str:
-        execution_id = str(
-            event.execution_id or (event.data or {}).get("execution_id") or ""
-        )
+        execution_id = _execution_id_for_event(event)
         if not execution_id:
             return ""
         slot = f"agent.execution.started:{execution_id}"
@@ -495,8 +491,6 @@ class OpenTelemetryTraceExporter:
         pairing_keys = _PAIRED_SPAN_CLASSES[event_type][1]
         pairing_id = _resolve_pairing_id(event, pairing_keys)
         if not pairing_id:
-            # No pairing key — fall back to a log record at the sink so the
-            # signal is not silently lost.
             self._emit_or_defer_event(
                 event=event,
                 trace_key=trace_key,
@@ -515,7 +509,6 @@ class OpenTelemetryTraceExporter:
             slot not in self._pending_paired_spans
             and len(self._pending_paired_spans) >= self._MAX_PENDING_PAIRED_SPANS
         ):
-            # Evict the oldest pending start to bound memory.
             oldest = next(iter(self._pending_paired_spans))
             self._pending_paired_spans.pop(oldest, None)
         self._pending_paired_spans[slot] = {
@@ -561,12 +554,11 @@ class OpenTelemetryTraceExporter:
             return False
         merged_attributes = dict(pending["attributes"])
         merged_attributes.update(attributes)
-        span_name = str(pending["span_name"])
         span: dict[str, Any] = {
             "trace_key": trace_key,
             "session_id": event.session_id,
             "turn_id": event.turn_id,
-            "span_name": span_name,
+            "span_name": str(pending["span_name"]),
             "attributes": merged_attributes,
             "timestamp_ns": int(pending["start_timestamp_ns"]),
             "end_timestamp_ns": timestamp_ns,
@@ -577,9 +569,7 @@ class OpenTelemetryTraceExporter:
             "span_key": str(pending["span_key"]),
             "parent_span_key": str(pending["parent_span_key"]),
         }
-        execution_id = str(
-            event.execution_id or (event.data or {}).get("execution_id") or ""
-        )
+        execution_id = _execution_id_for_event(event)
         if start_event_type == "agent.execution.started":
             self._sink.emit_span(**span)
             if execution_id:
@@ -610,18 +600,18 @@ class OpenTelemetryTraceExporter:
 
 
 def _execution_span_key(event: TelemetryEvent) -> str:
-    execution_id = str(
-        event.execution_id or (event.data or {}).get("execution_id") or ""
-    )
+    execution_id = _execution_id_for_event(event)
     return f"execution:{execution_id}" if execution_id else ""
 
 
 def _turn_span_key(event: TelemetryEvent) -> str:
-    execution_id = str(
-        event.execution_id or (event.data or {}).get("execution_id") or ""
-    )
+    execution_id = _execution_id_for_event(event)
     turn_id = str(event.turn_id or "")
     return f"turn:{execution_id}:{turn_id}" if execution_id and turn_id else ""
+
+
+def _execution_id_for_event(event: TelemetryEvent) -> str:
+    return str(event.execution_id or event.data.get("execution_id") or "")
 
 
 def _span_keys(

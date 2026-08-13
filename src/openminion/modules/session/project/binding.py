@@ -48,18 +48,17 @@ def resolve_installed_project_skills(
 ) -> tuple[str, ...]:
     """Validate installed project skills and keep child requests in scope."""
 
-    installed = {str(item).strip() for item in installed_skill_ids if str(item).strip()}
+    installed = set(filter(None, map(str.strip, installed_skill_ids)))
     missing = [item for item in inheritance.skill_set if item not in installed]
     if missing:
         raise ValueError(f"project references uninstalled skills: {', '.join(missing)}")
-    allowed = tuple(inheritance.skill_set)
-    requested = tuple(dict.fromkeys(str(item).strip() for item in requested_skill_ids))
-    outside_project = [item for item in requested if item and item not in allowed]
+    requested = tuple(dict.fromkeys(filter(None, map(str.strip, requested_skill_ids))))
+    outside_project = [item for item in requested if item not in inheritance.skill_set]
     if outside_project:
         raise ValueError(
             f"requested skills exceed project scope: {', '.join(outside_project)}"
         )
-    return requested or allowed
+    return requested or inheritance.skill_set
 
 
 def _project_to_inheritance(project: Project) -> ProjectSessionInheritance:

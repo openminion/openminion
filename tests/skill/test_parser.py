@@ -4,11 +4,25 @@ from openminion.modules.skill.runtime.parser import (
     RECOGNIZED_FRONT_MATTER_KEYS,
     _split_sections,
     build_default_snippets,
+    build_recipe,
     front_matter_unknown_key_warnings,
     normalize_section_name,
     parse_markdown,
     purpose_to_section_keys,
 )
+
+
+def test_build_recipe_does_not_infer_idempotency_from_prose() -> None:
+    recipe = build_recipe(
+        front_matter={},
+        sections={"procedure": "Retry idempotently if the first attempt fails."},
+        skill_name="retry safely",
+        risk_class="low",
+        known_tools=[],
+    )
+
+    assert recipe is not None
+    assert recipe.idempotency_notes is None
 
 
 def test_h1_only_skill_preserves_canonical_sections() -> None:

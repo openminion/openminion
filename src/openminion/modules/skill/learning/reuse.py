@@ -47,15 +47,12 @@ def matching_catalog_entries(shape: Any, catalog_entries: Iterable[Any]) -> list
     capability = _unscoped(getattr(shape, "capability_category", ""))
     strategy = _unscoped(getattr(shape, "strategy_id", ""))
     matches: list[Any] = []
-    for entry in catalog_entries or []:
+    for entry in catalog_entries:
         tags = {_unscoped(tag) for tag in _entry_field(entry, "tags", [])}
         applies_to = _entry_field(entry, "applies_to", {})
-        intents = {
-            _unscoped(item)
-            for item in (
-                applies_to.get("intents", []) if isinstance(applies_to, Mapping) else []
-            )
-        }
+        if not isinstance(applies_to, Mapping):
+            continue
+        intents = {_unscoped(item) for item in applies_to.get("intents", [])}
         if intent in intents and {capability, strategy}.issubset(tags):
             matches.append(entry)
     return matches

@@ -179,6 +179,7 @@ class AdaptiveToolLoopLLMRuntime(Protocol):
 @runtime_checkable
 class AdaptiveToolLoopContext(Protocol):
     state: WorkingState
+    session_api: Any | None
 
     def execute_command(
         self,

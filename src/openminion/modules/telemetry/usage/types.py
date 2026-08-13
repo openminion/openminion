@@ -39,14 +39,11 @@ def _tool_error_count_from_payload(payload: Mapping[str, Any]) -> int:
             raw_tool_results = None
     if not isinstance(raw_tool_results, list):
         return 0
-    count = 0
-    for item in raw_tool_results:
-        if not isinstance(item, dict):
-            continue
-        if bool(item.get("ok")):
-            continue
-        count += 1
-    return max(0, count)
+    return sum(
+        1
+        for item in raw_tool_results
+        if isinstance(item, dict) and not bool(item.get("ok"))
+    )
 
 
 @dataclass(frozen=True)
@@ -93,13 +90,13 @@ class RunStats:
 
     def as_payload(self) -> dict[str, int]:
         return {
-            "input_tokens": int(self.input_tokens),
-            "output_tokens": int(self.output_tokens),
-            "cache_read_tokens": int(self.cache_read_tokens),
-            "llm_calls": int(self.llm_calls),
-            "tool_calls": int(self.tool_calls),
-            "tool_errors": int(self.tool_errors),
-            "duration_ms": int(self.duration_ms),
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "llm_calls": self.llm_calls,
+            "tool_calls": self.tool_calls,
+            "tool_errors": self.tool_errors,
+            "duration_ms": self.duration_ms,
         }
 
     @classmethod

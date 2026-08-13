@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
-from collections.abc import Mapping
 
 from openminion.modules.runtime.replay import (
     ReplayBundle,
@@ -72,7 +72,7 @@ def list_task_checkpoints(
         action="checkpoint",
         task_id=record.task_id,
         checkpoints=checkpoints,
-        source_refs=_task_source_refs(record),
+        source_refs=(f"task:{record.task_id}",),
     )
 
 
@@ -118,7 +118,7 @@ def compare_task_checkpoint(
         task_id=record.task_id,
         checkpoint_id=checkpoint_id,
     )
-    _expected_id, expected_state = _load_checkpoint(
+    _, expected_state = _load_checkpoint(
         task_manager,
         task_id=record.task_id,
         checkpoint_id=expected_checkpoint_id,
@@ -209,7 +209,7 @@ def rewind_task_to_checkpoint(
 
 
 def _require_task(task_manager: TaskManager, task_id: str) -> TaskLifecycleRecord:
-    normalized_task_id = str(task_id or "").strip()
+    normalized_task_id = (task_id or "").strip()
     if not normalized_task_id:
         raise ValueError("task_id is required")
     record = task_manager.get_task(normalized_task_id)
@@ -224,7 +224,7 @@ def _load_checkpoint(
     task_id: str,
     checkpoint_id: str | None,
 ) -> tuple[str, dict[str, Any]]:
-    normalized_checkpoint_id = str(checkpoint_id or "").strip()
+    normalized_checkpoint_id = (checkpoint_id or "").strip()
     if normalized_checkpoint_id:
         state = task_manager.get_checkpoint(task_id, normalized_checkpoint_id)
         if state is None:
@@ -346,7 +346,7 @@ def _create_branch_record(
             "checkpoint_state": dict(checkpoint_state),
         }
     )
-    requested_task_id = str(branch_task_id or "").strip() or None
+    requested_task_id = (branch_task_id or "").strip() or None
     linked_job_id = requested_task_id or (
         f"{source.task_id}:{action}:{checkpoint_id}:{uuid.uuid4().hex[:12]}"
     )
@@ -356,10 +356,6 @@ def _create_branch_record(
         metadata=metadata,
         task_id=requested_task_id,
     )
-
-
-def _task_source_refs(record: TaskLifecycleRecord) -> tuple[str, ...]:
-    return (f"task:{record.task_id}",)
 
 
 def _branch_source_refs(task_id: str, checkpoint_id: str) -> tuple[str, ...]:

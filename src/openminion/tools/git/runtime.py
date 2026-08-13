@@ -20,7 +20,6 @@ from openminion.tools.git.errors import (
     GIT_REF_NOT_FOUND,
 )
 
-# Bounded timeout for any single `git` invocation. Read-only ops (status,
 DEFAULT_GIT_TIMEOUT_SECONDS = 30.0
 
 # Maximum stderr length carried in error details. Prevents unbounded growth
@@ -52,9 +51,7 @@ def _search_path_chain(seed: Path, preferred: Path) -> list[str]:
         chain.append(str(current))
         if current == seed:
             break
-        try:
-            current.relative_to(seed)
-        except ValueError:
+        if not current.is_relative_to(seed):
             break
         parent = current.parent
         if parent == current:
@@ -76,9 +73,7 @@ def resolve_git_repo_root(ctx: Any) -> Path:
     if preferred != seed:
         current = preferred
         while True:
-            try:
-                current.relative_to(seed)
-            except ValueError:
+            if not current.is_relative_to(seed):
                 break
             if _has_git_entry(current):
                 return current
@@ -125,12 +120,6 @@ class GitCommandResult:
     cwd: str
 
 
-def _git_binary_path() -> str | None:
-    """Return the absolute path to `git` on `PATH`, or `None` if not found."""
-
-    return shutil.which("git")
-
-
 def run_git(
     args: tuple[str, ...] | list[str],
     *,
@@ -138,12 +127,9 @@ def run_git(
     timeout: float = DEFAULT_GIT_TIMEOUT_SECONDS,
     env: dict[str, str] | None = None,
 ) -> GitCommandResult:
-    """Run `git <args>` in `cwd`. Raises `ToolRuntimeError(GIT_NOT_AVAILABLE)`
-    if the binary is missing. Otherwise returns the captured result; the
-    caller classifies exit codes via `classify_git_failure`.
-    """
+    """Run Git with explicit arguments and return its captured result."""
 
-    binary = _git_binary_path()
+    binary = shutil.which("git")
     if binary is None:
         raise ToolRuntimeError(
             GIT_NOT_AVAILABLE,
@@ -163,18 +149,15 @@ def run_git(
     )
     return GitCommandResult(
         command=command,
-        exit_code=int(completed.returncode),
-        stdout=str(completed.stdout or ""),
-        stderr=str(completed.stderr or ""),
+        exit_code=completed.returncode,
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
         cwd=str(cwd),
     )
 
 
 def classify_git_failure(result: GitCommandResult) -> ToolRuntimeError:
-    """Map a non-zero `GitCommandResult` to a deterministic"""
-
     if result.exit_code == 0:
-        # Defensive: callers should only invoke this on failure. Returning
         raise ValueError(
             "classify_git_failure called with successful result; "
             "check exit_code before classifying"

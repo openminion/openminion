@@ -169,11 +169,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Explicit telemetry SQLite path override.",
     )
-    catalog = sub.add_parser(
+    sub.add_parser(
         "catalog",
         help="Print registered telemetry event types and OTel export dispositions.",
     )
-    catalog.set_defaults(command="catalog")
     doctor = sub.add_parser(
         "doctor",
         help="Check telemetry database, trace root, and exporter configuration.",
@@ -223,10 +222,6 @@ async def _print_summary(*, db_path, session_id: str) -> int:
         await service.close()
     print_json_payload(payload)
     return 0
-
-
-def _safe_invocation_id(value: str) -> str:
-    return parse_invocation_id(value)
 
 
 def _event_row(event) -> dict[str, Any]:
@@ -390,7 +385,7 @@ async def _print_invocation(*, args, db_path) -> int:
 
 def _print_invocation_detail(*, args: Any, db_path: Path) -> int:
     try:
-        token = _safe_invocation_id(args.invocation_id)
+        token = parse_invocation_id(args.invocation_id)
     except ValueError:
         report = build_telemetry_debug_error("INVALID_ARGUMENT", "argument")
         print_json_payload(report.to_dict())

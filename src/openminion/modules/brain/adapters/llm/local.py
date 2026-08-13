@@ -287,7 +287,7 @@ class LocalLLMAdapter:
             user_input,
             {
                 "messages": [
-                    {"role": message.role, "content": message.content}
+                    message.model_dump(mode="json", exclude_none=True)
                     for message in request.messages
                 ],
                 "hints": {

@@ -1,4 +1,4 @@
-from typing import Final, Literal
+from typing import Literal
 
 from openminion.tools.constants import (
     TOOL_REASON_RECORD_NOT_FOUND as LOCATION_REASON_RECORD_NOT_FOUND,
@@ -7,28 +7,24 @@ from openminion.tools.constants import (
     TOOL_REASON_STORAGE_UNCONFIGURED as LOCATION_REASON_STORAGE_UNCONFIGURED,
 )
 
-LOCATION_SOURCE_SESSION_OVERRIDE: Final[Literal["session.override"]] = (
-    "session.override"
-)
-LOCATION_SOURCE_IDENTITY_DEFAULT: Final[Literal["identity.default"]] = (
-    "identity.default"
-)
-LOCATION_SOURCE_IP_GEO: Final[Literal["ip.geo"]] = "ip.geo"
-LOCATION_SOURCE_NONE: Final[Literal["none"]] = "none"
+LOCATION_SOURCE_SESSION_OVERRIDE: Literal["session.override"] = "session.override"
+LOCATION_SOURCE_IDENTITY_DEFAULT: Literal["identity.default"] = "identity.default"
+LOCATION_SOURCE_IP_GEO: Literal["ip.geo"] = "ip.geo"
+LOCATION_SOURCE_NONE: Literal["none"] = "none"
 LOCATION_SOURCE_VALUES: tuple[str, ...] = (
     LOCATION_SOURCE_SESSION_OVERRIDE,
     LOCATION_SOURCE_IDENTITY_DEFAULT,
     LOCATION_SOURCE_IP_GEO,
     LOCATION_SOURCE_NONE,
 )
-LOCATION_PREFER_AUTO: Final[Literal["auto"]] = "auto"
-LOCATION_PREFER_IDENTITY: Final[Literal["identity"]] = "identity"
-LOCATION_PREFER_IP: Final[Literal["ip"]] = "ip"
-LOCATION_PREFER_SESSION: Final[Literal["session"]] = "session"
-LOCATION_PRIVACY_NONE: Final[Literal["none"]] = "none"
-LOCATION_PRIVACY_CITY: Final[Literal["city"]] = "city"
-LOCATION_PRIVACY_REGION: Final[Literal["region"]] = "region"
-LOCATION_PRIVACY_PRECISE: Final[Literal["precise"]] = "precise"
+LOCATION_PREFER_AUTO: Literal["auto"] = "auto"
+LOCATION_PREFER_IDENTITY: Literal["identity"] = "identity"
+LOCATION_PREFER_IP: Literal["ip"] = "ip"
+LOCATION_PREFER_SESSION: Literal["session"] = "session"
+LOCATION_PRIVACY_NONE: Literal["none"] = "none"
+LOCATION_PRIVACY_CITY: Literal["city"] = "city"
+LOCATION_PRIVACY_REGION: Literal["region"] = "region"
+LOCATION_PRIVACY_PRECISE: Literal["precise"] = "precise"
 LOCATION_PRIVACY_LEVELS: tuple[str, ...] = (
     LOCATION_PRIVACY_NONE,
     LOCATION_PRIVACY_CITY,

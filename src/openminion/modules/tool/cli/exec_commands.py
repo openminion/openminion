@@ -24,10 +24,10 @@ def _build_exec_run_args(
 ) -> dict[str, Any]:
     args: dict[str, Any] = {
         "command": command,
-        "yield_ms": int(yield_ms),
-        "background": bool(background),
-        "timeout_s": int(timeout_s),
-        "pty": bool(pty),
+        "yield_ms": yield_ms,
+        "background": background,
+        "timeout_s": timeout_s,
+        "pty": pty,
         "host": host,
         "security": security,
         "ask": ask,
@@ -53,8 +53,6 @@ def _dispatch_exec(
     invoke_exec_tool: Callable[..., tuple[Any, int]],
     finalize_cli_call: Callable[[Any, int, bool], None],
 ) -> None:
-    """Common dispatch path: `invoke_exec_tool` + `finalize_cli_call`.
-    Preserves exact `tool=<name>` strings, arg shape, exit codes, and output."""
     env_out, exit_code = invoke_exec_tool(
         tool=tool,
         args=args,
@@ -144,7 +142,7 @@ def _register_exec_poll(
     ) -> None:
         _dispatch_exec(
             tool="exec.poll",
-            args={"session_id": session_id, "tail_lines": int(tail_lines)},
+            args={"session_id": session_id, "tail_lines": tail_lines},
             policy=policy,
             workspace=workspace,
             scope=scope,
@@ -242,7 +240,7 @@ def _register_exec_paste(
     ) -> None:
         _dispatch_exec(
             tool="exec.paste",
-            args={"session_id": session_id, "text": text, "bracketed": bool(bracketed)},
+            args={"session_id": session_id, "text": text, "bracketed": bracketed},
             policy=policy,
             workspace=workspace,
             scope=scope,
@@ -339,7 +337,7 @@ def _register_exec_list(
     ) -> None:
         _dispatch_exec(
             tool="exec.list",
-            args={"include_exited": bool(include_exited)},
+            args={"include_exited": include_exited},
             policy=policy,
             workspace=workspace,
             scope=scope,

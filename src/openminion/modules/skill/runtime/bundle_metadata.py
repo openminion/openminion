@@ -50,9 +50,11 @@ def resolve_bundle_metadata_trust(
 ) -> str:
     if trust is not None:
         return validate_bundle_metadata_trust(trust)
-    if remote:
-        return BUNDLE_METADATA_TRUST_UNTRUSTED_REMOTE
-    return BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL
+    return (
+        BUNDLE_METADATA_TRUST_UNTRUSTED_REMOTE
+        if remote
+        else BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL
+    )
 
 
 def _empty_companion_metadata(source: str, *, trust: str) -> dict[str, Any]:
@@ -77,10 +79,7 @@ def load_companion_metadata(
     trust: str | None = None,
 ) -> dict[str, Any]:
     """Load companion metadata and carry an explicit source enum."""
-    normalized_trust = resolve_bundle_metadata_trust(
-        trust,
-        remote=False,
-    )
+    normalized_trust = resolve_bundle_metadata_trust(trust, remote=False)
     if bundle_root is None:
         return _empty_companion_metadata(
             BUNDLE_METADATA_SOURCE_NOT_ATTEMPTED,
@@ -119,10 +118,10 @@ def companion_metadata_unavailable_warning(
     companion_metadata: dict[str, Any],
 ) -> str | None:
     bundle_block = companion_metadata.get("bundle_metadata") or {}
-    if not isinstance(bundle_block, dict):
-        return None
-    source = str(bundle_block.get("source", "")).strip()
-    if source == BUNDLE_METADATA_SOURCE_NONE:
+    if (
+        isinstance(bundle_block, dict)
+        and str(bundle_block.get("source", "")).strip() == BUNDLE_METADATA_SOURCE_NONE
+    ):
         return "parse.warning:companion_metadata_unavailable"
     return None
 
@@ -131,9 +130,7 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     if yaml is None:
         return {}
     parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(parsed, dict):
-        return {}
-    return parsed
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _as_text(value: Any) -> str | None:

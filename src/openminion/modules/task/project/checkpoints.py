@@ -82,10 +82,10 @@ def find_open_project_worker(
     project_run_id: str,
     exclude_task_id: str | None = None,
 ) -> TaskLifecycleRecord | None:
-    normalized_project_id = str(project_run_id or "").strip()
+    normalized_project_id = project_run_id.strip()
     if not normalized_project_id:
         raise ValueError("project_run_id is required")
-    excluded = str(exclude_task_id or "").strip() or None
+    excluded = exclude_task_id.strip() if exclude_task_id else None
     for record in task_manager.lifecycle_repository.list(limit=1000):
         if record.state not in _OPEN_PROJECT_TASK_STATES:
             continue
@@ -202,12 +202,12 @@ def record_project_cycle(
     checkpoint_id: str | None = None,
     payload: dict[str, object] | None = None,
 ) -> ProjectCycleRecord:
-    normalized_reason = str(decision_reason or "").strip() or None
+    normalized_reason = decision_reason.strip() if decision_reason else None
     if decision != ProjectCycleDecision.CONTINUE and normalized_reason is None:
         raise ValueError("decision_reason is required unless decision is continue")
-    effective_checkpoint_id = (
-        str(checkpoint_id or "").strip()
-        or f"{project_run.project_run_id}:{str(cycle_id).strip()}"
+    normalized_checkpoint_id = (checkpoint_id or "").strip()
+    effective_checkpoint_id = normalized_checkpoint_id or (
+        f"{project_run.project_run_id}:{cycle_id.strip()}"
     )
     record = ProjectCycleRecord(
         cycle_id=cycle_id,
@@ -223,9 +223,7 @@ def record_project_cycle(
         decision_reason=normalized_reason,
         created_at_ms=now_ms(),
     )
-    checkpoint_payload: dict[str, object] = {
-        "cycle": record.model_dump(mode="json"),
-    }
+    checkpoint_payload: dict[str, object] = {"cycle": record.model_dump(mode="json")}
     if payload:
         checkpoint_payload["payload"] = dict(payload)
     save_project_run_checkpoint(

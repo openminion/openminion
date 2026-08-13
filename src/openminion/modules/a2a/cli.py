@@ -272,7 +272,11 @@ def _optional(value: str) -> str | None:
 def _parse_since(value: str) -> int:
     raw = value.strip().lower()
     for suffix, multiplier in (
-        ("ms", 0.001), ("s", 1), ("m", 60), ("h", 3600), ("d", 86_400)
+        ("ms", 0.001),
+        ("s", 1),
+        ("m", 60),
+        ("h", 3600),
+        ("d", 86_400),
     ):
         if raw.endswith(suffix):
             return int(float(raw[: -len(suffix)]) * multiplier)

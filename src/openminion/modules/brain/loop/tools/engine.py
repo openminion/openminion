@@ -116,6 +116,7 @@ from .iteration.dispatch import prepare_iteration_dispatch
 from .iteration.execution import execute_iteration_results
 from .postprocess.loop import finalize_iteration_state
 from .iteration.termination import finalize_iteration_cap_exit
+from .transcript import persist_requested_tool_calls
 from .iteration.helpers import (
     _append_tool_result_payload,
     _build_enrichment_message,
@@ -533,6 +534,13 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             outcome = self._validate_tool_calls(tool_calls)
             if outcome is not None:
                 return outcome
+
+            persist_requested_tool_calls(
+                self.loop_ctx,
+                loop_state=self.loop_state,
+                turn_scope_id=str(self.turn_scope_id or ""),
+                tool_calls=tool_calls,
+            )
 
             dispatch_phase = prepare_iteration_dispatch(
                 self.loop_ctx,

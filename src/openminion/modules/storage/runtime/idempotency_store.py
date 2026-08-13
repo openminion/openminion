@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
-from typing import Any, Optional
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
 
 from openminion.modules.storage.record_store import RecordStore
 
@@ -17,9 +17,7 @@ def _json_payload(payload: Mapping[str, Any] | None) -> str:
 
 def _parse_json(raw: str) -> dict[str, Any]:
     parsed = json.loads(raw)
-    if isinstance(parsed, dict):
-        return parsed
-    return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 @dataclass(frozen=True)
@@ -86,7 +84,7 @@ class IdempotencyStore:
         )
         return inserted > 0
 
-    def get(self, *, method: str, idempotency_key: str) -> Optional[IdempotencyRecord]:
+    def get(self, *, method: str, idempotency_key: str) -> IdempotencyRecord | None:
         row = self._query_one(
             """
             SELECT method, idempotency_key, request_hash, response_json, status, created_at, updated_at

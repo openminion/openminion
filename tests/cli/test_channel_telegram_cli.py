@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneSto
 
 class FakeTelegramBotAPI:
     updates: list[dict] = []
+    update_batches: list[list[dict]] = []
     fail_get_me = False
     command_syncs: list[list[dict[str, str]]] = []
 
@@ -34,6 +36,8 @@ class FakeTelegramBotAPI:
         limit: int,
         allowed_updates: list[str],
     ) -> list[dict]:
+        if self.update_batches:
+            return list(self.update_batches.pop(0))
         return list(self.updates)
 
     def set_my_commands(self, commands: list[dict[str, str]]) -> dict:
@@ -138,6 +142,7 @@ def test_setup_writes_unified_config_from_stdin(
     assert payload["channels"]["telegram"]["enabled"] is True
     assert payload["channels"]["telegram"]["botToken"] == "good-token"
     assert "good-token" not in capsys.readouterr().out
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
 
 
 def test_setup_stdin_reads_one_line(
@@ -245,17 +250,17 @@ def test_identify_prints_candidate(
 ) -> None:
     monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
     monkeypatch.setattr(channel, "_daemon_reachable", lambda _path: False)
-    FakeTelegramBotAPI.updates = [
-        {
-            "update_id": 7,
-            "message": {
-                "message_id": 1,
-                "from": {"id": 11, "username": "alice", "first_name": "Alice"},
-                "chat": {"id": 22, "type": "private"},
-                "text": "hello",
-            },
-        }
-    ]
+    candidate = {
+        "update_id": 7,
+        "message": {
+            "message_id": 1,
+            "from": {"id": 11, "username": "alice", "first_name": "Alice"},
+            "chat": {"id": 22, "type": "private"},
+            "text": "hello",
+        },
+    }
+    FakeTelegramBotAPI.updates = []
+    FakeTelegramBotAPI.update_batches = [[], [candidate]]
     config_path = _write_profile(tmp_path)
 
     rc = channel.telegram_identify(
@@ -270,6 +275,44 @@ def test_identify_prints_candidate(
     assert (
         f"openminion channel telegram pair --config {config_path} --user-id 11 --chat-id 22"
     ) in output
+
+
+def test_identify_ignores_updates_queued_before_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    monkeypatch.setattr(channel, "_daemon_reachable", lambda _path: False)
+    old_update = {
+        "update_id": 7,
+        "message": {
+            "message_id": 1,
+            "from": {"id": 10, "username": "old"},
+            "chat": {"id": 20, "type": "private"},
+            "text": "old message",
+        },
+    }
+    new_update = {
+        "update_id": 8,
+        "message": {
+            "message_id": 2,
+            "from": {"id": 11, "username": "new"},
+            "chat": {"id": 22, "type": "private"},
+            "text": "new message",
+        },
+    }
+    FakeTelegramBotAPI.updates = []
+    FakeTelegramBotAPI.update_batches = [[old_update], [new_update]]
+    config_path = _write_profile(tmp_path)
+
+    rc = channel.telegram_identify(
+        SimpleNamespace(config=str(config_path), timeout_seconds=1)
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "user_id: 11" in output
+    assert "chat_id: 22" in output
+    assert "user_id: 10" not in output
 
 
 def test_identify_reports_active_runner_conflict(

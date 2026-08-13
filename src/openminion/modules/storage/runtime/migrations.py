@@ -413,7 +413,6 @@ def run_migrations(
 def _normalize_migrations(migrations: Iterable[Migration]) -> list[Migration]:
     ordered = sorted(migrations, key=lambda item: item.version)
     seen_versions: set[int] = set()
-    normalized: list[Migration] = []
 
     for migration in ordered:
         if migration.version <= 0:
@@ -428,9 +427,8 @@ def _normalize_migrations(migrations: Iterable[Migration]) -> list[Migration]:
             raise MigrationError(f"Migration v{migration.version} has no statements")
 
         seen_versions.add(migration.version)
-        normalized.append(migration)
 
-    return normalized
+    return ordered
 
 
 def _ensure_migration_ledger(connection: sqlite3.Connection) -> None:
@@ -507,7 +505,7 @@ def _adapt_migration_statements(
     *,
     backend_type: str,
 ) -> tuple[str, ...]:
-    if str(backend_type).strip().lower() != "postgres":
+    if backend_type.strip().lower() != "postgres":
         return tuple(statements)
     adapted: list[str] = []
     for statement in statements:

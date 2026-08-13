@@ -321,6 +321,7 @@ class FocusProbe:
             "--dir",
             str(self.workdir),
             "--no-update-check",
+            "--allow-unsandboxed-exec",
             "--progress",
             "minimal",
         )
@@ -609,6 +610,7 @@ class FocusProbe:
         self._submit_composer_line(session, scenario.prompt)
         event_offset = len(session.visible_transcript)
         approvals = 0
+        continuations = 0
         deadline = time.monotonic() + scenario.timeout
         while time.monotonic() < deadline:
             time.sleep(0.1)
@@ -644,6 +646,16 @@ class FocusProbe:
                 event_offset = len(session.visible_transcript)
                 continue
             if done_match is not None and not approval_visible:
+                completed_segment = transcript[event_offset:]
+                if (
+                    "Continue in a new turn to resume." in completed_segment
+                    and continuations < scenario.max_auto_continuations
+                ):
+                    continuations += 1
+                    session.send("continue\r")
+                    event_offset = len(session.visible_transcript)
+                    deadline = time.monotonic() + scenario.timeout
+                    continue
                 break
         else:
             raise AssertionError(

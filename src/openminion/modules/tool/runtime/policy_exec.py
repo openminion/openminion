@@ -129,12 +129,7 @@ class PolicyExecMixin:
         if not effective_argv:
             raise _invalid_argument("cmd.run argv must include executable")
         raw_exec = effective_argv[0]
-        exec_name = (
-            os.path.basename(raw_exec)
-            if ("/" in raw_exec or "\\" in raw_exec)
-            else raw_exec
-        )
-        exec_name = exec_name.strip()
+        exec_name = self._normalize_exec_name(raw_exec).strip()
         if not exec_name:
             raise _invalid_argument("cmd.run executable cannot be empty")
 
@@ -184,9 +179,7 @@ class PolicyExecMixin:
                         **(_MKDIR_SCAFFOLD_HINT if exec_name == "mkdir" else {}),
                     },
                 )
-        elif mode == "blocklist":
-            pass
-        else:
+        elif mode != "blocklist":
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT",
                 f"Invalid command mode: {mode_raw}",

@@ -13,10 +13,9 @@ class DataCompatWindow:
 def requires_rehydrate(
     *, user_version: int, window: DataCompatWindow, has_migration_path: bool
 ) -> bool:
-    in_window = window.min_data_version <= user_version <= window.max_data_version
-    if in_window and has_migration_path:
-        return False
-    return True
+    return not has_migration_path or not (
+        window.min_data_version <= user_version <= window.max_data_version
+    )
 
 
 def resolve_version_action(

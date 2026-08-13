@@ -269,12 +269,11 @@ def _matches(request: AuditQueryRequest, event: AuditEvent) -> bool:
         return False
     if request.actor_ref is not None and event.actor_ref != request.actor_ref:
         return False
-    if request.target_class is not None:
-        prefix = request.target_class
-        # ``target_class`` matches a structural prefix on ``target_ref``;
-        # the seam never scans prose. Callers declare the prefix.
-        if not event.target_ref.startswith(prefix):
-            return False
+    # ``target_class`` is a caller-declared structural prefix, never prose.
+    if request.target_class is not None and not event.target_ref.startswith(
+        request.target_class
+    ):
+        return False
     if request.time_range is not None:
         start, end = request.time_range
         if not (start <= event.timestamp < end):
@@ -321,14 +320,12 @@ def apply_audit_retention_policy(
     retained: list[str] = []
     targets: list[str] = []
     for audit_event_id, event in audit_log.iter_records():
-        if event.kind in policy.holds:
-            retained.append(audit_event_id)
-            continue
-        if event.kind not in policy.erasure_eligible:
-            retained.append(audit_event_id)
-            continue
         duration = policy.durations.get(event.kind)
-        if duration is None:
+        if (
+            event.kind in policy.holds
+            or event.kind not in policy.erasure_eligible
+            or duration is None
+        ):
             retained.append(audit_event_id)
             continue
         if now - event.timestamp >= duration:

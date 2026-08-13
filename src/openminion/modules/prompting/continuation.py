@@ -19,8 +19,6 @@ TOOL_LOOP_CONTINUE_PROMPT = (
 
 
 def build_active_task_continuation_prompt(*, original_request: str = "") -> str:
-    """Render the active-task continuation prompt used by provider retries."""
-
     request = str(original_request or "").strip()
     if not request:
         return ACTIVE_TASK_CONTINUATION_PROMPT
@@ -33,8 +31,6 @@ def build_active_task_continuation_prompt(*, original_request: str = "") -> str:
 
 
 def build_continuation_choice_message(reason: str | None) -> str:
-    """Render the operator choice prompt for pending continuation replies."""
-
     guidance = str(reason or "").strip()
     base = (
         "The previous step completed successfully, but it did not fully satisfy the goal."
@@ -53,8 +49,6 @@ def build_successful_tool_continuation_prompt(
     successful_tools: tuple[str, ...] | list[str],
     max_tools: int = 8,
 ) -> str:
-    """Render continuation guidance that preserves completed same-turn tools."""
-
     base = str(base_prompt or "").strip() or ACTIVE_TASK_CONTINUATION_PROMPT
     tools = tuple(
         clean for tool in successful_tools if (clean := str(tool or "").strip())
@@ -71,8 +65,6 @@ def build_successful_tool_continuation_prompt(
 
 
 def build_feasibility_choice_prompt(*, user_message: str) -> str:
-    """Render the standard feasibility-choice prompt."""
-
     base = str(user_message or "").strip() or (
         "User guidance is required before this request can continue."
     )
@@ -92,8 +84,6 @@ def build_goal_run_continuation_prompt(
     evidence_refs: tuple[str, ...] | list[str] = (),
     next_instruction: str = "",
 ) -> str:
-    """Render the structural continuation prompt for one goal-run turn."""
-
     lines = [
         f"Continue goal {str(goal_id or '').strip()}.",
         f"Evaluator outcome: {str(evaluator_outcome or '').strip()}.",
@@ -111,8 +101,6 @@ def build_goal_run_continuation_prompt(
 
 
 def build_plan_checkpoint_continuation_message(*, cursor: int, total_steps: int) -> str:
-    """Render the checkpoint pause prompt for plan execution."""
-
     return f"Completed {cursor}/{total_steps} steps. Reply 'continue' to proceed."
 
 

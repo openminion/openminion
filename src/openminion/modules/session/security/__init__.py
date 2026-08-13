@@ -1,5 +1,3 @@
-"""Session security helpers."""
-
 from .encryption import (
     FernetSessionKeyRing,
     SessionContentSearchDisabledError,

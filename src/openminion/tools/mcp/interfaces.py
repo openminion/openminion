@@ -225,8 +225,9 @@ class MCPToolRegistrationState:
                 continue
             supported_tools.append(tool)
             if prepared.mode == "passthrough":
-                passthrough_note = prepared.note or "passthrough"
-                passthrough_tools.append(f"{runtime_tool_name}:{passthrough_note}")
+                passthrough_tools.append(
+                    f"{runtime_tool_name}:{prepared.note or 'passthrough'}"
+                )
 
         self._supported_tools = tuple(supported_tools)
         self._passthrough_tools = tuple(passthrough_tools)
@@ -249,15 +250,15 @@ class MCPToolRegistrationState:
 
     @property
     def supported_prompts(self) -> tuple[MCPListedPrompt, ...]:
-        return tuple(self.discovered_prompts)
+        return self.discovered_prompts
 
     @property
     def supported_resources(self) -> tuple[MCPListedResource, ...]:
-        return tuple(self.discovered_resources)
+        return self.discovered_resources
 
     @property
     def supported_resource_templates(self) -> tuple[MCPListedResourceTemplate, ...]:
-        return tuple(self.discovered_resource_templates)
+        return self.discovered_resource_templates
 
     @property
     def added_runtime_tools(self) -> tuple[str, ...]:
@@ -313,8 +314,6 @@ class MCPToolRegistrationState:
                     token += f":{message}"
                 formatted.append(token)
             parts.append("failed_mcp_servers=" + ",".join(sorted(formatted)))
-        if not parts:
-            return ""
         return " ".join(parts)
 
 

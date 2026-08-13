@@ -50,6 +50,8 @@ class SessionStoreAPI(Protocol):
 
     def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None: ...
 
+    def get_tool_transcript(self, session_id: str) -> dict[str, Any]: ...
+
     def get_slice(
         self, session_id: str, purpose: str, limits: Any = None
     ) -> dict[str, Any]: ...
@@ -153,21 +155,17 @@ _REQUIRED_MEMBERS: dict[str, tuple[str, ...]] = {
 def ensure_session_component_compatibility(
     component: Any, *, component_type: str
 ) -> None:
-    normalized = str(component_type or "").strip().lower()
+    normalized = component_type.strip().lower()
     required = _REQUIRED_MEMBERS.get(normalized)
     if required is None:
         raise ValueError(f"unknown component_type: {component_type}")
 
-    missing: list[str] = []
-    for name in required:
-        if not hasattr(component, name):
-            missing.append(name)
-            continue
-        value = getattr(component, name)
-        if name == "contract_version":
-            continue
-        if not callable(value):
-            missing.append(name)
+    missing = [
+        name
+        for name in required
+        if not hasattr(component, name)
+        or (name != "contract_version" and not callable(getattr(component, name)))
+    ]
     if missing:
         raise TypeError(
             f"{component.__class__.__name__} is incompatible with session {normalized} contract; missing members: {', '.join(missing)}"
@@ -184,25 +182,19 @@ def ensure_cron_repository_compatibility(repository: Any) -> None:
     """Validate cron repository contract used by tool runtime injection."""
     errors = validate_cron_store_protocol(repository)
     if errors:
+        missing_prefix = "Missing required store method: "
         missing_members = [
-            error.removeprefix("Missing required store method: ").strip()
+            error.removeprefix(missing_prefix).strip()
             for error in errors
-            if error.startswith("Missing required store method: ")
+            if error.startswith(missing_prefix)
         ]
         version_errors = [
-            error
-            for error in errors
-            if error
-            not in set(
-                f"Missing required store method: {name}" for name in missing_members
-            )
+            error for error in errors if not error.startswith(missing_prefix)
         ]
+        details = []
         if missing_members:
-            detail = f"missing members: {', '.join(missing_members)}"
-            if version_errors:
-                detail = f"{detail}; {'; '.join(version_errors)}"
-        else:
-            detail = "; ".join(errors)
+            details.append(f"missing members: {', '.join(missing_members)}")
+        details.extend(version_errors)
         raise TypeError(
-            f"{repository.__class__.__name__} is incompatible with cron repository contract; {detail}"
+            f"{repository.__class__.__name__} is incompatible with cron repository contract; {'; '.join(details)}"
         )

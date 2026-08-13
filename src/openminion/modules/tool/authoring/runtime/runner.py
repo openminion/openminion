@@ -32,19 +32,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--args-json", default=None)
     args = parser.parse_args(argv)
 
-    raw_args = args.args_json
-    if raw_args is None:
-        raw_args = input()
-    payload = json.loads(str(raw_args or "{}"))
+    raw_args = args.args_json if args.args_json is not None else input()
+    payload = json.loads(raw_args or "{}")
     if not isinstance(payload, dict):
         raise SystemExit(2)
     result = execute_tool_file(
-        tool_file=str(args.tool_file),
-        entry_function=str(args.entry_function),
+        tool_file=args.tool_file,
+        entry_function=args.entry_function,
         arguments=dict(payload),
     )
-    sys.stdout.write(json.dumps(result, ensure_ascii=True))
-    sys.stdout.write("\n")
+    sys.stdout.write(json.dumps(result, ensure_ascii=True) + "\n")
     return 0
 
 

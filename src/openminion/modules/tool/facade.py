@@ -15,7 +15,6 @@ from .registry import ToolRegistry
 
 __version__ = OPENMINION_VERSION
 
-# Module-first tool source gates. Wave-1 TMFC/WOMC migrations forced this path.
 _MODULES_ONLY = True
 _TAVILY_SOURCE = "module_first"
 _WEATHER_SOURCE = "module_first"
@@ -38,12 +37,7 @@ def build_default_tool_registry(
 
 
 def build_default_tool_registry_debug_report() -> dict[str, Any]:
-    bootstrap = build_runtime_bootstrap(
-        config=None,
-        workspace_root=None,
-        run_root=None,
-        strict=False,
-    )
+    bootstrap = build_runtime_bootstrap(strict=False)
     records = [record.__dict__.copy() for record in (bootstrap.bootstrap_records or [])]
     required_failures = [
         record
@@ -56,7 +50,7 @@ def build_default_tool_registry_debug_report() -> dict[str, Any]:
         }
     ]
     return {
-        "ok": len(required_failures) == 0,
+        "ok": not required_failures,
         "required_failures": required_failures,
         "bootstrap_records": records,
         "registry_snapshot": bootstrap.registry.registration_debug_snapshot(),

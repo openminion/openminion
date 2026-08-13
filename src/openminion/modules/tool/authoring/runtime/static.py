@@ -59,10 +59,10 @@ def _call_name(node: ast.Call) -> tuple[str, ...]:
     return _attr_chain(node.func)
 
 
-def _literal_strings(tree: ast.AST) -> Iterable[ast.Constant]:
+def _literal_strings(tree: ast.AST) -> Iterable[tuple[ast.Constant, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            yield node
+            yield node, node.value
 
 
 def _make_finding(
@@ -82,7 +82,7 @@ def _make_finding(
 def rollup_risk_level(findings: Iterable[StaticInspectFinding]) -> str:
     level = "low"
     for finding in findings:
-        severity = str(finding.severity or "low").strip().lower() or "low"
+        severity = finding.severity.strip().lower() or "low"
         if _RISK_ORDER.get(severity, 0) > _RISK_ORDER[level]:
             level = severity
     return level
@@ -94,12 +94,10 @@ def inspect_source(
     target_scope_tier: str = POWER_USER,
     allowed_deps: set[str] | None = None,
 ) -> tuple[str, list[StaticInspectFinding]]:
-    tree = ast.parse(str(source_code or ""))
+    tree = ast.parse(source_code)
     findings: list[StaticInspectFinding] = []
-    tier = str(target_scope_tier or POWER_USER).strip().upper() or POWER_USER
-    allowed = {
-        str(item).strip() for item in (allowed_deps or set()) if str(item).strip()
-    }
+    tier = target_scope_tier.strip().upper() or POWER_USER
+    allowed = {item.strip() for item in (allowed_deps or set()) if item.strip()}
 
     def add(code: str, severity: str, message: str, node: ast.AST) -> None:
         findings.append(
@@ -142,9 +140,7 @@ def inspect_source(
                                 "filesystem write pattern",
                                 node,
                             )
-                if name_chain[:2] == ("pathlib", "Path"):
-                    continue
-                if name_chain[-1:] and name_chain[-1] in {"write_text", "write_bytes"}:
+                if name_chain and name_chain[-1] in {"write_text", "write_bytes"}:
                     add("STATIC-FS-WRITE", "high", "filesystem write pattern", node)
                 if name_chain in {("os", "remove"), ("os", "unlink")} or (
                     len(name_chain) >= 1 and name_chain[0] == "shutil"
@@ -201,8 +197,7 @@ def inspect_source(
                             node,
                         )
 
-    for node in _literal_strings(tree):
-        value = str(node.value)
+    for node, value in _literal_strings(tree):
         if _SECRET_TOKEN_RE.search(value):
             add("STATIC-SECRET-001", "critical", "hardcoded token literal", node)
         if _PRIVATE_KEY_RE.search(value):

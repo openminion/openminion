@@ -25,7 +25,7 @@ def render_record_with_confidence(record: Any) -> str:
     title = str(getattr(record, "title", "") or "").strip()
     content = getattr(record, "content", "") or ""
     if isinstance(content, dict):
-        content = str(content.get("text", content.get("value", str(content))))
+        content = content.get("text", content.get("value", content))
     content_text = str(content or "").strip()
     confidence = float(getattr(record, "confidence", 0.0) or 0.0)
     band = confidence_band(confidence)
@@ -51,9 +51,7 @@ def format_records_with_confidence(
     for rec in records:
         lines.append(f"  • {render_record_with_confidence(rec)}")
     out = "\n".join(lines)
-    if len(out) > max_chars:
-        out = out[:max_chars] + "\n  [truncated]"
-    return out
+    return out[:max_chars] + "\n  [truncated]" if len(out) > max_chars else out
 
 
 __all__ = (

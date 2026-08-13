@@ -210,12 +210,12 @@ def pinchtab_daemon_config(
     env_config = resolve_tool_env(env=env)
     data_root = resolve_tool_data_root(env=env_config)
     runtime_dir = data_root / DEFAULT_PINCHTAB_RUNTIME_SUBPATH
-    resolved_base = str(
+    resolved_base = (
         base_url or env_config.get(PINCHTAB_URL_ENV, DEFAULT_PINCHTAB_BASE_URL)
     ).strip()
     env_pairs: dict[str, str] = {}
     if launch_env:
-        for chunk in str(launch_env).split(","):
+        for chunk in launch_env.split(","):
             chunk = chunk.strip()
             if not chunk or "=" not in chunk:
                 continue
@@ -234,8 +234,7 @@ def pinchtab_daemon_config(
 
 def parse_env_pairs(values: list[str]) -> dict[str, str]:
     parsed: dict[str, str] = {}
-    for raw in values:
-        token = str(raw)
+    for token in values:
         if "=" not in token:
             raise typer.BadParameter(
                 f"Invalid --env value '{token}'; expected KEY=VALUE"

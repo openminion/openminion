@@ -211,7 +211,6 @@ class SkillMatchingMixin:
             has_signal = True
             reasons.append(f"exact skill_id matched: {package.skill_id}")
 
-        exact_name_fields: list[str] = []
         for field_name, candidate in (
             ("name", name_lower),
             ("display_name", display_name_lower),
@@ -220,7 +219,6 @@ class SkillMatchingMixin:
                 score += SKILL_MATCH_EXACT_NAME_SCORE
                 exact_match_count += 1
                 has_signal = True
-                exact_name_fields.append(field_name)
                 reasons.append(f"exact {field_name} matched")
 
         compact_phrase_sources = _compact_phrase_sources(package)
@@ -378,9 +376,7 @@ def _explicit_match_phrases(package: SkillPackage) -> list[str]:
 
 
 def _quoted_phrases(value: str) -> list[str]:
-    text = str(value or "").strip()
-    if not text:
-        return []
+    text = value.strip()
     matches = re.findall(r'"([^"\n]{3,})"', text)
     return [match.strip() for match in matches if match.strip()]
 

@@ -1,7 +1,7 @@
 import fnmatch
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
-from collections.abc import Callable, Mapping
 
 from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
@@ -35,7 +35,7 @@ class InMemoryStorageBackend:
         if root is not None:
             self._ensure_dir(self._normalize(root))
         for path, content in (initial_files or {}).items():
-            self.write(str(path), str(content), append=False, create_dirs=True)
+            self.write(path, content, append=False, create_dirs=True)
 
     @staticmethod
     def _normalize(path: str | Path) -> str:
@@ -50,20 +50,9 @@ class InMemoryStorageBackend:
                 break
             current = parent
 
-    @staticmethod
-    def _is_relative_to(path: str, root: str) -> bool:
-        try:
-            Path(path).relative_to(Path(root))
-            return True
-        except ValueError:
-            return False
-
     @classmethod
     def _has_hidden_component(cls, path: str, root: str) -> bool:
-        try:
-            relative = Path(path).relative_to(Path(root))
-        except ValueError:
-            return False
+        relative = Path(path).relative_to(root)
         return any(part.startswith(".") for part in relative.parts)
 
     def list_dir(
@@ -83,7 +72,7 @@ class InMemoryStorageBackend:
         entries: list[EntryInfo] = []
         if recursive:
             for entry in sorted(self._dirs):
-                if entry == root or not self._is_relative_to(entry, root):
+                if entry == root or not Path(entry).is_relative_to(root):
                     continue
                 name = Path(entry).name
                 if not include_hidden and self._has_hidden_component(entry, root):
@@ -93,7 +82,7 @@ class InMemoryStorageBackend:
                     break
             if len(entries) < max_entries:
                 for entry in sorted(self._files):
-                    if not self._is_relative_to(entry, root):
+                    if not Path(entry).is_relative_to(root):
                         continue
                     name = Path(entry).name
                     if not include_hidden and self._has_hidden_component(entry, root):
@@ -201,7 +190,7 @@ class InMemoryStorageBackend:
 
         matches: list[MatchInfo] = []
         for entry, content in sorted(self._files.items()):
-            if not self._is_relative_to(entry, root):
+            if not Path(entry).is_relative_to(root):
                 continue
             name = Path(entry).name
             if not include_hidden and self._has_hidden_component(entry, root):
@@ -245,7 +234,7 @@ class InMemoryStorageBackend:
         for entry, content in sorted(self._files.items()):
             if len(matches) >= max_matches:
                 break
-            if not self._is_relative_to(entry, root):
+            if not Path(entry).is_relative_to(root):
                 continue
             name = Path(entry).name
             if not include_hidden and self._has_hidden_component(entry, root):
@@ -339,7 +328,7 @@ class InMemoryStorageBackend:
             return True
 
         to_delete_files = [
-            entry for entry in self._files if self._is_relative_to(entry, normalized)
+            entry for entry in self._files if Path(entry).is_relative_to(normalized)
         ]
         for entry in to_delete_files:
             del self._files[entry]
@@ -347,7 +336,7 @@ class InMemoryStorageBackend:
         to_delete_dirs = [
             entry
             for entry in self._dirs
-            if entry == normalized or self._is_relative_to(entry, normalized)
+            if entry == normalized or Path(entry).is_relative_to(normalized)
         ]
         for entry in to_delete_dirs:
             self._dirs.discard(entry)

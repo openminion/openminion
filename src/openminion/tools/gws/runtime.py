@@ -1,10 +1,8 @@
-"""Google Workspace tool runtime helpers."""
-
 import hashlib
 import json
 import re
-from typing import Any, Optional, cast
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from .constants import GWS_REDACTION_BASIC, GWS_REDACTION_NONE, GWS_REDACTION_STRICT
 
@@ -24,9 +22,7 @@ def parse_ndjson(text: str) -> Optional[list[Any]]:
             rows.append(json.loads(token))
         except json.JSONDecodeError:
             return None
-    if not rows:
-        return None
-    return rows
+    return rows or None
 
 
 def parse_json_or_ndjson(
@@ -67,8 +63,7 @@ def extract_error_payload(
         }
 
     if isinstance(parsed_data, Mapping):
-        payload = dict(parsed_data)
-        error_obj = payload.get("error")
+        error_obj = parsed_data.get("error")
         if isinstance(error_obj, Mapping):
             code = str(error_obj.get("code", "GWS_ERROR"))
             message = str(error_obj.get("message", "gws command failed"))
@@ -111,8 +106,6 @@ def mask_email(value: str) -> str:
     def _replace(match: re.Match[str]) -> str:
         local = str(match.group(1))
         domain = str(match.group(2))
-        if not local:
-            return f"***@{domain}"
         return f"{local[0]}***@{domain}"
 
     return _EMAIL_PATTERN.sub(_replace, value)
@@ -120,14 +113,12 @@ def mask_email(value: str) -> str:
 
 def gws_redacted_credential_placeholder(ref: "CredentialRef") -> str:
     """Canonical credential redaction placeholder for GWS event emission."""
-    from openminion.modules.runtime.credentials import (
-        redacted_credential_ref,
-    )
+    from openminion.modules.runtime.credentials import redacted_credential_ref
 
     return redacted_credential_ref(ref)
 
 
-if False:  # pragma: no cover - typing-only import
+if TYPE_CHECKING:
     from openminion.modules.runtime.credentials import CredentialRef
 
 
@@ -200,7 +191,7 @@ def summarize_data(data: Any, *, data_format: Optional[str]) -> str:
         prefix = "ndjson pages" if data_format == "ndjson" else "items"
         return f"{len(data)} {prefix}"
     if isinstance(data, Mapping):
-        keys = sorted([str(key) for key in data.keys()])[:8]
+        keys = sorted(str(key) for key in data)[:8]
         if keys:
             return f"keys={','.join(keys)}"
     return f"type={type(data).__name__}"

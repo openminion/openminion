@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable
 
 from openminion.modules.storage.runtime.session_store import EventRecord, SessionStore
@@ -22,9 +22,7 @@ class _GatewayTurnLifecycleOps:
         logger: logging.Logger,
         emit_run_state: Callable[..., EventRecord | None],
         emit_invocation_lifecycle: Callable[[InvocationLifecycleFact], bool] | None,
-        typed_terminal_resolver: Optional[
-            Callable[..., Optional[tuple[Any, ...]]]
-        ] = None,
+        typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
     ) -> None:
         self._sessions = sessions
         self._logger = logger
@@ -103,13 +101,11 @@ class _GatewayTurnLifecycleOps:
         run_id: str,
         legacy_state: str,
         current_step: str,
-        payload: Optional[dict[str, Any]] = None,
+        payload: dict[str, Any] | None = None,
         conversation_id: str | None = None,
         thread_id: str | None = None,
         attach_id: str | None = None,
-        typed_terminal_resolver: Optional[
-            Callable[..., Optional[tuple[Any, ...]]]
-        ] = None,
+        typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
         session_turn_fence_token: int | None = None,
     ) -> EventRecord | None:
         resolver = typed_terminal_resolver or self._typed_terminal_resolver

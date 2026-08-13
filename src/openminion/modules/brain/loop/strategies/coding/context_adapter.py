@@ -9,6 +9,7 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
     _execute_prepared_tool_dispatch_from_context,
     _finalize_tool_result_from_context,
 )
+from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.runner.tick.context import (
     _store_pending_confirmation_metadata,
 )
@@ -25,6 +26,15 @@ class _CodingLoopContextAdapter:
     ) -> None:
         self.state = ctx.state
         self._ctx = ctx
+        self.session_api = getattr(runner_from_context(ctx), "session_api", None)
+        self.prepared_parallel_dispatch_supported = all(
+            callable(getattr(ctx.command_executor, name, None))
+            for name in (
+                "prepare_tool_dispatch",
+                "execute_prepared_tool_dispatch",
+                "finalize_tool_result",
+            )
+        )
         self._on_command_result = on_command_result
 
     def execute_command(

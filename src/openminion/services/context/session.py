@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+from sqlite3 import Error as SQLiteError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
 from openminion.modules.context.budget import (
     ContextBudgetConfig,
+    ContextBudgetOverflowError,
     assemble_budgeted_context,
 )
 from openminion.modules.context.summary.engine import (
@@ -31,7 +33,12 @@ from openminion.modules.storage.runtime.pinned_context import (
     render_pinned_context,
 )
 from openminion.modules.storage.runtime.session_store import MessageRecord, SessionStore
+from openminion.modules.telemetry.events import catalog as telemetry_events
 from openminion.services.bootstrap.paths import SERVICES_SESSION_CONTEXT_SUBDIR
+
+_HISTORY_METADATA_KEYS = frozenset(
+    "conversation_id message_id request_id run_id thread_id trace_id turn_id".split()
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,8 @@ class SessionCompactionResult:
     compacted_until_rowid: int
     summary_updated: bool
     archive_relative_path: str = ""
+    reason: str = "no_action"
+    budget_source: str = "count_fallback"
 
 
 @dataclass(frozen=True)
@@ -278,21 +287,29 @@ class SessionContextService:
                 )
         return result
 
-    def compact_session(self, *, session_id: str) -> SessionCompactionResult:
+    def compact_session(
+        self,
+        *,
+        session_id: str,
+        force: bool = False,
+    ) -> SessionCompactionResult:
         context = self._sessions.ensure_session_context(session_id=session_id)
         total_messages = self._sessions.count_messages(session_id=session_id)
-        to_compact = self._messages_to_compact(
+        to_compact, reason = self._messages_to_compact(
             session_id=session_id,
             context=context,
             total_messages=total_messages,
+            force=force,
         )
+        budget_source = "runtime_cap" if self._token_budget > 0 else "count_fallback"
         if not to_compact:
             return SessionCompactionResult(
                 session_id=session_id,
                 compacted_count=0,
                 compacted_until_rowid=context.compacted_until_rowid,
                 summary_updated=False,
-                archive_relative_path="",
+                reason=reason,
+                budget_source=budget_source,
             )
         archive_ref = self._archive_compacted_messages(
             session_id=session_id,
@@ -328,6 +345,20 @@ class SessionContextService:
             archive_ref=archive_ref,
         )
         self._log_compaction_result(session_id=session_id, to_compact=to_compact)
+        try:
+            self._sessions.append_event(
+                session_id=session_id,
+                event_type=telemetry_events.SESSION_CONTEXT_COMPACTION,
+                payload={
+                    "compacted_count": len(to_compact),
+                    "reason": reason,
+                    "budget_source": budget_source,
+                    "keep_recent_messages": self._keep_recent_messages,
+                    "max_tokens": self._token_budget,
+                },
+            )
+        except (OSError, SQLiteError, ValueError) as exc:
+            self._logger.warning("session compaction telemetry write failed: %s", exc)
         return SessionCompactionResult(
             session_id=session_id,
             compacted_count=len(to_compact),
@@ -336,6 +367,8 @@ class SessionContextService:
             archive_relative_path=archive_ref.relative_path
             if archive_ref is not None
             else "",
+            reason=reason,
+            budget_source=budget_source,
         )
 
     def _messages_to_compact(
@@ -344,19 +377,53 @@ class SessionContextService:
         session_id: str,
         context: Any,
         total_messages: int,
-    ) -> list[MessageRecord]:
+        force: bool,
+    ) -> tuple[list[MessageRecord], str]:
         uncompacted_count = max(0, total_messages - context.compacted_message_count)
         if uncompacted_count <= self._keep_recent_messages:
-            return []
-        target_compact_count = min(
+            return [], "below_keep_tail"
+
+        max_removable = min(
             self._max_compact_per_turn,
-            uncompacted_count - self._keep_recent_messages,
+            max(0, uncompacted_count - self._keep_recent_messages),
         )
-        return self._sessions.list_messages_after_rowid(
+        if force or self._token_budget <= 0:
+            target_count = max_removable
+            reason = "manual" if force else "count_fallback"
+        else:
+            safety_count = self._keep_recent_messages * 2
+            safety_target = max(0, uncompacted_count - safety_count)
+            candidate_limit = min(
+                uncompacted_count,
+                self._max_compact_per_turn + self._keep_recent_messages,
+            )
+            candidates = self._sessions.list_messages_after_rowid(
+                session_id=session_id,
+                after_rowid=context.compacted_until_rowid,
+                limit=candidate_limit,
+            )
+            budget_chars = int(self._token_budget * self._chars_per_token)
+            remaining_chars = sum(_message_record_chars(item) for item in candidates)
+            token_target = 0
+            while (
+                token_target < min(max_removable, len(candidates))
+                and remaining_chars > budget_chars
+            ):
+                remaining_chars -= _message_record_chars(candidates[token_target])
+                token_target += 1
+            target_count = min(max_removable, max(safety_target, token_target))
+            if target_count <= 0:
+                return [], "within_budget"
+            reason = (
+                "token_pressure" if token_target >= safety_target else "safety_count"
+            )
+
+        messages = self._sessions.list_messages_after_rowid(
             session_id=session_id,
             after_rowid=context.compacted_until_rowid,
-            limit=target_compact_count,
+            limit=target_count,
         )
+        return messages, reason
 
     def _merged_compaction_summary(
         self,
@@ -430,7 +497,7 @@ class SessionContextService:
         try:
             self._sessions.append_event(
                 session_id=session_id,
-                event_type="session.compaction.archive",
+                event_type=telemetry_events.SESSION_COMPACTION_ARCHIVE,
                 payload=_archive_ref_to_payload(archive_ref),
             )
         except Exception as exc:
@@ -505,23 +572,16 @@ class SessionContextService:
                 channel=channel,
                 target=target,
                 body=item.body,
-                metadata={
-                    "role": item.role,
-                    "session_id": session_id,
-                    **(
-                        {"conversation_id": conversation_value}
-                        if conversation_value
-                        else {}
-                    ),
-                    **({"thread_id": thread_value} if thread_value else {}),
-                },
+                metadata=_history_message_metadata(
+                    item,
+                    session_id=session_id,
+                    conversation_id=conversation_value,
+                    thread_id=thread_value,
+                ),
                 id=item.id,
             )
             for item in recent_records
         ]
-
-        if self._token_budget <= 0:
-            return system_messages + history_messages
 
         budget_config = ContextBudgetConfig(
             max_tokens=self._token_budget,
@@ -536,11 +596,17 @@ class SessionContextService:
         try:
             self._sessions.append_event(
                 session_id=session_id,
-                event_type="session.context.budget",
+                event_type=telemetry_events.SESSION_CONTEXT_BUDGET,
                 payload=budgeted.telemetry.to_dict(),
             )
         except Exception as exc:
             self._logger.warning("session budget telemetry write failed: %s", exc)
+
+        if budgeted.telemetry.overflow:
+            raise ContextBudgetOverflowError(
+                max_tokens=budgeted.telemetry.max_tokens,
+                estimated_tokens=budgeted.telemetry.estimated_tokens_total,
+            )
 
         return budgeted.messages
 
@@ -611,7 +677,7 @@ class SessionContextService:
             session_id=session_id,
             limit=self._archive_ref_limit,
             newest_first=True,
-            event_type_prefix="session.compaction.archive",
+            event_type_prefix=telemetry_events.SESSION_COMPACTION_ARCHIVE,
         )
         refs: list[dict[str, Any]] = []
         for event in reversed(events):
@@ -630,6 +696,31 @@ class SessionContextService:
                 }
             )
         return refs
+
+
+def _message_record_chars(message: MessageRecord) -> int:
+    return len(str(message.body or "")) + len(str(message.metadata or ""))
+
+
+def _history_message_metadata(
+    message: MessageRecord,
+    *,
+    session_id: str,
+    conversation_id: str,
+    thread_id: str,
+) -> dict[str, str]:
+    source = dict(message.metadata or {})
+    metadata = {
+        key: str(source.get(key, "") or "").strip()
+        for key in _HISTORY_METADATA_KEYS
+        if str(source.get(key, "") or "").strip()
+    }
+    metadata.update({"role": message.role, "session_id": session_id})
+    if conversation_id:
+        metadata["conversation_id"] = conversation_id
+    if thread_id:
+        metadata["thread_id"] = thread_id
+    return metadata
 
 
 def _ingest_compacted_messages(

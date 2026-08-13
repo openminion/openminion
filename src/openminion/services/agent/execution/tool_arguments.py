@@ -1,12 +1,14 @@
 import re
 from typing import Any
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.dispatch import _get_registry_manager
 from .prompts import (
     build_required_tool_retry_prompt as _render_required_tool_retry_prompt,
 )
+
+SpecLookup = Callable[[str], ProviderToolSpec | None]
 
 
 def _is_generic_open_object_schema(schema: Mapping[str, Any]) -> bool:
@@ -21,27 +23,21 @@ def _is_generic_open_object_schema(schema: Mapping[str, Any]) -> bool:
 def _parameters_for_spec(spec: ProviderToolSpec | None) -> dict[str, Any]:
     if spec is None:
         return {}
-    parameters = getattr(spec, "parameters", {}) or {}
-    if isinstance(parameters, dict):
-        normalized_parameters = dict(parameters)
-        if normalized_parameters and not _is_generic_open_object_schema(
-            normalized_parameters
-        ):
-            return normalized_parameters
+    parameters = dict(spec.parameters)
+    if parameters and not _is_generic_open_object_schema(parameters):
+        return parameters
 
     manager = _get_registry_manager()
     if manager is not None and callable(getattr(manager, "schema_for", None)):
         try:
-            schema = manager.schema_for(str(getattr(spec, "name", "") or ""))
+            schema = manager.schema_for(spec.name)
         except Exception:
             schema = {}
         if isinstance(schema, dict):
             normalized = dict(schema)
             if normalized and not _is_generic_open_object_schema(normalized):
                 return normalized
-    if isinstance(parameters, dict):
-        return dict(parameters)
-    return {}
+    return parameters
 
 
 def required_fields_from_spec(spec: ProviderToolSpec | None) -> list[str]:
@@ -64,14 +60,7 @@ def required_fields_from_spec(spec: ProviderToolSpec | None) -> list[str]:
                 token = str(item).strip()
                 if token:
                     required_fields.append(token)
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for item in required_fields:
-        if item in seen:
-            continue
-        seen.add(item)
-        ordered.append(item)
-    return ordered
+    return list(dict.fromkeys(required_fields))
 
 
 def normalize_required_tool_arguments(
@@ -80,7 +69,7 @@ def normalize_required_tool_arguments(
     arguments: Mapping[str, Any],
 ) -> dict[str, Any]:
     del tool_name
-    return dict(arguments or {})
+    return dict(arguments)
 
 
 def sanitize_arguments_for_spec(
@@ -88,7 +77,7 @@ def sanitize_arguments_for_spec(
     arguments: Mapping[str, Any],
     spec: ProviderToolSpec | None,
 ) -> dict[str, Any]:
-    normalized = dict(arguments or {})
+    normalized = dict(arguments)
     parameters = _parameters_for_spec(spec)
     if not parameters:
         return normalized
@@ -166,7 +155,7 @@ def extract_missing_fields(results: list[Any]) -> str:
 def missing_required_for_call(
     tool_call: Any,
     *,
-    spec_lookup,
+    spec_lookup: SpecLookup,
 ) -> list[str]:
     tool_name = str(getattr(tool_call, "name", "")).strip()
     if not tool_name:
@@ -194,7 +183,7 @@ def missing_required_for_call(
 def collect_missing_required(
     tool_calls: list[Any],
     *,
-    spec_lookup,
+    spec_lookup: SpecLookup,
 ) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for call in tool_calls:

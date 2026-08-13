@@ -93,7 +93,10 @@ def test_unpaired_inbox_message_is_rejected_except_pair_command(tmp_path: Path) 
     assert result["status"] == "unpaired"
     outbox = store.claim_outbox(lock_owner="test")
     assert outbox is not None
-    assert "not paired" in outbox["payload_json"]
+    assert (
+        "This chat is not paired. Send /pair for setup instructions."
+        in outbox["payload_json"]
+    )
 
     store.enqueue_inbox(
         channel="telegram",

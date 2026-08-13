@@ -695,9 +695,8 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "done"
-        assert "files changed: pkg/main.py" in result.message
-        assert "reserved final closeout" not in result.message
+        assert result.status == "waiting_user"
+        assert "budget exhausted" in str(result.message or "")
 
     def test_final_answer_reserve_budget_exhausted_does_not_salvage_missing_validation(
         self,
@@ -1587,10 +1586,8 @@ class TestCodingVerificationReserve:
 
         assert result.status == "done"
         message = str(result.message or "").lower()
-        assert "design:" in message
-        assert "implementation:" in message
-        assert "validation:" in message
-        assert "next steps:" in message
+        assert message.startswith("result:")
+        assert "validation:" not in message
         assert "wc_cli.py" in result.message
 
     def test_final_text_allows_read_only_plan_without_write(

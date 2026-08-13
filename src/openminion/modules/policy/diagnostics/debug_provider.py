@@ -13,20 +13,13 @@ def _probe_execution_boundary_policy() -> ModuleDebugPayload:
         status=DebugStatus.OK,
         mode="runtime",
         wiring_source=WiringSource.REAL,
-        details={
-            "adapter": "execution-boundary",
-        },
+        details={"adapter": "execution-boundary"},
     )
 
 
-def _register_provider() -> None:
-    registry = get_debug_registry()
-    registry.register(
-        DebugProvider(
-            module_name="execution.boundary.policy",
-            probe_fn=_probe_execution_boundary_policy,
-        )
+get_debug_registry().register(
+    DebugProvider(
+        module_name="execution.boundary.policy",
+        probe_fn=_probe_execution_boundary_policy,
     )
-
-
-_register_provider()
+)

@@ -8,6 +8,8 @@ from openminion.services.context.session import (
     SessionCompactionResult,
     SessionContextService,
 )
+from openminion.base.errors import error_info_from_exception
+from openminion.modules.context.budget import ContextBudgetOverflowError
 from openminion.modules.brain.constants import (
     RESPOND_KIND_POLICY_CONFIRMATION_PROMPT,
     SESSION_EVENT_POLICY_CONFIRMATION_PROMPT,
@@ -76,6 +78,80 @@ class SessionContextServiceTests(unittest.TestCase):
         second_result = service.compact_session(session_id=session.id)
         self.assertEqual(second_result.compacted_count, 0)
 
+    def test_token_budget_avoids_compacting_tiny_messages_within_safety_bound(
+        self,
+    ) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="tiny"
+        )
+        for body in ("u1", "a1", "u2", "a2"):
+            self.store.append_message(
+                session_id=session.id,
+                role="inbound" if body.startswith("u") else "outbound",
+                body=body,
+            )
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=2,
+            token_budget=1000,
+            chars_per_token=4.0,
+        )
+
+        result = service.compact_session(session_id=session.id)
+
+        self.assertEqual(result.compacted_count, 0)
+        self.assertEqual(result.reason, "within_budget")
+        self.assertEqual(result.budget_source, "runtime_cap")
+
+    def test_token_pressure_compacts_large_messages_but_keeps_recent_tail(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="large"
+        )
+        for idx in range(4):
+            self.store.append_message(
+                session_id=session.id,
+                role="inbound" if idx % 2 == 0 else "outbound",
+                body=f"message-{idx}-" + ("x" * 400),
+            )
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=2,
+            token_budget=100,
+            chars_per_token=1.0,
+        )
+
+        result = service.compact_session(session_id=session.id)
+
+        self.assertEqual(result.compacted_count, 2)
+        self.assertEqual(result.reason, "token_pressure")
+        event = self.store.list_events(
+            session_id=session.id,
+            event_type_prefix="session.context.compaction",
+        )[0]
+        self.assertEqual(event.payload["reason"], "token_pressure")
+        self.assertEqual(event.payload["keep_recent_messages"], 2)
+
+    def test_manual_compaction_uses_explicit_reason_with_token_headroom(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="manual"
+        )
+        for body in ("u1", "a1", "u2"):
+            self.store.append_message(
+                session_id=session.id,
+                role="inbound" if body.startswith("u") else "outbound",
+                body=body,
+            )
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=2,
+            token_budget=1000,
+        )
+
+        result = service.compact_session(session_id=session.id, force=True)
+
+        self.assertEqual(result.compacted_count, 1)
+        self.assertEqual(result.reason, "manual")
+
     def test_build_history_without_summary_has_no_system_context_message(self) -> None:
         session = self.store.resolve_session(
             agent_id="main", channel="console", target="chat"
@@ -95,6 +171,34 @@ class SessionContextServiceTests(unittest.TestCase):
             recent_limit=5,
         )
         self.assertEqual([item.id for item in history], [first.id, second.id])
+
+    def test_build_history_preserves_only_bounded_continuity_metadata(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="metadata"
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="inbound",
+            body="hello",
+            metadata={
+                "trace_id": "trace-1",
+                "run_id": "run-1",
+                "tool_output": "must-not-cross",
+                "secret": "must-not-cross",
+            },
+        )
+
+        history = SessionContextService(self.store).build_history(
+            session_id=session.id,
+            channel="console",
+            target="metadata",
+            recent_limit=5,
+        )
+
+        self.assertEqual(history[0].metadata["trace_id"], "trace-1")
+        self.assertEqual(history[0].metadata["run_id"], "run-1")
+        self.assertNotIn("tool_output", history[0].metadata)
+        self.assertNotIn("secret", history[0].metadata)
 
     def test_build_history_renders_structured_pinned_context(self) -> None:
         session = self.store.resolve_session(
@@ -414,6 +518,67 @@ class SessionContextServiceTests(unittest.TestCase):
         self.assertIn("messages_after_trim", payload)
         self.assertIn("trimmed_count", payload)
         self.assertIn("overflow", payload)
+        self.assertEqual(payload.get("budget_source"), "runtime_cap")
+        self.assertIn("selected_recent_count", payload)
+        self.assertIn("selected_recent_tokens", payload)
+
+    def test_build_history_without_token_cap_reports_count_fallback(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="fallback"
+        )
+        self.store.append_message(
+            session_id=session.id,
+            role="inbound",
+            body="short message",
+        )
+        service = SessionContextService(self.store, token_budget=0)
+
+        history = service.build_history(
+            session_id=session.id,
+            channel="console",
+            target="fallback",
+            recent_limit=20,
+        )
+
+        self.assertEqual([item.body for item in history], ["short message"])
+        events = self.store.list_events(
+            session_id=session.id,
+            event_type_prefix="session.context.budget",
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].payload["budget_source"], "count_fallback")
+        self.assertEqual(events[0].payload["selected_recent_count"], 1)
+
+    def test_required_context_overflow_uses_shared_error_facts(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="overflow"
+        )
+        self.store.replace_pins(
+            session_id=session.id,
+            pins=[PinnedContextEntry(pin_id="p1", source="policy", text="x" * 300)],
+        )
+        service = SessionContextService(
+            self.store,
+            token_budget=10,
+            chars_per_token=1.0,
+        )
+
+        with self.assertRaises(ContextBudgetOverflowError) as raised:
+            service.build_history(
+                session_id=session.id,
+                channel="console",
+                target="overflow",
+                recent_limit=5,
+            )
+
+        facts = error_info_from_exception(raised.exception)
+        self.assertEqual(facts.code, "CONTEXT_BUDGET_OVERFLOW")
+        self.assertEqual(facts.details["max_tokens"], 10)
+        event = self.store.list_events(
+            session_id=session.id,
+            event_type_prefix="session.context.budget",
+        )[0]
+        self.assertTrue(event.payload["overflow"])
 
     def test_compaction_deferred_summary_enrichment_fail_open(self) -> None:
         session = self.store.resolve_session(

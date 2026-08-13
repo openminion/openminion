@@ -1008,7 +1008,11 @@ class ProviderHTTPTests(unittest.TestCase):
 
         self.assertTrue(response.ok)
         self.assertEqual(response.output_text, "")
-        self.assertEqual(response.assistant_messages, [])
+        self.assertEqual(len(response.assistant_messages), 1)
+        self.assertEqual(
+            response.assistant_messages[0].tool_calls,
+            response.tool_calls,
+        )
         self.assertEqual(len(response.tool_calls), 1)
         self.assertEqual(response.tool_calls[0].name, "web.search")
         self.assertEqual(

@@ -7,7 +7,6 @@ from .schemas import ScraplingProviderOptions
 from .constants import (
     FETCH_BACKEND_AUTO,
     FETCH_EXTRACT_MODE_NONE,
-    FETCH_PROVIDER_ID_CORE_HTTP,
     FETCH_SCRAPLING_MODE_DYNAMIC,
     FETCH_SCRAPLING_MODE_STATIC,
     FETCH_SCRAPLING_MODE_STEALTH,
@@ -16,12 +15,6 @@ from .constants import (
 
 
 class ScraplingFetchProvider(FetchProviderProtocol):
-    """Reference scrapling provider implementation for TOOL-005.
-
-    V1 keeps OpenMinion policy + SSRF boundaries in core fetch and allows this
-    provider to resolve mode semantics with deterministic fallback behavior.
-    """
-
     name = FETCH_SCRAPLING_PROVIDER_ID
     capabilities: ProviderCapabilities = {
         "render": [FETCH_EXTRACT_MODE_NONE, "dom"],
@@ -46,7 +39,7 @@ class ScraplingFetchProvider(FetchProviderProtocol):
         )
         try:
             opts = ScraplingProviderOptions.model_validate(scrapling_opts_payload)
-        except Exception as exc:
+        except ValueError as exc:
             return {
                 "ok": False,
                 "error": {
@@ -56,9 +49,10 @@ class ScraplingFetchProvider(FetchProviderProtocol):
                 "backend": FETCH_SCRAPLING_PROVIDER_ID,
             }
 
-        mode = str(opts.mode or FETCH_BACKEND_AUTO).strip().lower()
         effective_mode = (
-            FETCH_SCRAPLING_MODE_STATIC if mode == FETCH_BACKEND_AUTO else mode
+            FETCH_SCRAPLING_MODE_STATIC
+            if opts.mode == FETCH_BACKEND_AUTO
+            else opts.mode
         )
 
         if effective_mode == FETCH_SCRAPLING_MODE_DYNAMIC and not bool(
@@ -106,29 +100,18 @@ class ScraplingFetchProvider(FetchProviderProtocol):
             effective_mode = FETCH_SCRAPLING_MODE_STATIC
             downgraded = True
 
-        delegated_request = dict(request)
-        delegated_request["prefer_backend"] = FETCH_PROVIDER_ID_CORE_HTTP
-        result = core_http_provider.fetch(delegated_request, ctx)
-
-        warnings: list[str] = []
-        if isinstance(result, dict):
-            raw_warnings = result.get("warnings", [])
-            if isinstance(raw_warnings, list):
-                warnings.extend(str(item) for item in raw_warnings if str(item).strip())
-            if downgraded:
-                warnings.append("DOWNGRADED_TO_STATIC")
-            result["warnings"] = warnings
-            result["backend"] = f"{FETCH_SCRAPLING_PROVIDER_ID}:{effective_mode}"
-            return result
-
-        return {
-            "ok": False,
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": "scrapling provider returned invalid delegate payload",
-            },
-            "backend": FETCH_SCRAPLING_PROVIDER_ID,
-        }
+        result: dict[str, Any] = core_http_provider.fetch(request, ctx)
+        raw_warnings = result.get("warnings", [])
+        warnings = (
+            [str(item) for item in raw_warnings if str(item).strip()]
+            if isinstance(raw_warnings, list)
+            else []
+        )
+        if downgraded:
+            warnings.append("DOWNGRADED_TO_STATIC")
+        result["warnings"] = warnings
+        result["backend"] = f"{FETCH_SCRAPLING_PROVIDER_ID}:{effective_mode}"
+        return result
 
 
 def _resolve_policy_config(ctx: Any | None) -> dict[str, Any]:

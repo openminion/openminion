@@ -150,7 +150,8 @@ def _maybe_run_autonomous_turn(
     logger: CanonicalEventLogger,
     user_input: str | None,
 ):
-    if state.mode != BrainMode.AUTONOMOUS or runner.rlm_api is None:
+    rlm_api = runner.rlm_api
+    if state.mode != BrainMode.AUTONOMOUS or not (rlm_api is not None):
         return None
 
     if _runner_delegate("_autonomous_requires_confirmation", runner, state=state):

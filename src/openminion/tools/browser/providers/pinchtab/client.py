@@ -1,8 +1,8 @@
 import json
 import time
-from dataclasses import dataclass
-from typing import Any, Optional
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -60,7 +60,7 @@ class PinchTabClient:
         self.retry_policy = retry_policy or RetryPolicy()
         self.base_url = self.config.base_url.rstrip("/")
 
-    def _headers(self, extra: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+    def _headers(self, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         headers: dict[str, str] = {"Accept": "application/json"}
         if self.config.token:
             headers["Authorization"] = f"Bearer {self.config.token}"
@@ -78,8 +78,8 @@ class PinchTabClient:
         method: str,
         path: str,
         *,
-        query: Optional[Mapping[str, Any]] = None,
-        json_body: Optional[Mapping[str, Any]] = None,
+        query: Mapping[str, Any] | None = None,
+        json_body: Mapping[str, Any] | None = None,
         expect: str = "json",
     ) -> Any:
         url = f"{self.base_url}{path}"
@@ -139,66 +139,48 @@ class PinchTabClient:
     def _is_missing_route(exc: PinchTabClientError) -> bool:
         return int(getattr(exc, "status", 0)) in {404, 405, 501}
 
-    def _try_post_json(
-        self, candidates: list[tuple[str, Mapping[str, Any] | None]]
-    ) -> dict[str, Any]:
-        if not candidates:
-            raise PinchTabClientError("No PinchTab endpoint candidates were provided")
-        last_error: PinchTabClientError | None = None
-        for path, body in candidates:
+    def _try_request(
+        self,
+        method: str,
+        candidates: list[tuple[str, Mapping[str, Any] | None]],
+        *,
+        expect: str,
+    ) -> Any:
+        last_error = PinchTabClientError(
+            "No PinchTab endpoint candidates were provided"
+        )
+        for path, arguments in candidates:
             try:
-                payload = self._request("POST", path, json_body=body, expect="json")
-                return payload if isinstance(payload, dict) else {"result": payload}
+                request_args = (
+                    {"query": arguments}
+                    if method == "GET"
+                    else {"json_body": arguments}
+                )
+                return self._request(method, path, expect=expect, **request_args)
             except PinchTabClientError as exc:
                 last_error = exc
                 if self._is_missing_route(exc):
                     continue
                 raise
-        if last_error is not None:
-            raise last_error
-        raise PinchTabClientError("No PinchTab endpoint candidates were provided")
+        raise last_error
+
+    def _try_post_json(
+        self, candidates: list[tuple[str, Mapping[str, Any] | None]]
+    ) -> dict[str, Any]:
+        payload = self._try_request("POST", candidates, expect="json")
+        return payload if isinstance(payload, dict) else {"result": payload}
 
     def _try_get_json(
         self, candidates: list[tuple[str, Mapping[str, Any] | None]]
     ) -> dict[str, Any]:
-        if not candidates:
-            raise PinchTabClientError("No PinchTab endpoint candidates were provided")
-        last_error: PinchTabClientError | None = None
-        for path, query in candidates:
-            try:
-                payload = self._request("GET", path, query=query, expect="json")
-                return payload if isinstance(payload, dict) else {"result": payload}
-            except PinchTabClientError as exc:
-                last_error = exc
-                if self._is_missing_route(exc):
-                    continue
-                raise
-        if last_error is not None:
-            raise last_error
-        raise PinchTabClientError("No PinchTab endpoint candidates were provided")
+        payload = self._try_request("GET", candidates, expect="json")
+        return payload if isinstance(payload, dict) else {"result": payload}
 
     def _try_get_bytes(
         self, candidates: list[tuple[str, Mapping[str, Any] | None]]
     ) -> bytes:
-        if not candidates:
-            raise PinchTabClientError("No PinchTab endpoint candidates were provided")
-        last_error: PinchTabClientError | None = None
-        for path, query in candidates:
-            try:
-                payload = self._request("GET", path, query=query, expect="bytes")
-                return (
-                    payload
-                    if isinstance(payload, bytes)
-                    else bytes(str(payload), "utf-8")
-                )
-            except PinchTabClientError as exc:
-                last_error = exc
-                if self._is_missing_route(exc):
-                    continue
-                raise
-        if last_error is not None:
-            raise last_error
-        raise PinchTabClientError("No PinchTab endpoint candidates were provided")
+        payload = self._try_request("GET", candidates, expect="bytes")
+        return payload if isinstance(payload, bytes) else bytes(str(payload), "utf-8")
 
     def health(self) -> dict[str, Any]:
         return self._try_get_json([("/health", None)])

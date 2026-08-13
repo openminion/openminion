@@ -5,8 +5,6 @@ from .constants import DEFAULT_GITHUB_PROVIDER_ID
 
 
 class GithubProvider(Protocol):
-    """V1 GitHub provider contract."""
-
     provider_id: str
 
     def list_prs(self, *, args: Mapping[str, Any], ctx: Any) -> Mapping[str, Any]: ...
@@ -32,9 +30,6 @@ class _GithubProviderRegistry:
 
     def register(self, provider: GithubProvider) -> None:
         self._providers[provider.provider_id] = provider
-
-    def get(self, provider_id: str) -> GithubProvider | None:
-        return self._providers.get(provider_id)
 
     def default(self) -> GithubProvider | None:
         return self._providers.get(DEFAULT_GITHUB_PROVIDER_ID)

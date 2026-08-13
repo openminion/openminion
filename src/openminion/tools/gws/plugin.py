@@ -1,5 +1,3 @@
-"""Google Workspace tool plugin."""
-
 import hashlib
 import json
 import os
@@ -96,12 +94,6 @@ class _CommandResult:
     raw_stderr: str
     stdout_bytes: int
     stderr_bytes: int
-
-
-def _emit_event(
-    ctx: RuntimeContext, *, event_name: str, payload: Dict[str, Any]
-) -> None:
-    emit_family_event(ctx, event=event_name, payload=payload)
 
 
 def _tool_config_payload(ctx: RuntimeContext) -> Mapping[str, Any]:
@@ -260,7 +252,7 @@ def _classify_risk(args: GwsCallArgs) -> RiskLevel:
     service = _normalize_service(args.service)
     method = str(args.method or "").strip().lower()
 
-    if service == "admin" or service.startswith("admin") or service == "directory":
+    if service.startswith("admin") or service == "directory":
         return GWS_RISK_ADMIN
     if method in GWS_WRITE_METHODS:
         return GWS_RISK_WRITE
@@ -273,7 +265,7 @@ def _ensure_call_allowed(
     *, args: GwsCallArgs, ctx: RuntimeContext, config: GwsToolConfig, risk: RiskLevel
 ) -> None:
     service = _normalize_service(args.service)
-    if service in set(config.safety.deny_services):
+    if service in config.safety.deny_services:
         raise ToolRuntimeError(
             "POLICY_DENIED",
             "Service is denied by tools.gws.safety.deny_services",
@@ -430,14 +422,10 @@ def _run_command(
                 raw_stdout = stdout_file.read().decode("utf-8", errors="replace")
 
             stderr_file.seek(0)
-            if max_raw_stderr_bytes <= 0:
-                raw_stderr = ""
-            elif stderr_size <= max_raw_stderr_bytes:
-                raw_stderr = stderr_file.read().decode("utf-8", errors="replace")
-            else:
-                raw_stderr = stderr_file.read(max_raw_stderr_bytes).decode(
-                    "utf-8", errors="replace"
-                )
+            raw_stderr = stderr_file.read(max(0, max_raw_stderr_bytes)).decode(
+                "utf-8", errors="replace"
+            )
+            if 0 < max_raw_stderr_bytes < stderr_size:
                 raw_stderr = f"{raw_stderr}\n...[truncated]"
 
             exit_code = int(
@@ -481,7 +469,7 @@ def _execute_common(
     request_event = _base_request_payload(
         tool=tool_name, command=argv, request=request_payload, auth_env=auth_env
     )
-    _emit_event(ctx, event_name="tool.request", payload=request_event)
+    emit_family_event(ctx, event="tool.request", payload=request_event)
 
     started = time.monotonic()
     executed = _run_command(
@@ -531,9 +519,9 @@ def _execute_common(
             "stdout_parse_truncated": executed.stdout_parse_truncated,
         },
     }
-    _emit_event(
+    emit_family_event(
         ctx,
-        event_name="tool.result",
+        event="tool.result",
         payload={
             "tool": tool_name,
             "result": _result_for_event(result, redaction_mode=redaction_mode),
@@ -561,9 +549,9 @@ def _sanitize_call_request(args: GwsCallArgs, *, risk: RiskLevel) -> Dict[str, A
     if args.pagination is not None:
         request["pagination"] = args.pagination.model_dump(exclude_none=True)
     if args.params is not None:
-        request["params_keys"] = sorted([str(key) for key in args.params.keys()])
+        request["params_keys"] = sorted(str(key) for key in args.params)
     if args.json_payload is not None:
-        request["json_keys"] = sorted([str(key) for key in args.json_payload.keys()])
+        request["json_keys"] = sorted(str(key) for key in args.json_payload)
     if args.force_risk is not None:
         request["force_risk"] = args.force_risk
     return request
@@ -811,7 +799,7 @@ def _h_auth_export(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
         },
         "auth_env": auth_env,
     }
-    _emit_event(ctx, event_name="tool.request", payload=request_payload)
+    emit_family_event(ctx, event="tool.request", payload=request_payload)
 
     started = time.monotonic()
     executed = _run_command(
@@ -846,9 +834,9 @@ def _h_auth_export(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
             duration_ms=duration_ms,
         )
 
-    _emit_event(
+    emit_family_event(
         ctx,
-        event_name="tool.result",
+        event="tool.result",
         payload={
             "tool": _TOOL_AUTH_EXPORT,
             "result": _result_for_event(result, redaction_mode=redaction_mode),

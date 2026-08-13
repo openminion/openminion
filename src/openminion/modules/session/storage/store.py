@@ -28,7 +28,6 @@ from .component_wiring import build_store_components
 from .context import RunStore
 from .json_utils import to_json
 from .migrations import MIGRATIONS, list_migrations
-from .rows import row_to_session_event
 from .queries import (
     _CLOSED_TASK_STATUSES as _SLICE_CLOSED_TASK_STATUSES,
 )
@@ -55,6 +54,7 @@ from .components import (
     get_latest_checkpoint as _get_latest_checkpoint_facade,
     get_latest_seed_bundle as _get_latest_seed_bundle_facade,
     get_replay_events as _get_replay_events_facade,
+    get_tool_transcript as _get_tool_transcript_facade,
     get_resume_state as _get_resume_state_facade,
     get_run_record as _get_run_record_facade,
     get_slice as _get_slice_facade,
@@ -132,8 +132,7 @@ def _resolve_session_storage_roots(
 
 
 def _stable_hash(value: Any) -> str:
-    encoded = to_json(value).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(to_json(value).encode()).hexdigest()
 
 
 _MODULE_ID = module_id_from_package(__package__)
@@ -354,7 +353,7 @@ class SQLiteSessionStore(SessionStore):
             return
         self._turn_lease_store.assert_fence(
             session_id,
-            fence_token=int(session_turn_fence_token),
+            fence_token=session_turn_fence_token,
         )
 
     def _session_id_for_prompt_context(self, prompt_context_id: str) -> str | None:
@@ -412,6 +411,7 @@ class SQLiteSessionStore(SessionStore):
     enforce_context_manifest = _enforce_context_manifest_facade
     emit_canonical_event = _emit_canonical_event_facade
     get_replay_events = _get_replay_events_facade
+    get_tool_transcript = _get_tool_transcript_facade
     get_resume_state = _get_resume_state_facade
 
     def _resolve_artifactctl(self) -> Any | None:
@@ -884,17 +884,6 @@ class SQLiteSessionStore(SessionStore):
             "include_active_state": bool(source.get("include_active_state", True)),
         }
 
-    def _derive_open_tasks(
-        self, *, session_id: str, upto_seq: int | None = None
-    ) -> list[dict[str, Any]]:
-        return self._slice_queries.derive_open_tasks(
-            session_id=session_id,
-            upto_seq=upto_seq,
-        )
-
-    def _latest_event_seq_tx(self, session_id: str) -> int:
-        return self._slice_queries.latest_event_seq_tx(session_id)
-
     def _touch_session_tx(self, *, session_id: str, ts: str) -> None:
         self._record_store.execute_count(
             "UPDATE sessions SET updated_at = ? WHERE session_id = ?",
@@ -906,12 +895,9 @@ class SQLiteSessionStore(SessionStore):
         for key in stale:
             self._slice_cache.pop(key, None)
 
-    def _row_to_session_event(self, row: sqlite3.Row) -> dict[str, Any]:
-        return row_to_session_event(row)
-
     def _latest_event_seq(self, session_id: str) -> int:
         with self._lock:
-            return self._latest_event_seq_tx(session_id)
+            return self._slice_queries.latest_event_seq_tx(session_id)
 
     def backfill_events(
         self,

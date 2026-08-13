@@ -1,11 +1,25 @@
 import logging
 from pathlib import Path
 
-from openminion.modules.identity import IdentityBundle, load_identity_bundle
-
+from openminion.modules.identity import (
+    IdentityBundle,
+    IdentityDocument,
+    load_identity_bundle,
+)
 from openminion.modules.context.schemas import IdentitySnippet
 
-logger = logging.getLogger(__name__)
+
+def _render_document(
+    bundle_root: Path,
+    document: IdentityDocument,
+    heading: str,
+) -> str:
+    document_path = bundle_root / document.relative_path
+    try:
+        content = document_path.read_text(encoding="utf-8")
+    except Exception:
+        content = document.relative_path
+    return f"{heading}\n\n{content}"
 
 
 class IdentityBundleClient:
@@ -64,59 +78,44 @@ class IdentityBundleClient:
                 render_version="fallback:v1",
             )
 
-        text_parts = []
-
+        text_parts: list[str] = []
         bundle_root = Path(bundle.root_path)
 
         if bundle.agent:
-            agent_path = bundle_root / bundle.agent.relative_path
-            try:
-                content = agent_path.read_text(encoding="utf-8")
-                text_parts.append(f"# Agent Identity\n\n{content}")
-            except Exception:
-                text_parts.append(f"# Agent Identity\n\n{bundle.agent.relative_path}")
+            text_parts.append(
+                _render_document(bundle_root, bundle.agent, "# Agent Identity")
+            )
 
         if bundle.soul:
-            soul_path = bundle_root / bundle.soul.relative_path
-            try:
-                content = soul_path.read_text(encoding="utf-8")
-                text_parts.append(f"# Agent Soul\n\n{content}")
-            except Exception:
-                text_parts.append(f"# Agent Soul\n\n{bundle.soul.relative_path}")
+            text_parts.append(
+                _render_document(bundle_root, bundle.soul, "# Agent Soul")
+            )
 
         if bundle.skills:
-            skills_content = []
-            for skill in bundle.skills:
-                skill_path = bundle_root / skill.relative_path
-                try:
-                    content = skill_path.read_text(encoding="utf-8")
-                    skills_content.append(f"## {skill.relative_path}\n\n{content}")
-                except Exception:
-                    skills_content.append(f"## {skill.relative_path}")
-            if skills_content:
-                text_parts.append("# Skills\n\n" + "\n\n".join(skills_content))
+            text_parts.append(
+                "# Skills\n\n"
+                + "\n\n".join(
+                    _render_document(bundle_root, skill, f"## {skill.relative_path}")
+                    for skill in bundle.skills
+                )
+            )
 
         if bundle.notes:
-            notes_content = []
-            for note in bundle.notes:
-                note_path = bundle_root / note.relative_path
-                try:
-                    content = note_path.read_text(encoding="utf-8")
-                    notes_content.append(f"## {note.relative_path}\n\n{content}")
-                except Exception:
-                    notes_content.append(f"## {note.relative_path}")
-            if notes_content:
-                text_parts.append("# Notes\n\n" + "\n\n".join(notes_content))
+            text_parts.append(
+                "# Notes\n\n"
+                + "\n\n".join(
+                    _render_document(bundle_root, note, f"## {note.relative_path}")
+                    for note in bundle.notes
+                )
+            )
 
         if not text_parts:
             text_parts.append(f"Agent: {agent_id}")
 
-        rendered_text = "\n\n".join(text_parts)
-
         return IdentitySnippet(
             agent_id=agent_id,
             purpose=purpose,
-            text=rendered_text,
+            text="\n\n".join(text_parts),
             profile_version=self._profile_version or "unknown",
             render_version=self._render_version or "unknown",
         )

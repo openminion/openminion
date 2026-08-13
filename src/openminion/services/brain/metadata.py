@@ -34,17 +34,17 @@ OverrideValue = Callable[[str], str]
 def _coerce_int(raw: str, *, default: int) -> int:
     raw = (raw or "").strip()
     if not raw:
-        return int(default)
+        return default
     try:
         return max(0, int(raw))
     except ValueError:
-        return int(default)
+        return default
 
 
 def _coerce_bool(raw: str, *, default: bool) -> bool:
     raw = (raw or "").strip().lower()
     if not raw:
-        return bool(default)
+        return default
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -60,11 +60,11 @@ def resolve_llm_profiles(
     reflect = override_value(OPENMINION_BRAIN_REFLECT_MODEL_ENV)
     summarize = override_value(OPENMINION_BRAIN_SUMMARIZE_MODEL_ENV)
     return LLMProfiles(
-        decide_model=str(decide or shared or default_profiles.decide_model),
-        plan_model=str(plan or shared or default_profiles.plan_model),
+        decide_model=decide or shared or default_profiles.decide_model,
+        plan_model=plan or shared or default_profiles.plan_model,
         act_model=default_profiles.act_model,
-        reflect_model=str(reflect or shared or default_profiles.reflect_model),
-        summarize_model=str(summarize or shared or default_profiles.summarize_model),
+        reflect_model=reflect or shared or default_profiles.reflect_model,
+        summarize_model=summarize or shared or default_profiles.summarize_model,
     )
 
 
@@ -74,15 +74,8 @@ def resolve_agent_budgets(
     override_value: OverrideValue,
 ) -> AgentBudgets:
     default_budgets = derive_default_budgets(config)
-    runtime_session_token_budget = int(
-        getattr(
-            getattr(config, "runtime", object()),
-            "session_context_token_budget",
-            0,
-        )
-        or 0
-    )
-    floor_total_llm_tokens = int(default_budgets.max_total_llm_tokens)
+    runtime_session_token_budget = config.runtime.session_context_token_budget
+    floor_total_llm_tokens = default_budgets.max_total_llm_tokens
     if runtime_session_token_budget <= 0:
         floor_total_llm_tokens = max(floor_total_llm_tokens, 100000)
 
@@ -91,21 +84,21 @@ def resolve_agent_budgets(
             1,
             _coerce_int(
                 override_value(OPENMINION_BRAIN_MAX_TICKS_ENV),
-                default=int(default_budgets.max_ticks_per_user_turn),
+                default=default_budgets.max_ticks_per_user_turn,
             ),
         ),
         max_tool_calls=max(
             0,
             _coerce_int(
                 override_value(OPENMINION_BRAIN_MAX_TOOL_CALLS_ENV),
-                default=int(default_budgets.max_tool_calls),
+                default=default_budgets.max_tool_calls,
             ),
         ),
         max_a2a_calls=max(
             0,
             _coerce_int(
                 override_value(OPENMINION_BRAIN_MAX_A2A_CALLS_ENV),
-                default=int(default_budgets.max_a2a_calls),
+                default=default_budgets.max_a2a_calls,
             ),
         ),
         max_total_llm_tokens=max(
@@ -119,7 +112,7 @@ def resolve_agent_budgets(
             1000,
             _coerce_int(
                 override_value(OPENMINION_BRAIN_MAX_ELAPSED_MS_ENV),
-                default=int(default_budgets.max_elapsed_ms),
+                default=default_budgets.max_elapsed_ms,
             ),
         ),
     )
@@ -172,7 +165,7 @@ def resolve_runner_options(
         )
 
     runtime_tss_enabled = getattr(
-        getattr(getattr(config, "runtime", object()), "brain", None),
+        getattr(config.runtime, "brain", None),
         "tool_schema_shortlisting_enabled",
         None,
     )
@@ -196,13 +189,7 @@ def resolve_runner_options(
         request_handoff_enabled=bool(
             getattr(getattr(brain_config, "request_handoff", None), "enabled", False)
         ),
-        complex_request_plan_policy=str(
-            getattr(
-                getattr(config, "runtime", object()),
-                "complex_request_plan_policy",
-                "balanced",
-            )
-        ),
+        complex_request_plan_policy=config.runtime.complex_request_plan_policy,
         memory_policy_snapshot=memory_policy_snapshot,
         skill_selection_strategy=str(
             getattr(brain_config, "skill_selection_strategy", "llm") or "llm"

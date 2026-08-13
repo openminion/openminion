@@ -8,8 +8,7 @@ class TabOpenArgs(PinchTabConfigArgs):
     url: str = Field(..., min_length=1)
 
 
-class TabsListArgs(PinchTabConfigArgs):
-    pass
+TabsListArgs = PinchTabConfigArgs
 
 
 class TabCloseArgs(PinchTabConfigArgs):

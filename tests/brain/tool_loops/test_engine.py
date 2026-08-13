@@ -26,7 +26,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_FINALIZATION_BLOCKED,
-    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_ITERATION_CAP,
     ADAPTIVE_TERM_JOB_PENDING,
@@ -265,18 +265,22 @@ class _FakeSessionAPI:
     def append_event(
         self,
         session_id: str,
-        event_type: str,
-        payload: dict[str, Any],
+        type: str | None = None,
+        payload: dict[str, Any] | None = None,
+        *,
+        event_type: str | None = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> str:
+        event_name = str(event_type or type or "")
         self.events.append(
             {
                 "session_id": session_id,
-                "event_type": event_type,
-                "payload": payload,
+                "event_type": event_name,
+                "payload": dict(payload or {}),
                 "kwargs": dict(kwargs),
             }
         )
+        return f"event-{len(self.events)}"
 
     def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:
         del session_id
@@ -421,7 +425,7 @@ def test_engine_runs_multiple_rounds_and_appends_tool_messages() -> None:
     ]
     assert len(tool_messages) == 2
     assert json.loads(tool_messages[0].content)["summary"] == "read ok"
-    assert tool_messages[0].meta["tool_name"] == "file.read"
+    assert tool_messages[0].tool_call_id == "call-1"
     assert any(
         (item.get("payload") or {}).get("adaptive.tool_calls_total") == 2
         for item in loop_ctx.statuses
@@ -807,9 +811,11 @@ def test_engine_redirects_repeated_plan_only_calls_to_substantive_work() -> None
     assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
     assert outcome.state.scratchpad["plan_control.noop_retries"] == 2
     assert outcome.state.scratchpad["plan_control.tool_suppressed"] is True
-    assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.declared"
-    ]
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == ["task_plan.declared"]
     assert PLAN_TOOL_NAME not in {spec.name for spec in runtime.calls[3]["tools"]}
     assert any(
         "already recorded a plan update" in message.content
@@ -1651,7 +1657,7 @@ def test_engine_mid_loop_decompose_empty_stays_in_loop_without_tool_execution() 
     assert outcome.final_text == "done without decomposition"
     assert loop_ctx.commands == []
     assert any(
-        message.role == "tool" and message.meta.get("tool_name") == "decompose"
+        message.role == "tool" and message.tool_call_id == "decompose-call"
         for message in outcome.state.messages
     )
 
@@ -1971,9 +1977,11 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
     assert outcome.state.total_tool_calls == 0
     assert loop_ctx.state.budgets_remaining.tool_calls == 2
     assert PLAN_TOOL_NAME in {spec.name for spec in runtime.calls[0]["tools"]}
-    assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.declared"
-    ]
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == ["task_plan.declared"]
 
 
 def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
@@ -2044,9 +2052,11 @@ def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
-    assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.invalid_trailer"
-    ]
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == ["task_plan.invalid_trailer"]
 
 
 def test_engine_does_not_complete_plan_step_from_prose_only() -> None:
@@ -5017,7 +5027,9 @@ def test_engine_requires_typed_finalization_after_substantive_tool_work_for_codi
     assert any("finalization_status" in message for message in retry_system_messages)
 
 
-def test_engine_fails_closed_when_typed_finalization_remains_missing() -> None:
+def test_engine_preserves_evidence_backed_answer_when_typed_finalization_is_missing() -> (
+    None
+):
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -5131,8 +5143,9 @@ def test_engine_fails_closed_when_typed_finalization_remains_missing() -> None:
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
-    assert outcome.final_text is None
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    assert outcome.final_text == "Still working on it."
+    assert outcome.state.scratchpad["typed_finalization_status_conservative_fallback"]
 
 
 def test_engine_retries_raw_tool_result_json_as_final_answer() -> None:
@@ -6555,7 +6568,11 @@ def test_engine_stops_on_budget_iteration_cap_and_nonrecoverable_tool_failure() 
     assert autonomous_outcome.final_text == "done after extension"
     assert autonomous_outcome.state.effective_max_iterations == 2
     assert autonomous_outcome.state.extensions_used == 1
-    assert [event["event_type"] for event in autonomous_session_api.events] == [
+    assert [
+        event["event_type"]
+        for event in autonomous_session_api.events
+        if event["event_type"].startswith("budget.")
+    ] == [
         "budget.allocated",
         "budget.extended",
     ]
@@ -6607,7 +6624,11 @@ def test_engine_stops_on_budget_iteration_cap_and_nonrecoverable_tool_failure() 
     assert interactive_outcome.termination_reason == ADAPTIVE_TERM_NEEDS_USER
     assert interactive_state.pending_confirmation_command is not None
     assert interactive_state.pending_confirmation_command.kind == "ask_user"
-    assert [event["event_type"] for event in interactive_session_api.events] == [
+    assert [
+        event["event_type"]
+        for event in interactive_session_api.events
+        if event["event_type"].startswith("budget.")
+    ] == [
         "budget.allocated",
         "budget.exhausted",
     ]

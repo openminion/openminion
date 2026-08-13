@@ -78,8 +78,6 @@ def _camel_case_options(options: FirecrawlProviderOptions) -> dict[str, Any]:
 
 
 def _pick_raw_body(data: Mapping[str, Any]) -> tuple[str, str]:
-    """Return (raw_body, content_type) using spec §4.8 mapping rules."""
-
     raw_html = data.get("rawHtml")
     if isinstance(raw_html, str) and raw_html:
         return raw_html, "text/html"
@@ -113,9 +111,7 @@ class FirecrawlFetchProvider(FetchProviderProtocol):
         if self.config.endpoint and self.config.endpoint.strip():
             return _scrape_url(self.config.endpoint)
         runtime_env = getattr(ctx, "env", None) if ctx is not None else None
-        return _scrape_url(
-            resolve_firecrawl_api_url(env=runtime_env) or DEFAULT_FIRECRAWL_API_URL
-        )
+        return _scrape_url(resolve_firecrawl_api_url(env=runtime_env))
 
     def _timeout_seconds(
         self,
@@ -140,7 +136,6 @@ class FirecrawlFetchProvider(FetchProviderProtocol):
     def fetch(self, request: dict[str, Any], ctx: Any | None = None) -> dict[str, Any]:
         method = str(request.get("method", "GET") or "GET").strip().upper()
         if method == "HEAD":
-            # Spec §4.7: HEAD is not handled natively. The facade enforces the
             return _error_result(
                 "INVALID_ARGUMENT",
                 "Firecrawl fetch does not support HEAD requests",
@@ -175,7 +170,7 @@ class FirecrawlFetchProvider(FetchProviderProtocol):
         )
         try:
             options = FirecrawlProviderOptions.model_validate(firecrawl_payload)
-        except Exception as exc:
+        except ValueError as exc:
             return _error_result(
                 "INVALID_ARGUMENT",
                 f"invalid firecrawl provider options: {exc}",
@@ -191,7 +186,6 @@ class FirecrawlFetchProvider(FetchProviderProtocol):
         if isinstance(headers_arg, dict) and headers_arg:
             body["headers"] = {str(k): str(v) for k, v in headers_arg.items()}
 
-        # timeout_ms -> Firecrawl `timeout` (milliseconds) when provided.
         explicit_timeout_ms = int(request.get("timeout_ms", 0) or 0)
         if explicit_timeout_ms > 0:
             body["timeout"] = explicit_timeout_ms

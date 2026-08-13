@@ -55,7 +55,7 @@ class SessionTurnBusyError(RuntimeError):
         expires_at: str = "",
     ) -> None:
         self.session_id = session_id
-        self.retry_after_s = max(1, int(retry_after_s))
+        self.retry_after_s = max(1, retry_after_s)
         self.active_owner = active_owner
         self.expires_at = expires_at
         super().__init__(
@@ -68,7 +68,7 @@ class SessionTurnFenceError(RuntimeError):
 
 
 def _parse_iso_datetime(value: str) -> datetime:
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -85,7 +85,7 @@ def _to_iso_utc(value: datetime) -> str:
 def _lease_expiry(now_iso: str | None, ttl_s: int) -> tuple[str, str]:
     now_dt = _parse_iso_datetime(now_iso) if now_iso else _utc_now()
     now = _to_iso_utc(now_dt)
-    expires = _to_iso_utc(now_dt + timedelta(seconds=max(1, int(ttl_s))))
+    expires = _to_iso_utc(now_dt + timedelta(seconds=max(1, ttl_s)))
     return now, expires
 
 
@@ -110,13 +110,6 @@ class SessionTurnLeaseStore:
     ) -> dict[str, Any] | None:
         rows = self._record_store.query_dicts(sql, params)
         return rows[0] if rows else None
-
-    def _execute_count(
-        self,
-        sql: str,
-        params: tuple[Any, ...] | list[Any] | None = None,
-    ) -> int:
-        return self._record_store.execute_count(sql, params)
 
     def acquire(
         self,
@@ -181,7 +174,7 @@ class SessionTurnLeaseStore:
                 (sid,),
             )
             next_fence = int(prior["max_fence"]) + 1 if prior is not None else 1
-            self._execute_count(
+            self._record_store.execute_count(
                 """
                 INSERT INTO session_turn_leases(
                   session_id, owner, request_id, fence_token,
@@ -218,7 +211,7 @@ class SessionTurnLeaseStore:
             return self._renew_locked(
                 session_id=str(session_id or "").strip(),
                 owner=str(owner or "").strip(),
-                fence_token=int(fence_token),
+                fence_token=fence_token,
                 now=now,
                 expires=expires,
             )
@@ -235,7 +228,7 @@ class SessionTurnLeaseStore:
         lease_owner = str(owner or "").strip()
         now, _expires = _lease_expiry(now_iso, 1)
         with self._lock, self._record_store.transaction():
-            updated = self._execute_count(
+            updated = self._record_store.execute_count(
                 """
                 UPDATE session_turn_leases
                 SET released_at = ?, renewed_at = ?
@@ -244,7 +237,7 @@ class SessionTurnLeaseStore:
                   AND fence_token = ?
                   AND released_at IS NULL
                 """,
-                (now, now, sid, lease_owner, int(fence_token)),
+                (now, now, sid, lease_owner, fence_token),
             )
             return updated > 0
 
@@ -261,7 +254,7 @@ class SessionTurnLeaseStore:
             )
         if row is None or row["released_at"] is not None:
             raise SessionTurnFenceError(f"session turn lease is not active: {sid}")
-        if int(row["fence_token"]) != int(fence_token):
+        if int(row["fence_token"]) != fence_token:
             raise SessionTurnFenceError(f"stale session turn fence for {sid}")
 
     def get_active(self, session_id: str) -> SessionTurnLease | None:
@@ -305,7 +298,7 @@ class SessionTurnLeaseStore:
     ) -> bool:
         if not session_id or not owner:
             return False
-        updated = self._execute_count(
+        updated = self._record_store.execute_count(
             """
             UPDATE session_turn_leases
             SET renewed_at = ?, expires_at = ?
@@ -314,7 +307,7 @@ class SessionTurnLeaseStore:
               AND fence_token = ?
               AND released_at IS NULL
             """,
-            (now, expires, session_id, owner, int(fence_token)),
+            (now, expires, session_id, owner, fence_token),
         )
         return updated > 0
 

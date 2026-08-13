@@ -21,6 +21,4 @@ def build_live_state_overlay(
 
 
 def intent_execution_payload(state: WorkingState) -> list[dict[str, Any]]:
-    return [
-        item.model_dump(mode="json") for item in state.intent_execution_states
-    ]
+    return [item.model_dump(mode="json") for item in state.intent_execution_states]

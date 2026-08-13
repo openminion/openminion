@@ -51,20 +51,15 @@ def _strategy_tokens(*values: str) -> set[str]:
     suffixes = ("-skill", "_skill")
     tokens: set[str] = set()
     for raw_value in values:
-        value = str(raw_value or "").strip()
-        if not value:
+        token = slugify(str(raw_value or "").strip(), fallback="")
+        if not token:
             continue
-        normalized = slugify(value, fallback="")
-        for candidate in (value, normalized):
-            token = slugify(candidate, fallback="")
-            if not token:
-                continue
-            tokens.add(token)
-            for suffix in suffixes:
-                if token.endswith(suffix):
-                    stripped = token[: -len(suffix)].strip("-_")
-                    if stripped:
-                        tokens.add(stripped)
+        tokens.add(token)
+        for suffix in suffixes:
+            if token.endswith(suffix):
+                stripped = token[: -len(suffix)].strip("-_")
+                if stripped:
+                    tokens.add(stripped)
     return tokens
 
 
@@ -74,7 +69,7 @@ def _catalog_duplicate_signatures(
     """Build ``(strategy-ish name, capability tag, intent)`` signatures."""
 
     signatures: set[tuple[str, str, str]] = set()
-    for item in current_catalog or []:
+    for item in current_catalog:
         if isinstance(item, Mapping):
             skill_id = str(item.get("skill_id") or item.get("id") or "").strip()
             name = str(item.get("name") or "").strip()
@@ -110,12 +105,9 @@ def _draft_from_shape(shape: Any) -> SkillProposalDraft:
             f"Proposed from recurring {strategy_id} task-shape evidence for "
             f"{intent_category}."
         ).strip(),
-        tools=[],
         tags=normalize_text_list([strategy_id, capability_category, intent_category]),
         risk_class=RISK_CLASS_LOW,
         applies_to={"intents": normalize_text_list([intent_category]), "steps": []},
-        inputs_schema=[],
-        verification_rules=[],
     )
 
 
@@ -129,7 +121,7 @@ def propose_skills_from_task_shapes(
 
     duplicate_signatures = _catalog_duplicate_signatures(current_catalog)
     proposals: list[SkillProposal] = []
-    for shape in shapes or []:
+    for shape in shapes:
         source_task_shape_ref = str(_shape_field(shape, "task_shape_ref") or "").strip()
         strategy_id = str(_shape_field(shape, "strategy_id") or "").strip()
         capability_category = str(

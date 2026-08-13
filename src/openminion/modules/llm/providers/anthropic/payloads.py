@@ -115,7 +115,9 @@ def _append_anthropic_tool_result(
     content: str | list[dict[str, Any]],
 ) -> bool:
     meta = dict(message.meta)
-    tool_use_id = str(meta.get("tool_call_id", "") or "").strip()
+    tool_use_id = str(
+        message.tool_call_id or meta.get("tool_call_id", "") or ""
+    ).strip()
     if not tool_use_id:
         return False
     block: dict[str, Any] = dict(
@@ -199,7 +201,19 @@ def _messages_anthropic(
             supports_vision_input=supports_vision_input,
         )
         if msg.role == "assistant":
-            tool_use_blocks = _anthropic_tool_use_blocks(msg.meta)
+            tool_use_blocks = [
+                {
+                    "type": "tool_use",
+                    "id": str(call.id or ""),
+                    "name": (
+                        str(tool_name_overrides.get(call.name, call.name)).strip()
+                        if tool_name_overrides
+                        else call.name
+                    ),
+                    "input": dict(call.arguments),
+                }
+                for call in msg.tool_calls
+            ] or _anthropic_tool_use_blocks(msg.meta)
             if tool_use_blocks:
                 content_blocks = (
                     [{"type": "text", "text": content}]

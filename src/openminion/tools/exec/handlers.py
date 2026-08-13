@@ -4,24 +4,14 @@ from typing import Any
 from collections.abc import Iterable
 
 from openminion.modules.tool.contracts.model_ids import (
-    MODEL_EXEC_CLEAR,
     MODEL_EXEC_KILL,
-    MODEL_EXEC_LIST,
-    MODEL_EXEC_PASTE,
     MODEL_EXEC_POLL,
     MODEL_EXEC_RUN,
-    MODEL_EXEC_SEND_KEYS,
-    MODEL_EXEC_SUBMIT,
 )
 from openminion.modules.tool.runtime.context import RuntimeContext
 from openminion.modules.tool.family.events import emit_family_event
-from openminion.modules.brain.runtime.escalation import (
-    ActionRiskTier,
-)
 
 from .constants import (
-    EXEC_APPROVAL_PENDING_STATUSES,
-    EXEC_ARTIFACT_THRESHOLD_BYTES,
     EXEC_PROCESS_STATUS_KILLED,
     EXEC_STATUS_ERROR,
     EXEC_STATUS_OK,
@@ -44,18 +34,21 @@ from .schemas import (
 )
 
 from .events import _emit_exec_operation
-from .policy import _agent_id, _sanitize_command
-from .results import _artifactize_output, _decode_preview, _status_for_entry
+from .policy import _agent_id, _sanitize_command, _validate_host_allowlist
+from .results import (
+    _artifactize_output,
+    _decode_preview,
+    _sandbox_error_result,
+    _status_for_entry,
+)
 from .sessions import (
+    _host_execution_enabled,
     _prepare_exec_run,
+    _sandbox_runner_for_ctx,
     _sandbox_session_manager_for_ctx,
     _session_backend_for_ctx,
     _start_exec_run_session,
 )
-
-
-_ARTIFACT_THRESHOLD_BYTES = EXEC_ARTIFACT_THRESHOLD_BYTES
-_APPROVAL_PENDING_STATUSES = EXEC_APPROVAL_PENDING_STATUSES
 
 
 _KEY_ALIASES = {
@@ -72,55 +65,13 @@ _KEY_ALIASES = {
     "C-D": b"\x04",
     "C-Z": b"\x1a",
 }
-_DECLARED_EXEC_RISK_TIERS: dict[str, ActionRiskTier] = {
-    MODEL_EXEC_RUN: "approve",
-    MODEL_EXEC_POLL: "silent",
-    MODEL_EXEC_SEND_KEYS: "approve",
-    MODEL_EXEC_SUBMIT: "approve",
-    MODEL_EXEC_PASTE: "approve",
-    MODEL_EXEC_KILL: "approve",
-    MODEL_EXEC_CLEAR: "approve",
-    MODEL_EXEC_LIST: "silent",
-}
-
-_CANONICAL_EXECUTABLE_ALIASES: dict[str, str] = {
-    "python3": "python3.11",
-}
 
 
-_UNSUPPORTED_REDIRECTION_HINT_TOOL = "file.list_dir"
-_UNSUPPORTED_REDIRECTION_HINT_FIX = (
-    "Redirections are not supported. For workspace inspection, use "
-    "file.list_dir and file.read instead of shell chains. For command output, "
-    "run the command directly; stdout and stderr previews are captured "
-    "separately."
-)
-_UNSUPPORTED_COMMAND_OUTPUT_REDIRECTION_HINT_TOOL = "exec.run"
-_UNSUPPORTED_COMMAND_OUTPUT_REDIRECTION_HINT_FIX = (
-    "Redirections, pipes, and shell output truncation are not supported. Run the "
-    "verification command directly; stdout and stderr previews are captured "
-    "separately."
-)
-_PYTEST_EXECUTABLE_HINT_TOOL = "exec.run"
-_PYTEST_EXECUTABLE_HINT_FIX = (
-    "Bare `pytest` is not allowlisted. Run pytest through the allowed Python "
-    "module form instead: `python -m pytest -q tests`. Do not use pipes, "
-    "redirections, shell chaining, or output truncation."
-)
-_PACKAGE_INSTALL_HINT_TOOL = "exec.run"
-_PACKAGE_INSTALL_HINT_FIX = (
-    "Package-manager install commands are not allowlisted for this execution "
-    "surface. Do not install the project just to verify local changes. If the "
-    "task requires Python test verification, run the allowed direct command "
-    "`python -m pytest -q tests` from the workspace instead."
-)
-_DISCOVERY_HINT_TOOL = "exec.run"
-_DISCOVERY_HINT_FIX = (
-    "Run toolchain discovery as a direct command such as "
-    "`command -v nasm`, then run a separate direct version check such as "
-    "`nasm --version` if the tool exists. Do not use pipes, redirections, "
-    "or shell chaining."
-)
+def _gateway_fallback_policy(command: str, ctx: RuntimeContext) -> dict[str, str]:
+    allowed, _message, _details = _validate_host_allowlist(command, ctx)
+    if allowed:
+        return {"host": "gateway", "security": "allowlist", "ask": "off"}
+    return {"host": "gateway", "security": "full", "ask": "on-miss"}
 
 
 def _encode_keys(keys: Iterable[str]) -> bytes:
@@ -145,7 +96,27 @@ def _encode_keys(keys: Iterable[str]) -> bytes:
 
 
 def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    params = ExecRunArgs.model_validate(args)
+    normalized_args = dict(args)
+    if (
+        "host" not in normalized_args
+        and _sandbox_runner_for_ctx(ctx) is None
+        and _sandbox_session_manager_for_ctx(ctx) is None
+        and _host_execution_enabled(ctx)
+    ):
+        normalized_args.update(
+            _gateway_fallback_policy(
+                str(normalized_args.get("command") or normalized_args.get("cmd") or ""),
+                ctx,
+            )
+        )
+    params = ExecRunArgs.model_validate(normalized_args)
+    if (
+        params.host == "sandbox"
+        and _sandbox_runner_for_ctx(ctx) is None
+        and _sandbox_session_manager_for_ctx(ctx) is None
+        and _host_execution_enabled(ctx)
+    ):
+        params = params.model_copy(update=_gateway_fallback_policy(params.command, ctx))
     started = time.monotonic()
     tool_name = MODEL_EXEC_RUN
     request_payload = {
@@ -162,6 +133,20 @@ def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "yield_ms": params.yield_ms,
     }
     emit_family_event(ctx, event="tool.requested", payload={"request": request_payload})
+    if (
+        params.host == "sandbox"
+        and _sandbox_runner_for_ctx(ctx) is None
+        and _sandbox_session_manager_for_ctx(ctx) is None
+    ):
+        return _sandbox_error_result(
+            ctx=ctx,
+            request_payload=request_payload,
+            started=started,
+            tool_name=tool_name,
+            code="SANDBOX_UNAVAILABLE",
+            message="sandbox execution is not configured",
+            details={"host": params.host},
+        )
     prep, early_result = _prepare_exec_run(
         params=params,
         ctx=ctx,

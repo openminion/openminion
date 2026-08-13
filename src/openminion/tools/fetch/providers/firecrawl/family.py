@@ -1,5 +1,3 @@
-"""Firecrawl fetch family declaration."""
-
 from openminion.modules.tool.framework import ToolFamilySpec
 from openminion.tools.fetch import register_provider
 

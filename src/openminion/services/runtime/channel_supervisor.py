@@ -270,9 +270,7 @@ class ChannelRuntimeSupervisor:
         self._emit("controlplane.outbox_worker.stopped")
 
     def _close_shared_runtime(self) -> None:
-        if self._runtime_closed:
-            return
-        if not callable(self._close_runtime):
+        if self._runtime_closed or not callable(self._close_runtime):
             return
         try:
             self._close_runtime()

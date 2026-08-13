@@ -45,6 +45,12 @@ def _unique_sorted(values: Iterable[str]) -> list[str]:
     return sorted(normalize_text_list([str(item) for item in values]))
 
 
+def _normalize_string_list(value: object) -> list[str]:
+    if isinstance(value, tuple):
+        value = list(value)
+    return _unique_sorted(value) if isinstance(value, list) else []
+
+
 def _redact_token(token: str) -> str:
     text = str(token or "")
     lowered = text.lower()
@@ -118,13 +124,7 @@ class WorkflowEvidenceBundle(BaseModel):
     )
     @classmethod
     def _normalize_lists(cls, value: object) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, tuple):
-            value = list(value)
-        if not isinstance(value, list):
-            return []
-        return _unique_sorted(str(item) for item in value)
+        return _normalize_string_list(value)
 
     @model_validator(mode="after")
     def _fill_ids(self) -> "WorkflowEvidenceBundle":
@@ -197,13 +197,7 @@ class WorkflowShape(BaseModel):
     )
     @classmethod
     def _normalize_lists(cls, value: object) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, tuple):
-            value = list(value)
-        if not isinstance(value, list):
-            return []
-        return _unique_sorted(str(item) for item in value)
+        return _normalize_string_list(value)
 
     @model_validator(mode="after")
     def _fill_shape_refs(self) -> "WorkflowShape":

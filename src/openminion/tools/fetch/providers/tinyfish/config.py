@@ -29,14 +29,11 @@ def resolve_tinyfish_fetch_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
+    value = resolve_tool_env(env=env).get(
+        TINYFISH_FETCH_API_URL_ENV, DEFAULT_TINYFISH_FETCH_API_URL
+    )
     return (
-        str(
-            resolve_tool_env(env=env).get(
-                TINYFISH_FETCH_API_URL_ENV,
-                DEFAULT_TINYFISH_FETCH_API_URL,
-            )
-            or ""
-        ).strip()
+        str(value or DEFAULT_TINYFISH_FETCH_API_URL).strip()
         or DEFAULT_TINYFISH_FETCH_API_URL
     )
 

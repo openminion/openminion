@@ -1,19 +1,17 @@
+from functools import partial
+
 from openminion.tools.ops.specialized import make_handler
 
-from .args import (
-    PrometheusRulesArgs,
-    PrometheusAlertsArgs,
-    PrometheusQueryArgs,
-    TraceLookupArgs,
-)
+from . import args
 
-_h_prometheus_rules = make_handler(
-    "observability", "prometheus_rules", PrometheusRulesArgs
+_observability_handler = partial(make_handler, "observability")
+_h_prometheus_rules = _observability_handler(
+    "prometheus_rules", args.PrometheusRulesArgs
 )
-_h_prometheus_alerts = make_handler(
-    "observability", "prometheus_alerts", PrometheusAlertsArgs
+_h_prometheus_alerts = _observability_handler(
+    "prometheus_alerts", args.PrometheusAlertsArgs
 )
-_h_prometheus_query = make_handler(
-    "observability", "prometheus_query", PrometheusQueryArgs
+_h_prometheus_query = _observability_handler(
+    "prometheus_query", args.PrometheusQueryArgs
 )
-_h_otel_trace = make_handler("observability", "otel_trace", TraceLookupArgs)
+_h_otel_trace = _observability_handler("otel_trace", args.TraceLookupArgs)

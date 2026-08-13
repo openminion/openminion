@@ -17,7 +17,7 @@ _BYTE_UNITS = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
 def _format_bytes(value: int | None) -> str:
     if value is None:
         return "unknown"
-    amount = float(max(0, int(value)))
+    amount = float(max(0, value))
     unit = _BYTE_UNITS[0]
     for unit in _BYTE_UNITS:
         if amount < 1024.0 or unit == _BYTE_UNITS[-1]:
@@ -31,28 +31,18 @@ def _format_bytes(value: int | None) -> str:
 def _percent(used: int | None, total: int | None) -> float | None:
     if used is None or not total:
         return None
-    return round((float(used) / float(total)) * 100.0, 1)
+    return round((used / total) * 100.0, 1)
 
 
 def _workspace_path(ctx: Any) -> Path:
-    for attr in ("workspace", "workspace_root", "run_root"):
-        raw = getattr(ctx, attr, None)
-        if raw:
-            return Path(raw)
-    policy = getattr(ctx, "policy", None)
-    raw_policy = getattr(policy, "raw", None)
-    if isinstance(raw_policy, dict):
-        raw = raw_policy.get("workspace_root")
-        if raw:
-            return Path(str(raw))
-    return Path.cwd()
+    return Path(ctx.workspace)
 
 
 def _resolve_path(raw_path: str | None, ctx: Any) -> Path:
     workspace = _workspace_path(ctx)
     if not raw_path:
         return workspace
-    path = Path(str(raw_path)).expanduser()
+    path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = workspace / path
     return path
@@ -84,13 +74,13 @@ def _disk_paths(requested: Path) -> list[Path]:
 
 def _disk_usage(path: Path) -> dict[str, Any]:
     usage = shutil.disk_usage(path)
-    used = int(usage.total) - int(usage.free)
+    used = usage.total - usage.free
     return {
         "path": str(path),
-        "total_bytes": int(usage.total),
+        "total_bytes": usage.total,
         "used_bytes": used,
-        "free_bytes": int(usage.free),
-        "used_percent": _percent(used, int(usage.total)),
+        "free_bytes": usage.free,
+        "used_percent": _percent(used, usage.total),
     }
 
 
@@ -104,7 +94,7 @@ def _parse_linux_meminfo() -> dict[str, int] | None:
             key, _, rest = line.partition(":")
             if not key or not rest:
                 continue
-            amount = str(rest).strip().split(maxsplit=1)[0]
+            amount = rest.strip().split(maxsplit=1)[0]
             values[key] = int(amount) * 1024
     except (OSError, ValueError):
         return None
@@ -205,20 +195,17 @@ def _platform_metrics() -> dict[str, str]:
 
 def _content(data: dict[str, Any]) -> str:
     lines: list[str] = []
-    platform_data = data.get("platform")
-    if isinstance(platform_data, dict):
-        system = str(platform_data.get("system") or "unknown")
-        release = str(platform_data.get("release") or "").strip()
-        machine = str(platform_data.get("machine") or "").strip()
-        suffix = " ".join(item for item in (release, machine) if item)
-        lines.append(f"Host: {system}{f' {suffix}' if suffix else ''}")
+    platform_data = data["platform"]
+    system = platform_data.get("system") or "unknown"
+    release = (platform_data.get("release") or "").strip()
+    machine = (platform_data.get("machine") or "").strip()
+    suffix = " ".join(item for item in (release, machine) if item)
+    lines.append(f"Host: {system}{f' {suffix}' if suffix else ''}")
 
     disks = data.get("disk")
-    if isinstance(disks, list) and disks:
+    if disks:
         lines.append("Disk:")
         for item in disks:
-            if not isinstance(item, dict):
-                continue
             total = _format_bytes(item.get("total_bytes"))
             used = _format_bytes(item.get("used_bytes"))
             free = _format_bytes(item.get("free_bytes"))
@@ -230,7 +217,7 @@ def _content(data: dict[str, Any]) -> str:
             )
 
     memory = data.get("memory")
-    if isinstance(memory, dict):
+    if memory is not None:
         total = _format_bytes(memory.get("total_bytes"))
         used = _format_bytes(memory.get("used_bytes"))
         available = _format_bytes(memory.get("available_bytes"))
@@ -243,7 +230,7 @@ def _content(data: dict[str, Any]) -> str:
 
 
 def _h_metrics(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    parsed = HostMetricsArgs.model_validate(dict(args or {}))
+    parsed = HostMetricsArgs.model_validate(args)
     data: dict[str, Any] = {
         "source": "openminion-tool-host",
         "method": TOOL_HOST_METRICS,

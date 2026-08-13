@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable, Iterable
 
 from openminion.base.config.env import resolve_environment_config
@@ -102,7 +102,7 @@ def probe_provider_supported(
     )
 
 
-def probe_provider_key(config: Any, provider_name: str) -> Optional[ProbeResult]:
+def probe_provider_key(config: Any, provider_name: str) -> ProbeResult | None:
     if provider_name == "openai":
         return _build_key_probe(
             provider_name="openai",
@@ -161,7 +161,7 @@ def probe_provider_key(config: Any, provider_name: str) -> Optional[ProbeResult]
     return None
 
 
-def probe_provider_session(config: Any, provider_name: str) -> Optional[ProbeResult]:
+def probe_provider_session(config: Any, provider_name: str) -> ProbeResult | None:
     if provider_name != "cortensor":
         return None
     if not _cortensor_completion_mode(
@@ -306,12 +306,10 @@ def _build_key_probe(
     )
 
 
-def _resolve_key_source(
-    config_key: str, env_name: str, default_env: str
-) -> Optional[str]:
-    if str(config_key or "").strip():
+def _resolve_key_source(config_key: str, env_name: str, default_env: str) -> str | None:
+    if config_key.strip():
         return "config"
-    env_key = str(env_name or "").strip() or default_env
+    env_key = env_name.strip() or default_env
     if resolve_environment_config().get(env_key, "").strip():
         return f"env:{env_key}"
     return None
@@ -339,8 +337,6 @@ def _resolve_cortensor_session_candidates(config: Any) -> list[int]:
 
 def _cortensor_completion_mode(*, api_mode: str, base_url: str) -> bool:
     mode = (api_mode or "").strip().lower()
-    if mode == "cortensor_completion":
-        return True
-    if mode == "openai_chat":
-        return False
+    if mode in {"cortensor_completion", "openai_chat"}:
+        return mode == "cortensor_completion"
     return base_url.strip().lower().endswith("/completions")

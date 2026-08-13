@@ -262,22 +262,20 @@ class BlobStoreFS(BlobStore):
         max_total_bytes = int(policy.get("max_total_bytes", -1))
 
         files = sorted(
-            [
+            (
                 path
                 for path in self.blob_root.rglob("*")
                 if path.is_file() and not path.name.endswith(".meta.json")
-            ],
+            ),
             key=lambda item: item.stat().st_mtime,
         )
         total_bytes = sum(int(item.stat().st_size) for item in files)
 
         candidates: list[Path] = []
         if max_age_days >= 0:
-            now_ts = time.time() if files else 0.0
+            now_ts = time.time()
             for path in files:
-                age_days = (
-                    (now_ts - path.stat().st_mtime) / 86_400 if now_ts > 0 else 0.0
-                )
+                age_days = (now_ts - path.stat().st_mtime) / 86_400
                 if age_days >= float(max_age_days):
                     candidates.append(path)
 

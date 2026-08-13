@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -51,8 +51,8 @@ class TaskPlanStep(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     tool_families: list[TaskPlanToolFamily] = Field(default_factory=list)
     output_summary: str = ""
-    blocker_type: Optional[str] = None
-    blocker_details: Optional[str] = None
+    blocker_type: str | None = None
+    blocker_details: str | None = None
 
     @field_validator("step_id", "description", mode="before")
     @classmethod
@@ -94,8 +94,7 @@ class TaskPlanStep(BaseModel):
     @field_validator("blocker_type", "blocker_details", mode="before")
     @classmethod
     def _optional_text(cls, value: Any) -> str | None:
-        text = _trimmed_non_empty(value)
-        return text or None
+        return _trimmed_non_empty(value) or None
 
 
 class TaskPlan(BaseModel):
@@ -103,11 +102,10 @@ class TaskPlan(BaseModel):
 
     plan_id: str = Field(min_length=1)
     objective: str = Field(min_length=1)
-    workflow_id: Optional[str] = None
-    root_goal_id: Optional[str] = None
+    workflow_id: str | None = None
+    root_goal_id: str | None = None
     status: TaskPlanStatus = "active"
     steps: list[TaskPlanStep] = Field(min_length=1)
-    # model-opt-in signal to schedule a follow-up autonomous turn
     continue_plan_autonomously: bool = False
 
     @field_validator("plan_id", "objective", mode="before")
@@ -118,8 +116,7 @@ class TaskPlan(BaseModel):
     @field_validator("workflow_id", "root_goal_id", mode="before")
     @classmethod
     def _optional_identifier(cls, value: Any) -> str | None:
-        text = _trimmed_non_empty(value)
-        return text or None
+        return _trimmed_non_empty(value) or None
 
     @model_validator(mode="after")
     def _validate_step_graph(self) -> "TaskPlan":
@@ -136,7 +133,7 @@ class TaskPlan(BaseModel):
 
         visiting: set[str] = set()
         visited: set[str] = set()
-        deps_by_step = {step.step_id: list(step.depends_on) for step in self.steps}
+        deps_by_step = {step.step_id: step.depends_on for step in self.steps}
 
         def visit(step_id: str) -> None:
             if step_id in visited:
@@ -144,7 +141,7 @@ class TaskPlan(BaseModel):
             if step_id in visiting:
                 raise ValueError("TaskPlan dependencies must be acyclic")
             visiting.add(step_id)
-            for dependency in deps_by_step.get(step_id, []):
+            for dependency in deps_by_step[step_id]:
                 visit(dependency)
             visiting.remove(step_id)
             visited.add(step_id)
@@ -159,8 +156,6 @@ class TaskPlanStepCompleted(BaseModel):
     step_id: str = Field(min_length=1)
     outcome: str = ""
     output_summary: str = ""
-    # opt-in signal to schedule a follow-up autonomous turn after
-    # this step commits. Runtime owns scheduling; safety caps apply.
     continue_plan_autonomously: bool = False
 
     @field_validator("plan_id", "step_id", mode="before")
@@ -200,10 +195,8 @@ class TaskPlanRevision(BaseModel):
     plan_id: str = Field(min_length=1)
     reason: str = ""
     revised_steps: list[TaskPlanStep] = Field(min_length=1)
-    objective: Optional[str] = None
-    workflow_id: Optional[str] = None
-    # opt-in signal to schedule a follow-up autonomous turn after
-    # this revision commits. Runtime owns scheduling; safety caps apply.
+    objective: str | None = None
+    workflow_id: str | None = None
     continue_plan_autonomously: bool = False
 
     @field_validator("plan_id", mode="before")
@@ -219,8 +212,7 @@ class TaskPlanRevision(BaseModel):
     @field_validator("objective", "workflow_id", mode="before")
     @classmethod
     def _optional_text(cls, value: Any) -> str | None:
-        text = _trimmed_non_empty(value)
-        return text or None
+        return _trimmed_non_empty(value) or None
 
     def to_task_plan(
         self,

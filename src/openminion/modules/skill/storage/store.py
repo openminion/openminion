@@ -1,5 +1,3 @@
-"""Skill storage store implementations."""
-
 from __future__ import annotations
 
 import json
@@ -150,12 +148,6 @@ def _create_skill_schema(record_store: RecordStore) -> None:
 
 
 class _SkillStoreMixin(SkillStore):
-    def _list_migrations(self) -> list[str]:
-        return list_migrations()
-
-    def _module_package(self) -> str:
-        return __package__
-
     def upsert_skill(
         self,
         *,
@@ -290,9 +282,7 @@ class _SkillStoreMixin(SkillStore):
         else:
             where_clauses.append("s.scope = 'global'")
 
-        where_sql = ""
-        if where_clauses:
-            where_sql = "WHERE " + " AND ".join(where_clauses)
+        where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
         rows = self._record_store.query_dicts(
             f"""
@@ -672,8 +662,8 @@ class _SkillStoreMixin(SkillStore):
                 str(proposal_id),
                 str(signature),
                 str(event_type),
-                reason if reason is None else str(reason),
-                outcome if outcome is None else str(outcome),
+                reason,
+                outcome,
                 str(surfaced_at),
             ),
         )
@@ -839,15 +829,9 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),
         "review": review_payload,
-        "reviewer_id": str(row.get("reviewer_id") or "")
-        if row.get("reviewer_id") is not None
-        else "",
-        "review_status": str(row.get("review_status") or "")
-        if row.get("review_status") is not None
-        else "",
-        "decided_at": str(row.get("decided_at") or "")
-        if row.get("decided_at") is not None
-        else "",
+        "reviewer_id": str(row.get("reviewer_id") or ""),
+        "review_status": str(row.get("review_status") or ""),
+        "decided_at": str(row.get("decided_at") or ""),
     }
 
 

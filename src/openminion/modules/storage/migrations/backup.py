@@ -46,7 +46,7 @@ def create_snapshot(
     schema_head: str | None,
     sqlite3_bin: str = "sqlite3",
 ) -> BackupArtifact:
-    normalized = str(mode).strip().lower()
+    normalized = mode.strip().lower()
     if normalized not in SUPPORTED_BACKUP_MODES:
         raise BackupError(
             f"Unsupported backup mode '{mode}'. Expected one of {sorted(SUPPORTED_BACKUP_MODES)}"
@@ -66,8 +66,7 @@ def create_snapshot(
     )
     tmp_path = snapshot_path.with_suffix(snapshot_path.suffix + ".tmp")
 
-    if tmp_path.exists():
-        tmp_path.unlink()
+    tmp_path.unlink(missing_ok=True)
 
     if normalized == BACKUP_MODE_ONLINE:
         backup_online(source_db_path, tmp_path)
@@ -87,7 +86,7 @@ def create_snapshot(
         snapshot_path=str(snapshot_path),
         mode=normalized,
         created_at=utc_now_iso(),
-        user_version=int(user_version),
+        user_version=user_version,
         schema_head=schema_head,
     )
 

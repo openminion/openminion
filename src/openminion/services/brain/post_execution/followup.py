@@ -1,4 +1,5 @@
 import hashlib
+import json
 import time
 
 from openminion.base.time import utc_now_iso as _iso_now_utc
@@ -17,6 +18,9 @@ from openminion.modules.llm.providers.tool_calling import (
     detect_raw_tool_markup,
 )
 from openminion.modules.tool.base import ToolExecutionResult
+from openminion.services.agent.execution.prompts import (
+    build_pre_tool_draft_message_text,
+)
 from openminion.services.agent import (
     _DEFAULT_TOOL_LOOP_CONTINUE_PROMPT,
     _loop_tool_feedback,
@@ -217,55 +221,75 @@ def _build_tool_follow_up_history(
         provider_history.append(ProviderHistoryMessage(role="user", content=user_body))
 
     assistant_text = str(prior_assistant_text or "").strip()
-    if not assistant_text:
-        names = sorted(
-            {
-                str(item.get("tool_name", "")).strip()
-                for item in tool_results
-                if str(item.get("tool_name", "")).strip()
-            }
+    if assistant_text:
+        provider_history.append(
+            ProviderHistoryMessage(
+                role="assistant",
+                content=build_pre_tool_draft_message_text(response_text=assistant_text),
+            )
         )
-        assistant_text = (
-            ("Tool call requested: " + ", ".join(names))
-            if names
-            else "Tool call requested."
-        )
-    provider_history.append(
-        ProviderHistoryMessage(
-            role="assistant",
-            content=(
-                "Pre-tool draft for the same request (not the final answer):\n"
-                f"{assistant_text}"
-            ),
-        )
-    )
 
-    feedback_items = [
-        ToolExecutionResult(
-            tool_name=str(item.get("tool_name", "") or "unknown"),
-            ok=bool(item.get("ok")),
-            content=str(item.get("content", "") or ""),
-            verified=bool(item.get("verified")),
-            error=str(item.get("error", "") or ""),
-            data=(
-                dict(item.get("data", {}))
-                if isinstance(item.get("data", {}), dict)
-                else {}
-            ),
-            call_id=str(item.get("call_id", "") or ""),
-            source=str(item.get("source", "") or ""),
+    canonical_call_ids = {
+        str(call.id or "")
+        for entry in provider_history
+        for call in list(entry.tool_calls or [])
+        if str(call.id or "")
+    }
+    legacy_results: list[dict[str, Any]] = []
+    for item in tool_results:
+        call_id = str(item.get("call_id", "") or "").strip()
+        ok = bool(item.get("ok"))
+        status = "success" if ok else "error"
+        if call_id and call_id in canonical_call_ids:
+            data = item.get("data")
+            error_message = str(item.get("error", "") or "")
+            provider_history.append(
+                ProviderHistoryMessage(
+                    role="tool",
+                    content=json.dumps(
+                        {
+                            "status": status,
+                            "output": item.get("content") if ok else None,
+                            "error": error_message if not ok else None,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    tool_call_id=call_id,
+                    tool_status=status,
+                    tool_output=dict(data) if ok and isinstance(data, dict) else None,
+                    tool_error=(
+                        {"code": "TOOL_EXECUTION_ERROR", "message": error_message}
+                        if not ok
+                        else None
+                    ),
+                )
+            )
+            continue
+        legacy_results.append(item)
+    if legacy_results:
+        feedback_items = [
+            ToolExecutionResult(
+                tool_name=str(item.get("tool_name", "") or "unknown"),
+                ok=bool(item.get("ok")),
+                content=str(item.get("content", "") or ""),
+                verified=bool(item.get("verified")),
+                error=str(item.get("error", "") or ""),
+                data=dict(item.get("data", {}))
+                if isinstance(item.get("data"), dict)
+                else {},
+                call_id=str(item.get("call_id", "") or ""),
+                source=str(item.get("source", "") or ""),
+            )
+            for item in legacy_results
+        ]
+        provider_history.append(
+            ProviderHistoryMessage(
+                role="user",
+                content="Tool execution results:\n"
+                + _loop_tool_feedback(tool_results=feedback_items, max_chars=4000),
+                meta={"transcript_lane": "legacy_history"},
+            )
         )
-        for item in tool_results
-    ]
-    provider_history.append(
-        ProviderHistoryMessage(
-            role="user",
-            content=(
-                "Tool execution results:\n"
-                + _loop_tool_feedback(tool_results=feedback_items, max_chars=4000)
-            ),
-        )
-    )
     return provider_history
 
 

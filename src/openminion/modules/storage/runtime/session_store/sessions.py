@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -35,11 +36,29 @@ class RuntimeSessionStoreSessions:
         self._list_participants = list_participants
 
     def _resolve_existing_explicit_session(
-        self, explicit_id: str, *, agent_id: str
+        self,
+        explicit_id: str,
+        *,
+        agent_id: str,
+        channel: str,
+        target: str,
     ) -> SessionRecord | None:
         existing = self.get_session(explicit_id)
         if existing is None:
             return None
+
+        normalized_channel = normalize_identity(channel)
+        normalized_target = normalize_identity(target)
+        if existing.channel != normalized_channel:
+            raise ValueError(
+                f"Session {explicit_id!r} belongs to channel "
+                f"{existing.channel!r}, not {normalized_channel!r}"
+            )
+        if existing.target != normalized_target:
+            raise ValueError(
+                f"Session {explicit_id!r} belongs to target "
+                f"{existing.target!r}, not {normalized_target!r}"
+            )
 
         normalized_agent = normalize_identity(agent_id) if agent_id else ""
         if normalized_agent:
@@ -111,7 +130,10 @@ class RuntimeSessionStoreSessions:
         explicit_id = (session_id or "").strip()
         if explicit_id:
             existing = self._resolve_existing_explicit_session(
-                explicit_id, agent_id=agent_id
+                explicit_id,
+                agent_id=agent_id,
+                channel=normalized_channel,
+                target=normalized_target,
             )
             if existing is not None:
                 return existing
@@ -173,7 +195,7 @@ class RuntimeSessionStoreSessions:
     ) -> SessionRecord:
         normalized_channel = normalize_identity(channel or "cli")
         normalized_target = normalize_identity(target or "room")
-        room_session_id = str(session_id or f"room-{uuid4().hex}").strip()
+        room_session_id = (session_id or f"room-{uuid4().hex}").strip()
         if not room_session_id:
             room_session_id = f"room-{uuid4().hex}"
         if self.get_session(room_session_id) is not None:
@@ -199,15 +221,11 @@ class RuntimeSessionStoreSessions:
             f"SELECT {SESSION_COLUMNS} FROM sessions WHERE id = ?",
             (session_id,),
         )
-        if row is None:
-            return None
-        return row_to_session(row)
+        return None if row is None else row_to_session(row)
 
     def count_sessions(self) -> int:
         row = self._backend.query_one("SELECT COUNT(*) AS count FROM sessions")
-        if row is None:
-            return 0
-        return int(row["count"])
+        return 0 if row is None else int(row["count"])
 
     def list_sessions(
         self,
@@ -250,8 +268,8 @@ class RuntimeSessionStoreSessions:
                 normalized_key = str(key or "").strip()
                 if not normalized_key:
                     continue
-                clauses.append(f"json_extract(metadata_json, '$.{normalized_key}') = ?")
-                params.append(str(value or ""))
+                clauses.append("json_extract(metadata_json, ?) = ?")
+                params.extend((f"$.{normalized_key}", value or ""))
         where_clause = ""
         if clauses:
             where_clause = "WHERE " + " AND ".join(clauses)
@@ -268,7 +286,7 @@ class RuntimeSessionStoreSessions:
         return [row_to_session(row) for row in rows]
 
     def delete_session(self, session_id: str) -> bool:
-        normalized_session_id = str(session_id or "").strip()
+        normalized_session_id = session_id.strip()
         if not normalized_session_id:
             return False
         with self._backend.transaction():

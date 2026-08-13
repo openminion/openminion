@@ -1,5 +1,3 @@
-"""Versioned schemas for opt-in session sharing."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field

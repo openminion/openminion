@@ -1,7 +1,5 @@
 """SQLite storage for modules tool authoring."""
 
-from pathlib import Path
-
 from openminion.modules.storage import BaseModuleSQLiteStore
 
 from .migrations import list_migrations
@@ -10,9 +8,6 @@ from ..schemas import AuthoredToolAuditEventRow, AuthoredToolRow, ToolDraftRow
 
 class SQLiteAuthoredToolStore(BaseModuleSQLiteStore):
     """SQLite-backed store for authored-tool drafts, registry rows, and audit rows."""
-
-    def __init__(self, sqlite_path: str | Path, *, wal: bool = True) -> None:
-        super().__init__(sqlite_path=sqlite_path, wal=wal)
 
     def _init_schema(self) -> None:
         return None
@@ -291,7 +286,7 @@ class SQLiteAuthoredToolStore(BaseModuleSQLiteStore):
         """
         params: list[object] = []
         clauses: list[str] = []
-        if tier and str(tier).strip().lower() != "all":
+        if tier and tier.strip().lower() != "all":
             clauses.append("tier = ?")
             params.append(tier)
         if not include_removed:
@@ -350,6 +345,6 @@ class SQLiteAuthoredToolStore(BaseModuleSQLiteStore):
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY timestamp DESC, event_id DESC LIMIT ?"
-        params.append(max(1, int(limit)))
+        params.append(max(1, limit))
         rows = self._record_store.query_dicts(sql, tuple(params))
         return [AuthoredToolAuditEventRow(**row) for row in rows]

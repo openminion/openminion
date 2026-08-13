@@ -94,6 +94,7 @@ class MetricsRegistry:
             "histograms": len(self.histograms),
         }
 
+
 class MetricsAuditSink:
     def __init__(self, registry: MetricsRegistry) -> None:
         self.registry = registry

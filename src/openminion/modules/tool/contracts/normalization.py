@@ -28,21 +28,7 @@ def strip_tool_wrapper_prefix(raw_name: str) -> str:
 
 
 def normalize_raw_model_tool_name(raw_name: str) -> str | None:
-    """Normalize raw tool name to canonical model-facing ID."""
-    token = str(raw_name or "").strip()
+    token = strip_tool_wrapper_prefix(raw_name)
     if not token:
         return None
-
-    if token in ALL_MODEL_TOOL_IDS_SET:
-        return token
-
-    direct = _MODEL_TOOL_IDS_BY_LOWER.get(token.lower())
-    if direct:
-        return direct
-
-    token = strip_tool_wrapper_prefix(token)
-    if not token:
-        return None
-    if token in ALL_MODEL_TOOL_IDS_SET:
-        return token
     return _MODEL_TOOL_IDS_BY_LOWER.get(token.lower())

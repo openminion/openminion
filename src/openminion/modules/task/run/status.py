@@ -81,11 +81,7 @@ _RUN_TERMINAL_STATES: frozenset[str] = frozenset(
 
 
 def is_run_terminal_state(value: Any) -> bool:
-    """Return True if ``value`` names a structurally terminal run state.
-
-    Pure function. Used by consumers (MTRC, AMEC, AMEB Phase 2) that
-    need to test terminal-state strings without importing the Literal.
-    """
+    """Return whether a value names a structurally terminal run state."""
 
     return isinstance(value, str) and value in _RUN_TERMINAL_STATES
 
@@ -477,8 +473,6 @@ def list_session_run_events(
         for item in (_to_run_event(event) for event in events)
         if item is not None and item.run_id == normalized_run_id
     ]
-    if len(run_events) <= safe_limit:
-        return run_events
     return run_events[-safe_limit:]
 
 
@@ -518,9 +512,7 @@ def _normalize_run_state(*, state: Any, source_event_type: str) -> str:
 
 def _extract_event_error(payload: Mapping[str, Any]) -> str:
     raw_error = payload.get("error")
-    if raw_error is None:
-        return ""
-    return str(raw_error).strip()
+    return "" if raw_error is None else str(raw_error).strip()
 
 
 def resolve_thread_routing_decision(
@@ -867,12 +859,15 @@ def _resolve_delivery_state(events: List[EventRecord]) -> str:
         event_type = str(event.event_type)
         if event_type == "response.acked":
             delivery_state = DELIVERY_STATE_ACKED
-        elif event_type == "response.delivered":
-            if delivery_state != DELIVERY_STATE_ACKED:
-                delivery_state = DELIVERY_STATE_DELIVERED
-        elif event_type == "response.persisted":
-            if delivery_state == DELIVERY_STATE_NONE:
-                delivery_state = DELIVERY_STATE_PERSISTED
+        elif (
+            event_type == "response.delivered"
+            and delivery_state != DELIVERY_STATE_ACKED
+        ):
+            delivery_state = DELIVERY_STATE_DELIVERED
+        elif (
+            event_type == "response.persisted" and delivery_state == DELIVERY_STATE_NONE
+        ):
+            delivery_state = DELIVERY_STATE_PERSISTED
     return delivery_state
 
 
@@ -885,11 +880,10 @@ def _is_internal_error_outbound(message: Any) -> bool:
     if message is None or str(getattr(message, "role", "") or "").strip() != "outbound":
         return False
     metadata = _message_metadata(message)
-    brain_status = str(metadata.get("brain_status", "") or "").strip().lower()
-    if brain_status == "error":
-        return True
-    finish_reason = str(metadata.get("finish_reason", "") or "").strip().lower()
-    return finish_reason == "error"
+    return (
+        str(metadata.get("brain_status", "") or "").strip().lower() == "error"
+        or str(metadata.get("finish_reason", "") or "").strip().lower() == "error"
+    )
 
 
 def _resolve_writer_attach_id(
@@ -981,9 +975,7 @@ def _resolve_thread_state(
 
 
 def _latest_event_time(events: List[EventRecord]) -> str:
-    if not events:
-        return ""
-    return str(events[-1].created_at)
+    return str(events[-1].created_at) if events else ""
 
 
 def _new_thread_id_for_decision(prefix: str) -> str:

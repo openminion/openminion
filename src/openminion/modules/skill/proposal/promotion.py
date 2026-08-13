@@ -10,7 +10,7 @@ from .base import (
     propose_skills_from_task_shapes,
 )
 from .catalog import EmergentSkillCatalogAddition
-from .review import SkillProposalReview, decide_skill_proposal
+from .review import decide_skill_proposal
 
 _STRUCTURAL_DEDUP_REVIEWER_ID = "structural_dedup"
 _STRUCTURAL_DEDUP_POLICY_ID = "skill_promotion_cadence_v1"
@@ -78,40 +78,14 @@ def _best_effort_memory_call(memory_api: Any, method_name: str, *args: Any) -> A
         return None
 
 
-def _fetch_recurring_task_shapes(memory_api: Any) -> list[Any]:
-    return list(_best_effort_memory_call(memory_api, "get_recurring_task_shapes") or [])
-
-
-def _fetch_current_catalog(memory_api: Any) -> list[Any]:
-    return list(_best_effort_memory_call(memory_api, "get_current_skill_catalog") or [])
-
-
-def _record_pending_proposal(
-    memory_api: Any, proposal: SkillProposal, *, dry_run: bool
-) -> None:
-    if dry_run:
-        return
-    _best_effort_memory_call(memory_api, "record_promotion_proposal", proposal)
-
-
-def _record_structural_dismissal(
-    memory_api: Any, review: SkillProposalReview, *, dry_run: bool
-) -> None:
-    if dry_run:
-        return
-    _best_effort_memory_call(memory_api, "record_promotion_review", review)
-
-
 def _proposal_signature_set(proposal: SkillProposal) -> set[tuple[str, str, str]]:
     draft = proposal.proposed_skill_definition
-    intents_raw: list[Any] = []
-    if isinstance(draft.applies_to, Mapping):
-        intents_raw = list(draft.applies_to.get("intents") or [])
+    intents = list(draft.applies_to.get("intents", []))
     synthetic_row = {
         "skill_id": "",
-        "name": str(draft.name or ""),
-        "tags": list(draft.tags or []),
-        "applies_to": {"intents": intents_raw, "steps": []},
+        "name": draft.name,
+        "tags": list(draft.tags),
+        "applies_to": {"intents": intents, "steps": []},
     }
     return _catalog_duplicate_signatures([synthetic_row])
 
@@ -136,19 +110,21 @@ def run_promotion_pass(
 ) -> PromotionPassReport:
     """Run one structural promotion pass without approving novel skills."""
 
-    shapes = _fetch_recurring_task_shapes(memory_api)
-    catalog = _fetch_current_catalog(memory_api)
+    shapes = list(
+        _best_effort_memory_call(memory_api, "get_recurring_task_shapes") or []
+    )
+    catalog = list(
+        _best_effort_memory_call(memory_api, "get_current_skill_catalog") or []
+    )
     catalog_signatures = _catalog_duplicate_signatures(catalog)
 
-    candidates_considered = 0
     skipped: dict[str, int] = {}
     qualifying: list[Any] = []
     for shape in shapes:
-        candidates_considered += 1
-        if _candidate_success_count(shape) < int(success_threshold):
+        if _candidate_success_count(shape) < success_threshold:
             skipped[_SKIPPED_BELOW_SUCCESS] = skipped.get(_SKIPPED_BELOW_SUCCESS, 0) + 1
             continue
-        if _candidate_utility(shape) < float(utility_threshold):
+        if _candidate_utility(shape) < utility_threshold:
             skipped[_SKIPPED_BELOW_UTILITY] = skipped.get(_SKIPPED_BELOW_UTILITY, 0) + 1
             continue
         qualifying.append(shape)
@@ -180,20 +156,22 @@ def run_promotion_pass(
                     }
                 ],
             )
-            _record_structural_dismissal(memory_api, review, dry_run=dry_run)
+            if not dry_run:
+                _best_effort_memory_call(memory_api, "record_promotion_review", review)
             auto_approved_structural_duplicates += 1
             continue
-        _record_pending_proposal(memory_api, proposal, dry_run=dry_run)
+        if not dry_run:
+            _best_effort_memory_call(memory_api, "record_promotion_proposal", proposal)
         pending_operator_review += 1
 
     return PromotionPassReport(
-        candidates_considered=candidates_considered,
+        candidates_considered=len(shapes),
         proposals_drafted=len(proposals),
         auto_approved_structural_duplicates=auto_approved_structural_duplicates,
         pending_operator_review=pending_operator_review,
         apply_emergent_results=[],
         skipped_reasons=skipped,
-        dry_run=bool(dry_run),
+        dry_run=dry_run,
     )
 
 

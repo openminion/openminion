@@ -136,8 +136,6 @@ def create_debug_bundle(
             diagnostics=[],
             error=None,
         )
-    except BundleError:
-        raise
     except PermissionError as exc:
         raise BundleError("BUNDLE_PERMISSION_FAILURE", "filesystem") from exc
     except OSError as exc:

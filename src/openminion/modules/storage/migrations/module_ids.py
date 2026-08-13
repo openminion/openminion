@@ -25,7 +25,7 @@ MODULE_APPLICATION_IDS: dict[str, int] = {
 
 
 def get_module_application_id(module_id: str) -> int:
-    normalized = str(module_id).strip().lower()
+    normalized = module_id.strip().lower()
     if not normalized:
         raise ValueError("module_id is required to resolve module application id")
     if normalized not in MODULE_APPLICATION_IDS:
@@ -56,9 +56,5 @@ def schema_head_from_migrations(
     *,
     fallback: str = DEFAULT_SCHEMA_HEAD,
 ) -> str:
-    if migrations is None:
-        return fallback
-    items = list(migrations)
-    if not items:
-        return fallback
-    return str(items[-1])
+    items = list(migrations or ())
+    return items[-1] if items else fallback

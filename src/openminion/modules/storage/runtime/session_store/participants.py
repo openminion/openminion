@@ -75,7 +75,7 @@ class RuntimeSessionStoreParticipants:
             participant_id=normalized_id,
             channel=normalized_channel,
             role=normalized_role,
-            display_name=str(display_name or "").strip(),
+            display_name=(display_name or "").strip(),
         )
         refreshed = self._get_session(session_id)
         if (
@@ -123,9 +123,7 @@ class RuntimeSessionStoreParticipants:
                 normalize_identity(participant_id),
             ),
         )
-        if row is None:
-            return None
-        return row_to_participant(row)
+        return None if row is None else row_to_participant(row)
 
     def list_participants(self, session_id: str) -> list[RoomParticipant]:
         session = self._get_session(session_id)
@@ -169,13 +167,14 @@ class RuntimeSessionStoreParticipants:
             if updated > 0 and normalized_type == "agent":
                 current_active = self.get_active_agent(session_id)
                 if current_active == normalized_id:
-                    remaining_agents = [
-                        item.participant_id
-                        for item in self.list_participants(session_id)
-                        if item.participant_type == "agent"
-                        and item.participant_id != normalized_id
-                    ]
-                    next_active = remaining_agents[0] if remaining_agents else None
+                    next_active = next(
+                        (
+                            item.participant_id
+                            for item in self.list_participants(session_id)
+                            if item.participant_type == "agent"
+                        ),
+                        None,
+                    )
                     self._backend.execute_count(
                         "UPDATE sessions SET active_agent_id = ?, updated_at = ? WHERE id = ?",
                         (next_active, now, session_id),

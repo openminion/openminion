@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import inspect
 import logging
+import threading
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Dict, Optional, Tuple, cast
 from uuid import uuid4
@@ -43,6 +44,48 @@ from openminion.modules.storage.runtime.session_store import EventRecord, Sessio
 _BRAIN_INTEGRATION_MODE_AUTHORITATIVE = "contextctl_authoritative"
 _BRAIN_INTEGRATION_MODE_LEGACY_ALIAS = "ctxctl_authoritative"
 _USER_IO = UserIO()
+
+
+def _run_gateway_stream_worker(
+    handler: Callable[..., Any],
+    kwargs: dict[str, Any],
+    *,
+    ready: threading.Event,
+    stopped: threading.Event,
+    state: dict[str, Any],
+) -> Message:
+    worker_loop = asyncio.new_event_loop()
+    worker_task = worker_loop.create_task(handler(**kwargs))
+    state.update(loop=worker_loop, task=worker_task)
+    ready.set()
+    try:
+        return worker_loop.run_until_complete(worker_task)
+    finally:
+        stopped.set()
+        with contextlib.suppress(Exception):
+            worker_loop.run_until_complete(worker_loop.shutdown_asyncgens())
+        with contextlib.suppress(Exception):
+            worker_loop.run_until_complete(worker_loop.shutdown_default_executor())
+        worker_loop.close()
+
+
+async def _cancel_gateway_stream_worker(
+    task: asyncio.Task[Message],
+    *,
+    ready: threading.Event,
+    stopped: threading.Event,
+    state: dict[str, Any],
+) -> None:
+    await asyncio.to_thread(ready.wait, 1.0)
+    worker_loop = state.get("loop")
+    worker_task = state.get("task")
+    if worker_loop is not None and worker_task is not None:
+        with contextlib.suppress(RuntimeError):
+            worker_loop.call_soon_threadsafe(worker_task.cancel)
+    await asyncio.to_thread(stopped.wait, 5.0)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 class GatewayService:
@@ -126,7 +169,9 @@ class GatewayService:
             memory_capsule_cache=self._memory_capsule_cache,
             memory_dynamic_retrieval_enabled=self._memory_dynamic_retrieval_enabled,
             emit_run_state=self._emit_run_state,
-            emit_invocation_lifecycle=self._agent.emit_invocation_lifecycle_sync,
+            emit_invocation_lifecycle=getattr(
+                self._agent, "emit_invocation_lifecycle_sync", None
+            ),
         )
 
     def flush_memory_followups(self, *, session_id: str | None = None) -> None:
@@ -249,37 +294,34 @@ class GatewayService:
             return _approval_callback
 
         bridged_approval_callback = _approval_callback_bridge(approval_callback)
+        worker_ready, worker_stopped = threading.Event(), threading.Event()
+        worker_state: dict[str, Any] = {}
 
-        def _run_message_turn() -> Message:
-            worker_loop = asyncio.new_event_loop()
-            try:
-                return worker_loop.run_until_complete(
-                    self.handle_message(
-                        channel=channel,
-                        target=target,
-                        body=body,
-                        session_id=session_id,
-                        idempotency_key=idempotency_key,
-                        request_id=request_id,
-                        inbound_metadata=inbound_metadata,
-                        deliver=deliver,
-                        forced_tools=forced_tools,
-                        capability_category=capability_category,
-                        typed_turn_intent=typed_turn_intent,
-                        progress_callback=_progress_callback,
-                        approval_callback=bridged_approval_callback,
-                    )
-                )
-            finally:
-                with contextlib.suppress(Exception):
-                    worker_loop.run_until_complete(worker_loop.shutdown_asyncgens())
-                with contextlib.suppress(Exception):
-                    worker_loop.run_until_complete(
-                        worker_loop.shutdown_default_executor()
-                    )
-                worker_loop.close()
-
-        task = asyncio.create_task(asyncio.to_thread(_run_message_turn))
+        worker_kwargs = {
+            "channel": channel,
+            "target": target,
+            "body": body,
+            "session_id": session_id,
+            "idempotency_key": idempotency_key,
+            "request_id": request_id,
+            "inbound_metadata": inbound_metadata,
+            "deliver": deliver,
+            "forced_tools": forced_tools,
+            "capability_category": capability_category,
+            "typed_turn_intent": typed_turn_intent,
+            "progress_callback": _progress_callback,
+            "approval_callback": bridged_approval_callback,
+        }
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                _run_gateway_stream_worker,
+                self.handle_message,
+                worker_kwargs,
+                ready=worker_ready,
+                stopped=worker_stopped,
+                state=worker_state,
+            )
+        )
         try:
             while True:
                 if task.done() and queue.empty():
@@ -293,9 +335,12 @@ class GatewayService:
             yield gateway_stream_event_from_message(message)
         finally:
             if not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                await _cancel_gateway_stream_worker(
+                    task,
+                    ready=worker_ready,
+                    stopped=worker_stopped,
+                    state=worker_state,
+                )
 
     async def _handle_message_with_idempotency(
         self,

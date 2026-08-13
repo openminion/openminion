@@ -66,13 +66,12 @@ class TelemetryServiceStorageHook(StorageTelemetryHook):
         return time.perf_counter()
 
     def on_query_end(self, token: Any, duration_ms: float, error: str | None) -> None:
-        del token
         event = TelemetryEvent(
             session_id=_QUERY_SESSION_ID,
             turn_id=_QUERY_TURN_ID,
             event_type=QUERY_EVENT_TYPE,
             timestamp=time.time(),
-            data={"duration_ms": float(duration_ms), "error": error},
+            data={"duration_ms": duration_ms, "error": error},
         )
         self._record_event_safely(event)
 
@@ -91,9 +90,9 @@ class TelemetryServiceStorageHook(StorageTelemetryHook):
             data={
                 "counter_name": "storage_error_class",
                 "counter_value": 1.0,
-                "error_class": str(error_class or "").strip() or "Exception",
-                "operation": str(operation or "").strip() or "query",
-                "error": str(error or ""),
+                "error_class": error_class.strip() or "Exception",
+                "operation": operation.strip() or "query",
+                "error": error,
             },
         )
         self._record_event_safely(event)
@@ -106,14 +105,13 @@ class TelemetryServiceStorageHook(StorageTelemetryHook):
             timestamp=time.time(),
             data={
                 "sql": sql,
-                "duration_ms": float(duration_ms),
-                "threshold_ms": int(threshold_ms),
+                "duration_ms": duration_ms,
+                "threshold_ms": threshold_ms,
             },
         )
         self._record_event_safely(event)
 
     def on_migration_start(self, module_id: str, operation: str) -> Any:
-        del module_id, operation
         return time.perf_counter()
 
     def on_migration_end(
@@ -125,7 +123,6 @@ class TelemetryServiceStorageHook(StorageTelemetryHook):
         success: bool,
         error: str | None,
     ) -> None:
-        del token
         event = TelemetryEvent(
             session_id=_MIGRATION_SESSION_ID,
             turn_id=f"migration.{module_id}.{operation}",
@@ -134,8 +131,8 @@ class TelemetryServiceStorageHook(StorageTelemetryHook):
             data={
                 "module_id": module_id,
                 "operation": operation,
-                "duration_ms": float(duration_ms),
-                "success": bool(success),
+                "duration_ms": duration_ms,
+                "success": success,
                 "error": error,
             },
         )

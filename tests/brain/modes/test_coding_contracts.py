@@ -273,7 +273,8 @@ def test_action_result_to_tool_message_success() -> None:
     assert payload["status"] == "success"
     assert payload["outputs"]["content"] == "hello world"
     assert msg.meta["tool_call_id"] == "tc-1"
-    assert msg.meta["tool_name"] == "file.read"
+    assert "tool_name" not in msg.meta
+    assert msg.tool_call_id == "tc-1"
 
 
 def test_action_result_to_tool_message_error() -> None:

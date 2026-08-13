@@ -80,16 +80,15 @@ def main(argv: list[str] | None = None) -> int:
         if not fallback_root:
             fallback_root = str(default_root)
     else:
+        default_root = (Path.home() / DEFAULT_STANDALONE_ROOT_SUBPATH).resolve()
         if not root_dir:
-            root_dir = str((Path.home() / DEFAULT_STANDALONE_ROOT_SUBPATH).resolve())
+            root_dir = str(default_root)
         if not sqlite_path:
             sqlite_path = str(
                 (Path.home() / DEFAULT_STANDALONE_SQLITE_SUBPATH).resolve()
             )
         if not fallback_root:
-            fallback_root = str(
-                (Path.home() / DEFAULT_STANDALONE_ROOT_SUBPATH).resolve()
-            )
+            fallback_root = str(default_root)
 
     if args.cmd == "pool-stats":
         return _run_pool_stats(args, env_map)
@@ -381,7 +380,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _add_storage_cli_subcommands(sub: Any) -> None:
-
     sub.add_parser("status", help="Show storage and DB health summary")
     sub.add_parser("db-health", help="Show SQLite diagnostics")
 

@@ -2,8 +2,8 @@ SELF_COMPACTION_EVENT_TYPE = "context.self_compaction"
 SELF_COMPACTION_MAX_CHARS = 800
 FINALIZATION_STATUS_TRAILER_GUIDANCE = (
     "If the provider cannot return the structured signal out of band, append "
-    "exactly <finalization_status>{\"status\":\"final_answer\","
-    "\"reasoning\":\"...\"}</finalization_status> after the answer, using "
+    'exactly <finalization_status>{"status":"final_answer",'
+    '"reasoning":"..."}</finalization_status> after the answer, using '
     "status incomplete or blocked when appropriate."
 )
 FINALIZED_ANSWER_RECOVERY_GUIDANCE = (

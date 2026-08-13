@@ -52,115 +52,45 @@ READ_ONLY_BLOCKED_CATEGORIES: set[str] = {
 CANONICAL_CATEGORY_COMPAT_IDS: frozenset[str] = frozenset({MODEL_WEB_SEARCH})
 
 PREFERRED_MODEL_TOOLS_BY_CATEGORY: dict[str, list[str]] = {
-    "browser": [
-        MODEL_BROWSER,
-    ],
-    "web.search": [
-        MODEL_WEB_SEARCH,
-    ],
-    "weather": [
-        MODEL_WEATHER,
-    ],
-    "file.list_dir": [
-        MODEL_FILE_LIST_DIR,
-    ],
-    "file.read": [
-        MODEL_FILE_READ,
-    ],
-    "file.write": [
-        MODEL_FILE_WRITE,
-    ],
-    "file.find": [
-        MODEL_FILE_FIND,
-    ],
-    "file.search": [
-        MODEL_FILE_SEARCH,
-    ],
-    "file.edit": [
-        MODEL_FILE_EDIT,
-    ],
-    "tool.list": [
-        MODEL_TOOL_LIST,
-    ],
-    "tool.search": [
-        MODEL_TOOL_LIST,
-    ],
-    "exec.run": [
-        MODEL_EXEC_RUN,
-    ],
+    "browser": [MODEL_BROWSER],
+    "web.search": [MODEL_WEB_SEARCH],
+    "weather": [MODEL_WEATHER],
+    "file.list_dir": [MODEL_FILE_LIST_DIR],
+    "file.read": [MODEL_FILE_READ],
+    "file.write": [MODEL_FILE_WRITE],
+    "file.find": [MODEL_FILE_FIND],
+    "file.search": [MODEL_FILE_SEARCH],
+    "file.edit": [MODEL_FILE_EDIT],
+    "tool.list": [MODEL_TOOL_LIST],
+    "tool.search": [MODEL_TOOL_LIST],
+    "exec.run": [MODEL_EXEC_RUN],
     "process_control": [
         MODEL_EXEC_LIST,
         MODEL_EXEC_POLL,
     ],
-    "web.fetch": [
-        MODEL_WEB_FETCH,
-    ],
-    "time": [
-        MODEL_TIME,
-    ],
-    "location": [
-        MODEL_LOCATION,
-    ],
-    "host.metrics": [
-        MODEL_HOST_METRICS,
-    ],
-    "resources": [
-        MODEL_HOST_METRICS,
-    ],
-    "system": [
-        MODEL_HOST_METRICS,
-    ],
-    "task.schedule": [
-        MODEL_TASK_SCHEDULE,
-    ],
-    "task.list": [
-        MODEL_TASK_LIST,
-    ],
-    "task.cancel": [
-        MODEL_TASK_CANCEL,
-    ],
-    "task.pause": [
-        MODEL_TASK_PAUSE,
-    ],
-    "task.resume": [
-        MODEL_TASK_RESUME,
-    ],
-    "task.show": [
-        MODEL_TASK_SHOW,
-    ],
-    "task.watch": [
-        MODEL_TASK_WATCH,
-    ],
-    "task.consolidate_memory": [
-        MODEL_TASK_CONSOLIDATE_MEMORY,
-    ],
-    "github.list_prs": [
-        MODEL_GITHUB_LIST_PRS,
-    ],
-    "github.fetch_pr": [
-        MODEL_GITHUB_FETCH_PR,
-    ],
-    "github.fetch_diff": [
-        MODEL_GITHUB_FETCH_DIFF,
-    ],
-    "github.fetch_comments": [
-        MODEL_GITHUB_FETCH_COMMENTS,
-    ],
-    "github.fetch_checks": [
-        MODEL_GITHUB_FETCH_CHECKS,
-    ],
-    "github.commit_files": [
-        MODEL_GITHUB_COMMIT_FILES,
-    ],
-    "github.open_pr": [
-        MODEL_GITHUB_OPEN_PR,
-    ],
-    "github.post_pr_review": [
-        MODEL_GITHUB_POST_PR_REVIEW,
-    ],
-    "github.post_pr_comment": [
-        MODEL_GITHUB_POST_PR_COMMENT,
-    ],
+    "web.fetch": [MODEL_WEB_FETCH],
+    "time": [MODEL_TIME],
+    "location": [MODEL_LOCATION],
+    "host.metrics": [MODEL_HOST_METRICS],
+    "resources": [MODEL_HOST_METRICS],
+    "system": [MODEL_HOST_METRICS],
+    "task.schedule": [MODEL_TASK_SCHEDULE],
+    "task.list": [MODEL_TASK_LIST],
+    "task.cancel": [MODEL_TASK_CANCEL],
+    "task.pause": [MODEL_TASK_PAUSE],
+    "task.resume": [MODEL_TASK_RESUME],
+    "task.show": [MODEL_TASK_SHOW],
+    "task.watch": [MODEL_TASK_WATCH],
+    "task.consolidate_memory": [MODEL_TASK_CONSOLIDATE_MEMORY],
+    "github.list_prs": [MODEL_GITHUB_LIST_PRS],
+    "github.fetch_pr": [MODEL_GITHUB_FETCH_PR],
+    "github.fetch_diff": [MODEL_GITHUB_FETCH_DIFF],
+    "github.fetch_comments": [MODEL_GITHUB_FETCH_COMMENTS],
+    "github.fetch_checks": [MODEL_GITHUB_FETCH_CHECKS],
+    "github.commit_files": [MODEL_GITHUB_COMMIT_FILES],
+    "github.open_pr": [MODEL_GITHUB_OPEN_PR],
+    "github.post_pr_review": [MODEL_GITHUB_POST_PR_REVIEW],
+    "github.post_pr_comment": [MODEL_GITHUB_POST_PR_COMMENT],
 }
 
 
@@ -270,9 +200,5 @@ def selection_result_to_provider_specs(
     if result.stubs:
         return [stub_to_provider_spec(stub) for stub in result.stubs]
 
-    specs: list[ProviderToolSpec] = []
-    for tool_name in result.shortlist:
-        spec = service.get_full_schema(tool_name)
-        if spec:
-            specs.append(spec)
-    return specs
+    specs = (service.get_full_schema(tool_name) for tool_name in result.shortlist)
+    return [spec for spec in specs if spec]

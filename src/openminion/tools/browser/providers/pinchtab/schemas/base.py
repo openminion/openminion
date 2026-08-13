@@ -11,5 +11,4 @@ class PinchTabConfigArgs(BaseModel):
     backoff_ms: Optional[int] = Field(default=None, ge=0, le=10000)
 
 
-class HealthArgs(PinchTabConfigArgs):
-    pass
+HealthArgs = PinchTabConfigArgs

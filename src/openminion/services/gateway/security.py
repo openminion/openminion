@@ -249,15 +249,14 @@ class GatewaySecurity:
             event_type=event_type,
             payload=safe_payload,
         )
-        if redaction_count <= 0:
-            return
-        self._sessions.append_event(
-            session_id=session_id,
-            event_type="secret_redacted",
-            payload={
-                "run_id": str(payload.get("run_id", "")).strip(),
-                "reason_code": "redaction_applied",
-                "source_event_type": event_type,
-                "redacted_fields_count": str(redaction_count),
-            },
-        )
+        if redaction_count > 0:
+            self._sessions.append_event(
+                session_id=session_id,
+                event_type="secret_redacted",
+                payload={
+                    "run_id": str(payload.get("run_id", "")).strip(),
+                    "reason_code": "redaction_applied",
+                    "source_event_type": event_type,
+                    "redacted_fields_count": str(redaction_count),
+                },
+            )

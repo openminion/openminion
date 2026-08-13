@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.brain.adapters.context import LocalContextAdapter
 from openminion.modules.brain.adapters.memory import LocalMemoryAdapter
 from openminion.modules.brain.adapters.policy import LocalPolicyAdapter
@@ -55,7 +56,7 @@ from openminion.modules.tool.diagnostics.events import (
     emit_tool_exec_operation,
     emit_tool_invoke_operation,
 )
-from openminion.tools.exec.plugin import _h_exec_run
+from openminion.tools.exec.plugin import _h_exec_run as _exec_run
 
 
 class _FailingTelemetryCtl:
@@ -109,6 +110,19 @@ class _DummyLogger:
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    ctx.env = EnvironmentConfig.from_sources(
+        process_env={
+            **ctx.env.values,
+            "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+        }
+    )
+    return _exec_run(
+        {"host": "gateway", "security": "full", "ask": "off", **args},
+        ctx,
+    )
 
 
 def _build_runtime_context(tmp_path: Path, telemetryctl: Any | None) -> RuntimeContext:

@@ -111,34 +111,8 @@ def _choose_provider_name(request: dict[str, Any], *, available: set[str]) -> st
     explicit = _requested_backend_name(request, available=available)
     if explicit:
         return explicit
-    provider_options = request.get("provider_options", {})
-    if isinstance(provider_options, dict):
-        tinyfish_cfg = _provider_option_block(
-            provider_options, FETCH_PROVIDER_ID_TINYFISH
-        )
-        if tinyfish_cfg and FETCH_PROVIDER_ID_TINYFISH in available:
-            return FETCH_PROVIDER_ID_TINYFISH
-        firecrawl_cfg = _provider_option_block(
-            provider_options, FETCH_PROVIDER_ID_FIRECRAWL
-        )
-        if firecrawl_cfg and FETCH_PROVIDER_ID_FIRECRAWL in available:
-            return FETCH_PROVIDER_ID_FIRECRAWL
-        scrapling_cfg = _provider_option_block(
-            provider_options, FETCH_PROVIDER_ID_SCRAPLING
-        )
-        if scrapling_cfg:
-            mode = (
-                str(scrapling_cfg.get("mode", FETCH_BACKEND_AUTO) or FETCH_BACKEND_AUTO)
-                .strip()
-                .lower()
-            )
-            if (
-                mode in FETCH_SCRAPLING_MODES
-                and FETCH_PROVIDER_ID_SCRAPLING in available
-            ):
-                return FETCH_PROVIDER_ID_SCRAPLING
-
-    return FETCH_PROVIDER_ID_CORE_HTTP
+    hinted = _hinted_backend_order(request, available=available)
+    return hinted[0] if hinted else FETCH_PROVIDER_ID_CORE_HTTP
 
 
 def _hinted_backend_order(request: dict[str, Any], *, available: set[str]) -> list[str]:
@@ -343,7 +317,6 @@ def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, A
 
     started = time.monotonic()
 
-    # enforce shared URL / SSRF policy at the facade level so that any
     try:
         enforce_url_policy(
             str(args.get("url", "") or ""),
@@ -519,11 +492,7 @@ def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, A
                 f"Fetched {response_payload.get('final_url', '')} "
                 f"({response_payload.get('status_code', 0)})"
             )
-        # TGFC: provider id (e.g. "core-http", "scrapling", "firecrawl") is
-        # the structural source-tag for OBGE grounding.
         backend_id = str(response_payload.get("backend", "") or "").strip()
-        # PIDF: route web_fetch through the typed boundary owner. content_type
-        # is metadata only -- never a routing key for escape selection.
         _pidf_emit_boundary_event(
             "web_fetch",
             content,
@@ -593,48 +562,28 @@ def _h_providers(_args: dict[str, Any], _ctx: Any) -> dict[str, Any]:
             "providers": providers,
         },
         "verified": True,
-        # TGFC: meta-listing comes from the fetch tool family itself.
         "source": "fetch_module",
     }
 
 
 def register(registry: ToolRegistry) -> None:
-    registry.add(
-        ToolSpec(
-            name="fetch.get",
-            args_model=FetchGetArgs,
-            min_scope="READ_ONLY",
-            handler=_h_get,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "fetch"),
-            capabilities=("read_only", "fetch"),
+    for name, args_model, handler in (
+        ("fetch.get", FetchGetArgs, _h_get),
+        ("fetch.head", FetchHeadArgs, _h_head),
+        ("fetch.providers", FetchProvidersArgs, _h_providers),
+    ):
+        registry.add(
+            ToolSpec(
+                name=name,
+                args_model=args_model,
+                min_scope="READ_ONLY",
+                handler=handler,
+                dangerous=False,
+                idempotent=True,
+                tags=("plugin", "fetch"),
+                capabilities=("read_only", "fetch"),
+            )
         )
-    )
-    registry.add(
-        ToolSpec(
-            name="fetch.head",
-            args_model=FetchHeadArgs,
-            min_scope="READ_ONLY",
-            handler=_h_head,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "fetch"),
-            capabilities=("read_only", "fetch"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name="fetch.providers",
-            args_model=FetchProvidersArgs,
-            min_scope="READ_ONLY",
-            handler=_h_providers,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "fetch"),
-            capabilities=("read_only", "fetch"),
-        )
-    )
 
 
 __all__ = ["register"]

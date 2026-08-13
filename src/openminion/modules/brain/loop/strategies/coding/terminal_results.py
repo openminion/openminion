@@ -172,6 +172,10 @@ def _exit_final_text(
 
 
 def _mutating_file_evidence_final_text(runner: Any) -> str:
+    if bool(
+        runner._loop_state.scratchpad.get("coding.final_answer_reserve_used", False)
+    ):
+        return ""
     if not runner._has_successful_mutating_file_result():
         return ""
     return mutating_file_evidence_fallback_text(runner._loop_state)

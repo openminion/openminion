@@ -50,6 +50,11 @@ def _response_usage_payload(response: Any) -> dict[str, Any]:
 
 def _is_empty_entry_response(response: Any) -> bool:
     detection = detect_entry_path(response)
+    if (
+        str(getattr(response, "finish_reason", "") or "").strip() == "tool_calls"
+        and not detection.tool_call_names
+    ):
+        return True
     if detection.path == "clarify":
         return not bool(detection.clarify_question)
     if detection.path == "act":

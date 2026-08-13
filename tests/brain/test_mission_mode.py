@@ -409,7 +409,9 @@ def test_active_mission_ordinary_input_fails_closed_and_fork_pauses() -> None:
         assert forked.working_state.mission is not None
         assert forked.working_state.mission.status == "paused"
         if forked.status == "waiting_user":
-            assert forked.message == "closure_gate_missing_llm_or_context"
+            assert "could not safely determine the next step" in str(
+                forked.message or ""
+            )
         event_types = {
             event.get("type") for event in session.list_events("s-mission-guard")
         }
@@ -547,7 +549,7 @@ def test_async_resume_returns_to_active_mission_without_auto_completion() -> Non
         assert state.mission is not None
         assert state.mission.status == "active"
         assert state.mission.latest_judgment is None
-        assert output.message == "closure_gate_missing_llm_or_context"
+        assert "could not safely determine the next step" in str(output.message or "")
         event_types = {
             event.get("type") for event in session.list_events("s-mission-resume")
         }
@@ -1122,7 +1124,7 @@ def test_turn_closure_does_not_infer_success_after_judge_failure() -> None:
                     "reason": "complete",
                     "next_action": "close",
                     "final_answer": "done",
-                }
+                },
             ),
             context_api=_ContextAPI(),
         )

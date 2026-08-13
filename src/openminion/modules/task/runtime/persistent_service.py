@@ -62,11 +62,7 @@ class SqlTaskCtl:
             if s is None or s == "":
                 return None
             if isinstance(s, str):
-                iso_string = (
-                    s.replace("Z", "+00:00")
-                    if isinstance(s, str) and s.endswith("Z")
-                    else s
-                )
+                iso_string = s.replace("Z", "+00:00") if s.endswith("Z") else s
                 return datetime.fromisoformat(iso_string)
             return s
 
@@ -150,14 +146,13 @@ class SqlTaskCtl:
             except ValueError:
                 return default or _utc_now()
 
-        def safe_json_list(obj, default=None):
-            fallback = [] if default is None else default
+        def safe_json_list(obj):
             if obj is None:
-                return fallback
+                return []
             try:
                 return json.loads(str(obj)) if obj != "" else []
             except (TypeError, json.JSONDecodeError):
-                return fallback
+                return []
 
         status_val = safe_str(row.get("status"), "PENDING")
         status_mapping = {
@@ -384,7 +379,7 @@ class SqlTaskCtl:
         next_step_id = _next_actionable_step(plan.steps)
         next_step_id = next_step_id.step_id if next_step_id is not None else None
 
-        task_status = _derive_task_status(task.status, plan.steps, input.status)
+        task_status = _derive_task_status(plan.steps, input.status)
         self._repo.update_task(
             task_id=task_id,
             status=task_status,
@@ -510,8 +505,7 @@ class SqlTaskCtl:
     ) -> PendingAction:
         existing = self._repo.get_pending_action(policy_request_id)
         if existing is not None and existing.get("resolved_at") is None:
-            existing_pa = self._dict_to_pending_action(existing)
-            return existing_pa
+            return self._dict_to_pending_action(existing)
 
         now = _utc_now()
         pending_action_id = _new_id("pa")
@@ -564,7 +558,6 @@ class SqlTaskCtl:
             resolved_at = _utc_now()
             pending = self._dict_to_pending_action(pending_row)
             latency_ms = int((resolved_at - pending.created_at).total_seconds() * 1000)
-            # Record the resolution in DB
             self._repo.update_pending_action(
                 policy_request_id=policy_request_id,
                 resolved_at=resolved_at,
@@ -585,7 +578,7 @@ class SqlTaskCtl:
                 },
             )
 
-        cursor = ResumePointer(
+        return ResumePointer(
             task_id=pending_row["task_id"],
             plan_id=pending_row["plan_id"],
             step_id=pending_row["step_id"],
@@ -594,8 +587,6 @@ class SqlTaskCtl:
             turn_id=pending_row.get("turn_id"),
             pack_id=pending_row.get("pack_id"),
         )
-
-        return cursor
 
     def list_events(self) -> list[dict[str, object]]:
         return [event.model_dump(mode="json") for event in self._events]
@@ -615,10 +606,7 @@ class SqlTaskCtl:
             return None
 
         step_row = self._repo.get_step(task.next_step_id)
-        if step_row:
-            return str(step_row["title"])
-
-        return None
+        return str(step_row["title"]) if step_row else None
 
     def _emit(
         self,
@@ -630,8 +618,6 @@ class SqlTaskCtl:
         trace_id: str | None = None,
         payload: dict[str, object] | None = None,
     ) -> None:
-        from ..schemas import TaskEvent
-
         event = TaskEvent(
             type=event_type,
             at=_utc_now(),
@@ -656,24 +642,14 @@ def _next_actionable_step(steps: Iterable[PlanStepRecord]) -> PlanStepRecord | N
 
 
 def _derive_task_status(
-    previous: TaskStatus,
     steps: list[PlanStepRecord],
     last_step_status: PlanStepStatus,
 ) -> TaskStatus:
     if last_step_status in {PlanStepStatus.BLOCKED, PlanStepStatus.FAILED}:
         return TaskStatus.WAITING
 
-    all_done = all(step.status == PlanStepStatus.DONE for step in steps if step)
-    if all_done:
+    if all(step.status == PlanStepStatus.DONE for step in steps):
         return TaskStatus.DONE
-
-    has_active = any(step.status == PlanStepStatus.ACTIVE for step in steps)
-    if has_active:
-        return TaskStatus.ACTIVE
-
-    if previous == TaskStatus.WAITING:
-        return TaskStatus.ACTIVE
-
     return TaskStatus.ACTIVE
 
 

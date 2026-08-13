@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openminion.base.config import EnvironmentConfig
 
@@ -43,7 +43,6 @@ def auth_invalid_error(
     status_code: int | None,
     body_excerpt: str = "",
 ) -> ToolRuntimeError:
-    """Construct the canonical ``AUTH_INVALID`` error for 401/403 responses."""
     return ToolRuntimeError(
         "AUTH_INVALID",
         "GitHub PAT was rejected by the API.",
@@ -62,7 +61,6 @@ def reload_github_pat_after_auth_invalid(
     context: Any | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> tuple[str, "CredentialRotationEvent"]:
-    """Owned reload path for the typed ``AUTH_INVALID`` response."""
     from openminion.modules.runtime.credentials import (
         reload_credential_after_auth_failure,
     )
@@ -72,7 +70,7 @@ def reload_github_pat_after_auth_invalid(
     return value, event
 
 
-if False:  # pragma: no cover - typing-only import to avoid cycles
+if TYPE_CHECKING:
     from openminion.modules.runtime.credentials import (
         CredentialAuditLog,
         CredentialRef,

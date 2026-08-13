@@ -443,7 +443,6 @@ def _normalize_runtime_response(response: LLMResponse) -> LLMResponse:
         _normalize_memory_consolidation_response,
         _normalize_watch_outcome_response,
         _normalize_session_work_summary_response,
-        _normalize_goal_declaration_response,
         _normalize_goal_revision_response,
         _normalize_delegation_context_response,
         _normalize_delegation_result_summary_response,
@@ -500,6 +499,7 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 tools=list(tools),
                 response=response,
             )
+            response = _normalize_goal_declaration_response(response)
             return _normalize_runtime_response(response)
 
         overrides: dict[str, Any] = {
@@ -519,6 +519,7 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             tools=list(tools),
             response=response,
         )
+        response = _normalize_goal_declaration_response(response)
         return _normalize_runtime_response(response)
 
 

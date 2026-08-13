@@ -1,6 +1,6 @@
 """Timeout and profile override helpers for runtime ingress."""
 
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Mapping
 
 from openminion.base.config import (
@@ -18,8 +18,8 @@ def resolve_timeout_seconds(
     *,
     payload: dict[str, Any],
     default_seconds: int,
-    config: Optional[OpenMinionConfig] = None,
-    agent_id: Optional[str] = None,
+    config: OpenMinionConfig | None = None,
+    agent_id: str | None = None,
     run_profile_overrides: RunProfileOverrides | None = None,
 ) -> float:
     override = payload.get("timeout_seconds")
@@ -48,21 +48,15 @@ def resolve_timeout_seconds(
 def _minimum_api_turn_timeout_for_provider(
     config: OpenMinionConfig,
     *,
-    agent_id: Optional[str] = None,
+    agent_id: str | None = None,
     run_profile_overrides: RunProfileOverrides | None = None,
 ) -> float:
-    provider_name = (
-        (
-            resolve_runtime_profile(
-                config,
-                agent_id=agent_id,
-                overrides=run_profile_overrides,
-            ).provider
-            or ""
-        )
-        .strip()
-        .lower()
+    profile = resolve_runtime_profile(
+        config,
+        agent_id=agent_id,
+        overrides=run_profile_overrides,
     )
+    provider_name = (profile.provider or "").strip().lower()
     if provider_name != "cortensor":
         return 0.0
 

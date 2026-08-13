@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 
 import pytest
@@ -116,6 +117,17 @@ def test_store_delete_unknown_returns_false():
         tmp.cleanup()
 
 
+def test_store_close_releases_connection():
+    store, tmp = _make_store()
+    connection = store._conn
+    try:
+        store.close()
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+    finally:
+        tmp.cleanup()
+
+
 # --- Binding (TPEO-03) ---
 
 
@@ -175,6 +187,11 @@ def test_project_skill_set_accepts_installed_ids_and_bounds_child_requests():
         inheritance,
         installed_skill_ids={"coding", "research"},
         requested_skill_ids=["research"],
+    ) == ("research",)
+    assert resolve_installed_project_skills(
+        inheritance,
+        installed_skill_ids={"coding", "research"},
+        requested_skill_ids=[" research ", "research", " "],
     ) == ("research",)
 
 

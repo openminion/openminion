@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 from collections.abc import Callable
 
 from openminion.base.types import Message
@@ -76,7 +76,7 @@ class GatewayTurnAgentExecutionMixin:
         authenticity_decision: Any,
         participant_id: str,
     ) -> Message:
-        inbound = Message(
+        return Message(
             channel=channel,
             target=target,
             body=body,
@@ -110,7 +110,6 @@ class GatewayTurnAgentExecutionMixin:
                 "display_name": participant_id,
             },
         )
-        return inbound
 
     def _persist_inbound_message(
         self,
@@ -236,8 +235,8 @@ class GatewayTurnAgentExecutionMixin:
         run_id: str,
         lifecycle_payload: dict[str, Any],
         history: list[Message],
-        forced_tools: Optional[list[str]],
-        capability_category: Optional[str],
+        forced_tools: list[str] | None,
+        capability_category: str | None,
         prior_transcript_available: bool,
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,

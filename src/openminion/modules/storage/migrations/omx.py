@@ -44,16 +44,7 @@ class OmxManifest:
     blobs: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["source"] = asdict(self.source)
-        payload["tables"] = []
-        for table in self.tables:
-            table_payload = asdict(table)
-            table_payload["resume_chunks"] = [
-                asdict(chunk) for chunk in table.resume_chunks
-            ]
-            payload["tables"].append(table_payload)
-        return payload
+        return asdict(self)
 
 
 def dump_manifest(manifest: OmxManifest, path: str | Path) -> None:

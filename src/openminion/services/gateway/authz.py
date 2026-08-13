@@ -38,12 +38,12 @@ def authorize_method(
     scopes: Iterable[str],
     rules: Mapping[str, MethodAuthorizationRule],
 ) -> ProtocolError | None:
-    normalized_method = str(method).strip()
+    normalized_method = method.strip()
     rule = rules.get(normalized_method)
     if rule is None:
         return None
 
-    normalized_role = str(role).strip().lower()
+    normalized_role = role.strip().lower()
     if normalized_role not in rule.allowed_roles:
         return ProtocolError(
             "auth_denied",
@@ -57,9 +57,7 @@ def authorize_method(
             retryable=False,
         )
 
-    normalized_scopes = {
-        scope.strip().lower() for scope in scopes if str(scope).strip()
-    }
+    normalized_scopes = {scope.strip().lower() for scope in scopes if scope.strip()}
     missing_scopes = [
         scope for scope in rule.required_scopes if scope not in normalized_scopes
     ]

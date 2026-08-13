@@ -204,7 +204,10 @@ def _missing_llm_or_context_judgment(
     )
     return ClosureJudgment(
         satisfied=False,
-        reason="closure_gate_missing_llm_or_context",
+        reason=(
+            "I could not safely determine the next step because post-action "
+            "judgment is unavailable in this runtime."
+        ),
         next_action=BRAIN_DISPOSITION_CLOSE,
     )
 

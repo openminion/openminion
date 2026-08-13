@@ -1,8 +1,6 @@
-import inspect
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypeVar
-from collections.abc import Callable
 
 from openminion.base.config.env import (
     EnvironmentConfig,
@@ -223,11 +221,7 @@ def resolve_provider_register_hook(
     """
     if callable(target) and getattr(target, "__name__", "") == hook_name:
         return target
-    fn = (
-        getattr(target, hook_name, None)
-        if inspect.ismodule(target)
-        else getattr(target, hook_name, None)
-    )
+    fn = getattr(target, hook_name, None)
     return fn if callable(fn) else None
 
 

@@ -53,7 +53,6 @@ def _cmd_show(store: ProjectStore, rest: list[str]) -> dict[str, Any]:
 def _cmd_create(store: ProjectStore, rest: list[str]) -> dict[str, Any]:
     if not rest:
         return {"ok": False, "error": "missing_name"}
-    name = rest[0]
     instruction = ""
     skill_set: list[str] = []
     triggers: list[str] = []
@@ -73,7 +72,7 @@ def _cmd_create(store: ProjectStore, rest: list[str]) -> dict[str, Any]:
             return {"ok": False, "error": "unknown_flag", "flag": flag}
     project = Project(
         project_id=f"proj-{uuid.uuid4().hex[:12]}",
-        name=name,
+        name=rest[0],
         master_instruction=instruction,
         skill_set=skill_set,
         scheduled_triggers=triggers,

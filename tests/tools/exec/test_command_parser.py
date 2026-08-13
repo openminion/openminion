@@ -137,8 +137,7 @@ def test_parse_command_dispatcher_preserves_posix_path() -> None:
 
 def test_parse_command_allows_dev_null_redirection() -> None:
     parsed = parse_command(
-        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || "
-        "cat ~/.ssh/id_ed25519.pub"
+        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || cat ~/.ssh/id_ed25519.pub"
     )
 
     assert [segment.argv[0] for segment in parsed.segments] == [

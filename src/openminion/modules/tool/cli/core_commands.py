@@ -35,7 +35,6 @@ def _evaluate_policy_explain(
     parse_call_payload: Callable[[Optional[str]], Any],
     effective_scope: Callable[[Policy, Optional[str]], Any],
 ) -> dict[str, Any]:
-    """Run the request → spec → adapter chain and return the explain payload."""
     try:
         req = parse_call_payload(payload)
         effective_scope_value = effective_scope(pol, scope)

@@ -1,18 +1,16 @@
-# ruff: noqa: F403,F405
-from .common import *
+import hashlib
+from datetime import datetime, timezone
+from typing import Any, Optional
+
 from .invocation import ArtifactRef
 
 
 class NullEventSink:
-    """No-op event sink used when caller does not provide one."""
-
     def emit(self, *, event_name: str, payload: dict[str, Any]) -> None:
         del event_name, payload
 
 
 class MemoryEventSink:
-    """Simple in-memory sink useful for tests and development."""
-
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
@@ -37,11 +35,10 @@ class MemoryArtifactSink:
         sha = hashlib.sha256(content).hexdigest()
         ref = f"artifact:sha256:{sha}"
         self.objects[ref] = content
-        now_iso = datetime.now(timezone.utc).isoformat()
         out_meta = dict(meta or {})
         out_meta.setdefault("size", len(content))
         out_meta.setdefault("sha256", sha)
-        out_meta.setdefault("created_at", now_iso)
+        out_meta.setdefault("created_at", datetime.now(timezone.utc).isoformat())
         return ArtifactRef(ref=ref, kind=kind, name=name, meta=out_meta)
 
 

@@ -39,7 +39,7 @@ class RuntimeSessionStoreLifecycle:
     ) -> None:
         if session_turn_fence_token is None or self._assert_session_turn_fence is None:
             return
-        self._assert_session_turn_fence(session_id, int(session_turn_fence_token))
+        self._assert_session_turn_fence(session_id, session_turn_fence_token)
 
     def append_event(
         self,
@@ -139,7 +139,7 @@ class RuntimeSessionStoreLifecycle:
         session_id: str,
         last_activity_at: str | None = None,
     ) -> SessionRecord:
-        timestamp = str(last_activity_at or utc_now_iso()).strip() or utc_now_iso()
+        timestamp = (last_activity_at or utc_now_iso()).strip() or utc_now_iso()
         updated = self._backend.execute_count(
             "UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?",
             (timestamp, timestamp, session_id),
@@ -166,15 +166,12 @@ class RuntimeSessionStoreLifecycle:
         if current is None:
             raise ValueError(f"Session not found: {session_id}")
 
-        next_status = str(status or current.status).strip() or current.status
+        next_status = (status or current.status).strip() or current.status
         next_last_activity = (
-            str(
-                last_activity_at
-                if last_activity_at is not None
-                else current.last_activity_at
-            ).strip()
-            or current.updated_at
-        )
+            last_activity_at
+            if last_activity_at is not None
+            else current.last_activity_at
+        ).strip() or current.updated_at
         next_closed_at = (
             current.closed_at
             if closed_at is LIFECYCLE_UNSET
@@ -239,7 +236,7 @@ class RuntimeSessionStoreLifecycle:
                 payload={
                     "previous_status": current.status,
                     "status": updated.status,
-                    "reason": str(reason or "").strip(),
+                    "reason": (reason or "").strip(),
                 },
             )
         if current.status != "closed" and updated.status == "closed":
@@ -248,7 +245,7 @@ class RuntimeSessionStoreLifecycle:
                 event_type="session.closed",
                 payload={
                     "closed_at": updated.closed_at or now,
-                    "reason": str(reason or "").strip(),
+                    "reason": (reason or "").strip(),
                 },
             )
         return updated
@@ -265,14 +262,42 @@ class RuntimeSessionStoreLifecycle:
             reason=reason or "manual_close",
         )
 
+    def resume_session(
+        self,
+        *,
+        session_id: str,
+        reason: str | None = None,
+    ) -> SessionRecord:
+        current = self._get_session(session_id)
+        if current is None:
+            raise ValueError(f"Session not found: {session_id}")
+        if current.expires_at:
+            raise ValueError(f"Session has expired and cannot be resumed: {session_id}")
+        if current.status == "active":
+            return current
+
+        updated = self.set_session_status(
+            session_id=session_id,
+            status="active",
+            reason=reason or "explicit_resume",
+        )
+        self.append_event(
+            session_id=session_id,
+            event_type="session.resumed",
+            payload={
+                "previous_status": current.status,
+                "reason": (reason or "explicit_resume").strip(),
+            },
+        )
+        return updated
+
     def mark_stale_sessions(self, timeout_seconds: int = 24 * 60 * 60) -> int:
         stale_after = max(1, int(timeout_seconds))
         now = datetime.now(timezone.utc)
         candidates = self._list_sessions(
             limit=10_000, newest_first=False, status="active"
         )
-        stale_ids: list[str] = []
-        stale_timestamps: dict[str, str] = {}
+        stale_sessions: list[tuple[str, str]] = []
         for session in candidates:
             last_seen = parse_iso_datetime(
                 session.last_activity_at or session.updated_at
@@ -281,9 +306,8 @@ class RuntimeSessionStoreLifecycle:
                 continue
             if (now - last_seen).total_seconds() <= stale_after:
                 continue
-            stale_ids.append(session.id)
-            stale_timestamps[session.id] = last_seen.isoformat()
-        for session_id in stale_ids:
+            stale_sessions.append((session.id, last_seen.isoformat()))
+        for session_id, last_activity_at in stale_sessions:
             self.set_session_status(
                 session_id=session_id,
                 status="stale",
@@ -294,11 +318,11 @@ class RuntimeSessionStoreLifecycle:
                 event_type="session.stale",
                 payload={
                     "reason": "stale_timeout",
-                    "last_activity_at": stale_timestamps.get(session_id, ""),
+                    "last_activity_at": last_activity_at,
                     "timeout_seconds": stale_after,
                 },
             )
-        return len(stale_ids)
+        return len(stale_sessions)
 
     def expire_session(
         self,
@@ -311,7 +335,7 @@ class RuntimeSessionStoreLifecycle:
         if current is None:
             raise ValueError(f"Session not found: {session_id}")
         now = utc_now_iso()
-        expiration = str(expires_at or now).strip() or now
+        expiration = (expires_at or now).strip() or now
         updated = self.update_session_lifecycle(
             session_id=session_id,
             status="closed",
@@ -337,7 +361,7 @@ class RuntimeSessionStoreLifecycle:
                 "status": updated.status,
                 "expires_at": expiration,
                 "closed_at": updated.closed_at or now,
-                "reason": str(reason or "ttl_expired").strip(),
+                "reason": (reason or "ttl_expired").strip(),
             },
         )
         return updated

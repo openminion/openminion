@@ -3,12 +3,7 @@ from __future__ import annotations
 from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
-from .args import (
-    PrometheusRulesArgs,
-    PrometheusAlertsArgs,
-    PrometheusQueryArgs,
-    TraceLookupArgs,
-)
+from . import args
 from .interfaces import (
     ALL_OBSERVABILITY_TOOLS,
     TOOL_OBSERVABILITY_PROM_RULES,
@@ -44,7 +39,7 @@ OBSERVABILITY_FAMILY = ToolFamilySpec(
     tools=(
         ToolDecl(
             TOOL_OBSERVABILITY_PROM_RULES,
-            PrometheusRulesArgs,
+            args.PrometheusRulesArgs,
             _h_prometheus_rules,
             "Inspect Prometheus rule definitions with source citations.",
             idempotent=True,
@@ -53,7 +48,7 @@ OBSERVABILITY_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             TOOL_OBSERVABILITY_PROM_ALERTS,
-            PrometheusAlertsArgs,
+            args.PrometheusAlertsArgs,
             _h_prometheus_alerts,
             "Inspect active Prometheus alerts in a bounded time window.",
             idempotent=True,
@@ -62,7 +57,7 @@ OBSERVABILITY_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             TOOL_OBSERVABILITY_PROM_QUERY,
-            PrometheusQueryArgs,
+            args.PrometheusQueryArgs,
             _h_prometheus_query,
             "Run a bounded read-only Prometheus query fixture.",
             idempotent=True,
@@ -71,7 +66,7 @@ OBSERVABILITY_FAMILY = ToolFamilySpec(
         ),
         ToolDecl(
             TOOL_OBSERVABILITY_TRACE_LOOKUP,
-            TraceLookupArgs,
+            args.TraceLookupArgs,
             _h_otel_trace,
             "Lookup an OpenTelemetry trace by trace id.",
             idempotent=True,

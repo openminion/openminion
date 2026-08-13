@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from openminion.base.time import utc_now_iso as _now_iso
 from .sqlite import connect_database
@@ -94,16 +94,14 @@ class AgentRegistryStore:
             )
             conn.commit()
 
-    def get_agent(self, agent_id: str) -> Optional[AgentRegistryRecord]:
+    def get_agent(self, agent_id: str) -> AgentRegistryRecord | None:
         with connect_database(self._path) as conn:
             row = conn.execute(
                 "SELECT * FROM daemon_registry WHERE agent_id = ?", (agent_id,)
             ).fetchone()
-        if row is None:
-            return None
-        return _row_to_registry(row)
+        return None if row is None else _row_to_registry(row)
 
-    def list_agents(self, *, status: Optional[str] = None) -> list[AgentRegistryRecord]:
+    def list_agents(self, *, status: str | None = None) -> list[AgentRegistryRecord]:
         if status:
             sql = "SELECT * FROM daemon_registry WHERE status = ? ORDER BY registered_at ASC"
             params: tuple = (status,)
@@ -159,14 +157,12 @@ class AgentRegistryStore:
             )
             conn.commit()
 
-    def get_heartbeat(self, agent_id: str) -> Optional[AgentHeartbeatRecord]:
+    def get_heartbeat(self, agent_id: str) -> AgentHeartbeatRecord | None:
         with connect_database(self._path) as conn:
             row = conn.execute(
                 "SELECT * FROM daemon_heartbeats WHERE agent_id = ?", (agent_id,)
             ).fetchone()
-        if row is None:
-            return None
-        return _row_to_heartbeat(row)
+        return None if row is None else _row_to_heartbeat(row)
 
     def list_heartbeats(self) -> list[AgentHeartbeatRecord]:
         with connect_database(self._path) as conn:

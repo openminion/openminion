@@ -67,12 +67,7 @@ class RuntimeStorageContext:
 def _maybe_check_schema_drift_sqlite(
     connection: Connection,
 ) -> SchemaDriftReport | None:
-    """Run the SDX-01 structural diff against an active SQLite connection.
-
-    Read-only: opens no transactions, mutates no rows. Returns the typed
-    report or ``None`` if drift detection cannot be performed (defensive —
-    we never want to fail startup for a diagnostic check).
-    """
+    """Return read-only schema drift facts without blocking startup."""
 
     try:
         expected = derive_expected_schema()
@@ -90,11 +85,7 @@ def _maybe_check_schema_drift_sqlite(
 
 
 def _emit_schema_drift_warning(report: SchemaDriftReport) -> None:
-    """Emit a typed warning log line when drift is detected.
-
-    Anti-LLM §1: severity is the binary ``has_drift`` flag from the typed
-    report. There is no LLM judgment about "is this drift serious".
-    """
+    """Warn when the typed report contains structural drift."""
 
     if not report.has_drift:
         return
@@ -122,7 +113,7 @@ def build_runtime_storage(
     check_schema_drift_on_startup: bool = True,
 ) -> RuntimeStorageContext:
     resolved_path = resolve_database_path(sqlite_path, env=env)
-    backend_id = str(record_backend or "record.sqlite").strip() or "record.sqlite"
+    backend_id = record_backend.strip() or "record.sqlite"
     # Boot-time validation for non-SQLite backends
     if backend_id != "record.sqlite":
         from openminion.modules.storage.runtime.validation import (
@@ -156,9 +147,6 @@ def build_runtime_storage(
     sessions = SessionStore(engine.record_store)
     idempotency = IdempotencyStore(engine.record_store)
 
-    # read-only schema-drift check + warning on startup. The check
-    # only runs for the SQLite backend today — the Postgres / other-backend
-    # case is left to a future expansion of detect_schema_drift.
     schema_drift_report: SchemaDriftReport | None = None
     if check_schema_drift_on_startup and backend_id == "record.sqlite":
         sqlite_connection = getattr(engine.record_store, "connection", None)

@@ -1,8 +1,12 @@
-"""Google Workspace tool registration."""
-
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
+from openminion.modules.tool.contracts import (
+    ModelToolDef,
+    RuntimeBindingDef,
+    ToolBindingManifest,
+)
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_GWS_AUTH_EXPORT,
@@ -23,6 +27,19 @@ if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
     from openminion.modules.tool.runtime.registrar import ToolRegisterContext
 
+_TOOL_BINDINGS = (
+    (MODEL_GWS_CALL, "Call Google Workspace API", RUNTIME_GWS_CALL, "gws.call"),
+    (MODEL_GWS_SCHEMA, "Get GWS API schema", RUNTIME_GWS_SCHEMA, "gws.schema"),
+    (MODEL_GWS_AUTH_SETUP, "Setup GWS auth", RUNTIME_GWS_AUTH_SETUP, "gws.auth.setup"),
+    (MODEL_GWS_AUTH_LOGIN, "Login to GWS", RUNTIME_GWS_AUTH_LOGIN, "gws.auth.login"),
+    (
+        MODEL_GWS_AUTH_EXPORT,
+        "Export GWS credentials",
+        RUNTIME_GWS_AUTH_EXPORT,
+        "gws.auth.export",
+    ),
+)
+
 
 class GWSRegistrar:
     module_id = "gws"
@@ -34,69 +51,23 @@ class GWSRegistrar:
 
         register(registry)
 
-    def get_manifest(self, ctx: ToolRegisterContext) -> Any:
+    def get_manifest(self, ctx: ToolRegisterContext) -> ToolBindingManifest:
         del ctx
-        from openminion.modules.tool.contracts import (
-            ModelToolDef,
-            RuntimeBindingDef,
-            ToolBindingManifest,
-        )
-
         return ToolBindingManifest(
-            module_id="gws",
-            model_tools=(
+            module_id=self.module_id,
+            model_tools=tuple(
                 ModelToolDef(
-                    model_tool_id=MODEL_GWS_CALL,
-                    description="Call Google Workspace API",
-                    parameters={},
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_GWS_SCHEMA,
-                    description="Get GWS API schema",
-                    parameters={},
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_GWS_AUTH_SETUP,
-                    description="Setup GWS auth",
-                    parameters={},
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_GWS_AUTH_LOGIN,
-                    description="Login to GWS",
-                    parameters={},
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_GWS_AUTH_EXPORT,
-                    description="Export GWS credentials",
-                    parameters={},
-                ),
+                    model_tool_id=model_id, description=description, parameters={}
+                )
+                for model_id, description, _, _ in _TOOL_BINDINGS
             ),
-            runtime_bindings=(
+            runtime_bindings=tuple(
                 RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_GWS_CALL,
-                    model_tool_id=MODEL_GWS_CALL,
-                    runtime_candidates=("gws.call",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_GWS_SCHEMA,
-                    model_tool_id=MODEL_GWS_SCHEMA,
-                    runtime_candidates=("gws.schema",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_GWS_AUTH_SETUP,
-                    model_tool_id=MODEL_GWS_AUTH_SETUP,
-                    runtime_candidates=("gws.auth.setup",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_GWS_AUTH_LOGIN,
-                    model_tool_id=MODEL_GWS_AUTH_LOGIN,
-                    runtime_candidates=("gws.auth.login",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_GWS_AUTH_EXPORT,
-                    model_tool_id=MODEL_GWS_AUTH_EXPORT,
-                    runtime_candidates=("gws.auth.export",),
-                ),
+                    runtime_binding_id=runtime_id,
+                    model_tool_id=model_id,
+                    runtime_candidates=(runtime_name,),
+                )
+                for model_id, _, runtime_id, runtime_name in _TOOL_BINDINGS
             ),
         )
 

@@ -3,7 +3,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict
 
-from openminion.base.config import EnvironmentConfig
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from .types import HealthCheck
 
@@ -112,17 +112,14 @@ def _build_brain_llm_mode_observability_check(
         # Plan mode is optional for simple Q&A turns; enforce only via explicit env gate.
         details["plan_mode_optional"] = True
 
-        require_llm_activity = _env_flag(
-            env_config,
-            "OPENMINION_HEALTH_REQUIRE_LLM_ACTIVITY",
+        require_llm_activity = env_config.get_bool(
+            "OPENMINION_HEALTH_REQUIRE_LLM_ACTIVITY"
         )
-        require_plan_decisions = _env_flag(
-            env_config,
-            "OPENMINION_HEALTH_REQUIRE_PLAN_DECISIONS",
+        require_plan_decisions = env_config.get_bool(
+            "OPENMINION_HEALTH_REQUIRE_PLAN_DECISIONS"
         )
-        require_real_rlm_autonomy = _env_flag(
-            env_config,
-            "OPENMINION_HEALTH_REQUIRE_REAL_RLM_AUTONOMY",
+        require_real_rlm_autonomy = env_config.get_bool(
+            "OPENMINION_HEALTH_REQUIRE_REAL_RLM_AUTONOMY"
         )
         if require_llm_activity and "no_llm_call_events" in issues:
             return HealthCheck(
@@ -302,15 +299,6 @@ def _collect_brain_mode_counts(
 
 def _resolve_brain_observability_event_limit(env_config: EnvironmentConfig) -> int:
     return max(20, env_config.get_int("OPENMINION_HEALTH_BRAIN_EVENT_LIMIT", 200))
-
-
-def _env_flag(
-    env_config: EnvironmentConfig,
-    name: str,
-    *,
-    default: bool = False,
-) -> bool:
-    return env_config.get_bool(name, default)
 
 
 def _safe_json_object(raw: Any) -> Dict[str, Any]:

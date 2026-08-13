@@ -34,8 +34,7 @@ def _dispatch_pinchtab(
     json_out: bool,
     invoke_pinchtab_tool: Callable[..., tuple[Any, int]],
     finalize_cli_call: Callable[[Any, int, bool], None],
-) -> tuple[Any, int]:
-    """Dispatch a PinchTab tool call and return ``(env, exit_code)``."""
+) -> None:
     env, exit_code = invoke_pinchtab_tool(
         tool=tool,
         args=args,
@@ -45,7 +44,7 @@ def _dispatch_pinchtab(
         confirm=confirm,
         timeout_sec=timeout_sec,
     )
-    return env, exit_code
+    finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_health(
@@ -64,7 +63,7 @@ def _register_pinchtab_health(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.health",
             args={},
             policy=policy,
@@ -76,7 +75,6 @@ def _register_pinchtab_health(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_instance_start(
@@ -105,7 +103,7 @@ def _register_pinchtab_instance_start(
             args["mode"] = mode
         if port is not None:
             args["port"] = int(port)
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.instance_start",
             args=args,
             policy=policy,
@@ -117,7 +115,6 @@ def _register_pinchtab_instance_start(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_instance_stop(
@@ -137,7 +134,7 @@ def _register_pinchtab_instance_stop(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.instance_stop",
             args={"instance_id": instance_id},
             policy=policy,
@@ -149,7 +146,6 @@ def _register_pinchtab_instance_stop(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_tab_open(
@@ -170,7 +166,7 @@ def _register_pinchtab_tab_open(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.tab_open",
             args={"instance_id": instance_id, "url": url},
             policy=policy,
@@ -182,7 +178,6 @@ def _register_pinchtab_tab_open(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_tab_list(
@@ -201,7 +196,7 @@ def _register_pinchtab_tab_list(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.tabs_list",
             args={},
             policy=policy,
@@ -213,7 +208,6 @@ def _register_pinchtab_tab_list(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_tab_close(
@@ -233,7 +227,7 @@ def _register_pinchtab_tab_close(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.tab_close",
             args={"tab_id": tab_id},
             policy=policy,
@@ -245,7 +239,6 @@ def _register_pinchtab_tab_close(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_tab_snapshot(
@@ -267,7 +260,7 @@ def _register_pinchtab_tab_snapshot(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        env, exit_code = invoke_pinchtab_tool(
             tool="browser.pinchtab.snapshot",
             args={
                 "tab_id": tab_id,
@@ -279,9 +272,6 @@ def _register_pinchtab_tab_snapshot(
             scope=scope,
             confirm=confirm,
             timeout_sec=timeout_sec,
-            json_out=json_out,
-            invoke_pinchtab_tool=invoke_pinchtab_tool,
-            finalize_cli_call=finalize_cli_call,
         )
         if out and env.ok:
             snapshot = env.data.get("snapshot")
@@ -314,7 +304,7 @@ def _register_pinchtab_tab_text(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        env, exit_code = invoke_pinchtab_tool(
             tool="browser.pinchtab.text",
             args={"tab_id": tab_id, "mode": mode, "include_text": out is not None},
             policy=policy,
@@ -322,9 +312,6 @@ def _register_pinchtab_tab_text(
             scope=scope,
             confirm=confirm,
             timeout_sec=timeout_sec,
-            json_out=json_out,
-            invoke_pinchtab_tool=invoke_pinchtab_tool,
-            finalize_cli_call=finalize_cli_call,
         )
         if out and env.ok:
             text_payload = env.data.get("text")
@@ -345,8 +332,6 @@ def _build_pinchtab_action_args(
     option: Optional[str],
     delta: Optional[int],
 ) -> Dict[str, Any]:
-    """Build the `tab_id`+optional fields arg dict and validate kind-specific
-    required fields. Raises `typer.BadParameter` with the original messages."""
     args: Dict[str, Any] = {"tab_id": tab_id}
     if ref is not None:
         args["ref"] = ref
@@ -405,7 +390,7 @@ def _register_pinchtab_tab_action(
             option=option,
             delta=delta,
         )
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool=tool_name,
             args=args,
             policy=policy,
@@ -417,7 +402,6 @@ def _register_pinchtab_tab_action(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_tab_screenshot(
@@ -437,7 +421,7 @@ def _register_pinchtab_tab_screenshot(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.screenshot",
             args={"tab_id": tab_id},
             policy=policy,
@@ -449,7 +433,6 @@ def _register_pinchtab_tab_screenshot(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_tab_pdf(
@@ -469,7 +452,7 @@ def _register_pinchtab_tab_pdf(
         timeout_sec: Optional[int] = typer.Option(None, "--timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        env, exit_code = _dispatch_pinchtab(
+        _dispatch_pinchtab(
             tool="browser.pinchtab.pdf",
             args={"tab_id": tab_id},
             policy=policy,
@@ -481,7 +464,6 @@ def _register_pinchtab_tab_pdf(
             invoke_pinchtab_tool=invoke_pinchtab_tool,
             finalize_cli_call=finalize_cli_call,
         )
-        finalize_cli_call(env, exit_code, json_out)
 
 
 def _register_pinchtab_daemon_status(

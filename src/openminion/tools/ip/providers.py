@@ -22,7 +22,7 @@ class IpProviderRegistry:
         self._order: list[str] = []
 
     def register(self, provider: IpProvider) -> None:
-        provider_id = str(getattr(provider, "provider_id", "") or "").strip().lower()
+        provider_id = provider.provider_id.strip().lower()
         if not provider_id:
             raise ValueError("ip provider must define provider_id")
         self._providers[provider_id] = provider
@@ -30,10 +30,8 @@ class IpProviderRegistry:
             self._order.append(provider_id)
 
     def get(self, provider_id: str) -> IpProvider | None:
-        token = str(provider_id or "").strip().lower()
-        if not token:
-            return None
-        return self._providers.get(token)
+        token = provider_id.strip().lower()
+        return self._providers.get(token) if token else None
 
     def list_provider_ids(self) -> tuple[str, ...]:
         return tuple(self._order)

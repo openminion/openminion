@@ -261,7 +261,6 @@ def _display_name_for_token(token: str) -> str | None:
 
 
 def display_name_for_tool_name(tool_name: str) -> str:
-    """Resolve a friendly user-facing label for a tool token."""
     token = str(tool_name or "").strip()
     if not token:
         return token

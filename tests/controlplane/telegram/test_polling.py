@@ -889,7 +889,10 @@ def test_scope_authorizer_blocks_unpaired_command_before_runtime(
 
     assert runtime.inputs == []
     assert auth_store.lookups == [("telegram", "111")]
-    assert any("not paired" in payload["text"] for payload in api.sent_payloads)
+    assert any(
+        payload["text"] == "This chat is not paired. Send /pair for setup instructions."
+        for payload in api.sent_payloads
+    )
 
 
 def test_scope_authorizer_blocks_command_with_missing_scopes(tmp_path: Path) -> None:
@@ -952,6 +955,39 @@ def test_pair_local_command_reports_status_for_paired_chat(tmp_path: Path) -> No
 
     assert runtime.inputs == []
     assert any(payload["text"].startswith("Paired ✅") for payload in api.sent_payloads)
+
+
+def test_pair_revoke_reaches_shared_command_runtime(tmp_path: Path) -> None:
+    api = _FakeAPI([[_private_message_update(1, "/pair revoke", user_id=111)]])
+    auth_store = _AuthStore(
+        pairing={
+            "pairing_id": "pair-1",
+            "scopes": [
+                "cp.message.read",
+                "cp.message.write",
+                "session.read",
+                "session.write",
+                "run.start",
+            ],
+        }
+    )
+    runtime = _AuthRuntime(auth_store)
+    runner = _runner_with_runtime(
+        api,
+        tmp_path / "state.db",
+        runtime,
+        access=AccessConfig(
+            dm_policy="allow", group_policy="allow", mention_only_in_groups=False
+        ),
+        pairing=PairingConfig(enabled=False),
+    )
+
+    runner.run_once()
+
+    assert runtime.inputs == ["/pair revoke"]
+    assert not any(
+        payload["text"].startswith("Paired ✅") for payload in api.sent_payloads
+    )
 
 
 def test_diag_local_command_returns_adapter_status(tmp_path: Path) -> None:

@@ -1,6 +1,3 @@
-from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
-
-GITOPS_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
 TOOL_GITOPS_APP_STATUS = "gitops.app.status"
 TOOL_GITOPS_APP_DIFF = "gitops.app.diff"
 TOOL_GITOPS_SOURCE_REVISION = "gitops.source.revision"

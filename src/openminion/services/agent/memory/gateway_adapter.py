@@ -489,11 +489,7 @@ class MemoryServiceGatewayAdapter(
 
     def _close_trace_file(self) -> None:
         handle = getattr(self, "_trace_file_handle", None)
-        if handle is None:
-            close_handle = False
-        else:
-            close_handle = True
-        if close_handle:
+        if handle is not None:
             try:
                 handle.close()
             except Exception:

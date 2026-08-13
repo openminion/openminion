@@ -216,10 +216,8 @@ def resolve_autonomy_state_root(home_root: str | Path | None = None) -> Path:
 def build_local_workspace_ref(workspace: str | Path) -> str:
     root = Path(workspace).expanduser().resolve(strict=False)
     commit = _git_output(root, "rev-parse", "HEAD") or "unknown"
-    dirty = "unknown"
     status = _git_output(root, "status", "--porcelain")
-    if status is not None:
-        dirty = "dirty" if status.strip() else "clean"
+    dirty = "unknown" if status is None else ("dirty" if status else "clean")
     return f"local:{root}#commit={commit};dirty={dirty}"
 
 
@@ -295,7 +293,7 @@ class AutonomyRunStore:
         if status is not None:
             runs = [run for run in runs if run.status == status]
         runs.sort(key=lambda run: run.created_at_ms, reverse=True)
-        return runs[: max(0, int(limit))]
+        return runs[: max(0, limit)]
 
     def transition(
         self,
@@ -360,7 +358,7 @@ def build_terminal_proof_packet(
         started_at_ms=run.created_at_ms,
         ended_at_ms=ended_at,
         workspace_ref=run.workspace_ref,
-        checkpoint_refs=tuple(ref for ref in (run.checkpoint_id,) if ref),
+        checkpoint_refs=(run.checkpoint_id,) if run.checkpoint_id else (),
         artifact_refs=artifact_refs,
         commands_run=commands_run,
         tests_run=tests_run,

@@ -8,6 +8,7 @@ from openminion.modules.llm.providers.base import (
     ProviderHistoryMessage,
     ProviderRequest,
     ProviderResponse,
+    ProviderToolCall,
     ProviderToolSpec,
 )
 from openminion.modules.llm.providers.normalization import normalize_provider_response
@@ -133,10 +134,23 @@ def successful_tool_names_from_history(
     history_entries: list[tuple[str, str, dict[str, Any]]],
 ) -> tuple[str, ...]:
     successful: list[str] = []
+    call_names: dict[str, str] = {}
     for role, content, meta in history_entries:
+        if role == "assistant":
+            for call in meta.get("tool_calls", []):
+                if not isinstance(call, dict):
+                    continue
+                call_id = str(call.get("id", "") or "").strip()
+                name = str(call.get("name", "") or "").strip()
+                if call_id and name:
+                    call_names[call_id] = name
+            continue
         if role != "tool":
             continue
-        tool_name = str(meta.get("tool_name", "") or "").strip()
+        call_id = str(meta.get("tool_call_id", "") or "").strip()
+        tool_name = (
+            call_names.get(call_id) or str(meta.get("tool_name", "") or "").strip()
+        )
         if not tool_name:
             continue
         try:
@@ -175,12 +189,79 @@ def normalized_messages(req: Any) -> list[tuple[str, str, dict[str, Any]]]:
     for message in list(getattr(req, "messages", []) or []):
         role = str(getattr(message, "role", "")).strip().lower()
         content = str(getattr(message, "content", "")).strip()
-        if not content:
+        meta = dict(getattr(message, "meta", {}) or {})
+        tool_calls = list(getattr(message, "tool_calls", []) or [])
+        tool_call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+        tool_status = str(getattr(message, "tool_status", "") or "").strip()
+        if tool_calls:
+            meta["tool_calls"] = [
+                {
+                    "id": getattr(call, "id", None),
+                    "name": str(getattr(call, "name", "") or ""),
+                    "arguments": dict(getattr(call, "arguments", {}) or {}),
+                    **(
+                        {"batch_index": int(getattr(call, "batch_index", 0))}
+                        if int(getattr(call, "batch_index", 0))
+                        else {}
+                    ),
+                    **(
+                        {"depends_on": list(getattr(call, "depends_on", []) or [])}
+                        if getattr(call, "depends_on", None)
+                        else {}
+                    ),
+                }
+                for call in tool_calls
+            ]
+        if tool_call_id:
+            meta["tool_call_id"] = tool_call_id
+        if tool_status:
+            meta["tool_status"] = tool_status
+        tool_output = getattr(message, "tool_output", None)
+        tool_error = getattr(message, "tool_error", None)
+        if tool_output is not None:
+            meta["tool_output"] = tool_output
+        if tool_error is not None:
+            meta["tool_error"] = dict(tool_error)
+        if not content and not tool_calls and not tool_call_id:
             continue
         if role not in {"system", "user", "assistant", "tool"}:
             role = "user"
-        normalized.append((role, content, dict(getattr(message, "meta", {}) or {})))
+        normalized.append((role, content, meta))
     return normalized
+
+
+def provider_history_payload(message: ProviderHistoryMessage) -> dict[str, Any] | None:
+    role = message.role.strip().lower()
+    if role not in {"system", "user", "assistant", "tool"}:
+        role = "user"
+    content = message.content.strip()
+    tool_call_id = str(message.tool_call_id or "").strip()
+    if not content and not message.tool_calls and not tool_call_id:
+        return None
+
+    payload: dict[str, Any] = {"role": role, "content": content}
+    if message.meta:
+        payload["meta"] = dict(message.meta)
+    if message.tool_calls:
+        payload["tool_calls"] = [
+            {
+                "id": str(call.id or ""),
+                "name": call.name,
+                "arguments": dict(call.arguments),
+                "depends_on": list(call.depends_on),
+            }
+            for call in message.tool_calls
+        ]
+    if tool_call_id:
+        payload.update(
+            {
+                "tool_call_id": tool_call_id,
+                "tool_status": str(message.tool_status or ""),
+                "tool_output": message.tool_output,
+                "tool_error": message.tool_error,
+            }
+        )
+    return payload
 
 
 def split_system_and_conversation(
@@ -211,7 +292,7 @@ def latest_prompt_and_history(
             latest_msg = content
             prompt_index = idx
             break
-    if prompt_index >= 0:
+    if prompt_index == len(conversational) - 1:
         history_entries = (
             conversational[:prompt_index] + conversational[prompt_index + 1 :]
         )
@@ -229,10 +310,46 @@ def latest_prompt_and_history(
         and history_entries[-1][1].strip() == latest_msg.strip()
     ):
         history_entries.pop()
-    history = [
-        ProviderHistoryMessage(role=role, content=content, meta=dict(meta or {}))
-        for role, content, meta in history_entries
-    ]
+    history = []
+    for role, content, meta in history_entries:
+        meta_value = dict(meta or {})
+        tool_calls = []
+        for raw_call in meta_value.pop("tool_calls", []):
+            if not isinstance(raw_call, dict):
+                continue
+            name = str(raw_call.get("name", "") or "").strip()
+            if not name:
+                continue
+            arguments = raw_call.get("arguments")
+            tool_calls.append(
+                ProviderToolCall(
+                    id=str(raw_call.get("id", "") or ""),
+                    name=name,
+                    arguments=dict(arguments) if isinstance(arguments, dict) else {},
+                    source=str(raw_call.get("source", "") or "native"),
+                    depends_on=[
+                        str(item)
+                        for item in raw_call.get("depends_on", [])
+                        if str(item).strip()
+                    ],
+                )
+            )
+        tool_call_id = str(meta_value.pop("tool_call_id", "") or "") or None
+        tool_status = str(meta_value.pop("tool_status", "") or "") or None
+        tool_output = meta_value.pop("tool_output", None)
+        raw_tool_error = meta_value.pop("tool_error", None)
+        history.append(
+            ProviderHistoryMessage(
+                role=role,
+                content=content,
+                meta=meta_value,
+                tool_calls=tool_calls,
+                tool_call_id=tool_call_id,
+                tool_status=tool_status,
+                tool_output=tool_output,
+                tool_error=raw_tool_error if isinstance(raw_tool_error, dict) else None,
+            )
+        )
     return latest_msg, history
 
 
@@ -348,9 +465,25 @@ def llm_response_kwargs(
     prompt_tokens, completion_tokens, total_tokens, _input, _output, cached_tokens = (
         token_usage_values(usage_payload)
     )
+    tool_calls = [
+        ToolCall(
+            id=tc.id or "call_1",
+            name=tc.name,
+            arguments=tc.arguments,
+            batch_index=index,
+            depends_on=list(tc.depends_on),
+        )
+        for index, tc in enumerate(resp.tool_calls)
+    ]
     assistant_messages = []
-    if str(resp.text or "").strip():
-        assistant_messages.append(Message(role="assistant", content=str(resp.text)))
+    if str(resp.text or "").strip() or tool_calls:
+        assistant_messages.append(
+            Message(
+                role="assistant",
+                content=str(resp.text or ""),
+                tool_calls=tool_calls,
+            )
+        )
     return {
         **structured_fields,
         "ok": True,
@@ -358,10 +491,7 @@ def llm_response_kwargs(
         "model": str(resp.model or req.model or ""),
         "output_text": str(resp.text or ""),
         "assistant_messages": assistant_messages,
-        "tool_calls": [
-            ToolCall(id=tc.id or "call_1", name=tc.name, arguments=tc.arguments)
-            for tc in resp.tool_calls
-        ],
+        "tool_calls": tool_calls,
         "thinking": serialize_thinking_blocks(list(resp.thinking or [])),
         "usage": UsageInfo(
             input_tokens=optional_int(prompt_tokens),
@@ -383,6 +513,7 @@ __all__ = [
     "latest_prompt_and_history",
     "llm_response_kwargs",
     "normalized_messages",
+    "provider_history_payload",
     "normalized_provider_response",
     "provider_tool_choice",
     "provider_tools_from_request",

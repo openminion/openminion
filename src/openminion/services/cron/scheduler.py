@@ -93,10 +93,10 @@ class CronScheduler:
         self._store = store
         self._daemon_id = str(daemon_id or uuid4().hex).strip()
         self._daemon_component_id = str(daemon_component_id or "").strip() or "primary"
-        self._daemon_pid = int(daemon_pid) if daemon_pid is not None else None
+        self._daemon_pid = daemon_pid
         self._tick_seconds = max(0.1, float(tick_seconds))
-        self._lease_ttl_seconds = max(1, int(lease_ttl_seconds))
-        self._max_concurrent_runs = max(1, int(max_concurrent_runs))
+        self._lease_ttl_seconds = max(1, lease_ttl_seconds)
+        self._max_concurrent_runs = max(1, max_concurrent_runs)
         self._execute_system_event = (
             execute_system_event or self._default_system_event_executor
         )
@@ -286,7 +286,7 @@ class CronScheduler:
                 result = self._normalize_result(self._execute_system_event(job, run))
             elif kind == "agentTurn":
                 result = self._normalize_result(self._execute_agent_turn(job, run))
-                if not str(result.isolated_session_id or "").strip():
+                if not (result.isolated_session_id or "").strip():
                     result = CronExecutionResult(
                         summary=result.summary,
                         artifact_refs=list(result.artifact_refs),
@@ -334,7 +334,7 @@ class CronScheduler:
             )
 
     def _lease_renewer(self, *, run_id: str, stop_event: Event) -> None:
-        interval_s = max(1.0, float(self._lease_ttl_seconds) / 2.0)
+        interval_s = max(1.0, self._lease_ttl_seconds / 2.0)
         while not stop_event.wait(interval_s):
             try:
                 refreshed = self._store.renew_cron_run_lease(
@@ -470,11 +470,10 @@ class CronScheduler:
             )
             output_raw = value.get("output", {})
             output = output_raw if isinstance(output_raw, dict) else {}
-            isolated_session_id_raw = value.get("isolated_session_id")
+            isolated_session_id = value.get("isolated_session_id")
             isolated_session_id = (
-                str(isolated_session_id_raw).strip()
-                if isinstance(isolated_session_id_raw, str)
-                and isolated_session_id_raw.strip()
+                isolated_session_id.strip()
+                if isinstance(isolated_session_id, str) and isolated_session_id.strip()
                 else None
             )
             return CronExecutionResult(

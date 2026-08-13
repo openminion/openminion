@@ -17,30 +17,16 @@ class SupervisionPolicy:
     clear_failure_on_recovery: bool = True
 
     def __post_init__(self) -> None:
-        warn_after = self._clean_optional_seconds(
-            self.stale_heartbeat_warn_after_seconds
+        warn_after, fail_after = self._clean_thresholds(
+            self.stale_heartbeat_warn_after_seconds,
+            self.stale_heartbeat_fail_after_seconds,
+            "stale heartbeat",
         )
-        fail_after = self._clean_optional_seconds(
-            self.stale_heartbeat_fail_after_seconds
+        lag_warn_after, lag_fail_after = self._clean_thresholds(
+            self.scheduler_lag_warn_after_seconds,
+            self.scheduler_lag_fail_after_seconds,
+            "scheduler lag",
         )
-        if (
-            warn_after is not None
-            and fail_after is not None
-            and fail_after < warn_after
-        ):
-            raise ValueError("stale heartbeat fail threshold must be >= warn threshold")
-        lag_warn_after = self._clean_optional_seconds(
-            self.scheduler_lag_warn_after_seconds
-        )
-        lag_fail_after = self._clean_optional_seconds(
-            self.scheduler_lag_fail_after_seconds
-        )
-        if (
-            lag_warn_after is not None
-            and lag_fail_after is not None
-            and lag_fail_after < lag_warn_after
-        ):
-            raise ValueError("scheduler lag fail threshold must be >= warn threshold")
         object.__setattr__(self, "stale_heartbeat_warn_after_seconds", warn_after)
         object.__setattr__(self, "stale_heartbeat_fail_after_seconds", fail_after)
         object.__setattr__(self, "scheduler_lag_warn_after_seconds", lag_warn_after)
@@ -74,9 +60,21 @@ class SupervisionPolicy:
 
     @staticmethod
     def _clean_optional_seconds(value: float | None) -> float | None:
-        if value is None:
-            return None
-        return max(0.0, float(value))
+        return None if value is None else max(0.0, float(value))
+
+    @classmethod
+    def _clean_thresholds(
+        cls, warn_after: float | None, fail_after: float | None, label: str
+    ) -> tuple[float | None, float | None]:
+        warn_after = cls._clean_optional_seconds(warn_after)
+        fail_after = cls._clean_optional_seconds(fail_after)
+        if (
+            warn_after is not None
+            and fail_after is not None
+            and fail_after < warn_after
+        ):
+            raise ValueError(f"{label} fail threshold must be >= warn threshold")
+        return warn_after, fail_after
 
 
 @dataclass(frozen=True)

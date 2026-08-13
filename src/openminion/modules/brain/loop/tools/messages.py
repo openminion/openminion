@@ -69,9 +69,11 @@ def action_result_to_tool_message(
             "message": _truncate_tool_message_text(action_result.error.message),
         }
 
-    meta: dict[str, Any] = {"tool_name": tool_name}
+    meta: dict[str, Any] = {}
     if tool_call_id:
         meta["tool_call_id"] = tool_call_id
+    else:
+        meta["tool_name"] = tool_name
     body = json.dumps(payload, ensure_ascii=False)
     _pidf_emit_boundary_event(
         "tool_output",
@@ -79,9 +81,23 @@ def action_result_to_tool_message(
         seam_id="modules.brain.loop.tools.messages.action_result_to_tool_message",
         provenance_ref=tool_call_id,
     )
+    status = {
+        "success": "success",
+        "blocked": "blocked",
+        "needs_user": "blocked",
+        "timeout": "timeout",
+        "failed": "error",
+        "retry": "error",
+    }[action_result.status]
     return Message(
         role="tool",
         content=body,
+        tool_call_id=tool_call_id,
+        tool_status=status,
+        tool_output=_compact_tool_message_value(action_result.outputs)
+        if action_result.outputs
+        else None,
+        tool_error=payload.get("error"),
         meta=meta,
     )
 

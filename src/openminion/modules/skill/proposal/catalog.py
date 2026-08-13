@@ -70,15 +70,10 @@ def _reviewer_id(review: SkillProposalReview | Mapping[str, Any]) -> str:
 def _existing_catalog(
     catalog: Iterable[SkillPackage | Mapping[str, Any]],
 ) -> list[SkillPackage]:
-    items: list[SkillPackage] = []
-    for item in catalog or []:
-        package = (
-            item
-            if isinstance(item, SkillPackage)
-            else SkillPackage.from_dict(dict(item))
-        )
-        items.append(package)
-    return items
+    return [
+        (item if isinstance(item, SkillPackage) else SkillPackage.from_dict(dict(item)))
+        for item in catalog
+    ]
 
 
 def _validate_review_gate(
@@ -130,11 +125,12 @@ def apply_emergent_skill(
     _assert_additive_only(existing_catalog, draft=draft, skill_id=added_skill_id)
 
     now = utc_now_iso()
+    description = draft.short_description.strip()
     package = SkillPackage(
         skill_id=added_skill_id,
-        name=str(draft.name or "").strip(),
-        display_name=str(draft.display_name or "").strip() or None,
-        short_description=str(draft.short_description or "").strip() or None,
+        name=draft.name.strip(),
+        display_name=draft.display_name.strip() or None,
+        short_description=description or None,
         default_prompt=None,
         dependency_hints={},
         bundle_metadata={},
@@ -144,7 +140,7 @@ def apply_emergent_skill(
         tags=normalize_text_list(draft.tags),
         tools=normalize_text_list(draft.tools),
         reference_hints=[],
-        risk_class=str(draft.risk_class or "").strip(),
+        risk_class=draft.risk_class.strip(),
         applies_to={
             "intents": normalize_text_list(draft.applies_to.get("intents")),
             "steps": normalize_text_list(draft.applies_to.get("steps")),
@@ -154,8 +150,8 @@ def apply_emergent_skill(
         recipe=None,
         verification_rules=normalize_text_list(draft.verification_rules),
         rollback_hints=[],
-        summary=str(draft.short_description or "").strip(),
-        sections={"summary": str(draft.short_description or "").strip()},
+        summary=description,
+        sections={"summary": description},
         scope="global",
         agent_id=None,
         source_version=None,

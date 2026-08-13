@@ -112,14 +112,14 @@ def proposal_signature(proposal: SkillProposal) -> tuple[str, str, str]:
     """Return the canonical structural signature for one proposal."""
 
     draft = proposal.proposed_skill_definition
-    intents: list[Any] = []
-    if isinstance(draft.applies_to, Mapping):
-        intents = list(draft.applies_to.get("intents") or [])
     synthetic_row = {
         "skill_id": "",
-        "name": str(draft.name or ""),
-        "tags": list(draft.tags or []),
-        "applies_to": {"intents": intents, "steps": []},
+        "name": draft.name,
+        "tags": draft.tags,
+        "applies_to": {
+            "intents": draft.applies_to.get("intents", []),
+            "steps": [],
+        },
     }
     signatures = _catalog_duplicate_signatures([synthetic_row])
     if not signatures:
@@ -147,11 +147,11 @@ def _projected_suggestion(
         proposer_policy_id=str(record.get("proposer_policy_id") or ""),
         proposed_at=str(record.get("proposed_at") or ""),
         queue_state=str(record.get("queue_state") or ""),
-        display_name=str(draft.display_name or "").strip(),
-        short_description=str(draft.short_description or "").strip(),
-        tags=tuple(str(item) for item in (draft.tags or [])),
-        risk_class=str(draft.risk_class or ""),
-        tools=tuple(str(item) for item in (draft.tools or [])),
+        display_name=draft.display_name.strip(),
+        short_description=draft.short_description.strip(),
+        tags=tuple(draft.tags),
+        risk_class=draft.risk_class,
+        tools=tuple(draft.tools),
         signature=signature,
         first_seen_at=first_seen_at,
         cli_inspect_command=_CLI_INSPECT_FMT.format(proposal_id=proposal_id),
@@ -207,11 +207,9 @@ def run_suggestion_surface_pass(
     safe_cooldown = max(0, int(cooldown_seconds))
     safe_min_age = max(0, int(min_age_seconds))
 
-    pending = list(
-        store.list_proposals(
-            queue_state=PROPOSAL_QUEUE_STATE_PENDING,
-            limit=max(safe_batch_cap * 4, 50),
-        )
+    pending = store.list_proposals(
+        queue_state=PROPOSAL_QUEUE_STATE_PENDING,
+        limit=max(safe_batch_cap * 4, 50),
     )
 
     surfaced: list[SkillProposalSuggestion] = []
@@ -307,7 +305,7 @@ def list_active_suggestions(
         )
         out.append(
             _projected_suggestion(
-                record, signature=signature, first_seen_at=str(first_seen_at)
+                record, signature=signature, first_seen_at=first_seen_at
             )
         )
     return out

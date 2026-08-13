@@ -30,15 +30,10 @@ def resolve_firecrawl_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        str(
-            resolve_tool_env(env=env).get(
-                FIRECRAWL_API_URL_ENV, DEFAULT_FIRECRAWL_API_URL
-            )
-            or ""
-        ).strip()
-        or DEFAULT_FIRECRAWL_API_URL
+    value = resolve_tool_env(env=env).get(
+        FIRECRAWL_API_URL_ENV, DEFAULT_FIRECRAWL_API_URL
     )
+    return str(value or DEFAULT_FIRECRAWL_API_URL).strip() or DEFAULT_FIRECRAWL_API_URL
 
 
 def resolve_firecrawl_timeout_seconds(

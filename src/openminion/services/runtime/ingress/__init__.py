@@ -120,10 +120,9 @@ def submit_turn_payload(
             _parse_run_profile_overrides(payload),
         ),
     )
-    handle = manager.submit_turn(request)
     return RuntimeTurnHandle(
         request=request,
-        handle=handle,
+        handle=manager.submit_turn(request),
         timeout_s=timeout_s,
     )
 

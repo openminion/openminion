@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -7,25 +8,18 @@ if TYPE_CHECKING:
 def ensure_default_profile(
     identityctl: "IdentityCtl", agent_id: str, system_prompt: str = ""
 ) -> None:
-    """Ensures that an AgentProfile exists for the given agent_id."""
-    # Check if profile already exists
-    existing_profile = identityctl.get_profile(agent_id)
-    if existing_profile is not None:
-        return  # Profile exists, nothing to do
-
-    # Build a minimal default profile
-    # Extract first sentence of system_prompt or create generic one
-    import re
+    if identityctl.get_profile(agent_id) is not None:
+        return
 
     first_sentence_match = re.search(r"^([^\.!?]*\.)(?:\s|$)", system_prompt or "")
     if first_sentence_match:
-        mission = first_sentence_match.group(1).strip()
+        first_sentence = first_sentence_match.group(1)
+        mission = first_sentence.strip()
         if len(mission) > 120:
-            mission = first_sentence_match.group(1)[:120].strip() + "..."
+            mission = first_sentence[:120].strip() + "..."
     else:
         mission = f"I am {agent_id}, a pragmatic AI assistant."
 
-    # Import here to avoid circular dependencies
     from openminion.modules.identity.models import (
         AgentProfile,
         RoleSpec,
@@ -45,5 +39,4 @@ def ensure_default_profile(
         meta={"source": "default"},
     )
 
-    # Save the new profile
     identityctl.upsert_profile(default_profile)

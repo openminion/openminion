@@ -2,7 +2,7 @@ import logging
 from time import perf_counter
 from typing import Any
 
-from openminion.base.config import EnvironmentConfig
+from openminion.base.config.env import EnvironmentConfig
 from openminion.services.runtime.constants import (
     API_METRICS_TOKEN_ENV,
     API_METRICS_TOKEN_HEADER,
@@ -139,13 +139,9 @@ def _build_operator_hints(env_config: EnvironmentConfig) -> dict[str, Any]:
 def _normalize_metrics_consistency(
     metrics_consistency: dict[str, Any],
 ) -> dict[str, str]:
-    stamp = str(metrics_consistency.get("stamp", "")).strip()
-    runtime_started = str(metrics_consistency.get("runtime_started_at_utc", "")).strip()
-    metrics_reset = str(metrics_consistency.get("metrics_reset_at_utc", "")).strip()
     return {
-        "stamp": stamp,
-        "runtime_started_at_utc": runtime_started,
-        "metrics_reset_at_utc": metrics_reset,
+        key: str(metrics_consistency.get(key, "")).strip()
+        for key in ("stamp", "runtime_started_at_utc", "metrics_reset_at_utc")
     }
 
 

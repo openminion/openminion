@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Literal
 
-TodoItemStatus = Literal["todo", "in_progress", "done", "blocked"]
+from openminion.modules.session.todo.constants import TodoStatusValue as TodoItemStatus
 
 
 @dataclass

@@ -192,10 +192,7 @@ class ExecutionResources:
                     if token == "runtime_env" and isinstance(value, Mapping)
                     else str(value)
                 )
-        try:
-            context.blast_radius_adapter = turn_boundary_adapter
-        except AttributeError:
-            pass
+        context.blast_radius_adapter = turn_boundary_adapter
         return context
 
 

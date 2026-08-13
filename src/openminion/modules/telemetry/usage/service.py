@@ -77,13 +77,9 @@ def _tool_name_from_payload(payload: dict[str, Any]) -> str:
 
 
 def _tool_error_delta(event_type: str, payload: dict[str, Any]) -> int:
-    if event_type == "tool.call.blocked":
+    if event_type in {"tool.failed", "tool.call.blocked"}:
         return 1
-    status = str(payload.get("status", "") or "").strip().lower()
-    if status and status not in {"success", "completed", "ok"}:
-        return 1
-    error = payload.get("error")
-    return 1 if error else 0
+    return 1 if payload.get("error") else 0
 
 
 def _event_run_id(event: dict[str, Any]) -> str:
@@ -145,10 +141,9 @@ def _is_run_usage_event(
 def _normalize_event_limit(event_limit: int | None) -> int | None:
     if event_limit is None:
         return None
-    normalized = int(event_limit)
-    if normalized <= 0:
+    if event_limit <= 0:
         raise ValueError("event_limit must be greater than zero")
-    return normalized
+    return event_limit
 
 
 def _normalize_session_event(event: Any) -> dict[str, Any]:
@@ -245,7 +240,7 @@ class StatsService:
         ]
         return self._build_token_usage_summary(
             session_id=session_id,
-            run_id=str(run_id),
+            run_id=run_id,
             usage_events=usage_events,
             read=read,
         )
@@ -273,7 +268,7 @@ class StatsService:
             for event in read.events
             if _event_belongs_to_run(
                 event=event,
-                run_id=str(run_id),
+                run_id=run_id,
                 request_id=request_id,
             )
             or (
@@ -298,7 +293,7 @@ class StatsService:
         ]
         return project_turn_cost(
             related_events,
-            run_id=str(run_id),
+            run_id=run_id,
             turn_id=request_id,
             session_id=session_id,
         )
@@ -328,7 +323,7 @@ class StatsService:
     ) -> tuple[TokenUsageSummary, ...]:
         if not hasattr(self._store, "list_sessions"):
             return ()
-        normalized_limit = max(1, int(limit))
+        normalized_limit = max(1, limit)
         summaries: list[TokenUsageSummary] = []
         for row in self._store.list_sessions(limit=normalized_limit):
             session_id = _session_id_from_row(row)
@@ -384,7 +379,7 @@ class StatsService:
                 )
         return RunStatsSummary(
             session_id=session_id,
-            run_id=str(run_id),
+            run_id=run_id,
             stats=stats,
         )
 
@@ -430,7 +425,7 @@ class StatsService:
         )
         return SessionStatsSummary(
             session_id=session_id,
-            turn_count=max(0, int(turn_count)),
+            turn_count=turn_count,
             stats=aggregate,
             top_tools=tuple(
                 ToolCallCount(name=name, calls=count)

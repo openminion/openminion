@@ -75,14 +75,13 @@ class ContextStore:
         *,
         rollover_reason: str | None = None,
     ) -> None:
-        now = self._utc_now_iso()
         self._rs.execute_count(
             """
             UPDATE prompt_contexts
             SET status='closed', closed_at=?, rollover_reason=?
             WHERE prompt_context_id=?
             """,
-            (now, rollover_reason, prompt_context_id),
+            (self._utc_now_iso(), rollover_reason, prompt_context_id),
         )
 
     def get_active_prompt_context(self, session_id: str) -> dict[str, Any] | None:
@@ -311,7 +310,7 @@ class RunStore:
                 output_tokens = COALESCE(output_tokens, 0) + ?
             WHERE run_id = ?
             """,
-            (max(0, int(input_tokens)), max(0, int(output_tokens)), run_id),
+            (max(0, input_tokens), max(0, output_tokens), run_id),
         )
 
     def get_run_record(self, run_id: str) -> dict[str, Any] | None:

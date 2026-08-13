@@ -7,17 +7,33 @@ from typing import Any, Iterable
 import pytest
 
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.diagnostics.events import (
     emit_tool_exec_operation,
 )
-from openminion.tools.exec.plugin import _h_exec_run, _h_process_kill, _h_process_poll
+from openminion.tools.exec.plugin import (
+    _h_exec_run as _exec_run,
+    _h_process_kill,
+    _h_process_poll,
+)
 from openminion.tools.exec.process import PROCESS_MANAGER
 
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    payload = {"host": "gateway", "security": "full", "ask": "off", **args}
+    ctx.env = EnvironmentConfig.from_sources(
+        process_env={
+            **ctx.env.values,
+            "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+        }
+    )
+    return _exec_run(payload, ctx)
 
 
 @pytest.fixture

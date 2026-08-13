@@ -186,11 +186,9 @@ class ResolveConstraints(BaseModel):
     def from_any(
         cls, raw: dict[str, Any] | "ResolveConstraints" | None
     ) -> "ResolveConstraints":
-        if raw is None:
-            return cls()
         if isinstance(raw, cls):
             return raw
-        return cls.model_validate(raw)
+        return cls.model_validate(raw or {})
 
 
 class MethodIndexRow(BaseModel):

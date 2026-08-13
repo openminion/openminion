@@ -255,11 +255,10 @@ class _TelemetryStoreMixin(TelemetryStore):
         turn_id: str | None = None,
         event_types: tuple[str, ...] = (),
     ) -> list[TelemetryEventPageRow]:
-        safe_limit = int(limit)
-        if safe_limit < 1 or safe_limit > 1000:
+        if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
         clauses = ["id <= ?"]
-        params: list[Any] = [max(0, int(high_water))]
+        params: list[Any] = [max(0, high_water)]
         for column, value in (
             ("invocation_id", invocation_id),
             ("session_id", session_id),
@@ -277,7 +276,7 @@ class _TelemetryStoreMixin(TelemetryStore):
             if before_id is None:
                 raise ValueError("before_id is required with before_timestamp")
             clauses.append("(timestamp < ? OR (timestamp = ? AND id < ?))")
-            params.extend((before_timestamp, before_timestamp, int(before_id)))
+            params.extend((before_timestamp, before_timestamp, before_id))
         query = (
             "SELECT id, session_id, turn_id, event_type, "
             "timestamp AS raw_timestamp, "
@@ -287,7 +286,7 @@ class _TelemetryStoreMixin(TelemetryStore):
             + " AND ".join(clauses)
             + " ORDER BY timestamp DESC, id DESC LIMIT ?"
         )
-        params.append(safe_limit)
+        params.append(limit)
         return [
             TelemetryEventPageRow(
                 row_id=int(row["id"]),
@@ -307,7 +306,7 @@ class _TelemetryStoreMixin(TelemetryStore):
         high_water: int | None = None,
         limit: int = 2,
     ) -> list[str]:
-        safe_limit = max(1, min(int(limit), 1000))
+        safe_limit = max(1, min(limit, 1000))
         clauses = [
             "session_id = ?",
             "turn_id = ?",
@@ -316,7 +315,7 @@ class _TelemetryStoreMixin(TelemetryStore):
         params: list[Any] = [session_id, turn_id]
         if high_water is not None:
             clauses.append("id <= ?")
-            params.append(max(0, int(high_water)))
+            params.append(max(0, high_water))
         params.append(safe_limit)
         rows = self._record_store.query_dicts(
             f"""

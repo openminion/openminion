@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
@@ -86,15 +86,4 @@ class ReindexReport:
     archived_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "scanned_files": int(self.scanned_files),
-            "scanned_lines": int(self.scanned_lines),
-            "inserted": int(self.inserted),
-            "duplicates": int(self.duplicates),
-            "failed": int(self.failed),
-            "errors": list(self.errors),
-            "skipped": int(self.skipped),
-            "dry_run": bool(self.dry_run),
-            "file_reports": list(self.file_reports),
-            "archived_files": list(self.archived_files),
-        }
+        return asdict(self)

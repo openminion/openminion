@@ -1099,7 +1099,7 @@ def test_act_adaptive_finalization_contract_missing_closes_from_successful_tool_
     assert result.action_result.error is None
 
 
-def test_act_adaptive_requires_typed_finalization_after_substantive_tool_work() -> None:
+def test_act_adaptive_preserves_answer_after_typed_finalization_retries() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             LLMResponse(
@@ -1153,9 +1153,9 @@ def test_act_adaptive_requires_typed_finalization_after_substantive_tool_work() 
     result = ActLoopMode().execute(ctx)
 
     assert result.status == "done"
+    assert "tool output was enough" in str(result.message or "")
     assert result.action_result is not None
-    assert result.action_result.error is None
-    assert "tool evidence" in str(result.message or "").lower()
+    assert result.action_result.status == "success"
     assert len(llm_client.calls) == 4
     retry_messages = llm_client.calls[2]["messages"]
     assert any(
@@ -1229,8 +1229,11 @@ def test_act_adaptive_salvages_typed_finalization_with_status_only_follow_up() -
     assert result.action_result.outputs["adaptive.finalization_status"]["status"] == (
         "final_answer"
     )
-    assert llm_client.calls[-1]["overrides"]["tool_choice"] == "none"
-    assert llm_client.calls[-1]["tools"] == []
+    assert llm_client.calls[-1]["overrides"]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }
+    assert llm_client.calls[-1]["tools"][0].name == "submit_output"
 
 
 def test_act_adaptive_blocked_finalization_status_returns_truthful_blocked_result() -> (

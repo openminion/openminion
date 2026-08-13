@@ -540,6 +540,34 @@ def test_unified_entry_file_tools_phrase_does_not_override_model_response(
     assert decision.answer == "I'll create it."
 
 
+def test_unified_entry_retries_tool_finish_without_a_usable_tool_call(
+    tmp_path: Path,
+) -> None:
+    malformed = LLMResponse(
+        ok=True,
+        provider="test",
+        model="decide-default",
+        output_text="I'll create it.",
+        assistant_messages=[Message(role="assistant", content="I'll create it.")],
+        tool_calls=[],
+        usage=UsageInfo(total_tokens=1),
+        finish_reason="tool_calls",
+    )
+    llm = _SequencedEntryLLM([malformed, _tool_response("coding", {})])
+    runner = _build_runner(tmp_path, llm_api=llm)
+
+    decision = runner._decide(
+        state=_state("entry-malformed-tool-finish"),
+        user_input="Create a tiny Python function and run its check.",
+        logger=fake_logger(),
+    )
+
+    assert len(llm.requests) == 2
+    assert decision.mode == "act"
+    assert decision.reason_code == "entry_coding_tool_call"
+    assert getattr(decision, "act_profile", "") == "coding"
+
+
 def test_unified_entry_tool_request_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:

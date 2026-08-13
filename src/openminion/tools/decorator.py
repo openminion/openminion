@@ -6,8 +6,6 @@ from pydantic import BaseModel, ConfigDict, create_model
 
 
 def _build_args_model(func: Callable[..., Any], model_name: str) -> type[BaseModel]:
-    """Generate a Pydantic model that mirrors ``func``'s signature."""
-
     signature = inspect.signature(func)
     fields: dict[str, tuple[Any, Any]] = {}
     for name, param in signature.parameters.items():
@@ -52,8 +50,6 @@ def _infer_description(func: Callable[..., Any]) -> str:
     if not parameters:
         return f"{subject}."
 
-    annotations = [param.annotation for param in parameters]
-
     def _annotation_name(annotation: Any) -> str:
         if annotation is inspect.Parameter.empty:
             return ""
@@ -61,7 +57,7 @@ def _infer_description(func: Callable[..., Any]) -> str:
             return annotation.strip().lower()
         return str(getattr(annotation, "__name__", annotation)).strip().lower()
 
-    annotation_names = [_annotation_name(annotation) for annotation in annotations]
+    annotation_names = [_annotation_name(param.annotation) for param in parameters]
     if all(name == "int" for name in annotation_names):
         quantity = {
             1: "an integer",
@@ -90,7 +86,6 @@ def _decorate(
     tags: tuple[str, ...],
     capabilities: tuple[str, ...],
 ) -> Callable[..., Any]:
-    # Lazy framework import — see module-level note on circular import.
     from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
     resolved_name = (name or func.__name__).strip()
@@ -100,9 +95,6 @@ def _decorate(
     args_model = _build_args_model(func, f"{resolved_name.replace('.', '_')}Args")
 
     def _handler(args: BaseModel) -> Any:
-        # The runtime invokes the handler with the validated args model;
-        # unpack it into kwargs for the user's function so they don't have to
-        # know about the model layer.
         return func(**args.model_dump())
 
     decl = ToolDecl(
@@ -162,11 +154,7 @@ def tool(
     tags: tuple[str, ...] = (),
     capabilities: tuple[str, ...] = (),
 ) -> Any:
-    """Decorate a Python function as an openminion tool.
-
-    Both bare and parameterized forms are supported. See module docstring
-    for the design contract.
-    """
+    """Decorate a Python function as an OpenMinion tool."""
 
     if func is not None and callable(func) and name is None and description is None:
         return _decorate(

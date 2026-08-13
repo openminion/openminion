@@ -139,6 +139,15 @@ class _AdaptiveLoopContextAdapter:
         self._runner = runner_from_context(ctx) or SimpleNamespace(
             options=SimpleNamespace(failure_strategy="halt")
         )
+        self.session_api = getattr(self._runner, "session_api", None)
+        self.prepared_parallel_dispatch_supported = all(
+            callable(getattr(ctx.command_executor, name, None))
+            for name in (
+                "prepare_tool_dispatch",
+                "execute_prepared_tool_dispatch",
+                "finalize_tool_result",
+            )
+        )
         self._intent_step_index = 0
 
     def execute_command(

@@ -1,5 +1,6 @@
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 
@@ -43,14 +44,13 @@ class PlaywrightLockManager:
             return False
 
     @contextmanager
-    def action_lock(self, key: str):
+    def action_lock(self, key: str) -> Iterator[None]:
         token = str(key).strip()
         if not token:
             raise ValueError("lock key is required")
         self._expire_manual_locks()
         lock = self._get_lock(token)
-        acquired = lock.acquire(blocking=False)
-        if not acquired:
+        if not lock.acquire(blocking=False):
             raise BrowserTabLockedError(token)
         try:
             yield
@@ -67,11 +67,10 @@ class PlaywrightLockManager:
 
     def _expire_manual_locks(self) -> None:
         now = time.monotonic()
-        expired: list[str] = []
         with self._guard:
-            for key, expiry in self._manual_expiry.items():
-                if expiry <= now:
-                    expired.append(key)
+            expired = [
+                key for key, expiry in self._manual_expiry.items() if expiry <= now
+            ]
             for key in expired:
                 self._manual_expiry.pop(key, None)
 

@@ -375,12 +375,19 @@ _MODULE_OPS_REQUIRED = (
     "rehydrate",
 )
 
+_CALLABILITY_EXEMPT_MEMBERS = {
+    "contract_version",
+    "describe_backend",
+    "module_id",
+    "module_application_id",
+}
+
 _VERSION_REQUIREMENT_RE = re.compile(r"^\s*(>=|<=|==|>|<)?\s*([0-9]+(?:\.[0-9]+)*)\s*$")
 
 
 def _parse_version(version: str) -> tuple[int, ...]:
     parts: list[int] = []
-    for token in str(version or "").strip().split("."):
+    for token in version.strip().split("."):
         if not token:
             continue
         if not token.isdigit():
@@ -403,7 +410,7 @@ def _compare_versions(left: tuple[int, ...], right: tuple[int, ...]) -> int:
 def ensure_interface_compatibility(obj: Any, *, interface: str) -> None:
     """Fail fast with deterministic errors when a storage implementation drifts."""
 
-    normalized = str(interface or "").strip().lower()
+    normalized = interface.strip().lower()
     if normalized == "structured_store":
         required = tuple(
             item for item in _STRUCTURED_REQUIRED if item != "check_capability"
@@ -429,14 +436,7 @@ def ensure_interface_compatibility(obj: Any, *, interface: str) -> None:
             missing.append(name)
             continue
         value = getattr(obj, name)
-        # Special exception for attributes that are not callable
-        _ATTRIBUTE_MEMBERS = {
-            "contract_version",
-            "describe_backend",
-            "module_id",
-            "module_application_id",
-        }
-        if name not in _ATTRIBUTE_MEMBERS and not callable(value):
+        if name not in _CALLABILITY_EXEMPT_MEMBERS and not callable(value):
             missing.append(name)
 
     if missing:
@@ -461,9 +461,7 @@ def create_capability_error_envelope(
     descriptor: BackendDescriptor,
     message: str,
 ) -> StorageEnvelope:
-    """
-    Helper to create a StorageEnvelope for capability mismatch errors.
-    """
+    """Create a storage envelope for a capability mismatch."""
     capability_error = UnsupportedCapabilityError(
         requirement=requirement, descriptor=descriptor, message=message
     )
@@ -479,11 +477,8 @@ def create_capability_error_envelope(
 def check_capability_support(
     backend_descriptor: BackendDescriptor, requirement: CapabilityRequirement
 ) -> bool:
-    """
-    Determine if a backend supports a specific capability requirement.
-    This is a basic check that considers version range and required features.
-    """
-    requirement_range = str(requirement.version_range or "").strip()
+    """Check a backend version and feature set against one requirement."""
+    requirement_range = requirement.version_range.strip()
     if requirement_range:
         match = _VERSION_REQUIREMENT_RE.match(requirement_range)
         if not match:

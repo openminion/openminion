@@ -205,6 +205,27 @@ class CanonicalEventLoggerTests(unittest.TestCase):
         self.assertGreater(len(turn_events), 0)
         self.assertEqual(turn_events[-1].get("actor_type"), "user")
 
+    def test_emit_redacts_nested_secret_values_before_persistence(self) -> None:
+        logger = self._make_logger()
+        logger.emit(
+            "brain.execution_status",
+            {
+                "tool_results": [
+                    {"data": {"content": "key=sk-fixture-1234567890abcdef"}}
+                ]
+            },
+            redaction="none",
+        )
+
+        events = self._store.get_events(
+            self._sid, after_seq=-1, types=["brain.execution_status"]
+        )
+        event = events[-1]
+        content = event["payload"]["tool_results"][0]["data"]["content"]
+        self.assertNotIn("sk-fixture", content)
+        self.assertIn("[REDACTED]", content)
+        self.assertEqual(event["redaction"], "bounded")
+
 
 class SessctlStandaloneTests(unittest.TestCase):
     def setUp(self) -> None:

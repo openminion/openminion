@@ -44,10 +44,10 @@ class PluginRegistry:
         return [plugin.name for plugin in self._plugins]
 
     def manifest_ids(self) -> list[str]:
-        return sorted(self._manifests.keys())
+        return sorted(self._manifests)
 
     def manifests(self) -> list[PluginManifest]:
-        return [self._manifests[key] for key in sorted(self._manifests.keys())]
+        return [self._manifests[key] for key in sorted(self._manifests)]
 
     def register_tool_extensions(
         self, registry: ToolRegistry, context: PluginContext
@@ -134,9 +134,8 @@ def _build_default_plugin_registry(
         discovered_plugin = custom_lookup.get(enabled_item)
         if discovered_plugin is None:
             raise RuntimeError(
-                "Enabled plugin was not found: "
-                + enabled_item
-                + ". Checked built-ins and discovery roots."
+                f"Enabled plugin was not found: {enabled_item}. "
+                "Checked built-ins and discovery roots."
             )
         if discovered_plugin.manifest.id in loaded_manifest_ids:
             continue
@@ -195,7 +194,7 @@ def _built_in_validate_manifest() -> PluginManifest:
         )
     except PluginManifestError as exc:
         raise RuntimeError(
-            "Built-in validate plugin manifest is invalid: " + "; ".join(exc.errors)
+            f"Built-in validate plugin manifest is invalid: {'; '.join(exc.errors)}"
         ) from exc
 
 
@@ -203,10 +202,8 @@ def _normalize_enabled_plugins(raw_values: list[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for value in raw_values:
-        normalized_value = str(value).strip()
-        if not normalized_value:
-            continue
-        if normalized_value in seen:
+        normalized_value = value.strip()
+        if not normalized_value or normalized_value in seen:
             continue
         seen.add(normalized_value)
         normalized.append(normalized_value)
@@ -224,20 +221,15 @@ def _build_custom_lookup(
         manifest_id = discovered.manifest.id
         if manifest_id in reserved_lookup_keys:
             raise RuntimeError(
-                "Custom plugin manifest id conflicts with reserved plugin id/key: "
-                + manifest_id
+                f"Custom plugin manifest id conflicts with reserved plugin id/key: {manifest_id}"
             )
 
         existing_manifest = manifest_index.get(manifest_id)
         if existing_manifest is not None:
             if existing_manifest.module_path != discovered.module_path:
                 raise RuntimeError(
-                    "Plugin discovery conflict for manifest id "
-                    + manifest_id
-                    + ": "
-                    + str(existing_manifest.module_path)
-                    + " vs "
-                    + str(discovered.module_path)
+                    f"Plugin discovery conflict for manifest id {manifest_id}: "
+                    f"{existing_manifest.module_path} vs {discovered.module_path}"
                 )
         else:
             manifest_index[manifest_id] = discovered
@@ -251,12 +243,8 @@ def _build_custom_lookup(
             existing = lookup.get(lookup_key)
             if existing is not None and existing.manifest.id != discovered.manifest.id:
                 raise RuntimeError(
-                    "Plugin discovery conflict for key "
-                    + lookup_key
-                    + ": "
-                    + existing.manifest.id
-                    + " vs "
-                    + discovered.manifest.id
+                    f"Plugin discovery conflict for key {lookup_key}: "
+                    f"{existing.manifest.id} vs {discovered.manifest.id}"
                 )
             lookup[lookup_key] = discovered
     return lookup

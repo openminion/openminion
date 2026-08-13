@@ -38,7 +38,7 @@ def run_tool_tests(
     sandbox_runner: Any,
     python_executable: str | None = None,
 ) -> ToolTestRunResult:
-    python_bin = str(python_executable or sys.executable)
+    python_bin = python_executable or sys.executable
     with TemporaryDirectory(prefix="aat-tests-") as tmp_dir:
         workspace = Path(tmp_dir)
         sandbox = ExecutionSandboxSpec(
@@ -87,7 +87,7 @@ def _parse_result(result: Any) -> ToolTestRunResult:
     combined = "\n".join(part for part in (stdout, stderr) if part)
     counts = {"passed": 0, "failed": 0, "errors": 0}
     for match in _COUNTS_RE.finditer(combined):
-        label = str(match.group("label"))
+        label = match.group("label")
         count = int(match.group("count"))
         if label == "passed":
             counts["passed"] = count
@@ -122,7 +122,6 @@ def _parse_result(result: Any) -> ToolTestRunResult:
         passed=counts["passed"],
         failed=counts["failed"],
         errors=errors,
-        timed_out=False,
     )
 
 

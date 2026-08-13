@@ -46,7 +46,7 @@ class OpenMinionElicitationHandler:
         server_name: str,
         request: MCPElicitationRequest,
     ) -> MCPElicitationResult:
-        request_mode = str(request.mode or "").strip().lower() or "form"
+        request_mode = request.mode.strip().lower() or "form"
         if request_mode == "url" and not self._url_supported:
             result = MCPElicitationResult(
                 action="decline",
@@ -74,9 +74,9 @@ class OpenMinionElicitationHandler:
             MCPElicitationAuditEvent(
                 server_name=server_name,
                 mode=self._mode,
-                request_mode=str(request.mode or "").strip(),
-                action=str(result.action or "").strip(),
-                elicitation_id=str(request.elicitation_id or "").strip(),
+                request_mode=request.mode.strip(),
+                action=result.action.strip(),
+                elicitation_id=request.elicitation_id.strip(),
                 timestamp=time.time(),
             )
         )
@@ -93,7 +93,6 @@ def _coerce_elicitation_result(
             action=str(value.get("action", "") or "decline").strip() or "decline",
             content=dict(content) if isinstance(content, dict) else None,
         )
-    return MCPElicitationResult(action="decline")
 
 
 __all__ = [

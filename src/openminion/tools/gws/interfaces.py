@@ -1,5 +1,3 @@
-"""Google Workspace tool interfaces."""
-
 from typing import Any
 
 GWS_INTERFACE_VERSION = "v1"

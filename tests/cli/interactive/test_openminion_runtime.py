@@ -40,6 +40,7 @@ class _FakeSessions:
         self._messages: dict[str, list[_MessageRecord]] = {}
         self._metadata: dict[str, dict[str, object]] = {}
         self._counter = 0
+        self._events: dict[str, list[SimpleNamespace]] = {}
 
     def resolve_session(
         self,
@@ -106,6 +107,15 @@ class _FakeSessions:
                 created_at="2026-03-21T10:21:00Z",
             )
         )
+
+    def add_event(self, session_id: str, event_type: str, payload: dict) -> None:
+        self._events.setdefault(session_id, []).insert(
+            0,
+            SimpleNamespace(event_type=event_type, payload=dict(payload)),
+        )
+
+    def list_events(self, *, session_id: str, **_: object) -> list[SimpleNamespace]:
+        return list(self._events.get(session_id, []))
 
 
 class _FakeGateway:
@@ -720,6 +730,32 @@ async def test_openminion_runtime_tracks_turn_and_session_token_usage() -> None:
     assert second.turn_total_tokens == 1500
     assert second.session_total_tokens == 3000
     assert second.context_used_tokens == 3000
+
+
+def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+    rt.sessions.add_event(
+        tui_rt.session_id,
+        "session.context.budget",
+        {
+            "max_tokens": 8000,
+            "budget_source": "runtime_cap",
+            "selected_recent_count": 10,
+        },
+    )
+    rt.sessions.add_event(
+        tui_rt.session_id,
+        "session.context.compaction",
+        {"compacted_count": 3, "reason": "token_pressure"},
+    )
+
+    snapshot = tui_rt.context_budget_snapshot()
+
+    assert snapshot["max_tokens"] == 8000
+    assert snapshot["selected_recent_count"] == 10
+    assert snapshot["compacted_count"] == 3
+    assert snapshot["compaction_reason"] == "token_pressure"
 
 
 @pytest.mark.asyncio

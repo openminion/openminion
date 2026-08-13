@@ -24,7 +24,6 @@ _validate_manifest_runtime_candidates = (
 )
 _is_empty_provider_only_manifest = _registration._is_empty_provider_only_manifest
 _validate_manifest_contract = _registration._validate_manifest_contract
-_register_module_plugin = _registration._register_module_plugin
 _register_provider_plugin = _registration._register_provider_plugin
 
 RuntimeBootstrap = _runtime_build.RuntimeBootstrap

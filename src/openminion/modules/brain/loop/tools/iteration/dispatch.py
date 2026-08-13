@@ -54,6 +54,7 @@ from ..shortlisting import (
 )
 from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
+from ..transcript import persist_blocked_tool_calls, persist_terminal_tool_result
 
 
 class LoopDispatchResult(NamedTuple):
@@ -66,6 +67,104 @@ class LoopDispatchResult(NamedTuple):
     batch_had_progress: bool
     continue_loop: bool
     outcome: AdaptiveToolLoopOutcome | None
+
+
+def _persist_control_terminal(
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    tool_call: Any,
+    action_result: Any,
+) -> None:
+    persist_terminal_tool_result(
+        loop_ctx,
+        loop_state=loop_state,
+        turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+        tool_call=tool_call,
+        action_result=action_result,
+    )
+
+
+def _handle_mixed_decompose_calls(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+    other_tool_names: list[str],
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+) -> LoopDispatchResult | None:
+    if not other_tool_names:
+        return None
+    blocked_message = (
+        "decompose cannot be mixed with other tool calls in the same "
+        f"adaptive-loop turn: {other_tool_names}"
+    )
+    persist_blocked_tool_calls(
+        loop_ctx,
+        loop_state=loop_state,
+        turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+        tool_calls=tool_calls,
+        code="MIXED_DECOMPOSE_TOOL_CALLS",
+        message=blocked_message,
+    )
+    mixed_signature = canonical_tool_call_signature(
+        {
+            "name": _DECOMPOSE_TOOL_NAME,
+            "arguments": {"other_tool_names": sorted(other_tool_names)},
+        }
+    )
+    seen_signatures = set(
+        loop_state.scratchpad.get("decompose_mixed_retry_signatures", []) or []
+    )
+    if mixed_signature in seen_signatures:
+        outcome = _decompose_invalid_outcome(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            reason="mixed_tool_calls",
+            message=blocked_message,
+        )
+        return LoopDispatchResult(
+            tool_calls=tool_calls,
+            ordered_tool_results=[],
+            cached_indices=frozenset(),
+            iter_batch_parallel_count=0,
+            batch_had_progress=False,
+            continue_loop=False,
+            outcome=outcome,
+        )
+    seen_signatures.add(mixed_signature)
+    loop_state.scratchpad["decompose_mixed_retry_signatures"] = sorted(seen_signatures)
+    loop_state.messages.append(
+        Message(
+            role="system",
+            content=(
+                "decompose is a control tool and cannot be mixed with executable "
+                "tool calls in the same turn. Retry with either decompose alone, "
+                "or with only executable tools (without decompose). Mixed tool "
+                f"names: {other_tool_names}"
+            ),
+        )
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} decompose mixed-tool retry",
+        mode_state="decompose_mixed_tool_retry",
+    )
+    return LoopDispatchResult(
+        tool_calls=tool_calls,
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=False,
+        continue_loop=True,
+        outcome=None,
+    )
 
 
 def _is_plan_tool_call(tool_call: Any) -> bool:
@@ -112,73 +211,30 @@ def _handle_decompose_calls(
         for call in tool_calls
         if str(getattr(call, "name", "") or "").strip() != _DECOMPOSE_TOOL_NAME
     ]
-    if other_tool_names:
-        mixed_signature = canonical_tool_call_signature(
-            {
-                "name": _DECOMPOSE_TOOL_NAME,
-                "arguments": {"other_tool_names": sorted(other_tool_names)},
-            }
-        )
-        seen_signatures = set(
-            loop_state.scratchpad.get("decompose_mixed_retry_signatures", []) or []
-        )
-        if mixed_signature in seen_signatures:
-            return LoopDispatchResult(
-                tool_calls=tool_calls,
-                ordered_tool_results=[],
-                cached_indices=frozenset(),
-                iter_batch_parallel_count=0,
-                batch_had_progress=False,
-                continue_loop=False,
-                outcome=_decompose_invalid_outcome(
-                    loop_ctx=loop_ctx,
-                    profile=profile,
-                    loop_state=loop_state,
-                    allowed_tools=allowed_tools,
-                    public_mode_tag=public_mode_tag,
-                    reason="mixed_tool_calls",
-                    message=(
-                        "decompose cannot be mixed with other tool calls in the "
-                        f"same adaptive-loop turn: {other_tool_names}"
-                    ),
-                ),
-            )
-        seen_signatures.add(mixed_signature)
-        loop_state.scratchpad["decompose_mixed_retry_signatures"] = sorted(
-            seen_signatures
-        )
-        loop_state.messages.append(
-            Message(
-                role="system",
-                content=(
-                    "decompose is a control tool and cannot be mixed with "
-                    "executable tool calls in the same turn. Retry with either "
-                    "decompose alone, or with only executable tools (without "
-                    f"decompose). Mixed tool names: {other_tool_names}"
-                ),
-            )
-        )
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} decompose mixed-tool retry",
-            mode_state="decompose_mixed_tool_retry",
-        )
-        return LoopDispatchResult(
-            tool_calls=tool_calls,
-            ordered_tool_results=[],
-            cached_indices=frozenset(),
-            iter_batch_parallel_count=0,
-            batch_had_progress=False,
-            continue_loop=True,
-            outcome=None,
-        )
+    mixed_result = _handle_mixed_decompose_calls(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        tool_calls=tool_calls,
+        other_tool_names=other_tool_names,
+        allowed_tools=allowed_tools,
+        public_mode_tag=public_mode_tag,
+    )
+    if mixed_result is not None:
+        return mixed_result
     try:
         payload = DecomposeControlPayload.model_validate(
             getattr(decompose_calls[0], "arguments", {}) or {}
         )
     except Exception as exc:  # noqa: BLE001
+        persist_blocked_tool_calls(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            tool_calls=decompose_calls,
+            code="INVALID_DECOMPOSE_PAYLOAD",
+            message=str(exc),
+        )
         return LoopDispatchResult(
             tool_calls=tool_calls,
             ordered_tool_results=[],
@@ -198,6 +254,20 @@ def _handle_decompose_calls(
         )
     decompose_subtasks = _subtasks_from_decompose_control(payload)
     if decompose_subtasks:
+        from openminion.modules.brain.schemas import ActionResult
+
+        persist_terminal_tool_result(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            tool_call=decompose_calls[0],
+            action_result=ActionResult(
+                command_id=str(getattr(decompose_calls[0], "id", "") or "decompose"),
+                status="success",
+                summary="Decomposition requested.",
+                outputs={"subtasks": decompose_subtasks},
+            ),
+        )
         scratchpad = dict(loop_state.scratchpad or {})
         scratchpad["adaptive.decompose_subtasks"] = list(decompose_subtasks)
         loop_state.scratchpad = scratchpad
@@ -236,6 +306,7 @@ def _handle_decompose_calls(
             ),
         )
     action_result = _decompose_decline_result()
+    _persist_control_terminal(loop_ctx, loop_state, decompose_calls[0], action_result)
     loop_state.messages.append(
         action_result_to_tool_message(
             getattr(decompose_calls[0], "id", None),
@@ -323,6 +394,7 @@ def _process_plan_tool_calls(
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         loop_state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
         action_result = handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+        _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
             _record_successful_plan_action(loop_state, arguments)
         loop_state.messages.append(
@@ -474,6 +546,7 @@ def _process_single_review_tool_call(
     arguments = dict(getattr(tool_call, "arguments", {}) or {})
     loop_state.scratchpad[REVIEW_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
     action_result = handle_review_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+    _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
     if str(getattr(action_result, "status", "") or "") == "success":
         loop_state.scratchpad[REVIEW_TOOL_USED_SCRATCHPAD_KEY] = True
     loop_state.messages.append(
@@ -565,6 +638,7 @@ def _process_tool_request_calls(
             requestable_specs_by_name=requestable_specs_by_name,
             active_tool_specs=active_tool_specs,
         )
+        _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         activated_any = activated_any or activated
         _record_terminal_tool_request(
             terminal_requested_names,

@@ -17,15 +17,11 @@ def resolve_storage_provider(
     | None = None,
 ) -> str:
     """Normalize provider selection with consistent fail-closed logging."""
-    allowed = tuple(
-        token.strip().lower()
-        for token in (str(item or "") for item in supported)
-        if token.strip()
-    )
+    allowed = tuple(item.strip().lower() for item in supported if item.strip())
     if not allowed:
         raise ValueError("supported providers must not be empty")
 
-    provider = str(raw_provider or default).strip().lower()
+    provider = (raw_provider or default).strip().lower()
     if provider not in allowed:
         _STORAGE_LOGGER.warning(
             "storage_provider_rejected module=%s provider=%s reason=unsupported",

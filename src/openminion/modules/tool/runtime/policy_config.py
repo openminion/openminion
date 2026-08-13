@@ -23,6 +23,26 @@ from ..errors import ToolRuntimeError
 from .policy_shared import SCOPE_ORDER, _invalid_argument
 
 
+_EXEC_SECURITY_MODES = {
+    TOOL_EXEC_SECURITY_DENY,
+    TOOL_EXEC_SECURITY_ALLOWLIST,
+    TOOL_EXEC_SECURITY_FULL,
+}
+_EXEC_ASK_MODES = {TOOL_EXEC_ASK_OFF, TOOL_EXEC_ASK_ON_MISS, TOOL_EXEC_ASK_ALWAYS}
+_DANGEROUS_MODES = {
+    TOOL_DANGEROUS_MODE_PROMPT,
+    TOOL_DANGEROUS_MODE_DENY,
+    TOOL_DANGEROUS_MODE_ALLOW,
+}
+
+
+def _validated_mode(value: Any, default: str, valid: set[str], label: str) -> str:
+    mode = str(value or default).strip().lower()
+    if mode not in valid:
+        raise ToolRuntimeError("INVALID_ARGUMENT", f"Invalid {label} mode: {mode}")
+    return mode
+
+
 class PolicyConfigMixin:
     def max_scope(self) -> Scope:
         raw_scope = self.raw.get("scope", "WRITE_SAFE")
@@ -70,59 +90,28 @@ class PolicyConfigMixin:
         return cast(dict[str, Any], self.raw.get("dangerous", {}))
 
     def exec_security_mode(self) -> str:
-        mode = (
-            str(
-                self.exec_config().get("security", TOOL_EXEC_SECURITY_ALLOWLIST)
-                or TOOL_EXEC_SECURITY_ALLOWLIST
-            )
-            .strip()
-            .lower()
-        )
-        if mode not in {
-            TOOL_EXEC_SECURITY_DENY,
+        return _validated_mode(
+            self.exec_config().get("security"),
             TOOL_EXEC_SECURITY_ALLOWLIST,
-            TOOL_EXEC_SECURITY_FULL,
-        }:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", f"Invalid exec security mode: {mode}"
-            )
-        return mode
+            _EXEC_SECURITY_MODES,
+            "exec security",
+        )
 
     def exec_ask_mode(self) -> str:
-        mode = (
-            str(
-                self.exec_config().get("ask", TOOL_EXEC_ASK_ON_MISS)
-                or TOOL_EXEC_ASK_ON_MISS
-            )
-            .strip()
-            .lower()
-        )
-        if mode not in {
-            TOOL_EXEC_ASK_OFF,
+        return _validated_mode(
+            self.exec_config().get("ask"),
             TOOL_EXEC_ASK_ON_MISS,
-            TOOL_EXEC_ASK_ALWAYS,
-        }:
-            raise ToolRuntimeError("INVALID_ARGUMENT", f"Invalid exec ask mode: {mode}")
-        return mode
+            _EXEC_ASK_MODES,
+            "exec ask",
+        )
 
     def exec_ask_fallback(self) -> str:
-        mode = (
-            str(
-                self.exec_config().get("askFallback", TOOL_EXEC_SECURITY_DENY)
-                or TOOL_EXEC_SECURITY_DENY
-            )
-            .strip()
-            .lower()
-        )
-        if mode not in {
+        return _validated_mode(
+            self.exec_config().get("askFallback"),
             TOOL_EXEC_SECURITY_DENY,
-            TOOL_EXEC_SECURITY_ALLOWLIST,
-            TOOL_EXEC_SECURITY_FULL,
-        }:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", f"Invalid exec askFallback mode: {mode}"
-            )
-        return mode
+            _EXEC_SECURITY_MODES,
+            "exec askFallback",
+        )
 
     def exec_allowlist(self) -> list[str]:
         raw = self.exec_config().get("allowlist", [])
@@ -134,23 +123,12 @@ class PolicyConfigMixin:
         return bool(self.dangerous_config().get("enabled", True))
 
     def dangerous_mode(self) -> str:
-        mode = (
-            str(
-                self.dangerous_config().get("mode", TOOL_DANGEROUS_MODE_PROMPT)
-                or TOOL_DANGEROUS_MODE_PROMPT
-            )
-            .strip()
-            .lower()
-        )
-        if mode not in {
+        return _validated_mode(
+            self.dangerous_config().get("mode"),
             TOOL_DANGEROUS_MODE_PROMPT,
-            TOOL_DANGEROUS_MODE_DENY,
-            TOOL_DANGEROUS_MODE_ALLOW,
-        }:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", f"Invalid dangerous mode: {mode}"
-            )
-        return mode
+            _DANGEROUS_MODES,
+            "dangerous",
+        )
 
     def workspace_root(self) -> Path:
         value = str(self.raw.get("workspace_root", "~/openminion_tool_runs"))

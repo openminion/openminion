@@ -13,7 +13,7 @@ from ..interfaces import FetchProviderProtocol, ProviderCapabilities, ProviderRe
 from ..policy import (
     FetchPolicyError as _FetchPolicyError,
     enforce_url_policy as _shared_enforce_url_policy,
-    extract_fetch_policy as _shared_extract_fetch_policy,
+    resolve_allow_private_hosts as _resolve_allow_private_hosts,
 )
 
 _REDIRECT_CODES = {301, 302, 303, 307, 308}
@@ -44,7 +44,7 @@ class _FetchProviderError(Exception):
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, hdrs, newurl):  # type: ignore[override]
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
         return None
 
 
@@ -54,10 +54,6 @@ def _bounded_int(value: Any, default: int, *, lower: int, upper: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(lower, min(upper, parsed))
-
-
-def _extract_fetch_policy(ctx: Any | None) -> dict[str, Any]:
-    return _shared_extract_fetch_policy(ctx)
 
 
 def _fail(code: str, message: str, details: dict[str, Any] | None = None) -> None:
@@ -200,10 +196,7 @@ class CoreHttpFetchProvider(FetchProviderProtocol):
             }:
                 headers["User-Agent"] = "OpenMinionFetch/1.0"
 
-            policy_cfg = _extract_fetch_policy(ctx)
-            allow_private_hosts = bool(policy_cfg.get("allow_private_hosts", False))
-            if bool(request.get("allow_private_hosts", False)):
-                allow_private_hosts = True
+            allow_private_hosts = _resolve_allow_private_hosts(request, ctx)
 
             _enforce_url_policy(requested_url, allow_private_hosts=allow_private_hosts)
 

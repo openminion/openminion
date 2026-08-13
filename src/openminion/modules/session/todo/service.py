@@ -5,8 +5,9 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Mapping
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
@@ -297,21 +298,7 @@ def reset_default_todo_store_for_tests() -> None:
 
 
 def _todo_to_payload(todo: Todo) -> dict[str, Any]:
-    return {
-        "session_id": todo.session_id,
-        "created_at": todo.created_at,
-        "updated_at": todo.updated_at,
-        "items": [
-            {
-                "index": item.index,
-                "text": item.text,
-                "status": item.status,
-                "created_at": item.created_at,
-                "updated_at": item.updated_at,
-            }
-            for item in todo.items
-        ],
-    }
+    return asdict(todo)
 
 
 def _todo_from_payload(session_id: str, payload: Mapping[str, Any]) -> Todo:
@@ -341,7 +328,7 @@ def _coerce_status(value: Any) -> TodoItemStatus:
     status = str(value or STATUS_TODO)
     if status not in VALID_STATUSES:
         return STATUS_TODO
-    return cast(TodoItemStatus, status)
+    return status
 
 
 __all__ = (

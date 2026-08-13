@@ -1,5 +1,3 @@
-"""Firecrawl fetch provider registration."""
-
 from typing import Any
 
 from openminion.modules.tool.framework import build_registrar

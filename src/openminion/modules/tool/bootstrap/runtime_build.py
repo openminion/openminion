@@ -7,13 +7,7 @@ from typing import Any, Mapping
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.constants import (
-    TOOL_BOOTSTRAP_GATE_ALWAYS,
-    TOOL_BOOTSTRAP_STATUS_IMPORT_ERROR,
-    TOOL_BOOTSTRAP_STATUS_REGISTRAR_FAILED,
-    TOOL_BOOTSTRAP_STATUS_REGISTERED,
-    TOOL_BOOTSTRAP_STATUS_SKIPPED_GATE,
-)
+from openminion.modules.tool.constants import TOOL_BOOTSTRAP_STATUS_SKIPPED_GATE
 from openminion.modules.tool.runtime.dispatch import set_registry, set_registry_manager
 from openminion.modules.tool.runtime.manager import (
     ToolContractDriftReport,
@@ -26,20 +20,16 @@ from .entries import (
     _TOOL_BOOTSTRAP_ENTRIES,
     _ToolBootstrapEntry,
     _ToolBootstrapRecord,
-    _apply_dynamic_runtime_ownership,
     _dynamic_tool_bootstrap_entries,
     _entry_enabled,
     _entry_enabled_for_runtime_config,
-    _prepare_tool_register_state,
-    _prepared_state_record_details,
 )
 from .registration import (
-    _ManifestCandidateValidationError,
     _register_provider_plugin,
+    _register_tool_entry,
+    _validate_manifest_contract,
     _require_registrar_protocol,
     _resolve_module_registrar,
-    _validate_manifest_contract,
-    _validate_manifest_runtime_candidates,
 )
 
 logger = logging.getLogger("openminion.modules.tool.bootstrap")
@@ -105,9 +95,7 @@ def _emit_contract_drift_report(
             raise ToolRuntimeError(
                 "INTERNAL_ERROR",
                 f"Tool contract drift detected: {payload}",
-                {"payload": payload}
-                if isinstance(payload, dict)
-                else {"payload": str(payload)},
+                {"payload": payload},
             )
     else:
         logger.info("tool.contract_drift=clean")
@@ -164,128 +152,18 @@ def build_runtime_bootstrap(
             bootstrap_records.append(record)
             continue
 
-        prepared_state = _prepare_tool_register_state(entry=entry, config=config)
-        ctx = ToolRegisterContext(
-            module_id=entry.label.lower().replace(" ", "_"),
-            config=config,
-            workspace_root=workspace_path,
-            run_root=run_path,
-            prepared_state=prepared_state,
-            strict=strict and entry.required,
+        bootstrap_records.append(
+            _register_tool_entry(
+                registry,
+                registry_manager,
+                entry=entry,
+                config=config,
+                workspace_root=workspace_path,
+                run_root=run_path,
+                strict_required=strict,
+                context_strict=strict and entry.required,
+            )
         )
-
-        try:
-            module = importlib.import_module(entry.module_name)
-        except ImportError as exc:
-            if entry.required and strict:
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Required module {entry.module_name} not found: {exc}",
-                    {"module_name": entry.module_name},
-                ) from exc
-            logger.debug(
-                "%s plugin unavailable (%s): %s", entry.label, entry.module_name, exc
-            )
-            bootstrap_records.append(
-                _ToolBootstrapRecord(
-                    kind=entry.kind,
-                    module_name=entry.module_name,
-                    label=entry.label,
-                    required=entry.required,
-                    gate=entry.gate,
-                    enabled=True,
-                    status=TOOL_BOOTSTRAP_STATUS_IMPORT_ERROR,
-                    error=str(exc),
-                )
-            )
-            continue
-
-        registrar, registrar_module_name = _resolve_module_registrar(
-            entry.module_name,
-            module,
-        )
-        try:
-            typed_registrar = _require_registrar_protocol(
-                module_name=entry.module_name,
-                label=entry.label,
-                registrar=registrar,
-            )
-            manifest = typed_registrar.get_manifest(ctx)
-            manifest_for_validation = _validate_manifest_contract(
-                module_name=entry.module_name,
-                label=entry.label,
-                is_provider_only=typed_registrar.is_provider_only,
-                manifest=manifest,
-            )
-            if manifest_for_validation is not None:
-                registry_manager.register_module_manifest(
-                    manifest_for_validation, source_module=entry.module_name
-                )
-            typed_registrar.register(registry, ctx)
-            _apply_dynamic_runtime_ownership(
-                registry=registry,
-                prepared_state=prepared_state,
-            )
-            if manifest_for_validation is not None:
-                _validate_manifest_runtime_candidates(
-                    module_name=entry.module_name,
-                    label=entry.label,
-                    manifest=manifest_for_validation,
-                    registry=registry,
-                )
-            added_runtime_tools, error_summary = _prepared_state_record_details(
-                prepared_state
-            )
-            logger.info(
-                "%s: registered via REGISTRAR (%s)",
-                entry.label,
-                registrar_module_name,
-            )
-            bootstrap_records.append(
-                _ToolBootstrapRecord(
-                    kind=entry.kind,
-                    module_name=entry.module_name,
-                    label=entry.label,
-                    required=entry.required,
-                    gate=entry.gate,
-                    enabled=True,
-                    status=TOOL_BOOTSTRAP_STATUS_REGISTERED,
-                    error=error_summary,
-                    added_runtime_tools=added_runtime_tools,
-                )
-            )
-            continue
-        except Exception as exc:
-            if isinstance(exc, _ManifestCandidateValidationError):
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Module {entry.module_name} REGISTRAR failed: {exc}",
-                    {"module_name": entry.module_name},
-                ) from exc
-            if isinstance(exc, TypeError):
-                raise
-            if entry.required and strict:
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Module {entry.module_name} REGISTRAR failed: {exc}",
-                    {"module_name": entry.module_name},
-                ) from exc
-            logger.warning(
-                "%s REGISTRAR failed (%s): %s", entry.label, entry.module_name, exc
-            )
-            bootstrap_records.append(
-                _ToolBootstrapRecord(
-                    kind=entry.kind,
-                    module_name=entry.module_name,
-                    label=entry.label,
-                    required=entry.required,
-                    gate=entry.gate,
-                    enabled=True,
-                    status=TOOL_BOOTSTRAP_STATUS_REGISTRAR_FAILED,
-                    error=str(exc),
-                )
-            )
-            continue
 
     registry_manager.set_runtime_tool_schemas(_collect_runtime_tool_schemas(registry))
     registry_manager.compile()
@@ -339,20 +217,6 @@ def build_runtime_bootstrap(
     )
 
 
-def _tool_bootstrap_entry_enabled(entry: _ToolBootstrapEntry) -> bool:
-    gate = str(entry.gate or TOOL_BOOTSTRAP_GATE_ALWAYS).strip().lower()
-    if gate == "never":
-        return False
-    if gate == TOOL_BOOTSTRAP_GATE_ALWAYS:
-        return True
-    env_val = (
-        resolve_environment_config()
-        .get(f"OPENMINION_TOOL_GATE_{gate.upper()}", "1")
-        .strip()
-    )
-    return env_val in ("1", "true", "yes", "on")
-
-
 def _validate_manifest_ids(
     *,
     entry: _ToolBootstrapEntry,
@@ -395,7 +259,7 @@ def wire_default_tool_registry_manager(
     registry_manager = ToolRegistryManager()
 
     for entry in tool_bootstrap_entries or _TOOL_BOOTSTRAP_ENTRIES:
-        if not _tool_bootstrap_entry_enabled(entry):
+        if not _entry_enabled(entry):
             continue
 
         if entry.kind == "provider":

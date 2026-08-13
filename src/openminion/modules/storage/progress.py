@@ -30,7 +30,7 @@ class TqdmProgressReporter:
     """Reporter that renders progress through ``tqdm`` when available."""
 
     def __init__(self, *, force: bool = False) -> None:
-        self._force = bool(force)
+        self._force = force
         self._bar: Any = None
         self._available = False
         try:
@@ -43,12 +43,10 @@ class TqdmProgressReporter:
     def _is_active(self) -> bool:
         if not self._available:
             return False
-        if self._force:
-            return True
         try:
-            return bool(sys.stdout.isatty())
+            return self._force or sys.stdout.isatty()
         except Exception:  # noqa: BLE001
-            return False
+            return self._force
 
     def on_start(self, *, total: int | None, label: str) -> None:
         if not self._is_active():
@@ -66,8 +64,8 @@ class TqdmProgressReporter:
             return
         try:
             if message is not None:
-                bar.set_postfix_str(str(message), refresh=False)
-            bar.update(max(0, int(advance)))
+                bar.set_postfix_str(message, refresh=False)
+            bar.update(max(0, advance))
         except Exception:  # noqa: BLE001
             return
 
@@ -77,7 +75,7 @@ class TqdmProgressReporter:
             return
         try:
             if message is not None:
-                bar.set_postfix_str(str(message), refresh=False)
+                bar.set_postfix_str(message, refresh=False)
             bar.close()
         except Exception:  # noqa: BLE001
             return

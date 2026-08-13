@@ -183,7 +183,9 @@ def test_webhook_scope_authorizer_blocks_unpaired_command() -> None:
     assert result["success"] is True
     assert runtime.calls == []
     assert auth_store.lookups == [("telegram", "111")]
-    assert any("not paired" in text for text in delivery.texts)
+    assert (
+        "This chat is not paired. Send /pair for setup instructions." in delivery.texts
+    )
 
 
 def test_webhook_emits_reason_coded_access_and_delivery_audit_events() -> None:
@@ -271,6 +273,38 @@ def test_webhook_scope_authorizer_blocks_missing_scopes() -> None:
     assert runtime.calls == []
     assert auth_store.lookups == [("telegram", "111")]
     assert any("Permission denied" in text for text in delivery.texts)
+
+
+def test_webhook_status_reaches_shared_command_runtime() -> None:
+    auth_store = _AuthStore(
+        pairing={
+            "pairing_id": "pair-1",
+            "scopes": [
+                "cp.message.read",
+                "cp.message.write",
+                "session.read",
+                "session.write",
+                "run.start",
+            ],
+        }
+    )
+    runtime = _Runtime(auth_store)
+    delivery = _Delivery()
+    runner = TelegramWebhookRunner(
+        config=_config(),
+        api=_API(),  # type: ignore[arg-type]
+        runtime=runtime,  # type: ignore[arg-type]
+        delivery=delivery,  # type: ignore[arg-type]
+        state_store=None,
+    )
+
+    result = runner.handle_webhook_update(
+        _private_update("/status"), secret_token="test-auth-secret"
+    )
+
+    assert result["success"] is True
+    assert [call.text for call in runtime.calls] == ["/status"]
+    assert not any("Webhook Mode Active" in text for text in delivery.texts)
 
 
 def test_webhook_routes_unknown_clarify_id_to_runtime() -> None:

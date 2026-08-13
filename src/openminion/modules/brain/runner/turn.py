@@ -148,7 +148,7 @@ def _capability_tokens(raw_capabilities: Any) -> set[str]:
     }
 
 
-def is_time_sensitive_tool_command(runner: "BrainRunner", *, command: Command) -> bool:
+def is_time_sensitive_tool_command(runner: "BrainRunner", command: Command) -> bool:
     if command.kind != "tool":
         return False
     candidate_names: list[str] = []

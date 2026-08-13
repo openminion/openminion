@@ -6,9 +6,7 @@ from typing import Any
 def annotate_with_recall_source(rendered_line: str, decision: Any) -> str:
     """Prefix a rendered line with the decision source."""
 
-    source = str(getattr(decision, "source", None) or "context").strip()
-    if not source:
-        source = "context"
+    source = str(getattr(decision, "source", None) or "").strip() or "context"
     return f"[recall={source}] {rendered_line}"
 
 

@@ -122,11 +122,8 @@ def ensure_registry_compatibility(
         if not callable(getattr(registry, method, None))
     )
 
-    if errors:
-        if strict:
-            raise RegistryInterfaceError(
-                "REGISTRY_INTERFACE_VIOLATION", f"Registry incompatible: {errors}"
-            )
-        return False, errors
-
-    return True, []
+    if errors and strict:
+        raise RegistryInterfaceError(
+            "REGISTRY_INTERFACE_VIOLATION", f"Registry incompatible: {errors}"
+        )
+    return not errors, errors

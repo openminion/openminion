@@ -10,7 +10,6 @@ def emit_family_event(
     event: str,
     payload: Mapping[str, Any] | dict[str, Any] | None = None,
 ) -> None:
-    """Emit a family-level audit event via RuntimeContext.write_audit_event."""
     if not isinstance(ctx, RuntimeContext):
         return
     try:
@@ -26,8 +25,5 @@ def emit_provider_attempt(
     attempt_index: int,
     payload: dict[str, Any] | None = None,
 ) -> None:
-    """Emit a provider/backend attempt event with attempt_index merged in."""
-    merged: dict[str, Any] = {"attempt_index": attempt_index}
-    if payload:
-        merged.update(payload)
+    merged = {"attempt_index": attempt_index, **(payload or {})}
     emit_family_event(ctx, event=event, payload=merged)

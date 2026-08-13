@@ -20,7 +20,9 @@ from rich.console import Console
 from rich.text import Text
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.presentation.animation import AnimationResolution
-from openminion.cli.presentation.clipboard import copy_to_clipboard as _copy_to_clipboard
+from openminion.cli.presentation.clipboard import (
+    copy_to_clipboard as _copy_to_clipboard,
+)
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.queue import (
     is_queue_command,

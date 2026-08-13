@@ -76,19 +76,16 @@ def build_runtime_repositories(
 
     prewired = metadata.get("runtime_repositories")
     if isinstance(prewired, Mapping):
-        identity_repo = prewired.get("identity")
-        cron_repo = prewired.get("cron")
-        audit_repo = prewired.get("audit")
+
+        def _handle(key: str) -> LazyRepositoryHandle:
+            value = prewired.get(key)
+            factory = (lambda: value) if value is not None else None
+            return LazyRepositoryHandle(_factory=factory)
+
         return RuntimeRepositories(
-            identity=LazyRepositoryHandle(
-                _factory=(lambda: identity_repo) if identity_repo is not None else None
-            ),
-            cron=LazyRepositoryHandle(
-                _factory=(lambda: cron_repo) if cron_repo is not None else None
-            ),
-            audit=LazyRepositoryHandle(
-                _factory=(lambda: audit_repo) if audit_repo is not None else None
-            ),
+            identity=_handle("identity"),
+            cron=_handle("cron"),
+            audit=_handle("audit"),
         )
 
     identity_path = identity_db_candidates(env=env_owner)

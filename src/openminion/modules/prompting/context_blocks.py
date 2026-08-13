@@ -10,8 +10,6 @@ PRIOR_SESSION_SUMMARY_HEADER = "## Continuing from recent sessions"
 
 
 def build_project_context_block(*, inbound_metadata: dict[str, str]) -> str:
-    """Render the project context block appended to a system prompt."""
-
     body = str(inbound_metadata.get("project_context_body", "") or "").strip()
     if not body:
         return ""
@@ -28,13 +26,11 @@ def build_project_context_block(*, inbound_metadata: dict[str, str]) -> str:
         lines.append(f"- path: {path_text}")
     if truncated:
         lines.append("- note: content was truncated to stay within shell limits.")
-    lines.extend(
-        [
-            "",
-            "Treat the following project context file as authoritative local guidance for this project:",
-            body,
-        ]
-    )
+    lines += [
+        "",
+        "Treat the following project context file as authoritative local guidance for this project:",
+        body,
+    ]
     return "\n".join(lines).strip()
 
 

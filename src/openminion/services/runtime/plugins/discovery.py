@@ -45,21 +45,15 @@ def discover_plugin_manifests(search_roots: Sequence[Path]) -> list[DiscoveredPl
                 manifest = load_plugin_manifest(manifest_path)
             except PluginManifestError as exc:
                 raise PluginDiscoveryError(
-                    "Invalid plugin manifest at "
-                    + str(manifest_path)
-                    + ": "
-                    + "; ".join(exc.errors)
+                    f"Invalid plugin manifest at {manifest_path}: {'; '.join(exc.errors)}"
                 ) from exc
 
             module_alias = _module_alias_from_manifest_path(manifest_path)
             module_path = manifest_path.with_name(module_alias + ".py")
             if not module_path.exists() or not module_path.is_file():
                 raise PluginDiscoveryError(
-                    "Plugin module is missing for manifest "
-                    + str(manifest_path)
-                    + " (expected "
-                    + str(module_path)
-                    + ")"
+                    f"Plugin module is missing for manifest {manifest_path} "
+                    f"(expected {module_path})"
                 )
             discovered.append(
                 DiscoveredPlugin(
@@ -79,16 +73,13 @@ def load_plugin_instance(discovered: DiscoveredPlugin) -> Plugin:
     plugin_classes = _plugin_classes_in_module(module)
     if not plugin_classes:
         raise PluginDiscoveryError(
-            "No Plugin subclass found in module " + str(discovered.module_path)
+            f"No Plugin subclass found in module {discovered.module_path}"
         )
     if len(plugin_classes) > 1:
         class_names = ", ".join(sorted(item.__name__ for item in plugin_classes))
         raise PluginDiscoveryError(
-            "Multiple Plugin subclasses found in module "
-            + str(discovered.module_path)
-            + " ("
-            + class_names
-            + "); keep exactly one."
+            f"Multiple Plugin subclasses found in module {discovered.module_path} "
+            f"({class_names}); keep exactly one."
         )
 
     plugin_class = plugin_classes[0]
@@ -96,22 +87,15 @@ def load_plugin_instance(discovered: DiscoveredPlugin) -> Plugin:
         instance = plugin_class()
     except Exception as exc:  # pragma: no cover - defensive
         raise PluginDiscoveryError(
-            "Failed to instantiate plugin class "
-            + plugin_class.__name__
-            + " from "
-            + str(discovered.module_path)
-            + ": "
-            + str(exc)
+            f"Failed to instantiate plugin class {plugin_class.__name__} "
+            f"from {discovered.module_path}: {exc}"
         ) from exc
 
     plugin_name = str(getattr(instance, "name", "")).strip()
     if not plugin_name:
         raise PluginDiscoveryError(
-            "Plugin class "
-            + plugin_class.__name__
-            + " in "
-            + str(discovered.module_path)
-            + " has empty `name`."
+            f"Plugin class {plugin_class.__name__} in {discovered.module_path} "
+            "has empty `name`."
         )
     return instance
 
@@ -123,7 +107,7 @@ def _import_plugin_module(discovered: DiscoveredPlugin) -> ModuleType:
     spec = importlib.util.spec_from_file_location(module_name, discovered.module_path)
     if spec is None or spec.loader is None:
         raise PluginDiscoveryError(
-            "Unable to create module spec for " + str(discovered.module_path)
+            f"Unable to create module spec for {discovered.module_path}"
         )
 
     module = importlib.util.module_from_spec(spec)
@@ -131,10 +115,7 @@ def _import_plugin_module(discovered: DiscoveredPlugin) -> ModuleType:
         spec.loader.exec_module(module)
     except Exception as exc:  # pragma: no cover - defensive
         raise PluginDiscoveryError(
-            "Failed to import plugin module "
-            + str(discovered.module_path)
-            + ": "
-            + str(exc)
+            f"Failed to import plugin module {discovered.module_path}: {exc}"
         ) from exc
     return module
 
@@ -158,10 +139,10 @@ def _module_alias_from_manifest_path(manifest_path: Path) -> str:
     file_name = manifest_path.name
     suffix = SERVICES_PLUGIN_MANIFEST_SUFFIX
     if not file_name.endswith(suffix):
-        raise PluginDiscoveryError("Unexpected manifest file name: " + file_name)
+        raise PluginDiscoveryError(f"Unexpected manifest file name: {file_name}")
     alias = file_name[: -len(suffix)].strip()
     if not alias:
         raise PluginDiscoveryError(
-            "Manifest file name must include module alias: " + file_name
+            f"Manifest file name must include module alias: {file_name}"
         )
     return alias

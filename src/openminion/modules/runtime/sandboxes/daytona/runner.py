@@ -33,13 +33,8 @@ def _filter_exec_env(
 ) -> dict[str, str]:
     if not allowlist:
         return {}
-    allowed = {str(name).strip() for name in allowlist if str(name).strip()}
-    filtered = {key: value for key, value in env.items() if key in allowed}
-    return {
-        key: value
-        for key, value in filtered.items()
-        if not key.startswith("OPENMINION_") or key in allowed
-    }
+    allowed = {name.strip() for name in allowlist if name.strip()}
+    return {key: value for key, value in env.items() if key in allowed}
 
 
 class DaytonaRunner:

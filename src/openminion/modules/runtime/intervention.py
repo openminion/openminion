@@ -264,30 +264,22 @@ def propagate_intervention(
 ) -> InterventionDecision:
     """Route the typed decision onto the matching adapter layer."""
 
-    slot = adapter_slot_for(decision.action)
     target = decision.target_ref
     try:
         if decision.action == "pause":
-            assert slot == "pause_resume_adapter"
-            ok = bool(pause_resume_adapter.pause(target, reason=decision.reason))
+            ok = pause_resume_adapter.pause(target, reason=decision.reason)
             status: PropagationStatus = "dispatched" if ok else "no_op"
         elif decision.action == "resume":
-            assert slot == "pause_resume_adapter"
-            ok = bool(pause_resume_adapter.resume(target, reason=decision.reason))
+            ok = pause_resume_adapter.resume(target, reason=decision.reason)
             status = "dispatched" if ok else "no_op"
         elif decision.action == "cancel":
-            assert slot == "runtime_adapter"
-            ok = bool(runtime_adapter.cancel_turn(target))
+            ok = runtime_adapter.cancel_turn(target)
             status = "dispatched" if ok else "no_op"
         elif decision.action == "kill":
-            assert slot == "runtime_adapter"
             runtime_adapter.kill_switch(kill_grace_s)
             status = "dispatched"
         elif decision.action == "redirect":
-            assert slot == "redirect_adapter"
-            ok = bool(
-                redirect_adapter.cancel_then_reissue(target, reason=decision.reason)
-            )
+            ok = redirect_adapter.cancel_then_reissue(target, reason=decision.reason)
             status = "dispatched" if ok else "no_op"
         else:  # pragma: no cover - exhaustive over INTERVENTION_ACTIONS
             raise ValueError(f"unknown action: {decision.action!r}")

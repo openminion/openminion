@@ -234,7 +234,7 @@ class SummaryStore:
     def needs_summary_update(
         self, session_id: str, *, threshold_events: int = 40
     ) -> bool:
-        threshold = max(1, int(threshold_events))
+        threshold = max(1, threshold_events)
         latest_seq = self._latest_event_seq_tx(session_id)
         row = self._first_row(
             """
@@ -258,7 +258,7 @@ class SummaryStore:
         based_on_seq: int,
     ) -> None:
         now = self._utc_now_iso()
-        based_seq_value = max(0, int(based_on_seq))
+        based_seq_value = max(0, based_on_seq)
         with self._rs.transaction():
             self._rs.execute_count(
                 """
@@ -297,9 +297,7 @@ class SummaryStore:
         if not exists:
             raise ValueError(f"session not found: {session_id}")
         latest_seq = self._latest_event_seq_tx(session_id)
-        boundary = (
-            latest_seq if seq_upto is None else max(0, min(int(seq_upto), latest_seq))
-        )
+        boundary = latest_seq if seq_upto is None else max(0, min(seq_upto, latest_seq))
 
         summary_short = self.get_summary(session_id, variant="short")
         summary_long = self.get_summary(session_id, variant="long")
@@ -364,12 +362,7 @@ class SummaryStore:
         latest_seq = int(rows[-1]["seq"])
         snapshot_id = str(uuid4())
         now = self._utc_now_iso()
-        existing_summary = self.get_summary(session_id)
-        summary_short = (
-            existing_summary.get("summary_short", "")
-            if isinstance(existing_summary, dict)
-            else str(existing_summary)
-        )
+        summary_short = self.get_summary(session_id)
 
         try:
             self._rs.execute_count(

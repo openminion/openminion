@@ -17,10 +17,6 @@ class SqlTaskRepository:
 
     def __init__(self, store: RecordStore):
         self._store = store
-        self.initialize_schema()
-
-    def initialize_schema(self) -> None:
-        """Initialize the database schema for task persistence."""
         ensure_schema(self._store)
 
     def _query_one(
@@ -65,7 +61,6 @@ class SqlTaskRepository:
         created_at: datetime,
         updated_at: datetime,
     ) -> None:
-        """Insert a new task record."""
         self._store.execute_count(
             """
             INSERT INTO tasks
@@ -96,7 +91,6 @@ class SqlTaskRepository:
         executing_mode: str | None = None,
         updated_at: datetime | None = None,
     ) -> None:
-        """Update an existing task record."""
         parts = []
         params = []
 
@@ -119,7 +113,7 @@ class SqlTaskRepository:
             parts.append("updated_at = CURRENT_TIMESTAMP")
 
         updates_sql = ", ".join(parts)
-        params.append(task_id)  # This is the WHERE value
+        params.append(task_id)
 
         self._store.execute_count(
             f"UPDATE tasks SET {updates_sql} WHERE task_id = ?",
@@ -127,7 +121,6 @@ class SqlTaskRepository:
         )
 
     def get_task(self, task_id: str) -> Mapping[str, Any] | None:
-        """Retrieve a task record by ID."""
         return self._query_one(
             "SELECT * FROM tasks WHERE task_id = ?",
             (task_id,),
@@ -143,7 +136,6 @@ class SqlTaskRepository:
         created_at: datetime,
         updated_at: datetime,
     ) -> None:
-        """Insert a new plan record."""
         self._store.execute_count(
             """
             INSERT INTO plans
@@ -162,21 +154,18 @@ class SqlTaskRepository:
         )
 
     def update_plan(self, plan_id: str, updated_at: datetime) -> None:
-        """Update a plan's timestamp."""
         self._store.execute_count(
             "UPDATE plans SET updated_at = ? WHERE plan_id = ?",
             (updated_at.isoformat(), plan_id),
         )
 
     def get_plan(self, plan_id: str) -> Mapping[str, Any] | None:
-        """Retrieve a plan record by ID."""
         return self._query_one(
             "SELECT * FROM plans WHERE plan_id = ?",
             (plan_id,),
         )
 
     def attach_plan_to_task(self, task_id: str, plan_id: str) -> None:
-        """Link a plan to a task."""
         self._store.execute_count(
             "UPDATE tasks SET current_plan_id = ? WHERE task_id = ?", (plan_id, task_id)
         )
@@ -194,7 +183,6 @@ class SqlTaskRepository:
         executing_mode: str | None,
         updated_at: datetime,
     ) -> None:
-        """Insert a new plan step."""
         self._store.execute_count(
             """
             INSERT INTO plan_steps
@@ -224,7 +212,6 @@ class SqlTaskRepository:
         executing_mode: str | None = None,
         updated_at: datetime | None = None,
     ) -> None:
-        """Update an existing plan step."""
         parts = []
         params = []
 
@@ -246,7 +233,7 @@ class SqlTaskRepository:
         else:
             parts.append("updated_at = CURRENT_TIMESTAMP")
 
-        params.append(step_id)  # This is the WHERE value
+        params.append(step_id)
 
         updates_sql = ", ".join(parts)
 
@@ -255,16 +242,13 @@ class SqlTaskRepository:
         )
 
     def get_step(self, step_id: str) -> Mapping[str, Any] | None:
-        """Retrieve a plan step by ID."""
         return self._query_one("SELECT * FROM plan_steps WHERE step_id = ?", (step_id,))
 
     def get_steps_for_plan(self, plan_id: str) -> list[Mapping[str, Any]]:
-        """Fetch all steps for a given plan ordered by index."""
-        rows = self._store.query_dicts(
+        return self._store.query_dicts(
             "SELECT * FROM plan_steps WHERE plan_id = ? ORDER BY order_index ASC",
             (plan_id,),
         )
-        return rows
 
     def record_pending_action(
         self,
@@ -275,7 +259,6 @@ class SqlTaskRepository:
         cursor: ResumePointer,
         created_at: datetime,
     ) -> None:
-        """Record a pending action for approval."""
         self._store.execute_count(
             """
             INSERT INTO pending_actions
@@ -300,14 +283,12 @@ class SqlTaskRepository:
         )
 
     def get_pending_action(self, policy_request_id: str) -> Mapping[str, Any] | None:
-        """Get a pending action by policy request ID."""
         return self._query_one(
             "SELECT * FROM pending_actions WHERE policy_request_id = ?",
             (policy_request_id,),
         )
 
     def count_pending_actions(self) -> int:
-        """Count unresolved approval checkpoints."""
         rows = self._store.query_dicts(
             "SELECT COUNT(*) AS count FROM pending_actions WHERE resolved_at IS NULL"
         )
@@ -321,7 +302,6 @@ class SqlTaskRepository:
         resolved_at: datetime | None,
         decision_id: str | None = None,
     ) -> None:
-        """Mark a pending action as resolved."""
         query = """
             UPDATE pending_actions
             SET decision_id = ?
@@ -346,7 +326,6 @@ class SqlTaskRepository:
         note: str | None,
         artifact_refs: list[str],
     ) -> None:
-        """Record an idempotency key to prevent duplicate operations."""
         self._store.execute_count(
             """
             INSERT INTO step_idempotency
@@ -364,20 +343,16 @@ class SqlTaskRepository:
         )
 
     def get_idempotency_record(self, idempotency_key: str) -> Mapping[str, Any] | None:
-        """Retrieve an idempotency record."""
         return self._query_one(
             "SELECT * FROM step_idempotency WHERE idempotency_key = ?",
             (idempotency_key,),
         )
 
     def get_tasks_ready(self, limit: int = 5) -> list[Mapping[str, Any]]:
-        """Get ready tasks (PENDING or ACTIVE)."""
         return self._get_tasks("status IN ('PENDING', 'ACTIVE')", limit=limit)
 
     def get_tasks_active(self, limit: int = 5) -> list[Mapping[str, Any]]:
-        """Get active tasks."""
         return self._get_tasks("status = 'ACTIVE'", limit=limit)
 
     def get_tasks_waiting(self, limit: int = 5) -> list[Mapping[str, Any]]:
-        """Get waiting tasks."""
         return self._get_tasks("status = 'WAITING'", limit=limit)

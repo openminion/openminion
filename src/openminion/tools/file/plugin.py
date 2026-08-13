@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import (
     AliasChoices,
@@ -55,13 +55,6 @@ from .constants import (
 _FILE_TOOL_SOURCE = "file_module"
 
 
-def _normalize_str(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    normalized = str(value).strip()
-    return normalized or None
-
-
 def _collapse_alias_group(
     data: dict[str, Any],
     canonical: str,
@@ -81,7 +74,7 @@ def _collapse_alias_group(
 class FileListDirArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    path: Optional[str] = Field(default=".", description="Directory path")
+    path: str | None = Field(default=".", description="Directory path")
     recursive: bool = Field(default=False, description="List recursively")
     max_entries: int = Field(
         default=FILE_DEFAULT_MAX_ENTRIES, ge=1, le=FILE_MAX_ENTRIES
@@ -199,7 +192,7 @@ class FileWriteArgs(BaseModel):
 class FileFindArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    path: Optional[str] = Field(default=".", description="Directory to search")
+    path: str | None = Field(default=".", description="Directory to search")
     pattern: str = Field(default="*", description="Glob pattern")
     max_entries: int = Field(
         default=FILE_DEFAULT_MAX_ENTRIES, ge=1, le=FILE_MAX_ENTRIES
@@ -234,7 +227,7 @@ class FileTrashArgs(BaseModel):
 class FileSearchArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    path: Optional[str] = Field(default=".", description="Directory to search")
+    path: str | None = Field(default=".", description="Directory to search")
     query: str = Field(..., min_length=1, description="Search query")
     regex: bool = Field(default=False, description="Use regex matching")
     case_sensitive: bool = Field(default=False, description="Case-sensitive matching")
@@ -265,7 +258,7 @@ class FileEditArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str = Field(..., min_length=1, description="File path to edit")
-    operations: List[FileEditOperation] = Field(..., min_length=1)
+    operations: list[FileEditOperation] = Field(..., min_length=1)
     dry_run: bool = Field(default=False, description="Preview changes without writing")
 
     @field_validator("path", mode="before")
@@ -378,15 +371,15 @@ def _reset_backend_cache_for_tests() -> None:
     _backend_cache.clear()
 
 
-def _entry_to_payload(entry: EntryInfo) -> Dict[str, Any]:
+def _entry_to_payload(entry: EntryInfo) -> dict[str, Any]:
     return {"name": entry.name, "type": entry.entry_type, "path": entry.path}
 
 
-def _match_to_payload(match: MatchInfo) -> Dict[str, Any]:
+def _match_to_payload(match: MatchInfo) -> dict[str, Any]:
     return {"name": match.name, "path": match.path, "size": match.size}
 
 
-def _search_match_to_payload(match: SearchMatch) -> Dict[str, Any]:
+def _search_match_to_payload(match: SearchMatch) -> dict[str, Any]:
     return {"path": match.path, "line": match.line, "snippet": match.snippet}
 
 
@@ -395,7 +388,7 @@ def _tool_error_payload(
     code: str,
     message: str,
     details: dict[str, Any] | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return error_dict_from_mapping(
         {"code": code, "message": message, "details": details},
         include_details=details is not None,
@@ -409,7 +402,7 @@ def _tool_error_result(
     message: str,
     details: dict[str, Any] | None = None,
     **payload: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "ok": False,
         "error": _tool_error_payload(code=code, message=message, details=details),
@@ -422,7 +415,7 @@ def _tool_error_result_from_exception(
     *,
     default_code: str = "INTERNAL_ERROR",
     **payload: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "ok": False,
         "error": error_dict_from_exception(
@@ -435,12 +428,9 @@ def _tool_error_result_from_exception(
     }
 
 
-def _h_list_dir(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_list_dir(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileListDirArgs.model_validate(args)
     raw_path = validated.path or "."
-    recursive = validated.recursive
-    max_entries = validated.max_entries
-    include_hidden = validated.include_hidden
 
     try:
         resolved = _resolve_path_lexical(ctx, raw_path, operation="read")
@@ -464,9 +454,9 @@ def _h_list_dir(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     try:
         result = backend.list_dir(
             resolved,
-            recursive=recursive,
-            max_entries=max_entries,
-            include_hidden=include_hidden,
+            recursive=validated.recursive,
+            max_entries=validated.max_entries,
+            include_hidden=validated.include_hidden,
         )
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e, entries=[])
@@ -480,11 +470,8 @@ def _h_list_dir(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     }
 
 
-def _h_read_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileReadArgs.model_validate(args)
-
-    max_chars = validated.max_chars
-    offset = validated.offset
 
     try:
         resolved = _resolve_path_lexical(ctx, validated.path, operation="read")
@@ -503,10 +490,13 @@ def _h_read_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
             message="path is not a file",
         )
     try:
-        result = backend.read(resolved, max_chars=max_chars, offset=offset)
+        result = backend.read(
+            resolved,
+            max_chars=validated.max_chars,
+            offset=validated.offset,
+        )
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
-    # PIDF: route file_read through the typed boundary owner.
     _pidf_emit_boundary_event(
         "file_read",
         result.content,
@@ -524,7 +514,7 @@ def _h_read_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     }
 
 
-def _h_read_range(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_read_range(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileReadRangeArgs.model_validate(args)
 
     try:
@@ -584,18 +574,15 @@ def _h_read_range(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     }
 
 
-def _h_write_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_write_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileWriteArgs.model_validate(args)
 
-    content = validated.content or ""
+    content = validated.content
     if len(content) > FILE_MAX_WRITE_CHARS:
         return _tool_error_result(
             code="INVALID_ARGUMENT",
             message=f"content exceeds maximum {FILE_MAX_WRITE_CHARS} characters",
         )
-
-    append = validated.append
-    create_dirs = validated.create_dirs
 
     try:
         resolved = _resolve_path_lexical(ctx, validated.path, operation="write")
@@ -607,8 +594,8 @@ def _h_write_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
         result = backend.write(
             resolved,
             content,
-            append=append,
-            create_dirs=create_dirs,
+            append=validated.append,
+            create_dirs=validated.create_dirs,
         )
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
@@ -628,13 +615,10 @@ def _h_write_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     }
 
 
-def _h_find_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_find_files(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileFindArgs.model_validate(args)
 
     raw_path = validated.path or "."
-    pattern = validated.pattern
-    max_entries = validated.max_entries
-    include_hidden = validated.include_hidden
 
     try:
         resolved = _resolve_path_lexical(ctx, raw_path, operation="read")
@@ -657,23 +641,23 @@ def _h_find_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     try:
         result = backend.find(
             resolved,
-            pattern=pattern,
-            max_entries=max_entries,
-            include_hidden=include_hidden,
+            pattern=validated.pattern,
+            max_entries=validated.max_entries,
+            include_hidden=validated.include_hidden,
         )
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e, matches=[])
     return {
         "ok": True,
         "path": resolved,
-        "pattern": pattern,
+        "pattern": validated.pattern,
         "matches": [_match_to_payload(match) for match in result.matches],
         "count": result.count,
         "source": _FILE_TOOL_SOURCE,
     }
 
 
-def _h_trash(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_trash(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileTrashArgs.model_validate(args)
 
     try:
@@ -700,16 +684,9 @@ def _h_trash(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     }
 
 
-def _h_search_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_search_files(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileSearchArgs.model_validate(args)
     raw_path = validated.path or "."
-    query = validated.query
-    use_regex = validated.regex
-    case_sensitive = validated.case_sensitive
-    context_lines = validated.context_lines
-    max_matches = validated.max_matches
-    include_hidden = validated.include_hidden
-    file_glob = validated.file_glob
 
     try:
         resolved = _resolve_path_lexical(ctx, raw_path, operation="read")
@@ -742,13 +719,13 @@ def _h_search_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]
     try:
         result = backend.search(
             resolved,
-            query=query,
-            regex=use_regex,
-            case_sensitive=case_sensitive,
-            context_lines=context_lines,
-            max_matches=max_matches,
-            include_hidden=include_hidden,
-            file_glob=file_glob,
+            query=validated.query,
+            regex=validated.regex,
+            case_sensitive=validated.case_sensitive,
+            context_lines=validated.context_lines,
+            max_matches=validated.max_matches,
+            include_hidden=validated.include_hidden,
+            file_glob=validated.file_glob,
             path_filter=_path_filter,
         )
     except ToolRuntimeError as e:
@@ -757,7 +734,7 @@ def _h_search_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]
     return {
         "ok": True,
         "path": resolved,
-        "query": query,
+        "query": validated.query,
         "matches": [_search_match_to_payload(match) for match in result.matches],
         "count": result.count,
         "scanned_files": result.scanned_files,
@@ -766,9 +743,8 @@ def _h_search_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]
     }
 
 
-def _h_edit_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_edit_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileEditArgs.model_validate(args)
-    dry_run = validated.dry_run
 
     try:
         resolved = _resolve_path_lexical(ctx, validated.path, operation="write")
@@ -792,7 +768,7 @@ def _h_edit_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
         for op in validated.operations
     ]
     try:
-        result = backend.edit(resolved, operations, dry_run=dry_run)
+        result = backend.edit(resolved, operations, dry_run=validated.dry_run)
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
 
@@ -820,7 +796,6 @@ def _h_edit_file(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
 
 
 def register(registry: ToolRegistry) -> None:
-    """Register file tools with runtime registry."""
     registry.add(
         ToolSpec(
             name=MODEL_FILE_LIST_DIR,

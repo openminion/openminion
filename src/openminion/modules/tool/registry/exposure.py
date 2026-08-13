@@ -1,13 +1,14 @@
 import logging
-from typing import TYPE_CHECKING, Any
 from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from openminion.modules.tool.contracts import (
     ProviderToolSpec,
     normalize_raw_model_tool_name,
 )
-from .catalog import ToolSpec
 from openminion.tools.config import resolve_tool_env
+
+from .catalog import ToolSpec
 
 if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
@@ -18,32 +19,32 @@ _ALLOW_MODEL_EXPOSURE_PROVIDER_FALLBACK_ENV = (
 )
 
 
+def _provider_spec_from_tool_spec(tool: ToolSpec) -> ProviderToolSpec:
+    description = ""
+    parameters: dict[str, Any] = {}
+    explicit_parameters = tool.parameters_schema
+    if isinstance(explicit_parameters, Mapping) and explicit_parameters:
+        parameters = dict(explicit_parameters)
+    args_model = tool.args_model
+    if not parameters and hasattr(args_model, "model_json_schema"):
+        schema = args_model.model_json_schema()
+        if isinstance(schema, Mapping):
+            parameters = dict(schema)
+            description = str(parameters.get("description", "") or "").strip()
+    elif not parameters and args_model in {dict, None}:
+        parameters = {"type": "object", "additionalProperties": True}
+    return ProviderToolSpec(
+        name=tool.name,
+        description=description or tool.name.strip() or "tool",
+        parameters=parameters,
+    )
+
+
 def provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
     result: list[ProviderToolSpec] = []
     for tool in registry._tools.values():
         if isinstance(tool, ToolSpec):
-            description = ""
-            parameters: dict[str, Any] = {}
-            explicit_parameters = getattr(tool, "parameters_schema", None)
-            if isinstance(explicit_parameters, Mapping) and explicit_parameters:
-                parameters = dict(explicit_parameters)
-            args_model = getattr(tool, "args_model", None)
-            if not parameters and hasattr(args_model, "model_json_schema"):
-                schema = args_model.model_json_schema()
-                if isinstance(schema, Mapping):
-                    parameters = dict(schema)
-                    description = str(parameters.get("description", "") or "").strip()
-            elif not parameters and args_model in {dict, None}:
-                parameters = {"type": "object", "additionalProperties": True}
-            result.append(
-                ProviderToolSpec(
-                    name=tool.name,
-                    description=description
-                    or str(getattr(tool, "name", "")).strip()
-                    or "tool",
-                    parameters=parameters,
-                )
-            )
+            result.append(_provider_spec_from_tool_spec(tool))
         else:
             result.append(tool.provider_spec())
     return result
@@ -51,7 +52,7 @@ def provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
 
 def model_provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
     manager = registry._binding_manager()
-    specs = manager.model_provider_specs(set(registry._tools.keys()))
+    specs = manager.model_provider_specs(set(registry._tools))
     if not specs and registry._tools:
         env_owner = resolve_tool_env()
         allow_fallback = str(
@@ -64,7 +65,7 @@ def model_provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
                 _ALLOW_MODEL_EXPOSURE_PROVIDER_FALLBACK_ENV,
             )
             return registry.provider_specs()
-        sample = ", ".join(sorted(registry._tools.keys())[:10])
+        sample = ", ".join(sorted(registry._tools)[:10])
         raise RuntimeError(  # allow-bare-raise: fail-closed invariant — empty canonical exposure surface
             "Canonical model tool exposure is empty; refusing silent provider_specs fallback. "
             f"runtime_tool_count={len(registry._tools)} sample=[{sample}] "
@@ -81,18 +82,18 @@ def model_to_runtime_binding_map(registry: "ToolRegistry") -> dict[str, str]:
 
 def model_to_runtime_tool_map(registry: "ToolRegistry") -> dict[str, str]:
     manager = registry._binding_manager()
-    return manager.model_to_runtime_tool_map(set(registry._tools.keys()))
+    return manager.model_to_runtime_tool_map(set(registry._tools))
 
 
 def model_runtime_dispatch_map(
     registry: "ToolRegistry",
 ) -> dict[str, dict[str, Any]]:
     manager = registry._binding_manager()
-    return manager.model_runtime_dispatch_map(set(registry._tools.keys()))
+    return manager.model_runtime_dispatch_map(set(registry._tools))
 
 
 def registration_debug_snapshot(registry: "ToolRegistry") -> dict[str, Any]:
-    runtime_tools = sorted(registry._tools.keys())
+    runtime_tools = sorted(registry._tools)
     manager = registry._binding_manager()
     binding_map = manager.model_to_runtime_binding_map()
     runtime_tool_map = manager.model_to_runtime_tool_map(set(runtime_tools))
@@ -111,15 +112,14 @@ def registration_debug_snapshot(registry: "ToolRegistry") -> dict[str, Any]:
     for model_tool_id, runtime_binding_id in sorted(binding_map.items()):
         dispatch = dict(dispatch_map.get(model_tool_id, {}) or {})
         runtime_tool_name = str(dispatch.get("runtime_tool_name", "") or "").strip()
-        available_candidates = []
-        if runtime_tool_name:
-            available_candidates.append(runtime_tool_name)
         runtime_bindings.append(
             {
                 "runtime_binding_id": runtime_binding_id,
                 "model_tool_id": model_tool_id,
                 "runtime_tool_name": runtime_tool_name,
-                "available_candidates": available_candidates,
+                "available_candidates": [runtime_tool_name]
+                if runtime_tool_name
+                else [],
                 "resolvable": bool(runtime_tool_name),
             }
         )
@@ -169,22 +169,5 @@ def provider_spec_for_runtime_name(
     if tool is None:
         return None
     if isinstance(tool, ToolSpec):
-        description = ""
-        parameters: dict[str, Any] = {}
-        explicit_parameters = getattr(tool, "parameters_schema", None)
-        if isinstance(explicit_parameters, Mapping) and explicit_parameters:
-            parameters = dict(explicit_parameters)
-        args_model = getattr(tool, "args_model", None)
-        if not parameters and hasattr(args_model, "model_json_schema"):
-            schema = args_model.model_json_schema()
-            if isinstance(schema, Mapping):
-                parameters = dict(schema)
-                description = str(parameters.get("description", "") or "").strip()
-        elif not parameters and args_model in {dict, None}:
-            parameters = {"type": "object", "additionalProperties": True}
-        return ProviderToolSpec(
-            name=tool.name,
-            description=description or str(getattr(tool, "name", "")).strip() or "tool",
-            parameters=parameters,
-        )
+        return _provider_spec_from_tool_spec(tool)
     return tool.provider_spec()

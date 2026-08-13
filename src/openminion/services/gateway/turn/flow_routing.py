@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import uuid4
 
 from openminion.base.types import Message
@@ -91,18 +90,16 @@ class GatewayTurnRoutingMixin:
         *,
         channel: str,
         target: str,
-        session_id: Optional[str],
-        request_id: Optional[str],
-        inbound_metadata: Optional[dict[str, str]],
+        session_id: str | None,
+        request_id: str | None,
+        inbound_metadata: dict[str, str] | None,
         deliver: bool,
     ) -> _RoutingResult:
         normalized_request_id = str(request_id or "").strip() or uuid4().hex
         normalized_inbound_metadata = _normalize_metadata(inbound_metadata)
-        conversation_id = str(
-            normalized_inbound_metadata.get("conversation_id", "") or ""
-        ).strip()
-        thread_id = str(normalized_inbound_metadata.get("thread_id", "") or "").strip()
-        attach_id = str(normalized_inbound_metadata.get("attach_id", "") or "").strip()
+        conversation_id = normalized_inbound_metadata.get("conversation_id", "").strip()
+        thread_id = normalized_inbound_metadata.get("thread_id", "").strip()
+        attach_id = normalized_inbound_metadata.get("attach_id", "").strip()
         resume_requested = parse_metadata_bool(normalized_inbound_metadata, "resume")
         reset_requested = parse_metadata_bool(
             normalized_inbound_metadata, "reset_session"

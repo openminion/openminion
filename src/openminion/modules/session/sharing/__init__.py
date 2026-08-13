@@ -1,5 +1,3 @@
-"""Session sharing public surface."""
-
 from openminion.modules.session.interfaces import SESSION_SHARE_PROJECTION_VERSION
 
 from .schemas import (

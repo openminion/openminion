@@ -1,7 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping
+from typing import Any, Mapping
 
 from pydantic import ValidationError
 
@@ -74,12 +74,10 @@ from .runtime import (
 
 _LOG = logging.getLogger(__name__)
 
-_BROWSER_OPS = tuple(dict.fromkeys(SUPPORTED_OPS))
-
-BROWSER_TOOL_INPUT_SCHEMA: Dict[str, Any] = {
+BROWSER_TOOL_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "op": {"type": "string", "enum": list(_BROWSER_OPS)},
+        "op": {"type": "string", "enum": list(SUPPORTED_OPS)},
         "provider": {"type": "string"},
         "instance_id": {"type": "string"},
         "tab_id": {"type": "string"},
@@ -181,9 +179,6 @@ BROWSER_TOOL_INPUT_SCHEMA: Dict[str, Any] = {
     "required": ["op"],
     "additionalProperties": False,
 }
-
-
-_SESSION_STATE_RELATIVE_PATH = DEFAULT_BROWSER_SESSION_STATE_RELATIVE_PATH
 
 
 @dataclass
@@ -330,7 +325,7 @@ class BrowserTool(Tool):
     def _execute_browser(
         self,
         *,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         ctx: _BrowserExecutionContext,
     ) -> dict[str, Any]:
         _ensure_discovered_providers()
@@ -428,7 +423,7 @@ class BrowserTool(Tool):
     def _select_provider_for_call(
         self,
         *,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         ctx: _BrowserExecutionContext,
     ) -> tuple[BrowserProvider, BrowserProviderContext, BrowserCallArgs]:
         call = BrowserCallArgs.model_validate(args)
@@ -503,8 +498,7 @@ class BrowserTool(Tool):
             data={"op": call.op},
         )
 
-        instance = payload.get("instance")
-        if isinstance(instance, Mapping):
+        if isinstance(instance := payload.get("instance"), Mapping):
             out.instance = InstanceInfo(
                 id=str(instance.get("id", "")),
                 profile=str(instance.get("profile"))
@@ -516,33 +510,10 @@ class BrowserTool(Tool):
             )
         elif isinstance(payload.get("instance_id"), str):
             out.instance = InstanceInfo(id=str(payload["instance_id"]))
-        instances = payload.get("instances")
-        if isinstance(instances, list):
-            out.instances = [
-                InstanceInfo(
-                    id=str(
-                        row.get("id")
-                        or row.get("instance_id")
-                        or row.get("instanceId")
-                        or ""
-                    ),
-                    profile=str(row.get("profile"))
-                    if row.get("profile") is not None
-                    else None,
-                    mode=str(row.get("mode")) if row.get("mode") is not None else None,
-                )
-                for row in instances
-                if isinstance(row, Mapping)
-                and str(
-                    row.get("id")
-                    or row.get("instance_id")
-                    or row.get("instanceId")
-                    or ""
-                ).strip()
-            ]
+        if isinstance(payload.get("instances"), list):
+            out.instances = extract_instances(payload)
 
-        tab = payload.get("tab")
-        if isinstance(tab, Mapping):
+        if isinstance(tab := payload.get("tab"), Mapping):
             out.tab = self._tab_info(tab)
         elif isinstance(payload.get("tab_id"), str):
             out.tab = self._tab_info(payload)
@@ -617,7 +588,7 @@ class BrowserTool(Tool):
 
 _PROVIDER_REGISTRY = BrowserProviderRegistry()
 _SESSION_STATE_STORE = BrowserSessionStateStore(
-    state_relative_path=_SESSION_STATE_RELATIVE_PATH
+    state_relative_path=DEFAULT_BROWSER_SESSION_STATE_RELATIVE_PATH
 )
 _SESSION_STATE = _SESSION_STATE_STORE.session_state
 _SESSION_STATE_LOADED_ROOTS = _SESSION_STATE_STORE.loaded_workspace_roots

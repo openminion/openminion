@@ -113,25 +113,13 @@ def provider_config_from_mapping(
     )
     data_root = str(data_root_path)
 
-    persistent_cfg = (
-        cfg.get("persistent") if isinstance(cfg.get("persistent"), Mapping) else {}
-    )
-    downloads_cfg = (
-        cfg.get("downloads") if isinstance(cfg.get("downloads"), Mapping) else {}
-    )
-    artifacts_cfg = (
-        cfg.get("artifacts") if isinstance(cfg.get("artifacts"), Mapping) else {}
-    )
-    timeouts_cfg = (
-        cfg.get("timeouts") if isinstance(cfg.get("timeouts"), Mapping) else {}
-    )
-    snapshot_cfg = (
-        cfg.get("snapshot") if isinstance(cfg.get("snapshot"), Mapping) else {}
-    )
-    network_cfg = cfg.get("network") if isinstance(cfg.get("network"), Mapping) else {}
-    viewport_cfg = (
-        cfg.get("viewport") if isinstance(cfg.get("viewport"), Mapping) else {}
-    )
+    persistent_cfg = _mapping_section(cfg, "persistent")
+    downloads_cfg = _mapping_section(cfg, "downloads")
+    artifacts_cfg = _mapping_section(cfg, "artifacts")
+    timeouts_cfg = _mapping_section(cfg, "timeouts")
+    snapshot_cfg = _mapping_section(cfg, "snapshot")
+    network_cfg = _mapping_section(cfg, "network")
+    viewport_cfg = _mapping_section(cfg, "viewport")
 
     # Default artifacts go under the workspace so artifact paths can be returned
     # workspace-relative (e.g. ".openminion/...").
@@ -323,12 +311,8 @@ def _resolve_io_path(
     else:
         candidate = candidate.resolve(strict=False)
 
-    if prefer_workspace:
-        try:
-            candidate.relative_to(workspace_root)
-            return str(candidate)
-        except ValueError:
-            pass
+    if prefer_workspace and candidate.is_relative_to(workspace_root):
+        return str(candidate)
     return _resolve_path_under_data_root(str(candidate), data_root, label=label)
 
 
@@ -338,3 +322,8 @@ def _clamp_int(value: Any, *, default: int, lower: int, upper: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(lower, min(upper, parsed))
+
+
+def _mapping_section(cfg: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = cfg.get(key)
+    return value if isinstance(value, Mapping) else {}

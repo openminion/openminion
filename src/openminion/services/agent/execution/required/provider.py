@@ -97,14 +97,10 @@ async def phase_recover_no_tool_calls(
     if response is None or response.tool_calls:
         return _PhaseResult()
 
-    all_attempts = list(state.all_attempts or [])
     del runner, config
     return _PhaseResult(
         action="break",
-        state_updates={
-            "all_attempts": all_attempts,
-            "termination_reason": "required_tool_call_missing",
-        },
+        state_updates={"termination_reason": "required_tool_call_missing"},
     )
 
 

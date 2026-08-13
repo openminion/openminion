@@ -30,11 +30,33 @@ from openminion.modules.task import TaskLifecycleState, TaskManager
 
 
 @dataclass
+class _StructuredLLM:
+    def call_structured(self, *, model, purpose, context, schema):
+        del model, purpose, context, schema
+        return {
+            "answer": "Mock research synthesis.",
+            "status": "complete",
+            "remaining_work": "",
+        }
+
+
+@dataclass
 class _FakeRunner:
     task_manager: TaskManager
+    llm_api: Any = field(default_factory=_StructuredLLM)
     profile: Any = field(
-        default_factory=lambda: SimpleNamespace(agent_id="router-agent")
+        default_factory=lambda: SimpleNamespace(
+            agent_id="router-agent",
+            llm_profiles=SimpleNamespace(summarize_model="mock-summarizer"),
+        )
     )
+
+    def _build_context(self, *, state, purpose, budget, hints, logger, mode_name=None):
+        del state, logger, mode_name
+        return {"purpose": purpose, "budget": budget, "user_input": hints["user_input"]}
+
+    def _debit_tokens(self, state, raw, logger) -> None:
+        del state, raw, logger
 
 
 @dataclass
@@ -278,7 +300,17 @@ def _due_delta_seconds(job: dict[str, Any]) -> int:
 
 def test_research_pause_then_cron_resume_completes_and_cleans_up(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.strategies.research.handler.invoke_decision_direct",
+        lambda *args, **kwargs: SimpleNamespace(
+            status="done",
+            message="Evidence gathered by the child research turn.",
+            action_result=None,
+            working_state=None,
+        ),
+    )
     task_manager = _manager(tmp_path)
     mode = ResearchMode()
     initial_ctx, _services = _ctx(task_manager, ticks=1, session_id="s-cron-cycle")

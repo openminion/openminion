@@ -7,6 +7,8 @@ from openminion.tools.browser.constants import (
     BROWSER_SNAPSHOT_MODE_MIN,
 )
 
+from .coercion import safe_title, safe_url
+
 
 _ACTIONABLE_ROLES = {
     "button",
@@ -104,11 +106,8 @@ class SnapshotAdapter:
                 action_candidates.append(node_id)
 
             text_chars += len(name) + len(value_text)
-            for child in (
-                node.get("children", [])
-                if isinstance(node.get("children"), list)
-                else []
-            ):
+            children = node.get("children", [])
+            for child in children if isinstance(children, list) else []:
                 walk(child)
 
         walk(root)
@@ -155,11 +154,9 @@ class SnapshotAdapter:
             """
         )
 
-        raw_nodes = (
-            payload.get("nodes")
-            if isinstance(payload, Mapping) and isinstance(payload.get("nodes"), list)
-            else []
-        )
+        raw_nodes = payload.get("nodes", []) if isinstance(payload, Mapping) else []
+        if not isinstance(raw_nodes, list):
+            raw_nodes = []
         nodes: list[dict[str, Any]] = []
         action_candidates: list[str] = []
         hints: dict[str, str] = {}
@@ -203,9 +200,8 @@ class SnapshotAdapter:
     def _from_min(
         self, *, page: Any, max_nodes: int, max_text_chars: int
     ) -> tuple[dict[str, Any], dict[str, str]]:
-        title = _safe_title(page)
-        url = _safe_url(page)
-        visible_text = ""
+        title = safe_title(page)
+        url = safe_url(page)
         try:
             visible_text = str(page.inner_text("body"))
         except Exception:
@@ -241,8 +237,8 @@ class SnapshotAdapter:
         return {
             "mode": mode,
             "truncated": bool(truncated),
-            "url": _safe_url(page),
-            "title": _safe_title(page),
+            "url": safe_url(page),
+            "title": safe_title(page),
             "timestamp": _utc_now(),
         }
 
@@ -254,17 +250,3 @@ def _selector_hint(*, role: str, name: str) -> str:
     if role:
         return f"[role='{role}']"
     return ""
-
-
-def _safe_title(page: Any) -> str:
-    try:
-        return str(page.title() or "")
-    except Exception:
-        return ""
-
-
-def _safe_url(page: Any) -> str:
-    try:
-        return str(page.url or "")
-    except Exception:
-        return ""

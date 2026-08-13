@@ -63,9 +63,6 @@ def split_by_token_windows(
         if segment:
             chunks.append((segment, current_start, cursor))
 
-    if not chunks:
-        total = estimate_tokens(raw)
-        chunks.append((raw, 0, total))
     return chunks
 
 

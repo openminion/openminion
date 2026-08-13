@@ -1,6 +1,3 @@
-from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
-
-IAC_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
 TOOL_IAC_VALIDATE = "iac.validate"
 TOOL_IAC_PLAN_CREATE = "iac.plan.create"
 TOOL_IAC_PLAN_SHOW = "iac.plan.show"

@@ -4,11 +4,6 @@ from typing import Any, cast
 from collections.abc import Sequence
 
 
-def canonicalize_policy_tool_token(raw_token: str) -> str:
-    token = str(raw_token or "").strip()
-    return token
-
-
 def dedupe(values: Sequence[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -70,9 +65,7 @@ def normalize_policy_legacy_aliases(raw: dict[str, Any]) -> dict[str, Any]:
         for key in ("allow_exact", "deny_exact"):
             values = tools_out.get(key)
             if isinstance(values, list):
-                tools_out[key] = [
-                    canonicalize_policy_tool_token(str(item)) for item in values
-                ]
+                tools_out[key] = [str(item).strip() for item in values]
         out["tools"] = tools_out
 
     confirm = out.get("confirm")
@@ -81,7 +74,7 @@ def normalize_policy_legacy_aliases(raw: dict[str, Any]) -> dict[str, Any]:
         required_tools = confirm_out.get("required_tools")
         if isinstance(required_tools, list):
             confirm_out["required_tools"] = [
-                canonicalize_policy_tool_token(str(item)) for item in required_tools
+                str(item).strip() for item in required_tools
             ]
         required_when = confirm_out.get("required_when")
         if isinstance(required_when, list):
@@ -91,7 +84,7 @@ def normalize_policy_legacy_aliases(raw: dict[str, Any]) -> dict[str, Any]:
                     rule_out = dict(rule)
                     token = str(rule_out.get("tool", ""))
                     if token:
-                        rule_out["tool"] = canonicalize_policy_tool_token(token)
+                        rule_out["tool"] = token.strip()
                     normalized_rules.append(rule_out)
                 else:
                     normalized_rules.append(rule)

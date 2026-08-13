@@ -46,6 +46,7 @@ class LocalSessionStore:
         trace_id: str | None = None,
         task_id: str | None = None,
         parent_id: str | None = None,
+        parent_event_id: str | None = None,
         artifact_refs: list[str] | None = None,
         memory_refs: list[str] | None = None,
         status: str | None = None,
@@ -69,7 +70,7 @@ class LocalSessionStore:
             "trace_id": trace_id or trace_obj.get("trace_id"),
             "span_id": trace_obj.get("span_id"),
             "task_id": task_id,
-            "parent_id": parent_id,
+            "parent_id": parent_event_id or parent_id,
             "artifact_refs": artifact_refs or [],
             "memory_refs": memory_refs or [],
             "status": status,
@@ -145,6 +146,20 @@ class LocalSessionStore:
 
     def list_events(self, session_id: str) -> list[dict[str, Any]]:
         return self._read_jsonl(self._events_path(session_id))
+
+    def get_tool_transcript(self, session_id: str) -> dict[str, Any]:
+        from openminion.modules.session.storage.replay import build_tool_transcript
+
+        events = [
+            {
+                "event_id": str(item.get("event_id", "") or ""),
+                "event_type": str(item.get("type", "") or ""),
+                "parent_event_id": str(item.get("parent_id", "") or "") or None,
+                "payload": item.get("payload"),
+            }
+            for item in self.list_events(session_id)
+        ]
+        return build_tool_transcript(events)
 
     def list_turns(self, session_id: str) -> list[dict[str, Any]]:
         return self._read_jsonl(self._turns_path(session_id))

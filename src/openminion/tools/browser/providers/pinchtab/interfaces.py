@@ -17,16 +17,9 @@ validate_contract_version = ContractValidator.validate_contract_version
 is_compatible = ContractValidator.is_compatible
 
 
-class PinchTabRequestEnvelope(ToolRequestEnvelope):
-    """Specialized request envelope for PinchTab plugin methods."""
-
-
-class PinchTabResultEnvelope(ToolResultEnvelope):
-    """Specialized result envelope for PinchTab plugin methods."""
-
-
-class PinchTabErrorEnvelope(ToolErrorEnvelope):
-    """Specialized error envelope for PinchTab plugin methods."""
+PinchTabRequestEnvelope = ToolRequestEnvelope
+PinchTabResultEnvelope = ToolResultEnvelope
+PinchTabErrorEnvelope = ToolErrorEnvelope
 
 
 class PinchTabOperationSchema(BaseModel):

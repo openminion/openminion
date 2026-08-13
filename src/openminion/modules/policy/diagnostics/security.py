@@ -226,22 +226,18 @@ def _check_channel_policy_posture(
 def _check_filesystem_permission_posture(
     *, config_path: Path, storage_path: Path
 ) -> list[SecurityValidateFinding]:
-    findings: list[SecurityValidateFinding] = []
-    findings.append(
+    return [
         _permission_finding(
             check_id="filesystem.config_permissions",
             path=config_path,
             missing_message="Config file does not exist yet; permission posture will be checked after creation.",
-        )
-    )
-    findings.append(
+        ),
         _permission_finding(
             check_id="filesystem.storage_permissions",
             path=storage_path.parent,
             missing_message="Storage directory does not exist yet; permission posture will be checked after creation.",
-        )
-    )
-    return findings
+        ),
+    ]
 
 
 def _check_channel_authenticity_posture(

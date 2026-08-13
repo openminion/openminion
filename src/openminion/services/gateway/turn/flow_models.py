@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field as _dc_field
-from typing import Any, Optional
+from typing import Any
 
 from openminion.base.types import Message
 from openminion.modules.telemetry.usage import RunStats
@@ -43,8 +43,6 @@ def _progress_usage_stats(payload: Any) -> tuple[RunStats | None, bool]:
     if not mapped:
         return None, False
     stats = RunStats.from_mapping(mapped)
-    if stats is None:
-        return None, bool(mapped.get("token_usage_estimated", False))
     return stats, bool(mapped.get("token_usage_estimated", False))
 
 
@@ -59,17 +57,17 @@ def _attach_progress_usage_metadata(
         existing.input_tokens > 0 or existing.output_tokens > 0
     ):
         return
-    total_tokens = max(0, int(stats.input_tokens) + int(stats.output_tokens))
+    total_tokens = max(0, stats.input_tokens + stats.output_tokens)
     if total_tokens <= 0:
         return
-    metadata["total_input_tokens_used"] = str(int(stats.input_tokens))
-    metadata["total_output_tokens_used"] = str(int(stats.output_tokens))
+    metadata["total_input_tokens_used"] = str(stats.input_tokens)
+    metadata["total_output_tokens_used"] = str(stats.output_tokens)
     metadata["total_tokens_used"] = str(total_tokens)
 
 
 @dataclass
 class _RoutingResult:
-    early_return: Optional[Message]
+    early_return: Message | None
     normalized_request_id: str = ""
     normalized_inbound_metadata: dict[str, str] = _dc_field(default_factory=dict)
     conversation_id: str = ""

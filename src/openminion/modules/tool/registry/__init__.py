@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Literal,
-)
+import builtins
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
 from openminion.modules.tool.contracts import ProviderToolCall, ProviderToolSpec
 from openminion.modules.tool.executor import (  # noqa: F401  (re-exported)
@@ -49,10 +46,10 @@ from openminion.modules.tool.base import (
     ToolExecutionResult,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
-import builtins
 
 if TYPE_CHECKING:
     from openminion.modules.tool.exposure import ToolExposureService
+    from openminion.modules.tool.runtime.manager import ToolRegistryManager
     from openminion.tools.mcp.interfaces import MCPFleetHandle
     from openminion.modules.tool.runtime import RuntimeContext
 
@@ -131,41 +128,33 @@ class ToolRegistry:
         """Shim for openminion-tool plugin compatibility."""
         return _catalog_list_by_capability(self, capability)
 
-    def provider_specs(self) -> list[ProviderToolSpec]:
+    def provider_specs(self) -> builtins.list[ProviderToolSpec]:
         from .exposure import provider_specs
 
         return provider_specs(self)
 
-    def model_provider_specs(self) -> list[ProviderToolSpec]:
+    def model_provider_specs(self) -> builtins.list[ProviderToolSpec]:
         from .exposure import model_provider_specs
 
         return model_provider_specs(self)
 
     def model_to_runtime_binding_map(self) -> dict[str, str]:
-        from .exposure import (
-            model_to_runtime_binding_map,
-        )
+        from .exposure import model_to_runtime_binding_map
 
         return model_to_runtime_binding_map(self)
 
     def model_to_runtime_tool_map(self) -> dict[str, str]:
-        from .exposure import (
-            model_to_runtime_tool_map,
-        )
+        from .exposure import model_to_runtime_tool_map
 
         return model_to_runtime_tool_map(self)
 
     def model_runtime_dispatch_map(self) -> dict[str, dict[str, Any]]:
-        from .exposure import (
-            model_runtime_dispatch_map,
-        )
+        from .exposure import model_runtime_dispatch_map
 
         return model_runtime_dispatch_map(self)
 
     def registration_debug_snapshot(self) -> dict[str, Any]:
-        from .exposure import (
-            registration_debug_snapshot,
-        )
+        from .exposure import registration_debug_snapshot
 
         return registration_debug_snapshot(self)
 
@@ -177,9 +166,7 @@ class ToolRegistry:
     def _provider_spec_for_runtime_name(
         self, tool_name: str
     ) -> ProviderToolSpec | None:
-        from .exposure import (
-            provider_spec_for_runtime_name,
-        )
+        from .exposure import provider_spec_for_runtime_name
 
         return provider_spec_for_runtime_name(self, tool_name)
 
@@ -236,7 +223,7 @@ class ToolRegistry:
         manager = self._binding_manager()
         model_tool_id = manager.normalize_raw_name(key)
         if model_tool_id:
-            runtime_map = manager.model_to_runtime_tool_map(set(self._tools.keys()))
+            runtime_map = manager.model_to_runtime_tool_map(set(self._tools))
             mapped_runtime_tool = runtime_map.get(model_tool_id)
             if mapped_runtime_tool:
                 tool = self._tools.get(mapped_runtime_tool)
@@ -244,7 +231,7 @@ class ToolRegistry:
                     return mapped_runtime_tool, tool
         resolution = resolve_binding_for_call(
             raw_tool_name=key,
-            available_tool_names=tuple(self._tools.keys()),
+            available_tool_names=tuple(self._tools),
         )
         if resolution is not None and resolution.runtime_tool_name:
             tool = self._tools.get(resolution.runtime_tool_name)
@@ -252,12 +239,12 @@ class ToolRegistry:
                 return resolution.runtime_tool_name, tool
         return key, None
 
-    def _binding_manager(self):
+    def _binding_manager(self) -> "ToolRegistryManager":
         # Resolver manager is the authoritative, bootstrap-wired source.
         from openminion.modules.tool.runtime.dispatch import get_registry_manager
 
         manager = get_registry_manager()
-        if manager.model_provider_specs(set(self._tools.keys())):
+        if manager.model_provider_specs(set(self._tools)):
             return manager
 
         # If resolver manager is still empty, bootstrap default manifests once.
@@ -287,7 +274,7 @@ class ToolRegistry:
         context: ToolExecutionContext,
         available_tool_names: tuple[str, ...],
         runtime_binding_policies: Any,
-    ) -> list[ToolExecutionResult]:
+    ) -> builtins.list[ToolExecutionResult]:
         return _executor_execute_calls_with_dependencies(
             self,
             calls=calls,

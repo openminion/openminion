@@ -144,20 +144,20 @@ def _finalization_status_from_response(response: Any) -> dict[str, Any] | None:
         return None
 
 
-def _finalization_status_tool() -> ToolSpec:
-    return ToolSpec(
-        name="submit_output",
-        description="Submit the typed finalization status for the prior answer.",
-        input_schema=FinalizationStatus.model_json_schema(),
-        strict=True,
-    )
-
-
 def _finalized_answer_tool() -> ToolSpec:
     return ToolSpec(
         name="submit_output",
         description="Submit the final user-facing answer and its typed status.",
         input_schema=_FinalizedAnswer.model_json_schema(),
+        strict=True,
+    )
+
+
+def _finalization_status_tool() -> ToolSpec:
+    return ToolSpec(
+        name="submit_output",
+        description="Submit the typed finalization status for the prior answer.",
+        input_schema=FinalizationStatus.model_json_schema(),
         strict=True,
     )
 
@@ -182,7 +182,7 @@ def _submit_output_response(
             max_output_tokens=max_output_tokens,
             metadata=metadata,
         )
-    except Exception:  # noqa: BLE001
+    except (RuntimeError, TypeError, ValueError):
         return None
     _debit_llm_usage(loop_ctx, response)
     loop_state.llm_calls += 1
@@ -273,14 +273,10 @@ def _recover_budget_finalization_status(
     loop_state.scratchpad["budget_finalization_status_retry_used"] = True
     structured = structured_mode_response(
         loop_ctx,
-        prompt=(
-            "Classify the already-produced answer with the truthful typed "
-            "finalization status. The answer was:\n\n"
-            f"{final_text}"
-        ),
+        prompt=BUDGET_FINALIZATION_STATUS_RETRY_PROMPT,
         schema=FinalizationStatus,
         purpose="summarize",
-        max_tokens=min(max_output_tokens or 1200, 1200),
+        max_tokens=max_output_tokens or 1200,
     )
     if isinstance(structured, FinalizationStatus):
         loop_state.llm_calls += 1

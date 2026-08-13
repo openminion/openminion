@@ -529,14 +529,23 @@ def _has_tool_evidence_for_answer_only(
         return False
     if int(getattr(loop_state, "total_tool_calls", 0) or 0) > 0:
         return True
+    tool_names_by_call_id: dict[str, str] = {}
     for message in list(getattr(loop_state, "messages", []) or []):
+        if str(getattr(message, "role", "") or "").strip().lower() == "assistant":
+            for call in list(getattr(message, "tool_calls", []) or []):
+                call_id = str(getattr(call, "id", "") or "").strip()
+                if call_id:
+                    tool_names_by_call_id[call_id] = str(
+                        getattr(call, "name", "") or ""
+                    )
+            continue
         if str(getattr(message, "role", "") or "").strip().lower() == "tool":
             meta = getattr(message, "meta", {}) or {}
-            if (
-                isinstance(meta, dict)
-                and "tool_name" in meta
-                and not _is_substantive_tool_name(meta.get("tool_name"))
-            ):
+            call_id = str(getattr(message, "tool_call_id", "") or "").strip()
+            tool_name = tool_names_by_call_id.get(call_id)
+            if not tool_name and isinstance(meta, dict):
+                tool_name = str(meta.get("tool_name", "") or "")
+            if tool_name and not _is_substantive_tool_name(tool_name):
                 continue
             if str(getattr(message, "content", "") or "").strip():
                 return True

@@ -30,8 +30,6 @@ class FileErrorEnvelope(ToolErrorEnvelope):
 
 
 class FileOperationSchema(BaseModel):
-    """Schema definition specifically for file operations."""
-
     operation: str
     parameters: dict[str, Any]
     contract_version: str = FILE_PLUGIN_INTERFACE_VERSION

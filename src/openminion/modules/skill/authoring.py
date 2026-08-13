@@ -19,19 +19,6 @@ SkillTestOutcome = Literal[
 ]
 
 
-_VALID_SKILL_TEST_OUTCOMES: frozenset[str] = frozenset({"passed", "failed", "skipped"})
-
-
-def _coerce_outcome(value: Any) -> SkillTestOutcome:
-    text = str(value or "").strip().lower()
-    if text not in _VALID_SKILL_TEST_OUTCOMES:
-        raise ValueError(
-            "SkillTestReport.outcome / SkillTestScenario.expected_outcome "
-            "must be one of 'passed'|'failed'|'skipped'; got " + repr(value)
-        )
-    return text  # type: ignore[return-value]
-
-
 def _iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -147,42 +134,29 @@ def _lint_findings(
         "warnings": len(warnings_in) if isinstance(warnings_in, Sequence) else 0,
         "errors": len(errors_in) if isinstance(errors_in, Sequence) else 0,
     }
-    if isinstance(warnings_in, Sequence):
-        for index, item in enumerate(warnings_in):
-            if not isinstance(item, Mapping):
-                continue
-            code = str(item.get("code") or item.get("rule_id") or "").strip()
-            message = str(item.get("message") or "").strip()
-            location_ref = str(
-                item.get("location_ref") or item.get("location") or ""
-            ).strip()
-            findings.append(
-                SkillValidationFinding(
-                    finding_id=f"lint:{skill_id}:warning:{index}",
-                    severity="warning",
-                    code=code,
-                    message=message,
-                    location_ref=location_ref,
+    groups: tuple[tuple[SkillValidationSeverity, Any], ...] = (
+        ("warning", warnings_in),
+        ("error", errors_in),
+    )
+    for severity, items in groups:
+        if isinstance(items, Sequence):
+            for index, item in enumerate(items):
+                if not isinstance(item, Mapping):
+                    continue
+                code = str(item.get("code") or item.get("rule_id") or "").strip()
+                message = str(item.get("message") or "").strip()
+                location_ref = str(
+                    item.get("location_ref") or item.get("location") or ""
+                ).strip()
+                findings.append(
+                    SkillValidationFinding(
+                        finding_id=f"lint:{skill_id}:{severity}:{index}",
+                        severity=severity,
+                        code=code,
+                        message=message,
+                        location_ref=location_ref,
+                    )
                 )
-            )
-    if isinstance(errors_in, Sequence):
-        for index, item in enumerate(errors_in):
-            if not isinstance(item, Mapping):
-                continue
-            code = str(item.get("code") or item.get("rule_id") or "").strip()
-            message = str(item.get("message") or "").strip()
-            location_ref = str(
-                item.get("location_ref") or item.get("location") or ""
-            ).strip()
-            findings.append(
-                SkillValidationFinding(
-                    finding_id=f"lint:{skill_id}:error:{index}",
-                    severity="error",
-                    code=code,
-                    message=message,
-                    location_ref=location_ref,
-                )
-            )
     return tuple(findings), counts
 
 
@@ -203,26 +177,21 @@ def _harness_findings(
         "ok": 1 if ok else 0,
     }
     findings: list[SkillValidationFinding] = []
-    for index, message in enumerate(warnings):
-        findings.append(
-            SkillValidationFinding(
-                finding_id=f"harness:{skill_id}:warning:{index}",
-                severity="warning",
-                code="harness.warning",
-                message=str(message),
-                location_ref=skill_root,
+    groups: tuple[tuple[SkillValidationSeverity, tuple[Any, ...]], ...] = (
+        ("warning", warnings),
+        ("error", errors),
+    )
+    for severity, messages in groups:
+        for index, message in enumerate(messages):
+            findings.append(
+                SkillValidationFinding(
+                    finding_id=f"harness:{skill_id}:{severity}:{index}",
+                    severity=severity,
+                    code=f"harness.{severity}",
+                    message=str(message),
+                    location_ref=skill_root,
+                )
             )
-        )
-    for index, message in enumerate(errors):
-        findings.append(
-            SkillValidationFinding(
-                finding_id=f"harness:{skill_id}:error:{index}",
-                severity="error",
-                code="harness.error",
-                message=str(message),
-                location_ref=skill_root,
-            )
-        )
     return tuple(findings), counts
 
 
@@ -254,15 +223,14 @@ def build_skill_validation_report(
 
 def _scenarios_from_harness(
     harness_report: Any,
-) -> tuple[tuple[SkillTestScenario, ...], SkillTestOutcome, str]:
+) -> tuple[tuple[SkillTestScenario, ...], SkillTestOutcome]:
     if harness_report is None:
-        return (), "skipped", ""
+        return (), "skipped"
 
-    report_ref = ""
     total_skills = int(getattr(harness_report, "total_skills", 0) or 0)
     ok = bool(getattr(harness_report, "ok", False))
     if total_skills == 0:
-        return (), "skipped", report_ref
+        return (), "skipped"
 
     results = tuple(getattr(harness_report, "results", ()) or ())
     scenarios: list[SkillTestScenario] = []
@@ -282,7 +250,7 @@ def _scenarios_from_harness(
             )
         )
     overall: SkillTestOutcome = "passed" if ok else "failed"
-    return tuple(scenarios), overall, report_ref
+    return tuple(scenarios), overall
 
 
 def build_skill_test_report(
@@ -293,7 +261,7 @@ def build_skill_test_report(
     generated_at: str | None = None,
 ) -> SkillTestReport:
     skill_id = str(skill_root or "").strip()
-    scenarios, derived_outcome, _ = _scenarios_from_harness(harness_report)
+    scenarios, outcome = _scenarios_from_harness(harness_report)
 
     harness_report_ref = ""
     if harness_report is not None:
@@ -310,7 +278,7 @@ def build_skill_test_report(
         scenarios=scenarios,
         harness_report_ref=harness_report_ref,
         regression_refs=refs,
-        outcome=_coerce_outcome(derived_outcome),
+        outcome=outcome,
         generated_at=generated_at or _iso_now(),
     )
 
@@ -359,12 +327,8 @@ def build_skill_authoring_debug_view(
         else:
             module_name = str(getattr(debug_payload, "module", "") or "").strip()
             status_attr = getattr(debug_payload, "status", "")
-            status = (
-                getattr(status_attr, "value", None)
-                if hasattr(status_attr, "value")
-                else str(status_attr or "")
-            )
-            status = str(status or "").strip()
+            status_value = getattr(status_attr, "value", status_attr)
+            status = str(status_value or "").strip()
             last_error = getattr(debug_payload, "last_error", None)
         debug_payload_ref = (
             f"debug:{module_name or 'openminion-skill'}:{status or 'unknown'}"

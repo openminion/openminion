@@ -19,6 +19,7 @@ def _run_args(*, as_json: bool = False) -> Namespace:
         resume=False,
         reset_session=False,
         stream=False,
+        jsonl=False,
         json=as_json,
     )
 
@@ -81,6 +82,32 @@ def test_run_openminion_plain_output_prefers_final_text(monkeypatch, capsys) -> 
 
     assert code == 0
     assert capsys.readouterr().out.strip() == "hello from run"
+
+
+def test_run_openminion_jsonl_output_single_process(monkeypatch, capsys) -> None:
+    args = _run_args()
+    args.jsonl = True
+    monkeypatch.setattr(
+        run_command,
+        "load_config",
+        lambda _cfg: SimpleNamespace(
+            runtime=SimpleNamespace(
+                process_mode="single-process", daemon_auto_start=True
+            )
+        ),
+    )
+    monkeypatch.setattr(run_command, "resolve_default_agent_id", lambda _cfg: "agent")
+    monkeypatch.setattr(
+        run_command,
+        "run_turn",
+        lambda **_kwargs: {"run_id": "run-jsonl", "final_text": "done"},
+    )
+
+    assert run_command.run_openminion(args) == 0
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["event"] for event in events] == ["response", "done"]
+    assert events[0]["data"]["turn"]["run_id"] == "run-jsonl"
 
 
 def test_run_openminion_suppresses_default_info_logs_and_restores_logging(

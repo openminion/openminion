@@ -149,13 +149,12 @@ def build_retention_plan(
                 candidates.append(item)
     candidates.sort(key=_retention_sort)
     exclusions.sort(key=_retention_sort)
-    status = "ready" if candidates else "empty"
     if not candidates:
         diagnostics.append(
             TelemetryDebugDiagnostic("NO_RETENTION_CANDIDATES", "info", {})
         )
     return TelemetryRetentionPlan(
-        status=status,
+        status="ready" if candidates else "empty",
         selector=selector,
         created_at=created_at,
         high_water_storage_sequence=high_water,

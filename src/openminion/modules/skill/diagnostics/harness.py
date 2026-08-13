@@ -96,22 +96,17 @@ def discover_skill_roots(root: Path) -> tuple[Path, ...]:
 
 def validate_skill(skill_root: Path) -> SkillHarnessResult:
     skill_file = skill_root / "SKILL.md"
+    if not skill_file.is_file():
+        return SkillHarnessResult(
+            skill_root=str(skill_root),
+            ok=False,
+            errors=("missing SKILL.md",),
+        )
+
     warnings: list[str] = []
     errors: list[str] = []
     fixture_input = ""
     fixture_expected = ""
-
-    if not skill_file.exists() or not skill_file.is_file():
-        errors.append("missing SKILL.md")
-        return SkillHarnessResult(
-            skill_root=str(skill_root),
-            ok=False,
-            warnings=tuple(warnings),
-            errors=tuple(errors),
-            fixture_input_path=fixture_input,
-            fixture_expected_path=fixture_expected,
-        )
-
     content = skill_file.read_text(encoding="utf-8").strip()
     if not content:
         errors.append("SKILL.md is empty")
@@ -146,14 +141,12 @@ def validate_skill(skill_root: Path) -> SkillHarnessResult:
                     errors.append("fixtures/input.json must contain a JSON object")
         if not expected_path.exists() or not expected_path.is_file():
             errors.append("missing fixtures/expected.txt")
-        else:
-            expected_content = expected_path.read_text(encoding="utf-8").strip()
-            if not expected_content:
-                errors.append("fixtures/expected.txt is empty")
+        elif not expected_path.read_text(encoding="utf-8").strip():
+            errors.append("fixtures/expected.txt is empty")
 
     return SkillHarnessResult(
         skill_root=str(skill_root),
-        ok=len(errors) == 0,
+        ok=not errors,
         warnings=tuple(warnings),
         errors=tuple(errors),
         fixture_input_path=fixture_input,

@@ -18,6 +18,50 @@ from openminion.modules.tool.contracts.normalization import (
 )
 
 
+def _claim_name(
+    claims: dict[str, str],
+    raw_name: str,
+    model_tool_id: str,
+    *,
+    source: str,
+    collision_label: str,
+) -> None:
+    token = str(raw_name or "").strip()
+    if not token:
+        return
+    existing = claims.get(token)
+    if existing is None:
+        claims[token] = model_tool_id
+    elif existing != model_tool_id:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT",
+            f"{collision_label} ({source}): {token!r} maps to both "
+            f"{existing!r} and {model_tool_id!r}",
+            {
+                "source": source,
+                "token": token,
+                "existing": existing,
+                "new": model_tool_id,
+            },
+        )
+
+
+def _lowercase_claims(claims: Mapping[str, str]) -> dict[str, str]:
+    lowered: dict[str, str] = {}
+    for raw_name, model_tool_id in claims.items():
+        lowered.setdefault(raw_name.lower(), model_tool_id)
+    return lowered
+
+
+def _normalized_names(names: Iterable[str]) -> set[str]:
+    normalized = set()
+    for name in names:
+        token = str(name).strip()
+        if token:
+            normalized.add(token)
+    return normalized
+
+
 @dataclass(frozen=True)
 class _CompiledBindings:
     model_tools_by_id: dict[str, ModelToolDef]
@@ -96,50 +140,6 @@ class ToolRegistryManager:
         raw_to_model_tool_id: dict[str, str] = {}
         runtime_candidate_owners: dict[str, set[str]] = {}
 
-        def _claim_raw(raw_name: str, model_tool_id: str, *, source: str) -> None:
-            token = str(raw_name or "").strip()
-            if not token:
-                return
-            existing = raw_to_model_tool_id.get(token)
-            if existing is None:
-                raw_to_model_tool_id[token] = model_tool_id
-                return
-            if existing != model_tool_id:
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Raw name collision ({source}): {token!r} maps to both "
-                    f"{existing!r} and {model_tool_id!r}",
-                    {
-                        "source": source,
-                        "token": token,
-                        "existing": existing,
-                        "new": model_tool_id,
-                    },
-                )
-
-        def _claim_model_input(
-            raw_name: str, model_tool_id: str, *, source: str
-        ) -> None:
-            token = str(raw_name or "").strip()
-            if not token:
-                return
-            existing = model_input_to_model_tool_id.get(token)
-            if existing is None:
-                model_input_to_model_tool_id[token] = model_tool_id
-                return
-            if existing != model_tool_id:
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Model-input raw name collision ({source}): {token!r} maps to both "
-                    f"{existing!r} and {model_tool_id!r}",
-                    {
-                        "source": source,
-                        "token": token,
-                        "existing": existing,
-                        "new": model_tool_id,
-                    },
-                )
-
         for manifest in self._manifests:
             module_id = str(manifest.module_id or "").strip() or "unknown"
             for model_tool in manifest.model_tools:
@@ -152,18 +152,34 @@ class ToolRegistryManager:
                         {"module_id": module_id, "model_tool_id": model_tool_id},
                     )
                 model_tools_by_id[model_tool_id] = model_tool
-                _claim_model_input(
-                    model_tool_id, model_tool_id, source=f"{module_id}.model_tools"
+                _claim_name(
+                    model_input_to_model_tool_id,
+                    model_tool_id,
+                    model_tool_id,
+                    source=f"{module_id}.model_tools",
+                    collision_label="Model-input raw name collision",
                 )
-                _claim_raw(
-                    model_tool_id, model_tool_id, source=f"{module_id}.model_tools"
+                _claim_name(
+                    raw_to_model_tool_id,
+                    model_tool_id,
+                    model_tool_id,
+                    source=f"{module_id}.model_tools",
+                    collision_label="Raw name collision",
                 )
                 for alias in model_tool.aliases:
-                    _claim_model_input(
-                        alias, model_tool_id, source=f"{module_id}.model_tools.aliases"
+                    _claim_name(
+                        model_input_to_model_tool_id,
+                        alias,
+                        model_tool_id,
+                        source=f"{module_id}.model_tools.aliases",
+                        collision_label="Model-input raw name collision",
                     )
-                    _claim_raw(
-                        alias, model_tool_id, source=f"{module_id}.model_tools.aliases"
+                    _claim_name(
+                        raw_to_model_tool_id,
+                        alias,
+                        model_tool_id,
+                        source=f"{module_id}.model_tools.aliases",
+                        collision_label="Raw name collision",
                     )
 
             for binding in manifest.runtime_bindings:
@@ -220,29 +236,18 @@ class ToolRegistryManager:
             if len(model_ids) != 1:
                 continue
             model_tool_id = next(iter(model_ids))
-            _claim_raw(runtime_candidate, model_tool_id, source="runtime_candidates")
+            _claim_name(
+                raw_to_model_tool_id,
+                runtime_candidate,
+                model_tool_id,
+                source="runtime_candidates",
+                collision_label="Raw name collision",
+            )
 
-        raw_to_model_tool_id_lower: dict[str, str] = {}
-        for raw_name, model_tool_id in raw_to_model_tool_id.items():
-            lowered = raw_name.lower()
-            existing = raw_to_model_tool_id_lower.get(lowered)
-            if existing is None:
-                raw_to_model_tool_id_lower[lowered] = model_tool_id
-                continue
-            if existing != model_tool_id:
-                # Preserve deterministic behavior for exact-case lookups and avoid
-                # ambiguous case-insensitive alias assignment.
-                continue
-
-        model_input_to_model_tool_id_lower: dict[str, str] = {}
-        for raw_name, model_tool_id in model_input_to_model_tool_id.items():
-            lowered = raw_name.lower()
-            existing = model_input_to_model_tool_id_lower.get(lowered)
-            if existing is None:
-                model_input_to_model_tool_id_lower[lowered] = model_tool_id
-                continue
-            if existing != model_tool_id:
-                continue
+        raw_to_model_tool_id_lower = _lowercase_claims(raw_to_model_tool_id)
+        model_input_to_model_tool_id_lower = _lowercase_claims(
+            model_input_to_model_tool_id
+        )
 
         self._compiled = _CompiledBindings(
             model_tools_by_id=model_tools_by_id,
@@ -343,13 +348,11 @@ class ToolRegistryManager:
     ) -> dict[str, str]:
         """Expose canonical model_tool_id -> selected runtime tool map."""
         compiled = self._ensure_compiled()
-        available: set[str] | None = None
-        if available_runtime_tools is not None:
-            available = {
-                str(item).strip()
-                for item in available_runtime_tools
-                if str(item).strip()
-            }
+        available = (
+            _normalized_names(available_runtime_tools)
+            if available_runtime_tools is not None
+            else None
+        )
 
         out: dict[str, str] = {}
         for model_tool_id, runtime_binding_id in sorted(
@@ -371,16 +374,15 @@ class ToolRegistryManager:
     def model_tool_catalog(self) -> tuple[tuple[str, str], ...]:
         """Expose canonical model-facing catalog rows as `(tool_id, description)`."""
         compiled = self._ensure_compiled()
-        rows: list[tuple[str, str]] = []
-        for model_tool_id in sorted(compiled.model_tools_by_id.keys()):
-            tool_def = compiled.model_tools_by_id[model_tool_id]
-            rows.append(
-                (
-                    model_tool_id,
-                    str(getattr(tool_def, "description", "") or "").strip(),
-                )
+        return tuple(
+            (
+                model_tool_id,
+                str(
+                    compiled.model_tools_by_id[model_tool_id].description or ""
+                ).strip(),
             )
-        return tuple(rows)
+            for model_tool_id in sorted(compiled.model_tools_by_id)
+        )
 
     def model_runtime_dispatch_map(
         self,
@@ -388,13 +390,11 @@ class ToolRegistryManager:
     ) -> dict[str, dict[str, object]]:
         """Expose canonical model -> runtime dispatch metadata."""
         compiled = self._ensure_compiled()
-        available: set[str] | None = None
-        if available_runtime_tools is not None:
-            available = {
-                str(item).strip()
-                for item in available_runtime_tools
-                if str(item).strip()
-            }
+        available = (
+            _normalized_names(available_runtime_tools)
+            if available_runtime_tools is not None
+            else None
+        )
 
         out: dict[str, dict[str, object]] = {}
         for model_tool_id, runtime_binding_id in sorted(
@@ -423,11 +423,9 @@ class ToolRegistryManager:
         available_runtime_tools: set[str],
     ) -> list[ProviderToolSpec]:
         compiled = self._ensure_compiled()
-        available = {
-            str(item).strip() for item in available_runtime_tools if str(item).strip()
-        }
+        available = _normalized_names(available_runtime_tools)
         specs: list[ProviderToolSpec] = []
-        for model_tool_id in sorted(compiled.model_tools_by_id.keys()):
+        for model_tool_id in sorted(compiled.model_tools_by_id):
             runtime_binding_id = compiled.model_to_runtime_binding_id.get(model_tool_id)
             if not runtime_binding_id:
                 continue
@@ -481,7 +479,7 @@ class ToolRegistryManager:
     def contract_drift_report(self) -> ToolContractDriftReport:
         """Compare compiled manifest IDs against canonical contract constants."""
         compiled = self._ensure_compiled()
-        compiled_model_ids = set(compiled.model_to_runtime_binding_id.keys())
+        compiled_model_ids = set(compiled.model_to_runtime_binding_id)
         compiled_runtime_binding_ids = set(
             compiled.model_to_runtime_binding_id.values()
         )

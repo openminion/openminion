@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from typing import Any, cast
+from typing import Any
 
 from openminion.modules.context.input_boundaries import (
     emit_boundary_event as _pidf_emit_boundary_event,
@@ -160,12 +160,9 @@ class SkillCatalogMixin:
         source_refs = self._collect_source_refs_for_delete(
             skill_id=skill_id, version_hash=version_hash
         )
-        result = cast(
-            dict[str, int],
-            self.store.delete_skill(
-                skill_id=skill_id,
-                version_hash=version_hash,
-            ),
+        result: dict[str, int] = self.store.delete_skill(
+            skill_id=skill_id,
+            version_hash=version_hash,
         )
         self._handle_blob_retention_on_delete(
             skill_id=skill_id,
@@ -180,15 +177,13 @@ class SkillCatalogMixin:
         skill_id: str,
         version_hash: str | None,
     ) -> list[str]:
-        refs: list[str] = []
         if version_hash is not None:
             package_payload = self.store.get_skill_package(
                 skill_id=skill_id, version_hash=version_hash
             )
             ref = _source_ref_from_payload(package_payload)
-            if ref:
-                refs.append(ref)
-            return refs
+            return [ref] if ref else []
+        refs: list[str] = []
         try:
             rows = self._record_store.query_dicts(
                 "SELECT package_json FROM skill_versions WHERE skill_id = ?",
@@ -297,18 +292,20 @@ class SkillCatalogMixin:
             label = key.replace("_", " ").title()
             lines.append(f"{label}:\n{section_value}")
 
-        if normalized_purpose == "verify":
-            if package.verification_rules:
-                lines.append(
-                    "Verification Rules:\n"
-                    + "\n".join(f"- {item}" for item in package.verification_rules)
-                )
-        elif normalized_purpose == "act":
-            if package.recipe and package.recipe.safety_notes:
-                lines.append(
-                    "Safety Notes:\n"
-                    + "\n".join(f"- {item}" for item in package.recipe.safety_notes)
-                )
+        if normalized_purpose == "verify" and package.verification_rules:
+            lines.append(
+                "Verification Rules:\n"
+                + "\n".join(f"- {item}" for item in package.verification_rules)
+            )
+        elif (
+            normalized_purpose == "act"
+            and package.recipe
+            and package.recipe.safety_notes
+        ):
+            lines.append(
+                "Safety Notes:\n"
+                + "\n".join(f"- {item}" for item in package.recipe.safety_notes)
+            )
 
         raw_snippet = "\n\n".join(lines).strip()
         trimmed = _trim_to_token_budget(raw_snippet, max_tokens=max_tokens)

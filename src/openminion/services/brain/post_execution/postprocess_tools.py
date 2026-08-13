@@ -30,13 +30,9 @@ def _resolve_command(*, step_out: Any) -> dict[str, Any] | None:
 
 
 def _active_mode_name_from_step(step_out: Any) -> str | None:
+    working_state = getattr(step_out, STATE_KEY_WORKING, None)
     return (
-        str(
-            getattr(getattr(step_out, STATE_KEY_WORKING, None), "active_mode_name", "")
-            or ""
-        )
-        .strip()
-        .lower()
+        str(getattr(working_state, "active_mode_name", "") or "").strip().lower()
         or None
     )
 
@@ -54,30 +50,29 @@ async def _apply_tool_result_postprocess(
 ) -> tuple[str, str, list[dict[str, Any]]]:
     action_result = getattr(step_out, "action_result", None)
     explicit_termination_reason = _action_result_termination_reason(action_result)
-    if action_result is not None:
-        aggregated_tool_results = _tool_results_from_action_outputs(
-            action_result=action_result
+    aggregated_tool_results = (
+        _tool_results_from_action_outputs(action_result=action_result)
+        if action_result is not None
+        else []
+    )
+    if aggregated_tool_results:
+        if self._telemetryctl:
+            for item in aggregated_tool_results:
+                tool_name = str(item.get("tool_name", "") or "").strip() or "unknown"
+                await self._telemetryctl.emit_tool_call(
+                    session_id,
+                    turn_id,
+                    tool_name,
+                    bool(item.get("ok")),
+                    active_mode_name,
+                )
+        if not all(bool(item.get("ok")) for item in aggregated_tool_results):
+            termination_reason = explicit_termination_reason or "tool_no_success"
+        response_text = _tool_result_response_text(
+            response_text=response_text,
+            tool_results_payload=aggregated_tool_results,
         )
-        if aggregated_tool_results:
-            if self._telemetryctl:
-                for item in aggregated_tool_results:
-                    tool_name = (
-                        str(item.get("tool_name", "") or "").strip() or "unknown"
-                    )
-                    await self._telemetryctl.emit_tool_call(
-                        session_id,
-                        turn_id,
-                        tool_name,
-                        bool(item.get("ok")),
-                        active_mode_name,
-                    )
-            if not all(bool(item.get("ok")) for item in aggregated_tool_results):
-                termination_reason = explicit_termination_reason or "tool_no_success"
-            response_text = _tool_result_response_text(
-                response_text=response_text,
-                tool_results_payload=aggregated_tool_results,
-            )
-            return response_text, termination_reason, aggregated_tool_results
+        return response_text, termination_reason, aggregated_tool_results
     command = self._resolve_command(step_out=step_out)
     if not (
         action_result is not None
@@ -102,10 +97,11 @@ async def _apply_tool_result_postprocess(
             active_mode_name,
         )
 
-    if bool(tool_result.get("ok")):
-        termination_reason = "tool_final"
-    else:
-        termination_reason = explicit_termination_reason or "tool_no_success"
+    termination_reason = (
+        "tool_final"
+        if bool(tool_result.get("ok"))
+        else explicit_termination_reason or "tool_no_success"
+    )
     response_text = _tool_result_response_text(
         response_text=response_text,
         tool_results_payload=tool_results_payload,

@@ -1,5 +1,3 @@
-"""GitHub REST provider."""
-
 import io
 import json
 from collections.abc import Mapping
@@ -11,17 +9,16 @@ from urllib.request import Request, urlopen
 from openminion.modules.tool.errors import ToolRuntimeError
 
 from .auth import auth_invalid_error, require_github_pat
+from .config import profile_config_from_context
 from .constants import DEFAULT_GITHUB_DIFF_MAX_LINES, DEFAULT_GITHUB_PROVIDER_ID
 from .policy import (
     ensure_base_branch_allowed,
     ensure_branch_allowed,
-    ensure_delete_allowed,
     ensure_force_push_allowed,
     ensure_merge_allowed,
     ensure_paths_allowed,
     ensure_pr_head_allowed,
     ensure_repository_allowed,
-    github_write_policy_from_context,
 )
 from .env import get_github_api_base_url, get_github_timeout_seconds
 
@@ -75,12 +72,11 @@ class GithubRestProvider:
             accept="application/vnd.github.v3.diff",
         )
         lines = text.splitlines()
-        truncated = len(lines) > max_lines
         return {
             "ok": True,
             "data": {
                 "diff": "\n".join(lines[:max_lines]),
-                "truncated": truncated,
+                "truncated": len(lines) > max_lines,
                 "line_count": len(lines),
             },
             "source": {"provider_id": self.provider_id},
@@ -135,7 +131,7 @@ class GithubRestProvider:
         message = str(args.get("message") or "").strip()
         files = list(args.get("files") or [])
         force = bool(args.get("force", False))
-        policy = github_write_policy_from_context(ctx)
+        policy = profile_config_from_context(ctx)
 
         ensure_repository_allowed(owner=owner, repo=repo, config=policy)
         ensure_branch_allowed(branch=branch, base_branch=base_branch, config=policy)
@@ -232,7 +228,7 @@ class GithubRestProvider:
         owner, repo = _owner_repo(args)
         head = str(args.get("head") or "").strip()
         base = str(args.get("base") or "").strip()
-        policy = github_write_policy_from_context(ctx)
+        policy = profile_config_from_context(ctx)
 
         ensure_repository_allowed(owner=owner, repo=repo, config=policy)
         ensure_branch_allowed(branch=head, base_branch=base, config=policy)
@@ -267,7 +263,7 @@ class GithubRestProvider:
         owner, repo = _owner_repo(args)
         number = int(args.get("number") or 0)
         event = str(args.get("event") or "").strip().upper()
-        policy = github_write_policy_from_context(ctx)
+        policy = profile_config_from_context(ctx)
 
         ensure_repository_allowed(owner=owner, repo=repo, config=policy)
         ensure_merge_allowed(
@@ -306,10 +302,9 @@ class GithubRestProvider:
     def post_pr_comment(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         owner, repo = _owner_repo(args)
         number = int(args.get("number") or 0)
-        policy = github_write_policy_from_context(ctx)
+        policy = profile_config_from_context(ctx)
 
         ensure_repository_allowed(owner=owner, repo=repo, config=policy)
-        ensure_delete_allowed(requested=False, config=policy)
         head_ref = self._fetch_pr_head_ref(
             ctx=ctx,
             owner=owner,
@@ -361,9 +356,6 @@ class GithubRestProvider:
         repo: str,
         number: int,
     ) -> str:
-        """Read the target PR's head ref so the smoke-branch policy can be
-        applied structurally before any write call (RWPRS §5.3, §5.4).
-        """
         row = self._request_json(
             ctx=ctx,
             path=f"/repos/{owner}/{repo}/pulls/{number}",

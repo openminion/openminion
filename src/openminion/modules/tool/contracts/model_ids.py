@@ -385,15 +385,9 @@ _DYNAMIC_MODEL_TOOL_PREFIXES: tuple[str, ...] = ("mcp.",)
 
 def is_dynamic_model_tool_id(model_tool_id: str) -> bool:
     token = str(model_tool_id or "").strip()
-    return bool(token) and any(
-        token.startswith(prefix) for prefix in _DYNAMIC_MODEL_TOOL_PREFIXES
-    )
+    return any(token.startswith(prefix) for prefix in _DYNAMIC_MODEL_TOOL_PREFIXES)
 
 
 def is_valid_model_tool_id(model_tool_id: str) -> bool:
     token = str(model_tool_id or "").strip()
-    if not token:
-        return False
-    if token in ALL_MODEL_TOOL_IDS_SET:
-        return True
-    return is_dynamic_model_tool_id(token)
+    return token in ALL_MODEL_TOOL_IDS_SET or is_dynamic_model_tool_id(token)

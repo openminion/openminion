@@ -64,7 +64,9 @@ def _resolve_agent_profile_and_service(args, app):
     )
 
 
-def _build_session_context_service(app, *, session_archive_root) -> SessionContextService:
+def _build_session_context_service(
+    app, *, session_archive_root
+) -> SessionContextService:
     runtime = app.config.runtime
     return SessionContextService(
         app.sessions,

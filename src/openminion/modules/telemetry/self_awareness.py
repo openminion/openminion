@@ -34,8 +34,6 @@ def build_self_model_snapshot_event(
     *,
     source: str = "runtime",
 ) -> tuple[str, dict[str, Any]]:
-    """Build telemetry for a snapshot compose attempt."""
-
     snapshot_obj = (
         snapshot
         if isinstance(snapshot, SelfModelSnapshot)
@@ -71,8 +69,6 @@ def build_self_awareness_answer_degraded_event(
     question_kind: str,
     degraded_reasons: list[str],
 ) -> tuple[str, dict[str, Any]]:
-    """Build telemetry for deterministic degraded self-awareness answers."""
-
     return SELF_AWARENESS_ANSWER_DEGRADED, {
         "agent_id": str(agent_id or "unknown"),
         "question_kind": str(question_kind or "unknown"),
@@ -84,8 +80,6 @@ def build_improvement_candidate_event(
     event_type: str,
     candidate: Mapping[str, Any] | Any,
 ) -> tuple[str, dict[str, Any]]:
-    """Build telemetry for the generic candidate lifecycle."""
-
     if event_type not in _CANDIDATE_EVENT_TYPES:
         raise ValueError(f"unsupported improvement candidate event: {event_type}")
     evidence_refs = _field(candidate, "evidence_refs", [])

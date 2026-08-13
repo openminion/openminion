@@ -1,5 +1,3 @@
-"""Add durable invocation and thread correlation to run records."""
-
 from alembic import op
 from sqlalchemy import inspect
 

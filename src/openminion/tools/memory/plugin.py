@@ -142,12 +142,12 @@ def _serialize_record(record: Any) -> dict[str, Any]:
 def _h_memory_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
     record_id = service.write_record(
-        scope=str(args["scope"]),
-        record_type=str(args["record_type"]),
-        title=str(args["title"]),
+        scope=args["scope"],
+        record_type=args["record_type"],
+        title=args["title"],
         content=args["content"],
-        tags=list(args.get("tags") or []),
-        evidence_refs=list(args.get("evidence_refs") or []),
+        tags=args.get("tags") or [],
+        evidence_refs=args.get("evidence_refs") or [],
         confidence=args.get("confidence"),
     )
     return {
@@ -155,18 +155,18 @@ def _h_memory_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
         "content": f"memory record stored: {record_id}",
         "data": {
             "record_id": record_id,
-            "scope": str(args["scope"]),
-            "record_type": str(args["record_type"]),
+            "scope": args["scope"],
+            "record_type": args["record_type"],
         },
     }
 
 
 def _h_memory_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
-    query = str(args["query"])
-    scopes = [str(item) for item in list(args["scopes"])]
-    types = [str(item) for item in list(args.get("types") or [])]
-    limit = int(args.get("limit") or 5)
+    query = args["query"]
+    scopes = args["scopes"]
+    types = args.get("types") or []
+    limit = args.get("limit") or 5
     records = service.search(
         SearchQueryOptions(
             query=query,
@@ -190,14 +190,9 @@ def _h_memory_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
 
 def _h_memory_forget(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
-    record_id = str(args["record_id"])
+    record_id = args["record_id"]
     reason = args.get("reason")
-    deleted = bool(
-        service.delete_record(
-            record_id,
-            reason=str(reason).strip() if reason is not None else None,
-        )
-    )
+    deleted = bool(service.delete_record(record_id, reason=reason))
     return {
         "ok": deleted,
         "verified": deleted,
@@ -210,7 +205,7 @@ def _h_memory_forget(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         "data": {
             "record_id": record_id,
             "deleted": deleted,
-            "reason": str(reason).strip() if reason is not None else None,
+            "reason": reason,
         },
     }
 

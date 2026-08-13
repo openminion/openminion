@@ -5,6 +5,18 @@ _COMPACTED_MESSAGE_PREFIX = "[context budget compacted message:"
 _COMPACTED_OMISSION_PREFIX = "[... omitted "
 
 
+class ContextBudgetOverflowError(RuntimeError):
+    code = "CONTEXT_BUDGET_OVERFLOW"
+
+    def __init__(self, *, max_tokens: int, estimated_tokens: int) -> None:
+        self.message = "Required session context exceeds the configured token budget"
+        self.details = {
+            "max_tokens": max(0, int(max_tokens)),
+            "estimated_tokens": max(0, int(estimated_tokens)),
+        }
+        super().__init__(self.message)
+
+
 @dataclass(frozen=True)
 class ContextBudgetConfig:
     """Control knobs for token-budgeted context assembly."""
@@ -28,8 +40,9 @@ class ContextBudgetTelemetry:
     overflow: bool = False
     budget_chars: int = 0
     max_tokens: int = 0
+    budget_source: str = "count_fallback"
 
-    def to_dict(self) -> dict[str, int | float | bool]:
+    def to_dict(self) -> dict[str, int | float | bool | str]:
         return {
             "estimated_tokens_total": self.estimated_tokens_total,
             "estimated_tokens_system": self.estimated_tokens_system,
@@ -41,6 +54,18 @@ class ContextBudgetTelemetry:
             "overflow": self.overflow,
             "budget_chars": self.budget_chars,
             "max_tokens": self.max_tokens,
+            "budget_source": self.budget_source,
+            "selected_recent_count": self.messages_after_trim,
+            "selected_recent_tokens": self.estimated_tokens_history,
+            "trim_reason": (
+                "overflow"
+                if self.overflow
+                else "token_budget"
+                if self.trimmed_count
+                else "within_budget"
+                if self.max_tokens > 0
+                else "count_fallback"
+            ),
         }
 
 
@@ -78,6 +103,7 @@ def assemble_budgeted_context(
         overflow=False,
         budget_chars=budget_chars,
         max_tokens=budget.max_tokens,
+        budget_source="runtime_cap" if budget.max_tokens > 0 else "count_fallback",
     )
 
     if is_unlimited or total_chars <= budget_chars:
@@ -111,8 +137,9 @@ def assemble_budgeted_context(
 
     trimmed_history = remaining + protected
     total_final_chars = system_chars + sum(_msg_chars(m) for m in trimmed_history)
+    compacted_count = 0
     if total_final_chars > budget_chars:
-        trimmed_history = _fit_recent_history_to_budget(
+        trimmed_history, compacted_count = _fit_recent_history_to_budget(
             system_chars=system_chars,
             history_messages=trimmed_history,
             budget_chars=budget_chars,
@@ -121,7 +148,9 @@ def assemble_budgeted_context(
     overflow = total_final_chars > budget_chars
 
     telemetry.messages_after_trim = len(trimmed_history)
-    telemetry.trimmed_count = len(trimmed)
+    telemetry.trimmed_count = (
+        len(history_messages) - len(trimmed_history) + compacted_count
+    )
     telemetry.estimated_tokens_total = _chars_to_tokens(
         total_final_chars, budget.chars_per_token
     )
@@ -149,12 +178,13 @@ def _fit_recent_history_to_budget(
     system_chars: int,
     history_messages: list[Message],
     budget_chars: int,
-) -> list[Message]:
+) -> tuple[list[Message], int]:
     available_history_chars = max(0, int(budget_chars) - max(0, int(system_chars)))
     if available_history_chars <= 0:
-        return []
+        return [], 0
 
     selected_newest_first: list[Message] = []
+    compacted_count = 0
     used_chars = 0
     for message in reversed(history_messages):
         remaining_chars = available_history_chars - used_chars
@@ -168,8 +198,9 @@ def _fit_recent_history_to_budget(
         compacted = _compact_message_to_char_limit(message, remaining_chars)
         if compacted is not None:
             selected_newest_first.append(compacted)
+            compacted_count += 1
         break
-    return list(reversed(selected_newest_first))
+    return list(reversed(selected_newest_first)), compacted_count
 
 
 def _compact_message_to_char_limit(message: Message, max_chars: int) -> Message | None:

@@ -51,12 +51,12 @@ def _record_backend_options(
 ) -> dict[str, Any]:
     options: dict[str, Any] = {
         "sqlite_path": sqlite,
-        "wal": bool(config.wal),
-        "synchronous": str(config.synchronous),
-        "busy_timeout_ms": int(config.busy_timeout_ms),
-        "autocheckpoint_pages": int(config.autocheckpoint_pages),
+        "wal": config.wal,
+        "synchronous": config.synchronous,
+        "busy_timeout_ms": config.busy_timeout_ms,
+        "autocheckpoint_pages": config.autocheckpoint_pages,
         "telemetry_hook": telemetry_hook,
-        "slow_query_threshold_ms": int(config.slow_query_threshold_ms),
+        "slow_query_threshold_ms": config.slow_query_threshold_ms,
     }
     optional_keys = {
         "pool_recycle_seconds": config.pg_pool_recycle_seconds,
@@ -72,9 +72,7 @@ def _record_backend_options(
 
 
 def _blob_backend_options(config: StorageEngineConfig, *, root: Path) -> dict[str, Any]:
-    options: dict[str, Any] = {"root_dir": root}
-    options.update(config.blob_backend_options)
-    return options
+    return {"root_dir": root, **config.blob_backend_options}
 
 
 def _create_vector_store(
@@ -87,7 +85,7 @@ def _create_vector_store(
         return None
     vector_options = dict(config.vector_backend_options)
     vector_options.setdefault("sqlite_path", sqlite)
-    vector_options.setdefault("wal", bool(config.wal))
+    vector_options.setdefault("wal", config.wal)
     vector_store = registry.create_vector(config.vector_backend, vector_options)
     ensure_interface_compatibility(vector_store, interface="vector_store")
     return vector_store
@@ -105,16 +103,14 @@ def _effective_storage_engine_config(
         root_dir=root,
         sqlite_path=sqlite,
         fallback_root=fallback,
-        wal=bool(config.wal),
-        synchronous=str(config.synchronous),
-        busy_timeout_ms=int(config.busy_timeout_ms),
-        autocheckpoint_pages=int(config.autocheckpoint_pages),
+        wal=config.wal,
+        synchronous=config.synchronous,
+        busy_timeout_ms=config.busy_timeout_ms,
+        autocheckpoint_pages=config.autocheckpoint_pages,
         default_namespace=namespace,
-        record_backend=str(config.record_backend),
-        blob_backend=str(config.blob_backend),
-        vector_backend=None
-        if config.vector_backend is None
-        else str(config.vector_backend),
+        record_backend=config.record_backend,
+        blob_backend=config.blob_backend,
+        vector_backend=config.vector_backend,
         record_backend_options=dict(config.record_backend_options),
         blob_backend_options=dict(config.blob_backend_options),
         vector_backend_options=dict(config.vector_backend_options),
@@ -123,7 +119,7 @@ def _effective_storage_engine_config(
         pg_pool_max_overflow=config.pg_pool_max_overflow,
         pg_pool_timeout_seconds=config.pg_pool_timeout_seconds,
         pool_health_emit_interval_seconds=config.pool_health_emit_interval_seconds,
-        slow_query_threshold_ms=int(config.slow_query_threshold_ms),
+        slow_query_threshold_ms=config.slow_query_threshold_ms,
     )
 
 

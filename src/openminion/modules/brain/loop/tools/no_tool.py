@@ -8,19 +8,20 @@ from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.schemas import Message
 
+from .budget_finalization import (
+    _recover_budget_finalization_status,
+    _recover_finalized_answer,
+)
 from .contracts import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     AdaptiveToolLoopOutcome,
 )
-from .budget_finalization import (
-    _recover_budget_finalization_status,
-    _recover_finalized_answer,
-)
 from .direct_tool import (
     _direct_tool_turn_active,
     _remaining_direct_tool_name_sequence,
 )
+from .evidence import _successful_substantive_tool_results
 from .postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
     _looks_like_unexecutable_tool_payload_text,
@@ -492,28 +493,45 @@ class AdaptiveLoopRunnerNoToolMixin:
         if empty_typed_retry is not None:
             return empty_typed_retry
         if requires_finalization_status and finalization_status is None:
-            self.loop_state.termination_reason = (
-                ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
-            )
-            emit_adaptive_status(
-                self.loop_ctx,
-                profile=self.profile,
-                loop_state=self.loop_state,
-                detail_text=f"{self.public_mode_tag} finalization contract missing",
-                mode_state="finalization_contract_missing",
-                termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
-            )
-            return False, AdaptiveToolLoopOutcome(
-                profile_name=self.profile.profile_name,
-                mode_name=self.profile.mode_name,
-                termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
-                state=self.loop_state,
-                allowed_tools=self.allowed_tools,
-                error_message=(
-                    "General act work ended without the required typed "
-                    "finalization_status contract."
-                ),
-            )
+            if normalized_final_text and _successful_substantive_tool_results(
+                self.loop_state
+            ):
+                finalization_status = FinalizationStatus(
+                    status="incomplete",
+                    reasoning=(
+                        "The model-authored answer was preserved after typed "
+                        "finalization recovery was exhausted."
+                    ),
+                    remaining_work=(
+                        "Confirm the answer's completion status in a later turn."
+                    ),
+                )
+                self.loop_state.scratchpad[
+                    "typed_finalization_status_conservative_fallback"
+                ] = True
+            else:
+                self.loop_state.termination_reason = (
+                    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+                )
+                emit_adaptive_status(
+                    self.loop_ctx,
+                    profile=self.profile,
+                    loop_state=self.loop_state,
+                    detail_text=f"{self.public_mode_tag} finalization contract missing",
+                    mode_state="finalization_contract_missing",
+                    termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+                )
+                return False, AdaptiveToolLoopOutcome(
+                    profile_name=self.profile.profile_name,
+                    mode_name=self.profile.mode_name,
+                    termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+                    state=self.loop_state,
+                    allowed_tools=self.allowed_tools,
+                    error_message=(
+                        "General act work ended without the required typed "
+                        "finalization_status contract."
+                    ),
+                )
         outcome_payloads = dict(payloads)
         outcome_payloads.pop("salvage_text", None)
         outcome_payloads["final_text"] = final_text

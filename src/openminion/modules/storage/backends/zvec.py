@@ -42,11 +42,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 class ZvecVectorStore:
-    """SQLite-backed vector store exposed under the `vector.zvec` backend id.
-
-    This is a storage-module-native adapter that keeps vector persistence in SQLite
-    while exposing the v1 VectorStoreInterface expected by modules.
-    """
+    """SQLite-backed implementation of the ``vector.zvec`` backend."""
 
     contract_version = STORAGE_INTERFACE_VERSION
 
@@ -91,9 +87,9 @@ class ZvecVectorStore:
 
     def _validate_dimension(self, vector_dim: int) -> None:
         if self._dimension is None:
-            self._dimension = int(vector_dim)
+            self._dimension = vector_dim
             return
-        if int(self._dimension) != int(vector_dim):
+        if self._dimension != vector_dim:
             raise ValueError(
                 f"vector dimension mismatch: expected={self._dimension}, got={vector_dim}"
             )
@@ -168,14 +164,11 @@ class ZvecVectorStore:
             candidate_meta = json.loads(str(row["metadata_json"]))
             if not isinstance(candidate_meta, dict):
                 candidate_meta = {}
-            if filter_payload:
-                matched = True
-                for key, expected_value in filter_payload.items():
-                    if candidate_meta.get(key) != expected_value:
-                        matched = False
-                        break
-                if not matched:
-                    continue
+            if any(
+                candidate_meta.get(key) != expected
+                for key, expected in filter_payload.items()
+            ):
+                continue
             score = _cosine_similarity(normalized_query, candidate_vector)
             scored.append(
                 {
@@ -223,8 +216,8 @@ class ZvecVectorStore:
             ).fetchone()
         return {
             "namespace": normalized_namespace,
-            "count": int(row["count"] if row is not None else 0),
-            "dimension": int(row["vector_dim"] if row is not None else 0),
+            "count": int(row["count"]),
+            "dimension": int(row["vector_dim"]),
         }
 
     def count(self, namespace: str | None = None) -> int:
@@ -239,13 +232,13 @@ class ZvecVectorStore:
                     "SELECT COUNT(*) AS count FROM zvec_vectors WHERE namespace = ?",
                     (normalized_namespace,),
                 ).fetchone()
-        return int(row["count"] if row is not None else 0)
+        return int(row["count"])
 
     def healthcheck(self) -> dict[str, Any]:
         with self._lock:
             row = self._conn.execute("SELECT 1 AS ok").fetchone()
         return {
-            "ok": bool(row and int(row["ok"]) == 1),
+            "ok": int(row["ok"]) == 1,
             "backend_id": "vector.zvec",
             "metric": self._metric,
             "dimension": self._dimension,
@@ -268,6 +261,4 @@ class ZvecVectorStore:
 
     def close(self) -> None:
         with self._lock:
-            close_fn = getattr(self._record_store, "close", None)
-            if callable(close_fn):
-                close_fn()
+            self._record_store.close()

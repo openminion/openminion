@@ -45,12 +45,6 @@ DEFAULT_WEATHERAPI_API_URL = "https://api.weatherapi.com/v1"
 DEFAULT_WEATHERAPI_TIMEOUT_SECONDS = 20.0
 
 
-def _env(
-    env: ToolEnv | Mapping[str, object] | None = None,
-) -> ToolEnv:
-    return resolve_tool_env(env=env)
-
-
 def get_env(
     name: str,
     default: str = "",
@@ -58,6 +52,15 @@ def get_env(
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
     return get_tool_env(name, default, env=env)
+
+
+def _api_url(
+    name: str,
+    default: str,
+    *,
+    env: ToolEnv | Mapping[str, object] | None = None,
+) -> str:
+    return get_env(name, default, env=env).strip() or default
 
 
 def get_web_search_provider_override(
@@ -71,7 +74,7 @@ def get_tavily_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).tavily_api_key.strip()
+    return resolve_tool_env(env=env).tavily_api_key.strip()
 
 
 def get_tavily_api_url(
@@ -86,35 +89,28 @@ def get_tavily_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        TAVILY_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(TAVILY_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_brave_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).brave_api_key.strip()
+    return resolve_tool_env(env=env).brave_api_key.strip()
 
 
 def get_serpapi_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).serpapi_api_key.strip()
+    return resolve_tool_env(env=env).serpapi_api_key.strip()
 
 
 def get_serpapi_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        get_env(SERPAPI_API_URL_ENV, DEFAULT_SERPAPI_API_URL, env=env).strip()
-        or DEFAULT_SERPAPI_API_URL
-    )
+    return _api_url(SERPAPI_API_URL_ENV, DEFAULT_SERPAPI_API_URL, env=env)
 
 
 def get_serpapi_timeout_seconds(
@@ -122,28 +118,21 @@ def get_serpapi_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        SERPAPI_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(SERPAPI_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_serper_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).serper_api_key.strip()
+    return resolve_tool_env(env=env).serper_api_key.strip()
 
 
 def get_serper_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        get_env(SERPER_API_URL_ENV, DEFAULT_SERPER_API_URL, env=env).strip()
-        or DEFAULT_SERPER_API_URL
-    )
+    return _api_url(SERPER_API_URL_ENV, DEFAULT_SERPER_API_URL, env=env)
 
 
 def get_serper_timeout_seconds(
@@ -151,28 +140,21 @@ def get_serper_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        SERPER_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(SERPER_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_firecrawl_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).firecrawl_api_key.strip()
+    return resolve_tool_env(env=env).firecrawl_api_key.strip()
 
 
 def get_firecrawl_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        get_env(FIRECRAWL_API_URL_ENV, DEFAULT_FIRECRAWL_API_URL, env=env).strip()
-        or DEFAULT_FIRECRAWL_API_URL
-    )
+    return _api_url(FIRECRAWL_API_URL_ENV, DEFAULT_FIRECRAWL_API_URL, env=env)
 
 
 def get_firecrawl_timeout_seconds(
@@ -180,31 +162,24 @@ def get_firecrawl_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        FIRECRAWL_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(FIRECRAWL_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_tinyfish_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).tinyfish_api_key.strip()
+    return resolve_tool_env(env=env).tinyfish_api_key.strip()
 
 
 def get_tinyfish_search_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        get_env(
-            TINYFISH_SEARCH_API_URL_ENV,
-            DEFAULT_TINYFISH_SEARCH_API_URL,
-            env=env,
-        ).strip()
-        or DEFAULT_TINYFISH_SEARCH_API_URL
+    return _api_url(
+        TINYFISH_SEARCH_API_URL_ENV,
+        DEFAULT_TINYFISH_SEARCH_API_URL,
+        env=env,
     )
 
 
@@ -213,24 +188,17 @@ def get_tinyfish_search_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        TINYFISH_SEARCH_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(TINYFISH_SEARCH_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_tinyfish_fetch_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        get_env(
-            TINYFISH_FETCH_API_URL_ENV,
-            DEFAULT_TINYFISH_FETCH_API_URL,
-            env=env,
-        ).strip()
-        or DEFAULT_TINYFISH_FETCH_API_URL
+    return _api_url(
+        TINYFISH_FETCH_API_URL_ENV,
+        DEFAULT_TINYFISH_FETCH_API_URL,
+        env=env,
     )
 
 
@@ -239,28 +207,21 @@ def get_tinyfish_fetch_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        TINYFISH_FETCH_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(TINYFISH_FETCH_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_weatherapi_api_key(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return _env(env).weatherapi_api_key.strip()
+    return resolve_tool_env(env=env).weatherapi_api_key.strip()
 
 
 def get_weatherapi_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        get_env(WEATHERAPI_API_URL_ENV, DEFAULT_WEATHERAPI_API_URL, env=env).strip()
-        or DEFAULT_WEATHERAPI_API_URL
-    )
+    return _api_url(WEATHERAPI_API_URL_ENV, DEFAULT_WEATHERAPI_API_URL, env=env)
 
 
 def get_weatherapi_timeout_seconds(
@@ -268,11 +229,7 @@ def get_weatherapi_timeout_seconds(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> float:
-    return get_tool_env_float(
-        WEATHERAPI_TIMEOUT_SECONDS_ENV,
-        float(default),
-        env=env,
-    )
+    return get_tool_env_float(WEATHERAPI_TIMEOUT_SECONDS_ENV, default, env=env)
 
 
 def get_ip_public_lookup_endpoints(
@@ -293,7 +250,7 @@ def get_ip_public_timeout_seconds(
 ) -> float:
     return get_tool_env_float(
         OPENMINION_IP_PUBLIC_TIMEOUT_SECONDS_ENV,
-        float(default),
+        default,
         env=env,
         minimum=0.5,
         maximum=30.0,

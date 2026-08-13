@@ -50,6 +50,12 @@ _QUEUE_ACTIVE_STATUSES = {
     TurnInputQueueStatus.RUNNING,
 }
 
+_TERMINAL_EVENTS = {
+    TurnInputQueueStatus.COMPLETED: QUEUE_EVENT_COMPLETED,
+    TurnInputQueueStatus.CANCELLED: QUEUE_EVENT_CANCEL_ACKNOWLEDGED,
+    TurnInputQueueStatus.FAILED: QUEUE_EVENT_FAILED,
+}
+
 
 @dataclass(frozen=True)
 class TurnInputQueueEntry:
@@ -318,11 +324,7 @@ class TurnInputQueue:
         status: TurnInputQueueStatus | str,
     ) -> None:
         terminal = _coerce_status(status)
-        if terminal not in {
-            TurnInputQueueStatus.COMPLETED,
-            TurnInputQueueStatus.CANCELLED,
-            TurnInputQueueStatus.FAILED,
-        }:
+        if terminal not in _TERMINAL_EVENTS:
             raise TurnInputQueueError(
                 "INVALID_STATUS", f"Invalid terminal status: {status}"
             )
@@ -440,16 +442,7 @@ class TurnInputQueue:
                 if entry.queue_id == queue_id:
                     updated = updater(entry)
                     self._entries[index] = updated
-                    if updated.status in {
-                        TurnInputQueueStatus.COMPLETED,
-                        TurnInputQueueStatus.CANCELLED,
-                        TurnInputQueueStatus.FAILED,
-                    }:
-                        event_type = {
-                            TurnInputQueueStatus.COMPLETED: QUEUE_EVENT_COMPLETED,
-                            TurnInputQueueStatus.CANCELLED: QUEUE_EVENT_CANCEL_ACKNOWLEDGED,
-                            TurnInputQueueStatus.FAILED: QUEUE_EVENT_FAILED,
-                        }[updated.status]
+                    if event_type := _TERMINAL_EVENTS.get(updated.status):
                         self._emit(event_type, updated.event_payload())
                     return
         raise TurnInputQueueError(

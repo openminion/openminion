@@ -204,7 +204,9 @@ def _hide_suppressed_subcommands(parser: argparse.ArgumentParser) -> None:
             for choice_action in choice_actions
             if getattr(choice_action, "help", None) != argparse.SUPPRESS
         ]
-        if visible_choice_actions and len(visible_choice_actions) != len(choice_actions):
+        if visible_choice_actions and len(visible_choice_actions) != len(
+            choice_actions
+        ):
             action._choices_actions = visible_choice_actions
             action.metavar = (
                 "{" + ",".join(choice.dest for choice in visible_choice_actions) + "}"

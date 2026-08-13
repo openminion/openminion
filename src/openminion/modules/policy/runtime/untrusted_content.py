@@ -85,13 +85,11 @@ def safe_tag(content: str) -> str:
 
 
 def _resolve_source(*, channel: str, metadata: Mapping[str, str]) -> str:
-    explicit = str(metadata.get("untrusted_source", "")).strip()
-    if explicit:
-        return explicit
-    origin = str(metadata.get("origin", "")).strip()
-    if origin:
-        return origin
-    return f"channel:{str(channel).strip().lower()}"
+    return (
+        str(metadata.get("untrusted_source", "")).strip()
+        or str(metadata.get("origin", "")).strip()
+        or f"channel:{str(channel).strip().lower()}"
+    )
 
 
 def _should_wrap(*, channel: str, metadata: Mapping[str, str]) -> bool:
@@ -104,10 +102,6 @@ def _should_wrap(*, channel: str, metadata: Mapping[str, str]) -> bool:
 
 def _detect_suspicious_signals(content: str) -> Sequence[str]:
     text = str(content or "")
-    if not text:
-        return []
-    signals: list[str] = []
-    for signal_id, pattern in _SUSPICIOUS_PATTERNS:
-        if pattern.search(text):
-            signals.append(signal_id)
-    return signals
+    return [
+        signal_id for signal_id, pattern in _SUSPICIOUS_PATTERNS if pattern.search(text)
+    ]

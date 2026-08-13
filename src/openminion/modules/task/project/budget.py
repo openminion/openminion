@@ -30,10 +30,10 @@ def evaluate_project_budget(
         raise KeyError(f"task not found: {task_id}")
     limits = _project_budget_limits_with_extensions(state.budget, record.metadata)
     used = {
-        "iterations": max(0, int(iterations)),
-        "wall_clock_ms": max(0, int(wall_clock_ms)),
-        "tool_calls": max(0, int(tool_calls)),
-        "tokens": max(0, int(tokens)),
+        "iterations": max(0, iterations),
+        "wall_clock_ms": max(0, wall_clock_ms),
+        "tool_calls": max(0, tool_calls),
+        "tokens": max(0, tokens),
     }
     remaining = {
         key: max(0, limit - used[key]) for key, limit in limits.items() if limit > 0
@@ -60,19 +60,16 @@ def _project_budget_limits_with_extensions(
     budget: ProjectBudgetPolicy,
     metadata: dict[str, object],
 ) -> dict[str, int]:
-    extensions = (
-        metadata.get("budget_extensions")
-        if isinstance(metadata.get("budget_extensions"), dict)
-        else {}
-    )
+    raw_extensions = metadata.get("budget_extensions")
+    extensions = raw_extensions if isinstance(raw_extensions, dict) else {}
     return {
-        "iterations": int(budget.max_iterations)
+        "iterations": budget.max_iterations
         + _metadata_int(extensions, "extra_iterations"),
-        "wall_clock_ms": int(budget.max_wall_clock_ms)
+        "wall_clock_ms": budget.max_wall_clock_ms
         + _metadata_int(extensions, "extra_wall_clock_ms"),
-        "tool_calls": int(budget.max_tool_calls)
+        "tool_calls": budget.max_tool_calls
         + _metadata_int(extensions, "extra_tool_calls"),
-        "tokens": int(budget.max_tokens),
+        "tokens": budget.max_tokens,
     }
 
 

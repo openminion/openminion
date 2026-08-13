@@ -23,8 +23,7 @@ def snapshot(
 ) -> dict[str, Any]:
     del interactive, compact, depth, max_tokens
     tab = provider._tabs.get(tab_id)
-    key = provider._lock_key(tab_id)
-    with provider._locks.action_lock(key):
+    with provider._locks.action_lock(provider._lock_key(tab_id)):
         snapshot_payload, hints = provider._snapshot_adapter.build(
             page=tab.page,
             mode=mode or provider.config.snapshot.mode,
@@ -74,8 +73,7 @@ def extract_text(provider: Any, page: Any, *, mode: str) -> str:
 
 def text(provider: Any, *, tab_id: str, mode: str = "visible_text") -> dict[str, Any]:
     tab = provider._tabs.get(tab_id)
-    key = provider._lock_key(tab_id)
-    with provider._locks.action_lock(key):
+    with provider._locks.action_lock(provider._lock_key(tab_id)):
         content = extract_text(provider, tab.page, mode=mode)
     max_chars = provider.config.snapshot.max_text_chars
     truncated = len(content) > max_chars
@@ -100,16 +98,9 @@ def tab_text(
     options: TextOptions | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     text_opts = text_options(options)
-    payload = text(provider, tab_id=tab_id, mode=text_opts.mode)
-    text_payload = payload.get("text") if isinstance(payload, Mapping) else None
-    if not isinstance(text_payload, Mapping):
-        return {"text": {"content": "", "truncated": False, "chars": 0}}
-    content = str(text_payload.get("content", ""))
-    stats = (
-        text_payload.get("stats")
-        if isinstance(text_payload.get("stats"), Mapping)
-        else {}
-    )
+    text_payload = text(provider, tab_id=tab_id, mode=text_opts.mode)["text"]
+    content = str(text_payload["content"])
+    stats = text_payload["stats"]
     return {
         "text": {
             "content": content,

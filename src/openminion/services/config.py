@@ -116,7 +116,7 @@ def resolve_services_path(
     )
     anchor = (
         resolved_roots.home_root
-        if str(relative_to or "").strip().lower() == "home_root"
+        if relative_to.strip().lower() == "home_root"
         else resolved_roots.data_root
     )
     return (anchor / candidate).resolve(strict=False)
@@ -139,7 +139,7 @@ def resolve_services_plugin_paths(
         process_env=process_env,
     )
     env_value = env_owner.get(_OPENMINION_PLUGIN_PATHS_ENV, "").strip()
-    raw_paths = [item for item in env_value.split(os.pathsep)] if env_value else []
+    raw_paths = env_value.split(os.pathsep) if env_value else []
     if not raw_paths:
         base_root = (
             Path(home_root).expanduser().resolve(strict=False)
@@ -149,16 +149,15 @@ def resolve_services_plugin_paths(
         raw_paths = [str(base_root / _DEFAULT_SERVICES_PLUGIN_SEARCH_RELATIVE_PATH)]
 
     resolved: list[Path] = []
-    seen: set[str] = set()
+    seen: set[Path] = set()
     for raw_path in raw_paths:
-        candidate = str(raw_path or "").strip()
+        candidate = raw_path.strip()
         if not candidate:
             continue
         path = Path(candidate).expanduser().resolve(strict=False)
-        key = str(path)
-        if key in seen:
+        if path in seen:
             continue
-        seen.add(key)
+        seen.add(path)
         resolved.append(path)
     return resolved
 

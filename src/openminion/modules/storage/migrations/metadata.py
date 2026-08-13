@@ -20,7 +20,7 @@ def _utc_now_iso() -> str:
 def _pragma_int(conn: sqlite3.Connection, pragma_name: str, *, default: int = 0) -> int:
     row = conn.execute(f"PRAGMA {pragma_name}").fetchone()
     if row is None or row[0] is None:
-        return int(default)
+        return default
     return int(row[0])
 
 
@@ -39,6 +39,19 @@ def read_om_meta(conn: sqlite3.Connection) -> dict[str, str]:
     return rows_to_meta(rows)
 
 
+def _metadata_updates(
+    existing: dict[str, str], module_id: str, schema_head: str | None
+) -> dict[str, str]:
+    updates = {}
+    if existing.get("module_id") != module_id:
+        updates["module_id"] = module_id
+    if schema_head is not None and existing.get("schema_head") != schema_head:
+        updates["schema_head"] = schema_head
+    if updates:
+        updates["last_migrated_at"] = _utc_now_iso()
+    return updates
+
+
 def ensure_module_metadata(
     conn: sqlite3.Connection,
     *,
@@ -47,26 +60,24 @@ def ensure_module_metadata(
     schema_head: str | None,
     user_version: int | None = None,
 ) -> dict[str, str]:
-    module_id = str(module_id).strip()
+    module_id = module_id.strip()
     if not module_id:
         raise ValueError("module_id is required")
 
     dirty = False
     current_app_id = _pragma_int(conn, "application_id", default=0)
     if current_app_id == 0:
-        conn.execute(f"PRAGMA application_id={int(module_application_id)}")
+        conn.execute(f"PRAGMA application_id={module_application_id}")
         dirty = True
-    elif current_app_id != int(module_application_id):
+    elif current_app_id != module_application_id:
         raise DbIdentityError(
-            f"application_id mismatch for module '{module_id}': expected {int(module_application_id)}, "
+            f"application_id mismatch for module '{module_id}': expected {module_application_id}, "
             f"found {current_app_id}"
         )
 
-    if user_version is not None:
-        current_version = _pragma_int(conn, "user_version", default=0)
-        if current_version == 0:
-            conn.execute(f"PRAGMA user_version={int(user_version)}")
-            dirty = True
+    if user_version is not None and _pragma_int(conn, "user_version", default=0) == 0:
+        conn.execute(f"PRAGMA user_version={user_version}")
+        dirty = True
 
     conn.execute(
         """
@@ -77,14 +88,7 @@ def ensure_module_metadata(
         """
     )
     existing = read_om_meta(conn)
-    updates: dict[str, str] = {}
-
-    if existing.get("module_id") != module_id:
-        updates["module_id"] = module_id
-    if schema_head is not None and existing.get("schema_head") != str(schema_head):
-        updates["schema_head"] = str(schema_head)
-    if updates:
-        updates["last_migrated_at"] = _utc_now_iso()
+    updates = _metadata_updates(existing, module_id, schema_head)
 
     if updates:
         for key, value in updates.items():
@@ -127,7 +131,7 @@ def ensure_module_metadata_via_store(
     module_id: str,
     schema_head: str | None,
 ) -> dict[str, str]:
-    module_id = str(module_id).strip()
+    module_id = module_id.strip()
     if not module_id:
         raise ValueError("module_id is required")
 
@@ -142,13 +146,7 @@ def ensure_module_metadata_via_store(
 
     existing_rows = record_store.query_dicts("SELECT key, value FROM om_meta")
     existing = rows_to_meta((row["key"], row["value"]) for row in existing_rows)
-    updates: dict[str, str] = {}
-    if existing.get("module_id") != module_id:
-        updates["module_id"] = module_id
-    if schema_head is not None and existing.get("schema_head") != str(schema_head):
-        updates["schema_head"] = str(schema_head)
-    if updates:
-        updates["last_migrated_at"] = _utc_now_iso()
+    updates = _metadata_updates(existing, module_id, schema_head)
 
     for key, value in updates.items():
         record_store.execute_count(

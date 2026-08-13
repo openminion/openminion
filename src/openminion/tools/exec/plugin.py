@@ -12,7 +12,6 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_SEND_KEYS,
     MODEL_EXEC_SUBMIT,
 )
-from openminion.modules.brain.runtime.escalation import ActionRiskTier
 from openminion.modules.tool.family.events import emit_family_event as emit_family_event
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime.context import RuntimeContext
@@ -35,10 +34,7 @@ from . import handlers as _handlers
 from . import policy as _policy
 from . import results as _results
 from . import sessions as _sessions
-from .events import (
-    _DECLARED_EXEC_RISK_TIERS as _DECLARED_EXEC_RISK_TIERS,
-    _declared_exec_risk_tier as _declared_exec_risk_tier,
-)
+from .events import _declared_exec_risk_tier as _declared_exec_risk_tier
 from .process import resolve_shell_family as resolve_shell_family
 from .results import _artifactize_output as _artifactize_output
 
@@ -52,7 +48,6 @@ class ExecToolDeclaration:
     dangerous: bool = False
     idempotent: bool = True
     block_under_readonly: bool = False
-    approval_risk_tier: ActionRiskTier = "silent"
 
 
 def _sync_compat_globals() -> None:
@@ -136,26 +131,19 @@ _h_process_list = _plugin_h_process_list
 
 def _register_tool(
     registry: ToolRegistry,
-    *,
-    name: str,
-    args_model: type[Any],
-    handler: Callable[[dict[str, Any], RuntimeContext], dict[str, Any]],
-    min_scope: str,
-    dangerous: bool = False,
-    idempotent: bool = True,
-    block_under_readonly: bool = False,
+    declaration: ExecToolDeclaration,
 ) -> None:
     registry.add(
         ToolSpec(
-            name=name,
-            args_model=args_model,
-            min_scope=min_scope,  # type: ignore[arg-type]
-            handler=handler,
-            dangerous=dangerous,
-            idempotent=idempotent,
+            name=declaration.name,
+            args_model=declaration.args_model,
+            min_scope=declaration.min_scope,
+            handler=declaration.handler,
+            dangerous=declaration.dangerous,
+            idempotent=declaration.idempotent,
             tags=("plugin", "exec"),
             capabilities=("exec", "process", "pty"),
-            block_under_readonly=block_under_readonly,
+            block_under_readonly=declaration.block_under_readonly,
         )
     )
 
@@ -170,14 +158,12 @@ def register(registry: ToolRegistry) -> None:
             dangerous=True,
             idempotent=False,
             block_under_readonly=True,
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_RUN],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_POLL,
             args_model=ProcessPollArgs,
             handler=_h_process_poll,
             min_scope="READ_ONLY",
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_POLL],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_SEND_KEYS,
@@ -186,7 +172,6 @@ def register(registry: ToolRegistry) -> None:
             min_scope="WRITE_SAFE",
             idempotent=False,
             block_under_readonly=True,
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_SEND_KEYS],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_SUBMIT,
@@ -195,7 +180,6 @@ def register(registry: ToolRegistry) -> None:
             min_scope="WRITE_SAFE",
             idempotent=False,
             block_under_readonly=True,
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_SUBMIT],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_PASTE,
@@ -204,7 +188,6 @@ def register(registry: ToolRegistry) -> None:
             min_scope="WRITE_SAFE",
             idempotent=False,
             block_under_readonly=True,
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_PASTE],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_KILL,
@@ -214,7 +197,6 @@ def register(registry: ToolRegistry) -> None:
             dangerous=True,
             idempotent=False,
             block_under_readonly=True,
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_KILL],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_CLEAR,
@@ -222,24 +204,13 @@ def register(registry: ToolRegistry) -> None:
             handler=_h_process_clear,
             min_scope="WRITE_SAFE",
             idempotent=False,
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_CLEAR],
         ),
         ExecToolDeclaration(
             name=MODEL_EXEC_LIST,
             args_model=ProcessListArgs,
             handler=_h_process_list,
             min_scope="READ_ONLY",
-            approval_risk_tier=_DECLARED_EXEC_RISK_TIERS[MODEL_EXEC_LIST],
         ),
     )
     for declaration in declarations:
-        _register_tool(
-            registry,
-            name=declaration.name,
-            args_model=declaration.args_model,
-            handler=declaration.handler,
-            min_scope=declaration.min_scope,
-            dangerous=declaration.dangerous,
-            idempotent=declaration.idempotent,
-            block_under_readonly=declaration.block_under_readonly,
-        )
+        _register_tool(registry, declaration)
