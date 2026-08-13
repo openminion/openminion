@@ -12,6 +12,7 @@ from ..dispatcher import ControlPlaneDispatcher
 from ..security import ScopeAuthorizer, is_pair_command
 
 from openminion.base.time import utc_now_iso as _iso_now
+from openminion.modules.controlplane.constants import PAIRING_REQUIRED_HINT
 
 
 @dataclass
@@ -81,7 +82,7 @@ class InboxWorker:
             return None
         self._queue_text_reply(
             row=row,
-            text="This chat is not paired. Run /pair <code> first.",
+            text=PAIRING_REQUIRED_HINT,
             payload_type="auth_error",
         )
         self.store.ack_inbox(inbox_id)

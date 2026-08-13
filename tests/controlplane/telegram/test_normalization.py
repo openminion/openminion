@@ -73,7 +73,16 @@ def test_command_alias_normalization() -> None:
     )
     assert normalize_command_aliases("/new", bot_username="mybot") == "/session new"
     assert normalize_command_aliases("/status", bot_username="mybot") == "/status"
+    assert normalize_command_aliases("/status extra", bot_username="mybot") == "/status"
     assert normalize_command_aliases("/pair", bot_username="mybot") == "/pair"
+    assert (
+        normalize_command_aliases("/pair status", bot_username="mybot")
+        == "/pair status"
+    )
+    assert (
+        normalize_command_aliases("/pair@mybot revoke", bot_username="mybot")
+        == "/pair revoke"
+    )
     assert normalize_command_aliases("/diag", bot_username="mybot") == "/diag"
     assert (
         normalize_command_aliases("/run status abc", bot_username="mybot") == "/job ls"

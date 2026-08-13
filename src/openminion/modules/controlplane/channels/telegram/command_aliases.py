@@ -25,6 +25,8 @@ def normalize_command_aliases(text: str, *, bot_username: str | None) -> str:
 
     if cmd == "start":
         return stripped if args else "/help"
+    if cmd == "pair":
+        return " ".join([_DIRECT_ALIASES[cmd], *args])
     if cmd in _DIRECT_ALIASES:
         return _DIRECT_ALIASES[cmd]
     if cmd == "new":

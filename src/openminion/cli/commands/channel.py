@@ -168,6 +168,8 @@ def telegram_setup(args: argparse.Namespace) -> int:
     )
     _patch_telegram_channel_config(config, bot_token_value=config_value)
     save_config(config, str(config_path))
+    if raw_secret:
+        config_path.chmod(0o600)
 
     username = str((bot_info or {}).get("username") or "").strip()
     print(f"Telegram channel enabled in {config_path}")
@@ -631,17 +633,33 @@ def _discover_telegram_candidate(
     if not lease.acquired:
         raise RuntimeError(lease.diagnostic())
     try:
+        allowed_updates = ["message", "edited_message"]
+        next_offset = store.get_last_update_id(account_id) + 1
+        queued_updates = api.get_updates(
+            offset=-1,
+            timeout=0,
+            limit=1,
+            allowed_updates=allowed_updates,
+        )
+        if queued_updates:
+            last_queued_id = int(queued_updates[0]["update_id"])
+            store.set_last_update_id(account_id, last_queued_id)
+            next_offset = last_queued_id + 1
+
         print("Send a message to your Telegram bot now. Waiting for an update...")
         deadline = time.time() + max(0, int(timeout_seconds))
         while True:
             store.heartbeat_polling_lease(account_id=account_id)
             updates = api.get_updates(
-                offset=None,
+                offset=next_offset,
                 timeout=min(2, max(0, timeout_seconds)),
                 limit=10,
-                allowed_updates=["message", "edited_message"],
+                allowed_updates=allowed_updates,
             )
             for update in updates:
+                update_id = int(update["update_id"])
+                store.set_last_update_id(account_id, update_id)
+                next_offset = max(next_offset, update_id + 1)
                 candidate = _candidate_from_update(update)
                 if candidate is not None:
                     return candidate

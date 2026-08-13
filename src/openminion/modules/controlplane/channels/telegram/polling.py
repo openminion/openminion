@@ -12,6 +12,7 @@ from openminion.modules.controlplane.interfaces import (
 )
 from openminion.modules.controlplane.constants import (
     AUTH_ROLE_UNPAIRED,
+    PAIRING_REQUIRED_HINT,
 )
 from openminion.modules.controlplane.contracts.models import (
     AuthContext,
@@ -834,7 +835,7 @@ class TelegramPollingRunner:
             )
             return True
 
-        if command == "/pair":
+        if stripped.casefold() == "/pair":
             if (
                 self._pairing is None
                 or not self._config.pairing.enabled
@@ -946,7 +947,7 @@ class TelegramPollingRunner:
                 )
             self._send_local_text(
                 envelope,
-                "This chat is not paired. Run /pair <code> first.",
+                PAIRING_REQUIRED_HINT,
                 payload_type="auth_error",
             )
             return None
