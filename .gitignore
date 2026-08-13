@@ -38,3 +38,6 @@ temp_*
 
 # Local control-plane runtime state (created on first use).
 controlplane/*.db
+
+# Local main-runtime state (database, sidecars, and daemon PID).
+state/
