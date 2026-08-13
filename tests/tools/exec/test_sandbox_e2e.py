@@ -262,6 +262,13 @@ def test_sandbox_e2e_unavailable_runner_surfaces_typed_error(tmp_path: Path) -> 
     assert result["error"]["code"] == "SANDBOX_UNAVAILABLE"
 
 
+def test_sandbox_e2e_missing_runner_does_not_fall_back_to_host(tmp_path: Path) -> None:
+    result = _h_exec_run({"command": "printf 'hello\\n'"}, _ctx(tmp_path))
+
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "SANDBOX_UNAVAILABLE"
+
+
 def test_sandbox_e2e_large_output_preserves_artifact_spillover(tmp_path: Path) -> None:
     payload = "x" * (EXEC_ARTIFACT_THRESHOLD_BYTES + 128)
     transport = _FakeSandboxTransport(

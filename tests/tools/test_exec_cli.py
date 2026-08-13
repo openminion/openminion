@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from typer.testing import CliRunner
 
 from openminion.modules.tool.cli import app
+from openminion.modules.tool.cli.runtime import build_registry
 from openminion.modules.tool.contracts.schemas import ResultEnvelope, WorkspaceInfo
+from openminion.modules.tool.runtime.policy import Policy
 from openminion.tools.exec.cli import app as standalone_exec_app
 
 
@@ -60,6 +62,14 @@ def test_exec_run_routes_to_exec_tool(monkeypatch, workspace_fixture):
     assert captured["tool"] == "exec.run"
     assert captured["args"]["env"] == {"FOO": "bar"}
     assert captured["args"]["command"] == "echo hi"
+
+
+def test_cli_registry_includes_exec_run(workspace_fixture):
+    _workspace, policy_path = workspace_fixture
+
+    registry, _statuses = build_registry(Policy.load(policy_path))
+
+    assert registry.get("exec.run").name == "exec.run"
 
 
 def test_exec_run_no_json_outputs_line_summary(monkeypatch, workspace_fixture):

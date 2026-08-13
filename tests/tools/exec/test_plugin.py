@@ -8,6 +8,7 @@ from typing import get_args
 import pytest
 
 from openminion.base.runtime.sandbox import ExecResult
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.brain.runtime.escalation import ApprovalResponse
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.registry import ToolRegistry
@@ -18,7 +19,6 @@ import openminion.tools.exec.plugin as exec_plugin
 from openminion.tools.exec.plugin import (
     _artifactize_output,
     register,
-    _h_exec_run,
     _h_process_poll,
     _h_process_send_keys,
     _validate_command_against_policy,
@@ -84,6 +84,21 @@ def _ctx(tmp_path, *, sandbox_runner=None, env=None):
         sandbox_runner=sandbox_runner,
         **kwargs,
     )
+
+
+def _h_exec_run(args, ctx):
+    payload = dict(args)
+    if "host" not in payload and ctx.sandbox_runner is None:
+        payload["host"] = "gateway"
+        payload["security"] = "full"
+        payload["ask"] = "off"
+        ctx.env = EnvironmentConfig.from_sources(
+            process_env={
+                **ctx.env.values,
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+            }
+        )
+    return exec_plugin._h_exec_run(payload, ctx)
 
 
 class _RecordingSandboxRunner:
@@ -798,8 +813,7 @@ def test_validate_command_against_policy_accepts_windows_shell_family_path(
 
 def test_validate_command_against_policy_accepts_read_only_identity_probe(tmp_path):
     allowed, message, details = _validate_command_against_policy(
-        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || "
-        "cat ~/.ssh/id_ed25519.pub",
+        "whoami && cat ~/.ssh/id_rsa.pub 2>/dev/null || cat ~/.ssh/id_ed25519.pub",
         _ctx(tmp_path),
     )
 

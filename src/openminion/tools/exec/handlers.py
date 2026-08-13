@@ -45,9 +45,15 @@ from .schemas import (
 
 from .events import _emit_exec_operation
 from .policy import _agent_id, _sanitize_command
-from .results import _artifactize_output, _decode_preview, _status_for_entry
+from .results import (
+    _artifactize_output,
+    _decode_preview,
+    _sandbox_error_result,
+    _status_for_entry,
+)
 from .sessions import (
     _prepare_exec_run,
+    _sandbox_runner_for_ctx,
     _sandbox_session_manager_for_ctx,
     _session_backend_for_ctx,
     _start_exec_run_session,
@@ -162,6 +168,20 @@ def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "yield_ms": params.yield_ms,
     }
     emit_family_event(ctx, event="tool.requested", payload={"request": request_payload})
+    if (
+        params.host == "sandbox"
+        and _sandbox_runner_for_ctx(ctx) is None
+        and _sandbox_session_manager_for_ctx(ctx) is None
+    ):
+        return _sandbox_error_result(
+            ctx=ctx,
+            request_payload=request_payload,
+            started=started,
+            tool_name=tool_name,
+            code="SANDBOX_UNAVAILABLE",
+            message="sandbox execution is not configured",
+            details={"host": params.host},
+        )
     prep, early_result = _prepare_exec_run(
         params=params,
         ctx=ctx,

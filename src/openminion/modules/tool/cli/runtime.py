@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.modules.telemetry.adapter import create_telemetry_adapter
 from openminion.tools.config import resolve_tool_env
+from openminion.tools.exec.plugin import register as register_exec_tools
 from ..adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from ..constants import (
     DEFAULT_TOOL_RUNS_DIRNAME,
@@ -216,6 +217,7 @@ def build_registry(policy: Policy) -> tuple[ToolRegistry, list[Dict[str, Any]]]:
     _register_file_tools(reg)
     _register_cmd_tools(reg)
     _register_proc_tools(reg)
+    register_exec_tools(reg)
     reg.add(
         ToolSpec("sys.info", SysInfoArgs, "READ_ONLY", h_sys_info, tags=("core", "sys"))
     )
