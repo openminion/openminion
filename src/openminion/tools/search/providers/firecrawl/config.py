@@ -36,10 +36,9 @@ def resolve_firecrawl_timeout_seconds(*, ctx: Any | None = None) -> float:
     env = resolve_tool_context_env(ctx)
     raw = env.get(FIRECRAWL_TIMEOUT_SECONDS_ENV, "")
     try:
-        value = float(raw) if raw else float(DEFAULT_FIRECRAWL_TIMEOUT_SECONDS)
+        return max(0.0, float(raw or DEFAULT_FIRECRAWL_TIMEOUT_SECONDS))
     except (TypeError, ValueError):
-        value = float(DEFAULT_FIRECRAWL_TIMEOUT_SECONDS)
-    return max(0.0, value)
+        return DEFAULT_FIRECRAWL_TIMEOUT_SECONDS
 
 
 __all__ = [

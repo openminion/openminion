@@ -1,7 +1,4 @@
-"""Firecrawl search provider."""
-
 import json
-from dataclasses import dataclass
 from typing import Any
 from collections.abc import Mapping
 from urllib import error as urllib_error
@@ -32,19 +29,13 @@ def _search_url(base_url: str) -> str:
 
 
 def _error_code_for_status(status: int) -> str:
-    if status in {400, 422}:
-        return "INVALID_REQUEST"
-    if status in {401, 403}:
-        return "AUTH_FAILED"
-    if status == 429:
-        return "RATE_LIMITED"
-    return "UPSTREAM_ERROR"
-
-
-@dataclass(frozen=True)
-class _FirecrawlResponse:
-    payload: Mapping[str, Any]
-    http_status: int
+    return {
+        400: "INVALID_REQUEST",
+        401: "AUTH_FAILED",
+        403: "AUTH_FAILED",
+        422: "INVALID_REQUEST",
+        429: "RATE_LIMITED",
+    }.get(status, "UPSTREAM_ERROR")
 
 
 class FirecrawlSearchProvider:
@@ -103,7 +94,7 @@ class FirecrawlSearchProvider:
         body: Mapping[str, Any],
         api_key: str,
         ctx: Any | None = None,
-    ) -> _FirecrawlResponse:
+    ) -> Mapping[str, Any]:
         request = urllib_request.Request(
             self._api_url(ctx=ctx),
             data=json.dumps(dict(body)).encode("utf-8"),
@@ -125,13 +116,9 @@ class FirecrawlSearchProvider:
                         "Firecrawl returned an unexpected payload shape",
                         code="UPSTREAM_ERROR",
                     )
-                return _FirecrawlResponse(
-                    payload=payload,
-                    http_status=int(getattr(response, "status", 200) or 200),
-                )
+                return payload
         except urllib_error.HTTPError as exc:
             status = int(exc.code)
-            body_text = ""
             try:
                 body_text = exc.read().decode("utf-8", errors="replace")
             except Exception:
@@ -156,10 +143,7 @@ class FirecrawlSearchProvider:
         max_results: int,
     ) -> dict[str, Any]:
         data = payload.get("data")
-        if isinstance(data, Mapping):
-            web_rows = data.get("web")
-        else:
-            web_rows = None
+        web_rows = data.get("web") if isinstance(data, Mapping) else []
         if not isinstance(web_rows, list):
             web_rows = []
 
@@ -181,10 +165,8 @@ class FirecrawlSearchProvider:
                 }
             )
 
-        warnings: list[str] = []
         warning = str(payload.get("warning", "") or "").strip()
-        if warning:
-            warnings.append(warning)
+        warnings = [warning] if warning else []
 
         return {
             "provider": self.provider_id,
@@ -212,7 +194,7 @@ class FirecrawlSearchProvider:
                 code="DEPENDENCY_MISSING",
             )
 
-        response = self._request(
+        payload = self._request(
             body=self._build_body(
                 query=query_text,
                 max_results=max_results,
@@ -223,7 +205,7 @@ class FirecrawlSearchProvider:
         )
         return self._normalize_payload(
             query=query_text,
-            payload=response.payload,
+            payload=payload,
             max_results=max_results,
         )
 

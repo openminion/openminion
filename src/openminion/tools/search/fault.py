@@ -1,5 +1,3 @@
-"""Search tool error mapping."""
-
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -128,7 +126,7 @@ def _build_fault_error(
         "deterministic_fault": True,
     }
     if fault.http_status is not None:
-        details["http_status"] = int(fault.http_status)
+        details["http_status"] = fault.http_status
     return SearchProviderError(
         message=message,
         code=code,

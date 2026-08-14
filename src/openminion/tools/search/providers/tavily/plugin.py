@@ -1,5 +1,5 @@
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 
 from openminion.tools.config import resolve_tool_context_env
 from openminion.tools.env import (
@@ -7,9 +7,11 @@ from openminion.tools.env import (
     get_tavily_api_url,
     get_tavily_timeout_seconds,
 )
-
-from .constants import DEFAULT_TAVILY_API_URL, TAVILY_SEARCH_DEPTH_VALUES
 from openminion.tools.search.constants import SEARCH_TAVILY_PROVIDER_ID
+from openminion.tools.search.providers import SearchProviderError
+
+from .config import DEFAULT_TAVILY_TIMEOUT_SECONDS
+from .constants import DEFAULT_TAVILY_API_URL, TAVILY_SEARCH_DEPTH_VALUES
 from .interfaces import TAVILY_PLUGIN_INTERFACE_VERSION
 from .search import (
     TavilySearchTool,
@@ -32,8 +34,16 @@ class TavilySearchProvider:
     ) -> dict[str, Any]:
         env = resolve_tool_context_env(ctx)
         api_key = get_tavily_api_key(env=env)
+        if not api_key:
+            raise SearchProviderError(
+                "Missing Tavily API key",
+                code="DEPENDENCY_MISSING",
+            )
         api_url = get_tavily_api_url(env=env) or DEFAULT_TAVILY_API_URL
-        timeout = get_tavily_timeout_seconds(default=12.0, env=env)
+        timeout = get_tavily_timeout_seconds(
+            default=DEFAULT_TAVILY_TIMEOUT_SECONDS,
+            env=env,
+        )
 
         tool = TavilySearchTool(
             api_key=api_key, api_url=api_url, timeout_seconds=timeout
@@ -50,43 +60,25 @@ class TavilySearchProvider:
             payload_args["include_answer"] = include_answer
 
         result = tool.execute(payload_args, ctx)
-        if not bool(result.get("ok", False)):
-            error_message = (
-                str(result.get("error", "")).strip() or "Tavily search failed"
-            )
-            from openminion.tools.search.providers import SearchProviderError
-
+        if not result.get("ok"):
             raise SearchProviderError(
-                error_message,
-                code="DEPENDENCY_MISSING"
-                if "api key" in error_message.lower()
-                else "UPSTREAM_ERROR",
+                str(result.get("error") or "Tavily search failed").strip(),
+                code="UPSTREAM_ERROR",
             )
 
-        data = result.get("data", {})
-        if not isinstance(data, Mapping):
-            data = {}
-        rows = data.get("results", [])
-        if not isinstance(rows, list):
-            rows = []
-
-        normalized_rows: list[dict[str, Any]] = []
-        for idx, row in enumerate(rows[:max_results], start=1):
-            if not isinstance(row, Mapping):
-                continue
-            normalized_rows.append(
-                {
-                    "rank": idx,
-                    "title": str(row.get("title", "") or "Untitled"),
-                    "url": str(row.get("url", "") or ""),
-                    "description": str(
-                        row.get(
-                            "description", row.get("snippet", row.get("content", ""))
-                        )
-                        or ""
-                    ),
-                }
-            )
+        data = result["data"]
+        normalized_rows = [
+            {
+                "rank": idx,
+                "title": str(row.get("title") or "Untitled"),
+                "url": str(row.get("url") or ""),
+                "description": str(
+                    row.get("description", row.get("snippet", row.get("content", "")))
+                    or ""
+                ),
+            }
+            for idx, row in enumerate(data["results"][:max_results], start=1)
+        ]
 
         normalized: dict[str, Any] = {
             "provider": SEARCH_TAVILY_PROVIDER_ID,

@@ -1,27 +1,21 @@
-"""Public exports for tools search providers tavily."""
-
 from typing import Any
-
-from openminion.modules.tool.runtime.registrar import ToolModuleRegistrar
 
 from .registrar import REGISTRAR
 
-REGISTRAR: ToolModuleRegistrar
 
-
-def register(*args: Any, **kwargs: Any):
+def register(*args: Any, **kwargs: Any) -> None:
     from .plugin import register as register_impl
 
     return register_impl(*args, **kwargs)
 
 
-def register_search_provider(*args: Any, **kwargs: Any):
+def register_search_provider(*args: Any, **kwargs: Any) -> None:
     from .plugin import register_search_provider as register_search_provider_impl
 
     return register_search_provider_impl(*args, **kwargs)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in {"TavilySearchPlugin", "TavilySearchProvider"}:
         from .plugin import TavilySearchPlugin, TavilySearchProvider
 

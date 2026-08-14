@@ -403,7 +403,7 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
     query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
 
     def _attempt_payload(
-        provider_id: str, attempt_index: int, total: int
+        provider_id: str, attempt_index: int, _total: int
     ) -> dict[str, Any]:
         return {
             "requested_provider": requested_provider or SEARCH_PROVIDER_AUTO,
@@ -420,8 +420,7 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
             args=shared_args,
             ctx=ctx,
         )
-        merged_warnings = list(payload.get("warnings", []))
-        merged_warnings.extend(warnings)
+        merged_warnings = [*payload.get("warnings", []), *warnings]
         if attempt_index > 1:
             merged_warnings.append(
                 f"Primary provider failed; fell back to '{provider_id}'"
@@ -468,108 +467,60 @@ def _handle_web_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, A
 def _handle_web_search_tavily(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
-    forced = dict(args)
-    forced["provider"] = SEARCH_TAVILY_PROVIDER_ID
-    return _handle_web_search(forced, ctx)
+    return _handle_web_search({**args, "provider": SEARCH_TAVILY_PROVIDER_ID}, ctx)
 
 
 def _handle_web_search_brave(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
-    forced = dict(args)
-    forced["provider"] = SEARCH_BRAVE_PROVIDER_ID
-    return _handle_web_search(forced, ctx)
+    return _handle_web_search({**args, "provider": SEARCH_BRAVE_PROVIDER_ID}, ctx)
 
 
 def _handle_web_search_serpapi(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
-    forced = dict(args)
-    forced["provider"] = "serpapi"
-    return _handle_web_search(forced, ctx)
+    return _handle_web_search({**args, "provider": SEARCH_SERPAPI_PROVIDER_ID}, ctx)
 
 
 def _handle_web_search_firecrawl(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
-    forced = dict(args)
-    forced["provider"] = "firecrawl"
-    return _handle_web_search(forced, ctx)
+    return _handle_web_search({**args, "provider": SEARCH_FIRECRAWL_PROVIDER_ID}, ctx)
 
 
 def _handle_web_search_serper(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
-    forced = dict(args)
-    forced["provider"] = "serper"
-    return _handle_web_search(forced, ctx)
+    return _handle_web_search({**args, "provider": SEARCH_SERPER_PROVIDER_ID}, ctx)
 
 
 def _handle_web_search_tinyfish(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
-    forced = dict(args)
-    forced["provider"] = "tinyfish"
-    return _handle_web_search(forced, ctx)
+    return _handle_web_search({**args, "provider": SEARCH_TINYFISH_PROVIDER_ID}, ctx)
+
+
+_TOOL_HANDLERS = (
+    ("search.dispatch", _handle_web_search),
+    ("search.tavily.search", _handle_web_search_tavily),
+    ("search.brave.search", _handle_web_search_brave),
+    ("search.serpapi.search", _handle_web_search_serpapi),
+    ("search.firecrawl.search", _handle_web_search_firecrawl),
+    ("search.serper.search", _handle_web_search_serper),
+    ("search.tinyfish.search", _handle_web_search_tinyfish),
+)
 
 
 def register(registry: ToolRegistry) -> None:
-    registry.add(
-        ToolSpec(
-            name="search.dispatch",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search,
+    for name, handler in _TOOL_HANDLERS:
+        registry.add(
+            ToolSpec(
+                name=name,
+                args_model=SearchArgs,
+                min_scope="READ_ONLY",
+                handler=handler,
+            )
         )
-    )
-    registry.add(
-        ToolSpec(
-            name="search.tavily.search",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search_tavily,
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name="search.brave.search",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search_brave,
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name="search.serpapi.search",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search_serpapi,
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name="search.firecrawl.search",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search_firecrawl,
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name="search.serper.search",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search_serper,
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name="search.tinyfish.search",
-            args_model=SearchArgs,
-            min_scope="READ_ONLY",
-            handler=_handle_web_search_tinyfish,
-        )
-    )
 
     try:
         provider_registry().load_entry_points()

@@ -29,16 +29,11 @@ def resolve_tinyfish_search_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return (
-        str(
-            resolve_tool_env(env=env).get(
-                TINYFISH_SEARCH_API_URL_ENV,
-                DEFAULT_TINYFISH_SEARCH_API_URL,
-            )
-            or ""
-        ).strip()
-        or DEFAULT_TINYFISH_SEARCH_API_URL
+    value = resolve_tool_env(env=env).get(
+        TINYFISH_SEARCH_API_URL_ENV,
+        DEFAULT_TINYFISH_SEARCH_API_URL,
     )
+    return str(value or "").strip() or DEFAULT_TINYFISH_SEARCH_API_URL
 
 
 def resolve_tinyfish_search_timeout_seconds(
@@ -48,7 +43,7 @@ def resolve_tinyfish_search_timeout_seconds(
 ) -> float:
     return get_tool_env_float(
         TINYFISH_SEARCH_TIMEOUT_SECONDS_ENV,
-        float(default),
+        default,
         env=env,
     )
 

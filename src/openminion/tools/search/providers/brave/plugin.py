@@ -1,10 +1,7 @@
-"""Brave search provider plugin."""
-
 from collections.abc import Mapping
 import inspect
 from typing import Any
 
-from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.search import register_provider
 from openminion.tools.search.constants import SEARCH_BRAVE_PROVIDER_ID
 from openminion.tools.search.providers import SearchProviderError
@@ -55,8 +52,8 @@ class BraveSearchFacadeProvider:
         except BraveSearchError as exc:
             raise SearchProviderError(
                 f"Brave search failed ({exc.code}): {exc}",
-                code=str(exc.code or "UPSTREAM_ERROR"),
-                details=dict(exc.details or {}),
+                code=exc.code or "UPSTREAM_ERROR",
+                details=exc.details,
             ) from exc
 
         web_payload = (
@@ -119,15 +116,12 @@ class BraveSearchFacadeProvider:
             return bool(self._provider._api_key({}))
 
 
-def register(registry: ToolRegistry | None = None) -> None:
-    register_provider(BraveSearchFacadeProvider())
-    if registry is not None:
-        del registry
-
-
-def register_search_provider(registry: object) -> None:
-    register(None)
+def register(registry: object | None = None) -> None:
     del registry
+    register_provider(BraveSearchFacadeProvider())
+
+
+register_search_provider = register
 
 
 __all__ = ["BraveSearchFacadeProvider", "register", "register_search_provider"]
