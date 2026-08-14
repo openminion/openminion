@@ -1688,6 +1688,58 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertEqual(response.output_text, "Hello from Anthropic")
         self.assertEqual(response.usage.total_tokens, 14)
 
+    def test_anthropic_hybrid_parses_fallback_tool_markup(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {
+                "model": "MiniMax-M2.7",
+                "messages": [{"role": "user", "content": "search"}],
+                "tools": [
+                    {
+                        "name": "web.search",
+                        "description": "Search the web",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"],
+                        },
+                    }
+                ],
+            }
+        )
+        payload = {
+            "model": "MiniMax-M2.7",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        '<tool name="web_search">'
+                        '<parameter name="query">current news</parameter>'
+                        "</tool>"
+                    ),
+                }
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 7},
+        }
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(payload),
+        ):
+            response = provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.minimax.io/anthropic/v1",
+                    "tool_call_strategy": "hybrid",
+                },
+            )
+
+        self.assertEqual(response.output_text, "")
+        self.assertEqual(len(response.tool_calls), 1)
+        self.assertEqual(response.tool_calls[0].name, "web.search")
+        self.assertEqual(response.tool_calls[0].arguments, {"query": "current news"})
+
     def test_anthropic_two_turn_tools_round_trip_and_name_restore(self) -> None:
         provider = AnthropicProvider()
         tools = [

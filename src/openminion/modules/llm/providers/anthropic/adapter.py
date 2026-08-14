@@ -27,15 +27,17 @@ from .payloads import (
 )
 from ..message_payloads import (
     _as_int,
+    _coerce_tool_calls,
     _extract_message_text,
     _list_models_from_config,
     _resolve_api_key,
     _resolve_model,
+    _resolve_tool_names,
     _resolve_timeout_seconds,
     _http_json_post,
 )
 from ..transport.sse import iter_sse_post_lines
-from ..behavior import resolve_behavior_profile
+from ..behavior import ProviderBehaviorProfile, resolve_behavior_profile
 from ..contract import PROVIDER_INTERFACE_VERSION
 from ..tool_calling import (
     build_openai_tools_payload,
@@ -43,9 +45,11 @@ from ..tool_calling import (
     detect_raw_envelope,
     detect_raw_tool_markup,
     remap_provider_tool_call_name,
+    resolve_tool_call_source_precedence,
     supports_native_tool_calling,
     sanitize_envelope_leak,
     supports_fallback_tool_calling,
+    ToolCallFallbackSource,
 )
 
 
@@ -90,7 +94,7 @@ class AnthropicProvider:
         model: str,
         response_payload: Dict[str, Any],
         started: float,
-        behavior_profile_id: str,
+        behavior_profile: ProviderBehaviorProfile,
         tool_call_strategy: str,
         prompt_cache_enabled: bool,
         external_to_canonical: dict[str, str] | None = None,
@@ -101,12 +105,49 @@ class AnthropicProvider:
             response_payload,
             external_to_canonical=external_to_canonical,
         )
+        tool_call_resolution = None
+        if (
+            request.tools
+            and text
+            and not tool_calls
+            and supports_fallback_tool_calling(tool_call_strategy)
+        ):
+            expanded_tool_names = [
+                *_resolve_tool_names(request),
+                *(external_to_canonical or {}),
+            ]
+            tool_call_resolution = resolve_tool_call_source_precedence(
+                message_payload=response_payload,
+                fallback_sources=[
+                    ToolCallFallbackSource(source="message.content", text=text)
+                ],
+                provider_name=self.name,
+                model_name=str(response_payload.get("model") or model),
+                allowed_tool_names=expanded_tool_names,
+                fallback_enabled=True,
+                parser_plugin_selection=behavior_profile.parser_plugin_selection,
+                fallback_parser_policy=behavior_profile.fallback_parser_policy,
+            )
+            tool_calls = _coerce_tool_calls(
+                [
+                    {
+                        "id": getattr(call, "id", None),
+                        "name": remap_provider_tool_call_name(
+                            getattr(call, "name", ""),
+                            external_to_canonical=external_to_canonical,
+                        ),
+                        "arguments": dict(getattr(call, "arguments", {}) or {}),
+                        "status": "parsed",
+                    }
+                    for call in tool_call_resolution.calls
+                ]
+            )
         if (
             request.tools
             and text
             and (detect_raw_envelope(text) or detect_raw_tool_markup(text))
         ):
-            text = sanitize_envelope_leak(text)
+            text = "" if tool_calls else sanitize_envelope_leak(text)
         if not text and not tool_calls:
             raise LLMCtlError(
                 "EMPTY_PAYLOAD",
@@ -123,10 +164,12 @@ class AnthropicProvider:
         assistant_messages = [Message(role="assistant", content=text, meta=meta)]
         normalization_meta = {
             "adapter": "anthropic",
-            "behavior_profile_id": behavior_profile_id,
+            "behavior_profile_id": behavior_profile.profile_id,
             "tool_call_strategy": tool_call_strategy,
             "prompt_cache_enabled": prompt_cache_enabled,
         }
+        if tool_call_resolution is not None:
+            normalization_meta.update(tool_call_resolution.as_metadata())
         if request.tools and text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]"):
             normalization_meta["envelope_sanitized"] = True
         return adapter_result_to_llm_response(
@@ -305,7 +348,7 @@ class AnthropicProvider:
             model=model,
             response_payload=response_payload,
             started=started,
-            behavior_profile_id=behavior_profile.profile_id,
+            behavior_profile=behavior_profile,
             tool_call_strategy=tool_call_strategy,
             prompt_cache_enabled=prompt_cache_enabled,
             external_to_canonical=external_to_canonical,

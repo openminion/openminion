@@ -165,6 +165,27 @@ def test_build_runtime_config_applies_profile_provider_config_overrides() -> Non
     assert effective.providers.openrouter.tool_call_strategy == "hybrid"
 
 
+def test_build_runtime_config_applies_anthropic_tool_strategy_override() -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "default_agent": "claude",
+            "agents": {
+                "claude": {
+                    "name": "claude",
+                    "provider": "anthropic",
+                    "provider_config_overrides": {
+                        "tool_call_strategy": "hybrid",
+                    },
+                }
+            },
+        }
+    )
+
+    effective = build_runtime_config(config, agent_id="claude")
+
+    assert effective.providers.anthropic.tool_call_strategy == "hybrid"
+
+
 def test_invocation_model_override_wins_over_profile_provider_config_override() -> None:
     config = OpenMinionConfig.from_dict(
         {
