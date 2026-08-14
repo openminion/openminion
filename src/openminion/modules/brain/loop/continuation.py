@@ -15,6 +15,10 @@ if TYPE_CHECKING:  # pragma: no cover
 AUTONOMOUS_TURN_FIRED_EVENT = "autonomous_turn.fired"
 
 
+def _event_type(event: dict[str, Any]) -> str:
+    return str(event.get("event_type") or event.get("type") or "").strip()
+
+
 class AutonomousContinuationCapsExceeded(Exception):
     def __init__(self, *, reason: str, details: dict[str, Any]) -> None:
         super().__init__(reason)
@@ -74,7 +78,7 @@ def _count_autonomous_turns_from_events(
     for event in events:
         if not isinstance(event, dict):
             continue
-        if str(event.get("event_type") or "").strip() != AUTONOMOUS_TURN_FIRED_EVENT:
+        if _event_type(event) != AUTONOMOUS_TURN_FIRED_EVENT:
             continue
         if target_plan is not None:
             payload = event.get("payload") or {}
@@ -254,7 +258,7 @@ _ELIGIBLE_PLAN_EVENT_TYPES = (
 
 
 def _signal_from_event(event: dict[str, Any]) -> dict[str, Any] | None:
-    event_type = str(event.get("event_type") or "").strip()
+    event_type = _event_type(event)
     if event_type not in _ELIGIBLE_PLAN_EVENT_TYPES:
         return None
     payload = event.get("payload") or {}
@@ -303,7 +307,7 @@ def peek_latest_continuation_signal(
     for event in reversed(events):
         if not isinstance(event, dict):
             continue
-        event_type = str(event.get("event_type") or "").strip()
+        event_type = _event_type(event)
         if event_type in terminal_event_types:
             return None
         if event_type in _ELIGIBLE_PLAN_EVENT_TYPES:
