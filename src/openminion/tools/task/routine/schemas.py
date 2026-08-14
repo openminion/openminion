@@ -8,8 +8,6 @@ ROUTINE_VERSION_V1 = 1
 
 
 class GitHubPrReviewConfigV1(BaseModel):
-    """Operator-supplied configuration for a github_pr_review routine."""
-
     model_config = ConfigDict(extra="forbid")
 
     owner: str = Field(..., min_length=1, description="GitHub owner / org")
@@ -28,8 +26,6 @@ class _PerPrCursorEntryV1(BaseModel):
 
 
 class GitHubPrReviewCursorV1(BaseModel):
-    """Durable cursor for a github_pr_review routine."""
-
     model_config = ConfigDict(extra="forbid")
 
     last_check_iso: str | None = Field(default=None)
@@ -40,12 +36,6 @@ class GitHubPrReviewCursorV1(BaseModel):
 
 
 class RoutinePayloadV1(BaseModel):
-    """Typed routine block carried inside ``task.watch`` payloads.
-
-    V1 ships exactly one routine kind. Unknown values fail validation rather
-    than silently fall through.
-    """
-
     model_config = ConfigDict(extra="forbid")
 
     routine_kind: Literal["github_pr_review"] = Field(

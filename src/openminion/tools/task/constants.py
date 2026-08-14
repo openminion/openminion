@@ -14,10 +14,7 @@ DEFAULT_WATCH_MAX_CHECKS = 6
 DEFAULT_WATCH_TIMEOUT_SECONDS = 60
 DEFAULT_WATCH_MAX_ITERATIONS = 3
 DEFAULT_WATCH_TTL_MINUTES = 60
-# runtime-side cap for `ReviewedPrV1.summary` so the model cannot
-# blow the artifact budget by emitting a giant summary string.
 PR_REVIEW_SUMMARY_MAX_CHARS = 1000
-# runtime-side cap for the announce delivery summary line.
 PR_REVIEW_ANNOUNCE_MAX_CHARS = 200
 CONSOLIDATION_PAYLOAD_KEY = "_openminion_memory_consolidation"
 FIRST_RUN_PENDING_STATE = "pending"
