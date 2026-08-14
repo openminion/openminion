@@ -10,17 +10,17 @@ seed_turns:
     role: user
     content: "Remember this preference: always prefer short checklists over long paragraphs."
     ts: "2026-03-06T10:00:00Z"
-  
+
   - turn_id: turn-002
     role: assistant
     content: "I've noted your preference for short checklists over long paragraphs."
     ts: "2026-03-06T10:00:01Z"
-  
+
   - turn_id: turn-003
     role: user
     content: "Also remember: my current project is the MIDE E2E validation tracker."
     ts: "2026-03-06T10:00:02Z"
-  
+
   - turn_id: turn-004
     role: assistant
     content: "Got it. Your current project is the MIDE E2E validation tracker."

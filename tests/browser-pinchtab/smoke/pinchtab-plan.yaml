@@ -54,7 +54,7 @@ steps:
       - output.data.artifact_ref exists
 notes:
   - The plan intentionally reuses a deterministic tab id so downstream
-    tooling can stub PinchTab responses. 
+    tooling can stub PinchTab responses.
   - The PINCHTAB_MODE defaults to 'headed' for local development and debugging.
   - Set PINCHTAB_TOKEN only when targeting non-local bridges; local default
     shells can keep it empty.
