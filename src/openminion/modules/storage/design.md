@@ -21,7 +21,7 @@
 The system implements capability negotiation through:
 
 - `BackendDescriptor`: Static declaration of supported features
-- `CapabilityRequirement`: Client expression of required features  
+- `CapabilityRequirement`: Client expression of required features
 - `check_capability_support()`: Runtime compatibility verification
 - `UnsupportedCapabilityError`: Explicit error signaling for mismatch cases
 
@@ -29,7 +29,7 @@ The system implements capability negotiation through:
 The monolithic storage interface is split into logical domains:
 
 - `StructuredStoreInterface`: Typed record/row operations
-- `VectorStoreInterface`: Embedding/semantic operations  
+- `VectorStoreInterface`: Embedding/semantic operations
 - `RecordStoreInterface`: Low-level SQL operations (existing)
 - `BlobStoreInterface`: Binary data storage (existing)
 - `HybridStoreInterface`: Composite operations (existing)
@@ -52,7 +52,7 @@ New interfaces should support soft capability requirements through feature flags
 
 #### Interface Versioning
 - Contract version: Remains "v1" for all existing compatibility
-- Feature version: Capabilities field can specify versions like `{"structured_crud": "1.1"}`  
+- Feature version: Capabilities field can specify versions like `{"structured_crud": "1.1"}`
 - Soft compatibility: New features should be detectable before invocation
 
 #### Error Classification
@@ -69,7 +69,7 @@ Distinguish between capability errors and operational errors:
 - Add capability checking functions
 - Maintain all existing interfaces
 
-#### Phase 2: Test Coverage  
+#### Phase 2: Test Coverage
 - Verify existing interfaces continue working
 - Validate new interface contracts
 - Test capability mismatch scenarios
