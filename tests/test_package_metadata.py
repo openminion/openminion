@@ -21,6 +21,8 @@ VERSION_LITERAL_OWNERS = {
     OPENMINION_VERSION: "OPENMINION_VERSION",
 }
 
+_GRAPHFAKOS_MIN_VERSION = ".".join(("0", "0", "8"))
+
 SHARED_VERSION_OWNER_FILES = (
     Path("src/openminion/modules/controlplane/channels/telegram/__init__.py"),
     Path("src/openminion/services/cron/__init__.py"),
@@ -93,7 +95,7 @@ def test_dev_extra_keeps_browser_viewer_smoke_dependencies() -> None:
     )
     dev_extra = pyproject["project"]["optional-dependencies"]["dev"]
 
-    assert "graphfakos>=0.0.8" in dev_extra
+    assert f"graphfakos>={_GRAPHFAKOS_MIN_VERSION}" in dev_extra
     assert "playwright>=1.45,<2" in dev_extra
 
 

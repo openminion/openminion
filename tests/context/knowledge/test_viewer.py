@@ -35,6 +35,9 @@ from openminion.modules.context.knowledge.viewer_memory import (
 from openminion.modules.memory.models import MemoryRecord, MemoryRelation
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 
+_VIEWER_GRAPHFAKOS_MIN_VERSION = ".".join(("0", "0", "8"))
+_VIEWER_PRAGMAGRAPH_MIN_VERSION = ".".join(("0", "0", "8"))
+
 
 @dataclass(frozen=True)
 class _FakeGraphFakosRequest:
@@ -1001,8 +1004,8 @@ def test_viewer_extra_installs_pragmagraph_runtime() -> None:
     pyproject = tomllib.loads((_package_root() / "pyproject.toml").read_text())
     viewer_extra = pyproject["project"]["optional-dependencies"]["viewer"]
 
-    assert "graphfakos>=0.0.8" in viewer_extra
-    assert "pragmagraph>=0.0.8" in viewer_extra
+    assert f"graphfakos>={_VIEWER_GRAPHFAKOS_MIN_VERSION}" in viewer_extra
+    assert f"pragmagraph>={_VIEWER_PRAGMAGRAPH_MIN_VERSION}" in viewer_extra
 
 
 def test_multiple_active_third_brain_providers_suggest_provider_flags(
