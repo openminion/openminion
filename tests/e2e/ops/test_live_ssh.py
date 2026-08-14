@@ -39,6 +39,7 @@ def test_live_ssh_readonly_smoke(tmp_path: Path) -> None:
         target_id="live-ssh",
         kind="ssh",
         address=required["OPENMINION_OPS_SSH_HOST"],
+        port=int(os.getenv("OPENMINION_OPS_SSH_PORT", "22")),
         username=required["OPENMINION_OPS_SSH_USER"],
         credential_ref=CredentialRef(
             credential_id="live-ssh",
