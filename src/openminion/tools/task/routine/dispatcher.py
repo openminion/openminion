@@ -1,6 +1,7 @@
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -45,29 +46,14 @@ _TRAILER_RE = re.compile(
 )
 
 
+@dataclass(slots=True, kw_only=True)
 class TrailerParseResult:
-    __slots__ = ("outcome", "reason_code", "detail")
-
-    def __init__(
-        self,
-        *,
-        outcome: ReviewOutcomePayloadV1 | None,
-        reason_code: str | None = None,
-        detail: str = "",
-    ) -> None:
-        self.outcome = outcome
-        self.reason_code = reason_code
-        self.detail = detail
+    outcome: ReviewOutcomePayloadV1 | None
+    reason_code: str | None = None
+    detail: str = ""
 
 
 def parse_routine_outcome_trailer(text: str) -> TrailerParseResult:
-    """Parse the ``<routine_outcome>...</routine_outcome>`` trailer."""
-    if not isinstance(text, str):
-        return TrailerParseResult(
-            outcome=None,
-            reason_code="trailer_missing",
-            detail="model returned non-string content",
-        )
     match = _TRAILER_RE.search(text)
     if match is None:
         return TrailerParseResult(
@@ -78,7 +64,7 @@ def parse_routine_outcome_trailer(text: str) -> TrailerParseResult:
     body = match.group("body").strip()
     try:
         parsed = json.loads(body)
-    except (ValueError, json.JSONDecodeError) as exc:
+    except ValueError as exc:
         return TrailerParseResult(
             outcome=None,
             reason_code="trailer_malformed_json",
@@ -117,41 +103,17 @@ class RoutineHandler(Protocol):
     ) -> "PostTurnResult": ...
 
 
+@dataclass(slots=True, kw_only=True)
 class PostTurnResult:
-    __slots__ = (
-        "ok",
-        "reason_code",
-        "detail",
-        "artifact_id",
-        "summary_line",
-        "kept_count",
-        "dropped_count",
-        "new_findings_count",
-        "updated_routine",
-    )
-
-    def __init__(
-        self,
-        *,
-        ok: bool,
-        reason_code: str | None = None,
-        detail: str = "",
-        artifact_id: str | None = None,
-        summary_line: str = "",
-        kept_count: int = 0,
-        dropped_count: int = 0,
-        new_findings_count: int = 0,
-        updated_routine: RoutinePayloadV1 | None = None,
-    ) -> None:
-        self.ok = ok
-        self.reason_code = reason_code
-        self.detail = detail
-        self.artifact_id = artifact_id
-        self.summary_line = summary_line
-        self.kept_count = kept_count
-        self.dropped_count = dropped_count
-        self.new_findings_count = new_findings_count
-        self.updated_routine = updated_routine
+    ok: bool
+    reason_code: str | None = None
+    detail: str = ""
+    artifact_id: str | None = None
+    summary_line: str = ""
+    kept_count: int = 0
+    dropped_count: int = 0
+    new_findings_count: int = 0
+    updated_routine: RoutinePayloadV1 | None = None
 
 
 class GitHubPrReviewHandler:
@@ -173,8 +135,7 @@ class GitHubPrReviewHandler:
                 "state": cfg.state_filter,
             },
         )
-        if not isinstance(result, Mapping) or not result.get("ok", False):
-            # Best-effort: hand the model an empty list rather than raising,
+        if not result.get("ok", False):
             return build_pr_facts_payload(
                 routine_id=routine_id,
                 repo=f"{cfg.owner}/{cfg.repo}",
@@ -188,7 +149,7 @@ class GitHubPrReviewHandler:
         return build_pr_facts_payload(
             routine_id=routine_id,
             repo=f"{cfg.owner}/{cfg.repo}",
-            open_prs_raw=list(raw_list),
+            open_prs_raw=raw_list,
             cursor=routine.cursor,
         )
 
@@ -207,11 +168,11 @@ class GitHubPrReviewHandler:
 
         kept, dropped = validate_review_outcome(parse.outcome, facts=facts)
         if not kept and not dropped and not parse.outcome.skipped_prs:
-            return _post_turn_noop_success(routine, facts=facts)
+            return _post_turn_empty_success(routine, facts=facts)
 
         deduped, fresh_hashes, fresh_count = _dedupe_review_entries(routine, kept)
         if not deduped and not parse.outcome.skipped_prs:
-            return _post_turn_duplicate_success(
+            return _post_turn_empty_success(
                 routine, facts=facts, dropped_count=len(dropped)
             )
 
@@ -253,27 +214,11 @@ def _post_turn_parse_failure(
     )
 
 
-def _post_turn_noop_success(
-    routine: RoutinePayloadV1, *, facts: PrFactsPayloadV1
-) -> PostTurnResult:
-    return PostTurnResult(
-        ok=True,
-        summary_line="",
-        kept_count=0,
-        dropped_count=0,
-        new_findings_count=0,
-        updated_routine=_advance_cursor(
-            routine,
-            checked_at=facts.checked_at,
-            facts=facts,
-            kept=[],
-            new_finding_hashes_per_pr={},
-        ),
-    )
-
-
-def _post_turn_duplicate_success(
-    routine: RoutinePayloadV1, *, facts: PrFactsPayloadV1, dropped_count: int
+def _post_turn_empty_success(
+    routine: RoutinePayloadV1,
+    *,
+    facts: PrFactsPayloadV1,
+    dropped_count: int = 0,
 ) -> PostTurnResult:
     return PostTurnResult(
         ok=True,
@@ -392,7 +337,7 @@ def _advance_cursor(
         last_review_per_pr=last_review_per_pr,
         seen_pr_numbers=seen,
         delivered_findings_hashes=delivered,
-        consecutive_failures=0,  # success resets the counter
+        consecutive_failures=0,
     )
     return routine.model_copy(update={"cursor": cursor})
 

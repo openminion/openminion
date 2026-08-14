@@ -14,6 +14,7 @@ from ...constants import (
 from ...errors import LLMCtlError
 from ...interfaces import LLM_RESPONSE_INTERFACE_VERSION
 from ...schemas import LLMRequest, LLMResponse, LLMStreamEvent, Message, ResponseError
+from ..transport.client import ProviderHTTPClient, http_client_for_config
 from ..transport.sse import iter_sse_post_lines
 from ..contract import PROVIDER_INTERFACE_VERSION
 from ..message_payloads import (
@@ -91,6 +92,12 @@ class OpenAIProvider:
     contract_version = LLM_RESPONSE_INTERFACE_VERSION
     provider_interface_version = PROVIDER_INTERFACE_VERSION
     default_base_url = "https://api.openai.com/v1"
+
+    def __init__(self) -> None:
+        self._http_client = ProviderHTTPClient()
+
+    def close(self) -> None:
+        self._http_client.close()
 
     def _resolve_behavior_profile(
         self,
@@ -204,6 +211,7 @@ class OpenAIProvider:
             "provider_name": self.name,
             "trace_metadata": request.metadata,
             "env": config.get("__env__"),
+            "http_client": http_client_for_config(self._http_client, config),
         }
         while True:
             try:
@@ -457,6 +465,7 @@ class OpenAIProvider:
                 timeout_seconds=timeout_seconds,
                 provider_name=self.name,
                 trace_metadata=request.metadata,
+                http_client=http_client_for_config(self._http_client, config),
             ):
                 if line.startswith("event:"):
                     stream_event_type = line[len("event:") :].strip() or "message"

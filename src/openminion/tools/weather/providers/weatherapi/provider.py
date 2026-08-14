@@ -35,12 +35,8 @@ def _current_url(base_url: str) -> str:
 def _resolve_q(query_args: Mapping[str, Any]) -> str:
     for key in ("location", "city", "query", "place"):
         raw_value = query_args.get(key)
-        if raw_value is None:
-            continue
-        value = str(raw_value).strip()
-        if value.lower() in _MISSING_LOCATION_TOKENS:
-            continue
-        if value:
+        value = "" if raw_value is None else str(raw_value).strip()
+        if value and value.lower() not in _MISSING_LOCATION_TOKENS:
             return value
     lat = query_args.get("latitude")
     lon = query_args.get("longitude")
@@ -125,36 +121,21 @@ def _normalize_response(payload: dict[str, Any], *, q: str) -> dict[str, Any]:
     localtime = str(location_raw.get("localtime_epoch", "") or "").strip()
     last_updated = str(current_raw.get("last_updated", "") or "").strip()
 
-    temp_c = current_raw.get("temp_c")
-    humidity = current_raw.get("humidity")
-    wind_kph = current_raw.get("wind_kph")
-    feelslike_c = current_raw.get("feelslike_c")
-    precip_mm = current_raw.get("precip_mm")
-    cloud = current_raw.get("cloud")
-    vis_km = current_raw.get("vis_km")
-    uv = current_raw.get("uv")
     condition_text = str(condition_raw.get("text", "") or "").strip()
-    condition_code = condition_raw.get("code")
-
-    metrics: dict[str, Any] = {}
-    if temp_c is not None:
-        metrics["temperature_c"] = float(temp_c)
-    if humidity is not None:
-        metrics["humidity_pct"] = float(humidity)
-    if wind_kph is not None:
-        metrics["wind_speed_kmh"] = float(wind_kph)
-    if feelslike_c is not None:
-        metrics["feels_like_c"] = float(feelslike_c)
-    if precip_mm is not None:
-        metrics["precipitation_mm"] = float(precip_mm)
-    if cloud is not None:
-        metrics["cloud_pct"] = float(cloud)
-    if vis_km is not None:
-        metrics["visibility_km"] = float(vis_km)
-    if uv is not None:
-        metrics["uv_index"] = float(uv)
-    if condition_code is not None:
-        metrics["weather_code"] = float(condition_code)
+    metric_values = {
+        "temperature_c": current_raw.get("temp_c"),
+        "humidity_pct": current_raw.get("humidity"),
+        "wind_speed_kmh": current_raw.get("wind_kph"),
+        "feels_like_c": current_raw.get("feelslike_c"),
+        "precipitation_mm": current_raw.get("precip_mm"),
+        "cloud_pct": current_raw.get("cloud"),
+        "visibility_km": current_raw.get("vis_km"),
+        "uv_index": current_raw.get("uv"),
+        "weather_code": condition_raw.get("code"),
+    }
+    metrics = {
+        name: float(value) for name, value in metric_values.items() if value is not None
+    }
 
     location: dict[str, Any] = {
         "query": q,
@@ -178,9 +159,9 @@ def _normalize_response(payload: dict[str, Any], *, q: str) -> dict[str, Any]:
         "verified": bool(
             resolved_name
             and last_updated
-            and temp_c is not None
-            and humidity is not None
-            and wind_kph is not None
+            and metric_values["temperature_c"] is not None
+            and metric_values["humidity_pct"] is not None
+            and metric_values["wind_speed_kmh"] is not None
         ),
         "warnings": [],
     }
@@ -194,14 +175,11 @@ class WeatherApiProvider:
         self.config = config or WeatherApiProviderConfig()
 
     def _api_key(self, ctx: Any | None = None) -> str:
-        if self.config.api_key and self.config.api_key.strip():
-            return self.config.api_key.strip()
-        return resolve_weatherapi_api_key(ctx=ctx)
+        return self.config.api_key.strip() or resolve_weatherapi_api_key(ctx=ctx)
 
     def _api_url(self, ctx: Any | None = None) -> str:
-        if self.config.api_url and self.config.api_url.strip():
-            return _current_url(self.config.api_url)
-        return _current_url(resolve_weatherapi_api_url(ctx=ctx))
+        configured_url = self.config.api_url.strip()
+        return _current_url(configured_url or resolve_weatherapi_api_url(ctx=ctx))
 
     def _timeout_s(self, ctx: Any | None = None) -> float:
         if self.config.timeout_s > 0:
@@ -269,6 +247,4 @@ class WeatherApiProvider:
             ) from exc
 
 
-__all__ = [
-    "WeatherApiProvider",
-]
+__all__ = ["WeatherApiProvider"]

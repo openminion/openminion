@@ -21,13 +21,6 @@ from openminion.modules.tool.contracts.runtime_ids import (
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
 
-def _require_authored_tools_api(ctx: Any) -> Any:
-    service = getattr(ctx, "authored_tools_api", None)
-    if service is None:
-        return None
-    return service
-
-
 def _service_unavailable() -> dict[str, Any]:
     return {
         "ok": False,
@@ -39,7 +32,7 @@ def _service_unavailable() -> dict[str, Any]:
 
 
 def _h_tool_author(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    service = _require_authored_tools_api(ctx)
+    service = getattr(ctx, "authored_tools_api", None)
     if service is None:
         return _service_unavailable()
     return service.author_draft(
@@ -50,7 +43,7 @@ def _h_tool_author(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 def _h_tool_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    service = _require_authored_tools_api(ctx)
+    service = getattr(ctx, "authored_tools_api", None)
     if service is None:
         return _service_unavailable()
     return service.inspect_draft(
@@ -61,7 +54,7 @@ def _h_tool_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 def _h_tool_register(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    service = _require_authored_tools_api(ctx)
+    service = getattr(ctx, "authored_tools_api", None)
     if service is None:
         return _service_unavailable()
     return service.register_draft(
@@ -72,7 +65,7 @@ def _h_tool_register(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 def _h_tool_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    service = _require_authored_tools_api(ctx)
+    service = getattr(ctx, "authored_tools_api", None)
     if service is None:
         return _service_unavailable()
     detail = service.get_authored_tool_detail(str(args["tool_name"]))

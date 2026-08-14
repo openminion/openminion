@@ -1,7 +1,4 @@
-from openminion.modules.tool import (
-    PLUGIN_CONTRACT_VERSION,
-    ContractValidator,
-)
+from openminion.modules.tool import PLUGIN_CONTRACT_VERSION, ContractValidator
 
 
 TOOL_CATALOG_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION

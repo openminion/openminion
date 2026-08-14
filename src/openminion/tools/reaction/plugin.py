@@ -1,5 +1,3 @@
-"""Reaction tool plugin."""
-
 import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, Dict
@@ -71,7 +69,6 @@ def _emit_event(
             type(exc).__name__,
             exc,
         )
-        return
 
 
 def _truncate(value: Any, *, max_chars: int = 200) -> str:
@@ -151,35 +148,22 @@ def _normalize_message_candidate(candidate: Any) -> Dict[str, Any] | None:
     )
     account_id = _first_non_empty(payload, ("account_id", "accountId", "account"))
 
-    meta = payload.get("meta")
-    if isinstance(meta, Mapping):
+    for nested_key in ("meta", "metadata"):
+        nested = payload.get(nested_key)
+        if not isinstance(nested, Mapping):
+            continue
         if not conversation_id:
             conversation_id = _first_non_empty(
-                meta, ("conversation_id", "chat_id", "chat_key", "target")
+                nested, ("conversation_id", "chat_id", "chat_key", "target")
             )
         if not message_id:
             message_id = _first_non_empty(
-                meta, ("message_id", "source_message_id", "id")
+                nested, ("message_id", "source_message_id", "id")
             )
         if not account_id:
-            account_id = _first_non_empty(meta, ("account_id", "account"))
+            account_id = _first_non_empty(nested, ("account_id", "account"))
         if not channel:
-            channel = _first_non_empty(meta, ("channel", "provider"))
-
-    metadata = payload.get("metadata")
-    if isinstance(metadata, Mapping):
-        if not conversation_id:
-            conversation_id = _first_non_empty(
-                metadata, ("conversation_id", "chat_id", "chat_key", "target")
-            )
-        if not message_id:
-            message_id = _first_non_empty(
-                metadata, ("message_id", "source_message_id", "id")
-            )
-        if not account_id:
-            account_id = _first_non_empty(metadata, ("account_id", "account"))
-        if not channel:
-            channel = _first_non_empty(metadata, ("channel", "provider"))
+            channel = _first_non_empty(nested, ("channel", "provider"))
 
     if not channel or not conversation_id or not message_id:
         return None
@@ -194,27 +178,25 @@ def _normalize_message_candidate(candidate: Any) -> Dict[str, Any] | None:
 
 
 def _resolve_runtime_message_ref(ctx: RuntimeContext) -> Dict[str, Any] | None:
-    candidates: list[Any] = []
-
-    for attr in (
-        "message_ref",
-        "message_context",
-        "inbound_message_ref",
-        "inbound_message",
-        "message",
-    ):
-        if hasattr(ctx, attr):
-            candidates.append(getattr(ctx, attr))
-
     root = _policy_root(ctx)
-    for key in ("message_ref", "message", "runtime_message_ref"):
-        if key in root:
-            candidates.append(root.get(key))
-
     reactions_cfg = _tool_config(ctx)
-    for key in ("runtime_message_ref", "message_ref", "message"):
-        if key in reactions_cfg:
-            candidates.append(reactions_cfg.get(key))
+    candidates = [
+        getattr(ctx, attr, None)
+        for attr in (
+            "message_ref",
+            "message_context",
+            "inbound_message_ref",
+            "inbound_message",
+            "message",
+        )
+    ]
+    candidates.extend(
+        root.get(key) for key in ("message_ref", "message", "runtime_message_ref")
+    )
+    candidates.extend(
+        reactions_cfg.get(key)
+        for key in ("runtime_message_ref", "message_ref", "message")
+    )
 
     for candidate in candidates:
         normalized = _normalize_message_candidate(candidate)
@@ -259,9 +241,7 @@ def _reaction_write_enabled(ctx: RuntimeContext, channel: str) -> bool:
         enabled = global_flag
 
     root_channels = _policy_root(ctx).get("channels", {})
-    root_channel_cfg = _lookup_channel_config(
-        root_channels if isinstance(root_channels, Mapping) else {}, channel
-    )
+    root_channel_cfg = _lookup_channel_config(root_channels, channel)
     root_channel_flag = _nested_bool(
         root_channel_cfg, ("actions", "reactions", "enabled")
     )
@@ -269,10 +249,7 @@ def _reaction_write_enabled(ctx: RuntimeContext, channel: str) -> bool:
         enabled = root_channel_flag
 
     plugin_channels = reactions_cfg.get("channels", {})
-    plugin_channel_cfg = _lookup_channel_config(
-        plugin_channels if isinstance(plugin_channels, Mapping) else {},
-        channel,
-    )
+    plugin_channel_cfg = _lookup_channel_config(plugin_channels, channel)
     plugin_channel_flag = _nested_bool(
         plugin_channel_cfg, ("actions", "reactions", "enabled")
     )
@@ -285,19 +262,13 @@ def _reaction_write_enabled(ctx: RuntimeContext, channel: str) -> bool:
 def _signal_reaction_notifications_enabled(ctx: RuntimeContext) -> bool:
     reactions_cfg = _tool_config(ctx)
     plugin_channels = reactions_cfg.get("channels", {})
-    signal_cfg = _lookup_channel_config(
-        plugin_channels if isinstance(plugin_channels, Mapping) else {},
-        REACTION_CHANNEL_SIGNAL,
-    )
+    signal_cfg = _lookup_channel_config(plugin_channels, REACTION_CHANNEL_SIGNAL)
     flag = _nested_bool(signal_cfg, ("reactionNotifications",))
     if flag is not None:
         return flag
 
     root_channels = _policy_root(ctx).get("channels", {})
-    root_signal_cfg = _lookup_channel_config(
-        root_channels if isinstance(root_channels, Mapping) else {},
-        REACTION_CHANNEL_SIGNAL,
-    )
+    root_signal_cfg = _lookup_channel_config(root_channels, REACTION_CHANNEL_SIGNAL)
     root_flag = _nested_bool(root_signal_cfg, ("reactionNotifications",))
     return bool(root_flag)
 

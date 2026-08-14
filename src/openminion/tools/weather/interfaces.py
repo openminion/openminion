@@ -25,8 +25,4 @@ class WeatherResult(TypedDict, total=False):
     error: WeatherError
 
 
-__all__ = [
-    "WEATHER_PLUGIN_INTERFACE_VERSION",
-    "WeatherError",
-    "WeatherResult",
-]
+__all__ = ["WEATHER_PLUGIN_INTERFACE_VERSION", "WeatherError", "WeatherResult"]

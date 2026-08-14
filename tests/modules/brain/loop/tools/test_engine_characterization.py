@@ -3290,6 +3290,18 @@ def test_tool_choice_none_retries_when_model_still_emits_tool_calls() -> None:
                 provider="fake",
                 model="m",
                 output_text="",
+                assistant_messages=[
+                    Message(
+                        role="assistant",
+                        tool_calls=[
+                            ToolCall(
+                                id="call-1",
+                                name="file.write",
+                                arguments={"path": "a.py"},
+                            )
+                        ],
+                    )
+                ],
                 tool_calls=[
                     ToolCall(id="call-1", name="file.write", arguments={"path": "a.py"})
                 ],
@@ -3382,6 +3394,10 @@ def test_tool_choice_none_retry_preserves_answer_only_output_constraints() -> No
     ]
     assert any("result markers" in message for message in retry_system_messages)
     assert any("Do not call tools" in message for message in retry_system_messages)
+    assert not any(
+        any(call.id == "call-1" for call in message.tool_calls)
+        for message in runtime.calls[1]["messages"]
+    )
 
 
 def test_tool_choice_none_second_retry_degrades_answer_only_closeout_to_budget_exhausted() -> (

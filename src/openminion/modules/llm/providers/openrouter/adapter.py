@@ -28,6 +28,7 @@ from ..message_payloads import (
     _usage_from_openai_like,
 )
 from ..openai.adapter import OpenAIProvider
+from ..transport.client import http_client_for_config
 from ..tool_calling import (
     build_tool_schema_name_map,
     build_openai_tools_payload,
@@ -130,6 +131,7 @@ class OpenRouterProvider(OpenAIProvider):
             provider_name=self.name,
             trace_metadata=request.metadata,
             env=config.get("__env__"),
+            http_client=http_client_for_config(self._http_client, config),
         )
 
         choices = response_payload.get("choices")
@@ -312,6 +314,7 @@ class OpenRouterProvider(OpenAIProvider):
                 timeout_seconds=timeout_seconds,
                 provider_name=self.name,
                 trace_metadata=request.metadata,
+                http_client=http_client_for_config(self._http_client, config),
             ):
                 if not line.startswith("data:"):
                     continue
@@ -374,6 +377,7 @@ class OpenRouterProvider(OpenAIProvider):
                 timeout_seconds=_resolve_timeout_seconds(config),
                 provider_name=self.name,
                 env=config.get("__env__"),
+                http_client=http_client_for_config(self._http_client, config),
             )
             data = payload.get("data")
             if isinstance(data, list):

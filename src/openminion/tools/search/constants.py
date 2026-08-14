@@ -26,7 +26,6 @@ SEARCH_TINYFISH_PROVIDER_ALIASES: frozenset[str] = frozenset(
     {"search.tinyfish.search", "tinyfish.web.search", "tinyfish"}
 )
 
-# PFRH §5.2: typed reason codes for deterministic search-provider faults.
 SEARCH_FAULT_NETWORK_TIMEOUT = "SEARCH_FAULT_NETWORK_TIMEOUT"
 SEARCH_FAULT_HTTP_5XX = "SEARCH_FAULT_HTTP_5XX"
 SEARCH_FAULT_RATE_LIMITED = "SEARCH_FAULT_RATE_LIMITED"

@@ -29,9 +29,8 @@ def get_serper_api_url(
     *,
     env: ToolEnv | Mapping[str, object] | None = None,
 ) -> str:
-    return str(
-        resolve_tool_env(env=env).get(SERPER_API_URL_ENV, DEFAULT_SERPER_API_URL) or ""
-    ).strip()
+    value = resolve_tool_env(env=env).get(SERPER_API_URL_ENV, DEFAULT_SERPER_API_URL)
+    return str(value or "").strip()
 
 
 def get_serper_timeout_seconds(

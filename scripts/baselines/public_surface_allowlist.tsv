@@ -187,8 +187,6 @@ tools/memory/plugin.py	openminion.modules.tool.runtime
 tools/reaction/plugin.py	openminion.modules.tool.runtime
 tools/search/plugin.py	openminion.modules.tool.runtime
 tools/search/plugin.py	openminion.modules.tool.runtime.routing
-tools/search/providers/brave/__init__.py	openminion.modules.tool.runtime.registrar
-tools/search/providers/tavily/__init__.py	openminion.modules.tool.runtime.registrar
 tools/task/plugin.py	openminion.modules.brain.runtime.goal.policy
 tools/task/plugin.py	openminion.modules.tool.runtime
 tools/task/plugin.py	openminion.modules.tool.runtime.context

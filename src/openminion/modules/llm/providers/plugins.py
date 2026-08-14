@@ -52,6 +52,12 @@ class ProviderRegistry:
     def list(self) -> dict[str, Provider]:
         return dict(self._providers)
 
+    def close(self) -> None:
+        for provider in self._providers.values():
+            close = getattr(provider, "close", None)
+            if callable(close):
+                close()
+
 
 def _provider_entry_points() -> list[EntryPoint]:
     try:

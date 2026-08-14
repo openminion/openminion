@@ -39,7 +39,6 @@ class WeatherRegistrar:
                         "to use the current approximate location."
                     ),
                     parameters={},
-                    aliases=(),
                 ),
             ),
             runtime_bindings=(

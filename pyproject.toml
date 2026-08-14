@@ -27,6 +27,7 @@ dependencies = [
   "alembic==1.18.4",
   "aiosqlite>=0.19.0",
   "cryptography>=41.0.0",
+  "httpx>=0.27,<1",
   "platformdirs",
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.

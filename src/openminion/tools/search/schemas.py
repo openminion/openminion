@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -8,28 +8,28 @@ from .constants import SEARCH_PROVIDER_AUTO
 class SearchArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    query: Optional[str] = Field(default=None, description="Search query text")
-    q: Optional[str] = Field(default=None, description="Alias for query")
+    query: str | None = Field(default=None, description="Search query text")
+    q: str | None = Field(default=None, description="Alias for query")
     provider: str = Field(
         default=SEARCH_PROVIDER_AUTO,
         description="Provider selection: auto, tavily, brave, serpapi, firecrawl, serper, tinyfish",
     )
     max_results: int = Field(default=5, ge=1, le=20)
-    count: Optional[int] = Field(
+    count: int | None = Field(
         default=None,
         ge=1,
         le=20,
         description="Alias for max_results",
     )
-    search_depth: Optional[str] = Field(default=None)
-    include_answer: Optional[bool] = Field(default=None)
-    extra_snippets: Optional[bool] = Field(default=None)
-    country: Optional[str] = Field(default=None)
-    search_lang: Optional[str] = Field(default=None)
-    ui_lang: Optional[str] = Field(default=None)
-    safesearch: Optional[str] = Field(default=None)
-    offset: Optional[int] = Field(default=None, ge=0, le=9)
-    api_key: Optional[str] = Field(default=None)
+    search_depth: str | None = Field(default=None)
+    include_answer: bool | None = Field(default=None)
+    extra_snippets: bool | None = Field(default=None)
+    country: str | None = Field(default=None)
+    search_lang: str | None = Field(default=None)
+    ui_lang: str | None = Field(default=None)
+    safesearch: str | None = Field(default=None)
+    offset: int | None = Field(default=None, ge=0, le=9)
+    api_key: str | None = Field(default=None)
 
     @field_validator(
         "query",
@@ -44,24 +44,20 @@ class SearchArgs(BaseModel):
         mode="before",
     )
     @classmethod
-    def _normalize_optional_string(cls, value: Any) -> Optional[str] | str:
+    def _normalize_optional_string(cls, value: Any) -> str | None:
         if value is None:
             return None
-        normalized = str(value).strip()
-        return normalized
+        return str(value).strip()
 
     @model_validator(mode="after")
     def _normalize_aliases(self) -> "SearchArgs":
         if not self.query and self.q:
             self.query = self.q
         if self.count is not None:
-            self.max_results = int(self.count)
+            self.max_results = self.count
         if not self.query:
             raise ValueError("query is required")
-        self.provider = (
-            str(self.provider or SEARCH_PROVIDER_AUTO).strip().lower()
-            or SEARCH_PROVIDER_AUTO
-        )
+        self.provider = self.provider.lower() or SEARCH_PROVIDER_AUTO
         return self
 
 
@@ -81,4 +77,4 @@ class SearchResult(BaseModel):
     query: dict[str, Any]
     results: list[SearchResultItem] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    answer: Optional[str] = None
+    answer: str | None = None

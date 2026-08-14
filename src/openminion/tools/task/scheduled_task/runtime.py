@@ -1,5 +1,3 @@
-"""Scheduled-task runtime helpers."""
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -37,17 +35,14 @@ def _truthy_flag(value: Any) -> bool:
 
 
 def _context_metadata(ctx: RuntimeContext) -> Mapping[str, Any]:
-    raw = getattr(getattr(ctx, "policy", None), "raw", {}) or {}
-    if not isinstance(raw, Mapping):
-        return {}
-    metadata = raw.get("context_metadata")
+    metadata = ctx.policy.raw.get("context_metadata")
     if not isinstance(metadata, Mapping):
         return {}
     return metadata
 
 
 def _background_write_authorization_allowed(ctx: RuntimeContext) -> bool:
-    if bool(getattr(ctx, "confirm", False)):
+    if ctx.confirm:
         return True
     return _truthy_flag(
         _context_metadata(ctx).get("allow_background_write_authorization")
@@ -72,7 +67,7 @@ def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
 
 
 def _watch_delivery_payload(mode: str, origin: Mapping[str, str]) -> dict[str, Any]:
-    normalized_mode = str(mode or "announce").strip().lower() or "announce"
+    normalized_mode = (mode or "announce").strip().lower() or "announce"
     if normalized_mode == "announce":
         return {
             "mode": "announce",
@@ -85,13 +80,19 @@ def _watch_delivery_payload(mode: str, origin: Mapping[str, str]) -> dict[str, A
     return {"mode": "none"}
 
 
-def _watch_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _nested_payload(
+    payload: Mapping[str, Any] | None, key: str
+) -> dict[str, Any] | None:
     if not isinstance(payload, Mapping):
         return None
-    raw = payload.get(WATCH_PAYLOAD_KEY)
+    raw = payload.get(key)
     if not isinstance(raw, Mapping):
         return None
     return dict(raw)
+
+
+def _watch_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    return _nested_payload(payload, WATCH_PAYLOAD_KEY)
 
 
 def _watch_metadata_from_payload(
@@ -128,19 +129,10 @@ def _watch_metadata_from_payload(
     }
 
 
-def _consolidation_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(payload, Mapping):
-        return None
-    raw = payload.get(CONSOLIDATION_PAYLOAD_KEY)
-    if not isinstance(raw, Mapping):
-        return None
-    return dict(raw)
-
-
 def _consolidation_metadata_from_payload(
     payload: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
-    consolidation = _consolidation_payload(payload)
+    consolidation = _nested_payload(payload, CONSOLIDATION_PAYLOAD_KEY)
     if consolidation is None:
         return None
     return {
@@ -189,7 +181,7 @@ def _find_existing_scheduled_task(
             continue
         if _safe_str(job, "session_target") != session_target:
             continue
-        if bool(job.get("delete_after_run", False)) != bool(delete_after_run):
+        if bool(job.get("delete_after_run", False)) != delete_after_run:
             continue
         try:
             job_schedule = normalize_schedule(job.get("schedule") or {})

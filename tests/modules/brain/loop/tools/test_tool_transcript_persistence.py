@@ -134,7 +134,7 @@ def test_runtime_emitter_closes_rejected_batch_as_blocked(tmp_path: Path) -> Non
             turn_scope_id="turn-2",
             tool_calls=calls,
         )
-        persist_blocked_tool_calls(
+        results = persist_blocked_tool_calls(
             loop_ctx,
             loop_state=loop_state,
             turn_scope_id="turn-2",
@@ -142,6 +142,8 @@ def test_runtime_emitter_closes_rejected_batch_as_blocked(tmp_path: Path) -> Non
             code="MIXED_DECOMPOSE_TOOL_CALLS",
             message="mixed control and executable calls",
         )
+
+        assert [result.status for result in results] == ["blocked", "blocked"]
 
         events = store.get_tool_transcript(session_id)["events"]
         assert [event["event_type"] for event in events] == [

@@ -12,7 +12,4 @@ class TimeInstant(TypedDict, total=False):
     offset_seconds: int
 
 
-__all__ = [
-    "TIME_PLUGIN_INTERFACE_VERSION",
-    "TimeInstant",
-]
+__all__ = ["TIME_PLUGIN_INTERFACE_VERSION", "TimeInstant"]

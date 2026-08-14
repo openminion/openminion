@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
+from threading import RLock
+
 from openminion.api.core.lifecycle import (
     close_runtime_components,
     initialize_runtime_components,
 )
+from openminion.api.core.profiles import RuntimeProfilesMixin
 
 
 class _ExposureService:
@@ -39,6 +44,14 @@ class _Runtime:
         self.channel_supervisor = _ChannelSupervisor()
 
 
+class _AgentService:
+    def __init__(self) -> None:
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
 def test_runtime_lifecycle_starts_and_stops_channel_supervisor() -> None:
     runtime = _Runtime()
 
@@ -63,3 +76,39 @@ def test_runtime_lifecycle_starts_and_stops_channel_supervisor() -> None:
     )
 
     assert runtime.channel_supervisor.stopped == 1
+
+
+def test_runtime_lifecycle_closes_agent_services() -> None:
+    service = _AgentService()
+
+    close_runtime_components(
+        retrieve_ctl=None,
+        action_policy=None,
+        runtime_manager=None,
+        lifecycle_bridge=None,
+        tools=None,
+        runtime_storage=None,
+        agent_services={"default": service},
+    )
+
+    assert service.closed == 1
+
+
+def test_agent_runtime_eviction_closes_its_provider_client() -> None:
+    service = _AgentService()
+    runtime = SimpleNamespace(
+        _agent_runtime_lock=RLock(),
+        _gateways={"alpha||default": object()},
+        _agent_services={"alpha||default": service},
+        logger=logging.getLogger("test.runtime"),
+    )
+
+    RuntimeProfilesMixin.evict_agent_runtime(
+        runtime,
+        agent_id="alpha",
+        reason="test",
+    )
+
+    assert service.closed == 1
+    assert runtime._gateways == {}
+    assert runtime._agent_services == {}

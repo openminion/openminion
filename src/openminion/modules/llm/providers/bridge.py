@@ -195,6 +195,9 @@ class LLMCTLBridgeProvider(LLMProvider):
             self, component_name=f"llmctl-bridge:{self.name}"
         )
 
+    def close(self) -> None:
+        self._runtime.close()
+
     def _normalize_request_thinking(self, request: ProviderRequest) -> ProviderRequest:
         metadata = {
             str(key): str(value)

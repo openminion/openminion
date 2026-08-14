@@ -95,6 +95,14 @@ class _InMemorySessionAPI:
         self.append_event(session_id, event_type, payload)
 
 
+class _RuntimeShapedSessionAPI(_InMemorySessionAPI):
+    def list_events(self, session_id: str) -> list[dict[str, Any]]:
+        events = super().list_events(session_id)
+        for event in events:
+            event["type"] = event.pop("event_type")
+        return events
+
+
 class PlanToolContinuationParamTests(unittest.TestCase):
     def test_plan_tool_schema_exposes_continue_plan_autonomously(self) -> None:
         spec = build_plan_tool_spec()
@@ -391,6 +399,20 @@ class AutonomousTurnCapsTests(unittest.TestCase):
         ]
         self.assertEqual([e["payload"]["turn_index"] for e in events], [1, 2, 3])
 
+    def test_counts_runtime_shaped_events(self) -> None:
+        api = _RuntimeShapedSessionAPI()
+        record_autonomous_turn(
+            session_api=api,
+            session_id="s1",
+            agent_id="agent-x",
+            plan_id="p1",
+            trace_id="trace-x",
+        )
+        self.assertEqual(
+            count_autonomous_turns(session_api=api, session_id="s1"),
+            1,
+        )
+
     def test_caps_allow_within_limits(self) -> None:
         api = _InMemorySessionAPI()
         for _ in range(2):
@@ -493,6 +515,20 @@ class PeekContinuationSignalTests(unittest.TestCase):
         self.assertIsNotNone(signal)
         self.assertEqual(signal["plan_id"], "p1")
         self.assertTrue(signal["continue_plan_autonomously"])
+
+    def test_picks_up_runtime_shaped_plan_event(self) -> None:
+        api = _RuntimeShapedSessionAPI()
+        api.seed_plan_event(
+            "s1",
+            event_type="task_plan.declared",
+            plan_id="p1",
+            continue_plan_autonomously=True,
+        )
+        signal = peek_latest_continuation_signal(session_api=api, session_id="s1")
+        self.assertEqual(
+            signal,
+            {"plan_id": "p1", "continue_plan_autonomously": True},
+        )
 
     def test_terminal_event_cancels_dangling_signal(self) -> None:
         api = _InMemorySessionAPI()

@@ -55,6 +55,7 @@ def initialize_runtime_components(
         sandbox_runner=getattr(runtime, "sandbox_runner", None),
         authored_tools=getattr(runtime, "authored_tools", None),
         telemetry_service=getattr(runtime, "telemetry_service", None),
+        llm_runtime=getattr(runtime, "llm_runtime", None),
     )
 
 
@@ -70,8 +71,14 @@ def close_runtime_components(
     sandbox_runner: object | None = None,
     authored_tools: object | None = None,
     telemetry_service: object | None = None,
+    agent_services: object | None = None,
+    llm_runtime: object | None = None,
 ) -> None:
     _call(channel_supervisor, "stop")
+    if isinstance(agent_services, dict):
+        for service in tuple(agent_services.values()):
+            _call(service, "close")
+    _call(llm_runtime, "close")
     _call(retrieve_ctl, "close")
     _call(action_policy, "close")
     _call(runtime_manager, "shutdown", grace_s=2)

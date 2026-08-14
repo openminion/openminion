@@ -176,6 +176,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             sandbox_runner=getattr(self, "sandbox_runner", None),
             authored_tools=getattr(self, "authored_tools", None),
             telemetry_service=getattr(self, "telemetry_service", None),
+            agent_services=getattr(self, "_agent_services", None),
         )
         self._closed = True
 

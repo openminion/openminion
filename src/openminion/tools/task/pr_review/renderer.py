@@ -21,14 +21,15 @@ def render_artifact_markdown(
     checked_at: str,
     outcome: ReviewOutcomePayloadV1,
 ) -> str:
-    lines: list[str] = []
-    lines.append(f"# GitHub PR Review — {repo}")
-    lines.append("")
-    lines.append(f"Routine: {routine_id}")
-    lines.append(f"Checked at: {checked_at}")
-    lines.append(f"Reviewed: {len(outcome.reviewed_prs)}")
-    lines.append(f"Skipped: {len(outcome.skipped_prs)}")
-    lines.append("")
+    lines = [
+        f"# GitHub PR Review — {repo}",
+        "",
+        f"Routine: {routine_id}",
+        f"Checked at: {checked_at}",
+        f"Reviewed: {len(outcome.reviewed_prs)}",
+        f"Skipped: {len(outcome.skipped_prs)}",
+        "",
+    ]
 
     for entry in outcome.reviewed_prs:
         lines.extend(_render_pr_section(entry))
@@ -37,8 +38,7 @@ def render_artifact_markdown(
     if outcome.skipped_prs:
         lines.append("## Skipped")
         for skipped in outcome.skipped_prs:
-            reason = skipped.reason or "(no reason)"
-            lines.append(f"- #{skipped.number}: {reason}")
+            lines.append(f"- #{skipped.number}: {skipped.reason or '(no reason)'}")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -57,11 +57,8 @@ def _render_pr_section(entry: ReviewedPrV1) -> list[str]:
         for finding in entry.findings:
             sev = _SEVERITY_GLYPH.get(finding.severity, finding.severity)
             location = f"{finding.file}:{finding.line}" if finding.file else ""
-            prefix = f"[{sev}]"
-            if location:
-                out.append(f"- {prefix} {location} — {finding.message}")
-            else:
-                out.append(f"- {prefix} {finding.message}")
+            detail = f"{location} — " if location else ""
+            out.append(f"- [{sev}] {detail}{finding.message}")
     return out
 
 
@@ -77,7 +74,7 @@ def render_announce_summary(
         f"{findings_total} finding(s)."
     )
     if len(summary) > PR_REVIEW_ANNOUNCE_MAX_CHARS:
-        summary = summary[: PR_REVIEW_ANNOUNCE_MAX_CHARS - 1] + "…"
+        return summary[: PR_REVIEW_ANNOUNCE_MAX_CHARS - 1] + "…"
     return summary
 
 

@@ -13,7 +13,7 @@ def _coerce_int(
     try:
         parsed = int(raw_value)
     except (TypeError, ValueError):
-        parsed = int(default_value)
+        parsed = default_value
     return max(minimum, min(maximum, parsed))
 
 
@@ -48,8 +48,7 @@ def _normalize_results(raw_results: Any) -> list[dict[str, Any]]:
             continue
         url = str(item.get("url", "")).strip()
         title = str(item.get("title", "")).strip()
-        content = str(item.get("content", "")).strip()
-        snippet = " ".join(content.split())
+        snippet = " ".join(str(item.get("content", "")).split())
         if len(snippet) > 400:
             snippet = snippet[:400].rstrip() + "..."
         record: dict[str, Any] = {
@@ -57,7 +56,7 @@ def _normalize_results(raw_results: Any) -> list[dict[str, Any]]:
             "url": url,
             "snippet": snippet,
         }
-        if isinstance(item.get("score"), (int, float)):
-            record["score"] = float(item.get("score"))
+        if isinstance(score := item.get("score"), (int, float)):
+            record["score"] = float(score)
         normalized.append(record)
     return normalized

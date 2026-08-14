@@ -1,9 +1,8 @@
 """Serper search provider."""
 
 import json
-from dataclasses import dataclass
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -31,12 +30,6 @@ def _error_code_for_status(status: int) -> str:
     return "UPSTREAM_ERROR"
 
 
-@dataclass(frozen=True)
-class _SerperResponse:
-    payload: Mapping[str, Any]
-    http_status: int
-
-
 class SerperSearchProvider:
     provider_id = SERPER_SEARCH_PROVIDER_ID
     display_name = SERPER_SEARCH_DISPLAY_NAME
@@ -48,14 +41,14 @@ class SerperSearchProvider:
         raw_arg = str(args.get("api_key", "") or "").strip()
         if raw_arg:
             return raw_arg
-        if self.config.api_key and self.config.api_key.strip():
-            return self.config.api_key.strip()
+        if config_key := (self.config.api_key or "").strip():
+            return config_key
         env = resolve_tool_context_env(ctx)
         return get_serper_api_key(env=env)
 
     def _api_url(self, *, ctx: Any | None = None) -> str:
-        if self.config.endpoint and self.config.endpoint.strip():
-            return self.config.endpoint.strip()
+        if endpoint := self.config.endpoint.strip():
+            return endpoint
         env = resolve_tool_context_env(ctx)
         return get_serper_api_url(env=env) or DEFAULT_SERPER_API_URL
 
@@ -78,7 +71,7 @@ class SerperSearchProvider:
         max_results: int,
         args: Mapping[str, Any],
     ) -> dict[str, Any]:
-        body: dict[str, Any] = {"q": query, "num": int(max_results)}
+        body: dict[str, Any] = {"q": query, "num": max_results}
         country = str(args.get("country", "") or "").strip().lower()
         if country:
             body["gl"] = country
@@ -95,7 +88,7 @@ class SerperSearchProvider:
         body: Mapping[str, Any],
         api_key: str,
         ctx: Any | None = None,
-    ) -> _SerperResponse:
+    ) -> Mapping[str, Any]:
         request = urllib_request.Request(
             self._api_url(ctx=ctx),
             data=json.dumps(dict(body)).encode("utf-8"),
@@ -117,10 +110,7 @@ class SerperSearchProvider:
                         "Serper returned an unexpected payload shape",
                         code="UPSTREAM_ERROR",
                     )
-                return _SerperResponse(
-                    payload=payload,
-                    http_status=int(getattr(response, "status", 200) or 200),
-                )
+                return payload
         except urllib_error.HTTPError as exc:
             status = int(exc.code)
             body_text = ""
@@ -164,16 +154,13 @@ class SerperSearchProvider:
                 }
             )
 
-        warnings: list[str] = []
         warning = str(payload.get("warning", "") or "").strip()
-        if warning:
-            warnings.append(warning)
 
         return {
             "provider": self.provider_id,
             "query": {"original": query, "more_results_available": False},
             "results": results,
-            "warnings": warnings,
+            "warnings": [warning] if warning else [],
         }
 
     def search(
@@ -184,7 +171,7 @@ class SerperSearchProvider:
         args: Mapping[str, Any],
         ctx: Any,
     ) -> Mapping[str, Any]:
-        query_text = str(query or "").strip()
+        query_text = query.strip()
         if not query_text:
             raise SearchProviderError("query is required", code="INVALID_REQUEST")
 
@@ -195,7 +182,7 @@ class SerperSearchProvider:
                 code="DEPENDENCY_MISSING",
             )
 
-        response = self._request(
+        payload = self._request(
             body=self._build_body(
                 query=query_text,
                 max_results=max_results,
@@ -206,6 +193,6 @@ class SerperSearchProvider:
         )
         return self._normalize_payload(
             query=query_text,
-            payload=response.payload,
+            payload=payload,
             max_results=max_results,
         )

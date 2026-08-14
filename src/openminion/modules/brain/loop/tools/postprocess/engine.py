@@ -109,6 +109,37 @@ class AdaptiveLoopRunnerPostprocessMixin(
     AdaptiveLoopRunnerClosureMixin,
     AdaptiveLoopRunnerNoToolMixin,
 ):
+    def _append_response_messages(self, response: Any) -> None:
+        response_tool_calls = list(getattr(response, "tool_calls", []) or [])
+        fallback_text = str(getattr(response, "output_text", "") or "").strip()
+        assistant_messages = [
+            message
+            for message in list(getattr(response, "assistant_messages", []) or [])
+            if not _looks_like_unexecutable_tool_payload_text(message.content)
+        ]
+        if response_tool_calls and not any(
+            message.tool_calls for message in assistant_messages
+        ):
+            if assistant_messages:
+                assistant_messages[-1] = assistant_messages[-1].model_copy(
+                    update={"tool_calls": response_tool_calls}
+                )
+            else:
+                assistant_messages.append(
+                    Message(
+                        role="assistant",
+                        content=fallback_text,
+                        tool_calls=response_tool_calls,
+                    )
+                )
+        elif (
+            not assistant_messages
+            and fallback_text
+            and not _looks_like_unexecutable_tool_payload_text(fallback_text)
+        ):
+            assistant_messages.append(Message(role="assistant", content=fallback_text))
+        self.loop_state.messages.extend(assistant_messages)
+
     def _retry_pending_duplicate_batch_closeout(self) -> AdaptiveToolLoopOutcome:
         compact_closeout = self._force_compact_answer_only_closeout()
         if compact_closeout is not None:
@@ -446,25 +477,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
             progress_phase="composing answer",
             tool_name="",
         )
-        appended_assistant_messages = 0
-        for assistant_message in list(
-            getattr(response, "assistant_messages", []) or []
-        ):
-            assistant_text = getattr(assistant_message, "content", "")
-            if _looks_like_unexecutable_tool_payload_text(assistant_text):
-                continue
-            self.loop_state.messages.append(assistant_message)
-            appended_assistant_messages += 1
-        if appended_assistant_messages == 0:
-            fallback_output_text = str(
-                getattr(response, "output_text", "") or ""
-            ).strip()
-            if fallback_output_text and not _looks_like_unexecutable_tool_payload_text(
-                fallback_output_text
-            ):
-                self.loop_state.messages.append(
-                    Message(role="assistant", content=fallback_output_text)
-                )
         if not bool(getattr(response, "ok", False)):
             error = getattr(response, "error", None)
             error_message = str(getattr(error, "message", "") or "LLM returned not-ok")

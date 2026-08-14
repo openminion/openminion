@@ -689,6 +689,56 @@ class ToolAdapterTests(unittest.TestCase):
             self.assertEqual(resolved, child)
             self.assertIsNone(adapter._registered_workspace_override(str(child)))
 
+    def test_tool_adapter_rebases_parent_path_into_child_workspace(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.modules.tool.base import ToolExecutionResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "parent"
+            child = Path(tmp) / "child"
+            parent.mkdir()
+            child.mkdir()
+            captured: dict[str, object] = {}
+
+            class _RuntimeTool:
+                name = "file.write"
+
+                def execute(self, arguments, context):
+                    captured.update(arguments)
+                    captured["workspace_root"] = context.metadata["workspace_root"]
+                    return ToolExecutionResult(
+                        tool_name=self.name,
+                        ok=True,
+                        content="ok",
+                        verified=True,
+                    )
+
+            class _Registry:
+                def get(self, name):
+                    if name != "file.write":
+                        raise KeyError(name)
+                    return _RuntimeTool()
+
+            adapter = ToolAdapter(workspace_root=parent)
+            adapter.registry = _Registry()
+            with adapter.workspace_override(child):
+                result = adapter.execute(
+                    command={
+                        "tool_name": "file.write",
+                        "args": {
+                            "path": str(parent / "accepted.txt"),
+                            "content": "accepted",
+                        },
+                        "meta": {"runtime_execution": {"workspace_root": str(child)}},
+                    },
+                    session_id="s1",
+                    trace_id="t1",
+                )
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(captured["path"], str(child / "accepted.txt"))
+            self.assertEqual(captured["workspace_root"], str(child))
+
     def test_tool_adapter_passes_a2a_delegate_seam_to_runtime_context(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.modules.tool.runtime.delegation import A2ADelegateResult

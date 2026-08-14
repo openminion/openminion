@@ -1,9 +1,8 @@
 """SerpAPI search provider."""
 
 import json
-from dataclasses import dataclass
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -43,17 +42,6 @@ def _error_code_for_status(status: int) -> str:
     return "UPSTREAM_ERROR"
 
 
-def _coerce_warning(raw: Any) -> str:
-    warning = str(raw or "").strip()
-    return warning
-
-
-@dataclass(frozen=True)
-class _SerpApiResponse:
-    payload: Mapping[str, Any]
-    http_status: int
-
-
 class SerpApiSearchProvider:
     provider_id = SERPAPI_SEARCH_PROVIDER_ID
     display_name = "SerpApi Search"
@@ -65,14 +53,14 @@ class SerpApiSearchProvider:
         raw_arg = str(args.get("api_key", "") or "").strip()
         if raw_arg:
             return raw_arg
-        if self.config.api_key and self.config.api_key.strip():
-            return self.config.api_key.strip()
+        if config_key := (self.config.api_key or "").strip():
+            return config_key
         env = resolve_tool_context_env(ctx)
         return get_serpapi_api_key(env=env)
 
     def _api_url(self, *, ctx: Any | None = None) -> str:
-        if self.config.endpoint and self.config.endpoint.strip():
-            return self.config.endpoint.strip()
+        if endpoint := self.config.endpoint.strip():
+            return endpoint
         env = resolve_tool_context_env(ctx)
         return get_serpapi_api_url(env=env) or DEFAULT_SERPAPI_API_URL
 
@@ -119,7 +107,7 @@ class SerpApiSearchProvider:
         *,
         params: Mapping[str, str],
         ctx: Any | None = None,
-    ) -> _SerpApiResponse:
+    ) -> Mapping[str, Any]:
         url = f"{self._api_url(ctx=ctx)}?{urllib_parse.urlencode(params)}"
         request = urllib_request.Request(
             url,
@@ -137,10 +125,7 @@ class SerpApiSearchProvider:
                         "SerpApi returned an unexpected payload shape",
                         code="UPSTREAM_ERROR",
                     )
-                return _SerpApiResponse(
-                    payload=payload,
-                    http_status=int(getattr(response, "status", 200) or 200),
-                )
+                return payload
         except urllib_error.HTTPError as exc:
             status = int(exc.code)
             body = ""
@@ -169,12 +154,14 @@ class SerpApiSearchProvider:
     ) -> dict[str, Any]:
         warnings: list[str] = []
 
-        search_metadata = payload.get("search_metadata")
-        metadata_status = ""
-        if isinstance(search_metadata, Mapping):
-            metadata_status = str(search_metadata.get("status", "") or "").strip()
+        metadata = payload.get("search_metadata")
+        metadata_status = (
+            str(metadata.get("status") or "").strip()
+            if isinstance(metadata, Mapping)
+            else ""
+        )
 
-        top_level_error = _coerce_warning(payload.get("error"))
+        top_level_error = str(payload.get("error") or "").strip()
         if top_level_error:
             if metadata_status.lower() == "success" or not metadata_status:
                 warnings.append(top_level_error)
@@ -187,17 +174,18 @@ class SerpApiSearchProvider:
 
         search_information = payload.get("search_information")
         if isinstance(search_information, Mapping):
-            organic_state = _coerce_warning(
-                search_information.get("organic_results_state")
-            )
+            organic_state = str(
+                search_information.get("organic_results_state") or ""
+            ).strip()
             if organic_state:
                 warnings.append(f"organic_results_state={organic_state}")
 
         answer_box = payload.get("answer_box")
         answer = ""
         if isinstance(answer_box, Mapping):
-            answer = _coerce_warning(answer_box.get("answer")) or _coerce_warning(
-                answer_box.get("snippet")
+            answer = (
+                str(answer_box.get("answer") or "").strip()
+                or str(answer_box.get("snippet") or "").strip()
             )
 
         raw_results = payload.get("organic_results")
@@ -220,14 +208,10 @@ class SerpApiSearchProvider:
                 }
             )
 
-        serpapi_pagination = payload.get("serpapi_pagination")
-        more_results_available = False
-        if isinstance(serpapi_pagination, Mapping):
-            more_results_available = bool(
-                serpapi_pagination.get("next")
-                or serpapi_pagination.get("next_link")
-                or serpapi_pagination.get("next_page_token")
-            )
+        pagination = payload.get("serpapi_pagination")
+        more_results_available = isinstance(pagination, Mapping) and any(
+            pagination.get(key) for key in ("next", "next_link", "next_page_token")
+        )
 
         normalized: dict[str, Any] = {
             "provider": self.provider_id,
@@ -250,7 +234,7 @@ class SerpApiSearchProvider:
         args: Mapping[str, Any],
         ctx: Any,
     ) -> Mapping[str, Any]:
-        query_text = str(query or "").strip()
+        query_text = query.strip()
         if not query_text:
             raise SearchProviderError("query is required", code="INVALID_REQUEST")
 
@@ -261,14 +245,14 @@ class SerpApiSearchProvider:
                 code="DEPENDENCY_MISSING",
             )
 
-        response = self._request(
+        payload = self._request(
             params=self._build_params(query=query_text, args=args, api_key=api_key),
             ctx=ctx,
         )
         return self._normalize_payload(
             query=query_text,
-            payload=response.payload,
-            max_results=max(1, int(max_results or 1)),
+            payload=payload,
+            max_results=max(1, max_results),
         )
 
 

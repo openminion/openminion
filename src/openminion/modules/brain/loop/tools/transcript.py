@@ -214,17 +214,21 @@ def persist_blocked_tool_calls(
     tool_calls: list[ToolCall],
     code: str,
     message: str,
-) -> None:
+) -> list[ActionResult]:
+    results = []
     for tool_call in tool_calls:
+        result = ActionResult(
+            command_id=str(tool_call.id or tool_call.name),
+            status="blocked",
+            summary=message,
+            error=ActionError(code=code, message=message),
+        )
         persist_terminal_tool_result(
             loop_ctx,
             loop_state=loop_state,
             turn_scope_id=turn_scope_id,
             tool_call=tool_call,
-            action_result=ActionResult(
-                command_id=str(tool_call.id or tool_call.name),
-                status="blocked",
-                summary=message,
-                error=ActionError(code=code, message=message),
-            ),
+            action_result=result,
         )
+        results.append(result)
+    return results

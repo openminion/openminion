@@ -1,15 +1,10 @@
-"""Shared scheduled-task view builders for task tool responses."""
-
 from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.task import TaskManager
 from openminion.modules.task.scheduling.schedule import normalize_schedule
 
-from ..constants import (
-    FIRST_RUN_PENDING_NOTE,
-    FIRST_RUN_PENDING_STATE,
-)
+from ..constants import FIRST_RUN_PENDING_NOTE, FIRST_RUN_PENDING_STATE
 from .runtime import (
     _consolidation_metadata_from_payload,
     _safe_str,
@@ -55,7 +50,7 @@ def _recent_runs(
     job_id: str,
     limit: int,
 ) -> tuple[list[dict[str, Any]], int]:
-    effective_limit = max(1, min(int(limit), 20))
+    effective_limit = max(1, min(limit, 20))
     runs = manager.list_scheduled_runs(job_id=job_id, limit=effective_limit)
     recent: list[dict[str, Any]] = []
     failure_count = 0
@@ -157,11 +152,9 @@ def _task_list_payload(
                 "watch": (
                     {
                         **watch,
-                        "checks_completed": int(
-                            (watch or {}).get("checks_completed", 0) or 0
-                        ),
+                        "checks_completed": int(watch.get("checks_completed", 0) or 0),
                         "last_check_result": last_run_summary
-                        or (watch or {}).get("last_check_summary"),
+                        or watch.get("last_check_summary"),
                     }
                     if watch is not None
                     else None

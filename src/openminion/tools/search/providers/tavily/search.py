@@ -1,6 +1,6 @@
+from collections.abc import Mapping
 import json
 from typing import Any
-from collections.abc import Mapping
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -23,6 +23,15 @@ _MAX_SEARCH_RETRIES = DEFAULT_TAVILY_MAX_SEARCH_RETRIES
 _SEARCH_RETRY_BACKOFF = DEFAULT_TAVILY_SEARCH_RETRY_BACKOFF
 
 
+def _error_result(message: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "content": "",
+        "error": message,
+        "verified": False,
+    }
+
+
 class TavilySearchTool:
     def __init__(
         self,
@@ -37,45 +46,25 @@ class TavilySearchTool:
 
     def execute(self, arguments: Mapping[str, Any], context: Any) -> dict[str, Any]:
         request = self._build_search_request(arguments, context)
-        if "error" in request:
-            return request["error"]
+        if isinstance(error := request.get("error"), dict):
+            return error
 
-        last_error = None
         for attempt in range(1, _MAX_SEARCH_RETRIES + 1):
-            result, last_error = self._execute_search_attempt(
-                request=request, attempt=attempt, last_error=last_error
-            )
+            result = self._execute_search_attempt(request=request, attempt=attempt)
             if result is not None:
                 return result
-        return {
-            "ok": False,
-            "content": "",
-            "error": "Tavily search failed: unexpected error",
-            "verified": False,
-        }
+        return _error_result("Tavily search failed: unexpected error")
 
     def _build_search_request(
         self, arguments: Mapping[str, Any], context: Any
     ) -> dict[str, Any]:
         query = str(arguments.get("query", "")).strip()
         if not query:
-            return {
-                "error": {
-                    "ok": False,
-                    "content": "",
-                    "error": "missing required argument 'query'",
-                    "verified": False,
-                }
-            }
+            return {"error": _error_result("missing required argument 'query'")}
         api_key = self._resolve_api_key(context)
         if not api_key:
             return {
-                "error": {
-                    "ok": False,
-                    "content": "",
-                    "error": "missing Tavily API key (set TAVILY_API_KEY)",
-                    "verified": False,
-                }
+                "error": _error_result("missing Tavily API key (set TAVILY_API_KEY)")
             }
         max_results = _coerce_int(
             arguments.get("max_results"), default_value=5, minimum=1, maximum=10
@@ -96,8 +85,8 @@ class TavilySearchTool:
         }
 
     def _execute_search_attempt(
-        self, *, request: Mapping[str, Any], attempt: int, last_error: str | None
-    ) -> tuple[dict[str, Any] | None, str | None]:
+        self, *, request: Mapping[str, Any], attempt: int
+    ) -> dict[str, Any] | None:
         try:
             response_payload = self._search_tavily(
                 api_url=str(request["api_url"]), payload=request["payload"]
@@ -121,24 +110,19 @@ class TavilySearchTool:
             query=str(request["payload"]["query"]),
             search_depth=str(request["payload"]["search_depth"]),
             max_results=int(request["max_results"]),
-        ), last_error
+        )
 
     def _retry_or_error(
         self, attempt: int, error: str, *, final_error: str | None
-    ) -> tuple[dict[str, Any] | None, str]:
+    ) -> dict[str, Any] | None:
         if attempt < _MAX_SEARCH_RETRIES:
             import time
 
             time.sleep(
                 _SEARCH_RETRY_BACKOFF[min(attempt - 1, len(_SEARCH_RETRY_BACKOFF) - 1)]
             )
-            return None, error
-        return {
-            "ok": False,
-            "content": "",
-            "error": final_error or error,
-            "verified": False,
-        }, error
+            return None
+        return _error_result(final_error or error)
 
     def _success_result(
         self,
@@ -159,13 +143,13 @@ class TavilySearchTool:
             "max_results": max_results,
             "source": "tavily",
         }
-        if (
-            isinstance(response_payload.get("query"), str)
-            and str(response_payload.get("query")).strip()
+        provider_query = response_payload.get("query")
+        if isinstance(provider_query, str) and provider_query.strip():
+            data["provider_query"] = provider_query.strip()
+        if isinstance(
+            response_time := response_payload.get("response_time"), (int, float)
         ):
-            data["provider_query"] = str(response_payload.get("query")).strip()
-        if isinstance(response_payload.get("response_time"), (int, float)):
-            data["response_time"] = float(response_payload.get("response_time"))
+            data["response_time"] = float(response_time)
         return {
             "ok": True,
             "content": _format_web_search_content(data),
@@ -191,10 +175,9 @@ class TavilySearchTool:
                 request, timeout=self._timeout_seconds
             ) as response:
                 raw_body = response.read().decode("utf-8")
-        except urllib_error.URLError as exc:
-            raise RuntimeError(str(exc.reason)) from exc
         except Exception as exc:
-            raise RuntimeError(str(exc)) from exc
+            reason = exc.reason if isinstance(exc, urllib_error.URLError) else exc
+            raise RuntimeError(str(reason)) from exc
 
         try:
             decoded = json.loads(raw_body)
@@ -212,10 +195,10 @@ class TavilySearchTool:
     def _resolve_api_url(self, context: Any = None) -> str:
         if self._api_url:
             return self._api_url
-        from_env = get_tavily_api_url(env=resolve_tool_context_env(context))
-        if from_env:
-            return from_env
-        return DEFAULT_TAVILY_API_URL
+        return (
+            get_tavily_api_url(env=resolve_tool_context_env(context))
+            or DEFAULT_TAVILY_API_URL
+        )
 
 
 def _format_web_search_content(payload: Mapping[str, Any]) -> str:

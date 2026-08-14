@@ -1,4 +1,4 @@
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -30,16 +30,14 @@ class TaskScheduleArgs(BaseModel):
         ),
     )
     name: str | None = Field(default=None, description="Optional task name")
-    goal_origin_action_type: Optional[Literal["watch", "task", "suggest", "none"]] = (
-        Field(
-            default=None,
-            description=(
-                "Optional: when this cron task is being created to back a "
-                "recalled goal, set the action type so the runtime can apply "
-                "agent_profile.goal_execution_policy. Omit for direct "
-                "(non-goal) task scheduling."
-            ),
-        )
+    goal_origin_action_type: Literal["watch", "task", "suggest", "none"] | None = Field(
+        default=None,
+        description=(
+            "Optional: when this cron task is being created to back a "
+            "recalled goal, set the action type so the runtime can apply "
+            "agent_profile.goal_execution_policy. Omit for direct "
+            "(non-goal) task scheduling."
+        ),
     )
 
     @field_validator("instruction", mode="before")
@@ -53,13 +51,11 @@ class TaskScheduleArgs(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def _normalize_name(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        token = str(value).strip()
+        token = _text(value)
         return token or None
 
 
-class TaskCancelArgs(BaseModel):
+class _TaskIdArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     task_id: str = Field(..., min_length=1, description="Task identifier (cron job_id)")
@@ -71,6 +67,10 @@ class TaskCancelArgs(BaseModel):
         if not token:
             raise ValueError("task_id is required")
         return token
+
+
+class TaskCancelArgs(_TaskIdArgs):
+    pass
 
 
 class TaskListArgs(BaseModel):
@@ -86,49 +86,18 @@ class TaskListArgs(BaseModel):
         return int(value)
 
 
-class TaskPauseArgs(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    task_id: str = Field(..., min_length=1, description="Task identifier (cron job_id)")
-
-    @field_validator("task_id", mode="before")
-    @classmethod
-    def _normalize_task_id(cls, value: Any) -> str:
-        token = _text(value)
-        if not token:
-            raise ValueError("task_id is required")
-        return token
+class TaskPauseArgs(_TaskIdArgs):
+    pass
 
 
-class TaskResumeArgs(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    task_id: str = Field(..., min_length=1, description="Task identifier (cron job_id)")
-
-    @field_validator("task_id", mode="before")
-    @classmethod
-    def _normalize_task_id(cls, value: Any) -> str:
-        token = _text(value)
-        if not token:
-            raise ValueError("task_id is required")
-        return token
+class TaskResumeArgs(_TaskIdArgs):
+    pass
 
 
-class TaskShowArgs(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    task_id: str = Field(..., min_length=1, description="Task identifier (cron job_id)")
+class TaskShowArgs(_TaskIdArgs):
     runs_limit: int = Field(
         default=5, description="Maximum number of recent runs to return"
     )
-
-    @field_validator("task_id", mode="before")
-    @classmethod
-    def _normalize_task_id(cls, value: Any) -> str:
-        token = _text(value)
-        if not token:
-            raise ValueError("task_id is required")
-        return token
 
     @field_validator("runs_limit", mode="before")
     @classmethod
@@ -183,18 +152,16 @@ class TaskWatchArgs(BaseModel):
             "run write-capable tools without an interactive confirmation prompt."
         ),
     )
-    goal_origin_action_type: Optional[Literal["watch", "task", "suggest", "none"]] = (
-        Field(
-            default=None,
-            description=(
-                "Optional: when this watch is being created to back a recalled "
-                "goal, set the action type so the runtime can apply "
-                "agent_profile.goal_execution_policy. Omit for direct "
-                "(non-goal) watch creation."
-            ),
-        )
+    goal_origin_action_type: Literal["watch", "task", "suggest", "none"] | None = Field(
+        default=None,
+        description=(
+            "Optional: when this watch is being created to back a recalled "
+            "goal, set the action type so the runtime can apply "
+            "agent_profile.goal_execution_policy. Omit for direct "
+            "(non-goal) watch creation."
+        ),
     )
-    routine: Optional[RoutinePayloadV1] = Field(
+    routine: RoutinePayloadV1 | None = Field(
         default=None,
         description=(
             "Optional typed routine binding. V1 supports "
@@ -206,7 +173,7 @@ class TaskWatchArgs(BaseModel):
     @model_validator(mode="after")
     def _validate_routine_specific_rules(self) -> "TaskWatchArgs":
         if self.routine is not None and self.routine.routine_kind == "github_pr_review":
-            if int(self.interval_minutes) < 5:
+            if self.interval_minutes < 5:
                 raise ValueError(
                     "routine_kind='github_pr_review' requires interval_minutes >= 5"
                 )
@@ -229,7 +196,7 @@ class TaskWatchArgs(BaseModel):
     @field_validator("delivery", mode="after")
     @classmethod
     def _validate_delivery(cls, value: str) -> str:
-        token = str(value or "").strip().lower()
+        token = value.strip().lower()
         if token not in {"announce", "webhook", "none"}:
             raise ValueError("delivery must be announce, webhook, or none")
         return token
@@ -263,9 +230,7 @@ class TaskConsolidateMemoryArgs(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def _normalize_name(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        token = str(value).strip()
+        token = _text(value)
         return token or None
 
 

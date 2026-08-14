@@ -265,6 +265,14 @@ class AgentService(AgentTurnFlowMixin):
         self._last_identity_snippet = None
         self._init_identity_runtime()
 
+    def close(self) -> None:
+        resource = (
+            self._llm_runtime if self._llm_runtime is not None else self._provider
+        )
+        close = getattr(resource, "close", None)
+        if callable(close):
+            close()
+
     def _bind_execution_telemetry(
         self,
         *,

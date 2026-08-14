@@ -137,7 +137,6 @@ class WeatherOpenMeteoArgs(BaseModel):
         if self.longitude is None and self.lon is not None:
             self.longitude = self.lon
 
-        any([self.location, self.city, self.query, self.place])
         has_coordinates = self.latitude is not None or self.longitude is not None
         if has_coordinates and (self.latitude is None or self.longitude is None):
             raise ValueError(

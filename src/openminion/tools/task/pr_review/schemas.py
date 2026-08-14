@@ -9,8 +9,6 @@ from ..routine.schemas import GitHubPrReviewCursorV1
 
 
 class OpenPrFactsV1(BaseModel):
-    """Typed facts about a single open pull request."""
-
     model_config = ConfigDict(extra="forbid")
 
     number: int = Field(..., ge=1)
@@ -39,8 +37,6 @@ class OpenPrFactsV1(BaseModel):
 
 
 class PrFactsPayloadV1(BaseModel):
-    """Top-level PR facts payload handed to the model."""
-
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = Field(default=1, ge=1)
@@ -55,8 +51,6 @@ class PrFactsPayloadV1(BaseModel):
 
 
 class FindingV1(BaseModel):
-    """One review finding emitted by the model."""
-
     model_config = ConfigDict(extra="forbid")
 
     file: str = Field(default="")
@@ -66,8 +60,6 @@ class FindingV1(BaseModel):
 
 
 class ReviewedPrV1(BaseModel):
-    """One PR review entry emitted by the model."""
-
     model_config = ConfigDict(extra="forbid")
 
     number: int = Field(..., ge=1)
@@ -81,10 +73,7 @@ class ReviewedPrV1(BaseModel):
     @field_validator("summary", mode="after")
     @classmethod
     def _cap_summary_length(cls, value: str) -> str:
-        # Spec § 6.2 rule 4: runtime-side truncation, not model-side.
-        if len(value) > PR_REVIEW_SUMMARY_MAX_CHARS:
-            return value[:PR_REVIEW_SUMMARY_MAX_CHARS]
-        return value
+        return value[:PR_REVIEW_SUMMARY_MAX_CHARS]
 
 
 class SkippedPrV1(BaseModel):
@@ -95,16 +84,11 @@ class SkippedPrV1(BaseModel):
 
 
 class ReviewOutcomePayloadV1(BaseModel):
-    """Top-level review outcome the model returns inside the trailer."""
-
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = Field(default=1, ge=1)
     reviewed_prs: list[ReviewedPrV1] = Field(default_factory=list)
     skipped_prs: list[SkippedPrV1] = Field(default_factory=list)
-
-
-# Builder + validator helpers
 
 
 def build_pr_facts_payload(
@@ -115,7 +99,6 @@ def build_pr_facts_payload(
     cursor: GitHubPrReviewCursorV1,
     checked_at: str | None = None,
 ) -> PrFactsPayloadV1:
-    """Build the typed PR facts payload from raw github tool results + cursor."""
     if checked_at is None:
         checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -123,8 +106,6 @@ def build_pr_facts_payload(
     open_pr_numbers_now: list[int] = []
 
     for raw in open_prs_raw:
-        if not isinstance(raw, dict):
-            continue
         number = raw.get("number")
         head_sha = raw.get("head_sha") or ""
         if not isinstance(number, int) or not head_sha:
@@ -134,13 +115,11 @@ def build_pr_facts_payload(
         cursor_entry = cursor.last_review_per_pr.get(str(number))
         last_sha = cursor_entry.head_sha if cursor_entry is not None else None
 
-        # Head-SHA dedupe: skip PRs whose SHA matches the last reviewed SHA.
         if last_sha == head_sha:
             continue
 
         commits_since = int(raw.get("commits_since_last_review", 0) or 0)
         if commits_since == 0 and last_sha is not None:
-            # Best-effort default when raw payload omits the count.
             commits_since = 1
 
         actionable.append(
@@ -185,9 +164,6 @@ def build_pr_facts_payload(
     )
 
 
-# Outcome validation (spec § 6.2 rules)
-
-
 class OutcomeValidationError(Exception):
     """Internal carrier for outcome validation problems with stable codes."""
 
@@ -201,7 +177,6 @@ def validate_review_outcome(
     *,
     facts: PrFactsPayloadV1,
 ) -> tuple[list[ReviewedPrV1], list[dict[str, Any]]]:
-    """Apply spec § 6.2 validation rules to a parsed outcome."""
     open_by_number = {pr.number: pr for pr in facts.open_prs}
     kept: list[ReviewedPrV1] = []
     dropped: list[dict[str, Any]] = []
@@ -236,15 +211,11 @@ def validate_review_outcome(
 
 
 def finding_hash(*, pr_number: int, head_sha: str, finding: FindingV1) -> str:
-    """Stable hash for finding-level dedupe.
-
-    Per spec D7 (2): ``sha256(pr_number || head_sha || file || line || message)``.
-    """
     payload = "||".join(
         [
             str(pr_number),
             head_sha,
-            finding.file or "",
+            finding.file,
             str(finding.line),
             finding.message,
         ]

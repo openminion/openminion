@@ -390,13 +390,18 @@ class RuntimeProfilesMixin:
         normalized = str(agent_id or "").strip()
         if not normalized:
             return
+        evicted_services: list[AgentService] = []
         with self._agent_runtime_lock:
-            for cache in (self._gateways, self._agent_services):
-                for cache_key in tuple(cache):
-                    if cache_key == normalized or cache_key.startswith(
-                        f"{normalized}||"
-                    ):
-                        cache.pop(cache_key, None)
+            for cache_key in tuple(self._gateways):
+                if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
+                    self._gateways.pop(cache_key, None)
+            for cache_key in tuple(self._agent_services):
+                if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
+                    service = self._agent_services.pop(cache_key, None)
+                    if service is not None:
+                        evicted_services.append(service)
+        for service in evicted_services:
+            service.close()
         self.logger.getChild("runtime").info(
             "evicted agent runtime cache agent_id=%s reason=%s",
             normalized,

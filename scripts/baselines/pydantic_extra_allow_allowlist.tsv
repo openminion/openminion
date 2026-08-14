@@ -37,6 +37,6 @@ src/openminion/tools/browser/models.py	210	TextResult	provider-extensibility
 src/openminion/tools/browser/models.py	220	ArtifactRef	provider-extensibility
 src/openminion/tools/browser/models.py	230	BrowserError	provider-extensibility
 src/openminion/tools/browser/models.py	246	BrowserResult	provider-extensibility
-src/openminion/tools/search/schemas.py	69	SearchResultItem	provider-extensibility
-src/openminion/tools/search/schemas.py	78	SearchResult	provider-extensibility
+src/openminion/tools/search/schemas.py	65	SearchResultItem	provider-extensibility
+src/openminion/tools/search/schemas.py	74	SearchResult	provider-extensibility
 src/openminion/tools/weather/plugin.py	57	WeatherArgs	provider-extensibility

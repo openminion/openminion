@@ -14,6 +14,22 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+def _required_text(value: Any, message: str) -> str:
+    token = str(value or "").strip()
+    if not token:
+        raise ValueError(message)
+    return token
+
+
+class _RequiredISOArgs(_StrictModel):
+    iso: str = Field(..., min_length=1, description="ISO8601 timestamp")
+
+    @field_validator("iso", mode="before")
+    @classmethod
+    def _normalize_iso(cls, value: Any) -> str:
+        return _required_text(value, "iso is required")
+
+
 class TimeNowArgs(_StrictModel):
     timezone: str | None = Field(
         default=None,
@@ -39,39 +55,23 @@ class TimeInZoneArgs(_StrictModel):
     @field_validator("timezone", mode="before")
     @classmethod
     def _normalize_timezone(cls, value: Any) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("timezone is required")
-        return token
+        return _required_text(value, "timezone is required")
 
 
-class TimeConvertArgs(_StrictModel):
-    iso: str = Field(..., min_length=1, description="ISO8601 timestamp")
+class TimeConvertArgs(_RequiredISOArgs):
     to_timezone: str = Field(..., min_length=1, description="IANA timezone")
 
-    @field_validator("iso", "to_timezone", mode="before")
+    @field_validator("to_timezone", mode="before")
     @classmethod
     def _normalize_text(cls, value: Any) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("field is required")
-        return token
+        return _required_text(value, "field is required")
 
 
-class TimeParseISOArgs(_StrictModel):
-    iso: str = Field(..., min_length=1, description="ISO8601 timestamp")
+class TimeParseISOArgs(_RequiredISOArgs):
     timezone_hint: str | None = Field(
         default=None,
         description="IANA timezone when ISO has no offset/Z",
     )
-
-    @field_validator("iso", mode="before")
-    @classmethod
-    def _normalize_iso(cls, value: Any) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("iso is required")
-        return token
 
 
 class TimeDiffArgs(_StrictModel):
@@ -86,10 +86,7 @@ class TimeDiffArgs(_StrictModel):
     @field_validator("a", "b", mode="before")
     @classmethod
     def _normalize_iso(cls, value: Any) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("timestamp is required")
-        return token
+        return _required_text(value, "timestamp is required")
 
     @field_validator("unit", mode="before")
     @classmethod
@@ -100,8 +97,7 @@ class TimeDiffArgs(_StrictModel):
         )
 
 
-class TimeFormatArgs(_StrictModel):
-    iso: str = Field(..., min_length=1, description="ISO8601 timestamp")
+class TimeFormatArgs(_RequiredISOArgs):
     timezone: str | None = Field(default=None, description="IANA timezone")
     format: str = Field(
         default=TIME_FORMAT_ISO,
@@ -110,14 +106,6 @@ class TimeFormatArgs(_StrictModel):
     custom: str | None = Field(
         default=None, description="strftime pattern if format=custom"
     )
-
-    @field_validator("iso", mode="before")
-    @classmethod
-    def _normalize_iso(cls, value: Any) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("iso is required")
-        return token
 
     @field_validator("format", mode="before")
     @classmethod
@@ -148,7 +136,4 @@ class TimeNextCronArgs(_StrictModel):
     @field_validator("cron", "timezone", mode="before")
     @classmethod
     def _normalize_text(cls, value: Any) -> str:
-        token = str(value or "").strip()
-        if not token:
-            raise ValueError("field is required")
-        return token
+        return _required_text(value, "field is required")

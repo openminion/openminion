@@ -22,12 +22,6 @@ class _NoFollowRedirectHandler(urllib_request.HTTPRedirectHandler):
 
 
 def _resolve_host_ips(host: str) -> set[str]:
-    """SIPS-04: resolve a host to its set of IP addresses.
-
-    Returns an empty set on resolution failure so the caller can treat
-    "couldn't resolve" identically to "resolved differently" — both are
-    suspicious states for the DNS rebinding guard.
-    """
     if not host:
         return set()
     try:
@@ -91,35 +85,27 @@ def is_valid_markdown_content(content: str) -> bool:
         return False
 
     text = content[:5000]
-    indicator_count = 0
-    if "# " in text or text.startswith("#"):
-        indicator_count += 1
-    if "## " in text or "### " in text:
-        indicator_count += 1
-    if "- " in text or "* " in text:
-        indicator_count += 1
-    if "```" in text:
-        indicator_count += 1
-    if "[" in text and "]" in text:
-        indicator_count += 1
-    if "|" in text and "---" in text:
-        indicator_count += 1
-
-    return indicator_count >= 2 or "# " in text or text.startswith("#")
+    has_heading = "# " in text or text.startswith("#")
+    indicators = (
+        has_heading,
+        "## " in text or "### " in text,
+        "- " in text or "* " in text,
+        "```" in text,
+        "[" in text and "]" in text,
+        "|" in text and "---" in text,
+    )
+    return has_heading or sum(indicators) >= 2
 
 
 def extract_skill_name_from_url(url: str) -> str:
     parsed = urllib_parse.urlparse(url)
     path = parsed.path or "skill"
 
-    filename = path.split("/")[-1] if "/" in path else path
+    filename = path.rsplit("/", 1)[-1]
     name = filename.replace(".md", "")
 
     name = re.sub(
         r"(?<![a-zA-Z0-9_-])SKILL(?![a-zA-Z0-9_-])", "", name, flags=re.IGNORECASE
-    )
-    name = re.sub(
-        r"(?<![a-zA-Z0-9_-])skill(?![a-zA-Z0-9_-])", "", name, flags=re.IGNORECASE
     )
     name = re.sub(r"[^a-zA-Z0-9_-]", "_", name).strip("_")
     name = re.sub(r"_+", "_", name)
@@ -135,12 +121,6 @@ def _validate_fetch_target(
     *,
     baseline_ips: set[str] | None,
 ) -> tuple[str | None, dict[str, Any] | None, set[str]]:
-    """Return (host, error_dict_or_None, resolved_ips).
-
-    Used at every redirect hop. Re-checks scheme, host blocklist, and (if
-    baseline_ips is provided) the SIPS-04 DNS rebinding guard. Caller
-    proceeds with the fetch when error_dict is None.
-    """
     parsed = urllib_parse.urlparse(current_url)
     if parsed.scheme not in {"http", "https"}:
         return (
@@ -267,7 +247,6 @@ def _handle_fetch_http_error(
 
 
 def fetch_skill_markdown_from_url(url: str) -> dict[str, Any]:
-    """Fetch skill markdown from url helper."""
     path = urllib_parse.urlparse(url).path or ""
     if not path.lower().endswith(".md"):
         return {
@@ -276,12 +255,7 @@ def fetch_skill_markdown_from_url(url: str) -> dict[str, Any]:
             "error_message": "URL path must end with .md extension",
         }
 
-    # initial DNS resolution baseline. The same host must resolve
-    # to the same IP set when we actually fetch, otherwise we treat the
-    # difference as a DNS rebinding signal.
-    initial_host, initial_error, baseline_ips = _validate_fetch_target(
-        url, baseline_ips=None
-    )
+    _, initial_error, baseline_ips = _validate_fetch_target(url, baseline_ips=None)
     if initial_error is not None:
         return initial_error
 
@@ -289,18 +263,17 @@ def fetch_skill_markdown_from_url(url: str) -> dict[str, Any]:
     opener = urllib_request.build_opener(_NoFollowRedirectHandler())
 
     for hop in range(SKILL_URL_MAX_REDIRECTS + 1):
-        host, target_error, _ips = _validate_fetch_target(
+        _, target_error, _ips = _validate_fetch_target(
             current_url, baseline_ips=baseline_ips if hop == 0 else None
         )
         if target_error is not None:
             return target_error
-        del host  # variable not used downstream; validated above
 
         try:
             req = _fetch_request(current_url)
             with opener.open(
                 req,
-                timeout=float(SKILL_URL_FETCH_TIMEOUT_SECONDS),
+                timeout=SKILL_URL_FETCH_TIMEOUT_SECONDS,
             ) as resp:
                 status = int(getattr(resp, "status", 200) or 200)
                 location = resp.headers.get("Location") if resp.headers else None
@@ -335,7 +308,7 @@ def fetch_skill_markdown_from_url(url: str) -> dict[str, Any]:
             return {
                 "ok": False,
                 "error_code": "FETCH_EXCEPTION",
-                "error_message": f"Exception during fetch: {str(exc)}",
+                "error_message": f"Exception during fetch: {exc}",
             }
 
         return _markdown_fetch_success(
@@ -345,7 +318,6 @@ def fetch_skill_markdown_from_url(url: str) -> dict[str, Any]:
             original_url=url,
         )
 
-    # Loop should always return inside; this is defensive.
     return _redirect_limit_error()
 
 
@@ -364,15 +336,15 @@ def ingest_skill_url(
         return {
             "ok": False,
             "error": {
-                "code": str(fetch_result["error_code"]),
-                "message": str(fetch_result["error_message"]),
+                "code": fetch_result["error_code"],
+                "message": fetch_result["error_message"],
             },
             "source_type": "url",
             "source_url": url,
         }
 
-    resolved_name = str(name or "").strip() or str(fetch_result["suggested_name"])
-    markdown = str(fetch_result["content"])
+    resolved_name = (name or "").strip() or fetch_result["suggested_name"]
+    markdown = fetch_result["content"]
 
     risk_level, issues = scan(markdown)
     safe = risk_level != "critical"
@@ -434,7 +406,7 @@ def ingest_skill_url(
         "version_hash": version_hash,
         "snippet": snippet,
         "snippet_hash": snippet_hash,
-        "warnings": list(warnings or []),
+        "warnings": warnings,
         "risk_level": risk_level,
         "safe": safe,
         "issues": issues,

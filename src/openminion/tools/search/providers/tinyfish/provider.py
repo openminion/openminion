@@ -1,7 +1,6 @@
 import json
-from dataclasses import dataclass
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -10,7 +9,6 @@ from openminion.tools.config import resolve_tool_context_env
 from openminion.tools.search.providers import SearchProviderError
 
 from .config import (
-    DEFAULT_TINYFISH_SEARCH_API_URL,
     DEFAULT_TINYFISH_SEARCH_TIMEOUT_SECONDS,
     TinyFishSearchProviderConfig,
     resolve_tinyfish_api_key,
@@ -30,12 +28,6 @@ def _error_code_for_status(status: int) -> str:
     return "UPSTREAM_ERROR"
 
 
-@dataclass(frozen=True)
-class _TinyFishResponse:
-    payload: Mapping[str, Any]
-    http_status: int
-
-
 class TinyFishSearchProvider:
     provider_id = TINYFISH_SEARCH_PROVIDER_ID
     display_name = TINYFISH_SEARCH_DISPLAY_NAME
@@ -47,22 +39,20 @@ class TinyFishSearchProvider:
         raw_arg = str(args.get("api_key", "") or "").strip()
         if raw_arg:
             return raw_arg
-        if self.config.api_key and self.config.api_key.strip():
-            return self.config.api_key.strip()
+        if config_key := (self.config.api_key or "").strip():
+            return config_key
         env = resolve_tool_context_env(ctx)
         return resolve_tinyfish_api_key(env=env)
 
     def _api_url(self, *, ctx: Any | None = None) -> str:
-        if self.config.endpoint and self.config.endpoint.strip():
-            return self.config.endpoint.strip()
+        if endpoint := self.config.endpoint.strip():
+            return endpoint
         env = resolve_tool_context_env(ctx)
-        return (
-            resolve_tinyfish_search_api_url(env=env) or DEFAULT_TINYFISH_SEARCH_API_URL
-        )
+        return resolve_tinyfish_search_api_url(env=env)
 
     def _timeout_seconds(self, *, ctx: Any | None = None) -> float:
         if self.config.timeout_s > 0:
-            return float(self.config.timeout_s)
+            return self.config.timeout_s
         env = resolve_tool_context_env(ctx)
         return resolve_tinyfish_search_timeout_seconds(
             default=DEFAULT_TINYFISH_SEARCH_TIMEOUT_SECONDS,
@@ -90,7 +80,7 @@ class TinyFishSearchProvider:
         query_params: str,
         api_key: str,
         ctx: Any | None = None,
-    ) -> _TinyFishResponse:
+    ) -> Mapping[str, Any]:
         base_url = self._api_url(ctx=ctx).rstrip("?")
         full_url = f"{base_url}?{query_params}" if query_params else base_url
         request = urllib_request.Request(
@@ -112,10 +102,7 @@ class TinyFishSearchProvider:
                         "TinyFish returned an unexpected payload shape",
                         code="UPSTREAM_ERROR",
                     )
-                return _TinyFishResponse(
-                    payload=payload,
-                    http_status=int(getattr(response, "status", 200) or 200),
-                )
+                return payload
         except urllib_error.HTTPError as exc:
             status = int(exc.code)
             body_text = ""
@@ -167,7 +154,6 @@ class TinyFishSearchProvider:
         except (TypeError, ValueError):
             more_results_available = len(raw_results) > len(results)
 
-        warnings: list[str] = []
         return {
             "provider": self.provider_id,
             "query": {
@@ -175,7 +161,7 @@ class TinyFishSearchProvider:
                 "more_results_available": more_results_available,
             },
             "results": results,
-            "warnings": warnings,
+            "warnings": [],
         }
 
     def search(
@@ -186,7 +172,7 @@ class TinyFishSearchProvider:
         args: Mapping[str, Any],
         ctx: Any,
     ) -> Mapping[str, Any]:
-        query_text = str(query or "").strip()
+        query_text = query.strip()
         if not query_text:
             raise SearchProviderError("query is required", code="INVALID_REQUEST")
 
@@ -197,14 +183,14 @@ class TinyFishSearchProvider:
                 code="DEPENDENCY_MISSING",
             )
 
-        response = self._request(
+        payload = self._request(
             query_params=self._build_query_params(query=query_text, args=args),
             api_key=api_key,
             ctx=ctx,
         )
         return self._normalize_payload(
             query=query_text,
-            payload=response.payload,
+            payload=payload,
             max_results=max_results,
         )
 

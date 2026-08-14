@@ -151,9 +151,8 @@ def _h_text_stats(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     line_count = 0 if not text else text.count("\n") + 1
     word_count = len(re.findall(r"\b\w+\b", text))
     sentence_count = len([item for item in re.split(r"[.!?]+", text) if item.strip()])
-    char_count = len(text)
     return {
-        "char_count": char_count,
+        "char_count": len(text),
         "word_count": word_count,
         "line_count": line_count,
         "sentence_count": sentence_count,

@@ -5,19 +5,24 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
-from openminion.base.generated_paths import resolve_generated_root
+ROOT = Path(__file__).resolve().parents[3]
+SRC = ROOT / "src"
+for import_root in (ROOT, SRC):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
-from sophiagraph import SophiaGraphMemoryStore
+from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
 
-from tests.context.test_memory_block_context_consumption import (
+from sophiagraph import SophiaGraphMemoryStore  # noqa: E402
+
+from tests.context.test_memory_block_context_consumption import (  # noqa: E402
     _block,
     _request,
     _service,
 )
-from tests.helpers.runtime_roots import isolate_runtime_roots
-
-ROOT = Path(__file__).resolve().parents[3]
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def _default_output_path() -> Path:

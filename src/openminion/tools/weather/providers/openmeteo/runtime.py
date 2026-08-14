@@ -37,14 +37,8 @@ def truncate_text(text: Any, max_chars: int = 400) -> str:
 
 
 def normalize_location_text(value: Any) -> str:
-    if value is None:
-        return ""
-    normalized = str(value).strip()
-    if not normalized:
-        return ""
-    if normalized.lower() in _MISSING_LOCATION_TOKENS:
-        return ""
-    return normalized
+    normalized = "" if value is None else str(value).strip()
+    return "" if normalized.lower() in _MISSING_LOCATION_TOKENS else normalized
 
 
 def sanitize_request(args: Mapping[str, Any]) -> dict[str, Any]:
@@ -139,13 +133,9 @@ def location_matches_query(*, resolved_name: str, expected_query: str) -> bool:
 
 
 def verify_weather_result(payload: Mapping[str, Any], *, expected_query: str) -> bool:
-    location = payload.get("location") if isinstance(payload, Mapping) else None
-    metrics = payload.get("metrics") if isinstance(payload, Mapping) else None
-    observed_at = (
-        str(payload.get("observed_at", "")).strip()
-        if isinstance(payload, Mapping)
-        else ""
-    )
+    location = payload.get("location")
+    metrics = payload.get("metrics")
+    observed_at = str(payload.get("observed_at", "")).strip()
 
     if not isinstance(location, Mapping) or not isinstance(metrics, Mapping):
         return False

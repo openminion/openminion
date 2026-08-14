@@ -25,10 +25,15 @@ from .schemas import (
 from .url_ingest import ingest_skill_url
 
 _LOG = logging.getLogger(__name__)
+_SKILL_UNAVAILABLE_MESSAGE = "Skill service is not available in this runtime context."
+
+
+def _error(code: str, message: str) -> dict[str, Any]:
+    return {"ok": False, "error": {"code": code, "message": message}}
 
 
 def _invalid_args_error(exc: ValidationError) -> dict[str, Any]:
-    return {"ok": False, "error": {"code": "INVALID_ARGS", "message": str(exc)}}
+    return _error("INVALID_ARGS", str(exc))
 
 
 def _h_skill_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
@@ -50,29 +55,17 @@ def _h_skill_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     skill = getattr(ctx, "skill_api", None)
     if skill is None:
-        return {
-            "ok": False,
-            "error": {
-                "code": "SKILL_UNAVAILABLE",
-                "message": "Skill service is not available in this runtime context.",
-            },
-        }
+        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
     try:
         parsed_args = SkillIngestArgs.model_validate(args)
     except ValidationError as exc:
         return _invalid_args_error(exc)
 
-    name = parsed_args.name
     markdown = parsed_args.markdown
-    scope = parsed_args.scope
-    max_snippet_tokens = parsed_args.max_snippet_tokens
-    enforce_safety = parsed_args.enforce_safety
-    trust = parsed_args.trust
-
     risk_level, issues = scan(markdown)
     safe = risk_level != "critical"
-    if enforce_safety and not safe:
+    if parsed_args.enforce_safety and not safe:
         return {
             "ok": False,
             "error": {
@@ -86,20 +79,14 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
     try:
         skill_id, version_hash, warnings = skill.ingest_text(
-            name=name,
+            name=parsed_args.name,
             markdown=markdown,
-            scope=scope,
-            trust=trust,
+            scope=parsed_args.scope,
+            trust=parsed_args.trust,
             promotion_path="runtime",
         )
     except Exception as exc:
-        return {
-            "ok": False,
-            "error": {
-                "code": "INGEST_FAILED",
-                "message": str(exc),
-            },
-        }
+        return _error("INGEST_FAILED", str(exc))
 
     snippet = ""
     snippet_hash = ""
@@ -108,7 +95,7 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             skill_id=skill_id,
             version_hash=version_hash,
             purpose="act",
-            max_tokens=max_snippet_tokens,
+            max_tokens=parsed_args.max_snippet_tokens,
         )
     except Exception as exc:
         _LOG.warning(
@@ -125,24 +112,18 @@ def _h_skill_ingest(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "version_hash": version_hash,
         "snippet": snippet,
         "snippet_hash": snippet_hash,
-        "warnings": list(warnings or []),
+        "warnings": warnings,
         "risk_level": risk_level,
         "safe": safe,
         "issues": issues,
-        "safety_enforced": enforce_safety,
+        "safety_enforced": parsed_args.enforce_safety,
     }
 
 
 def _h_skill_ingest_url(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     skill = getattr(ctx, "skill_api", None)
     if skill is None:
-        return {
-            "ok": False,
-            "error": {
-                "code": "SKILL_UNAVAILABLE",
-                "message": "Skill service is not available in this runtime context.",
-            },
-        }
+        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
     try:
         parsed_args = SkillIngestUrlArgs.model_validate(args)
@@ -163,13 +144,7 @@ def _h_skill_ingest_url(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 def _h_skill_list(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     skill = getattr(ctx, "skill_api", None)
     if skill is None:
-        return {
-            "ok": False,
-            "error": {
-                "code": "SKILL_UNAVAILABLE",
-                "message": "Skill service is not available in this runtime context.",
-            },
-        }
+        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
     try:
         parsed_args = SkillListArgs.model_validate(args)
@@ -179,41 +154,25 @@ def _h_skill_list(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     filters: dict[str, Any] = {}
     for key in ("scope", "status", "tag", "tool"):
         value = getattr(parsed_args, key, None)
-        if value is not None and str(value).strip():
-            filters[key] = str(value).strip()
-
-    limit = parsed_args.limit
+        if value is not None and value.strip():
+            filters[key] = value.strip()
 
     try:
         skills = skill.list_skills(filters)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error": {
-                "code": "SKILL_LIST_FAILED",
-                "message": str(exc),
-            },
-        }
+        return _error("SKILL_LIST_FAILED", str(exc))
 
-    normalized = skills if isinstance(skills, list) else []
-    result = normalized[: max(1, limit)]
     return {
         "ok": True,
-        "skills": result,
-        "total": len(normalized),
+        "skills": skills[: parsed_args.limit],
+        "total": len(skills),
     }
 
 
 def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     skill = getattr(ctx, "skill_api", None)
     if skill is None:
-        return {
-            "ok": False,
-            "error": {
-                "code": "SKILL_UNAVAILABLE",
-                "message": "Skill service is not available in this runtime context.",
-            },
-        }
+        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
     try:
         parsed_args = SkillGetArgs.model_validate(args)
@@ -226,40 +185,18 @@ def _h_skill_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     try:
         package = skill.get_skill(skill_id=skill_id, version_hash=version_hash)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error": {
-                "code": str(getattr(exc, "code", "SKILL_GET_FAILED")),
-                "message": str(exc),
-            },
-        }
-
-    payload: dict[str, Any]
-    if isinstance(package, dict):
-        payload = package
-    elif hasattr(package, "to_dict"):
-        payload = package.to_dict()
-    elif hasattr(package, "model_dump"):
-        payload = package.model_dump()
-    else:
-        payload = {"value": str(package)}
+        return _error(str(getattr(exc, "code", "SKILL_GET_FAILED")), str(exc))
 
     return {
         "ok": True,
-        "skill": payload,
+        "skill": package.to_dict(),
     }
 
 
 def _h_skill_remove(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     skill = getattr(ctx, "skill_api", None)
     if skill is None:
-        return {
-            "ok": False,
-            "error": {
-                "code": "SKILL_UNAVAILABLE",
-                "message": "Skill service is not available in this runtime context.",
-            },
-        }
+        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
 
     try:
         parsed_args = SkillRemoveArgs.model_validate(args)
@@ -272,26 +209,12 @@ def _h_skill_remove(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     try:
         deleted = skill.delete_skill(skill_id=skill_id, version_hash=version_hash)
     except Exception as exc:
-        return {
-            "ok": False,
-            "error": {
-                "code": str(getattr(exc, "code", "SKILL_REMOVE_FAILED")),
-                "message": str(exc),
-            },
-        }
-
-    deleted_count = 0
-    if isinstance(deleted, dict):
-        for value in deleted.values():
-            try:
-                deleted_count += int(value)
-            except (ValueError, TypeError):
-                continue
+        return _error(str(getattr(exc, "code", "SKILL_REMOVE_FAILED")), str(exc))
 
     return {
         "ok": True,
         "skill_id": skill_id,
-        "deleted": deleted_count,
+        "deleted": sum(deleted.values()),
     }
 
 

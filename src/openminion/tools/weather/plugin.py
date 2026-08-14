@@ -116,11 +116,9 @@ class WeatherArgs(BaseModel):
         if value is None:
             return None
         normalized = str(value).strip()
-        if not normalized:
+        if not normalized or normalized.lower() in _MISSING_LOCATION_TOKENS:
             return None
-        if normalized.lower() in _MISSING_LOCATION_TOKENS:
-            return None
-        return normalized or None
+        return normalized
 
 
 class _LegacyOpenMeteoCompatProvider:
@@ -155,11 +153,8 @@ def _normalize_query_payload(
     validated: WeatherArgs,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     payload = validated.model_dump(exclude_none=True)
-    requested_provider = (
-        str(payload.pop("provider", WEATHER_PROVIDER_AUTO) or WEATHER_PROVIDER_AUTO)
-        .strip()
-        .lower()
-    )
+    requested_provider = validated.provider
+    payload.pop("provider", None)
 
     extension_args = dict(validated.model_extra or {})
 
@@ -181,18 +176,13 @@ def _normalize_query_payload(
     if longitude is None:
         longitude = payload.get("lon")
 
-    if latitude is not None:
-        query_args["latitude"] = float(latitude)
-    if longitude is not None:
-        query_args["longitude"] = float(longitude)
-
-    has_lat = "latitude" in query_args
-    has_lon = "longitude" in query_args
-    if has_lat != has_lon:
+    if (latitude is None) != (longitude is None):
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",
             "Both latitude and longitude are required when passing coordinates",
         )
+    if latitude is not None:
+        query_args.update(latitude=latitude, longitude=longitude)
 
     for key in ("language", "timeout_s", "debug"):
         if key in payload:
@@ -289,15 +279,13 @@ def _execute_provider(
         if provider is None:
             continue
 
-        healthcheck = getattr(provider, "healthcheck", None)
-        if callable(healthcheck):
-            try:
-                if not bool(healthcheck()):
-                    warnings.append(f"provider '{provider_id}' reported unhealthy")
-                    continue
-            except Exception as exc:
-                warnings.append(f"provider '{provider_id}' healthcheck failed: {exc}")
+        try:
+            if not provider.healthcheck():
+                warnings.append(f"provider '{provider_id}' reported unhealthy")
                 continue
+        except Exception as exc:
+            warnings.append(f"provider '{provider_id}' healthcheck failed: {exc}")
+            continue
 
         try:
             payload = provider.lookup(
@@ -325,7 +313,6 @@ def _execute_provider(
             source_payload.setdefault("provider_id", provider_id)
             result["source"] = source_payload
         else:
-            # TGFC: ensure every successful weather lookup carries the
             result["source"] = {"provider_id": provider_id}
         if warnings:
             combined = (

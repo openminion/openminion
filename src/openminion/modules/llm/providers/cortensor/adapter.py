@@ -27,6 +27,7 @@ from ..message_payloads import (
     _resolve_tool_names,
     _usage_from_openai_like,
 )
+from ..transport.client import ProviderHTTPClient, http_client_for_config
 from ..tool_calling import (
     build_fallback_tool_call_instruction,
     build_openai_tools_payload,
@@ -54,6 +55,12 @@ class CortensorProvider:
     _DEFAULT_EMPTY_RESULT_MAX_ATTEMPTS = 3
     _DEFAULT_EMPTY_RESULT_BACKOFF_MS = 500
     _DEFAULT_EMPTY_RESULT_MAX_BACKOFF_MS = 4000
+
+    def __init__(self) -> None:
+        self._http_client = ProviderHTTPClient()
+
+    def close(self) -> None:
+        self._http_client.close()
 
     def complete(self, request: LLMRequest, config: dict[str, Any]) -> LLMResponse:
         started = time.perf_counter()
@@ -331,6 +338,7 @@ class CortensorProvider:
                         result_wait_interval_seconds=result_wait_interval_seconds,
                         trace_metadata=request.metadata,
                         env=config.get("__env__"),
+                        http_client=http_client_for_config(self._http_client, config),
                     )
                 except LLMCtlError as exc:
                     failures.append(f"session_id={session_id}: {exc.message}")
@@ -355,6 +363,7 @@ class CortensorProvider:
         result_wait_interval_seconds: float,
         trace_metadata: dict[str, Any] | None = None,
         env: Mapping[str, object] | None = None,
+        http_client: ProviderHTTPClient | None = None,
     ) -> dict[str, Any]:
         max_attempts = result_wait_attempts
         attempt = 1
@@ -368,6 +377,7 @@ class CortensorProvider:
                     provider_name=self.name,
                     trace_metadata=trace_metadata,
                     env=env,
+                    http_client=http_client,
                 )
             except LLMCtlError as exc:
                 retryable = exc.code in {"TIMEOUT", "RATE_LIMITED"}

@@ -1,5 +1,3 @@
-"""Brave search provider."""
-
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -63,8 +61,8 @@ class BraveSearchProvider:
         self.config = config or BraveSearchProviderConfig()
 
     def _api_key(self, args: Mapping[str, Any], *, ctx: Any | None = None) -> str:
-        if isinstance(args.get("api_key"), str) and str(args.get("api_key")).strip():
-            return str(args.get("api_key")).strip()
+        if isinstance(api_key := args.get("api_key"), str) and api_key.strip():
+            return api_key.strip()
         if self.config.api_key and self.config.api_key.strip():
             return self.config.api_key.strip()
         env = getattr(ctx, "env", None) if ctx is not None else None
@@ -131,13 +129,12 @@ class BraveSearchProvider:
                 body = exc.read().decode("utf-8", errors="replace")
             except Exception:
                 body = ""
-            code = "UPSTREAM_ERROR"
-            if status in (401, 403):
-                code = "AUTH_FAILED"
-            elif status == 429:
-                code = "RATE_LIMITED"
-            elif status == 422:
-                code = "INVALID_REQUEST"
+            code = {
+                401: "AUTH_FAILED",
+                403: "AUTH_FAILED",
+                422: "INVALID_REQUEST",
+                429: "RATE_LIMITED",
+            }.get(status, "UPSTREAM_ERROR")
             raise BraveSearchError(
                 f"Brave request failed with status {status}",
                 code=code,

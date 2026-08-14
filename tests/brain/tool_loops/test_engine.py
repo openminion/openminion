@@ -613,6 +613,18 @@ def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -
                 provider="fake",
                 model="fake-model",
                 output_text="",
+                assistant_messages=[
+                    Message(
+                        role="assistant",
+                        tool_calls=[
+                            ToolCall(
+                                id="plan-noop",
+                                name=PLAN_TOOL_NAME,
+                                arguments={},
+                            )
+                        ],
+                    )
+                ],
                 tool_calls=[
                     ToolCall(
                         id="plan-noop",
@@ -682,9 +694,17 @@ def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -
     assert outcome.state.scratchpad["plan_control.noop_retries"] == 1
     assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
     assert any(
+        any(call.id == "plan-declare" for call in message.tool_calls)
+        for message in runtime.calls[1]["messages"]
+    )
+    assert any(
         "It cannot inspect or list the current plan" in message.content
         for message in runtime.calls[2]["messages"]
         if message.role == "system"
+    )
+    assert not any(
+        any(call.id == "plan-noop" for call in message.tool_calls)
+        for message in runtime.calls[2]["messages"]
     )
 
 
@@ -1783,6 +1803,12 @@ def test_engine_mid_loop_decompose_mixed_tool_calls_retries_once_then_executes_r
     assert outcome.termination_reason != ADAPTIVE_TERM_DECOMPOSE_INVALID
     assert loop_ctx.commands
     assert loop_ctx.commands[0].tool_name == "file.read"
+    blocked_result_ids = {
+        message.tool_call_id
+        for message in runtime.calls[1]["messages"]
+        if message.role == "tool"
+    }
+    assert {"decompose-call", "read-call"} <= blocked_result_ids
 
 
 def test_engine_mid_loop_decompose_mixed_tool_calls_repeated_still_fail_closed() -> (
