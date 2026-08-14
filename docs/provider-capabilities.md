@@ -69,3 +69,20 @@ for row in provider_capability_matrix(catalog):
 This matrix describes configured facts. Provider certification remains a
 separate exercise that proves endpoint access and behavior with live evidence.
 
+## HTTP connection reuse
+
+OpenMinion reuses provider HTTP connections by default for OpenAI, OpenRouter,
+Anthropic, Cerebras, Groq, Ollama, and Cortensor. Reuse is owned by each provider
+instance and does not change routing, retries, prompts, or response parsing.
+
+Set `http_connection_reuse_enabled: false` on a provider to return that provider
+to one HTTP connection per request:
+
+```yaml
+providers:
+  openrouter:
+    http_connection_reuse_enabled: false
+```
+
+The provider client is closed when its agent runtime is evicted or the API
+runtime shuts down.

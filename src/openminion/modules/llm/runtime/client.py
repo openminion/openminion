@@ -306,6 +306,9 @@ class LLMCTL:
         cfg = resolve_provider_config(self.config, provider)
         return list(provider_obj.list_models(cfg))
 
+    def close(self) -> None:
+        self.registry.close()
+
 
 class LLMClient:
     contract_version = LLM_RESPONSE_INTERFACE_VERSION

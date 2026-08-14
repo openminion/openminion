@@ -3,6 +3,7 @@ import logging
 import socket
 import time
 import uuid
+from functools import partial
 from typing import Any, Dict, Mapping
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -15,6 +16,7 @@ from openminion.modules.telemetry.events.module import (
     emit_module_telemetry,
 )
 from ...errors import LLMCtlError
+from .client import ProviderHTTPClient
 from .curl import curl_json_post
 from .debug import (
     llm_debug_max_chars,
@@ -98,6 +100,7 @@ def _emit_transport_performance(
     response_bytes: int | None = None,
     retry_count: int = 0,
     reason: str = "",
+    transport: str = "urllib",
 ) -> None:
     if telemetryctl is None:
         return
@@ -116,7 +119,7 @@ def _emit_transport_performance(
     extra = {
         "provider": provider_name.strip(),
         "method": method.strip().upper(),
-        "transport": "urllib",
+        "transport": transport,
         "request_build_ms": request_build_ms,
         "provider_round_trip_ms": round_trip_ms,
         "parse_ms": parse_ms,
@@ -150,6 +153,19 @@ def _should_use_curl_fallback(reason: str) -> bool:
     )
 
 
+def _read_http_response(
+    request: urllib_request.Request,
+    *,
+    timeout_seconds: int,
+    http_client: ProviderHTTPClient | None,
+) -> tuple[int, str]:
+    open_url = http_client.urlopen if http_client else urllib_request.urlopen
+    with open_url(request, timeout=float(timeout_seconds)) as response:
+        status_code = int(getattr(response, "status", 200) or 200)
+        raw = response.read().decode("utf-8")
+    return status_code, raw
+
+
 def http_json_get(
     *,
     url: str,
@@ -159,12 +175,15 @@ def http_json_get(
     trace_metadata: Dict[str, Any] | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
     telemetryctl: Any | None = None,
+    http_client: ProviderHTTPClient | None = None,
 ) -> Dict[str, Any]:
     """GET a JSON payload from a provider URL."""
     total_started = time.perf_counter()
     env_owner = resolve_environment_config(env=env)
     request_build_started = time.perf_counter()
     request_headers = with_default_user_agent(headers)
+    transport_name = http_client.transport_name if http_client else "urllib"
+    emit_performance = partial(_emit_transport_performance, transport=transport_name)
 
     def _write(event: Dict[str, Any]) -> None:
         write_llm_debug_event(event, env=env_owner)
@@ -190,7 +209,7 @@ def http_json_get(
         payload=None,
         headers=request_headers,
         timeout_seconds=timeout_seconds,
-        transport="urllib",
+        transport=transport_name,
         method="GET",
         env=env_owner,
     )
@@ -203,14 +222,13 @@ def http_json_get(
     round_trip_ms: int | None = None
     parse_ms: int | None = None
     response_bytes: int | None = None
-
     try:
         round_trip_started = time.perf_counter()
-        with urllib_request.urlopen(
-            request_obj, timeout=float(timeout_seconds)
-        ) as response:
-            status_code = int(getattr(response, "status", 200) or 200)
-            raw = response.read().decode("utf-8")
+        status_code, raw = _read_http_response(
+            request_obj,
+            timeout_seconds=timeout_seconds,
+            http_client=http_client,
+        )
         round_trip_ms = _elapsed_ms(round_trip_started)
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
@@ -222,7 +240,7 @@ def http_json_get(
             url=url,
             status_code=int(getattr(exc, "code", 0) or 0),
             body_text=detail,
-            transport="urllib",
+            transport=transport_name,
             env=env_owner,
         )
         _write(
@@ -236,7 +254,7 @@ def http_json_get(
             }
         )
         if exc.code in {401, 403}:
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="GET",
@@ -259,7 +277,7 @@ def http_json_get(
                 },
             ) from exc
         if exc.code == 429:
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="GET",
@@ -288,7 +306,7 @@ def http_json_get(
                 method="GET",
                 reason=f"http_{exc.code}",
             )
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="GET",
@@ -310,7 +328,7 @@ def http_json_get(
                     "response_text": detail,
                 },
             ) from exc
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="GET",
@@ -350,7 +368,7 @@ def http_json_get(
                 method="GET",
                 reason=reason,
             )
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="GET",
@@ -366,7 +384,7 @@ def http_json_get(
                 f"{provider_name} request timed out: {reason}",
                 details={"provider": provider_name, "url": url},
             ) from exc
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="GET",
@@ -396,7 +414,7 @@ def http_json_get(
             url=url,
             status_code=status_code,
             body_text=raw,
-            transport="urllib",
+            transport=transport_name,
             parse_error=parse_error,
             env=env_owner,
         )
@@ -410,7 +428,7 @@ def http_json_get(
                 "raw": raw[:max_chars],
             }
         )
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="GET",
@@ -432,7 +450,7 @@ def http_json_get(
             url=url,
             status_code=status_code,
             body_text=raw,
-            transport="urllib",
+            transport=transport_name,
             parsed_json=parsed,
             env=env_owner,
         )
@@ -448,7 +466,7 @@ def http_json_get(
                 "raw": raw[:max_chars],
             }
         )
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="GET",
@@ -473,7 +491,7 @@ def http_json_get(
             "payload": truncate_debug_value(parsed, max_chars),
         }
     )
-    _emit_transport_performance(
+    emit_performance(
         telemetryctl,
         provider_name=provider_name,
         method="GET",
@@ -497,11 +515,14 @@ def http_json_post(
     trace_metadata: Dict[str, Any] | None = None,
     env: EnvironmentConfig | Mapping[str, object] | None = None,
     telemetryctl: Any | None = None,
+    http_client: ProviderHTTPClient | None = None,
 ) -> Dict[str, Any]:
     total_started = time.perf_counter()
     env_owner = resolve_environment_config(env=env)
     request_build_started = time.perf_counter()
     request_headers = with_default_user_agent(headers)
+    transport_name = http_client.transport_name if http_client else "urllib"
+    emit_performance = partial(_emit_transport_performance, transport=transport_name)
 
     def _write(event: Dict[str, Any]) -> None:
         write_llm_debug_event(event, env=env_owner)
@@ -529,7 +550,7 @@ def http_json_post(
         payload=serialized_payload.payload,
         headers=request_headers,
         timeout_seconds=timeout_seconds,
-        transport="urllib",
+        transport=transport_name,
         env=env_owner,
     )
     request_obj = urllib_request.Request(
@@ -545,11 +566,11 @@ def http_json_post(
 
     try:
         round_trip_started = time.perf_counter()
-        with urllib_request.urlopen(
-            request_obj, timeout=float(timeout_seconds)
-        ) as response:
-            status_code = int(getattr(response, "status", 200) or 200)
-            raw = response.read().decode("utf-8")
+        status_code, raw = _read_http_response(
+            request_obj,
+            timeout_seconds=timeout_seconds,
+            http_client=http_client,
+        )
         round_trip_ms = _elapsed_ms(round_trip_started)
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
@@ -561,7 +582,7 @@ def http_json_post(
             url=url,
             status_code=int(getattr(exc, "code", 0) or 0),
             body_text=detail,
-            transport="urllib",
+            transport=transport_name,
             env=env_owner,
         )
         _write(
@@ -575,7 +596,7 @@ def http_json_post(
             }
         )
         if exc.code in {401, 403}:
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="POST",
@@ -599,7 +620,7 @@ def http_json_post(
                 },
             ) from exc
         if exc.code == 429:
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="POST",
@@ -629,7 +650,7 @@ def http_json_post(
                 method="POST",
                 reason=f"http_{exc.code}",
             )
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="POST",
@@ -652,7 +673,7 @@ def http_json_post(
                     "response_text": detail,
                 },
             ) from exc
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="POST",
@@ -693,7 +714,7 @@ def http_json_post(
                 method="POST",
                 reason=reason,
             )
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="POST",
@@ -711,7 +732,7 @@ def http_json_post(
                 details={"provider": provider_name, "url": url},
             ) from exc
         if _should_use_curl_fallback(reason):
-            _emit_transport_performance(
+            emit_performance(
                 telemetryctl,
                 provider_name=provider_name,
                 method="POST",
@@ -736,7 +757,7 @@ def http_json_post(
                 trace_metadata=trace_metadata,
                 env=env_owner,
             )
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="POST",
@@ -767,7 +788,7 @@ def http_json_post(
             url=url,
             status_code=status_code,
             body_text=raw,
-            transport="urllib",
+            transport=transport_name,
             parse_error=parse_error,
             env=env_owner,
         )
@@ -781,7 +802,7 @@ def http_json_post(
                 "raw": raw[:max_chars],
             }
         )
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="POST",
@@ -804,7 +825,7 @@ def http_json_post(
             url=url,
             status_code=status_code,
             body_text=raw,
-            transport="urllib",
+            transport=transport_name,
             parsed_json=parsed,
             env=env_owner,
         )
@@ -820,7 +841,7 @@ def http_json_post(
                 "raw": raw[:max_chars],
             }
         )
-        _emit_transport_performance(
+        emit_performance(
             telemetryctl,
             provider_name=provider_name,
             method="POST",
@@ -846,7 +867,7 @@ def http_json_post(
             "payload": truncate_debug_value(parsed, max_chars),
         }
     )
-    _emit_transport_performance(
+    emit_performance(
         telemetryctl,
         provider_name=provider_name,
         method="POST",

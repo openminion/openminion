@@ -18,6 +18,7 @@ from .tool_calling import (
 )
 from openminion.base.config.parse import _as_float as _base_as_float, _as_int
 from .transport.http import http_json_get, http_json_post
+from .transport.client import ProviderHTTPClient
 
 _as_float = _base_as_float
 
@@ -599,6 +600,7 @@ def _http_json_post(
     provider_name: str,
     trace_metadata: Dict[str, Any] | None = None,
     env: Mapping[str, object] | None = None,
+    http_client: ProviderHTTPClient | None = None,
 ) -> Dict[str, Any]:
     return http_json_post(
         url=url,
@@ -608,6 +610,7 @@ def _http_json_post(
         provider_name=provider_name,
         trace_metadata=trace_metadata,
         env=env,
+        http_client=http_client,
     )
 
 
@@ -619,6 +622,7 @@ def _http_json_get(
     provider_name: str,
     trace_metadata: Dict[str, Any] | None = None,
     env: Mapping[str, object] | None = None,
+    http_client: ProviderHTTPClient | None = None,
 ) -> Dict[str, Any]:
     return http_json_get(
         url=url,
@@ -627,6 +631,7 @@ def _http_json_get(
         provider_name=provider_name,
         trace_metadata=trace_metadata,
         env=env,
+        http_client=http_client,
     )
 
 

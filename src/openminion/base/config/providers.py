@@ -13,6 +13,7 @@ class OpenAIProviderConfig:
     base_url: str = "https://api.openai.com/v1"
     provider_identity: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 60
+    http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
     tool_call_strategy: str = "hybrid"
 
@@ -24,6 +25,7 @@ class AnthropicProviderConfig:
     api_key_env: str = "ANTHROPIC_API_KEY"
     base_url: str = "https://api.anthropic.com/v1"
     timeout_seconds: int = 60
+    http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
     max_tokens: int = 1024
     api_version: str = "2023-06-01"
@@ -36,6 +38,7 @@ class OpenRouterProviderConfig:
     api_key_env: str = "OPENROUTER_API_KEY"
     base_url: str = "https://openrouter.ai/api/v1"
     timeout_seconds: int = 60
+    http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
     app_name: str = "openminion"
     app_url: str = ""
@@ -50,6 +53,7 @@ class CerebrasProviderConfig:
     api_key_env: str = "CEREBRAS_API_KEY"
     base_url: str = "https://api.cerebras.ai/v1"
     timeout_seconds: int = 120
+    http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
     tool_call_strategy: str = "hybrid"
 
@@ -61,6 +65,7 @@ class GroqProviderConfig:
     api_key_env: str = "GROQ_API_KEY"
     base_url: str = "https://api.groq.com/openai/v1"
     timeout_seconds: int = 120
+    http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
     tool_call_strategy: str = "hybrid"
 
@@ -70,6 +75,7 @@ class OllamaProviderConfig:
     model: str = "llama3.1"
     base_url: str = "http://127.0.0.1:11434"
     timeout_seconds: int = 60
+    http_connection_reuse_enabled: bool = True
     temperature: float = 0.2
     api_key: str = ""
     api_key_env: str = "OLLAMA_API_KEY"
@@ -81,6 +87,7 @@ class CortensorProviderConfig:
     model: str = "gpt-oss-20b"
     base_url: str = "http://127.0.0.1:8080/api/v2/completions"
     timeout_seconds: int = 420
+    http_connection_reuse_enabled: bool = True
     transport_timeout_buffer_seconds: int = 30
     result_wait_attempts: int = 3
     result_wait_interval_seconds: float = 2.0

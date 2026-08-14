@@ -42,6 +42,9 @@ class RuntimeLLMHandle:
     client: Any
     tool_call_strategy: str = LLM_TOOL_CALL_STRATEGY_HYBRID
 
+    def close(self) -> None:
+        self.client.llmctl.close()
+
 
 def _runtime_llmctl_config(
     *,

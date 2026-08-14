@@ -37,6 +37,7 @@ from ..tool_calling import (
     supports_native_tool_calling,
     ToolCallFallbackSource,
 )
+from ..transport.client import ProviderHTTPClient, http_client_for_config
 
 _OLLAMA_STRUCTURED_OUTPUT_INSTRUCTION = (
     "Return only a valid JSON object that matches the requested schema. "
@@ -201,6 +202,12 @@ class OllamaProvider:
     provider_interface_version = PROVIDER_INTERFACE_VERSION
     default_base_url = "http://127.0.0.1:11434"
 
+    def __init__(self) -> None:
+        self._http_client = ProviderHTTPClient()
+
+    def close(self) -> None:
+        self._http_client.close()
+
     def complete(self, request: LLMRequest, config: dict[str, Any]) -> LLMResponse:
         started = time.perf_counter()
         model = _resolve_model(request, config, "llama3.1")
@@ -268,8 +275,8 @@ class OllamaProvider:
             provider_name=self.name,
             trace_metadata=request.metadata,
             env=config.get("__env__"),
+            http_client=http_client_for_config(self._http_client, config),
         )
-
         message_payload = response_payload.get("message")
         raw_text = ""
         if isinstance(message_payload, dict):

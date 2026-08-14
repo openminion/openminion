@@ -18,6 +18,7 @@ from ...schemas import (
     ToolCallStatus,
 )
 from ...streaming import response_stream_events, stream_error_event
+from ..transport.client import ProviderHTTPClient, http_client_for_config
 from .payloads import (
     _extract_anthropic_thinking_blocks,
     _messages_anthropic,
@@ -66,6 +67,12 @@ class AnthropicProvider:
     contract_version = LLM_RESPONSE_INTERFACE_VERSION
     provider_interface_version = PROVIDER_INTERFACE_VERSION
     default_base_url = "https://api.anthropic.com/v1"
+
+    def __init__(self) -> None:
+        self._http_client = ProviderHTTPClient()
+
+    def close(self) -> None:
+        self._http_client.close()
 
     @staticmethod
     def _prompt_cache_config(config: Dict[str, Any]) -> tuple[bool, bool]:
@@ -290,6 +297,7 @@ class AnthropicProvider:
             provider_name=self.name,
             trace_metadata=request.metadata,
             env=config.get("__env__"),
+            http_client=http_client_for_config(self._http_client, config),
         )
 
         return self._response_from_payload(
@@ -338,6 +346,7 @@ class AnthropicProvider:
                 provider_name=self.name,
                 trace_metadata=request.metadata,
                 env=config.get("__env__"),
+                http_client=http_client_for_config(self._http_client, config),
             ):
                 if line.startswith("event:"):
                     stream_event_type = line[len("event:") :].strip() or "message"
