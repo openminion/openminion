@@ -1,14 +1,9 @@
 import re
 from typing import TypedDict
 
+from .interfaces import SkillInspectIssue
+
 MAX_MARKDOWN_CHARS = 100_000  # public: used by tests and callers
-_SIZE_WARN_BYTES = MAX_MARKDOWN_CHARS  # internal alias used in scan()
-
-
-class SkillInspectIssue(TypedDict):
-    code: str
-    message: str
-    risk: str
 
 
 class _Rule(TypedDict):
@@ -19,7 +14,6 @@ class _Rule(TypedDict):
 
 
 _RULES: tuple[_Rule, ...] = (
-    # --- Prompt injection ---
     {
         "code": "PI-001",
         "risk": "critical",
@@ -54,7 +48,6 @@ _RULES: tuple[_Rule, ...] = (
             re.IGNORECASE,
         ),
     },
-    # --- Dangerous shell execution ---
     {
         "code": "EXEC-001",
         "risk": "critical",
@@ -76,7 +69,6 @@ _RULES: tuple[_Rule, ...] = (
             re.IGNORECASE,
         ),
     },
-    # --- Exfiltration ---
     {
         "code": "EXFIL-001",
         "risk": "high",
@@ -101,7 +93,6 @@ _RULES: tuple[_Rule, ...] = (
             re.IGNORECASE,
         ),
     },
-    # --- Scope abuse ---
     {
         "code": "SCOPE-001",
         "risk": "medium",
@@ -128,24 +119,22 @@ def _max_risk(current: str, incoming: str) -> str:
 
 
 def scan(markdown: str) -> tuple[str, list[SkillInspectIssue]]:
-    text = str(markdown or "")
     issues: list[SkillInspectIssue] = []
     risk_level = "low"
 
-    # warn on large payloads (> 100 000 chars, medium risk)
-    if len(text) > _SIZE_WARN_BYTES:
-        size_k = len(text) // 1000
+    if len(markdown) > MAX_MARKDOWN_CHARS:
+        size_k = len(markdown) // 1000
         issues.append(
             {
                 "code": "SIZE-001",
-                "message": f"Skill markdown is {size_k}K chars (limit {_SIZE_WARN_BYTES // 1000}K).",
+                "message": f"Skill markdown is {size_k}K chars (limit {MAX_MARKDOWN_CHARS // 1000}K).",
                 "risk": "medium",
             }
         )
         risk_level = _max_risk(risk_level, "medium")
 
     for rule in _RULES:
-        if rule["pattern"].search(text):
+        if rule["pattern"].search(markdown):
             issues.append(
                 {
                     "code": rule["code"],
