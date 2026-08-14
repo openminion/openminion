@@ -44,15 +44,10 @@ from .constants import (
 )
 
 _UTC = timezone.utc
-_TIMEZONE_META_KEYS = TIMEZONE_META_KEYS
 
 
 def _iso_utc(dt: datetime) -> str:
     return dt.astimezone(_UTC).isoformat().replace("+00:00", "Z")
-
-
-def _iso_local(dt: datetime) -> str:
-    return dt.isoformat()
 
 
 def _load_timezone(name: str) -> ZoneInfo:
@@ -73,7 +68,6 @@ def _load_timezone(name: str) -> ZoneInfo:
         ) from exc
 
 
-# TGFC: stable provider id for the time tool family. Single canonical owner.
 _TIME_TOOL_SOURCE = "time_module"
 
 
@@ -119,7 +113,7 @@ def _build_instant(*, dt_utc: datetime, timezone_name: str) -> dict[str, Any]:
         "unix_seconds": int(unix_ts),
         "unix_millis": int(unix_ts * 1000),
         "timezone": timezone_name,
-        "local": _iso_local(local_dt),
+        "local": local_dt.isoformat(),
         "offset_seconds": int(offset.total_seconds()),
         "source": _TIME_TOOL_SOURCE,
     }
@@ -127,11 +121,7 @@ def _build_instant(*, dt_utc: datetime, timezone_name: str) -> dict[str, Any]:
 
 def _contains_time_component(raw_iso: str) -> bool:
     token = str(raw_iso or "").strip()
-    if not token:
-        return False
-    if "T" in token or " " in token:
-        return True
-    return False
+    return bool(token and ("T" in token or " " in token))
 
 
 def _parse_iso8601(
@@ -195,7 +185,7 @@ def _timezone_from_identity_profile(ctx: RuntimeContext) -> str | None:
     metadata = getattr(profile, "meta", None)
     if not isinstance(metadata, Mapping):
         return None
-    for key in _TIMEZONE_META_KEYS:
+    for key in TIMEZONE_META_KEYS:
         token = str(metadata.get(key, "")).strip()
         if not token:
             continue
@@ -208,13 +198,10 @@ def _timezone_from_identity_profile(ctx: RuntimeContext) -> str | None:
 
 
 def _timezone_from_context_metadata(ctx: RuntimeContext) -> str | None:
-    policy_raw = getattr(ctx.policy, "raw", {}) or {}
-    if not isinstance(policy_raw, Mapping):
-        return None
-    context_meta = policy_raw.get("context_metadata")
+    context_meta = ctx.policy.raw.get("context_metadata")
     if not isinstance(context_meta, Mapping):
         return None
-    for key in _TIMEZONE_META_KEYS:
+    for key in TIMEZONE_META_KEYS:
         token = str(context_meta.get(key, "")).strip()
         if not token:
             continue
@@ -474,9 +461,7 @@ def _resolve_timezone(
 
 
 def _normalize_value(value: float) -> int | float:
-    if float(value).is_integer():
-        return int(value)
-    return float(value)
+    return int(value) if value.is_integer() else value
 
 
 def _record_tool_call(
@@ -495,125 +480,90 @@ def _record_tool_call(
             "tool": method,
             "timezone": timezone_name,
             "duration_ms": int(max(0.0, (time.perf_counter() - started_at) * 1000.0)),
-            "defaulted_from_identity": bool(defaulted_from_identity),
+            "defaulted_from_identity": defaulted_from_identity,
             "error_code": error_code,
         },
     )
 
 
+class _ToolCallLog:
+    def __init__(self, ctx: RuntimeContext, method: str) -> None:
+        self.ctx = ctx
+        self.method = method
+        self.started_at = time.perf_counter()
+        self.timezone_name = "UTC"
+        self.defaulted_from_identity = False
+
+    def __enter__(self) -> "_ToolCallLog":
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: Any,
+    ) -> None:
+        _record_tool_call(
+            ctx=self.ctx,
+            method=self.method,
+            started_at=self.started_at,
+            timezone_name=self.timezone_name,
+            defaulted_from_identity=self.defaulted_from_identity,
+            error_code=exc.code if isinstance(exc, ToolRuntimeError) else "",
+        )
+
+
 def _h_now(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    defaulted_from_identity = False
-    error_code = ""
-    try:
-        timezone_name, defaulted_from_identity = _resolve_timezone(
+    with _ToolCallLog(ctx, "time.now") as call:
+        call.timezone_name, call.defaulted_from_identity = _resolve_timezone(
             explicit_timezone=str(args.get("timezone") or "").strip() or None,
             explicit_location=str(args.get("location") or "").strip() or None,
             ctx=ctx,
         )
-        return _build_instant(dt_utc=datetime.now(_UTC), timezone_name=timezone_name)
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.now",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=defaulted_from_identity,
-            error_code=error_code,
+        return _build_instant(
+            dt_utc=datetime.now(_UTC), timezone_name=call.timezone_name
         )
 
 
 def _h_in_zone(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    error_code = ""
-    try:
+    with _ToolCallLog(ctx, "time.in_zone") as call:
         timezone_name = str(args.get("timezone") or "").strip()
+        call.timezone_name = timezone_name or "UTC"
         _load_timezone(timezone_name)
         return _build_instant(dt_utc=datetime.now(_UTC), timezone_name=timezone_name)
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.in_zone",
-            started_at=started_at,
-            timezone_name=timezone_name or "UTC",
-            defaulted_from_identity=False,
-            error_code=error_code,
-        )
 
 
 def _h_convert(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    error_code = ""
-    try:
-        timezone_name = str(args.get("to_timezone") or "").strip()
-        _load_timezone(timezone_name)
+    with _ToolCallLog(ctx, "time.convert") as call:
+        call.timezone_name = str(args.get("to_timezone") or "").strip()
+        _load_timezone(call.timezone_name)
         dt_utc, _ = _parse_iso8601(iso=str(args.get("iso") or "").strip())
-        return _build_instant(dt_utc=dt_utc, timezone_name=timezone_name)
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.convert",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=False,
-            error_code=error_code,
-        )
+        return _build_instant(dt_utc=dt_utc, timezone_name=call.timezone_name)
 
 
 def _h_parse_iso(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    error_code = ""
-    assumed_timezone = False
-    try:
+    with _ToolCallLog(ctx, "time.parse_iso") as call:
         raw_iso = str(args.get("iso") or "").strip()
         timezone_hint = str(args.get("timezone_hint") or "").strip() or None
         dt_utc, assumed_timezone = _parse_iso8601(
             iso=raw_iso, timezone_hint=timezone_hint
         )
-        if assumed_timezone and timezone_hint:
-            timezone_name = timezone_hint
-        else:
-            timezone_name = "UTC"
+        call.timezone_name = (
+            timezone_hint if assumed_timezone and timezone_hint else "UTC"
+        )
         return {
-            "instant": _build_instant(dt_utc=dt_utc, timezone_name=timezone_name),
+            "instant": _build_instant(dt_utc=dt_utc, timezone_name=call.timezone_name),
             "assumed_timezone": assumed_timezone,
             "source": _TIME_TOOL_SOURCE,
         }
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.parse_iso",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=False,
-            error_code=error_code,
-        )
 
 
 def _h_diff(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    error_code = ""
     unit = (
         str(args.get("unit") or TIME_DIFF_UNIT_SECONDS).strip().lower()
         or TIME_DIFF_UNIT_SECONDS
     )
-    try:
+    with _ToolCallLog(ctx, "time.diff"):
         a_utc, _ = _parse_iso8601(iso=str(args.get("a") or "").strip())
         b_utc, _ = _parse_iso8601(iso=str(args.get("b") or "").strip())
         unit_divisor = {
@@ -639,28 +589,13 @@ def _h_diff(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             "a_utc": _iso_utc(a_utc),
             "b_utc": _iso_utc(b_utc),
         }
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.diff",
-            started_at=started_at,
-            timezone_name="UTC",
-            defaulted_from_identity=False,
-            error_code=error_code,
-        )
 
 
 def _h_format(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    error_code = ""
-    try:
+    with _ToolCallLog(ctx, "time.format") as call:
         dt_utc, _ = _parse_iso8601(iso=str(args.get("iso") or "").strip())
-        timezone_name = str(args.get("timezone") or "").strip() or "UTC"
-        zone = _load_timezone(timezone_name)
+        call.timezone_name = str(args.get("timezone") or "").strip() or "UTC"
+        zone = _load_timezone(call.timezone_name)
         local_dt = dt_utc.astimezone(zone)
         fmt = (
             str(args.get("format") or TIME_FORMAT_ISO).strip().lower()
@@ -668,7 +603,7 @@ def _h_format(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
         custom_pattern = str(args.get("custom") or "").strip()
         if fmt in {TIME_FORMAT_ISO, TIME_FORMAT_RFC3339}:
-            formatted = _iso_local(local_dt).replace("+00:00", "Z")
+            formatted = local_dt.isoformat().replace("+00:00", "Z")
         elif fmt == TIME_FORMAT_DATE:
             formatted = local_dt.strftime("%Y-%m-%d")
         elif fmt == TIME_FORMAT_TIME:
@@ -693,164 +628,111 @@ def _h_format(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
                 },
             )
         return {"formatted": formatted, "source": _TIME_TOOL_SOURCE}
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.format",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=False,
-            error_code=error_code,
-        )
 
 
 def _h_start_of_day(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    defaulted_from_identity = False
-    error_code = ""
-    try:
-        timezone_name, defaulted_from_identity = _resolve_timezone(
+    with _ToolCallLog(ctx, "time.start_of_day") as call:
+        call.timezone_name, call.defaulted_from_identity = _resolve_timezone(
             explicit_timezone=str(args.get("timezone") or "").strip() or None,
             explicit_location=None,
             ctx=ctx,
         )
-        zone = _load_timezone(timezone_name)
+        zone = _load_timezone(call.timezone_name)
         raw_iso = str(args.get("iso") or "").strip()
         if raw_iso:
-            dt_utc, _ = _parse_iso8601(iso=raw_iso, timezone_hint=timezone_name)
+            dt_utc, _ = _parse_iso8601(iso=raw_iso, timezone_hint=call.timezone_name)
         else:
             dt_utc = datetime.now(_UTC)
         local_dt = dt_utc.astimezone(zone)
         start_local = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
         return {
             "start": _build_instant(
-                dt_utc=start_local.astimezone(_UTC), timezone_name=timezone_name
+                dt_utc=start_local.astimezone(_UTC),
+                timezone_name=call.timezone_name,
             ),
             "source": _TIME_TOOL_SOURCE,
         }
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.start_of_day",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=defaulted_from_identity,
-            error_code=error_code,
-        )
 
 
 def _h_end_of_day(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    defaulted_from_identity = False
-    error_code = ""
-    try:
-        timezone_name, defaulted_from_identity = _resolve_timezone(
+    with _ToolCallLog(ctx, "time.end_of_day") as call:
+        call.timezone_name, call.defaulted_from_identity = _resolve_timezone(
             explicit_timezone=str(args.get("timezone") or "").strip() or None,
             explicit_location=None,
             ctx=ctx,
         )
-        zone = _load_timezone(timezone_name)
+        zone = _load_timezone(call.timezone_name)
         raw_iso = str(args.get("iso") or "").strip()
         if raw_iso:
-            dt_utc, _ = _parse_iso8601(iso=raw_iso, timezone_hint=timezone_name)
+            dt_utc, _ = _parse_iso8601(iso=raw_iso, timezone_hint=call.timezone_name)
         else:
             dt_utc = datetime.now(_UTC)
         local_dt = dt_utc.astimezone(zone)
         end_local = local_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
         return {
             "end": _build_instant(
-                dt_utc=end_local.astimezone(_UTC), timezone_name=timezone_name
+                dt_utc=end_local.astimezone(_UTC),
+                timezone_name=call.timezone_name,
             ),
             "source": _TIME_TOOL_SOURCE,
         }
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.end_of_day",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=defaulted_from_identity,
-            error_code=error_code,
-        )
 
 
 def _h_next_cron(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
-    started_at = time.perf_counter()
-    timezone_name = "UTC"
-    error_code = ""
-    try:
-        cron_expr = str(args.get("cron") or "").strip()
-        timezone_name = str(args.get("timezone") or "").strip()
-        _load_timezone(timezone_name)
-        count = int(
-            args.get("count", DEFAULT_NEXT_CRON_COUNT) or DEFAULT_NEXT_CRON_COUNT
-        )
-        if count < 1 or count > MAX_NEXT_CRON_COUNT:
+    with _ToolCallLog(ctx, "time.next_cron") as call:
+        try:
+            cron_expr = str(args.get("cron") or "").strip()
+            call.timezone_name = str(args.get("timezone") or "").strip()
+            _load_timezone(call.timezone_name)
+            count = int(
+                args.get("count", DEFAULT_NEXT_CRON_COUNT) or DEFAULT_NEXT_CRON_COUNT
+            )
+            if count < 1 or count > MAX_NEXT_CRON_COUNT:
+                raise ToolRuntimeError(
+                    "OUT_OF_RANGE",
+                    f"count must be between 1 and {MAX_NEXT_CRON_COUNT}",
+                    {"count": count},
+                )
+            raw_from_iso = str(args.get("from_iso") or "").strip()
+            if raw_from_iso:
+                cursor, _ = _parse_iso8601(
+                    iso=raw_from_iso, timezone_hint=call.timezone_name
+                )
+            else:
+                cursor = datetime.now(_UTC)
+            schedule = {
+                "kind": "cron",
+                "expr": cron_expr,
+                "tz": call.timezone_name,
+                "stagger_ms": 0,
+            }
+            items: list[dict[str, Any]] = []
+            for index in range(count):
+                due = compute_next_due(
+                    schedule=schedule,
+                    after=cursor,
+                    job_id=f"time.next_cron:{cron_expr}:{index}",
+                )
+                if due is None:
+                    break
+                due_utc = due.astimezone(_UTC)
+                items.append(
+                    _build_instant(dt_utc=due_utc, timezone_name=call.timezone_name)
+                )
+                cursor = due_utc + timedelta(seconds=1)
+            return {
+                "next": items,
+                "count": len(items),
+                "timezone": call.timezone_name,
+                "cron": cron_expr,
+                "source": _TIME_TOOL_SOURCE,
+            }
+        except ValueError as exc:
             raise ToolRuntimeError(
-                "OUT_OF_RANGE",
-                f"count must be between 1 and {MAX_NEXT_CRON_COUNT}",
-                {"count": count},
-            )
-        raw_from_iso = str(args.get("from_iso") or "").strip()
-        if raw_from_iso:
-            cursor, _ = _parse_iso8601(iso=raw_from_iso, timezone_hint=timezone_name)
-        else:
-            cursor = datetime.now(_UTC)
-        schedule = {
-            "kind": "cron",
-            "expr": cron_expr,
-            "tz": timezone_name,
-            "stagger_ms": 0,
-        }
-        items: list[dict[str, Any]] = []
-        for index in range(count):
-            due = compute_next_due(
-                schedule=schedule,
-                after=cursor,
-                job_id=f"time.next_cron:{cron_expr}:{index}",
-            )
-            if due is None:
-                break
-            due_utc = due.astimezone(_UTC)
-            items.append(_build_instant(dt_utc=due_utc, timezone_name=timezone_name))
-            cursor = due_utc + timedelta(seconds=1)
-        return {
-            "next": items,
-            "count": len(items),
-            "timezone": timezone_name,
-            "cron": cron_expr,
-            "source": _TIME_TOOL_SOURCE,
-        }
-    except ValueError as exc:
-        error_code = "INVALID_ARGUMENT"
-        raise ToolRuntimeError(
-            "INVALID_ARGUMENT",
-            str(exc),
-            {"cron": str(args.get("cron") or "")},
-        ) from exc
-    except ToolRuntimeError as exc:
-        error_code = exc.code
-        raise
-    finally:
-        _record_tool_call(
-            ctx=ctx,
-            method="time.next_cron",
-            started_at=started_at,
-            timezone_name=timezone_name,
-            defaulted_from_identity=False,
-            error_code=error_code,
-        )
+                "INVALID_ARGUMENT",
+                str(exc),
+                {"cron": str(args.get("cron") or "")},
+            ) from exc
 
 
 def _time_tool_specs() -> tuple[ToolSpec, ...]:
