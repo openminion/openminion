@@ -128,20 +128,12 @@ class AnthropicProvider:
                 parser_plugin_selection=behavior_profile.parser_plugin_selection,
                 fallback_parser_policy=behavior_profile.fallback_parser_policy,
             )
-            tool_calls = _coerce_tool_calls(
-                [
-                    {
-                        "id": getattr(call, "id", None),
-                        "name": remap_provider_tool_call_name(
-                            getattr(call, "name", ""),
-                            external_to_canonical=external_to_canonical,
-                        ),
-                        "arguments": dict(getattr(call, "arguments", {}) or {}),
-                        "status": "parsed",
-                    }
-                    for call in tool_call_resolution.calls
-                ]
-            )
+            tool_calls = _coerce_tool_calls(tool_call_resolution.calls)
+            for call in tool_calls:
+                call.name = remap_provider_tool_call_name(
+                    call.name,
+                    external_to_canonical=external_to_canonical,
+                )
         if (
             request.tools
             and text
