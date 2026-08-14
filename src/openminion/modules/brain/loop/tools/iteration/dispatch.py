@@ -100,13 +100,17 @@ def _handle_mixed_decompose_calls(
         "decompose cannot be mixed with other tool calls in the same "
         f"adaptive-loop turn: {other_tool_names}"
     )
-    persist_blocked_tool_calls(
+    blocked_results = persist_blocked_tool_calls(
         loop_ctx,
         loop_state=loop_state,
         turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
         tool_calls=tool_calls,
         code="MIXED_DECOMPOSE_TOOL_CALLS",
         message=blocked_message,
+    )
+    loop_state.messages.extend(
+        action_result_to_tool_message(call.id, call.name, result)
+        for call, result in zip(tool_calls, blocked_results, strict=True)
     )
     mixed_signature = canonical_tool_call_signature(
         {

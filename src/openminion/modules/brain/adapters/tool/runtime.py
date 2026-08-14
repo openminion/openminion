@@ -69,6 +69,39 @@ _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
 )
 
 
+def _rebase_child_path_argument(
+    args: dict[str, Any], *, parent: Path, child: Path
+) -> None:
+    raw_path = str(args.get("path", "") or "").strip()
+    candidate = Path(raw_path).expanduser()
+    if not raw_path or not candidate.is_absolute():
+        return
+    try:
+        relative_path = candidate.resolve(strict=False).relative_to(
+            parent.resolve(strict=False)
+        )
+    except ValueError:
+        return
+    args["path"] = str(child / relative_path)
+
+
+def _child_workspace_policy(
+    policy: Policy,
+    *,
+    args: dict[str, Any],
+    parent: Path,
+    child: Path,
+) -> Policy:
+    _rebase_child_path_argument(args, parent=parent, child=child)
+    policy_raw = copy.deepcopy(policy.raw)
+    policy_raw["workspace_root"] = str(child)
+    context_metadata = policy_raw.setdefault("context_metadata", {})
+    if isinstance(context_metadata, dict):
+        context_metadata["workspace_root"] = str(child)
+        context_metadata["cwd"] = str(child)
+    return Policy(raw=policy_raw)
+
+
 def _is_confirm_required_code(code: Any) -> bool:
     return str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
 
@@ -387,13 +420,12 @@ class ToolAdapter:
             )
         workspace_override = workspace_override or _WORKSPACE_OVERRIDE.get()
         if workspace_override is not None:
-            policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
-            policy_raw["workspace_root"] = str(workspace_override)
-            context_metadata = policy_raw.setdefault("context_metadata", {})
-            if isinstance(context_metadata, dict):
-                context_metadata["workspace_root"] = str(workspace_override)
-                context_metadata["cwd"] = str(workspace_override)
-            policy_for_run = Policy(raw=policy_raw)
+            policy_for_run = _child_workspace_policy(
+                policy_for_run,
+                args=args,
+                parent=self.workspace_root,
+                child=workspace_override,
+            )
         if runtime_message_ref is not None:
             policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
             tools_cfg = policy_raw.setdefault("tools", {})
