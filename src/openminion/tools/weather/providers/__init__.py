@@ -24,7 +24,7 @@ class WeatherProviderRegistry:
         self._order: list[str] = []
 
     def register(self, provider: WeatherProvider) -> None:
-        provider_id = str(getattr(provider, "provider_id", "") or "").strip().lower()
+        provider_id = provider.provider_id.strip().lower()
         if not provider_id:
             raise ValueError("weather provider must define provider_id")
         self._providers[provider_id] = provider
@@ -35,10 +35,7 @@ class WeatherProviderRegistry:
         return tuple(self._order)
 
     def get(self, provider_id: str) -> WeatherProvider | None:
-        token = str(provider_id or "").strip().lower()
-        if not token:
-            return None
-        return self._providers.get(token)
+        return self._providers.get(provider_id.strip().lower())
 
 
 _PROVIDER_REGISTRY = WeatherProviderRegistry()

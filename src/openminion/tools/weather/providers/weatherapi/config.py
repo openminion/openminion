@@ -33,12 +33,11 @@ def resolve_weatherapi_api_url(*, ctx: Any | None = None) -> str:
 
 def resolve_weatherapi_timeout_seconds(*, ctx: Any | None = None) -> float:
     env = resolve_tool_context_env(ctx)
-    raw = env.get(WEATHERAPI_TIMEOUT_SECONDS_ENV, "")
+    raw = env.get(WEATHERAPI_TIMEOUT_SECONDS_ENV) or DEFAULT_WEATHERAPI_TIMEOUT_SECONDS
     try:
-        value = float(raw) if raw else float(DEFAULT_WEATHERAPI_TIMEOUT_SECONDS)
+        return max(0.0, float(raw))
     except (TypeError, ValueError):
-        value = float(DEFAULT_WEATHERAPI_TIMEOUT_SECONDS)
-    return max(0.0, value)
+        return DEFAULT_WEATHERAPI_TIMEOUT_SECONDS
 
 
 __all__ = [

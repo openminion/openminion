@@ -433,7 +433,6 @@ src/openminion/tools/task/plugin.py	5	2	current broad-handler baseline; ratchet 
 src/openminion/tools/task/scheduled_task/runtime.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/task/scheduled_task/views.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/time/plugin.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/tool_catalog/plugin.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/plugin.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/providers/openmeteo/plugin.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/providers/openmeteo/runtime.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

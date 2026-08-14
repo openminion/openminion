@@ -85,7 +85,7 @@ def _load_env_config(ctx: RuntimeContext) -> Dict[str, Any]:
     return decoded
 
 
-def _resolve_config(ctx: RuntimeContext) -> WeatherOpenMeteoConfig:
+def resolve_openmeteo_config(ctx: RuntimeContext) -> WeatherOpenMeteoConfig:
     policy_tools = (
         ctx.policy.raw.get("tools", {}) if isinstance(ctx.policy.raw, dict) else {}
     )
@@ -97,12 +97,6 @@ def _resolve_config(ctx: RuntimeContext) -> WeatherOpenMeteoConfig:
 
     config_payload = _deep_merge(from_policy, _load_env_config(ctx))
     return WeatherOpenMeteoConfig.model_validate(config_payload)
-
-
-def resolve_openmeteo_config(ctx: RuntimeContext) -> WeatherOpenMeteoConfig:
-    """Resolve Open-Meteo config for sibling tools that reuse this provider."""
-
-    return _resolve_config(ctx)
 
 
 def _resolve_location_argument(arguments: Mapping[str, Any]) -> str:
@@ -335,7 +329,7 @@ def _retry_openmeteo_url_error(
     ) from exc
 
 
-def _geocode(
+def geocode_openmeteo_location(
     query: str,
     *,
     config: WeatherOpenMeteoConfig,
@@ -387,19 +381,7 @@ def _geocode(
     )
 
 
-def geocode_openmeteo_location(
-    query: str,
-    *,
-    config: WeatherOpenMeteoConfig,
-    language: str,
-    timeout_s: float,
-) -> tuple[Dict[str, Any], str, Dict[str, Any]]:
-    """Resolve a location through the primary Open-Meteo geocoder."""
-
-    return _geocode(query, config=config, language=language, timeout_s=timeout_s)
-
-
-def _secondary_geocode(
+def secondary_geocode_openmeteo_location(
     query: str,
     *,
     config: WeatherOpenMeteoConfig,
@@ -468,21 +450,7 @@ def _secondary_geocode(
     )
 
 
-def secondary_geocode_openmeteo_location(
-    query: str,
-    *,
-    config: WeatherOpenMeteoConfig,
-    language: str,
-    timeout_s: float,
-) -> tuple[Dict[str, Any], str, list[Dict[str, Any]]]:
-    """Resolve a location through the fallback Open-Meteo geocoder."""
-
-    return _secondary_geocode(
-        query, config=config, language=language, timeout_s=timeout_s
-    )
-
-
-def _forecast_current(
+def forecast_openmeteo_current(
     *,
     latitude: float,
     longitude: float,
@@ -513,23 +481,6 @@ def _forecast_current(
         )
 
     return current, request_url, payload
-
-
-def forecast_openmeteo_current(
-    *,
-    latitude: float,
-    longitude: float,
-    config: WeatherOpenMeteoConfig,
-    timeout_s: float,
-) -> tuple[Dict[str, Any], str, Dict[str, Any]]:
-    """Fetch current Open-Meteo conditions for sibling provider reuse."""
-
-    return _forecast_current(
-        latitude=latitude,
-        longitude=longitude,
-        config=config,
-        timeout_s=timeout_s,
-    )
 
 
 def _normalize_metrics(
@@ -597,21 +548,17 @@ def _run_weather_lookup(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, 
             "One of location/city/query/place or latitude+longitude is required",
         )
 
-    config = _resolve_config(ctx)
+    config = resolve_openmeteo_config(ctx)
     if not config.enabled:
         raise ToolRuntimeError(
             "POLICY_DENIED", "weather_openmeteo tool is disabled by configuration"
         )
 
-    timeout_s = float(
-        validated.timeout_s
-        if validated.timeout_s is not None
-        else config.timeout_seconds
-    )
+    timeout_s = float(validated.timeout_s or config.timeout_seconds)
     language = (
         str(validated.language or config.default_language or "en").strip() or "en"
     )
-    debug_enabled = bool(config.debug or validated.debug)
+    debug_enabled = config.debug or validated.debug
 
     warnings: list[str] = []
 
@@ -675,7 +622,7 @@ def _run_weather_lookup(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, 
             }
         else:
             try:
-                location, geocode_url, geocode_payload = _geocode(
+                location, geocode_url, geocode_payload = geocode_openmeteo_location(
                     query_key,
                     config=config,
                     language=language,
@@ -685,11 +632,13 @@ def _run_weather_lookup(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, 
                 if exc.code != "NOT_FOUND":
                     raise
                 try:
-                    location, geocode_url, secondary_payload = _secondary_geocode(
-                        query_key,
-                        config=config,
-                        language=language,
-                        timeout_s=timeout_s,
+                    location, geocode_url, secondary_payload = (
+                        secondary_geocode_openmeteo_location(
+                            query_key,
+                            config=config,
+                            language=language,
+                            timeout_s=timeout_s,
+                        )
                     )
                 except ToolRuntimeError as fallback_exc:
                     exc.details["secondary_geocoder"] = "nominatim"
@@ -704,7 +653,7 @@ def _run_weather_lookup(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, 
                 geocoding_provider = "nominatim"
                 geocode_payload = {"results": secondary_payload}
                 warnings.append("geocode_fallback_used:nominatim")
-        current, forecast_url, forecast_payload = _forecast_current(
+        current, forecast_url, forecast_payload = forecast_openmeteo_current(
             latitude=_as_float(location.get("latitude"), field_name="latitude"),
             longitude=_as_float(location.get("longitude"), field_name="longitude"),
             config=config,

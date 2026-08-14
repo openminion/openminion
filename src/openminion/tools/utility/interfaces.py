@@ -8,7 +8,4 @@ class UtilityResult(TypedDict, total=False):
     error: str
 
 
-__all__ = [
-    "UTILITY_PLUGIN_INTERFACE_VERSION",
-    "UtilityResult",
-]
+__all__ = ["UTILITY_PLUGIN_INTERFACE_VERSION", "UtilityResult"]

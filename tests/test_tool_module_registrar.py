@@ -289,16 +289,15 @@ def test_plugin_layout_has_required_registrar_files() -> None:
         )
 
 
-def test_plugin_packages_export_typed_registrar_annotation() -> None:
+def test_plugin_packages_export_conforming_registrar() -> None:
     from openminion.modules.tool.bootstrap import _TOOL_BOOTSTRAP_ENTRIES
 
     for entry in _TOOL_BOOTSTRAP_ENTRIES:
         if entry.kind != "tool":
             continue
         module = importlib.import_module(entry.module_name)
-        annotations = getattr(module, "__annotations__", {})
-        assert "REGISTRAR" in annotations, (
-            f"{entry.module_name} __init__.py must type-annotate REGISTRAR"
+        assert isinstance(module.REGISTRAR, ToolModuleRegistrar), (
+            f"{entry.module_name} must export a conforming REGISTRAR"
         )
 
 
