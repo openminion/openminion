@@ -725,7 +725,6 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertEqual(record_events[0].payload.get("changed"), "false")
         self.assertEqual(record_events[-1].payload.get("changed"), "true")
 
-
     def test_gateway_memory_envelope_metadata_is_emitted_when_caps_apply(self) -> None:
         # V2 uses char-based truncation (not count-based caps); create adapter with small budget
         db_path = Path(self._tmp.name) / "memory-envelope-caps.db"

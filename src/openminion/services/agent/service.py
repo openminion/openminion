@@ -381,6 +381,44 @@ class AgentService(AgentTurnFlowMixin):
             )
             return False
 
+    def emit_memory_followup_sync(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        conversation_id: str | None,
+        thread_id: str | None,
+        attach_id: str | None,
+        payload: dict[str, Any],
+    ) -> bool:
+        if self._telemetryctl is None:
+            return False
+        del conversation_id, thread_id, attach_id
+        event_payload = dict(payload)
+        run_id = str(event_payload.get("run_id", "") or "")
+        turn_id = str(event_payload.get("request_id", "") or run_id)
+        invocation_id = str(event_payload.pop("invocation_id", "") or "") or None
+        status = event_type.rsplit(".", 1)[-1]
+        try:
+            return bool(
+                self._telemetryctl.emit_canonical_event_sync(
+                    session_id,
+                    turn_id,
+                    event_type,
+                    event_payload,
+                    status=status,
+                    event_id=f"{event_type}:{session_id}:{run_id}",
+                    invocation_id=invocation_id,
+                    agent_id=self._identity_agent_id,
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            self._logger.warning(
+                "agent memory followup telemetry emit failed",
+                exc_info=True,
+            )
+            return False
+
     @staticmethod
     def _sanitize_arguments_for_spec(
         *,

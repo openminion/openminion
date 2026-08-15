@@ -19,11 +19,12 @@ from openminion.modules.memory.gateway_turn import (
     record_memory_failure as _record_memory_failure,
     text_fingerprint as _text_fingerprint,
 )
-from openminion.services.gateway.turn.lifecycle import RuntimeSessionTurnFenceError
 from openminion.services.constants import MEMORY_CAPSULE_STRATEGY_REFRESH_ON_WRITE
+from openminion.services.gateway.turn.lifecycle import RuntimeSessionTurnFenceError
 
 
 MemoryEventEmitter = Callable[..., None]
+
 
 @dataclass(frozen=True)
 class MemoryFollowupJob:

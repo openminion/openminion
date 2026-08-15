@@ -90,9 +90,7 @@ def test_invocation_filters_preserve_complete_canonical_summary(
     )
     shown = json.loads(capsys.readouterr().out)
     assert shown["summary"] == listed["summary"]
-    assert [event["event_type"] for event in shown["events"]] == [
-        "policy.decision"
-    ]
+    assert [event["event_type"] for event in shown["events"]] == ["policy.decision"]
 
     assert (
         main(

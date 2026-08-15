@@ -5,7 +5,6 @@ import hashlib
 import json
 import sys
 from datetime import datetime, timezone
-from typing import Any
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import (
@@ -215,17 +214,6 @@ def _response_has_tool_activity(metadata: dict[str, str]) -> bool:
     tool_calls = int(raw_tool_calls) if raw_tool_calls.isdigit() else 0
     tool_exec = int(raw_tool_exec) if raw_tool_exec.isdigit() else 0
     return tool_calls > 0 or tool_exec > 0
-
-
-def _correlation_payload(
-    *,
-    request_id: str,
-    payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    merged = dict(payload or {})
-    if request_id:
-        merged["request_id"] = request_id
-    return merged
 
 
 def _normalize_metadata(metadata: dict[str, str] | None) -> dict[str, str]:

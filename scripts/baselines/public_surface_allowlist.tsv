@@ -5,7 +5,6 @@ api/operations/skill.py	openminion.modules.skill.runtime.skill
 api/operations/tools.py	openminion.modules.llm.providers.base
 api/operations/tools.py	openminion.modules.tool.runtime.routing
 cli/commands/agent/control.py	openminion.modules.storage.runtime.registry_store
-cli/commands/agent/runner.py	openminion.modules.memory.storage.sqlite.store
 cli/commands/cron.py	openminion.modules.llm.providers.base
 cli/commands/cron.py	openminion.modules.tool.runtime.routing
 cli/commands/doctor.py	openminion.modules.llm.providers.factory

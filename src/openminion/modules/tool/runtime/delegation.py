@@ -6,7 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 from openminion.base.logging import get_logger
 from openminion.modules.a2a.interfaces import A2A_OBSERVABILITY_SCHEMA_VERSION
 from openminion.modules.telemetry.events.module import emit_module_telemetry
-from openminion.modules.telemetry.service import build_execution_traceparent
+from openminion.modules.telemetry.execution_lifecycle import build_execution_traceparent
 from openminion.modules.tool.constants import TOOL_A2A_DELEGATE_DEFAULT_TIMEOUT_SECONDS
 
 

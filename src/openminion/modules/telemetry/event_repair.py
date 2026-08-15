@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.modules.telemetry.events.canonical import build_canonical_event
-from openminion.modules.telemetry.schemas import TelemetryEvent, normalize_telemetry_event
+from openminion.modules.telemetry.schemas import (
+    TelemetryEvent,
+    normalize_telemetry_event,
+)
 from openminion.modules.telemetry.storage.base import TelemetryEventConflictError
 
 

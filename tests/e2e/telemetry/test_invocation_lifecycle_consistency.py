@@ -57,12 +57,8 @@ class InvocationLifecycleConsistencyE2E(GatewayServiceTestCase):
         )
         invocation_id = str(response.metadata["invocation_id"])
 
-        repaired = self.gateway.repair_invocation_lifecycle(
-            session_id="lifecycle-e2e"
-        )
-        unchanged = self.gateway.repair_invocation_lifecycle(
-            session_id="lifecycle-e2e"
-        )
+        repaired = self.gateway.repair_invocation_lifecycle(session_id="lifecycle-e2e")
+        unchanged = self.gateway.repair_invocation_lifecycle(session_id="lifecycle-e2e")
 
         assert repaired["status"] == "repaired"
         assert unchanged["status"] == "unchanged"

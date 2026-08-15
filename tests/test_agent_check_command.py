@@ -1,5 +1,7 @@
 import io
+import asyncio
 import json
+import logging
 import unittest
 from argparse import Namespace
 from contextlib import redirect_stdout
@@ -8,6 +10,12 @@ from dataclasses import dataclass
 
 from openminion.cli.commands.agent.check import run_agent_check
 from openminion.base.types import AgentResponse, Message
+from openminion.base.config import OpenMinionConfig
+from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
+from openminion.services.agent import AgentService
+from openminion.services.runtime.plugins import PluginRegistry
+from tests._csc_fixtures import _csc_install_default_agent
+from tests.services.agent._agent_service_support import FakeProvider
 
 
 @dataclass
@@ -101,6 +109,8 @@ class AgentCheckCommandTests(unittest.TestCase):
         self.assertEqual(payload["status"], "healthy")
         self.assertEqual(payload["provider"], "fake")
         self.assertEqual(payload["channel"], "console")
+        self.assertEqual(payload["scope"], "runtime")
+        self.assertTrue(payload["request_id"])
 
     def test_agent_check_deliver_sends_message(self) -> None:
         app = _FakeApp()
@@ -147,3 +157,45 @@ class AgentCheckCommandTests(unittest.TestCase):
         payload = json.loads(buf.getvalue())
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["agent"], "research")
+
+
+def test_agent_check_emits_finite_runtime_lifecycle(tmp_path) -> None:  # noqa: ANN001
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name="main")
+    telemetry_service = TelemetryService(home_root=tmp_path)
+    agent = AgentService(
+        config,
+        PluginRegistry([]),
+        FakeProvider(),
+        logging.getLogger("openminion.tests.agent_check.lifecycle"),
+        telemetryctl=TelemetryCtl(telemetry_service),
+    )
+    app = _FakeApp()
+    app.agent = agent
+    args = Namespace(
+        message="ping",
+        target="user",
+        channel="console",
+        agent_id="main",
+        deliver=False,
+        json=True,
+    )
+
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = run_agent_check(args, app)
+    payload = json.loads(output.getvalue())
+    events = asyncio.run(
+        telemetry_service.get_invocation_events(payload["invocation_id"])
+    )
+    telemetry_service.close_sync()
+
+    assert code == 0
+    assert payload["scope"] == "runtime"
+    assert payload["request_id"]
+    assert payload["invocation_id"]
+    assert payload["execution_id"]
+    event_types = [event.event_type for event in events]
+    assert event_types[0] == "agent.execution.started"
+    assert event_types.count("agent.execution.completed") == 1
+    assert event_types[-1] == "agent.invocation.completed"

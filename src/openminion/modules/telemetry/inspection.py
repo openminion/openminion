@@ -430,8 +430,6 @@ def read_invocation_events(
     ]
 
 
-
-
 def telemetry_debug_exit(report: TelemetryDebugReport) -> int:
     if report.error is None:
         return 0

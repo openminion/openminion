@@ -31,9 +31,7 @@ def _aggregate_snapshot_events(events: list[Any]) -> dict[str, Any]:
             totals["cache_read_tokens"] += int(
                 usage.get("cached_tokens") or usage.get("cache_read_tokens") or 0
             )
-            totals["cache_write_tokens"] += int(
-                usage.get("cache_creation_tokens") or 0
-            )
+            totals["cache_write_tokens"] += int(usage.get("cache_creation_tokens") or 0)
         if data.get("cost_source") and isinstance(data.get("cost_usd"), (int, float)):
             totals["cost_usd"] += float(data["cost_usd"])
         if event.event_type == "policy.decision":

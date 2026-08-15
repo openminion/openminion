@@ -5,10 +5,9 @@ from collections.abc import Callable
 
 from openminion.modules.storage.runtime.session_store import (
     EventRecord,
-    RuntimeSessionTurnFenceError,
+    RuntimeSessionTurnFenceError as RuntimeSessionTurnFenceError,
     SessionStore,
 )
-from openminion.services.gateway.turn.runtime import _correlation_payload
 from openminion.modules.task.run import (
     Run,
     append_lifecycle_event,
@@ -241,10 +240,10 @@ class _GatewayTurnLifecycleOps:
         lifecycle_payload: dict[str, Any],
         extra: dict[str, Any],
     ) -> dict[str, Any]:
-        return _correlation_payload(
-            request_id=normalized_request_id,
-            payload={**extra, **lifecycle_payload},
-        )
+        payload = {**extra, **lifecycle_payload}
+        if normalized_request_id:
+            payload["request_id"] = normalized_request_id
+        return payload
 
     @staticmethod
     def optional_ids(

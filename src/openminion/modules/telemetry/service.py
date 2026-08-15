@@ -42,6 +42,7 @@ from .trace.layout import delete_invocation_trace_artifacts, resolve_trace_root
 from .trace import ids as trace_ids
 from .trace.metadata import apply_content_policy
 from .events.canonical import build_canonical_event
+
 _LOG = logging.getLogger(__name__)
 
 

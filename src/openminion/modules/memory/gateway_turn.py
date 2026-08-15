@@ -122,7 +122,6 @@ def emit_memory_write_events(
     )
 
 
-
 def record_memory_failure(
     *,
     exc: Exception,
@@ -177,7 +176,6 @@ def record_memory_failure(
         attach_id=attach_id or None,
         payload=common,
     )
-
 
 
 __all__ = [

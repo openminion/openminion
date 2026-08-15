@@ -15,7 +15,11 @@ def run_gateway(args: Any, app: Any) -> int:
         apply_logging_mode("interactive")
 
     if getattr(args, "gateway_command", "") == "repair-lifecycle":
-        gateway = app.resolve_gateway(None) if hasattr(app, "resolve_gateway") else app.gateway
+        gateway = (
+            app.resolve_gateway(None)
+            if hasattr(app, "resolve_gateway")
+            else app.gateway
+        )
         report = gateway.repair_invocation_lifecycle(session_id=args.session_id)
         if args.json:
             print_json_payload(report)

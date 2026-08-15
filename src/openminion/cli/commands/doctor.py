@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import (
@@ -811,7 +812,19 @@ def _run_turn_smoke_check(
     started = perf_counter()
     try:
         app.channels.get(selected_channel)
-        inbound = Message(channel=selected_channel, target=target, body=message)
+        request_id = uuid4().hex
+        inbound = Message(
+            channel=selected_channel,
+            target=target,
+            body=message,
+            metadata={
+                "session_id": f"runtime:doctor:{request_id}",
+                "request_id": request_id,
+                "turn_id": request_id,
+                "invocation_scope": "runtime",
+                "diagnostic_scope": "runtime",
+            },
+        )
         response = asyncio.run(agent_service.run_turn(inbound))
         latency_ms = int((perf_counter() - started) * 1000)
         if not response.text.strip():
@@ -833,6 +846,10 @@ def _run_turn_smoke_check(
                 "agent": agent_profile.name,
                 "provider": response.metadata.get("provider", agent_profile.provider),
                 "model": response.metadata.get("model", ""),
+                "scope": "runtime",
+                "request_id": request_id,
+                "invocation_id": response.metadata.get("invocation_id", ""),
+                "execution_id": response.metadata.get("execution_id", ""),
             },
         )
     except Exception as exc:

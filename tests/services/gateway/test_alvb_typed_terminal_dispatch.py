@@ -234,8 +234,14 @@ class TypedTerminalDispatchTests(unittest.TestCase):
 class ChokePointStructuralPropertyTests(unittest.TestCase):
     def test_terminal_seams_route_through_choke_point(self) -> None:
         from openminion.services.gateway import turn as turn_module
+        from openminion.services.gateway.turn import flow_persistence
 
-        source = Path(turn_module.__file__).read_text()
+        source = "\n".join(
+            (
+                Path(turn_module.__file__).read_text(),
+                Path(flow_persistence.__file__).read_text(),
+            )
+        )
         terminal_seam_signatures = (
             "legacy_state=RUN_STATE_COMPLETED",
             "legacy_state=RUN_STATE_FAILED",
@@ -244,5 +250,5 @@ class ChokePointStructuralPropertyTests(unittest.TestCase):
             self.assertIn(
                 signature,
                 source,
-                f"Expected choke-point signature {signature!r} in turn/__init__.py",
+                f"Expected choke-point signature {signature!r} in turn owners",
             )

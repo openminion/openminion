@@ -848,8 +848,6 @@ def _ingest_compacted_messages(
             i += 1
 
 
-
-
 def _archive_compacted_messages(
     self,
     *,
