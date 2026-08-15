@@ -15,6 +15,7 @@ if str(_ROOT) not in sys.path:
 from tests.e2e.project_worker.harness import (  # noqa: E402
     scenario_ids,
     scenarios_for_suite,
+    run_certification,
     soak_pilot_specs,
     validate_certification_manifest,
     write_certification_report,
@@ -92,25 +93,27 @@ def _run_certify(args: list[str]) -> int:
     manifest_path = Path(parsed.manifest)
     try:
         manifest = validate_certification_manifest(manifest_path)
-        json_path, markdown_path = write_certification_report(
-            manifest,
-            manifest_path=manifest_path,
-            root=_ROOT,
-            validation_only=parsed.validate_only,
-        )
+        if parsed.validate_only:
+            json_path, markdown_path = write_certification_report(
+                manifest,
+                manifest_path=manifest_path,
+                root=_ROOT,
+                validation_only=True,
+            )
+            exit_code = 0
+        else:
+            exit_code, json_path, markdown_path = run_certification(
+                manifest,
+                manifest_path=manifest_path,
+                root=_ROOT,
+            )
     except (OSError, ValueError) as exc:
         print(f"certification manifest rejected: {exc}", file=sys.stderr)
         return 2
 
     print(f"{manifest.run_id}: {json_path}")
     print(f"{manifest.run_id}: {markdown_path}")
-    if not parsed.validate_only:
-        print(
-            "live sustained-autonomy execution remains owned by SAC-01/SAC-02",
-            file=sys.stderr,
-        )
-        return 2
-    return 0
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
