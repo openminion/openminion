@@ -81,7 +81,7 @@ def _pair_user(
         bot_username="testbot",
     )
     assert result.handled is True
-    assert result.reply_text == "Paired ✅"
+    assert result.reply_text.startswith("Paired ✅")
     binding = store.get_pairing(channel="telegram", chat_id=str(user_id))
     assert binding is not None
     return str(binding["session_id"])

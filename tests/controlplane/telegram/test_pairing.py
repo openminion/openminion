@@ -82,7 +82,8 @@ def test_consume_token_single_use_and_user_binding(tmp_path: Path) -> None:
         _env(text=f"/start {issued.token}"), bot_username="mybot"
     )
     assert ok.handled is True
-    assert ok.reply_text == "Paired ✅"
+    assert ok.reply_text.startswith("Paired ✅")
+    assert "/status" in ok.reply_text
 
     reused = service.handle_start_pairing(
         _env(text=f"/start {issued.token}"), bot_username="mybot"
@@ -107,7 +108,7 @@ def test_consume_token_enforces_expected_user(tmp_path: Path) -> None:
     accepted = service.handle_start_pairing(
         _env(text=f"/start {issued.token}", user_id=99), bot_username="mybot"
     )
-    assert accepted.reply_text == "Paired ✅"
+    assert accepted.reply_text.startswith("Paired ✅")
 
 
 def test_pairing_rate_limit_per_user(tmp_path: Path) -> None:
@@ -162,7 +163,7 @@ def test_successful_pairing_bridges_to_controlplane_pairings(tmp_path: Path) -> 
         _env(text=f"/start {issued.token}"), bot_username="mybot"
     )
     assert result.handled is True
-    assert result.reply_text == "Paired ✅"
+    assert result.reply_text.startswith("Paired ✅")
 
     pairing = controlplane_store.get_pairing(channel="telegram", chat_id="22")
     assert pairing is not None

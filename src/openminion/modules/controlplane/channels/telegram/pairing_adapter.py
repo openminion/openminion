@@ -61,7 +61,11 @@ class TelegramPairingAdapter:
         return f"Send /start {token} to the bot within {minutes} minutes."
 
     def format_success_reply(self) -> str:
-        return "Paired ✅"
+        return (
+            "Paired ✅\n"
+            "OpenMinion is ready. Send /status to verify, /help for commands, "
+            "or send a message."
+        )
 
     def format_failure_reply(self, reason: str) -> str:
         if reason in {"lru_limited", "rate_limited"}:

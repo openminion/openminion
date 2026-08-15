@@ -16,6 +16,7 @@ from openminion.modules.controlplane.channels.telegram.models import DeliveryRes
 from openminion.modules.controlplane.channels.telegram.webhook import (
     TelegramWebhookRunner,
 )
+from openminion.modules.controlplane.pairing import PairingHandleResult
 
 
 class _AuthStore:
@@ -133,6 +134,14 @@ class _AuditCollector:
         self.events.append((event_type, payload))
 
 
+class _NoopPairingService:
+    def handle_start_pairing(
+        self, envelope: Any, *, bot_username: str | None
+    ) -> PairingHandleResult:
+        del envelope, bot_username
+        return PairingHandleResult(handled=False)
+
+
 def _config() -> TelegramChannelConfig:
     return TelegramChannelConfig(
         enabled=True,
@@ -186,6 +195,38 @@ def test_webhook_scope_authorizer_blocks_unpaired_command() -> None:
     assert (
         "This chat is not paired. Send /pair for setup instructions." in delivery.texts
     )
+
+
+def test_webhook_pair_command_reports_ids_before_access_gate() -> None:
+    auth_store = _AuthStore(pairing=None)
+    runtime = _Runtime(auth_store)
+    delivery = _Delivery()
+    config = replace(
+        _config(),
+        access=AccessConfig(dm_policy="allowlist", allow_from_user_ids=[]),
+        pairing=PairingConfig(enabled=True),
+    )
+    runner = TelegramWebhookRunner(
+        config=config,
+        api=_API(),  # type: ignore[arg-type]
+        runtime=runtime,  # type: ignore[arg-type]
+        delivery=delivery,  # type: ignore[arg-type]
+        state_store=None,
+        pairing_service=_NoopPairingService(),  # type: ignore[arg-type]
+    )
+
+    result = runner.handle_webhook_update(
+        _private_update("/pair"), secret_token="test-auth-secret"
+    )
+
+    assert result["success"] is True
+    assert runtime.calls == []
+    text = "\n".join(delivery.texts)
+    assert "This chat is not paired" in text
+    assert (
+        "openminion channel telegram pair --config <profile.json> "
+        "--user-id 111 --chat-id 111"
+    ) in text
 
 
 def test_webhook_emits_reason_coded_access_and_delivery_audit_events() -> None:

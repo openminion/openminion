@@ -56,6 +56,9 @@ from openminion.modules.controlplane.channels.telegram.models import (
     TelegramInboundEnvelope,
     TelegramReplyTarget,
 )
+from openminion.modules.controlplane.channels.telegram.pairing_text import (
+    format_pairing_status,
+)
 from openminion.modules.controlplane.channels.telegram.normalization import (
     extract_envelope,
     to_control_event,
@@ -402,6 +405,21 @@ class TelegramPollingRunner:
                     )
                 return None
 
+        normalized_text = normalize_command_aliases(
+            envelope.text,
+            bot_username=self._bot_username,
+        )
+        if normalized_text.strip().casefold() == "/pair":
+            self._handle_local_command(envelope, normalized_text)
+            self._audit_event(
+                "cp.route.local_command",
+                reason="local_command",
+                update_id=envelope.update_id,
+                chat_id=str(envelope.chat_id),
+            )
+            self._answer_callback_if_needed(envelope)
+            return None
+
         access = self._access_policy.evaluate(
             envelope,
             bot_username=self._bot_username,
@@ -442,10 +460,6 @@ class TelegramPollingRunner:
             self._answer_callback_if_needed(envelope)
             return None
 
-        normalized_text = normalize_command_aliases(
-            envelope.text,
-            bot_username=self._bot_username,
-        )
         if self._handle_local_command(envelope, normalized_text):
             self._audit_event(
                 "cp.route.local_command",
@@ -845,24 +859,14 @@ class TelegramPollingRunner:
                     envelope, "Pairing is disabled.", payload_type="pair"
                 )
                 return True
-            if self._has_active_principal_binding(envelope):
-                session_scope = str(envelope.chat_id)
-                if envelope.topic_id is not None:
-                    session_scope = f"{session_scope}:{envelope.topic_id}"
-                self._send_local_text(
-                    envelope,
-                    (
-                        "Paired ✅\n"
-                        f"chat_id={envelope.chat_id}\n"
-                        f"user_id={envelope.from_user.id}\n"
-                        f"session_scope={session_scope}"
-                    ),
-                    payload_type="pair",
-                )
-                return True
             self._send_local_text(
                 envelope,
-                "Pairing required. Ask the owner for a fresh /start token.",
+                format_pairing_status(
+                    paired=self._has_active_principal_binding(envelope),
+                    chat_id=envelope.chat_id,
+                    user_id=envelope.from_user.id,
+                    topic_id=envelope.topic_id,
+                ),
                 payload_type="pair",
             )
             return True

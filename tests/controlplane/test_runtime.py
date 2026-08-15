@@ -331,6 +331,8 @@ def test_command_pair_status_and_revoke_current_chat() -> None:
     assert status_result.ok
     assert "Pairing active" in status_result.text
     assert "chat with OpenMinion (chat.interact)" in status_result.text
+    assert "pairing_id" not in status_result.text
+    assert "/pair revoke" in status_result.text
     assert revoke_result.ok
     assert "revoked" in revoke_result.text
     assert store.upserts[-1]["status"] == "revoked"
