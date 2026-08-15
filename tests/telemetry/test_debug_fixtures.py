@@ -72,4 +72,6 @@ def test_fixture_structural_fields_remain_usable() -> None:
         "-structured.json"
     )
     assert fixtures["bundle-manifest.json"]["files"][0]["mode"] == "0600"
-    assert "latest failed invocation" in fixtures["rich-card.json"]["body"]
+    rich_body = fixtures["rich-card.json"]["body"]
+    assert rich_body.startswith("latest invocation\n")
+    assert "telemetryctl debug bundle invocation-synthetic-1" in rich_body

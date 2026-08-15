@@ -133,6 +133,36 @@ class RuntimeSessionStoreLifecycle:
         )
         return [row_to_event(row) for row in rows]
 
+    def event_high_water(self, *, session_id: str) -> int:
+        row = self._backend.query_one(
+            "SELECT COALESCE(MAX(id), 0) AS high_water FROM events WHERE session_id = ?",
+            (session_id,),
+        )
+        return 0 if row is None else int(row["high_water"])
+
+    def list_events_after_id(
+        self,
+        *,
+        session_id: str,
+        after_id: int,
+        high_water_id: int,
+        limit: int = EVENT_PAGE_MAX,
+    ) -> list[EventRecord]:
+        safe_limit = max(0, min(int(limit), EVENT_PAGE_MAX))
+        if safe_limit == 0:
+            return []
+        rows = self._backend.query_dicts(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE session_id = ? AND id > ? AND id <= ?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (session_id, max(0, int(after_id)), max(0, int(high_water_id)), safe_limit),
+        )
+        return [row_to_event(row) for row in rows]
+
     def touch_session_activity(
         self,
         *,

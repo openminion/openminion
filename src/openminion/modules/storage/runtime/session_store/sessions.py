@@ -107,8 +107,14 @@ class RuntimeSessionStoreSessions:
             session_metadata_json=metadata_json(metadata),
             created_at=now,
             updated_at=now,
+            ignore_conflict=True,
         )
-        created = self.get_session(explicit_id)
+        created = self._resolve_existing_explicit_session(
+            explicit_id,
+            agent_id=agent_id,
+            channel=channel,
+            target=target,
+        )
         if created is None:
             raise RuntimeError(
                 f"Failed to create explicit session record id={explicit_id}"
@@ -178,11 +184,15 @@ class RuntimeSessionStoreSessions:
             session_metadata_json=metadata_json(metadata),
             created_at=now,
             updated_at=now,
+            ignore_conflict=True,
         )
-        created = self.get_session(session_id_value)
-        if created is None:
+        created_row = self._backend.query_one(
+            f"SELECT {SESSION_COLUMNS} FROM sessions WHERE session_key = ?",
+            (session_key,),
+        )
+        if created_row is None:
             raise RuntimeError(f"Failed to create session record for key={session_key}")
-        return created
+        return row_to_session(created_row)
 
     def create_room(
         self,
@@ -340,9 +350,11 @@ class RuntimeSessionStoreSessions:
         created_at: str,
         updated_at: str,
         active_agent_id: str | None = None,
+        ignore_conflict: bool = False,
     ) -> None:
+        conflict_clause = " ON CONFLICT DO NOTHING" if ignore_conflict else ""
         self._backend.execute_count(
-            """
+            f"""
             INSERT INTO sessions(
                 id,
                 session_key,
@@ -356,6 +368,7 @@ class RuntimeSessionStoreSessions:
                 active_agent_id
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            {conflict_clause}
             """,
             (
                 session_id,

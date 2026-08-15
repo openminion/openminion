@@ -3,7 +3,11 @@ from datetime import datetime
 from typing import Any
 from collections.abc import Callable
 
-from openminion.modules.storage.runtime.session_store import EventRecord, SessionStore
+from openminion.modules.storage.runtime.session_store import (
+    EventRecord,
+    RuntimeSessionTurnFenceError,
+    SessionStore,
+)
 from openminion.services.gateway.turn.runtime import _correlation_payload
 from openminion.modules.task.run import (
     Run,
@@ -57,6 +61,8 @@ class _GatewayTurnLifecycleOps:
                 payload=payload,
                 session_turn_fence_token=session_turn_fence_token,
             )
+        except RuntimeSessionTurnFenceError:
+            raise
         except Exception as exc:
             self._logger.debug(
                 "agent memory event append failed session_id=%s event_type=%s error=%s",
@@ -116,6 +122,8 @@ class _GatewayTurnLifecycleOps:
                     session_id=session_id,
                     legacy_state=legacy_state,
                 )
+            except RuntimeSessionTurnFenceError:
+                raise
             except Exception as exc:
                 self._logger.warning(
                     "typed_terminal_resolver failed run_id=%s error=%s; "
@@ -146,6 +154,7 @@ class _GatewayTurnLifecycleOps:
                             thread_id=thread_id,
                             attach_id=attach_id,
                             extra_payload=dict(payload or {}),
+                            session_turn_fence_token=session_turn_fence_token,
                         )
                         self._emit_resolved_invocation_terminal(
                             terminal_event,
@@ -153,6 +162,8 @@ class _GatewayTurnLifecycleOps:
                             thread_id=thread_id or "",
                         )
                         return terminal_event
+                    except RuntimeSessionTurnFenceError:
+                        raise
                     except Exception as exc:
                         self._logger.warning(
                             "bind_run_terminal_event failed run_id=%s error=%s; "

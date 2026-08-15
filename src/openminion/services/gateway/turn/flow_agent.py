@@ -3,7 +3,11 @@ from collections.abc import Callable
 
 from openminion.base.types import Message
 from openminion.modules.policy import RISK_LOW
-from openminion.modules.task.run import RUN_STATE_RESPONDING, RUN_STATE_WAITING_TOOL
+from openminion.modules.task.run import (
+    RUN_STATE_RESPONDING,
+    RUN_STATE_RUNNING,
+    RUN_STATE_WAITING_TOOL,
+)
 from openminion.modules.telemetry.usage import RunStats
 from openminion.services.gateway.routing import parse_metadata_bool
 from openminion.services.gateway.turn.runtime import (
@@ -20,6 +24,44 @@ from .flow_models import (
 
 
 class GatewayTurnAgentExecutionMixin:
+    def _emit_agent_running_state(
+        self,
+        *,
+        routing: Any,
+        run_id: str,
+        lifecycle_payload: dict[str, str],
+        turn_context: Any,
+        setup_cost_route: Any,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        self._emit_run_state(
+            session_id=routing.session.id,
+            run_id=run_id,
+            state=RUN_STATE_RUNNING,
+            current_step="agent.generate",
+            payload=self._lifecycle_ops.corr_payload(
+                normalized_request_id=routing.normalized_request_id,
+                lifecycle_payload=lifecycle_payload,
+                extra={
+                    "history_count": len(turn_context.history),
+                    "memory_capsule_strategy": self._memory_capsule_strategy,
+                    "memory_capsule_cache_hit": str(
+                        turn_context.capsule_cache_hit
+                    ).lower(),
+                    "memory_capsule_chars": len(turn_context.memory_context),
+                    "memory_dynamic_retrieval_enabled": str(
+                        self._memory_dynamic_retrieval_enabled
+                    ).lower(),
+                    "memory_dynamic_retrieval_chars": len(
+                        turn_context.memory_retrieval_context
+                    ),
+                    "setup_cost_route": setup_cost_route.label,
+                    "setup_cost_route_reason": setup_cost_route.reason,
+                },
+            ),
+            session_turn_fence_token=session_turn_fence_token,
+        )
+
     @staticmethod
     def _usage_totals_from_response(response: Any) -> tuple[int | None, int | None]:
         metadata = getattr(response, "metadata", None)
@@ -36,6 +78,7 @@ class GatewayTurnAgentExecutionMixin:
         body: str,
         run_id: str,
         routing: _RoutingResult,
+        session_turn_fence_token: int | None,
     ) -> Any:
         session_id = routing.session.id
         normalized_inbound_metadata = routing.normalized_inbound_metadata
@@ -49,6 +92,7 @@ class GatewayTurnAgentExecutionMixin:
             session_id=session_id,
             run_id=run_id,
             decision=authenticity_decision,
+            session_turn_fence_token=session_turn_fence_token,
         )
         self._security.enforce_policy(
             session_id=session_id,
@@ -62,6 +106,7 @@ class GatewayTurnAgentExecutionMixin:
                 session_id=session_id,
                 run_id=run_id,
             ),
+            session_turn_fence_token=session_turn_fence_token,
         )
         return authenticity_decision
 
@@ -192,6 +237,7 @@ class GatewayTurnAgentExecutionMixin:
         routing: _RoutingResult,
         run_id: str,
         lifecycle_payload: dict[str, Any],
+        session_turn_fence_token: int | None,
     ) -> None:
         session_id = routing.session.id
         if _response_has_tool_activity(response.metadata):
@@ -212,6 +258,7 @@ class GatewayTurnAgentExecutionMixin:
                         ),
                     },
                 ),
+                session_turn_fence_token=session_turn_fence_token,
             )
         self._emit_run_state(
             session_id=session_id,
@@ -223,6 +270,7 @@ class GatewayTurnAgentExecutionMixin:
                 lifecycle_payload=lifecycle_payload,
                 extra={"channel": response.channel, "target": response.target},
             ),
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     async def _execute_agent(
@@ -268,6 +316,7 @@ class GatewayTurnAgentExecutionMixin:
             body=body,
             run_id=run_id,
             routing=routing,
+            session_turn_fence_token=session_turn_fence_token,
         )
         inbound = self._build_inbound_message(
             routing,
@@ -312,11 +361,13 @@ class GatewayTurnAgentExecutionMixin:
             session_id=routing.session.id,
             run_id=run_id,
             metadata=response.metadata,
+            session_turn_fence_token=session_turn_fence_token,
         )
         self._emit_agent_progress_states(
             response=response,
             routing=routing,
             run_id=run_id,
             lifecycle_payload=lifecycle_payload,
+            session_turn_fence_token=session_turn_fence_token,
         )
         return response

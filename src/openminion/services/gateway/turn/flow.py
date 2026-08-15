@@ -3,7 +3,10 @@ from typing import Any
 from collections.abc import Callable
 
 from openminion.base.channel import ChannelRegistry
-from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.storage.runtime.session_store import (
+    RuntimeSessionTurnFenceError,
+    SessionStore,
+)
 from openminion.services.agent import AgentService
 from openminion.services.agent.telemetry import InvocationLifecycleFact
 from openminion.services.context.session import SessionContextService
@@ -60,6 +63,11 @@ class GatewayTurnRunnerFlowMixin(
         self._memory_capsule_strategy = memory_capsule_strategy
         self._memory_capsule_cache = memory_capsule_cache
         self._memory_followup_queue = MemoryFollowupQueue(auto_start=False)
+        self._emit_memory_followup = getattr(
+            agent,
+            "emit_memory_followup_sync",
+            None,
+        )
         self._memory_dynamic_retrieval_enabled = memory_dynamic_retrieval_enabled
         self._emit_run_state = emit_run_state
         self._typed_terminal_resolver = typed_terminal_resolver
@@ -70,6 +78,25 @@ class GatewayTurnRunnerFlowMixin(
             emit_invocation_lifecycle=emit_invocation_lifecycle,
             typed_terminal_resolver=typed_terminal_resolver,
         )
+
+    def _renew_session_turn_lease(
+        self,
+        *,
+        session_id: str,
+        owner: str,
+        fence_token: int | None,
+    ) -> None:
+        if fence_token is None:
+            return
+        renew = getattr(self._sessions, "renew_session_turn_lease", None)
+        if callable(renew) and renew(
+            session_id,
+            owner=owner,
+            fence_token=fence_token,
+            ttl_s=60,
+        ):
+            return
+        raise RuntimeSessionTurnFenceError("session turn lease renewal failed")
 
     def flush_memory_followups(self, *, session_id: str | None = None) -> None:
         self._memory_followup_queue.flush(session_id=session_id)

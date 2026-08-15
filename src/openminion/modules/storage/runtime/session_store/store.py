@@ -361,6 +361,24 @@ class SessionStore:
             session_turn_fence_token=session_turn_fence_token,
         )
 
+    def event_high_water(self, *, session_id: str) -> int:
+        return self._lifecycle.event_high_water(session_id=session_id)
+
+    def list_events_after_id(
+        self,
+        *,
+        session_id: str,
+        after_id: int,
+        high_water_id: int,
+        limit: int = 1000,
+    ) -> list[EventRecord]:
+        return self._lifecycle.list_events_after_id(
+            session_id=session_id,
+            after_id=after_id,
+            high_water_id=high_water_id,
+            limit=limit,
+        )
+
     def list_events(
         self,
         *,
@@ -534,8 +552,16 @@ class SessionStore:
             policy=policy,
         )
 
-    def ensure_session_context(self, *, session_id: str) -> SessionContextRecord:
-        return self._context.ensure_session_context(session_id=session_id)
+    def ensure_session_context(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None = None,
+    ) -> SessionContextRecord:
+        return self._context.ensure_session_context(
+            session_id=session_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
 
     def update_session_context(
         self,

@@ -1,4 +1,5 @@
 from datetime import datetime
+from functools import partial
 from typing import Any, Optional
 from collections.abc import Callable
 from uuid import uuid4
@@ -78,6 +79,7 @@ class GatewayTurnSetupMixin:
         *,
         attach_role: str,
         attach_conflict: bool,
+        session_turn_fence_token: int | None,
     ) -> None:
         if not attach_role:
             return
@@ -98,6 +100,46 @@ class GatewayTurnSetupMixin:
                     else {}
                 ),
             },
+            session_turn_fence_token=session_turn_fence_token,
+        )
+
+    def _emit_invocation_start(
+        self,
+        routing: _RoutingResult,
+        *,
+        run_id: str,
+        queued_event: Any,
+        invocation_id: str,
+        invocation_reason: str,
+        parent_invocation_id: str,
+    ) -> None:
+        if queued_event is None:
+            return
+        source_event_id = int(queued_event.id)
+        source_timestamp = queued_event.created_at
+        if invocation_reason == "resumed_thread":
+            source_event_id = int(routing.lifecycle.invocation_source_event_id)
+            source_timestamp = routing.lifecycle.invocation_started_at
+        payload: dict[str, Any] = {
+            "scope": "durable",
+            "source_event_id": source_event_id,
+            "source_event_type": "run.queued",
+            "run_id": run_id,
+            "thread_id": routing.thread_id,
+        }
+        if parent_invocation_id:
+            payload["parent_invocation_id"] = parent_invocation_id
+        self._lifecycle_ops.emit_invocation_lifecycle(
+            InvocationLifecycleFact(
+                event_id=f"agent.invocation:{invocation_id}:start",
+                timestamp=datetime.fromisoformat(source_timestamp).timestamp(),
+                event_type=AGENT_INVOCATION_STARTED,
+                invocation_id=invocation_id,
+                session_id=routing.session.id,
+                turn_id=routing.normalized_request_id,
+                agent_id=self._agent_id,
+                payload=payload,
+            )
         )
 
     def _setup_turn(
@@ -106,6 +148,7 @@ class GatewayTurnSetupMixin:
         *,
         channel: str,
         target: str,
+        session_turn_fence_token: int | None = None,
     ) -> tuple[str, dict[str, str]]:
         session_id = routing.session.id
         conversation_id = routing.conversation_id
@@ -121,6 +164,7 @@ class GatewayTurnSetupMixin:
             routing,
             attach_role=attach_role,
             attach_conflict=attach_conflict,
+            session_turn_fence_token=session_turn_fence_token,
         )
         if attach_conflict:
             raise RuntimeError(
@@ -143,6 +187,7 @@ class GatewayTurnSetupMixin:
                 "explicit_thread": str(routing.explicit_thread).lower(),
                 "auto_resume_inferred": str(routing.auto_resume_inferred).lower(),
             },
+            session_turn_fence_token=session_turn_fence_token,
         )
         lifecycle_payload = build_lifecycle_payload(
             conversation_id=conversation_id,
@@ -168,36 +213,22 @@ class GatewayTurnSetupMixin:
             payload=self._lifecycle_ops.corr_payload(
                 normalized_request_id=normalized_request_id,
                 lifecycle_payload=lifecycle_payload,
-                extra={"channel": channel, "target": target},
+                extra={
+                    "agent_id": self._agent_id,
+                    "channel": channel,
+                    "target": target,
+                },
             ),
+            session_turn_fence_token=session_turn_fence_token,
         )
-        if queued_event is not None:
-            source_event_id = int(queued_event.id)
-            source_timestamp = queued_event.created_at
-            if invocation_reason == "resumed_thread":
-                source_event_id = int(lifecycle.invocation_source_event_id)
-                source_timestamp = lifecycle.invocation_started_at
-            payload: dict[str, Any] = {
-                "scope": "durable",
-                "source_event_id": source_event_id,
-                "source_event_type": "run.queued",
-                "run_id": run_id,
-                "thread_id": thread_id,
-            }
-            if parent_invocation_id:
-                payload["parent_invocation_id"] = parent_invocation_id
-            self._lifecycle_ops.emit_invocation_lifecycle(
-                InvocationLifecycleFact(
-                    event_id=f"agent.invocation:{invocation_id}:start",
-                    timestamp=datetime.fromisoformat(source_timestamp).timestamp(),
-                    event_type=AGENT_INVOCATION_STARTED,
-                    invocation_id=invocation_id,
-                    session_id=session_id,
-                    turn_id=normalized_request_id,
-                    agent_id=self._agent_id,
-                    payload=payload,
-                )
-            )
+        self._emit_invocation_start(
+            routing,
+            run_id=run_id,
+            queued_event=queued_event,
+            invocation_id=invocation_id,
+            invocation_reason=invocation_reason,
+            parent_invocation_id=parent_invocation_id,
+        )
         return run_id, lifecycle_payload
 
     def _build_memory_context(
@@ -209,6 +240,7 @@ class GatewayTurnSetupMixin:
         body: str,
         run_id: str,
         history: list[Message],
+        session_turn_fence_token: int | None = None,
     ) -> TurnContext:
         with active_chat_phase("memory_followup_flush"):
             self._memory_followup_queue.flush(session_id=routing.session.id)
@@ -217,7 +249,10 @@ class GatewayTurnSetupMixin:
             agent_id=self._agent_id,
             agent_memory=self._agent_memory,
             logger=self._logger,
-            emit_memory_event=self._lifecycle_ops.emit_memory_event,
+            emit_memory_event=partial(
+                self._lifecycle_ops.emit_memory_event,
+                session_turn_fence_token=session_turn_fence_token,
+            ),
             session_id=routing.session.id,
             run_id=run_id,
             request_id=routing.normalized_request_id,

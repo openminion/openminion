@@ -172,8 +172,11 @@ def test_telemetryctl_trace_show_rejects_symlinked_artifacts(
 def test_telemetryctl_invocation_list_show_and_graph_are_structural(
     capsys,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db_path = tmp_path / "telemetry.db"
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    db_path = data_root / "telemetry.db"
     invocation_id = str(uuid.uuid4())
     execution_id = str(uuid.uuid4())
     service = TelemetryService(str(db_path), include_local_content=True)

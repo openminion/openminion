@@ -13,11 +13,21 @@ from .models import (
     SessionRecord,
 )
 from .store import SessionStore
+from .turn_leases import (
+    RuntimeSessionTurnBusyError,
+    RuntimeSessionTurnFenceError,
+    RuntimeSessionTurnLease,
+    RuntimeSessionTurnLeases,
+)
 
 __all__ = (
     "EventRecord",
     "MessageRecord",
     "RoomParticipant",
+    "RuntimeSessionTurnBusyError",
+    "RuntimeSessionTurnFenceError",
+    "RuntimeSessionTurnLease",
+    "RuntimeSessionTurnLeases",
     "SessionContextRecord",
     "SessionRecord",
     "SessionStore",

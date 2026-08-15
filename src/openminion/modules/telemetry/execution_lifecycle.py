@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .service import build_execution_traceparent
+
+def build_execution_traceparent(invocation_id: str, execution_id: str) -> str:
+    trace_id = hashlib.sha256(str(invocation_id).encode("utf-8")).hexdigest()[:32]
+    span_id = hashlib.sha256(str(execution_id).encode("utf-8")).hexdigest()[:16]
+    return f"00-{trace_id}-{span_id}-01"
 
 
 @dataclass(frozen=True)

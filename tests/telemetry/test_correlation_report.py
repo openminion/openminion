@@ -66,8 +66,10 @@ def _run(data_root: Path, db_path: Path, args: list[str], capsys) -> tuple[int, 
 def test_correlation_report_has_fixed_fields_and_direct_coverage(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
 
     exit_code, payload = _run(data_root, db_path, [], capsys)
@@ -89,8 +91,10 @@ def test_correlation_report_has_fixed_fields_and_direct_coverage(
 def test_correlation_session_scope_and_invalid_grammar(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
 
     exit_code, payload = _run(

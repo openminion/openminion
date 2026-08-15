@@ -64,6 +64,7 @@ def bind_run_terminal_event(
     thread_id: str | None = None,
     attach_id: str | None = None,
     extra_payload: dict[str, object] | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> EventRecord:
     _validate_run_goal_binding(run=run, goal=goal)
 
@@ -92,6 +93,7 @@ def bind_run_terminal_event(
         checkpoint=checkpoint,
         conversation_id=conversation_id,
         thread_id=thread_id,
+        session_turn_fence_token=session_turn_fence_token,
     )
 
     payload = _build_terminal_event_payload(
@@ -115,6 +117,7 @@ def bind_run_terminal_event(
         conversation_id=conversation_id,
         thread_id=thread_id,
         attach_id=attach_id,
+        session_turn_fence_token=session_turn_fence_token,
     )
 
 

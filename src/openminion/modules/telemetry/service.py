@@ -1,6 +1,5 @@
 import asyncio
 from dataclasses import dataclass, replace
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -13,6 +12,7 @@ from openminion.modules.config import (
     resolve_module_data_root,
     resolve_module_home_root,
 )
+from . import event_repair
 from .export.otel import OpenTelemetryTraceExporter
 from .export.content_policy import external_sensitive_fields
 from .constants import (
@@ -39,16 +39,14 @@ from .schemas import (
     calculate_cost,
 )
 from .trace.layout import delete_invocation_trace_artifacts, resolve_trace_root
+from .trace import ids as trace_ids
 from .trace.metadata import apply_content_policy
 from .events.canonical import build_canonical_event
-
 _LOG = logging.getLogger(__name__)
 
 
 def build_execution_traceparent(invocation_id: str, execution_id: str) -> str:
-    trace_id = hashlib.sha256(str(invocation_id).encode("utf-8")).hexdigest()[:32]
-    span_id = hashlib.sha256(str(execution_id).encode("utf-8")).hexdigest()[:16]
-    return f"00-{trace_id}-{span_id}-01"
+    return trace_ids.build_execution_traceparent(invocation_id, execution_id)
 
 
 class TelemetryService:
@@ -150,6 +148,9 @@ class TelemetryService:
             )
         return created
 
+    def repair_event_sync(self, event: TelemetryEvent) -> str:
+        return event_repair.repair_event_sync(self, event)
+
     def record_and_probe_export(
         self,
         event: TelemetryEvent,
@@ -183,12 +184,16 @@ class TelemetryService:
         )
 
     def delete_invocation(self, invocation_id: str) -> TelemetryDeletionResult:
+        artifact_paths = event_repair.invocation_artifact_paths(
+            self._store.fetch_invocation_events(invocation_id)
+        )
         database_rows = self._store.delete_invocation_events(invocation_id)
         artifacts = delete_invocation_trace_artifacts(
             resolve_trace_root(
                 home_root=Path(self._home_root) if self._home_root else None
             ),
             invocation_id=invocation_id,
+            artifact_paths=artifact_paths,
         )
         pending_exports = self._external_exporter.delete_pending_invocation(
             invocation_id
@@ -864,6 +869,30 @@ class TelemetryCtl:
             agent_id=agent_id,
         )
         return self._service.record_event_sync(event)
+
+    def repair_canonical_event_sync(
+        self,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: Optional[dict[str, Any]] = None,
+        *,
+        event_id: str,
+        timestamp: float,
+        invocation_id: str,
+        agent_id: str | None = None,
+    ) -> str:
+        return event_repair.repair_canonical_event_sync(
+            self,
+            session_id,
+            turn_id,
+            event_type,
+            payload,
+            event_id=event_id,
+            timestamp=timestamp,
+            invocation_id=invocation_id,
+            agent_id=agent_id,
+        )
 
     @property
     def contract_version(self) -> str:

@@ -156,7 +156,7 @@ def _render_card(report: TelemetryDebugReport) -> str:
     cost = usage.cost_usd if usage and usage.cost_usd is not None else "-"
     return "\n".join(
         (
-            "latest failed invocation",
+            _card_title(report),
             f"id: {invocation.invocation_id}",
             f"agent: {invocation.agent_ids[0] if invocation.agent_ids else '-'}",
             f"session: {invocation.session_ids[0] if invocation.session_ids else '-'}",
@@ -166,9 +166,27 @@ def _render_card(report: TelemetryDebugReport) -> str:
             f"tokens: input={input_tokens} output={output_tokens} cost={cost}",
             f"failure: {failure}",
             f"trace files: {invocation.trace_count if invocation.trace_count is not None else '-'}",
-            "next: open graph | show traces | copy bundle command",
+            _next_actions(report),
         )
     )
+
+
+def _card_title(report: TelemetryDebugReport) -> str:
+    kind = report.selection.kind if report.selection else "latest"
+    if kind == "failed":
+        return "latest failed invocation"
+    if kind == "invocation_id":
+        return "selected invocation"
+    return "latest invocation"
+
+
+def _next_actions(report: TelemetryDebugReport) -> str:
+    actions = list(report.links.commands[:2])
+    if report.links.trace_paths:
+        actions.append("/trace list")
+    if not actions:
+        actions.append("telemetryctl debug latest")
+    return "next: " + " | ".join(actions)
 
 
 def _trace_limit(parts: list[str]) -> int | None:
