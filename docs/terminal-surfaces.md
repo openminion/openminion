@@ -71,6 +71,22 @@ gearspin while executing, orbitnodes while reviewing, scanline while verifying,
 fillsweep while evaluating completion, and cascade while saving context. An
 explicitly selected or saved animation remains fixed instead.
 
+## Local plugins
+
+Preview a local plugin before installing it, then check its runtime health:
+
+```bash
+openminion plugins preview ./my-plugin
+openminion plugins install ./my-plugin --root ./src/openminion/extensions/custom
+openminion plugins health example.plugin --root ./src/openminion/extensions/custom
+```
+
+`preview` reports declared dependencies, permissions, trust tier, and
+provenance. `rollback` undoes the last install of that plugin, while `uninstall`
+removes it and disables its manifest ID in the active config. Use the same
+`--root` for install, health, rollback, and uninstall. The default is the first
+path in `OPENMINION_PLUGIN_PATHS`, or the current local-extension root.
+
 ## Dashboard replacements
 
 The dashboard runtime has been retired. Its former areas are owned by the
