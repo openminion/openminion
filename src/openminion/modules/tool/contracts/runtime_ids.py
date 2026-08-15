@@ -77,6 +77,13 @@ SPECIALIZED_OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     "runtime.config.salt.job_status",
 )
 
+SECURITY_RUNTIME_BINDING_IDS: tuple[str, ...] = (
+    "runtime.security.scan_code",
+    "runtime.security.scan_dependencies",
+    "runtime.security.scan_artifact",
+    "runtime.security.scan_secrets",
+)
+
 RUNTIME_GWS_CALL = "runtime.gws.call"
 RUNTIME_GWS_SCHEMA = "runtime.gws.schema"
 RUNTIME_GWS_AUTH_SETUP = "runtime.gws.auth.setup"
@@ -171,6 +178,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_BROWSER,
     *OPS_RUNTIME_BINDING_IDS,
     *SPECIALIZED_OPS_RUNTIME_BINDING_IDS,
+    *SECURITY_RUNTIME_BINDING_IDS,
     RUNTIME_GWS_CALL,
     RUNTIME_GWS_SCHEMA,
     RUNTIME_GWS_AUTH_SETUP,

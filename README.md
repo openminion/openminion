@@ -257,6 +257,8 @@ reserve `make check` for an intentional broader integration sweep.
   and library surfaces
 - [`docs/system-operations.md`](docs/system-operations.md): local operation and
   diagnostics
+- [`docs/security-scanning.md`](docs/security-scanning.md): bounded local
+  Semgrep and Trivy audits
 - [`docs/testing-and-validation.md`](docs/testing-and-validation.md): validation
   inventory
 - [`docs/certification-readiness-matrix.md`](docs/certification-readiness-matrix.md):

@@ -20,13 +20,16 @@ def _normalize_execution_tool_name(raw_name: str) -> str | None:
     return manager.normalize_raw_name(token) or normalize_tool_name_for_brain(token)
 
 
-def collect_runtime_tool_schemas(runner: "BrainRunner") -> list[dict[str, Any]]:
+def collect_runtime_tool_schemas(
+    runner: "BrainRunner", *, metadata: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     registry = getattr(getattr(runner, "tool_api", None), "registry", None)
     if registry is None:
         return []
     return _TOOL_SCHEMA_SERVICE.collect_execution_tool_schemas(
         registry=registry,
         normalize_name=_normalize_execution_tool_name,
+        metadata=metadata,
     )
 
 

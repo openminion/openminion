@@ -71,6 +71,7 @@ from .allowed_tools import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     _memory_consolidation_profile_overrides,
     _watch_profile_overrides,
+    _with_exposed_runtime_tools,
     _with_decompose_tool_spec,
     _with_general_decompose_allowed_tools,
 )
@@ -329,6 +330,12 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 else ACT_ADAPTIVE_ALLOWED_TOOLS
             )
         )
+        if consolidation_overrides is None and watch_overrides is None:
+            effective_allowed_tools = _with_exposed_runtime_tools(
+                frozenset(effective_allowed_tools),
+                runner=runner,
+                session_id=str(ctx.state.session_id or ""),
+            )
         decision_reason_code = str(
             getattr(ctx.decision, "reason_code", "") or ""
         ).strip()
@@ -363,6 +370,7 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         full_tool_specs = build_runtime_tool_specs(
             runner,
             allowed_tools=effective_allowed_tools,
+            metadata={"session_id": str(ctx.state.session_id or "")},
         )
         # compute the per-turn soft cap from typed Decision fields
         _aib_config = getattr(ctx.options, "adaptive_budget_config", None)

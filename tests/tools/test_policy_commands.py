@@ -227,6 +227,7 @@ def test_default_policy_allows_skill_model_tool(tmp_path):
     policy_path.write_text("version: 1\n", encoding="utf-8")
     policy = Policy.load(policy_path)
     policy.ensure_tool_allowed("skill.list")
+    policy.ensure_tool_allowed("security.scan_code")
 
 
 @pytest.mark.parametrize("argv", [["python", "--version"], ["python3", "--version"]])

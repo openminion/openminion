@@ -87,6 +87,7 @@ def test_adaptive_metadata_handoff_emits_expected_and_emitted_events() -> None:
         TRAILER_LANE_MACC,
         TRAILER_LANE_SWSC,
     ]
+    assert metadata["session_id"] == "s-adaptive-metadata"
     expected_event = next(
         event
         for event in session_api.events

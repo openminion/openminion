@@ -1,0 +1,21 @@
+"""Stable model-facing security tool identifiers."""
+
+TOOL_SECURITY_SCAN_CODE = "security.scan_code"
+TOOL_SECURITY_SCAN_DEPENDENCIES = "security.scan_dependencies"
+TOOL_SECURITY_SCAN_ARTIFACT = "security.scan_artifact"
+TOOL_SECURITY_SCAN_SECRETS = "security.scan_secrets"
+
+ALL_SECURITY_TOOLS: tuple[str, ...] = (
+    TOOL_SECURITY_SCAN_CODE,
+    TOOL_SECURITY_SCAN_DEPENDENCIES,
+    TOOL_SECURITY_SCAN_ARTIFACT,
+    TOOL_SECURITY_SCAN_SECRETS,
+)
+
+__all__ = [
+    "ALL_SECURITY_TOOLS",
+    "TOOL_SECURITY_SCAN_ARTIFACT",
+    "TOOL_SECURITY_SCAN_CODE",
+    "TOOL_SECURITY_SCAN_DEPENDENCIES",
+    "TOOL_SECURITY_SCAN_SECRETS",
+]
