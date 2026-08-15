@@ -88,6 +88,7 @@ from openminion.modules.controlplane.channels.telegram.runtime.helpers import (
     _resolve_controlplane_clarify_store,
     _resolve_controlplane_pairing_store,
     _resolve_reply_target,
+    _route_pre_access_pair_command,
     _send_runner_online_notice as _runtime_send_runner_online_notice,
     _validate_component_contracts as _runtime_validate_component_contracts,
 )
@@ -431,15 +432,7 @@ class TelegramWebhookRunner:
             envelope.text,
             bot_username=self._bot_username,
         )
-        if normalized_text.strip().casefold() == "/pair":
-            self._handle_local_command(envelope, normalized_text)
-            self._audit_event(
-                "cp.route.local_command",
-                reason="local_command",
-                update_id=envelope.update_id,
-                chat_id=str(envelope.chat_id),
-            )
-            self._answer_callback_if_needed(envelope)
+        if _route_pre_access_pair_command(self, envelope, normalized_text):
             return None
 
         access = self._access_policy.evaluate(
