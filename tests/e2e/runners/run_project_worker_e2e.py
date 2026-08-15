@@ -117,9 +117,10 @@ def _run_certify(args: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    isolate_runtime_roots(prefix="openminion-project-worker-")
     args = list(sys.argv[1:] if argv is None else argv)
     mode = args[0] if args else "local"
+    if mode != "certify":
+        isolate_runtime_roots(prefix="openminion-project-worker-")
     if mode in {"--list", "list"}:
         for name in (
             "pilot-artifacts",
