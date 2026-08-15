@@ -85,6 +85,30 @@ def test_os_adapter_fails_closed_after_inline_denial(tmp_path: Path):
     assert not (tmp_path / "probe.txt").exists()
 
 
+def test_exec_run_replays_after_inline_approval(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
+    adapter = ToolAdapter(workspace_root=tmp_path)
+    approvals: list[str] = []
+
+    def approve(tool_name, _args, _approval_id):
+        approvals.append(tool_name)
+        return True
+
+    adapter.set_approval_callback(approve)
+    result = adapter.execute(
+        command={
+            "tool_name": "exec.run",
+            "args": {"command": 'python3.11 -c "print(\'approved\')"'},
+        },
+        session_id="s1",
+        trace_id="t1",
+    )
+
+    assert result["status"] == "success"
+    assert "approved" in result["outputs"]["stdout"]
+    assert approvals == ["exec.run"]
+
+
 def test_os_adapter_confirmation_grant_replay_uses_policy_gate(tmp_path: Path):
     adapter = ToolAdapter(
         workspace_root=tmp_path,

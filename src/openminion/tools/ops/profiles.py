@@ -76,6 +76,48 @@ def _processes(
     return ("ps", "-axo", "pid,ppid,user,%cpu,%mem,command")
 
 
+def _bounded_int(
+    parameters: Mapping[str, str | int | bool], name: str, maximum: int
+) -> int:
+    value = parameters.get(name)
+    if isinstance(value, bool):
+        raise ValueError(f"operation profile requires integer parameter: {name}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"operation profile requires integer parameter: {name}"
+        ) from exc
+    if not 1 <= parsed <= maximum:
+        raise ValueError(f"operation profile parameter out of range: {name}")
+    return parsed
+
+
+def _process_inspect_argv(
+    parameters: Mapping[str, str | int | bool], _: TargetPlatform
+) -> tuple[str, ...]:
+    pid = _bounded_int(parameters, "pid", 4_194_304)
+    return ("ps", "-p", str(pid), "-o", "pid=,ppid=,user=,%cpu=,%mem=,etime=,comm=")
+
+
+def _port_owner(
+    parameters: Mapping[str, str | int | bool], target_platform: TargetPlatform
+) -> tuple[str, ...]:
+    port = _bounded_int(parameters, "port", 65_535)
+    protocol = _required(parameters, "protocol").lower()
+    if protocol not in {"tcp", "udp"}:
+        raise ValueError("operation profile protocol must be tcp or udp")
+    if target_platform == "darwin":
+        selector = f"-i{protocol.upper()}:{port}"
+        return (
+            ("lsof", "-nP", selector, "-sTCP:LISTEN")
+            if protocol == "tcp"
+            else ("lsof", "-nP", selector)
+        )
+    mode = "-ltnp" if protocol == "tcp" else "-lunp"
+    return ("ss", mode, "sport", "=", f":{port}")
+
+
 PROFILE_BUILDERS: dict[str, ProfileBuilder] = {
     "host.snapshot": _host_snapshot,
     "service.inspect": _service_inspect_argv,
@@ -84,6 +126,8 @@ PROFILE_BUILDERS: dict[str, ProfileBuilder] = {
     "disk.usage": _disk,
     "memory.usage": _memory,
     "process.list": _processes,
+    "process.inspect": _process_inspect_argv,
+    "network.port_owner": _port_owner,
 }
 
 PROFILE_PARAMETERS: dict[str, frozenset[str]] = {
@@ -94,6 +138,8 @@ PROFILE_PARAMETERS: dict[str, frozenset[str]] = {
     "disk.usage": frozenset(),
     "memory.usage": frozenset(),
     "process.list": frozenset(),
+    "process.inspect": frozenset({"pid"}),
+    "network.port_owner": frozenset({"port", "protocol"}),
 }
 
 

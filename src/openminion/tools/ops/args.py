@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -23,6 +25,15 @@ class ServiceArgs(ObservationArgs):
 
 class LogsArgs(ServiceArgs):
     limit: int = Field(default=100, ge=1, le=500)
+
+
+class ProcessArgs(ObservationArgs):
+    pid: int = Field(ge=1, le=4_194_304)
+
+
+class PortOwnerArgs(ObservationArgs):
+    port: int = Field(ge=1, le=65_535)
+    protocol: Literal["tcp", "udp"] = "tcp"
 
 
 class ProfileArgs(ObservationArgs):

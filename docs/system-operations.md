@@ -4,7 +4,7 @@ The `tools/ops` family provides bounded local, container, and optional SSH
 observations. `ops` is the broad system-operations domain; SSH is only one
 transport backend.
 
-The tool family exposes nine tools:
+The tool family exposes eleven tools:
 
 - `ops.target.list`
 - `ops.target.inspect`
@@ -12,6 +12,8 @@ The tool family exposes nine tools:
 - `ops.service.inspect`
 - `ops.logs.query`
 - `ops.network.inspect`
+- `ops.process.inspect`
+- `ops.network.port_owner`
 - `ops.command.observe`
 - `ops.job.inspect`
 - `ops.job.cancel`
@@ -34,6 +36,33 @@ Built-in ops guidance is injected by tool-family ownership rather than a
 separate capability-pack framework. Optional skills can add deeper workflows
 such as Linux diagnostics or incident handoff, but the base safety rules stay
 with `tools/ops`.
+
+## Debugging evidence owners
+
+Use the narrowest existing owner for each question:
+
+| Question | Owner |
+| --- | --- |
+| Reproduce, diagnose, patch, and verify an application failure | `/fix <symptom or failing test>` |
+| Review ordered durable events for one session | `openminion debug timeline --session <id>` |
+| Aggregate executions, model/tool calls, policy, failures, timing, and usage for one invocation | `telemetryctl invocation list`, then `show` or `graph` |
+| Inspect current OpenMinion runtime wiring | `openminion debug modules` and `openminion debug module <name>` |
+| Inspect normalized runtime readiness and health | `openminion doctor` and current health/status surfaces |
+| Inspect a configured host, service, log window, process, or port | the exact `ops.*` observation tool |
+
+Session timeline and telemetry invocation inspection are complementary; one is
+ordered session history and the other is an invocation aggregate. OpenMinion
+does not copy either into a debugging case or infer root cause from them.
+
+`ops.process.inspect` accepts one typed PID. `ops.network.port_owner` accepts
+one typed port and `tcp|udp`. Both use the existing target, fixed-command,
+timeout/cancellation, policy, and evidence owners. They do not accept command
+text or arbitrary arguments. A missing process/listener or unavailable system
+binary is evidence of an incomplete observation, not proof of a root cause.
+
+Read-only diagnosis does not authorize a patch, process signal, service
+restart, package install, or remote change. Those actions remain separately
+owned and approved.
 
 ## Opt-in SSH smoke
 

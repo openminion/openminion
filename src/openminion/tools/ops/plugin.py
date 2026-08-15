@@ -10,6 +10,8 @@ from .args import (
     JobArgs,
     LogsArgs,
     ObservationArgs,
+    PortOwnerArgs,
+    ProcessArgs,
     ProfileArgs,
     ServiceArgs,
     TargetArgs,
@@ -18,6 +20,8 @@ from .contracts import OperationRequest
 from .interfaces import (
     TOOL_OPS_COMMAND_OBSERVE,
     TOOL_OPS_LOGS_QUERY,
+    TOOL_OPS_NETWORK_PORT_OWNER,
+    TOOL_OPS_PROCESS_INSPECT,
     TOOL_OPS_SERVICE_INSPECT,
 )
 from .service import (
@@ -125,6 +129,36 @@ def _logs_query(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             tool_id=TOOL_OPS_LOGS_QUERY,
             timeout_seconds=parsed.timeout_seconds,
             parameters={"service": parsed.service, "limit": parsed.limit},
+            session_id=_session_id(ctx),
+        ),
+    )
+
+
+def _process_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = ProcessArgs.model_validate(args)
+    return _observed(
+        _service(ctx),
+        _request(
+            target_id=parsed.target_id,
+            profile_id="process.inspect",
+            tool_id=TOOL_OPS_PROCESS_INSPECT,
+            timeout_seconds=parsed.timeout_seconds,
+            parameters={"pid": parsed.pid},
+            session_id=_session_id(ctx),
+        ),
+    )
+
+
+def _network_port_owner(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = PortOwnerArgs.model_validate(args)
+    return _observed(
+        _service(ctx),
+        _request(
+            target_id=parsed.target_id,
+            profile_id="network.port_owner",
+            tool_id=TOOL_OPS_NETWORK_PORT_OWNER,
+            timeout_seconds=parsed.timeout_seconds,
+            parameters={"port": parsed.port, "protocol": parsed.protocol},
             session_id=_session_id(ctx),
         ),
     )

@@ -233,7 +233,7 @@ def _prepare_exec_run(
                 status=EXEC_STATUS_DENIED,
             )
 
-        if params.ask in EXEC_APPROVAL_PENDING_STATUSES:
+        if params.ask in EXEC_APPROVAL_PENDING_STATUSES and not ctx.confirm:
             approval_id = f"approval_{uuid.uuid4().hex[:12]}"
             emit_family_event(
                 ctx,

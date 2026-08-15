@@ -228,6 +228,7 @@ def test_default_policy_allows_skill_model_tool(tmp_path):
     policy = Policy.load(policy_path)
     policy.ensure_tool_allowed("skill.list")
     policy.ensure_tool_allowed("security.scan_code")
+    policy.ensure_tool_allowed("ops.process.inspect")
 
 
 @pytest.mark.parametrize("argv", [["python", "--version"], ["python3", "--version"]])
