@@ -38,16 +38,6 @@ def _workspace_path(ctx: Any) -> Path:
     return Path(ctx.workspace)
 
 
-def _resolve_path(raw_path: str | None, ctx: Any) -> Path:
-    workspace = _workspace_path(ctx)
-    if not raw_path:
-        return workspace
-    path = Path(raw_path).expanduser()
-    if not path.is_absolute():
-        path = workspace / path
-    return path
-
-
 def _disk_paths(requested: Path) -> list[Path]:
     paths: list[Path] = []
     devices: set[int] = set()
@@ -229,8 +219,13 @@ def _content(data: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "Host metrics unavailable."
 
 
-def _h_metrics(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    parsed = HostMetricsArgs.model_validate(args)
+def collect_host_metrics(
+    workspace: Path,
+    *,
+    path: str | None = None,
+    include_disk: bool = True,
+    include_memory: bool = True,
+) -> tuple[dict[str, Any], list[str]]:
     data: dict[str, Any] = {
         "source": "openminion-tool-host",
         "method": TOOL_HOST_METRICS,
@@ -238,8 +233,10 @@ def _h_metrics(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     }
     warnings: list[str] = []
 
-    if parsed.include_disk:
-        requested = _resolve_path(parsed.path, ctx)
+    if include_disk:
+        requested = Path(path).expanduser() if path else workspace
+        if not requested.is_absolute():
+            requested = workspace / requested
         disks: list[dict[str, Any]] = []
         for path in _disk_paths(requested):
             try:
@@ -248,8 +245,20 @@ def _h_metrics(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
                 warnings.append(f"disk usage unavailable for {path}: {exc}")
         data["disk"] = disks
 
-    if parsed.include_memory:
+    if include_memory:
         data["memory"] = _memory_metrics()
+
+    return data, warnings
+
+
+def _h_metrics(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = HostMetricsArgs.model_validate(args)
+    data, warnings = collect_host_metrics(
+        _workspace_path(ctx),
+        path=parsed.path,
+        include_disk=parsed.include_disk,
+        include_memory=parsed.include_memory,
+    )
 
     return {
         "ok": True,
@@ -275,4 +284,4 @@ def register(registry: ToolRegistry) -> None:
     )
 
 
-__all__ = ["register"]
+__all__ = ["collect_host_metrics", "register"]

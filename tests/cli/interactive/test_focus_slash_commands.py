@@ -5,13 +5,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import OptionList
+from textual.widgets import OptionList, Static
 
 from openminion.cli.presentation import styles
 from openminion.cli.theme import DARK
 from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.interactive.screen import FocusScreen
-from openminion.cli.interactive.widgets import FocusTranscript, PermissionsOverlay
+from openminion.cli.interactive.widgets import (
+    FocusTranscript,
+    OverviewOverlay,
+    PermissionsOverlay,
+)
 from openminion.cli.interactive.widgets.transcript import MessageKind
 from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
@@ -68,6 +72,30 @@ async def test_slash_help_lists_every_registered_command_with_description() -> N
             # FCC-04 also surfaces a key-hint trailer for parity with
             # Claude-Code-style help output.
             assert "Ctrl+P" in body
+
+
+@pytest.mark.asyncio
+async def test_slash_overview_opens_read_only_rich_overlay() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/overview")
+            await pilot.pause()
+
+            assert isinstance(app.screen, OverviewOverlay)
+            content = app.screen.query_one("#focus-overview-content", Static)
+            rendered = str(content.render())
+            assert "Runtime  [available]" in rendered
+            assert "Host  [available]" in rendered
+            assert "Recent tools  [unavailable]" in rendered
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert isinstance(app.screen, FocusScreen)
 
 
 @pytest.mark.asyncio

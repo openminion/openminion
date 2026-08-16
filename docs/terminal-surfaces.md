@@ -29,6 +29,21 @@ The default terminal leaves mouse-wheel input with the terminal for native
 scrollback. It captures the mouse only while a clickable completion menu is
 open, then returns control to the terminal when the menu closes.
 
+## Read-only operations overview
+
+The optional Textual renderer provides a compact local overview:
+
+```bash
+openminion --rich
+```
+
+Then enter `/overview`. The overlay reads the active agent/model,
+workspace/session, task summary, recent tool activity, telemetry diagnostics,
+and host metrics from their existing owners. It performs no write action and
+closes with Escape. The command is intentionally absent from the default
+terminal renderer; use `/status`, `/tasks`, `/telemetry`, and the bounded
+operator commands there.
+
 ## Interactive activity animation
 
 Interactive activity animation is presentation chrome, not runtime semantics.

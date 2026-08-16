@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from .plugin import register
+from .plugin import collect_host_metrics, register
 from .registrar import REGISTRAR as _REGISTRAR
 
 if TYPE_CHECKING:
@@ -9,4 +9,4 @@ if TYPE_CHECKING:
 REGISTRAR: "ToolModuleRegistrar" = _REGISTRAR
 
 
-__all__ = ["REGISTRAR", "register"]
+__all__ = ["REGISTRAR", "collect_host_metrics", "register"]

@@ -49,7 +49,7 @@ from openminion.cli.status.models import (
 from openminion.cli.ux.verbosity import write_focus_preferences
 from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
-from .widgets import FocusTranscript, PermissionsOverlay
+from .widgets import FocusTranscript, OverviewOverlay, PermissionsOverlay
 from .tool_exposure import tool_exposure_command
 
 
@@ -323,6 +323,15 @@ class SlashCommandMixin:
         from openminion.cli.presentation.visible_parity import render_context_report
 
         self._push_system_body(render_context_report(self._runtime))
+
+    def _slash_overview(self, _args: str) -> None:
+        from openminion.cli.status.overview import build_operations_overview
+
+        snapshot = build_operations_overview(
+            self._runtime,
+            working_dir=self._working_dir,
+        )
+        self.app.push_screen(OverviewOverlay(snapshot))
 
     def _slash_goal(self: Any, args: str) -> None:
         executor = getattr(self._runtime, "execute_goal_command", None)

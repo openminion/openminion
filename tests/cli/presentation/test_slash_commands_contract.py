@@ -45,7 +45,25 @@ def test_rich_metadata_preserves_known_aliases() -> None:
 
 
 def test_busy_slash_policy_allows_reads_and_blocks_changes() -> None:
-    for command in ("/status", "/memory", "/skills", "/tasks task-1", "/model"):
+    for command in (
+        "/status",
+        "/overview",
+        "/memory",
+        "/skills",
+        "/tasks task-1",
+        "/model",
+    ):
         assert slash_command_runs_while_busy(command)
     for command in ("/new", "/undo", "/model openai/gpt-5", "/permissions bypass"):
         assert not slash_command_runs_while_busy(command)
+
+
+def test_overview_is_registered_for_rich_only() -> None:
+    terminal = set(terminal_slash_commands())
+    rich = {
+        aliases[0]: handler
+        for aliases, _description, handler in rich_slash_command_registry()
+    }
+
+    assert "/overview" not in terminal
+    assert rich["/overview"] == "_slash_overview"

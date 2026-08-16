@@ -32,7 +32,7 @@ def render_telemetry_slash(args: str, *, runtime: Any) -> str:
         selector_kind, invocation_id = "invocation_id", parts[1]
     else:
         return TELEMETRY_USAGE
-    report = _load_report(
+    report = load_telemetry_report(
         runtime,
         selector_kind=selector_kind,
         invocation_id=invocation_id,
@@ -91,14 +91,14 @@ def _selected_report(runtime: Any) -> TelemetryDebugReport:
     invocation_id = str(
         getattr(runtime, "_interactive_telemetry_invocation_id", "") or ""
     ).strip()
-    return _load_report(
+    return load_telemetry_report(
         runtime,
         selector_kind="invocation_id" if invocation_id else "latest",
         invocation_id=invocation_id or None,
     )
 
 
-def _load_report(
+def load_telemetry_report(
     runtime: Any,
     *,
     selector_kind: str,
@@ -209,6 +209,7 @@ def _relative_trace_name(value: str) -> bool:
 __all__ = [
     "TELEMETRY_USAGE",
     "TRACE_USAGE",
+    "load_telemetry_report",
     "render_telemetry_slash",
     "render_trace_slash",
 ]
