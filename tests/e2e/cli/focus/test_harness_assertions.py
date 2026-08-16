@@ -401,16 +401,10 @@ def test_inline_approval_menu_supports_both_focus_surfaces(
     [
         "[y]es / [N]o / [a]lways:\n❯ Ask anything",
         "[y]es / [N]o / [a]lways:\n● file.write(example.py)",
-        (
-            "[y]es / [N]o / [a]lways: ● file.write(example.py)\n"
-            '  └ {"ok": true}'
-        ),
+        ('[y]es / [N]o / [a]lways: ● file.write(example.py)\n  └ {"ok": true}'),
         "[y]es / [N]o / [a]lways: a\n❯ ● file.write(example.py)",
         "[y]es / [N]o / [a]lways: a\nFIRST:a",
-        (
-            "[y]es / [N]o / [a]lways: ● Running file.write(cli.py)\n"
-            "a\nStatus: Working"
-        ),
+        ("[y]es / [N]o / [a]lways: ● Running file.write(cli.py)\na\nStatus: Working"),
         "[A] Allow once [S] Session allow [D] Deny\nDone in 2s",
     ],
 )

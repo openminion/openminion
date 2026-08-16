@@ -2307,8 +2307,7 @@ def test_postprocess_turn_attaches_clarify_request_metadata() -> None:
     assert response.metadata["finish_reason"] == "stop"
     assert len(response.metadata["clarify_id"]) == 32
     assert all(
-        character in "0123456789abcdef"
-        for character in response.metadata["clarify_id"]
+        character in "0123456789abcdef" for character in response.metadata["clarify_id"]
     )
     assert response.metadata["clarify_question_count"] == "1"
     assert "Which city?" in response.metadata["clarify_request"]
