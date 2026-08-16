@@ -41,6 +41,7 @@ from openminion.modules.storage.runtime.idempotency_store import IdempotencyStor
 from openminion.modules.storage.runtime.retrieval_service import RetrievalService
 from openminion.modules.storage.runtime.session_store import (
     EventRecord,
+    RuntimeSessionTurnFenceError,
     SessionStore,
 )
 from openminion.modules.telemetry.invocation_repair import InvocationLifecycleReconciler
@@ -184,7 +185,7 @@ class GatewayService:
     def repair_invocation_lifecycle(self, *, session_id: str) -> dict[str, object]:
         report = InvocationLifecycleReconciler.for_runtime(
             sessions=self._sessions,
-            telemetryctl=getattr(self._agent, "_telemetryctl", None),
+            telemetryctl=self._agent.telemetry_contract,
         ).repair_session(session_id)
         return report.to_dict()
 
@@ -462,30 +463,50 @@ class GatewayService:
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
         lease = None
-        resolved_session = self._sessions.resolve_session(
-            agent_id=self._agent_id,
-            channel=channel,
-            target=target,
-            session_id=session_id,
-            metadata=inbound_metadata,
-        )
-        session_value = resolved_session.id
         request_value = str(request_id or "").strip() or uuid4().hex
         acquire_lease = getattr(self._sessions, "acquire_session_turn_lease", None)
         if not callable(acquire_lease):
             self._logger.warning(
                 "session turn lease unavailable; session turn proceeds "
                 "without same-session serialization session_id=%s",
-                session_value,
+                session_id,
             )
-        if callable(acquire_lease):
-            lease = acquire_lease(
-                session_value,
-                owner=f"gateway:{request_value}",
-                request_id=request_value,
-                ttl_s=60,
+            resolved_session = self._sessions.resolve_session(
+                agent_id=self._agent_id,
+                channel=channel,
+                target=target,
+                session_id=session_id,
+                metadata=inbound_metadata,
             )
+        else:
+            resolved_session = self._sessions.resolve_session(
+                agent_id=self._agent_id,
+                channel=channel,
+                target=target,
+                session_id=session_id,
+                resume_existing=False,
+            )
+        session_value = resolved_session.id
         try:
+            if callable(acquire_lease):
+                lease = acquire_lease(
+                    session_value,
+                    owner=f"gateway:{request_value}",
+                    request_id=request_value,
+                    ttl_s=60,
+                )
+                fence_token = int(getattr(lease, "fence_token", 0))
+                if inbound_metadata:
+                    resolved_session = self._sessions.update_session_metadata(
+                        session_id=session_value,
+                        patch=inbound_metadata,
+                        session_turn_fence_token=fence_token,
+                    )
+                if str(session_id or "").strip():
+                    resolved_session = self._sessions.resume_session(
+                        session_id=session_value,
+                        session_turn_fence_token=fence_token,
+                    )
             return await self._turn_runner.run(
                 channel=channel,
                 target=target,
@@ -581,15 +602,14 @@ class GatewayService:
                     channel=channel,
                     target=loop_target,
                     body=text,
-                    deliver=False,
+                    deliver=True,
                     inbound_metadata={"attach_id": attach_id},
                 )
             )
             try:
                 if show_progress:
                     await _await_with_progress_indicator(pending, label="openminion")
-                response = await pending
-                self._channels.get(response.channel).send(response)
+                await pending
             finally:
                 if not pending.done():
                     pending.cancel()
@@ -618,6 +638,8 @@ class GatewayService:
                 payload=payload,
                 session_turn_fence_token=session_turn_fence_token,
             )
+        except RuntimeSessionTurnFenceError:
+            raise
         except Exception as exc:
             self._logger.warning(
                 "failed to append run event session_id=%s run_id=%s state=%s error=%s",

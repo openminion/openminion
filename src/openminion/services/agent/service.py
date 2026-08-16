@@ -32,6 +32,7 @@ from openminion.modules.llm.providers.tool_choice import (
     complete_with_provider_override_retry,
 )
 from openminion.modules.tool import ToolRegistry
+from openminion.modules.telemetry.interfaces import TelemetryAdapterContract
 
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.modules.policy.adapters.composition import (
@@ -272,6 +273,10 @@ class AgentService(AgentTurnFlowMixin):
         close = getattr(resource, "close", None)
         if callable(close):
             close()
+
+    @property
+    def telemetry_contract(self) -> TelemetryAdapterContract | None:
+        return self._telemetryctl
 
     def _bind_execution_telemetry(
         self,

@@ -16,12 +16,12 @@ def run_agent_check(args, app) -> int:
     channel = (args.channel or agent_profile.default_channel).strip()
     target = args.target
     message_text = args.message
+    request_id = uuid4().hex
 
     started = perf_counter()
     try:
         app.channels.get(channel)
 
-        request_id = uuid4().hex
         inbound = Message(
             channel=channel,
             target=target,
@@ -80,6 +80,10 @@ def run_agent_check(args, app) -> int:
             "provider": agent_profile.provider,
             "channel": channel,
             "target": target,
+            "scope": "runtime",
+            "request_id": request_id,
+            "invocation_id": "",
+            "execution_id": "",
             "error": str(exc),
         }
         if args.json:

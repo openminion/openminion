@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from openminion.modules.telemetry.events.canonical import build_canonical_event
+from openminion.modules.telemetry.events.module import emit_module_telemetry
 from openminion.modules.telemetry.schemas import (
     TelemetryEvent,
     normalize_telemetry_event,
 )
 from openminion.modules.telemetry.storage.base import TelemetryEventConflictError
+
+_LOG = logging.getLogger(__name__)
 
 
 def invocation_artifact_paths(events: list[Any]) -> set[str]:
@@ -34,11 +38,14 @@ def repair_event_sync(service: Any, event: TelemetryEvent) -> str:
         return "storage_failed"
     if not created:
         return "already_identical"
-    service._external_exporter.export(
+    emit_module_telemetry(
+        service._external_exporter,
+        "export",
         service._content_policy_event(
             normalized,
             allowed_sensitive_fields=service._external_sensitive_fields,
-        )
+        ),
+        logger=_LOG,
     )
     return "created"
 

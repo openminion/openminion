@@ -106,6 +106,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
         )
         typed_terminal_resolver = self._build_gtgs_terminal_resolver(
             typed_turn_intent=typed_turn_intent,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
         self._emit_agent_running_state(

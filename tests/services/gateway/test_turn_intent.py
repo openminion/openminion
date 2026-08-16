@@ -14,16 +14,17 @@ from openminion.services.gateway.turn_intent import (
 
 class _StubSessionApi:
     def __init__(self) -> None:
-        self.events: list[tuple[str, dict]] = []
+        self.events: list[tuple[str, dict, int | None]] = []
 
     def append_event(
         self,
         session_id: str,
         event_type: str,
         payload: dict,
+        session_turn_fence_token: int | None = None,
         **_: object,
     ) -> str:
-        self.events.append((event_type, dict(payload)))
+        self.events.append((event_type, dict(payload), session_turn_fence_token))
         return f"event-{len(self.events)}"
 
 
@@ -179,12 +180,14 @@ def test_build_fail_closed_terminal_resolution_returns_none_for_freeform_chat() 
 def test_build_fail_closed_terminal_resolution_returns_typed_tuple_for_benchmark() -> (
     None
 ):
+    session_api = _StubSessionApi()
     resolved = build_fail_closed_terminal_resolution(
         turn_intent=_benchmark_intent(),
         run_id="run-1",
         session_id="sess-1",
         agent_id="agent-1",
-        session_api=_StubSessionApi(),
+        session_api=session_api,
+        session_turn_fence_token=7,
     )
     assert resolved is not None
     run, goal, verifier_results, fired_failure_conditions = resolved
@@ -193,3 +196,5 @@ def test_build_fail_closed_terminal_resolution_returns_typed_tuple_for_benchmark
     assert len(verifier_results) == 2
     assert fired_failure_conditions == ()
     assert all(not row.passed for row in verifier_results)
+    assert session_api.events
+    assert {event[2] for event in session_api.events} == {7}

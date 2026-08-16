@@ -272,6 +272,7 @@ class GatewayTurnSetupMixin:
         self,
         *,
         typed_turn_intent: TypedTurnIntent | None,
+        session_turn_fence_token: int | None,
     ) -> Optional[Callable[..., Optional[tuple[Any, ...]]]]:
         if typed_turn_intent is None:
             return None
@@ -286,6 +287,7 @@ class GatewayTurnSetupMixin:
                 session_id=session_id,
                 agent_id=self._agent_id,
                 session_api=self._sessions,
+                session_turn_fence_token=session_turn_fence_token,
             )
 
         return _resolver

@@ -80,3 +80,23 @@ def test_gateway_repair_lifecycle_requires_session_id() -> None:
     with pytest.raises(SystemExit) as raised:
         parser.parse_args(["gateway", "repair-lifecycle", "--json"])
     assert raised.value.code == 2
+
+
+def test_gateway_repair_lifecycle_rejects_blank_session_id() -> None:
+    gateway = SimpleNamespace(
+        repair_invocation_lifecycle=lambda **_kwargs: pytest.fail("repair must not run")
+    )
+    app = SimpleNamespace(resolve_gateway=lambda _agent_id: gateway)
+    args = Namespace(
+        gateway_command="repair-lifecycle",
+        session_id="   ",
+        json=True,
+        quiet=False,
+    )
+    output = io.StringIO()
+
+    with redirect_stdout(output):
+        exit_code = run_gateway(args, app)
+
+    assert exit_code == 2
+    assert json.loads(output.getvalue()) == {"error": "session_id is required"}
