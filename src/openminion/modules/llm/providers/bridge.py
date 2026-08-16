@@ -28,6 +28,9 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.llm.providers.behavior import (
     resolve_behavior_profile,
 )
+from openminion.modules.llm.providers.behavior.constants import (
+    CORTENSOR_PORTAL_RETRY_DISABLED_REASON,
+)
 from openminion.modules.llm.providers.normalization import (
     normalize_provider_response,
 )
@@ -147,7 +150,23 @@ class LLMCTLBridgeProvider(LLMProvider):
             provider_name=self.name,
             provider_config=self._provider_config,
         )
-        max_retries = 0 if self.name == "cortensor" else 2
+        behavior_profile = resolve_behavior_profile(
+            provider=self.name,
+            model=self._model,
+            base_url=str(self._provider_config.get("base_url") or ""),
+            provider_identity=self._provider_config.get("provider_identity"),
+            env=self._env,
+        )
+        self.service_vendor = (
+            behavior_profile.provider_identity.service_vendor
+            if behavior_profile.provider_identity is not None
+            else self.name
+        )
+        is_cortensor_portal = (
+            behavior_profile.retry_override_policy.disabled_reason
+            == CORTENSOR_PORTAL_RETRY_DISABLED_REASON
+        )
+        max_retries = 0 if self.name == "cortensor" or is_cortensor_portal else 2
 
         llmctl_config = {
             "version": 1,
@@ -321,7 +340,11 @@ class LLMCTLBridgeProvider(LLMProvider):
 
             if response.error is None:
                 raise ProviderError("llmctl bridge call failed")
-            raise ProviderError(f"{response.error.code}: {response.error.message}")
+            raise ProviderError(
+                response.error.message,
+                code=response.error.code,
+                details=dict(getattr(response.error, "details", {}) or {}),
+            )
 
         usage = _bridge_usage_payload(response.usage)
 

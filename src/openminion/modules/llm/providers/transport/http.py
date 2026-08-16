@@ -23,6 +23,11 @@ from .debug import (
     truncate_debug_value,
     write_llm_debug_event,
 )
+from .error_facts import (
+    malformed_response_facts,
+    openai_error_facts,
+    openai_error_message,
+)
 from .payload import serialize_json_payload
 from .trace import trace_http_json_request, trace_http_json_response
 
@@ -34,6 +39,55 @@ def _safe_http_error_body(exc: urllib_error.HTTPError) -> str:
         return exc.read().decode("utf-8", errors="replace")
     except Exception:
         return "(no response body)"
+
+
+def _http_error_details(
+    exc: urllib_error.HTTPError,
+) -> tuple[str, dict[str, Any], str]:
+    body = _safe_http_error_body(exc)
+    facts = openai_error_facts(
+        body,
+        status_code=int(exc.code),
+        request_id=str((exc.headers or {}).get("X-Request-ID") or ""),
+    )
+    return body, facts, openai_error_message(facts, status_code=int(exc.code))
+
+
+def _record_malformed_response(
+    *,
+    trace_metadata: Dict[str, Any] | None,
+    provider_name: str,
+    url: str,
+    status_code: int,
+    raw: str,
+    error: str,
+    transport: str,
+    trace_id: str,
+    env: EnvironmentConfig,
+    write_event: Any,
+    parse_error: str = "",
+) -> None:
+    facts = malformed_response_facts(raw, status_code=status_code, error=error)
+    trace_http_json_response(
+        trace_metadata=trace_metadata,
+        provider_name=provider_name,
+        url=url,
+        status_code=status_code,
+        body_text=json.dumps(facts),
+        transport=transport,
+        parse_error=parse_error,
+        env=env,
+    )
+    write_event(
+        {
+            "event": "error",
+            "provider": provider_name,
+            "trace_id": trace_id,
+            "url": url,
+            "error": error,
+            "response_bytes": facts["response_bytes"],
+        }
+    )
 
 
 def with_default_user_agent(headers: Dict[str, str]) -> Dict[str, str]:
@@ -232,14 +286,14 @@ def http_json_get(
         round_trip_ms = _elapsed_ms(round_trip_started)
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
-        detail = _safe_http_error_body(exc)
+        detail, error_facts, safe_detail = _http_error_details(exc)
         response_bytes = len(detail.encode("utf-8"))
         trace_http_json_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=int(getattr(exc, "code", 0) or 0),
-            body_text=detail,
+            body_text=json.dumps(error_facts),
             transport=transport_name,
             env=env_owner,
         )
@@ -250,7 +304,7 @@ def http_json_get(
                 "trace_id": trace_id,
                 "url": url,
                 "status": getattr(exc, "code", 0),
-                "error": detail[:max_chars],
+                "error": safe_detail[:max_chars],
             }
         )
         if exc.code in {401, 403}:
@@ -268,12 +322,11 @@ def http_json_get(
             )
             raise LLMCtlError(
                 "AUTH_ERROR",
-                f"{provider_name} auth failed: {detail}",
+                f"{provider_name} auth failed: {safe_detail}",
                 details={
                     "provider": provider_name,
-                    "status_code": int(exc.code),
                     "url": url,
-                    "response_text": detail,
+                    **error_facts,
                 },
             ) from exc
         if exc.code == 429:
@@ -291,12 +344,11 @@ def http_json_get(
             )
             raise LLMCtlError(
                 "RATE_LIMITED",
-                f"{provider_name} rate limited: {detail}",
+                f"{provider_name} rate limited: {safe_detail}",
                 details={
                     "provider": provider_name,
-                    "status_code": int(exc.code),
                     "url": url,
-                    "response_text": detail,
+                    **error_facts,
                 },
             ) from exc
         if exc.code in {408, 504}:
@@ -320,12 +372,11 @@ def http_json_get(
             )
             raise LLMCtlError(
                 "TIMEOUT",
-                f"{provider_name} timeout: {detail}",
+                f"{provider_name} timeout: {safe_detail}",
                 details={
                     "provider": provider_name,
-                    "status_code": int(exc.code),
                     "url": url,
-                    "response_text": detail,
+                    **error_facts,
                 },
             ) from exc
         emit_performance(
@@ -342,12 +393,11 @@ def http_json_get(
         )
         raise LLMCtlError(
             "PROVIDER_ERROR",
-            f"{provider_name} request failed with HTTP {exc.code}: {detail}",
+            f"{provider_name} request failed with HTTP {exc.code}: {safe_detail}",
             details={
                 "provider": provider_name,
-                "status_code": int(exc.code),
                 "url": url,
-                "response_text": detail,
+                **error_facts,
             },
         ) from exc
     except urllib_error.URLError as exc:
@@ -408,25 +458,18 @@ def http_json_get(
     except json.JSONDecodeError as exc:
         parse_ms = _elapsed_ms(parse_started)
         parse_error = f"{type(exc).__name__}: {exc}"
-        trace_http_json_response(
+        _record_malformed_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=status_code,
-            body_text=raw,
+            raw=raw,
+            error="invalid_json_response",
             transport=transport_name,
+            trace_id=trace_id,
             parse_error=parse_error,
             env=env_owner,
-        )
-        _write(
-            {
-                "event": "error",
-                "provider": provider_name,
-                "trace_id": trace_id,
-                "url": url,
-                "error": "invalid_json_response",
-                "raw": raw[:max_chars],
-            }
+            write_event=_write,
         )
         emit_performance(
             telemetryctl,
@@ -443,28 +486,18 @@ def http_json_get(
         raise LLMCtlError(
             "PROVIDER_ERROR", f"{provider_name} response was not valid JSON"
         ) from exc
-    else:
-        trace_http_json_response(
+    if not isinstance(parsed, dict):
+        _record_malformed_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=status_code,
-            body_text=raw,
+            raw=raw,
+            error="response_not_object",
             transport=transport_name,
-            parsed_json=parsed,
+            trace_id=trace_id,
             env=env_owner,
-        )
-
-    if not isinstance(parsed, dict):
-        _write(
-            {
-                "event": "error",
-                "provider": provider_name,
-                "trace_id": trace_id,
-                "url": url,
-                "error": "response_not_object",
-                "raw": raw[:max_chars],
-            }
+            write_event=_write,
         )
         emit_performance(
             telemetryctl,
@@ -481,6 +514,17 @@ def http_json_get(
         raise LLMCtlError(
             "PROVIDER_ERROR", f"{provider_name} response was not an object"
         )
+
+    trace_http_json_response(
+        trace_metadata=trace_metadata,
+        provider_name=provider_name,
+        url=url,
+        status_code=status_code,
+        body_text=raw,
+        transport=transport_name,
+        parsed_json=parsed,
+        env=env_owner,
+    )
 
     _write(
         {
@@ -574,14 +618,14 @@ def http_json_post(
         round_trip_ms = _elapsed_ms(round_trip_started)
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
-        detail = _safe_http_error_body(exc)
+        detail, error_facts, safe_detail = _http_error_details(exc)
         response_bytes = len(detail.encode("utf-8"))
         trace_http_json_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=int(getattr(exc, "code", 0) or 0),
-            body_text=detail,
+            body_text=json.dumps(error_facts),
             transport=transport_name,
             env=env_owner,
         )
@@ -592,7 +636,7 @@ def http_json_post(
                 "trace_id": trace_id,
                 "url": url,
                 "status": getattr(exc, "code", 0),
-                "error": detail[:max_chars],
+                "error": safe_detail[:max_chars],
             }
         )
         if exc.code in {401, 403}:
@@ -611,12 +655,11 @@ def http_json_post(
             )
             raise LLMCtlError(
                 "AUTH_ERROR",
-                f"{provider_name} auth failed: {detail}",
+                f"{provider_name} auth failed: {safe_detail}",
                 details={
                     "provider": provider_name,
-                    "status_code": int(exc.code),
                     "url": url,
-                    "response_text": detail,
+                    **error_facts,
                 },
             ) from exc
         if exc.code == 429:
@@ -635,12 +678,11 @@ def http_json_post(
             )
             raise LLMCtlError(
                 "RATE_LIMITED",
-                f"{provider_name} rate limited: {detail}",
+                f"{provider_name} rate limited: {safe_detail}",
                 details={
                     "provider": provider_name,
-                    "status_code": int(exc.code),
                     "url": url,
-                    "response_text": detail,
+                    **error_facts,
                 },
             ) from exc
         if exc.code in {408, 504}:
@@ -665,12 +707,11 @@ def http_json_post(
             )
             raise LLMCtlError(
                 "TIMEOUT",
-                f"{provider_name} timeout: {detail}",
+                f"{provider_name} timeout: {safe_detail}",
                 details={
                     "provider": provider_name,
-                    "status_code": int(exc.code),
                     "url": url,
-                    "response_text": detail,
+                    **error_facts,
                 },
             ) from exc
         emit_performance(
@@ -688,12 +729,11 @@ def http_json_post(
         )
         raise LLMCtlError(
             "PROVIDER_ERROR",
-            f"{provider_name} request failed with HTTP {exc.code}: {detail}",
+            f"{provider_name} request failed with HTTP {exc.code}: {safe_detail}",
             details={
                 "provider": provider_name,
-                "status_code": int(exc.code),
                 "url": url,
-                "response_text": detail,
+                **error_facts,
             },
         ) from exc
     except urllib_error.URLError as exc:
@@ -782,25 +822,18 @@ def http_json_post(
     except json.JSONDecodeError as exc:
         parse_ms = _elapsed_ms(parse_started)
         parse_error = f"{type(exc).__name__}: {exc}"
-        trace_http_json_response(
+        _record_malformed_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=status_code,
-            body_text=raw,
+            raw=raw,
+            error="invalid_json_response",
             transport=transport_name,
+            trace_id=trace_id,
             parse_error=parse_error,
             env=env_owner,
-        )
-        _write(
-            {
-                "event": "error",
-                "provider": provider_name,
-                "trace_id": trace_id,
-                "url": url,
-                "error": "invalid_json_response",
-                "raw": raw[:max_chars],
-            }
+            write_event=_write,
         )
         emit_performance(
             telemetryctl,
@@ -818,28 +851,18 @@ def http_json_post(
         raise LLMCtlError(
             "PROVIDER_ERROR", f"{provider_name} response was not valid JSON"
         ) from exc
-    else:
-        trace_http_json_response(
+    if not isinstance(parsed, dict):
+        _record_malformed_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=status_code,
-            body_text=raw,
+            raw=raw,
+            error="response_not_object",
             transport=transport_name,
-            parsed_json=parsed,
+            trace_id=trace_id,
             env=env_owner,
-        )
-
-    if not isinstance(parsed, dict):
-        _write(
-            {
-                "event": "error",
-                "provider": provider_name,
-                "trace_id": trace_id,
-                "url": url,
-                "error": "response_not_object",
-                "raw": raw[:max_chars],
-            }
+            write_event=_write,
         )
         emit_performance(
             telemetryctl,
@@ -857,6 +880,17 @@ def http_json_post(
         raise LLMCtlError(
             "PROVIDER_ERROR", f"{provider_name} response was not an object"
         )
+
+    trace_http_json_response(
+        trace_metadata=trace_metadata,
+        provider_name=provider_name,
+        url=url,
+        status_code=status_code,
+        body_text=raw,
+        transport=transport_name,
+        parsed_json=parsed,
+        env=env_owner,
+    )
 
     _write(
         {

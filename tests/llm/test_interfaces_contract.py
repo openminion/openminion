@@ -9,6 +9,7 @@ from openminion.modules.llm.interfaces import (
     ensure_llm_response_compatibility,
 )
 from openminion.modules.llm.providers.plugins import ProviderRegistry
+from openminion.modules.llm.providers.contracts import ProviderError
 from openminion.modules.llm.providers import stub_provider
 
 
@@ -31,6 +32,14 @@ class _BadContractProvider:
 
 def test_llmctl_contract_version_matches_interface_version() -> None:
     assert LLMCTL.contract_version == LLM_RESPONSE_INTERFACE_VERSION
+
+
+def test_provider_error_preserves_legacy_default_message() -> None:
+    error = ProviderError("bad request")
+
+    assert str(error) == "bad request"
+    assert error.code == "PROVIDER_ERROR"
+    assert error.message == "bad request"
 
 
 def test_ensure_llm_response_compatibility_strict_mode_raises() -> None:

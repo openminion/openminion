@@ -133,6 +133,12 @@ def resolve_provider_retry_override(
 ) -> ProviderRetryOverrideResolution:
     """Resolve the retry override for one provider call."""
 
+    if _provider_overrides_disabled(metadata=metadata, env=env):
+        return ProviderRetryOverrideResolution(
+            matched=False,
+            disabled=True,
+            disabled_reason="provider overrides explicitly disabled",
+        )
     if policy is not None:
         if policy.disabled:
             return ProviderRetryOverrideResolution(
@@ -143,12 +149,6 @@ def resolve_provider_retry_override(
             )
         candidates = policy.applicable_overrides
     else:
-        if _provider_overrides_disabled(metadata=metadata, env=env):
-            return ProviderRetryOverrideResolution(
-                matched=False,
-                disabled=True,
-                disabled_reason="provider overrides explicitly disabled",
-            )
         candidates = _PROVIDER_RETRY_OVERRIDES
 
     normalized_provider = provider_name.strip().lower()

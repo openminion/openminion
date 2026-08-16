@@ -12,6 +12,11 @@ from openminion.modules.llm.constants import (
     LLM_TOOL_CHOICE_AUTO,
 )
 from openminion.modules.llm.providers.base import LLMProvider, ProviderError
+from openminion.modules.llm.providers.behavior import resolve_behavior_profile
+from openminion.modules.llm.providers.behavior.constants import (
+    CORTENSOR_PORTAL_RETRY_DISABLED_REASON,
+)
+from openminion.modules.llm.providers.behavior.contracts import RetryOverridePolicy
 from openminion.modules.llm.providers.bridge import (
     LLMCTLBridgeProvider,
     llmctl_bridge_available,
@@ -41,6 +46,8 @@ class RuntimeLLMHandle:
     model: str
     client: Any
     tool_call_strategy: str = LLM_TOOL_CALL_STRATEGY_HYBRID
+    retry_override_policy: RetryOverridePolicy = RetryOverridePolicy()
+    service_vendor: str = ""
 
     def close(self) -> None:
         self.client.llmctl.close()
@@ -51,6 +58,7 @@ def _runtime_llmctl_config(
     bridge_provider_name: str,
     model: str,
     provider_payload: Mapping[str, Any],
+    max_retries: int,
 ) -> dict[str, Any]:
     return {
         "version": 1,
@@ -64,7 +72,7 @@ def _runtime_llmctl_config(
                 "connect_timeout_sec": 10,
             },
             "retries": {
-                "max_retries": 0 if bridge_provider_name == "cortensor" else 2,
+                "max_retries": max_retries,
                 "backoff_ms": 300,
             },
             "logging": {"redaction": "normal", "include_provider_raw": False},
@@ -125,11 +133,25 @@ def build_runtime_llm_handle(
     provider_payload["__env__"] = resolve_environment_config(
         env=provider_env
     ).snapshot()
+    behavior_profile = resolve_behavior_profile(
+        provider=bridge_provider_name,
+        model=model,
+        base_url=str(provider_payload.get("base_url") or ""),
+        provider_identity=provider_payload.get("provider_identity"),
+        env=provider_env,
+    )
+    is_cortensor_portal = (
+        behavior_profile.retry_override_policy.disabled_reason
+        == CORTENSOR_PORTAL_RETRY_DISABLED_REASON
+    )
 
     llmctl_config = _runtime_llmctl_config(
         bridge_provider_name=bridge_provider_name,
         model=model,
         provider_payload=provider_payload,
+        max_retries=(
+            0 if bridge_provider_name == "cortensor" or is_cortensor_portal else 2
+        ),
     )
 
     runtime = LLMCTL.from_config(llmctl_config)
@@ -152,6 +174,12 @@ def build_runtime_llm_handle(
         model=model,
         client=client,
         tool_call_strategy=tool_call_strategy,
+        retry_override_policy=behavior_profile.retry_override_policy,
+        service_vendor=(
+            behavior_profile.provider_identity.service_vendor
+            if behavior_profile.provider_identity is not None
+            else bridge_provider_name
+        ),
     )
 
 

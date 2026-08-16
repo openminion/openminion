@@ -34,6 +34,19 @@ STRICT_PROVIDER_RESPONSE_CONTRACTS_ENV = (
 class ProviderError(RuntimeError):
     """Raised when a provider cannot complete a request."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        resolved_code = code or "PROVIDER_ERROR"
+        super().__init__(f"{resolved_code}: {message}" if code else message)
+        self.code = resolved_code
+        self.message = message
+        self.details = dict(details or {})
+
 
 @dataclass
 class ProviderRequest:

@@ -11,6 +11,7 @@ from openminion.modules.llm.providers.base import (
     ProviderRequest,
     ProviderToolSpec,
 )
+from openminion.modules.llm.providers.behavior import resolve_behavior_profile
 from openminion.services.agent import AgentService
 from openminion.services.runtime.plugins import PluginRegistry
 
@@ -59,7 +60,11 @@ class _FakeOkResponse:
 class _FakeErrorResponse:
     def __init__(self, *, message: str) -> None:
         self.ok = False
-        self.error = SimpleNamespace(code="PROVIDER_ERROR", message=message)
+        self.error = SimpleNamespace(
+            code="PROVIDER_ERROR",
+            message=message,
+            details={"upstream_code": "tool_choice", "request_id": "req-1"},
+        )
         self.output_text = ""
         self.model = "MiniMax-M2.5"
         self.usage = _FakeUsage()
@@ -152,7 +157,17 @@ class _RetryingRuntimeClient:
 
 
 def _service(*, client) -> AgentService:
-    runtime = SimpleNamespace(client=client, name="openai", model="MiniMax-M2.5")
+    retry_policy = resolve_behavior_profile(
+        provider="openai",
+        model="MiniMax-M2.5",
+        base_url="https://api.minimax.io/v1",
+    ).retry_override_policy
+    runtime = SimpleNamespace(
+        client=client,
+        name="openai",
+        model="MiniMax-M2.5",
+        retry_override_policy=retry_policy,
+    )
     return AgentService(
         OpenMinionConfig(),
         PluginRegistry([]),
@@ -253,7 +268,7 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
         client = _RetryingRuntimeClient()
         service = _service(client=client)
 
-        with self.assertRaisesRegex(ProviderError, "PROVIDER_ERROR"):
+        with self.assertRaisesRegex(ProviderError, "PROVIDER_ERROR") as raised:
             asyncio.run(
                 service._invoke_provider_request(
                     _structured_request(metadata={"provider_override_mode": "disabled"})
@@ -261,6 +276,7 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
             )
 
         self.assertEqual(len(client.calls), 1)
+        self.assertEqual(raised.exception.details["request_id"], "req-1")
 
     def test_runtime_client_recovers_minimax_xml_tool_call_from_output_text(
         self,

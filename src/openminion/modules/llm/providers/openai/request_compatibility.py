@@ -12,6 +12,7 @@ from typing import Any
 from collections.abc import Mapping
 
 from openminion.modules.llm.providers.behavior.constants import (
+    CORTENSOR_SERVICE_VENDOR,
     DEFAULT_REQUEST_DIALECT,
     MINIMAX_OPENAI_COMPAT_REQUEST_DIALECT,
 )
@@ -24,6 +25,7 @@ class OpenAIRequestCompatProfile:
     profile_id: str = "openai_default"
     collapse_system_messages: bool = False
     disable_fallback_instruction: bool = False
+    include_native_tool_contract: bool = True
     native_tool_only_instruction: str = ""
     enable_structured_tool_envelope_parse: bool = False
     retry_empty_payload_once: bool = False
@@ -36,6 +38,12 @@ def resolve_openai_request_compat(
     request_dialect: str = DEFAULT_REQUEST_DIALECT,
 ) -> OpenAIRequestCompatProfile:
     normalized_request_dialect = str(request_dialect or "").strip().lower()
+    if _provider_identity_uses_cortensor_portal(provider_identity):
+        return OpenAIRequestCompatProfile(
+            profile_id="cortensor_portal",
+            disable_fallback_instruction=True,
+            include_native_tool_contract=False,
+        )
     if (
         normalized_request_dialect == MINIMAX_OPENAI_COMPAT_REQUEST_DIALECT
         or _provider_identity_uses_minimax_compat(provider_identity)
@@ -89,3 +97,17 @@ def _provider_identity_uses_minimax_compat(
         "minimax",
         "dashscope",
     }
+
+
+def _provider_identity_uses_cortensor_portal(
+    provider_identity: Mapping[str, Any] | None,
+) -> bool:
+    if not isinstance(provider_identity, Mapping):
+        return False
+    return (
+        str(provider_identity.get("transport_adapter") or "").strip() == "openai_chat"
+        and str(provider_identity.get("wire_protocol_family") or "").strip()
+        == "openai_chat_completions"
+        and str(provider_identity.get("service_vendor") or "").strip()
+        == CORTENSOR_SERVICE_VENDOR
+    )

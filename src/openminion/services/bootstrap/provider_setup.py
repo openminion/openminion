@@ -31,6 +31,7 @@ _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
         "base_url",
         "model",
         "provider_identity",
+        "timeout_seconds",
     }
 )
 _PROVIDER_ALIASES = {
@@ -395,6 +396,7 @@ def _apply_setup_selection(
         for existing_id, profile in config.agents.items()
     )
     provider_patch = _provider_patch(
+        preset=preset,
         model=model,
         base_url=base_url,
         credential=credential,
@@ -430,12 +432,15 @@ def _apply_setup_selection(
 
 def _provider_patch(
     *,
+    preset: ProviderSetupPreset,
     model: str,
     base_url: str,
     credential: CredentialResolution,
     provider_identity: Mapping[str, str],
 ) -> dict[str, Any]:
     patch: dict[str, Any] = {"model": model}
+    if preset.timeout_seconds is not None:
+        patch["timeout_seconds"] = preset.timeout_seconds
     if base_url:
         patch["base_url"] = base_url
     if provider_identity:

@@ -3,7 +3,7 @@ import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
@@ -660,7 +660,9 @@ class AgentService(AgentTurnFlowMixin):
             if error is None:
                 raise ProviderError("llm runtime call failed")
             raise ProviderError(
-                f"{error_code}: {error_message}" if error_code else error_message
+                error_message,
+                code=error_code or "PROVIDER_ERROR",
+                details=dict(getattr(error, "details", {}) or {}),
             )
 
         usage_payload = _provider_usage_payload(getattr(response, "usage", None))
@@ -720,15 +722,14 @@ class AgentService(AgentTurnFlowMixin):
             allowed_tool_names = sorted(get_allowed_model_tool_names(self._tools))
         if not allowed_tool_names:
             allowed_tool_names = None
-        llm_client = getattr(self._llm_runtime, "client", None)
-        if llm_client is not None:
+        llm_runtime = cast(Any, self._llm_runtime)
+        if llm_runtime is not None:
+            llm_client = llm_runtime.client
             provider_name = str(
-                getattr(self._llm_runtime, "name", "")
-                or self._provider_name()
-                or "echo"
+                getattr(llm_runtime, "name", "") or self._provider_name() or "echo"
             )
             model_name = str(
-                getattr(self._llm_runtime, "model", "")
+                getattr(llm_runtime, "model", "")
                 or getattr(getattr(self, "_provider", object()), "model", "")
                 or ""
             )
@@ -745,6 +746,7 @@ class AgentService(AgentTurnFlowMixin):
                 tool_choice=provider_request.tool_choice,
                 metadata=metadata,
                 thinking=provider_request.thinking,
+                policy=llm_runtime.retry_override_policy,
             )
             return self._llm_response_to_provider_response(
                 completion_result.response,

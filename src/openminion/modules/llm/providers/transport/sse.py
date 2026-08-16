@@ -7,6 +7,7 @@ from urllib import request as urllib_request
 from openminion.base.config.env import EnvironmentConfig
 from ...errors import LLMCtlError
 from .client import ProviderHTTPClient
+from .error_facts import openai_error_facts, openai_error_message
 from .http import _safe_http_error_body, with_default_user_agent
 from .payload import serialize_json_payload
 from .trace import trace_http_json_request
@@ -57,19 +58,28 @@ def iter_sse_post_lines(
                 yield raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
     except urllib_error.HTTPError as exc:
         detail = _safe_http_error_body(exc)
+        facts = openai_error_facts(
+            detail,
+            status_code=int(exc.code),
+            request_id=str((exc.headers or {}).get("X-Request-ID") or ""),
+        )
+        message = openai_error_message(facts, status_code=int(exc.code))
         if exc.code in {401, 403}:
             raise LLMCtlError(
-                "AUTH_ERROR", f"{provider_name} auth failed: {detail}"
+                "AUTH_ERROR", f"{provider_name} auth failed: {message}", facts
             ) from exc
         if exc.code == 429:
             raise LLMCtlError(
-                "RATE_LIMITED", f"{provider_name} rate limited: {detail}"
+                "RATE_LIMITED", f"{provider_name} rate limited: {message}", facts
             ) from exc
         if exc.code in {408, 504}:
-            raise LLMCtlError("TIMEOUT", f"{provider_name} timeout: {detail}") from exc
+            raise LLMCtlError(
+                "TIMEOUT", f"{provider_name} timeout: {message}", facts
+            ) from exc
         raise LLMCtlError(
             "PROVIDER_ERROR",
-            f"{provider_name} request failed with HTTP {exc.code}: {detail}",
+            f"{provider_name} request failed with HTTP {exc.code}: {message}",
+            facts,
         ) from exc
     except urllib_error.URLError as exc:
         reason = str(exc.reason)
