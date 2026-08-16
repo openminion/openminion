@@ -97,7 +97,6 @@ class PostgresMemoryStore(MemoryStore):
             if database_path is not None
             else (Path.cwd() / ".openminion-memory-postgres").resolve()
         )
-        placeholder_path.parent.mkdir(parents=True, exist_ok=True)
         self._bootstrap_schema(placeholder_path)
 
     def close(self) -> None:

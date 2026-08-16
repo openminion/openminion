@@ -64,8 +64,9 @@ def test_postgres_dispatcher_roundtrip() -> None:
 
             turns = store.list_turns(session_id)
             assert any(
-                t.get("role") == "user"
-                and "hello from cpe-02" in (t.get("content") or "")
+                (t.get("payload") or {}).get("role") == "user"
+                and "hello from cpe-02"
+                in ((t.get("payload") or {}).get("content") or "")
                 for t in turns
             ), f"inbound turn not persisted: {turns}"
 
