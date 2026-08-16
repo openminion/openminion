@@ -111,7 +111,7 @@ def test_skill_cli_ingest_list_show_remove(tmp_path: Path, monkeypatch) -> None:
     skill = payload["skill"]
     assert skill["skill_id"] == skill_id
     assert skill["status"] == "draft"
-    assert "file" in skill["tools"]
+    assert skill["tools"] == ["file.read", "exec.run"]
 
     code, payload = _run(
         _run_skill_remove,

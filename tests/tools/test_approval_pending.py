@@ -98,7 +98,7 @@ def test_exec_run_replays_after_inline_approval(monkeypatch, tmp_path: Path):
     result = adapter.execute(
         command={
             "tool_name": "exec.run",
-            "args": {"command": 'python3.11 -c "print(\'approved\')"'},
+            "args": {"command": "python3.11 -c \"print('approved')\""},
         },
         session_id="s1",
         trace_id="t1",
