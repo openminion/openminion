@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 import pytest
 from textual.css.query import QueryError
@@ -22,11 +23,34 @@ def test_detect_branch_handles_empty_input() -> None:
     assert detect_branch(None) is None  # type: ignore[arg-type]
 
 
-def test_detect_branch_returns_branch_for_real_git_repo() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
-    branch = detect_branch(repo_root)
-    assert isinstance(branch, str)
-    assert len(branch) > 0
+def test_detect_branch_returns_branch_for_real_git_repo(tmp_path: Path) -> None:
+    subprocess.run(
+        ["git", "init", "--initial-branch", "test-branch", str(tmp_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=OpenMinion Test",
+            "-c",
+            "user.email=test@openminion.invalid",
+            "commit",
+            "--allow-empty",
+            "--no-gpg-sign",
+            "-m",
+            "test fixture",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert detect_branch(tmp_path) == "test-branch"
 
 
 def _idle_text(line: FocusStatusLine) -> str:

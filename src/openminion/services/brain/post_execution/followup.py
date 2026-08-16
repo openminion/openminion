@@ -373,9 +373,9 @@ async def _follow_up_after_tool(
     if self._provider is None:
         return None, None
 
-    llm_call_id = hashlib.sha1(
+    llm_call_id = hashlib.sha256(
         f"{session_id}:{time.time_ns()}".encode("utf-8")
-    ).hexdigest()[:16]
+    ).hexdigest()[:32]
     run_id = str(getattr(message, "metadata", {}).get("run_id", "") or "").strip()
     session_api = getattr(getattr(self, "_runner", None), "session_api", None)
     _record_session_event(

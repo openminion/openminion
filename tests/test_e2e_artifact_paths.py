@@ -211,6 +211,51 @@ def test_live_cli_chat_helper_probe_timeout_leaves_pytest_margin(
     assert live_cli_chat_alibaba._probe_timeout_seconds("coding_project") == 1170
 
 
+@pytest.mark.parametrize(
+    ("allow_unsandboxed_exec", "expected_flag"),
+    [(False, False), (True, True)],
+)
+def test_live_cli_chat_helper_requires_explicit_unsandboxed_exec_opt_in(
+    monkeypatch,
+    tmp_path: Path,
+    allow_unsandboxed_exec: bool,
+    expected_flag: bool,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    python_path = tmp_path / "python"
+    python_path.touch()
+    captured_command: list[str] = []
+
+    monkeypatch.setattr(live_cli_chat_alibaba, "require_live_flag", lambda: None)
+    monkeypatch.setattr(live_cli_chat_alibaba, "python_bin", lambda: python_path)
+    monkeypatch.setattr(live_cli_chat_alibaba, "openminion_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        live_cli_chat_alibaba, "artifact_dir", lambda: tmp_path / "artifacts"
+    )
+
+    def _capture_command(**kwargs):
+        captured_command.extend(kwargs["cmd"])
+        return 0, "completed"
+
+    monkeypatch.setattr(live_cli_chat_alibaba, "_run_probe_session", _capture_command)
+    monkeypatch.setattr(
+        live_cli_chat_alibaba,
+        "_append_structured_probe_debug",
+        lambda **kwargs: kwargs["transcript"],
+    )
+
+    live_cli_chat_alibaba.run_cli_session(
+        session_id_prefix="exec-opt-in",
+        user_input="run tests",
+        agent_id="test-agent",
+        config_path=config_path,
+        allow_unsandboxed_exec=allow_unsandboxed_exec,
+    )
+
+    assert ("--allow-unsandboxed-exec" in captured_command) is expected_flag
+
+
 def test_live_cli_chat_helper_counts_probe_input_turns() -> None:
     assert live_cli_chat_alibaba._probe_input_turn_count("hello\n/debug\n/exit\n") == 1
     assert (

@@ -325,6 +325,7 @@ def _repair_project_after_pytest_failure(
         workspace_root_override=workspace,
         matrix_type="coding_project",
         auto_confirm=True,
+        allow_unsandboxed_exec=True,
     )
 
 
@@ -369,6 +370,7 @@ def _repair_project_after_missing_files(
         workspace_root_override=workspace,
         matrix_type="coding_project",
         auto_confirm=True,
+        allow_unsandboxed_exec=True,
     )
 
 
@@ -396,6 +398,7 @@ def _retry_research_update_after_tool_flow_failure(
         workspace_root_override=workspace,
         matrix_type="coding_project",
         auto_confirm=True,
+        allow_unsandboxed_exec=True,
     )
 
 
@@ -489,6 +492,7 @@ def _repair_research_update_workspace(
         workspace_root_override=workspace,
         matrix_type="coding_project",
         auto_confirm=True,
+        allow_unsandboxed_exec=True,
     )
 
 
@@ -806,6 +810,7 @@ def test_live_minimax_m2_7_coding_builds_scratch_project() -> None:
         workspace_root_override=workspace,
         matrix_type="coding_project",
         auto_confirm=True,
+        allow_unsandboxed_exec=True,
     )
 
     assistant_body = _assistant_body(
@@ -964,6 +969,7 @@ def test_live_minimax_m2_7_research_updates_scratch_project() -> None:
         workspace_root_override=workspace,
         matrix_type="coding_project",
         auto_confirm=True,
+        allow_unsandboxed_exec=True,
     )
 
     assistant_body = _assistant_body(

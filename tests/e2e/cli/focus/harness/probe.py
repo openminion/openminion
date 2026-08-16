@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hashlib import sha1
+from hashlib import sha256
 import json
 from pathlib import Path
 import re
@@ -153,7 +153,8 @@ def _compact_approval_answered(
     trailing = screen_text[match.end() :]
     return (
         re.match(
-            r"[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\n|[ \t]*$)",
+            r"[ \t]*(?:(?:●|•)\s+Running[^\r\n]*\r?\n[ \t]*)?"
+            r"(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
             trailing,
             re.IGNORECASE,
         )
@@ -169,7 +170,8 @@ def _compact_approval_submitted(
     trailing = screen_text[match.end() :]
     return (
         re.match(
-            r"[ \t]*(?:y|yes|a|always|n|no)[ \t]*(?:\n|\r\n)",
+            r"[ \t]*(?:(?:●|•)\s+Running[^\r\n]*\r?\n[ \t]*)?"
+            r"(?:y|yes|a|always|n|no)[ \t]*\r?\n",
             trailing,
             re.IGNORECASE,
         )
@@ -183,7 +185,7 @@ def _compact_approval_inline_status_follows(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.match(r"[ \t]+(?:●|•)\s", trailing) is not None
+    return re.match(r"[ \t]+(?:●|•)\s+Running\b", trailing) is not None
 
 
 def inline_approval_fingerprint(screen_text: str) -> str | None:
@@ -672,6 +674,6 @@ class FocusProbe:
 
 
 def focus_session_id(*, data_root: Path, node_name: str) -> str:
-    digest = sha1(str(data_root).encode("utf-8")).hexdigest()[:12]
+    digest = sha256(str(data_root).encode("utf-8")).hexdigest()[:32]
     label = re.sub(r"[^A-Za-z0-9-]+", "-", node_name).strip("-")[:48]
     return f"focus-e2e-{label or 'session'}-{digest}"

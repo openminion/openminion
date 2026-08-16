@@ -378,3 +378,6 @@ def test_tool_artifact_refs_falls_back_to_synthesized_ref_when_none_exist() -> N
     assert len(refs) == 1
     assert refs[0]["tool"] == "fetch.get"
     assert refs[0]["ref"].startswith("artifact://tool/sess/trace/")
+    digest = refs[0]["ref"].rsplit("-", maxsplit=1)[-1]
+    assert len(digest) == 32
+    assert all(character in "0123456789abcdef" for character in digest)

@@ -51,7 +51,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         )
         self.assertEqual(pid1, pid2)
         self.assertIsInstance(pid1, str)
-        self.assertTrue(pid1)  # non-empty
+        self.assertRegex(pid1, r"^[0-9a-f]{32}$")
 
     def test_derive_patch_id_unique_per_session(self) -> None:
         adapter = _make_adapter()

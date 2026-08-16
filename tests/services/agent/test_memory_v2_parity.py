@@ -152,12 +152,14 @@ class TestDerivePatchIdParity:
         )
         assert isinstance(result, str)
 
-    def test_derive_patch_id_12_chars(self) -> None:
+    def test_derive_patch_id_is_32_char_lowercase_hex(self) -> None:
         adapter = _v2_adapter()
         pid = adapter.derive_patch_id(
             session_id="s", run_id="r", request_id="req", user_message="msg"
         )
-        assert len(pid) == 12
+        assert len(pid) == 32
+        assert pid == pid.lower()
+        assert all(character in "0123456789abcdef" for character in pid)
 
 
 class TestGatewayDuckTypingParity:

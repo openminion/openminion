@@ -569,6 +569,7 @@ def run_cli_session(
     workspace_root_override: Path | None = None,
     matrix_type: str = "generic",
     auto_confirm: bool = False,
+    allow_unsandboxed_exec: bool = False,
 ) -> CLISessionResult:
     require_live_flag()
 
@@ -653,6 +654,8 @@ def run_cli_session(
         "--progress",
         "off",
     ]
+    if allow_unsandboxed_exec:
+        command.append("--allow-unsandboxed-exec")
     exit_code, transcript = _run_probe_session(
         cmd=command,
         cwd=str(workspace_root_override or openminion_root()),

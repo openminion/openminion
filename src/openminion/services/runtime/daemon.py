@@ -544,9 +544,9 @@ def _tool_artifact_refs(
                 )
         if emitted:
             continue
-        digest = hashlib.sha1(
+        digest = hashlib.sha256(
             json.dumps(item, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:12]
+        ).hexdigest()[:32]
         refs.append(
             {
                 "ref": f"artifact://tool/{session_id}/{trace_id}/{index}-{tool_name}-{digest}",

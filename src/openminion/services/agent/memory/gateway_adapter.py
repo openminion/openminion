@@ -450,7 +450,7 @@ class MemoryServiceGatewayAdapter(
         user_message: str,
     ) -> str:
         payload = f"{session_id}|{run_id}|{request_id}|{user_message}"
-        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
     def export_debug_snapshot(
         self,

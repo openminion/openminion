@@ -254,7 +254,7 @@ class MemctlAdapter:
         user_message: str,
     ) -> str:
         raw = f"{session_id}|{run_id}|{request_id}|{(user_message or '').strip()}"
-        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
         return f"patch-{digest}"
 
     def _build_capsule_text(

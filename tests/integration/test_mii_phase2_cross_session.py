@@ -504,6 +504,10 @@ def test_plan_snapshot_candidate_stages_on_incomplete_session_close(
         )
         assert len(candidates) == 1
         assert candidates[0].type == "plan_snapshot"
+        assert candidates[0].candidate_id.startswith("cand_plan_snapshot_")
+        digest = candidates[0].candidate_id.removeprefix("cand_plan_snapshot_")
+        assert len(digest) == 32
+        assert all(character in "0123456789abcdef" for character in digest)
         assert candidates[0].content["incomplete_reason"] == "iteration_cap"
         assert candidates[0].content["plan_steps"] == [
             {"step_id": "cmd-1", "status": "succeeded"},
