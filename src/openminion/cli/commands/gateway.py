@@ -15,12 +15,19 @@ def run_gateway(args: Any, app: Any) -> int:
         apply_logging_mode("interactive")
 
     if getattr(args, "gateway_command", "") == "repair-lifecycle":
+        session_id = str(getattr(args, "session_id", "") or "").strip()
+        if not session_id:
+            if args.json:
+                print_json_payload({"error": "session_id is required"})
+            else:
+                print("gateway lifecycle repair: session_id is required")
+            return 2
         gateway = (
             app.resolve_gateway(None)
             if hasattr(app, "resolve_gateway")
             else app.gateway
         )
-        report = gateway.repair_invocation_lifecycle(session_id=args.session_id)
+        report = gateway.repair_invocation_lifecycle(session_id=session_id)
         if args.json:
             print_json_payload(report)
         else:

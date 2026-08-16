@@ -45,8 +45,8 @@ def _snapshot(path: Path) -> dict[str, tuple[int, int, int, str]]:
 
 
 def test_missing_database_returns_empty_without_creating_parent(tmp_path: Path) -> None:
-    parent = tmp_path / "existing"
-    parent.mkdir()
+    parent = tmp_path / ".openminion" / "existing"
+    parent.mkdir(parents=True)
     path = parent / "telemetry.db"
 
     with open_telemetry_inspection(db_path=path) as service:
@@ -57,7 +57,7 @@ def test_missing_database_returns_empty_without_creating_parent(tmp_path: Path) 
 
 
 def test_missing_parent_fails_without_creation(tmp_path: Path) -> None:
-    path = tmp_path / "missing" / "telemetry.db"
+    path = tmp_path / ".openminion" / "missing" / "telemetry.db"
 
     with pytest.raises(PermissionError):
         with open_telemetry_inspection(db_path=path):
@@ -67,7 +67,7 @@ def test_missing_parent_fails_without_creation(tmp_path: Path) -> None:
 
 
 def test_read_only_query_preserves_database_and_sidecars(tmp_path: Path) -> None:
-    path = tmp_path / "telemetry.db"
+    path = tmp_path / ".openminion" / "telemetry.db"
     writer = TelemetryService(db_path=str(path))
     writer.record_event_sync(_event(0))
     writer.record_event_sync(_event(1))
@@ -90,7 +90,7 @@ def test_read_only_query_preserves_database_and_sidecars(tmp_path: Path) -> None
 
 
 def test_partial_wal_sidecars_fail_closed(tmp_path: Path) -> None:
-    path = tmp_path / "telemetry.db"
+    path = tmp_path / ".openminion" / "telemetry.db"
     service = TelemetryService(db_path=str(path))
     service.close_sync()
     Path(f"{path}-wal").write_bytes(b"partial")
@@ -104,7 +104,7 @@ def test_unreadable_wal_sidecar_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "telemetry.db"
+    path = tmp_path / ".openminion" / "telemetry.db"
     service = TelemetryService(db_path=str(path))
     service.close_sync()
     wal = Path(f"{path}-wal")
@@ -125,7 +125,7 @@ def test_unreadable_wal_sidecar_fails_closed(
 
 
 def test_rollback_journal_database_opens_read_only(tmp_path: Path) -> None:
-    path = tmp_path / "telemetry.db"
+    path = tmp_path / ".openminion" / "telemetry.db"
     from openminion.modules.telemetry.storage.store import SQLiteTelemetryStore
 
     store = SQLiteTelemetryStore(path, wal=False)
@@ -138,7 +138,7 @@ def test_rollback_journal_database_opens_read_only(tmp_path: Path) -> None:
 
 
 def test_bounded_pages_hold_the_original_high_water(tmp_path: Path) -> None:
-    service = TelemetryService(db_path=str(tmp_path / "telemetry.db"))
+    service = TelemetryService(db_path=str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         for index in range(1002):
             service.record_event_sync(_event(index, timestamp=10.0))
@@ -165,7 +165,7 @@ def test_bounded_pages_hold_the_original_high_water(tmp_path: Path) -> None:
 
 
 def test_exact_session_turn_owner_lookup_is_bounded(tmp_path: Path) -> None:
-    service = TelemetryService(db_path=str(tmp_path / "telemetry.db"))
+    service = TelemetryService(db_path=str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         service.record_event_sync(_event(0))
         service.record_event_sync(
@@ -201,7 +201,7 @@ def test_exact_session_turn_owner_lookup_is_bounded(tmp_path: Path) -> None:
 
 
 def test_sqlite_legacy_text_timestamp_is_read_as_numeric(tmp_path: Path) -> None:
-    path = tmp_path / "telemetry.db"
+    path = tmp_path / ".openminion" / "telemetry.db"
     service = TelemetryService(db_path=str(path))
     service.record_event_sync(_event(0))
     service.close_sync()

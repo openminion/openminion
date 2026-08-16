@@ -36,7 +36,8 @@ def test_invocation_list_missing_database_does_not_create_it(
     capsys,
     tmp_path: Path,
 ) -> None:
-    db_path = tmp_path / "telemetry.db"
+    db_path = tmp_path / ".openminion" / "telemetry.db"
+    db_path.parent.mkdir()
 
     assert main(["invocation", "list", "--db", str(db_path)]) == 0
 
@@ -52,7 +53,7 @@ def test_invocation_filters_preserve_complete_canonical_summary(
     capsys,
     tmp_path: Path,
 ) -> None:
-    db_path = tmp_path / "telemetry.db"
+    db_path = tmp_path / ".openminion" / "telemetry.db"
     invocation_id = "opaque.invocation-1"
     _record_invocation(db_path, invocation_id)
 
@@ -118,7 +119,7 @@ def test_invocation_duration_is_not_sum_of_overlapping_event_durations(
     capsys,
     tmp_path: Path,
 ) -> None:
-    db_path = tmp_path / "telemetry.db"
+    db_path = tmp_path / ".openminion" / "telemetry.db"
     invocation_id = "invocation-overlap"
     service = TelemetryService(str(db_path))
     try:

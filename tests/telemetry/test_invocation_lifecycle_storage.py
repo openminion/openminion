@@ -31,6 +31,12 @@ class RecordingExporter:
         return None
 
 
+class FailingExporter(RecordingExporter):
+    def export(self, event: TelemetryEvent) -> bool:
+        del event
+        raise RuntimeError("export unavailable")
+
+
 def _started_event(**overrides: object) -> TelemetryEvent:
     values: dict[str, object] = {
         "session_id": "session-1",
@@ -73,6 +79,24 @@ def test_atomic_duplicate_creates_one_row_and_one_export(tmp_path: Path) -> None
     assert created.count(False) == 15
     assert len(exporter.events) == 1
     assert len(service._store.fetch_invocation_events("invocation-1")) == 1
+    service.close_sync()
+
+
+def test_repair_reports_created_when_best_effort_export_fails(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = TelemetryService(
+        db_path=_db_path(tmp_path),
+        external_exporter=FailingExporter(),
+    )
+    event = _started_event()
+
+    with caplog.at_level(logging.WARNING):
+        assert service.repair_event_sync(event) == "created"
+    assert service.repair_event_sync(event) == "already_identical"
+    assert len(service._store.fetch_invocation_events("invocation-1")) == 1
+    assert "telemetry emit failed" in caplog.text
     service.close_sync()
 
 

@@ -137,6 +137,10 @@ class AgentCheckCommandTests(unittest.TestCase):
         payload = json.loads(buf.getvalue())
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "unhealthy")
+        self.assertEqual(payload["scope"], "runtime")
+        self.assertTrue(payload["request_id"])
+        self.assertEqual(payload["invocation_id"], "")
+        self.assertEqual(payload["execution_id"], "")
 
     def test_agent_check_uses_selected_agent_id(self) -> None:
         app = _FakeApp()

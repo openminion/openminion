@@ -31,9 +31,21 @@ class RuntimeSessionStoreSessions:
         backend: RuntimeSessionStoreBackend,
         *,
         list_participants: Callable[[str], list[RoomParticipant]],
+        assert_session_turn_fence: Callable[[str, int], None] | None = None,
     ) -> None:
         self._backend = backend
         self._list_participants = list_participants
+        self._assert_session_turn_fence = assert_session_turn_fence
+
+    def _assert_fence_if_requested(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        if session_turn_fence_token is None or self._assert_session_turn_fence is None:
+            return
+        self._assert_session_turn_fence(session_id, session_turn_fence_token)
 
     def _resolve_existing_explicit_session(
         self,
@@ -323,20 +335,28 @@ class RuntimeSessionStoreSessions:
         *,
         session_id: str,
         patch: Mapping[str, Any],
+        session_turn_fence_token: int | None = None,
     ) -> SessionRecord:
-        current = self.get_session(session_id)
-        if current is None:
-            raise ValueError(f"Session not found: {session_id}")
-        merged = dict(current.metadata)
-        merged.update(patch)
-        now = utc_now_iso()
-        self._backend.execute_count(
-            "UPDATE sessions SET metadata_json = ?, updated_at = ? WHERE id = ?",
-            (metadata_json(merged), now, session_id),
-        )
-        updated = self.get_session(session_id)
-        if updated is None:
-            raise RuntimeError(f"Failed to update metadata for session_id={session_id}")
+        with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
+            )
+            current = self.get_session(session_id)
+            if current is None:
+                raise ValueError(f"Session not found: {session_id}")
+            merged = dict(current.metadata)
+            merged.update(patch)
+            now = utc_now_iso()
+            self._backend.execute_count(
+                "UPDATE sessions SET metadata_json = ?, updated_at = ? WHERE id = ?",
+                (metadata_json(merged), now, session_id),
+            )
+            updated = self.get_session(session_id)
+            if updated is None:
+                raise RuntimeError(
+                    f"Failed to update metadata for session_id={session_id}"
+                )
         return updated
 
     def insert_session(

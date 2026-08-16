@@ -809,10 +809,10 @@ def _run_turn_smoke_check(
     agent_profile = app.resolve_agent_profile(agent_id)
     agent_service = app.resolve_agent_service(agent_profile.name)
     selected_channel = (channel or agent_profile.default_channel).strip()
+    request_id = uuid4().hex
     started = perf_counter()
     try:
         app.channels.get(selected_channel)
-        request_id = uuid4().hex
         inbound = Message(
             channel=selected_channel,
             target=target,
@@ -827,30 +827,32 @@ def _run_turn_smoke_check(
         )
         response = asyncio.run(agent_service.run_turn(inbound))
         latency_ms = int((perf_counter() - started) * 1000)
+        details = {
+            "channel": response.channel,
+            "target": response.target,
+            "latency_ms": latency_ms,
+            "response_chars": len(response.text),
+            "agent": agent_profile.name,
+            "provider": response.metadata.get("provider", agent_profile.provider),
+            "model": response.metadata.get("model", ""),
+            "scope": "runtime",
+            "request_id": request_id,
+            "invocation_id": response.metadata.get("invocation_id", ""),
+            "execution_id": response.metadata.get("execution_id", ""),
+        }
         if not response.text.strip():
             return DoctorCheck(
                 id="agent.turn_smoke",
                 status="fail",
                 message="Turn smoke test returned empty response text",
                 remediation="Inspect provider and plugin response mapping.",
+                details=details,
             )
         return DoctorCheck(
             id="agent.turn_smoke",
             status="ok",
             message="Agent turn smoke test succeeded",
-            details={
-                "channel": response.channel,
-                "target": response.target,
-                "latency_ms": latency_ms,
-                "response_chars": len(response.text),
-                "agent": agent_profile.name,
-                "provider": response.metadata.get("provider", agent_profile.provider),
-                "model": response.metadata.get("model", ""),
-                "scope": "runtime",
-                "request_id": request_id,
-                "invocation_id": response.metadata.get("invocation_id", ""),
-                "execution_id": response.metadata.get("execution_id", ""),
-            },
+            details=details,
         )
     except Exception as exc:
         return DoctorCheck(
@@ -858,6 +860,14 @@ def _run_turn_smoke_check(
             status="fail",
             message=f"Agent turn smoke test failed: {exc}",
             remediation="Run `openminion agent-check --json` for detailed functional failure context.",
+            details={
+                "channel": selected_channel,
+                "target": target,
+                "scope": "runtime",
+                "request_id": request_id,
+                "invocation_id": "",
+                "execution_id": "",
+            },
         )
 
 
