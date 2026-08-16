@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 

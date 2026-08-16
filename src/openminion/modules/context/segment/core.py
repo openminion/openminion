@@ -1,7 +1,5 @@
 """Compatibility exports for context segment assembly helpers."""
 
-from __future__ import annotations
-
 from ..mode_ranking import normalize_mode_name
 from .evidence import append_evidence_and_turn_input_segments
 from .messages import (

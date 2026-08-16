@@ -14,7 +14,7 @@ scope	max_python_files	max_loc
 # provider identity persistence for OpenAI-compatible setup presets.
 # AOBS (2026-08-09) adds durable invocation/execution identity, finite runtime
 # lifecycle emission, and owner-emitted policy, safety, tool, and telemetry facts.
-services	205	39026
+services	205	39047
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

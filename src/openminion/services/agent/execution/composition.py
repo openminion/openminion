@@ -58,6 +58,11 @@ class AgentServiceTurnFlowAdapter:
     def self_improvement(self) -> Any | None:
         return getattr(self._service, "_self_improvement", None)
 
+    @property
+    def ops_service(self) -> Any | None:
+        runtime = getattr(self._service, "_runtime_handle", None)
+        return getattr(runtime, "ops_service", None)
+
     async def generate_normalized(self, request: ProviderRequest) -> ProviderResponse:
         return await self._service._generate_normalized(request)
 

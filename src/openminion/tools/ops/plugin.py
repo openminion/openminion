@@ -7,6 +7,8 @@ from typing import Any
 from .api import target_view
 from .args import (
     EmptyArgs,
+    CommandPlanArgs,
+    CommandRunArgs,
     JobArgs,
     LogsArgs,
     ObservationArgs,
@@ -31,6 +33,9 @@ from .service import (
 
 
 def _service(ctx: Any) -> OpsService:
+    configured = getattr(ctx, "ops_service", None)
+    if isinstance(configured, OpsService):
+        return configured
     extras = getattr(ctx, "extras", None)
     if isinstance(extras, Mapping):
         configured = extras.get("ops_service")
@@ -178,9 +183,59 @@ def _command_observe(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     )
 
 
+def _command_plan(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = CommandPlanArgs.model_validate(args)
+    plan = _service(ctx).plan_command(
+        target_id=parsed.target_id,
+        argv=parsed.argv,
+        cwd=parsed.cwd,
+        timeout_seconds=parsed.timeout_seconds,
+        session_id=_session_id(ctx),
+        idempotency_key=parsed.idempotency_key,
+    )
+    return {
+        "ok": True,
+        "content": f"Command plan {plan.plan_id} is ready for review.",
+        "data": plan.model_dump(mode="json"),
+        "verified": True,
+    }
+
+
+def _command_run(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = CommandRunArgs.model_validate(args)
+    if not bool(getattr(ctx, "confirm", False)):
+        raise PermissionError("command plan requires operator approval")
+    job = _service(ctx).run_plan(
+        plan_id=parsed.plan_id,
+        plan_hash=parsed.plan_hash,
+        approval_id=_approval_id(ctx, parsed.plan_hash),
+    )
+    return {
+        "ok": job.status == "succeeded",
+        "content": f"Command job {job.job_id} finished with status {job.status}.",
+        "data": job.model_dump(mode="json"),
+        "verified": job.status == "succeeded",
+    }
+
+
 def _session_id(ctx: Any) -> str:
+    direct = str(getattr(ctx, "session_id", "") or "").strip()
+    if direct:
+        return direct
     extras = getattr(ctx, "extras", None)
     return str(extras.get("session_id", "")) if isinstance(extras, Mapping) else ""
+
+
+def _approval_id(ctx: Any, plan_hash: str) -> str:
+    policy = getattr(ctx, "policy", None)
+    raw = getattr(policy, "raw", {})
+    metadata = raw.get("context_metadata", {}) if isinstance(raw, Mapping) else {}
+    grant_id = (
+        str(metadata.get("confirmation_grant_id", "") or "").strip()
+        if isinstance(metadata, Mapping)
+        else ""
+    )
+    return grant_id or f"interactive-{plan_hash[:16]}"
 
 
 def _job_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:

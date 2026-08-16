@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 from openminion.modules.tool.exposure import ToolExposureProfile, ToolRiskAnnotations
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
 from .args import (
     EmptyArgs,
+    CommandPlanArgs,
+    CommandRunArgs,
     JobArgs,
     LogsArgs,
     ObservationArgs,
@@ -16,6 +16,8 @@ from .args import (
 )
 from .interfaces import (
     TOOL_OPS_COMMAND_OBSERVE,
+    TOOL_OPS_COMMAND_PLAN,
+    TOOL_OPS_COMMAND_RUN,
     TOOL_OPS_HOST_SNAPSHOT,
     TOOL_OPS_JOB_CANCEL,
     TOOL_OPS_JOB_INSPECT,
@@ -29,6 +31,8 @@ from .interfaces import (
 )
 from .plugin import (
     _command_observe,
+    _command_plan,
+    _command_run,
     _job_cancel,
     _job_inspect,
     _logs_query,
@@ -76,6 +80,35 @@ OPS_FAMILY = ToolFamilySpec(
                 "ops.safety.v1",
             ),
             default_active=True,
+        ),
+        ToolExposureProfile(
+            profile_id="ops_command_plan",
+            title="Remote command planning",
+            summary="Create reviewable structured command plans without execution.",
+            tool_names=frozenset({TOOL_OPS_COMMAND_PLAN}),
+            evidence_expectations=(
+                "review target revision, argv, expiry, and plan hash",
+            ),
+            stop_rules=("stop when target identity or command scope is unclear",),
+            guidance_names=("ops.safety.v1",),
+            activation_hint="Activate for an explicit remote command planning task.",
+        ),
+        ToolExposureProfile(
+            profile_id="ops_command_run",
+            title="Approved remote command execution",
+            summary="Run one immutable command plan after operator approval.",
+            tool_names=frozenset({TOOL_OPS_COMMAND_RUN}),
+            risk=ToolRiskAnnotations(
+                tier="apply",
+                requires_approval=True,
+                mutates_state=True,
+            ),
+            evidence_expectations=("record plan, job, approval, and evidence ids",),
+            stop_rules=(
+                "stop when approval, plan hash, or target revision is missing",
+            ),
+            guidance_names=("ops.safety.v1",),
+            activation_hint="Activate only for a reviewed immutable command plan.",
         ),
         ToolExposureProfile(
             profile_id="ops_job_control",
@@ -174,6 +207,23 @@ OPS_FAMILY = ToolFamilySpec(
             idempotent=True,
             tags=("observation",),
             capabilities=("read_only", "ops", "evidence"),
+        ),
+        ToolDecl(
+            TOOL_OPS_COMMAND_PLAN,
+            CommandPlanArgs,
+            _command_plan,
+            "Create an immutable structured command plan without executing it.",
+            tags=("operation_plan",),
+            capabilities=("operation_plan", "ops", "evidence"),
+        ),
+        ToolDecl(
+            TOOL_OPS_COMMAND_RUN,
+            CommandRunArgs,
+            _command_run,
+            "Run one reviewed command plan after explicit operator approval.",
+            idempotent=True,
+            tags=("operation_control",),
+            capabilities=("operation_control", "ops", "evidence"),
         ),
         ToolDecl(
             TOOL_OPS_JOB_INSPECT,

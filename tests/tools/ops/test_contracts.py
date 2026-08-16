@@ -18,19 +18,21 @@ from openminion.tools.ops import (
     decide_operation_policy,
 )
 from openminion.tools.ops.api import target_view
+from openminion.tools.ops.contracts import OpsConfig
 from openminion.base.time import utc_now
 
 
 def test_target_contract_requires_kind_specific_fields() -> None:
     with pytest.raises(ValidationError, match="container name"):
         OperationTarget(target_id="container", kind="container")
-    with pytest.raises(ValidationError, match="address and credential_ref"):
+    with pytest.raises(ValidationError, match="address, username, and credential_ref"):
         OperationTarget(target_id="remote", kind="ssh")
 
     remote = OperationTarget(
         target_id="remote",
         kind="ssh",
         address="host.example",
+        username="operator",
         credential_ref=CredentialRef(
             credential_id="ops-ssh",
             scope_kind="tool_family",
@@ -55,6 +57,7 @@ def test_public_target_view_redacts_credentials_and_trust_material() -> None:
         target_id="remote",
         kind="ssh",
         address="host.example",
+        username="operator",
         credential_ref=CredentialRef(
             credential_id="ops-ssh",
             scope_kind="tool_family",
@@ -73,6 +76,35 @@ def test_public_target_view_redacts_credentials_and_trust_material() -> None:
     assert "credential_ref" not in view
     assert "endpoint_trust" not in view
     assert "OPENMINION_OPS_SSH_PASSWORD" not in str(view)
+
+
+def test_ops_config_is_strict_and_supports_private_key_auth() -> None:
+    payload = {
+        "targets": [
+            {
+                "target_id": "remote",
+                "kind": "ssh",
+                "address": "host.example",
+                "username": "operator",
+                "ssh_auth_mode": "private_key",
+                "credential_ref": {
+                    "credential_id": "ops-key",
+                    "scope_kind": "tool_family",
+                    "scope_id": "ops",
+                    "source_kind": "env",
+                    "env_name": "OPENMINION_OPS_SSH_KEY",
+                    "rotation_policy": "static",
+                },
+                "endpoint_trust": {"host_key": "ssh-ed25519 AAAAfixture"},
+            }
+        ]
+    }
+
+    config = OpsConfig.model_validate(payload)
+
+    assert config.targets[0].ssh_auth_mode == "private_key"
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        OpsConfig.model_validate({**payload, "host": "ad-hoc.example"})
 
 
 def test_target_registry_requires_monotonic_revisions() -> None:

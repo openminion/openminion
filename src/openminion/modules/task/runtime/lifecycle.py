@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .lifecycle_manager import TaskManager
 from .lifecycle_models import (
     TaskCronStoreProtocol,

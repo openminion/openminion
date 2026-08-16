@@ -17,6 +17,7 @@ def target_view(target: OperationTarget) -> dict[str, Any]:
         "kind": target.kind,
         "platform": target.platform,
         "environment": target.environment,
+        "ssh_auth_mode": target.ssh_auth_mode if target.kind == "ssh" else "",
         "policy_profile": target.policy_profile,
         "capabilities": target.capabilities,
         "workspace_scopes": target.workspace_scopes,
@@ -53,6 +54,7 @@ def operator_state(service: OpsService) -> dict[str, Any]:
             },
             "targets": [target_view(target) for target in targets],
             "jobs": [job.model_dump(mode="json") for job in service.jobs.list()],
+            "plans": [plan.model_dump(mode="json") for plan in service.plans.list()],
             "evidence": [
                 item.model_dump(mode="json") for item in service.list_evidence()
             ],

@@ -205,6 +205,7 @@ class RuntimeContext:
     telemetryctl: Optional[Any] = None
     telemetry_session_id: Optional[str] = None
     telemetry_turn_id: Optional[str] = None
+    ops_service: Any | None = None
     artifactctl: Optional[Any] = None
     memory_service: MemoryToolRuntimeService | None = None
     sandbox_runner: Any | None = None

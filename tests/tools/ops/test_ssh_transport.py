@@ -73,10 +73,53 @@ def test_ssh_transport_uses_pinned_key_and_closed_argv(monkeypatch) -> None:
     assert captured["address"] == "ops.example.test"
     assert captured["password"] == "password"
     assert captured["client_keys"] is None
+    assert captured["config"] is None
+    assert captured["agent_path"] is None
     assert captured["known_hosts"] == (["parsed:ssh-ed25519 fixture-key"], [], [])
     assert captured["command"] == "printf %s 'hello world'"
     assert captured["closed"] is True
     assert captured["waited"] is True
+
+
+def test_ssh_transport_uses_private_key_without_password(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class Connection:
+        async def run(self, command: str, *, check: bool):
+            del command, check
+            return SimpleNamespace(stdout="ok\n", stderr="", exit_status=0)
+
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    async def connect(address: str, **kwargs: object) -> Connection:
+        del address
+        captured.update(kwargs)
+        return Connection()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "asyncssh",
+        SimpleNamespace(
+            import_public_key=lambda value: value,
+            import_private_key=lambda value: f"parsed:{value}",
+            connect=connect,
+        ),
+    )
+    target = _target().model_copy(update={"ssh_auth_mode": "private_key"})
+
+    result = SshTransport(lambda _: "PRIVATE KEY").run(
+        target,
+        ("uname", "-a"),
+        timeout_seconds=2,
+    )
+
+    assert result.return_code == 0
+    assert captured["password"] is None
+    assert captured["client_keys"] == ["parsed:PRIVATE KEY"]
 
 
 def test_ssh_transport_reports_missing_remote_extra(monkeypatch) -> None:
@@ -111,7 +154,11 @@ def test_ssh_transport_times_out_and_closes_connection(monkeypatch) -> None:
     monkeypatch.setitem(
         sys.modules,
         "asyncssh",
-        SimpleNamespace(import_public_key=lambda value: value, connect=connect),
+        SimpleNamespace(
+            Error=Exception,
+            import_public_key=lambda value: value,
+            connect=connect,
+        ),
     )
 
     result = SshTransport(lambda _: "password").run(
@@ -152,7 +199,11 @@ def test_ssh_transport_cancels_active_operation(monkeypatch) -> None:
     monkeypatch.setitem(
         sys.modules,
         "asyncssh",
-        SimpleNamespace(import_public_key=lambda value: value, connect=connect),
+        SimpleNamespace(
+            Error=Exception,
+            import_public_key=lambda value: value,
+            connect=connect,
+        ),
     )
     transport = SshTransport(lambda _: "password")
     result: dict[str, TransportResult] = {}

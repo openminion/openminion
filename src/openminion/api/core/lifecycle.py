@@ -54,6 +54,7 @@ def initialize_runtime_components(
         runtime_storage=getattr(runtime, "runtime_storage", None),
         sandbox_runner=getattr(runtime, "sandbox_runner", None),
         authored_tools=getattr(runtime, "authored_tools", None),
+        ops_service=getattr(runtime, "ops_service", None),
         telemetry_service=getattr(runtime, "telemetry_service", None),
         llm_runtime=getattr(runtime, "llm_runtime", None),
     )
@@ -70,6 +71,7 @@ def close_runtime_components(
     runtime_storage: object | None,
     sandbox_runner: object | None = None,
     authored_tools: object | None = None,
+    ops_service: object | None = None,
     telemetry_service: object | None = None,
     agent_services: object | None = None,
     llm_runtime: object | None = None,
@@ -85,6 +87,7 @@ def close_runtime_components(
     _call(lifecycle_bridge, "close")
     _call(sandbox_runner, "close")
     _call(authored_tools, "close")
+    _call(ops_service, "close")
     _call(getattr(tools, "mcp_manager", None), "close")
     _call(runtime_storage, "close")
     _call(telemetry_service, "close_sync")

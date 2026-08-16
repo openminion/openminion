@@ -46,3 +46,15 @@ class JobArgs(StrictArgs):
     job_id: str = Field(min_length=1)
     target_id: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
+
+
+class CommandPlanArgs(TargetArgs):
+    argv: tuple[str, ...] = Field(min_length=1)
+    cwd: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    idempotency_key: str = ""
+
+
+class CommandRunArgs(StrictArgs):
+    plan_id: str = Field(min_length=1)
+    plan_hash: str = Field(min_length=64, max_length=64)

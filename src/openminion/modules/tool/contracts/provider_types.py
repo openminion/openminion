@@ -19,6 +19,7 @@ class ProviderToolCall:
     id: str = ""
     source: str = PROVIDER_TOOL_CALL_DEFAULT_SOURCE
     depends_on: list[str] = field(default_factory=list)
+    approval_id: str = ""
 
 
 __all__ = [

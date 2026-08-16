@@ -141,6 +141,7 @@ def finalize_runtime_instance(
         knowledge_graphs=infrastructure["knowledge_graphs"],
         sandbox_runner=infrastructure["sandbox_runner"],
         authored_tools=infrastructure["authored_tools"],
+        ops_service=infrastructure.get("ops_service"),
         runtime_manager=None,
         config_manager=manager,
         _agent_services={},

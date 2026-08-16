@@ -52,6 +52,7 @@ def _run(
     active: dict[str, subprocess.Popen[str]] | None = None,
     lock: threading.RLock | None = None,
     output_sink: OutputSink | None = None,
+    cwd: str = "",
 ) -> TransportResult:
     process: subprocess.Popen[str] | None = None
     try:
@@ -60,6 +61,7 @@ def _run(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            cwd=cwd or None,
         )
         if operation_id and active is not None and lock is not None:
             with lock:
@@ -123,6 +125,7 @@ class _ProcessTransport:
         timeout_seconds: float,
         operation_id: str,
         output_sink: OutputSink | None,
+        cwd: str = "",
     ) -> TransportResult:
         result = _run(
             argv,
@@ -131,6 +134,7 @@ class _ProcessTransport:
             active=self._active,
             lock=self._lock,
             output_sink=output_sink,
+            cwd=cwd,
         )
         if not operation_id:
             return result
@@ -183,6 +187,7 @@ class LocalTransport(_ProcessTransport):
         timeout_seconds: float,
         operation_id: str = "",
         output_sink: OutputSink | None = None,
+        cwd: str = "",
     ) -> TransportResult:
         if target.kind != "local":
             raise ValueError("local transport requires a local target")
@@ -191,6 +196,7 @@ class LocalTransport(_ProcessTransport):
             timeout_seconds=timeout_seconds,
             operation_id=operation_id,
             output_sink=output_sink,
+            cwd=cwd,
         )
 
     def read(
@@ -241,11 +247,17 @@ class ContainerTransport(_ProcessTransport):
         timeout_seconds: float,
         operation_id: str = "",
         output_sink: OutputSink | None = None,
+        cwd: str = "",
     ) -> TransportResult:
         if target.kind != "container":
             raise ValueError("container transport requires a container target")
+        runtime_argv = (
+            (self.runtime, "exec", "-w", cwd, target.container, *argv)
+            if cwd
+            else (self.runtime, "exec", target.container, *argv)
+        )
         return self._execute(
-            (self.runtime, "exec", target.container, *argv),
+            runtime_argv,
             timeout_seconds=timeout_seconds,
             operation_id=operation_id,
             output_sink=output_sink,
@@ -305,6 +317,7 @@ class SshTransport:
         timeout_seconds: float,
         operation_id: str = "",
         output_sink: OutputSink | None = None,
+        cwd: str = "",
     ) -> TransportResult:
         if target.kind != "ssh" or target.credential_ref is None:
             raise ValueError("ssh transport requires an ssh target")
@@ -315,6 +328,7 @@ class SshTransport:
                 timeout_seconds=timeout_seconds,
                 operation_id=operation_id,
                 output_sink=output_sink,
+                cwd=cwd,
             )
         )
         return result
@@ -327,6 +341,7 @@ class SshTransport:
         timeout_seconds: float,
         operation_id: str,
         output_sink: OutputSink | None,
+        cwd: str,
     ) -> TransportResult:
         try:
             import asyncssh
@@ -337,27 +352,39 @@ class SshTransport:
         self._validate_target(target)
         assert target.credential_ref is not None
         credential = self._credential_reader(target.credential_ref)
+        password = credential if target.ssh_auth_mode == "password" else None
+        client_keys: object = None
+        if target.ssh_auth_mode == "private_key":
+            client_keys = [asyncssh.import_private_key(credential)]
         known_hosts: object = target.endpoint_trust.known_hosts_path or None
         if target.endpoint_trust.host_key:
             host_key = asyncssh.import_public_key(target.endpoint_trust.host_key)
             known_hosts = ([host_key], [], [])
-        connection = cast(
-            _SshConnection,
-            await asyncssh.connect(
-                target.address,
-                port=target.port,
-                username=target.username or None,
-                password=credential,
-                client_keys=None,
-                known_hosts=known_hosts,
-            ),
-        )
+        try:
+            connection = cast(
+                _SshConnection,
+                await asyncssh.connect(
+                    target.address,
+                    port=target.port,
+                    username=target.username or None,
+                    password=password,
+                    client_keys=client_keys,
+                    known_hosts=known_hosts,
+                    config=None,
+                    agent_path=None,
+                ),
+            )
+        except (asyncssh.Error, OSError, ValueError) as exc:
+            raise RuntimeError(f"SSH connection failed: {type(exc).__name__}") from exc
         if operation_id:
             with self._lock:
                 self._active[operation_id] = connection
         try:
+            command = shlex.join(argv)
+            if cwd:
+                command = f"cd -- {shlex.quote(cwd)} && exec {command}"
             result = await asyncio.wait_for(
-                connection.run(shlex.join(argv), check=False),
+                connection.run(command, check=False),
                 timeout=timeout_seconds,
             )
         except asyncio.TimeoutError:
@@ -366,11 +393,11 @@ class SshTransport:
                 return_code=124,
                 timed_out=True,
             )
-        except Exception:
+        except (asyncssh.Error, OSError) as exc:
             with self._lock:
                 cancelled = operation_id in self._cancelled
             if not cancelled:
-                raise
+                raise RuntimeError(f"SSH command failed: {type(exc).__name__}") from exc
             return TransportResult(
                 argv=argv,
                 return_code=130,

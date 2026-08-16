@@ -153,6 +153,7 @@ def _build_tool_runtime_context(
             metadata.get("turn_id") or metadata.get("trace_id") or ""
         ).strip()
         or None,
+        ops_service=context.ops_service,
     )
     runtime_ctx.session_id = str(context.session_id or "").strip() or None
     runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()

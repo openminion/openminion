@@ -21,6 +21,8 @@ TOOL_OPS_NETWORK_INSPECT = "ops.network.inspect"
 TOOL_OPS_PROCESS_INSPECT = "ops.process.inspect"
 TOOL_OPS_NETWORK_PORT_OWNER = "ops.network.port_owner"
 TOOL_OPS_COMMAND_OBSERVE = "ops.command.observe"
+TOOL_OPS_COMMAND_PLAN = "ops.command.plan"
+TOOL_OPS_COMMAND_RUN = "ops.command.run"
 TOOL_OPS_JOB_INSPECT = "ops.job.inspect"
 TOOL_OPS_JOB_CANCEL = "ops.job.cancel"
 
@@ -34,6 +36,8 @@ ALL_OPS_TOOLS = (
     TOOL_OPS_PROCESS_INSPECT,
     TOOL_OPS_NETWORK_PORT_OWNER,
     TOOL_OPS_COMMAND_OBSERVE,
+    TOOL_OPS_COMMAND_PLAN,
+    TOOL_OPS_COMMAND_RUN,
     TOOL_OPS_JOB_INSPECT,
     TOOL_OPS_JOB_CANCEL,
 )
@@ -54,6 +58,7 @@ class TargetTransport(Protocol):
         timeout_seconds: float,
         operation_id: str = "",
         output_sink: OutputSink | None = None,
+        cwd: str = "",
     ) -> TransportResult: ...
 
     def read(

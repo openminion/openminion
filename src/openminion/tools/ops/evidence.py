@@ -122,3 +122,7 @@ class EvidenceStore:
             if (not target_id or record.target_id == target_id)
             and (not session_id or record.session_id == session_id)
         )
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.close()
