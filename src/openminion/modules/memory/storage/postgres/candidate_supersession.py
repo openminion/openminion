@@ -172,6 +172,8 @@ def promote_candidate(store: Any, candidate_id: str, target_scope: str) -> Memor
                 evidence_refs=list(promoted_candidate.evidence_refs),
                 meta={},
                 last_hit_at=None,
+                event_time=None,
+                valid_to=None,
                 tier="working",
                 access_count=0,
                 expires_at=None,

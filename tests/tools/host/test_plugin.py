@@ -6,7 +6,7 @@ from typing import Any
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.policy import Policy
-from openminion.tools.host.plugin import _h_metrics, register
+from openminion.tools.host.plugin import _h_metrics, collect_host_metrics, register
 
 
 def _ctx(tmp_path: Path) -> RuntimeContext:
@@ -46,6 +46,18 @@ def test_h_metrics_returns_platform_disk_and_memory(tmp_path: Path) -> None:
     assert payload["data"]["platform"]["system"]
     assert payload["data"]["disk"]
     assert "Memory:" in payload["content"]
+
+
+def test_collect_host_metrics_reuses_tool_owner_without_runtime_context(
+    tmp_path: Path,
+) -> None:
+    payload, warnings = collect_host_metrics(tmp_path)
+
+    assert payload["method"] == "host.metrics"
+    assert payload["platform"]["system"]
+    assert payload["disk"]
+    assert "memory" in payload
+    assert isinstance(warnings, list)
 
 
 def test_h_metrics_accepts_relative_disk_path(tmp_path: Path) -> None:

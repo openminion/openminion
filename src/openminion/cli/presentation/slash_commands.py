@@ -95,6 +95,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "_slash_context_review",
     ),
     SlashCommandMetadata(
+        "/overview",
+        "Show the read-only operations overview",
+        None,
+        "_slash_overview",
+    ),
+    SlashCommandMetadata(
         "/goal",
         "Create, bind, inspect, or run a session goal",
         "_slash_goal",
@@ -218,6 +224,7 @@ _BUSY_SAFE_SLASH_COMMANDS = frozenset(
         "/mcp",
         "/memory",
         "/normal",
+        "/overview",
         "/quiet",
         "/skills",
         "/status",
