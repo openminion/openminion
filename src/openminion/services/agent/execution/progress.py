@@ -1,6 +1,7 @@
 """Tool-loop observation and progress emission."""
 
 import time
+from dataclasses import replace
 from typing import Any
 
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
@@ -96,18 +97,32 @@ def execute_allowed_tool_calls(
     if not allowed_calls:
         return []
     callback = getattr(runtime, "progress_callback", None)
+    tools: Any = service_port.tools
     started_at = time.perf_counter()
     if callable(callback):
         _emit_started(callback, allowed_calls)
-    batch = service_port.tools.execute_calls(allowed_calls, context=context)
+    if any(call.approval_id for call in allowed_calls):
+        results = []
+        for call in allowed_calls:
+            call_context = context
+            if call.approval_id:
+                metadata = dict(context.metadata)
+                metadata.update(
+                    confirmation_source="policy_replay",
+                    confirmation_grant_id=call.approval_id,
+                )
+                call_context = replace(context, metadata=metadata, confirm=True)
+            results.extend(tools.execute_calls([call], context=call_context).results)
+    else:
+        results = list(tools.execute_calls(allowed_calls, context=context).results)
     if callable(callback):
         _emit_completed(
             callback,
-            list(batch.results or []),
+            results,
             allowed_calls,
             int((time.perf_counter() - started_at) * 1000),
         )
-    return list(batch.results)
+    return results
 
 
 def observe_tool_loop(runtime: Any, tool_calls: list[ProviderToolCall]) -> None:

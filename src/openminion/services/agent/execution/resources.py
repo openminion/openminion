@@ -172,6 +172,7 @@ class ExecutionResources:
             a2a_delegate_api=self._resolve_a2a_delegate_api(),
             agent_query=getattr(self._runtime, "agent_discovery_snapshot", None),
             telemetryctl=_service_port_telemetryctl(self._service_port),
+            ops_service=self._service_port.ops_service,
         )
 
     def build_context_with_overrides(

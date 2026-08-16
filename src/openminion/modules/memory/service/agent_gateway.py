@@ -1,7 +1,5 @@
 """Public memory-service assembly surface for the agent gateway adapter."""
 
-from __future__ import annotations
-
 from openminion.modules.memory.runtime.config_values import (
     config_section,
     config_value,

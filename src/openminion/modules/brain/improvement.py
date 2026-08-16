@@ -1,7 +1,5 @@
 """Public brain improvement contracts used by callers outside the brain module."""
 
-from __future__ import annotations
-
 from openminion.modules.brain.runtime.improvement.candidates import (
     ImprovementCandidate,
     ImprovementCandidateSemanticAuthorSource,

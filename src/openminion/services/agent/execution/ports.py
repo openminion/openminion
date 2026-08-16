@@ -44,6 +44,9 @@ class TurnFlowServicePort(Protocol):
     @property
     def self_improvement(self) -> Any | None: ...
 
+    @property
+    def ops_service(self) -> Any | None: ...
+
     async def generate_normalized(
         self, request: ProviderRequest
     ) -> ProviderResponse: ...

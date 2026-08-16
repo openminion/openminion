@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .checkpoints import (
     build_project_run_projection,
     find_open_project_worker,
