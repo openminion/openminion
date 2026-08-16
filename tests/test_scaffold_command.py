@@ -3,6 +3,7 @@ import io
 from argparse import Namespace
 from contextlib import redirect_stdout
 from pathlib import Path
+from runpy import run_path
 
 import pytest
 
@@ -121,7 +122,8 @@ class TestScaffoldCommand:
         tool_content = tool_path.read_text(encoding="utf-8")
         assert "openminion.modules.tool" in tool_content
         assert "ToolExecutionPolicy" in tool_content
-        assert "ToolExecutionResultV2" in tool_content
+        assert "ToolExecutionResult" in tool_content
+        assert "GreeterTool" in run_path(str(tool_path))
 
     def test_scaffold_pack_memory_creates_pack_files(self, tmp_path: Path) -> None:
         args = Namespace(
@@ -145,6 +147,7 @@ class TestScaffoldCommand:
         assert "openminion.modules.tool" in plugin_content
         assert "register_tools" in plugin_content
         assert "PluginContext" in plugin_content
+        assert "StarterMemoryLookupTool" in run_path(str(pack_root / "plugin.py"))
 
     def test_scaffold_pack_automation_creates_pack_files(self, tmp_path: Path) -> None:
         args = Namespace(

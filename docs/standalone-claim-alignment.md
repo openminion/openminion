@@ -1,7 +1,7 @@
 # OpenMinion Standalone Claim Alignment
 
 Status: active
-Last updated: 2026-07-03
+Last updated: 2026-08-15
 
 Purpose: keep public `openminion` package claims aligned with the surfaces that
 ship today.
@@ -15,7 +15,7 @@ ship today.
 | public API runtime surface | `openminion.api` re-exports `APIRuntime`, `Agent`, `Handoff`, `dispatch_request`, and related helpers | `src/openminion/api/__init__.py`, `src/openminion/api/README.md`, targeted package regression tests | aligned |
 | interactive CLI surface | `openminion` console script and module entrypoint | `pyproject.toml`, `README.md`, CLI smoke gate | aligned |
 | operator subcommands and companion CLIs | `openminiond`, `artifactctl`, `memctl`, `brainctl`, `policyctl`, and related package-owned entrypoints | `pyproject.toml`, package-local `make lint` plus public-surface validators | aligned |
-| examples as runnable teaching surfaces | top-level `examples/` files and `examples/modules/sample` | `examples/`, `docs/runtime-surfaces.md`, `python -m compileall examples` | aligned |
+| examples as runnable teaching surfaces | top-level `examples/` files and `examples/modules/sample` | `examples/`, `docs/runtime-surfaces.md`, focused example smoke tests, compile and lint checks | aligned |
 
 ## Current package line
 

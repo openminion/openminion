@@ -4,7 +4,7 @@ name: Invalid Skill - Missing Required Sections
 version: 0.0.1
 description: Invalid skill fixture missing required SKILL.md sections for negative testing.
 tags: [invalid, negative-test, malformed]
-tools: [file]
+tools: [file.write]
 scopes_required: ["tool.execute"]
 risk: low
 when_to_use:
@@ -20,7 +20,7 @@ outputs:
 # Skill Card
 - **Goal:** Test that missing sections trigger validation errors.
 - **Triggers:** Negative test scenario.
-- **Tools:** file
+- **Tools:** file.write
 
 # Procedure
 

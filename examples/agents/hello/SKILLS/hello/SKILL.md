@@ -12,6 +12,6 @@ Produce `hello <name>` using `hello_tool`.
 
 ## Guardrails
 
-1. Requires scope `tool.hello.read`.
+1. Requires scope `tool.execute`.
 2. No external network access.
 3. No filesystem writes.

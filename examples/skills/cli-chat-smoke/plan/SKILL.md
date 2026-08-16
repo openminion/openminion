@@ -4,7 +4,7 @@ name: CLI Chat Smoke Test - Planning
 version: 0.0.1
 description: Simple planning skill for CLI chat smoke testing with checkpoint structure.
 tags: [planning, smoke-test, cli]
-tools: [file]
+tools: [file.write]
 scopes_required: ["tool.execute"]
 risk: low
 when_to_use:
@@ -24,7 +24,7 @@ outputs:
 # Skill Card
 - **Goal:** Create a simple checkpointed plan for CLI chat smoke testing.
 - **Triggers:** Planning requests, smoke test scenarios.
-- **Tools:** file
+- **Tools:** file.write
 - **Hard rules:** Produce 2-3 checkpoints; each with Action + Verify; end with Next action.
 
 # Procedure

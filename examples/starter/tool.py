@@ -1,44 +1,40 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Any, Mapping
+
+from openminion.modules.tool import (
+    Tool,
+    ToolExecutionContext,
+    ToolExecutionPolicy,
+    ToolExecutionResult,
+)
 
 
-@dataclass
-class ToolContext:
-    run_id: str
-    session_id: str
-    allowed_scopes: Tuple[str, ...] = ()
-    budget_steps_remaining: int = 10
-
-
-@dataclass
-class ToolRequest:
-    arguments: Dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
-class ToolResult:
-    ok: bool
-    content: str = ""
-    error: str = ""
-
-
-class HelloTool:
-    """Copy-first tool template."""
-
+class HelloTool(Tool):
     name = "hello_tool"
-    required_scopes = ("tool.hello.read",)
+    description = "Return a short greeting."
+    policy = ToolExecutionPolicy(
+        required_scopes_all=("tool.execute",),
+        risk="low",
+        budget_cost=1,
+    )
+    parameters = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": [],
+    }
 
-    def execute(self, request: ToolRequest, context: ToolContext) -> ToolResult:
-        granted = {scope.strip() for scope in context.allowed_scopes}
-        missing = tuple(scope for scope in self.required_scopes if scope not in granted)
-        if missing:
-            return ToolResult(
-                ok=False, error=f"missing required scopes: {', '.join(missing)}"
-            )
-        if context.budget_steps_remaining <= 0:
-            return ToolResult(ok=False, error="tool budget exhausted")
-
-        who = request.arguments.get("name", "world").strip() or "world"
-        return ToolResult(ok=True, content=f"hello {who}")
+    def execute(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolExecutionContext,
+    ) -> ToolExecutionResult:
+        del context
+        who = str(arguments.get("name", "world")).strip() or "world"
+        return ToolExecutionResult(
+            tool_name=self.name,
+            ok=True,
+            content=f"hello {who}",
+            verified=True,
+            data={"name": who},
+        )

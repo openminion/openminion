@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timezone
 
-from openminion.base.channel import Channel
+from openminion.base.channel.interface import Channel
 from openminion.base.types import Message
 
 

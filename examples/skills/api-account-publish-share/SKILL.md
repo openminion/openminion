@@ -4,7 +4,7 @@ name: API Account Publish Share
 version: 0.0.1
 description: Create post and share using an existing account through a mock or sandbox API.
 tags: [api, post, share, existing-account]
-tools: [http_request, file]
+tools: [http_request, file.write]
 scopes_required: ["tool.http_request", "tool.fs.write"]
 risk: medium
 when_to_use:
@@ -35,7 +35,7 @@ outputs:
 # Skill Card
 - **Goal:** Create post and share using existing account (continuation flow)
 - **Triggers:** "publish to existing account", "share post with existing account"
-- **Tools:** http_request, file
+- **Tools:** http_request, file.write
 - **Hard rules:**
   - Use a mock or sandbox API by default
   - Never call a production service unless the user explicitly requests it

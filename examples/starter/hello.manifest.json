@@ -1,7 +1,7 @@
 {
   "id": "example.hello",
   "name": "Hello Example Plugin",
-  "version": "0.0.1",
+  "version": "0.0.8",
   "description": "Minimal plugin template for copy-first extension work.",
   "config_schema": {
     "type": "object",
@@ -9,10 +9,6 @@
       "enabled": {
         "type": "boolean",
         "default": true
-      },
-      "footer_text": {
-        "type": "string",
-        "default": "(hello-plugin footer)"
       }
     },
     "additionalProperties": false

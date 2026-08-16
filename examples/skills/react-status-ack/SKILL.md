@@ -4,7 +4,7 @@ name: React Status Ack
 version: 0.0.1
 description: Add reaction acknowledgements to user messages for progress signals.
 tags: [ux, status]
-tools: [reactions]
+tools: [reactions.set]
 scopes_required: ["tool.execute", "tool.reactions.write"]
 risk: low
 when_to_use:
@@ -17,7 +17,7 @@ outputs:
 # Skill Card
 - **Goal:** Provide visible progress signals.
 - **Triggers:** Long-running operations.
-- **Tools:** reactions
+- **Tools:** reactions.set
 - **Hard rules:** React only to the latest user message in active channel.
 
 # Procedure

@@ -1,7 +1,7 @@
 # OpenMinion Certification Readiness Matrix
 
 Status: active
-Last updated: 2026-08-08
+Last updated: 2026-08-15
 
 Purpose: summarize the current proof posture for the public `openminion`
 package surface.
@@ -16,7 +16,7 @@ package surface.
 | agent wrapper surface | `openminion.Agent`, `AgentRunResult`, `Handoff`, `subagent` | root exports, agent/handoff tests, targeted package regression suite | alpha-ready |
 | CLI entrypoint | `openminion` console script and module run path | `pyproject.toml`, README quickstart, CLI smoke gate, package-local lint/validator flows | alpha-ready |
 | operator companion CLIs | `openminiond`, `artifactctl`, `memctl`, `brainctl`, `policyctl`, and siblings | `pyproject.toml`, package-local `make lint`, public-surface/layout validators | alpha-ready |
-| examples | hello examples, quickstart, `sample` module | `examples/` plus `python -m compileall examples` | alpha-ready |
+| examples | hello examples, quickstart, identity bundle, `sample` module | `examples/`, `tests/examples/test_examples.py`, sample CLI and skill-fixture tests, plus compile and lint checks | alpha-ready |
 | package docs | README, docs entrypoint, compatibility/release/source-boundary refs | `README.md`, `docs/`, `API_COMPATIBILITY.md`, `RELEASING.md`, current canonical-version package proof | alpha-ready |
 | long-horizon project worker | `docs/long-horizon-project-worker.md`, project-worker E2E runner, autonomy reports | deterministic compressed pilots plus a validation-only 2-hour interim certification support report; full 8-hour and 24-hour real elapsed certification pilots remain pending | alpha substrate, not certification-ready |
 | memory/context usefulness | memory records, session/context surfaces, scorecard references | local utility and audit evidence exists; live provider-backed ContextCtl proof and paired usefulness claims remain routed to their owning trackers | alpha substrate, claim-gated |
@@ -39,11 +39,13 @@ These are still true even when the public package surface is documented:
 
 The package-local public release line is the value of
 `openminion.base.version.OPENMINION_VERSION`.
-As of 2026-07-03, local proof covers:
+As of 2026-08-15, local proof covers:
 
 1. targeted package metadata and version tests,
 2. root import smoke,
 3. package-local `ruff check .`,
 4. package-local `make lint`,
-5. `python -m compileall examples`,
-6. local wheel and sdist build generation.
+5. fresh-demo quickstart and identity example smokes,
+6. plugin discovery, tool execution, sample CLI, and skill ingest checks,
+7. `python -m compileall examples`,
+8. local wheel and sdist build generation.

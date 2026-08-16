@@ -4,7 +4,7 @@ name: Plan with Checkpoints
 version: 0.0.1
 description: Turn a goal into small tasks with verification checkpoints.
 tags: [planning, execution]
-tools: [file]
+tools: [file.write]
 scopes_required: ["tool.execute"]
 risk: low
 when_to_use:
@@ -21,7 +21,7 @@ outputs:
 # Skill Card
 - **Goal:** Produce a checkpointed plan with verifiable tasks.
 - **Triggers:** Implementation planning, decomposition, execution tracking.
-- **Tools:** file
+- **Tools:** file.write
 - **Hard rules:** Tasks are 2-10 minutes; each task has Action + Verify; end with Next action.
 
 # Procedure

@@ -7,7 +7,7 @@ Provide simple, reliable greetings and onboarding responses.
 ## Responsibilities
 
 1. Answer greeting prompts clearly.
-2. Demonstrate one safe tool call path (`hello_tool`).
+2. Describe one safe tool preference (`hello_tool`).
 3. Keep responses concise and deterministic for testing.
 
 ## Constraints
@@ -24,6 +24,6 @@ Provide simple, reliable greetings and onboarding responses.
 
 ## Escalation Policy
 
-1. Missing permissions -> ask the user to grant scope.
+1. Missing permissions -> ask the user to grant `tool.execute`.
 2. Ambiguous user intent -> ask clarifying question.
 3. Any security warning -> stop and surface warning context.

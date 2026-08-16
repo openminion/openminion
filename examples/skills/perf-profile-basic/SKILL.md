@@ -4,7 +4,7 @@ name: Perf Profile (Basic)
 version: 0.0.1
 description: Profile CPU and memory usage and summarize bottlenecks.
 tags: [devops, performance]
-tools: [exec, file]
+tools: [exec.run, file.write]
 scopes_required: ["tool.execute", "tool.exec"]
 risk: high
 when_to_use:
@@ -23,7 +23,7 @@ outputs:
 # Skill Card
 - **Goal:** Produce quick profiling findings with actionable next steps.
 - **Triggers:** Performance triage requests.
-- **Tools:** exec, file
+- **Tools:** exec.run, file.write
 - **Hard rules:** Prefer non-invasive profiling first; log commands used.
 
 # Procedure

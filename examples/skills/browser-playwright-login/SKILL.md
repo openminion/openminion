@@ -4,7 +4,7 @@ name: Browser Login (Playwright)
 version: 0.0.1
 description: Create a persistent headed session for login-required sites.
 tags: [browser, login]
-tools: [browser, file]
+tools: [browser, file.write]
 scopes_required: ["tool.execute", "tool.browser.control", "tool.net.connect", "tool.fs.write"]
 risk: high
 when_to_use:
@@ -23,7 +23,7 @@ outputs:
 # Skill Card
 - **Goal:** Establish persistent browser session with minimal automation.
 - **Triggers:** Login-required tasks.
-- **Tools:** browser, file
+- **Tools:** browser, file.write
 - **Hard rules:** User confirms login; do not type secrets without explicit approval.
 
 # Procedure

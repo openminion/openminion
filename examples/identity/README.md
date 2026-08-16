@@ -4,20 +4,19 @@ This folder contains sample identity profiles for `openminion identity upsert`.
 
 ## Load a sample profile
 
-From the package root:
+From the package root, initialize a local configuration once and load the
+checked-in profile:
 
 ```bash
-PYTHONPATH=src .venv/bin/python3.11 -m openminion identity upsert examples/identity/<profile>.yaml
+openminion config init --provider echo
+openminion identity upsert examples/identity/sample.yaml
 ```
-
-Replace `<profile>` with the checked-in sample profile or your own profile
-file.
 
 ## Verify profile and rendered snippet
 
 ```bash
-PYTHONPATH=src .venv/bin/python3.11 -m openminion identity show <profile-id>
-PYTHONPATH=src .venv/bin/python3.11 -m openminion identity render <profile-id> --purpose act --max-tokens 180
+openminion identity show sample
+openminion identity render sample --purpose act --max-tokens 180
 ```
 
 ## Interactive CLI controls
