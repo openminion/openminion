@@ -29,7 +29,7 @@ def _build_clarify_request_payload(
                 continue
             q_id = (
                 str(item.get("id", "")).strip()
-                or hashlib.sha1(q_text.encode("utf-8")).hexdigest()[:12]
+                or hashlib.sha256(q_text.encode("utf-8")).hexdigest()[:32]
             )
             options = item.get("options")
             questions.append(
@@ -50,7 +50,7 @@ def _build_clarify_request_payload(
         return None
     trace_value = str(trace_id or getattr(working_state, "trace_id", "") or "").strip()
     clar_seed = f"{session_id}:{trace_value}:{','.join(q['id'] for q in questions)}"
-    clarify_id = hashlib.sha1(clar_seed.encode("utf-8")).hexdigest()[:16]
+    clarify_id = hashlib.sha256(clar_seed.encode("utf-8")).hexdigest()[:32]
     return {
         "clarify_id": clarify_id,
         "trace_id": trace_value,

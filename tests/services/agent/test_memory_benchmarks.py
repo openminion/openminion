@@ -703,7 +703,7 @@ class TestLongTermScalingScenarios(unittest.TestCase):
                     user_message=f"unique message content number {i}",
                     assistant_message="ok",
                 )
-                self.assertEqual(len(result.patch_id), 12)
+                self.assertEqual(len(result.patch_id), 32)
                 patch_ids.add(result.patch_id)
             self.assertEqual(len(patch_ids), 100, "patch_id collision detected")
 

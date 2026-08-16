@@ -806,8 +806,8 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         )
 
         patch_id = str(response.metadata.get("memory_patch_id", "") or "")
-        # V2 patch_id is a 12-char lowercase hex SHA1 digest (no "patch-" prefix)
-        self.assertEqual(len(patch_id), 12)
+        # V2 patch_id is a 32-character lowercase SHA-256 digest without a prefix.
+        self.assertEqual(len(patch_id), 32)
         self.assertRegex(patch_id, r"^[0-9a-f]+$")
 
         events = self.sessions.list_events(session_id=session_id, limit=200)

@@ -202,7 +202,7 @@ class SessionLifecycleMixin:
 
         candidate_id = (
             "cand_plan_snapshot_"
-            + hashlib.sha1(str(session_id).encode("utf-8")).hexdigest()[:12]
+            + hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:32]
         )
         title = f"plan_snapshot:{session_id}:{content['incomplete_reason']}"
         candidate_id = self._service.candidate_put(

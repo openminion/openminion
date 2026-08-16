@@ -2188,6 +2188,13 @@ def test_follow_up_after_tool_uses_fallback_for_embedded_tool_call_text() -> Non
     assert final_model == "follow-model"
     event_types = [item["type"] for item in bridge._runner.session_api.events]
     assert event_types == ["llm.call.started", "llm.call.completed"]
+    call_ids = {
+        item["payload"]["llm_call_id"] for item in bridge._runner.session_api.events
+    }
+    assert len(call_ids) == 1
+    call_id = call_ids.pop()
+    assert len(call_id) == 32
+    assert all(character in "0123456789abcdef" for character in call_id)
 
 
 def test_follow_up_after_tool_preserves_typed_cache_usage_in_completed_event() -> None:
@@ -2275,7 +2282,6 @@ def test_postprocess_turn_attaches_clarify_request_metadata() -> None:
             active_mode_name="plan",
             unresolved_clarify_items=[
                 {
-                    "id": "q1",
                     "question": "Which city?",
                     "reason_code": "weather_location_required",
                     "source": "clarify",
@@ -2299,9 +2305,17 @@ def test_postprocess_turn_attaches_clarify_request_metadata() -> None:
     )
 
     assert response.metadata["finish_reason"] == "stop"
-    assert response.metadata["clarify_id"]
+    assert len(response.metadata["clarify_id"]) == 32
+    assert all(
+        character in "0123456789abcdef"
+        for character in response.metadata["clarify_id"]
+    )
     assert response.metadata["clarify_question_count"] == "1"
     assert "Which city?" in response.metadata["clarify_request"]
+    clarify_request = json.loads(response.metadata["clarify_request"])
+    question_id = clarify_request["questions"][0]["id"]
+    assert len(question_id) == 32
+    assert all(character in "0123456789abcdef" for character in question_id)
 
 
 def test_postprocess_turn_attaches_tool_and_security_metadata() -> None:

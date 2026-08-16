@@ -57,3 +57,19 @@ def test_smoke_provider_does_not_extract_user_facts() -> None:
     text = provider.build_context(session_id="s", user_message="what do you know?")
     assert "project codename is Orion" not in text
     assert "ephemeral-memory-smoke provider is active" in text
+
+
+def test_smoke_provider_uses_stable_sha256_patch_ids() -> None:
+    provider = EphemeralMemorySmokeProvider(agent_id="main")
+
+    first = provider.derive_patch_id(
+        session_id="s", run_id="r", request_id="q", user_message="message"
+    )
+    second = provider.derive_patch_id(
+        session_id="s", run_id="r", request_id="q", user_message="message"
+    )
+
+    assert first == second
+    assert first.startswith("patch-")
+    assert len(first.removeprefix("patch-")) == 32
+    assert all(character in "0123456789abcdef" for character in first[6:])

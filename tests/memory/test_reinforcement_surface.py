@@ -227,6 +227,18 @@ class AdapterPathReinforcementTests(unittest.TestCase):
         adapter = MemctlAdapter(service)
         return adapter, service
 
+    def test_adapter_uses_stable_sha256_patch_ids(self) -> None:
+        adapter, _service = self._adapter()
+
+        patch_id = adapter.derive_patch_id(
+            session_id="s", run_id="r", request_id="q", user_message="message"
+        )
+
+        assert patch_id.startswith("patch-")
+        digest = patch_id.removeprefix("patch-")
+        assert len(digest) == 32
+        assert all(character in "0123456789abcdef" for character in digest)
+
     def test_adapter_forwards_find_candidate_by_normalized_key(self) -> None:
         adapter, service = self._adapter()
         cid = service.stage_candidate(

@@ -17,6 +17,7 @@ from tests.e2e.cli.focus.harness.probe import (
     active_turn_busy,
     approval_prompt_needs_reply,
     composer_echo_probe,
+    focus_session_id,
     inline_approval_fingerprint,
     inline_approval_key,
     inline_approval_menu,
@@ -33,6 +34,15 @@ from tests.e2e.cli.focus.harness.scenarios import (
 )
 
 pytestmark = pytest.mark.e2e
+
+
+def test_focus_session_id_uses_stable_sha256_digest(tmp_path: Path) -> None:
+    session_id = focus_session_id(data_root=tmp_path, node_name="focus node")
+
+    assert session_id.startswith("focus-e2e-focus-node-")
+    digest = session_id.rsplit("-", maxsplit=1)[-1]
+    assert len(digest) == 32
+    assert all(character in "0123456789abcdef" for character in digest)
 
 
 def test_expected_markers_ignore_echoed_prompt() -> None:
@@ -391,8 +401,16 @@ def test_inline_approval_menu_supports_both_focus_surfaces(
     [
         "[y]es / [N]o / [a]lways:\n❯ Ask anything",
         "[y]es / [N]o / [a]lways:\n● file.write(example.py)",
+        (
+            "[y]es / [N]o / [a]lways: ● file.write(example.py)\n"
+            '  └ {"ok": true}'
+        ),
         "[y]es / [N]o / [a]lways: a\n❯ ● file.write(example.py)",
         "[y]es / [N]o / [a]lways: a\nFIRST:a",
+        (
+            "[y]es / [N]o / [a]lways: ● Running file.write(cli.py)\n"
+            "a\nStatus: Working"
+        ),
         "[A] Allow once [S] Session allow [D] Deny\nDone in 2s",
     ],
 )
