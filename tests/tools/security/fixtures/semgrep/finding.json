@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "results": [
+    {
+      "check_id": "openminion.test.shell-true",
+      "path": "vulnerable.py",
+      "start": {"line": 3, "col": 1},
+      "end": {"line": 3, "col": 43},
+      "extra": {
+        "message": "Avoid shell=True with dynamic input.",
+        "severity": "ERROR",
+        "fingerprint": "synthetic-semgrep-finding",
+        "lines": "subprocess.run(user_input, shell=True)",
+        "metadata": {
+          "confidence": "HIGH",
+          "references": ["https://semgrep.dev/docs/semgrep-code/overview/"]
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {"scanned": ["vulnerable.py"], "skipped": []}
+}

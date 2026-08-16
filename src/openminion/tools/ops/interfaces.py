@@ -18,6 +18,8 @@ TOOL_OPS_HOST_SNAPSHOT = "ops.host.snapshot"
 TOOL_OPS_SERVICE_INSPECT = "ops.service.inspect"
 TOOL_OPS_LOGS_QUERY = "ops.logs.query"
 TOOL_OPS_NETWORK_INSPECT = "ops.network.inspect"
+TOOL_OPS_PROCESS_INSPECT = "ops.process.inspect"
+TOOL_OPS_NETWORK_PORT_OWNER = "ops.network.port_owner"
 TOOL_OPS_COMMAND_OBSERVE = "ops.command.observe"
 TOOL_OPS_JOB_INSPECT = "ops.job.inspect"
 TOOL_OPS_JOB_CANCEL = "ops.job.cancel"
@@ -29,6 +31,8 @@ ALL_OPS_TOOLS = (
     TOOL_OPS_SERVICE_INSPECT,
     TOOL_OPS_LOGS_QUERY,
     TOOL_OPS_NETWORK_INSPECT,
+    TOOL_OPS_PROCESS_INSPECT,
+    TOOL_OPS_NETWORK_PORT_OWNER,
     TOOL_OPS_COMMAND_OBSERVE,
     TOOL_OPS_JOB_INSPECT,
     TOOL_OPS_JOB_CANCEL,

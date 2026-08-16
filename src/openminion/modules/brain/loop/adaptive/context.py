@@ -45,6 +45,7 @@ from ..services import runner_from_context
 
 def _adaptive_loop_metadata(ctx: ExecutionContext, *, purpose: str) -> dict[str, Any]:
     metadata = build_loop_thinking_metadata(ctx, purpose=purpose)
+    metadata["session_id"] = str(ctx.state.session_id or "")
     if purpose == "act":
         metadata[EXPECTED_TRAILERS_METADATA_KEY] = [
             TRAILER_LANE_MACC,

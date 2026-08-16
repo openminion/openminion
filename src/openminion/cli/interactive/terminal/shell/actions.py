@@ -13,6 +13,7 @@ from openminion.cli.interactive.project_context import (
     find_project_context_target_root,
     write_init_template,
 )
+from openminion.cli.interactive.tool_exposure import tool_exposure_command
 from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -575,6 +576,13 @@ def _handle_visible_parity_slash(
         )
 
 
+def _render_tools_command(runtime: Any, console: Console, text: str) -> None:
+    if text.strip() == "/tools":
+        _render_tools_list(runtime=runtime, console=console)
+    else:
+        console.print(tool_exposure_command(runtime, text))
+
+
 def _handle_slash_goal(
     text: str,
     *,
@@ -699,7 +707,7 @@ async def _handle_slash(
         )
         return False
     if cmd == "/tools":
-        _render_tools_list(runtime=runtime, console=console)
+        _render_tools_command(runtime, console, text)
         return False
     if cmd == "/mcp":
         _render_mcp_status(runtime=runtime, console=console)

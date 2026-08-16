@@ -806,12 +806,17 @@ def test_execute_builds_profile_variants_and_shortlisting(
     monkeypatch.setattr(
         adaptive_modes,
         "build_runtime_tool_specs",
-        lambda runner, *, allowed_tools: [
+        lambda runner, *, allowed_tools, metadata=None: [
             SimpleNamespace(name=name, description=name, input_schema={})
             for name in sorted(allowed_tools)
         ],
     )
     monkeypatch.setattr(adaptive_modes, "resolve_loop_model", lambda ctx: "model")
+    monkeypatch.setattr(
+        adaptive_modes,
+        "_with_exposed_runtime_tools",
+        lambda tool_names, **kwargs: frozenset({*tool_names, "security.scan_code"}),
+    )
     monkeypatch.setattr(
         adaptive_modes,
         "should_shortlist_tool_schemas",
@@ -868,6 +873,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
     result = mode.execute(_ctx())
     assert result.status == "done"
     assert captured[-1]["profile"].profile_name == "general_adaptive_v1"
+    assert "security.scan_code" in captured[-1]["profile"].allowed_tools
     assert captured[-1]["requestable_tool_specs"][0].name == "tool.request"
     assert (
         captured[-1]["initial_state"].scratchpad["turn_progress_total_tokens_used"] == 7
@@ -887,6 +893,7 @@ def test_execute_builds_profile_variants_and_shortlisting(
     mode.execute(watch_ctx)
     assert captured[-1]["profile"].profile_name == "watch_action_v1"
     assert captured[-1]["profile"].provider_parallel_tool_capacity == 1
+    assert "security.scan_code" not in captured[-1]["profile"].allowed_tools
 
     memory_ctx = _ctx(
         state=_state(
@@ -917,8 +924,13 @@ def test_direct_tool_turn_adds_dynamic_runtime_tool_to_allowed_surface(
         staticmethod(lambda adapter: _Runtime()),
     )
 
-    def _fake_build_specs(runner: Any, *, allowed_tools: frozenset[str]) -> list[Any]:
-        del runner
+    def _fake_build_specs(
+        runner: Any,
+        *,
+        allowed_tools: frozenset[str],
+        metadata: dict[str, Any] | None = None,
+    ) -> list[Any]:
+        del runner, metadata
         captured["allowed_tools"] = frozenset(allowed_tools)
         return [
             SimpleNamespace(name=name, description=name, input_schema={})
@@ -1085,7 +1097,7 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
 
     monkeypatch.setattr(
         "openminion.modules.brain.loop.tools.runtime.collect_runtime_tool_schemas",
-        lambda runner: [
+        lambda runner, *, metadata=None: [
             {
                 "name": "mcp.fixture.echo_text",
                 "description": "Echo text",

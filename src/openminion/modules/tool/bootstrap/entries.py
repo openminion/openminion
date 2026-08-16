@@ -247,6 +247,12 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
     ),
     _ToolBootstrapEntry(
         kind="tool",
+        module_name="openminion.tools.security",
+        label="Security scanning",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
         module_name="openminion.tools.k8s",
         label="Kubernetes operations",
         required=False,

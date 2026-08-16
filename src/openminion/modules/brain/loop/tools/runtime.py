@@ -602,6 +602,7 @@ def build_runtime_tool_specs(
     runner: Any | None,
     *,
     allowed_tools: frozenset[str],
+    metadata: dict[str, Any] | None = None,
 ) -> list[ToolSpec]:
     descriptions: dict[str, str] = {
         "file.list_dir": "List files and directories at a path.",
@@ -637,9 +638,14 @@ def build_runtime_tool_specs(
     schema_by_name: dict[str, dict[str, Any]] = {}
     if runner is not None:
         try:
+            schemas = (
+                collect_runtime_tool_schemas(runner, metadata=metadata)
+                if metadata is not None
+                else collect_runtime_tool_schemas(runner)
+            )
             schema_by_name = {
                 str(item.get("name", "")).strip(): dict(item)
-                for item in collect_runtime_tool_schemas(runner)
+                for item in schemas
                 if isinstance(item, dict) and str(item.get("name", "")).strip()
             }
         except (ValidationError, json.JSONDecodeError):
