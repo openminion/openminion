@@ -667,6 +667,15 @@ class DoctorCommandTests(unittest.TestCase):
             payload = json.loads(buf.getvalue())
             check_ids = {check["id"] for check in payload["checks"]}
             self.assertIn("agent.turn_smoke", check_ids)
+            turn_smoke = next(
+                check
+                for check in payload["checks"]
+                if check["id"] == "agent.turn_smoke"
+            )
+            self.assertEqual(turn_smoke["details"]["scope"], "runtime")
+            self.assertTrue(turn_smoke["details"]["request_id"])
+            self.assertTrue(turn_smoke["details"]["invocation_id"])
+            self.assertTrue(turn_smoke["details"]["execution_id"])
 
     def test_doctor_provider_check_uses_direct_llm_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

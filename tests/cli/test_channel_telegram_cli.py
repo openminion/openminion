@@ -11,6 +11,10 @@ import pytest
 
 from openminion.cli.commands import channel
 from openminion.cli.parser.base import build_parser
+from openminion.modules.controlplane.channels.telegram.bot_api import (
+    TelegramAPIError,
+    TelegramTransportError,
+)
 from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 
 
@@ -18,6 +22,7 @@ class FakeTelegramBotAPI:
     updates: list[dict] = []
     update_batches: list[list[dict]] = []
     fail_get_me = False
+    fail_set_my_commands = False
     command_syncs: list[list[dict[str, str]]] = []
 
     def __init__(self, token: str):
@@ -25,7 +30,7 @@ class FakeTelegramBotAPI:
 
     def get_me(self) -> dict:
         if self.fail_get_me or self.token == "bad-token":
-            raise RuntimeError("invalid token")
+            raise TelegramAPIError(code=401, description="invalid token")
         return {"id": 123, "username": "openminion_test_bot"}
 
     def get_updates(
@@ -41,6 +46,8 @@ class FakeTelegramBotAPI:
         return list(self.updates)
 
     def set_my_commands(self, commands: list[dict[str, str]]) -> dict:
+        if self.fail_set_my_commands:
+            raise TelegramTransportError("menu unavailable")
         self.command_syncs.append(list(commands))
         return {"value": True}
 
@@ -134,6 +141,7 @@ def test_setup_writes_unified_config_from_stdin(
     monkeypatch.setattr("sys.stdin", io.StringIO("good-token\n"))
     config_path = tmp_path / "agent.json"
 
+    FakeTelegramBotAPI.command_syncs = []
     rc = channel.telegram_setup(_setup_args(config_path))
 
     assert rc == 0
@@ -141,7 +149,10 @@ def test_setup_writes_unified_config_from_stdin(
     assert "telegram" in payload["enabled_channels"]
     assert payload["channels"]["telegram"]["enabled"] is True
     assert payload["channels"]["telegram"]["botToken"] == "good-token"
-    assert "good-token" not in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "good-token" not in output
+    assert "Bot menu: 6 commands synced" in output
+    assert FakeTelegramBotAPI.command_syncs
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
 
 
@@ -172,6 +183,22 @@ def test_setup_invalid_token_does_not_write_config(
 
     assert rc == 2
     assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_setup_keeps_valid_config_when_command_menu_sync_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    monkeypatch.setattr("sys.stdin", io.StringIO("good-token\n"))
+    monkeypatch.setattr(FakeTelegramBotAPI, "fail_set_my_commands", True)
+    config_path = tmp_path / "agent.json"
+    rc = channel.telegram_setup(_setup_args(config_path))
+
+    assert rc == 0
+    assert config_path.exists()
+    output = capsys.readouterr().out
+    assert "Bot menu sync skipped: menu unavailable" in output
+    assert "openminion channel telegram commands-sync" in output
 
 
 def test_setup_refuses_raw_token_in_tracked_config(
@@ -243,6 +270,34 @@ def test_doctor_points_paired_config_to_run(
     output = capsys.readouterr().out
     assert "pairings.active - 1" in output
     assert f"Next: openminion channel telegram run --config {config_path}" in output
+
+
+def test_doctor_treats_offline_listener_as_information_and_recommends_guided_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    monkeypatch.setattr(channel, "_daemon_probe", lambda _path: ("unreachable", {}))
+    monkeypatch.setattr(channel, "_count_active_pairings", lambda _path: 0)
+    config_path = _write_profile(tmp_path)
+
+    rc = channel.telegram_doctor(
+        SimpleNamespace(
+            config=str(config_path),
+            json=False,
+            user_id=None,
+            chat_id=None,
+            topic_id=None,
+        )
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "[info] daemon.reachable" in output
+    assert "[fail] daemon.reachable" not in output
+    assert (
+        f"Next: openminion channel telegram pair --config {config_path} --wait"
+        in output
+    )
 
 
 def test_identify_prints_candidate(
@@ -347,10 +402,13 @@ def test_pair_known_id_prints_deep_link_and_access_warning(
     assert "PAIR_DEEP_LINK=https://t.me/openminion_test_bot?start=" in output
     assert output.index("Open this link in Telegram:") < output.index("PAIR_TOKEN=")
     assert "Fine-grained ACL is not available yet." in output
-    assert (
-        f"Make sure the listener is running:\nopenminion channel telegram run --config {config_path}"
-        in output
+    listener = (
+        "1. Make sure the Telegram listener is running:\n"
+        f"openminion channel telegram run --config {config_path}"
     )
+    assert listener in output
+    assert output.index(listener) < output.index("2. Open this link in Telegram:")
+    assert "3. Wait for the Paired confirmation" in output
 
 
 def test_pair_missing_ids_offers_guided_flow(
@@ -364,11 +422,11 @@ def test_pair_missing_ids_offers_guided_flow(
     output = capsys.readouterr().out
     assert "Pairing needs Telegram IDs first." in output
     assert (
-        f"Easy path: openminion channel telegram pair --config {config_path} --wait"
+        f"Recommended: openminion channel telegram pair --config {config_path} --wait"
         in output
     )
     assert (
-        f"Or discover IDs first: openminion channel telegram identify --config {config_path}"
+        f"Advanced: openminion channel telegram identify --config {config_path}"
         in output
     )
 
@@ -400,8 +458,8 @@ def test_pair_wait_confirms_candidate_before_issuing_token(
     assert "Telegram candidate found:" in output
     assert "PAIR_TOKEN=" in output
     assert (
-        f"Make sure the listener is running:\nopenminion channel telegram run --config {config_path}"
-        in output
+        "1. Make sure the Telegram listener is running:\n"
+        f"openminion channel telegram run --config {config_path}" in output
     )
 
 
@@ -484,12 +542,67 @@ def test_status_prints_runner_requirement(
 
     assert rc == 0
     output = capsys.readouterr().out
+    assert output.startswith("Status: pairing required")
     assert "telegram.enabled=True" in output
     assert "daemon.state=not_observed" in output
     assert "default.profile=agent:default" in output
     assert "active.session=not_observed" in output
     assert "active.profile=not_observed" in output
     assert "runner is online" in output
+
+
+def test_status_human_summary_reports_ready_listener(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = _write_profile(tmp_path)
+    monkeypatch.setattr(channel, "_count_active_pairings", lambda _path: 1)
+    monkeypatch.setattr(
+        channel,
+        "_daemon_probe",
+        lambda _path: (
+            "ok",
+            {
+                "channel_runtime": {
+                    "state": "running",
+                    "channels": {
+                        "telegram": {
+                            "state": "running",
+                            "listener_alive": True,
+                            "connected": True,
+                        }
+                    },
+                }
+            },
+        ),
+    )
+
+    rc = channel.telegram_status(
+        SimpleNamespace(
+            config=str(config_path),
+            json=False,
+            user_id=None,
+            chat_id=None,
+            topic_id=None,
+        )
+    )
+
+    assert rc == 0
+    assert capsys.readouterr().out.startswith(
+        "Status: ready; a paired chat and listener are active."
+    )
+
+
+def test_pair_help_explains_guided_wait_semantics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit, match="0"):
+        parser.parse_args(["channel", "telegram", "pair", "--help"])
+    help_text = capsys.readouterr().out
+
+    assert "Pair a Telegram chat" in help_text
+    assert "Wait for a new Telegram message to identify the chat" in help_text
+    assert "Pairing-token lifetime" in help_text
 
 
 def test_status_json_reports_bound_session_profile(

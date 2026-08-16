@@ -13,9 +13,11 @@ from openminion.modules.telemetry.inspection import (
     build_telemetry_debug_report,
     select_recent_invocation_ids,
 )
+from openminion.modules.telemetry.invocation_inspection import (
+    build_invocation_snapshot,
+)
 from openminion.modules.telemetry.schemas import TelemetryEvent
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
-from openminion.modules.telemetry.cli import _invocation_summary
 
 
 def _run(coro: Any) -> Any:
@@ -65,20 +67,23 @@ def test_telemetryctl_summary_prints_sorted_module_and_metric_keys(
     assert list(payload["openminion-tool"]["operation_counts"].keys()) == ["completed"]
 
 
-def test_invocation_summary_reports_legacy_orphan_and_propagation_diagnostics() -> None:
-    from openminion.modules.telemetry.schemas import TelemetryEvent
-
-    payload = _invocation_summary(
-        "invocation-1",
-        [
+def test_invocation_summary_reports_legacy_orphan_and_propagation_diagnostics(
+    tmp_path: Path,
+) -> None:
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
+    try:
+        service.record_event_sync(
             TelemetryEvent(
                 session_id="session-1",
                 turn_id="turn-1",
+                invocation_id="invocation-1",
                 event_type="agent.execution.failed",
                 data={"trace_context_status": "invalid", "status": "error"},
             )
-        ],
-    )
+        )
+        payload, _events = build_invocation_snapshot(service, "invocation-1")
+    finally:
+        service.close_sync()
 
     assert payload["diagnostics"]["orphan_terminal_events"] == 1
     assert payload["diagnostics"]["propagation"]["invalid"] == 1
@@ -91,7 +96,7 @@ def test_debug_report_selects_latest_and_aggregates_direct_facts(
     trace_path = trace_root / "llm/agent/run/step01-call01.json"
     trace_path.parent.mkdir(parents=True)
     trace_path.write_text("{}", encoding="utf-8")
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         for invocation_id in ("invocation-a", "invocation-b"):
             service.record_event_sync(
@@ -164,11 +169,16 @@ def test_debug_report_selects_latest_and_aggregates_direct_facts(
         "complete": True,
     }
     assert payload["invocation"]["trace_count"] == 1
+    assert payload["links"]["commands"] == [
+        "telemetryctl debug bundle invocation-b",
+        "telemetryctl invocation graph invocation-b",
+        "telemetryctl invocation show invocation-b",
+    ]
     assert payload["links"]["trace_paths"] == ["llm/agent/run/step01-call01.json"]
 
 
 def test_debug_report_failed_selector_uses_canonical_terminal(tmp_path: Path) -> None:
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         for invocation_id, terminal_type, timestamp in (
             ("failed-old", "agent.invocation.failed", 2.0),
@@ -201,7 +211,7 @@ def test_debug_report_failed_selector_uses_canonical_terminal(tmp_path: Path) ->
 
 
 def test_debug_report_opaque_lookup_and_mid_page_failure(tmp_path: Path) -> None:
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         for index in range(1001):
             service.record_event_sync(
@@ -246,7 +256,7 @@ def test_debug_report_opaque_lookup_and_mid_page_failure(tmp_path: Path) -> None
 def test_debug_report_exhausts_more_than_one_page_at_captured_high_water(
     tmp_path: Path,
 ) -> None:
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         service.record_event_sync(
             TelemetryEvent(
@@ -329,7 +339,7 @@ def test_debug_report_exhausts_more_than_one_page_at_captured_high_water(
 def test_debug_report_usage_conflicts_invalid_values_and_overflow(
     tmp_path: Path,
 ) -> None:
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         service.record_event_sync(
             TelemetryEvent(
@@ -404,7 +414,7 @@ def test_debug_report_usage_conflicts_invalid_values_and_overflow(
 def test_recent_invocation_selector_defaults_to_twenty_and_validates_first(
     tmp_path: Path,
 ) -> None:
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         for index in range(25):
             service.record_event_sync(

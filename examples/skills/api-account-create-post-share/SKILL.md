@@ -4,7 +4,7 @@ name: API Account Create Post Share
 version: 0.0.1
 description: Full flow to create account, create post, and share post through a mock or sandbox API.
 tags: [api, account, post, share]
-tools: [http_request, file]
+tools: [http_request, file.write]
 scopes_required: ["tool.http_request", "tool.fs.write"]
 risk: medium
 when_to_use:
@@ -38,7 +38,7 @@ outputs:
 # Skill Card
 - **Goal:** Execute complete account lifecycle: create account → create post → share post
 - **Triggers:** "create account and publish", "create account post and share"
-- **Tools:** http_request, file
+- **Tools:** http_request, file.write
 - **Hard rules:**
   - Use a mock or sandbox API by default
   - Never call a production service unless the user explicitly requests it

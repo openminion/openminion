@@ -23,6 +23,9 @@ def test_quickstarts_cover_all_supported_backends_and_proof_levels() -> None:
     assert "Collector receipt" in text
     assert "vendor proof" in text
     assert "content export disabled" in text
+    assert "/v1/traces" in text
+    assert "/v1/metrics" in text
+    assert "/v1/logs" in text
 
 
 def test_quickstarts_contain_only_placeholders_and_portable_paths() -> None:

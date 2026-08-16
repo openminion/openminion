@@ -5,13 +5,16 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
+from tests.e2e.project_worker.harness import certification
 from tests.e2e.project_worker.harness.certification import (
     REPORT_SCHEMA_VERSION,
     RUN_SCHEMA_VERSION,
     validate_certification_manifest,
+    run_certification,
     write_certification_report,
 )
 
@@ -60,7 +63,12 @@ def _manifest(
                 "storage": 1,
                 "wall_clock": minimum_elapsed_seconds,
             },
-            "recovery_checks": ["restart", "wake"],
+            "recovery_checks": [
+                "restart",
+                "reconnect",
+                "interruption",
+                "scheduled_wake",
+            ],
             "side_effect_scope": "none",
         },
     }
@@ -225,3 +233,74 @@ def test_project_worker_list_keeps_existing_modes() -> None:
     assert result.returncode == 0
     assert "pilot-artifacts" in result.stdout
     assert "soak-artifacts" in result.stdout
+
+
+def test_live_certification_rejects_compressed_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    payload = _manifest(tmp_path)
+    now = datetime.now(UTC)
+    payload["approved_start_utc"] = (now - timedelta(minutes=1)).isoformat()
+    payload["approved_end_utc"] = (now + timedelta(hours=9)).isoformat()
+    payload["slo"]["budgets"] = {
+        "token": 100_000,
+        "cost": 10,
+        "retry": 10,
+        "iteration": 10,
+        "storage": 10_000_000,
+        "wall_clock": 40_000,
+    }
+    workspace = Path(str(payload["workspace_path"]))
+    evidence_path = workspace / "evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "token": 1,
+                    "cost": 0.01,
+                    "retry": 0,
+                    "iteration": 1,
+                    "storage": 1,
+                },
+                "recovery_events": [
+                    {"kind": kind}
+                    for kind in (
+                        "restart",
+                        "reconnect",
+                        "interruption",
+                        "scheduled_wake",
+                    )
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload["slo"]["execution_command"] = "python -c pass"
+    payload["slo"]["evidence_file"] = str(evidence_path)
+    goal_path = tmp_path / "goal.md"
+    goal_path.write_text("complete the bounded fixture", encoding="utf-8")
+    payload["goal_file"] = str(goal_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+    manifest = validate_certification_manifest(
+        manifest_path,
+        now=now,
+    )
+    monkeypatch.setattr(
+        certification.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="verified\n"),
+    )
+    exit_code, json_path, _ = run_certification(
+        manifest,
+        manifest_path=manifest_path,
+        root=tmp_path,
+    )
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert report["outcome"] == "failed_certification"
+    assert report["evidence"]["verifier_passed"] is True
+    assert report["evidence"]["metrics"]["elapsed_seconds"] < 28_800

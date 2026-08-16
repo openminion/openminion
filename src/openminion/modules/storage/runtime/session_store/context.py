@@ -138,15 +138,25 @@ class RuntimeSessionStoreContext:
         self.replace_pins(session_id=session_id, pins=normalized, policy=policy)
         return self.list_pins(session_id=session_id)
 
-    def ensure_session_context(self, *, session_id: str) -> SessionContextRecord:
+    def ensure_session_context(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None = None,
+    ) -> SessionContextRecord:
         existing = self.get_session_context(session_id=session_id)
         if existing is not None:
             return existing
 
         now = utc_now_iso()
-        self._backend.execute_count(
-            """
-            INSERT INTO session_contexts(
+        with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
+            )
+            self._backend.execute_count(
+                """
+                INSERT INTO session_contexts(
                 session_id,
                 pinned_context,
                 summary_short,
@@ -159,10 +169,11 @@ class RuntimeSessionStoreContext:
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (session_id, "", "", "", 0, "", "", 0, 1, now, now),
-        )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO NOTHING
+                """,
+                (session_id, "", "", "", 0, "", "", 0, 1, now, now),
+            )
         created = self.get_session_context(session_id=session_id)
         if created is None:
             raise RuntimeError(
@@ -185,7 +196,10 @@ class RuntimeSessionStoreContext:
         expected_version: int | None = None,
         session_turn_fence_token: int | None = None,
     ) -> SessionContextRecord:
-        current = self.ensure_session_context(session_id=session_id)
+        current = self.ensure_session_context(
+            session_id=session_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
         now = utc_now_iso()
         update_values = build_session_context_update_values(
             current=current,

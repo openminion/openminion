@@ -763,7 +763,10 @@ def test_pairing_start_token_binds_and_allows_followup_dm(tmp_path: Path) -> Non
     assert first == 1
     assert second == 1
     assert runtime.inputs == ["hello after pair"]
-    assert any(payload["text"] == "Paired ✅" for payload in api.sent_payloads)
+    assert any(
+        payload["text"].startswith("Paired ✅") and "/status" in payload["text"]
+        for payload in api.sent_payloads
+    )
 
 
 def test_unpaired_dm_gets_pairing_hint_and_is_not_routed(tmp_path: Path) -> None:
@@ -779,6 +782,26 @@ def test_unpaired_dm_gets_pairing_hint_and_is_not_routed(tmp_path: Path) -> None
 
     assert runtime.inputs == []
     assert any("Pairing required" in payload["text"] for payload in api.sent_payloads)
+
+
+def test_unpaired_pair_command_reports_ids_before_access_gate(tmp_path: Path) -> None:
+    api = _FakeAPI([[_private_message_update(1, "/pair", user_id=111)]])
+    runner, runtime = _runner(
+        api,
+        tmp_path / "state.db",
+        access=AccessConfig(dm_policy="allowlist", allow_from_user_ids=[]),
+        pairing=PairingConfig(enabled=True),
+    )
+
+    runner.run_once()
+
+    assert runtime.inputs == []
+    text = "\n".join(payload["text"] for payload in api.sent_payloads)
+    assert "This chat is not paired" in text
+    assert (
+        "openminion channel telegram pair --config <profile.json> "
+        "--user-id 111 --chat-id 111"
+    ) in text
 
 
 def test_access_decisions_emit_reason_coded_audit_events(tmp_path: Path) -> None:
@@ -955,6 +978,7 @@ def test_pair_local_command_reports_status_for_paired_chat(tmp_path: Path) -> No
 
     assert runtime.inputs == []
     assert any(payload["text"].startswith("Paired ✅") for payload in api.sent_payloads)
+    assert any("/pair revoke" in payload["text"] for payload in api.sent_payloads)
 
 
 def test_pair_revoke_reaches_shared_command_runtime(tmp_path: Path) -> None:

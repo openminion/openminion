@@ -62,8 +62,14 @@ class _StructuredTypedTurnIntent(BaseModel):
 class _CanonicalSessionApiAdapter:
     """Bridge canonical-event logger calls onto SessionStore-like owners."""
 
-    def __init__(self, session_api: Any) -> None:
+    def __init__(
+        self,
+        session_api: Any,
+        *,
+        session_turn_fence_token: int | None,
+    ) -> None:
         self._session_api = session_api
+        self._session_turn_fence_token = session_turn_fence_token
 
     def append_event(
         self,
@@ -76,6 +82,7 @@ class _CanonicalSessionApiAdapter:
             session_id=session_id,
             event_type=event_type,
             payload=payload,
+            session_turn_fence_token=self._session_turn_fence_token,
         )
         return getattr(record, "id", "") or event_type
 
@@ -207,6 +214,7 @@ def build_fail_closed_terminal_resolution(
     session_id: str,
     agent_id: str,
     session_api: Any,
+    session_turn_fence_token: int | None = None,
 ) -> tuple[Run, Goal, tuple[VerifierResult, ...], tuple[FailureCondition, ...]] | None:
     goal = resolve_typed_goal(turn_intent)
     if goal is None:
@@ -219,7 +227,10 @@ def build_fail_closed_terminal_resolution(
             return None
 
     logger = CanonicalEventLogger(
-        session_api=_CanonicalSessionApiAdapter(session_api),
+        session_api=_CanonicalSessionApiAdapter(
+            session_api,
+            session_turn_fence_token=session_turn_fence_token,
+        ),
         session_id=session_id,
         agent_id=agent_id,
     )

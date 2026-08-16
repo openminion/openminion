@@ -59,6 +59,7 @@ class ToolSchemaService:
         *,
         registry: Any,
         normalize_name: Callable[[str], str | None] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         if registry is None:
             return []
@@ -73,7 +74,7 @@ class ToolSchemaService:
             except Exception:
                 manager = None
 
-        for spec in get_model_exposure_specs(registry):
+        for spec in get_model_exposure_specs(registry, metadata=metadata):
             name = str(getattr(spec, "name", "")).strip()
             if not name or name in seen_names:
                 continue

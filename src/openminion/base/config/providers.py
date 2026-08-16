@@ -1,5 +1,3 @@
-"""Provider config dataclasses."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -29,6 +27,7 @@ class AnthropicProviderConfig:
     temperature: float = 0.2
     max_tokens: int = 1024
     api_version: str = "2023-06-01"
+    tool_call_strategy: str = "native"
 
 
 @dataclass

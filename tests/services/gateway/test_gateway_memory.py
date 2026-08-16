@@ -17,6 +17,9 @@ from tests.services.gateway._gateway_service_support import (
 )
 
 from openminion.modules.memory.service import MemoryService
+from openminion.modules.storage.runtime.session_store.turn_leases import (
+    RuntimeSessionTurnFenceError,
+)
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 from openminion.services.gateway.memory import MemoryFollowupQueue, record_memory_turn
@@ -37,6 +40,44 @@ def _make_v2_memory(
 
 
 class GatewayServiceMemoryTests(GatewayServiceTestCase):
+    def test_stale_memory_fence_does_not_enqueue_followup(self) -> None:
+        class _Memory:
+            def record_turn(self, **_kwargs):
+                raise AssertionError("stale worker must not write memory")
+
+            def maybe_checkpoint_session_summary(self, _session_id: str) -> str:
+                return "summary"
+
+        def _stale_event(**_kwargs):
+            raise RuntimeSessionTurnFenceError("stale")
+
+        queue = MemoryFollowupQueue(auto_start=False)
+        with self.assertRaises(RuntimeSessionTurnFenceError):
+            record_memory_turn(
+                agent_memory=_Memory(),
+                logger=logging.getLogger(__name__),
+                agent_id="main",
+                memory_capsule_strategy="dynamic_turn",
+                memory_capsule_cache={},
+                session_id="sess-stale",
+                run_id="run-stale",
+                request_id="req-stale",
+                channel="console",
+                target="local-user",
+                user_message="hello",
+                assistant_message="hi",
+                conversation_id="",
+                thread_id="",
+                attach_id="",
+                emit_memory_event=_stale_event,
+                outbound_metadata={},
+                followup_queue=queue,
+                defer_followup=True,
+                session_turn_fence_token=1,
+            )
+
+        self.assertEqual(queue.pending_count(), 0)
+
     def test_record_memory_turn_triggers_session_summary_checkpoint_when_available(
         self,
     ) -> None:
@@ -118,9 +159,13 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
                 return "summary-1"
 
         events: list[dict[str, object]] = []
+        followup_events: list[dict[str, object]] = []
 
         def _emit_memory_event(**kwargs):
             events.append(dict(kwargs))
+
+        def _emit_followup_event(**kwargs):
+            followup_events.append(dict(kwargs))
 
         memory = _DeferredMemory()
         metadata: dict[str, str] = {}
@@ -145,6 +190,7 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
             outbound_metadata=metadata,
             followup_queue=queue,
             defer_followup=True,
+            emit_memory_followup=_emit_followup_event,
         )
 
         self.assertEqual(memory.calls, [("record_turn", "sess-1")])
@@ -154,7 +200,7 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertEqual(queue.pending_count(session_id="sess-1"), 1)
         self.assertIn(
             "memory.followup.pending",
-            [str(event.get("event_type")) for event in events],
+            [str(event.get("event_type")) for event in followup_events],
         )
 
         queue.flush(session_id="sess-1")
@@ -169,6 +215,14 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         )
         self.assertEqual(metadata.get("memory_capsule_refreshed"), "true")
         self.assertIn(
+            "memory.followup.completed",
+            [str(event.get("event_type")) for event in followup_events],
+        )
+        self.assertEqual(
+            [str(event.get("event_type")) for event in followup_events],
+            ["memory.followup.pending", "memory.followup.completed"],
+        )
+        self.assertNotIn(
             "memory.followup.completed",
             [str(event.get("event_type")) for event in events],
         )
@@ -661,8 +715,8 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertIn("memory.context.built", event_types)
         self.assertIn("memory.retrieval.built", event_types)
         self.assertIn("memory.turn.recorded", event_types)
-        self.assertIn("memory.capsule.refresh_skipped", event_types)
-        self.assertIn("memory.capsule.refreshed", event_types)
+        self.assertNotIn("memory.capsule.refresh_skipped", event_types)
+        self.assertNotIn("memory.capsule.refreshed", event_types)
 
         record_events = [
             event for event in events if event.event_type == "memory.turn.recorded"
@@ -670,19 +724,6 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertGreaterEqual(len(record_events), 2)
         self.assertEqual(record_events[0].payload.get("changed"), "false")
         self.assertEqual(record_events[-1].payload.get("changed"), "true")
-
-        refresh_payload = [
-            event.payload
-            for event in events
-            if event.event_type == "memory.capsule.refreshed"
-        ][-1]
-        self.assertEqual(refresh_payload.get("reason"), "on_write")
-        self.assertEqual(refresh_payload.get("changed"), "true")
-        self.assertNotEqual(refresh_payload.get("after_fingerprint"), "")
-        self.assertNotEqual(
-            refresh_payload.get("before_fingerprint"),
-            refresh_payload.get("after_fingerprint"),
-        )
 
     def test_gateway_memory_envelope_metadata_is_emitted_when_caps_apply(self) -> None:
         # V2 uses char-based truncation (not count-based caps); create adapter with small budget

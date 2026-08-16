@@ -6,7 +6,6 @@ from sqlite3 import Error as SQLiteError
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Thread
 from typing import Any, Callable, List
 from uuid import uuid4
 
@@ -32,7 +31,17 @@ from openminion.modules.storage.runtime.pinned_context import (
     PinnedContextPolicy,
     render_pinned_context,
 )
-from openminion.modules.storage.runtime.session_store import MessageRecord, SessionStore
+from openminion.modules.context.summary.enrichment import (
+    defer_summary_task,
+    maybe_schedule_summary_enrichment,
+    summary_short_from_rolling_summary,
+)
+from openminion.modules.storage.runtime.session_store import (
+    MessageRecord,
+    RuntimeSessionTurnBusyError,
+    RuntimeSessionTurnFenceError,
+    SessionStore,
+)
 from openminion.modules.telemetry.events import catalog as telemetry_events
 from openminion.services.bootstrap.paths import SERVICES_SESSION_CONTEXT_SUBDIR
 
@@ -143,15 +152,16 @@ class SessionContextService:
         self._summary_engine = summary_engine or DEFAULT_SESSION_SUMMARY_ENGINE
         self._summary_enrichment_enabled = bool(summary_enrichment_enabled)
         self._summary_enricher = summary_enricher
-        self._summary_enrichment_defer = (
-            summary_enrichment_defer or self._default_defer_summary_task
-        )
+        self._summary_enrichment_defer = summary_enrichment_defer or defer_summary_task
         self._session_close_callbacks: list[Callable[[str], None]] = []
         if self._archive_enabled and self._archive_root is not None:
             self._archive_root.mkdir(parents=True, exist_ok=True)
 
     def register_close_callback(self, callback: Callable[[str], None]) -> None:
         self._session_close_callbacks.append(callback)
+
+    def configure_summary_enricher(self, enricher: Callable[[str], str]) -> None:
+        self._summary_enricher = enricher
 
     def ensure_session_context(self, *, session_id: str) -> object:
         return self._sessions.ensure_session_context(session_id=session_id)
@@ -257,7 +267,7 @@ class SessionContextService:
                     last_message = remaining[-1]
                     updated_context = self._sessions.update_session_context(
                         session_id=session_id,
-                        summary_short=_summary_short_from_rolling_summary(
+                        summary_short=summary_short_from_rolling_summary(
                             merged_summary
                         ),
                         rolling_summary=merged_summary,
@@ -292,8 +302,12 @@ class SessionContextService:
         *,
         session_id: str,
         force: bool = False,
+        session_turn_fence_token: int | None = None,
     ) -> SessionCompactionResult:
-        context = self._sessions.ensure_session_context(session_id=session_id)
+        context = self._sessions.ensure_session_context(
+            session_id=session_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
         total_messages = self._sessions.count_messages(session_id=session_id)
         to_compact, reason = self._messages_to_compact(
             session_id=session_id,
@@ -311,14 +325,6 @@ class SessionContextService:
                 reason=reason,
                 budget_source=budget_source,
             )
-        archive_ref = self._archive_compacted_messages(
-            session_id=session_id,
-            messages=to_compact,
-        )
-        self._ingest_compacted_messages(
-            session_id=session_id,
-            messages=to_compact,
-        )
         merged_summary = self._merged_compaction_summary(
             context=context,
             to_compact=to_compact,
@@ -329,6 +335,7 @@ class SessionContextService:
             context=context,
             to_compact=to_compact,
             merged_summary=merged_summary,
+            session_turn_fence_token=session_turn_fence_token,
         )
         if updated_context.version == context.version:
             return self._compaction_conflict_result(
@@ -336,13 +343,24 @@ class SessionContextService:
                 context_version=context.version,
                 updated_context=updated_context,
             )
-        self._maybe_schedule_summary_enrichment(
+        archive_ref = self._archive_compacted_messages(
+            session_id=session_id,
+            messages=to_compact,
+        )
+        self._ingest_compacted_messages(
+            session_id=session_id,
+            messages=to_compact,
+        )
+        maybe_schedule_summary_enrichment(
+            self,
             session_id=session_id,
             deterministic_summary=merged_summary,
+            busy_error=RuntimeSessionTurnBusyError,
         )
         self._record_compaction_archive_event(
             session_id,
             archive_ref=archive_ref,
+            session_turn_fence_token=session_turn_fence_token,
         )
         self._log_compaction_result(session_id=session_id, to_compact=to_compact)
         try:
@@ -356,6 +374,7 @@ class SessionContextService:
                     "keep_recent_messages": self._keep_recent_messages,
                     "max_tokens": self._token_budget,
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )
         except (OSError, SQLiteError, ValueError) as exc:
             self._logger.warning("session compaction telemetry write failed: %s", exc)
@@ -450,11 +469,12 @@ class SessionContextService:
         context: Any,
         to_compact: list[MessageRecord],
         merged_summary: str,
+        session_turn_fence_token: int | None = None,
     ) -> Any:
         last_message = to_compact[-1]
         return self._sessions.update_session_context(
             session_id=session_id,
-            summary_short=_summary_short_from_rolling_summary(merged_summary),
+            summary_short=summary_short_from_rolling_summary(merged_summary),
             rolling_summary=merged_summary,
             compacted_until_rowid=last_message.rowid,
             compacted_until_created_at=last_message.created_at,
@@ -462,6 +482,7 @@ class SessionContextService:
             compacted_message_count=context.compacted_message_count + len(to_compact),
             version=context.version + 1,
             expected_version=context.version,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     def _compaction_conflict_result(
@@ -491,6 +512,7 @@ class SessionContextService:
         session_id: str,
         *,
         archive_ref: SessionArchiveRef | None,
+        session_turn_fence_token: int | None = None,
     ) -> None:
         if archive_ref is None:
             return
@@ -499,7 +521,10 @@ class SessionContextService:
                 session_id=session_id,
                 event_type=telemetry_events.SESSION_COMPACTION_ARCHIVE,
                 payload=_archive_ref_to_payload(archive_ref),
+                session_turn_fence_token=session_turn_fence_token,
             )
+        except RuntimeSessionTurnFenceError:
+            raise
         except Exception as exc:
             self._logger.warning(
                 "session archive event write failed session_id=%s error=%s",
@@ -529,11 +554,15 @@ class SessionContextService:
         recent_limit: int,
         conversation_id: str | None = None,
         thread_id: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> List[Message]:
         conversation_value = str(conversation_id or "").strip()
         thread_value = str(thread_id or "").strip()
         context = (
-            self._sessions.ensure_session_context(session_id=session_id)
+            self._sessions.ensure_session_context(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
+            )
             if not conversation_value
             else None
         )
@@ -598,7 +627,10 @@ class SessionContextService:
                 session_id=session_id,
                 event_type=telemetry_events.SESSION_CONTEXT_BUDGET,
                 payload=budgeted.telemetry.to_dict(),
+                session_turn_fence_token=session_turn_fence_token,
             )
+        except RuntimeSessionTurnFenceError:
+            raise
         except Exception as exc:
             self._logger.warning("session budget telemetry write failed: %s", exc)
 
@@ -610,8 +642,22 @@ class SessionContextService:
 
         return budgeted.messages
 
-    async def acompact_session(self, *, session_id: str) -> SessionCompactionResult:
-        return await asyncio.to_thread(self.compact_session, session_id=session_id)
+    async def acompact_session(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None = None,
+    ) -> SessionCompactionResult:
+        fence_kwargs = (
+            {"session_turn_fence_token": session_turn_fence_token}
+            if session_turn_fence_token is not None
+            else {}
+        )
+        return await asyncio.to_thread(
+            self.compact_session,
+            session_id=session_id,
+            **fence_kwargs,
+        )
 
     async def abuild_history(
         self,
@@ -622,7 +668,13 @@ class SessionContextService:
         recent_limit: int,
         conversation_id: str | None = None,
         thread_id: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> List[Message]:
+        fence_kwargs = (
+            {"session_turn_fence_token": session_turn_fence_token}
+            if session_turn_fence_token is not None
+            else {}
+        )
         return await asyncio.to_thread(
             self.build_history,
             session_id=session_id,
@@ -631,6 +683,7 @@ class SessionContextService:
             recent_limit=recent_limit,
             conversation_id=conversation_id,
             thread_id=thread_id,
+            **fence_kwargs,
         )
 
     def list_pins(self, *, session_id: str) -> list[PinnedContextEntry]:
@@ -795,73 +848,6 @@ def _ingest_compacted_messages(
             i += 1
 
 
-def _maybe_schedule_summary_enrichment(
-    self, *, session_id: str, deterministic_summary: str
-) -> None:
-    if not self._summary_enrichment_enabled:
-        return
-    if self._summary_enricher is None:
-        return
-    summary_enricher = self._summary_enricher
-    base_summary = str(deterministic_summary or "").strip()
-    if not base_summary:
-        return
-
-    def _task() -> None:
-        try:
-            enriched = str(summary_enricher(base_summary) or "").strip()
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning(
-                "session summary enrichment failed session_id=%s error=%s",
-                session_id,
-                exc,
-            )
-            return
-        if not enriched or enriched == base_summary:
-            return
-        safe_summary = enriched[-self._summary_max_chars :]
-        try:
-            context = self._sessions.ensure_session_context(session_id=session_id)
-            if context.rolling_summary.strip() != base_summary:
-                return
-            self._sessions.update_session_context(
-                session_id=session_id,
-                summary_short=_summary_short_from_rolling_summary(safe_summary),
-                rolling_summary=safe_summary,
-                compacted_until_rowid=context.compacted_until_rowid,
-                compacted_until_created_at=context.compacted_until_created_at,
-                compacted_until_message_id=context.compacted_until_message_id,
-                compacted_message_count=context.compacted_message_count,
-                version=context.version + 1,
-                expected_version=context.version,
-            )
-            self._sessions.append_event(
-                session_id=session_id,
-                event_type="session.summary.enriched",
-                payload={"mode": "deferred", "chars": len(safe_summary)},
-            )
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning(
-                "session summary enrichment apply failed session_id=%s error=%s",
-                session_id,
-                exc,
-            )
-
-    try:
-        self._summary_enrichment_defer(_task)
-    except Exception as exc:  # noqa: BLE001
-        self._logger.warning(
-            "session summary enrichment scheduling failed session_id=%s error=%s",
-            session_id,
-            exc,
-        )
-
-
-def _default_defer_summary_task(task: Callable[[], None]) -> None:
-    thread = Thread(target=task, daemon=True)
-    thread.start()
-
-
 def _archive_compacted_messages(
     self,
     *,
@@ -915,12 +901,6 @@ def _archive_compacted_messages(
 
 
 SessionContextService._ingest_compacted_messages = _ingest_compacted_messages
-SessionContextService._maybe_schedule_summary_enrichment = (
-    _maybe_schedule_summary_enrichment
-)
-SessionContextService._default_defer_summary_task = staticmethod(
-    _default_defer_summary_task
-)
 SessionContextService._archive_compacted_messages = _archive_compacted_messages
 
 
@@ -973,16 +953,6 @@ def _archive_ref_to_payload(archive_ref: SessionArchiveRef) -> dict[str, Any]:
         "first_created_at": archive_ref.first_created_at,
         "last_created_at": archive_ref.last_created_at,
     }
-
-
-def _summary_short_from_rolling_summary(rolling_summary: str) -> str:
-    summary = str(rolling_summary or "").strip()
-    if not summary:
-        return ""
-    first_line = summary.splitlines()[0].strip()
-    if not first_line:
-        return ""
-    return first_line[:240]
 
 
 def _safe_int(value: Any, *, default: int) -> int:

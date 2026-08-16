@@ -38,9 +38,9 @@ profiles:
       blocked_patterns:
         - rm -rf /
       allowed_tools:
-        - run_command
-        - read_file
-        - write_file
-        - web_search
-        - tavily.web.search
-        - weather.openmeteo.current
+        - exec.run
+        - file.read
+        - file.write
+        - web.search
+        - web.fetch
+        - weather

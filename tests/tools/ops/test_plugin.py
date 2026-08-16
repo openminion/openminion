@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -8,11 +9,12 @@ from pydantic import ValidationError
 from openminion.modules.tool.framework import derive_manifest, derive_tool_specs
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.ops import OPS_FAMILY, REGISTRAR
-from openminion.tools.ops.args import ProfileArgs
+from openminion.tools.ops.args import PortOwnerArgs, ProcessArgs, ProfileArgs
 from openminion.tools.ops.interfaces import (
     ALL_OPS_TOOLS,
     TOOL_OPS_HOST_SNAPSHOT,
     TOOL_OPS_JOB_CANCEL,
+    TOOL_OPS_PROCESS_INSPECT,
 )
 
 
@@ -72,6 +74,42 @@ def test_ops_plugin_records_concrete_tool_id_in_evidence() -> None:
     assert result["ok"] is True
     assert result["data"]["session_id"] == "ops-plugin-test"
     assert result["data"]["tool_id"] == TOOL_OPS_HOST_SNAPSHOT
+
+
+def test_process_inspect_records_typed_local_evidence() -> None:
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    ctx = SimpleNamespace(extras={"session_id": "process-plugin-test"})
+
+    result = registry.get(TOOL_OPS_PROCESS_INSPECT).handler(
+        {"target_id": "local", "pid": os.getpid()}, ctx
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["profile_id"] == "process.inspect"
+    assert result["data"]["tool_id"] == TOOL_OPS_PROCESS_INSPECT
+    assert result["data"]["redacted_parameters"]["pid"] == str(os.getpid())
+
+
+@pytest.mark.parametrize(
+    ("args_model", "payload"),
+    [
+        (ProcessArgs, {"target_id": "local", "pid": 0}),
+        (
+            PortOwnerArgs,
+            {"target_id": "local", "port": 8080, "protocol": "sctp"},
+        ),
+        (
+            PortOwnerArgs,
+            {"target_id": "local", "port": 8080, "command": "lsof"},
+        ),
+    ],
+)
+def test_process_and_port_args_refuse_invalid_or_free_form_input(
+    args_model, payload: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        args_model.model_validate(payload)
 
 
 @pytest.mark.parametrize("field", ["command", "argv", "executable", "shell"])

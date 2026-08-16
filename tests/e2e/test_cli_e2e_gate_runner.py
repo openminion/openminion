@@ -57,3 +57,12 @@ def test_run_returns_124_when_subprocess_times_out(monkeypatch, capsys) -> None:
 
     assert result == 124
     assert "timed out after 3s" in capsys.readouterr().err
+
+
+def test_local_gate_includes_invocation_lifecycle_matrix() -> None:
+    runner = _load_runner()
+
+    assert (
+        "tests/e2e/telemetry/test_invocation_lifecycle_consistency.py"
+        in runner.LOCAL_TESTS
+    )

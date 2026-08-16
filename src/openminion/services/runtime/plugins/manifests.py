@@ -34,6 +34,7 @@ class PluginManifest:
     provenance_publisher: str
     provenance_checksum: str
     provenance_verified: bool
+    dependencies: tuple[str, ...] = ()
 
 
 def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
@@ -71,6 +72,19 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
         normalized = capability.strip()
         if normalized:
             requested_capabilities.append(normalized)
+
+    dependencies_raw = payload.get("dependencies", [])
+    if not isinstance(dependencies_raw, list):
+        errors.append("dependencies must be an array of strings.")
+        dependencies_raw = []
+    dependencies: list[str] = []
+    for dependency in dependencies_raw:
+        if not isinstance(dependency, str):
+            errors.append("dependencies must contain only strings.")
+            continue
+        normalized = dependency.strip()
+        if normalized:
+            dependencies.append(normalized)
 
     provenance_payload = payload.get("provenance")
     if provenance_payload is None:
@@ -111,6 +125,7 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> PluginManifest:
         provenance_publisher=provenance_publisher,
         provenance_checksum=provenance_checksum,
         provenance_verified=provenance_verified,
+        dependencies=tuple(sorted(set(dependencies))),
     )
 
 

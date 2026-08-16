@@ -4,7 +4,7 @@ name: Research Brief (Brave)
 version: 0.0.1
 description: Produce a concise, cited brief using Brave Search.
 tags: [research, citations]
-tools: [web.search, file]
+tools: [web.search, file.write]
 scopes_required: ["tool.execute", "tool.net.connect"]
 risk: medium
 when_to_use:
@@ -24,7 +24,7 @@ outputs:
 # Skill Card
 - **Goal:** Produce a concise brief with citations and recency notes.
 - **Triggers:** Research tasks requiring sources.
-- **Tools:** web.search, file
+- **Tools:** web.search, file.write
 - **Hard rules:** Include at least 3 sources and publish dates when possible.
 
 # Procedure

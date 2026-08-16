@@ -56,6 +56,9 @@ from openminion.modules.controlplane.channels.telegram.models import (
     TelegramInboundEnvelope,
     TelegramReplyTarget,
 )
+from openminion.modules.controlplane.channels.telegram.pairing_text import (
+    format_pairing_status,
+)
 from openminion.modules.controlplane.channels.telegram.normalization import (
     extract_envelope,
     to_control_event,
@@ -85,6 +88,7 @@ from openminion.modules.controlplane.channels.telegram.runtime.helpers import (
     _resolve_controlplane_clarify_store,
     _resolve_controlplane_pairing_store,
     _resolve_reply_target,
+    _route_pre_access_pair_command,
     _send_runner_online_notice as _runtime_send_runner_online_notice,
     _validate_component_contracts as _runtime_validate_component_contracts,
 )
@@ -424,6 +428,13 @@ class TelegramWebhookRunner:
                     )
                 return None
 
+        normalized_text = normalize_command_aliases(
+            envelope.text,
+            bot_username=self._bot_username,
+        )
+        if _route_pre_access_pair_command(self, envelope, normalized_text):
+            return None
+
         access = self._access_policy.evaluate(
             envelope,
             bot_username=self._bot_username,
@@ -464,10 +475,6 @@ class TelegramWebhookRunner:
             self._answer_callback_if_needed(envelope)
             return None
 
-        normalized_text = normalize_command_aliases(
-            envelope.text,
-            bot_username=self._bot_username,
-        )
         if self._handle_local_command(envelope, normalized_text):
             self._audit_event(
                 "cp.route.local_command",
@@ -607,6 +614,26 @@ class TelegramWebhookRunner:
         if not stripped.startswith("/"):
             return False
         cmd = stripped.split()[0].lower()
+
+        if stripped.casefold() == "/pair":
+            pairing_enabled = (
+                self._pairing is not None
+                and self._config.pairing.enabled
+                and self._config.pairing.mode != PAIRING_MODE_OFF
+            )
+            if not pairing_enabled:
+                self._send_local_text(envelope, "Pairing is disabled.")
+                return True
+            self._send_local_text(
+                envelope,
+                format_pairing_status(
+                    paired=self._has_active_principal_binding(envelope),
+                    chat_id=envelope.chat_id,
+                    user_id=envelope.from_user.id,
+                    topic_id=envelope.topic_id,
+                ),
+            )
+            return True
 
         if cmd == "/exit":
             self._send_local_text(

@@ -29,6 +29,21 @@ The default terminal leaves mouse-wheel input with the terminal for native
 scrollback. It captures the mouse only while a clickable completion menu is
 open, then returns control to the terminal when the menu closes.
 
+## Read-only operations overview
+
+The optional Textual renderer provides a compact local overview:
+
+```bash
+openminion --rich
+```
+
+Then enter `/overview`. The overlay reads the active agent/model,
+workspace/session, task summary, recent tool activity, telemetry diagnostics,
+and host metrics from their existing owners. It performs no write action and
+closes with Escape. The command is intentionally absent from the default
+terminal renderer; use `/status`, `/tasks`, `/telemetry`, and the bounded
+operator commands there.
+
 ## Interactive activity animation
 
 Interactive activity animation is presentation chrome, not runtime semantics.
@@ -70,6 +85,22 @@ braillewave while analyzing, assemble while planning, dna while replanning,
 gearspin while executing, orbitnodes while reviewing, scanline while verifying,
 fillsweep while evaluating completion, and cascade while saving context. An
 explicitly selected or saved animation remains fixed instead.
+
+## Local plugins
+
+Preview a local plugin before installing it, then check its runtime health:
+
+```bash
+openminion plugins preview ./my-plugin
+openminion plugins install ./my-plugin --root ./src/openminion/extensions/custom
+openminion plugins health example.plugin --root ./src/openminion/extensions/custom
+```
+
+`preview` reports declared dependencies, permissions, trust tier, and
+provenance. `rollback` undoes the last install of that plugin, while `uninstall`
+removes it and disables its manifest ID in the active config. Use the same
+`--root` for install, health, rollback, and uninstall. The default is the first
+path in `OPENMINION_PLUGIN_PATHS`, or the current local-extension root.
 
 ## Dashboard replacements
 

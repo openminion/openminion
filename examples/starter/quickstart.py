@@ -1,4 +1,4 @@
-"""Run one APIRuntime turn from the command line."""
+"""Run one APIRuntime turn with the configured agent."""
 
 from __future__ import annotations
 
@@ -14,21 +14,11 @@ def main() -> int:
 
     runtime = APIRuntime.from_config_path(None)
     try:
-        result = runtime.run_turn(payload={"message": prompt})
-        reply = result
-        if isinstance(result, dict):
-            reply = (
-                result.get("body")
-                or result.get("text")
-                or result.get("reply")
-                or result
-            )
-        print(f"  reply: {reply}")
+        result = runtime.run_turn(payload={"message": prompt, "deliver": False})
+        print(f"  reply: {result['body']}")
         return 0
     finally:
-        close = getattr(runtime, "close", None)
-        if callable(close):
-            close()
+        runtime.close()
 
 
 if __name__ == "__main__":

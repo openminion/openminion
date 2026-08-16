@@ -23,4 +23,26 @@ def extract_start_token(text: str, *, bot_username: str | None) -> str | None:
     return parts[1].split()[0]
 
 
-__all__ = ["extract_start_token"]
+def format_pairing_status(
+    *, paired: bool, chat_id: int, user_id: int, topic_id: int | None
+) -> str:
+    if not paired:
+        return (
+            "This chat is not paired. Ask the OpenMinion owner to run:\n"
+            "openminion channel telegram pair --config <profile.json> "
+            f"--user-id {user_id} --chat-id {chat_id}\n"
+            "Then send the /start link they provide."
+        )
+    session_scope = str(chat_id)
+    if topic_id is not None:
+        session_scope = f"{session_scope}:{topic_id}"
+    return (
+        "Paired ✅\n"
+        f"chat_id={chat_id}\n"
+        f"user_id={user_id}\n"
+        f"session_scope={session_scope}\n"
+        "To disconnect this chat, send /pair revoke."
+    )
+
+
+__all__ = ["extract_start_token", "format_pairing_status"]

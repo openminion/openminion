@@ -15,6 +15,9 @@ from openminion.modules.storage.migrations import (
     import_omx,
 )
 from openminion.modules.storage.migrations.module_ids import get_module_application_id
+from openminion.modules.session.storage.migrations import (
+    list_migrations as list_session_migrations,
+)
 from openminion.modules.secret.storage.store import SQLiteSecretStore
 
 pytestmark = pytest.mark.postgres
@@ -430,8 +433,9 @@ def test_postgres_migrate_session_bootstraps_schema() -> None:
 
         assert report.success is True
         assert report.backup.mode == "transactional_ddl"
-        assert report.after.alembic_revision == "0001_baseline"
-        assert report.after.om_meta["schema_head"] == "0001_baseline"
+        expected_revision = list_session_migrations()[-1]
+        assert report.after.alembic_revision == expected_revision
+        assert report.after.om_meta["schema_head"] == expected_revision
         with engine.connect() as conn:
             version = conn.execute(
                 sqlalchemy.text("SELECT version_num FROM alembic_version")
@@ -446,7 +450,7 @@ def test_postgres_migrate_session_bootstraps_schema() -> None:
                     """
                 )
             ).scalar()
-        assert version == "0001_baseline"
+        assert version == expected_revision
         assert int(sessions_table or 0) == 1
     finally:
         try:

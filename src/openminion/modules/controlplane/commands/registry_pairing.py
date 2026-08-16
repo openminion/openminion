@@ -28,9 +28,9 @@ class CommandRegistryPairingMixin:
             ok=True,
             text=(
                 "Pairing active for this chat.\n"
-                f"  pairing_id: {pairing.get('pairing_id', 'unknown')}\n"
                 f"  scopes: {scope_text}\n"
-                "  access: broad non-admin controlplane access until ACL exists"
+                "  access: broad non-admin controlplane access until ACL exists\n"
+                "To disconnect this chat, send /pair revoke."
             ),
             data={"paired": True, "pairing": pairing},
         )

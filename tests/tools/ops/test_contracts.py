@@ -122,6 +122,73 @@ def test_platform_profiles_require_structured_parameters() -> None:
         )
 
 
+def test_process_and_port_profiles_build_fixed_platform_argv() -> None:
+    process = OperationRequest(
+        operation_id="process-1",
+        target_id="local",
+        profile_id="process.inspect",
+        parameters={"pid": 42},
+    )
+    port = OperationRequest(
+        operation_id="port-1",
+        target_id="local",
+        profile_id="network.port_owner",
+        parameters={"port": 8080, "protocol": "tcp"},
+    )
+
+    assert build_argv(process, target_platform="linux")[:3] == ("ps", "-p", "42")
+    assert build_argv(port, target_platform="darwin") == (
+        "lsof",
+        "-nP",
+        "-iTCP:8080",
+        "-sTCP:LISTEN",
+    )
+    assert build_argv(port, target_platform="linux") == (
+        "ss",
+        "-ltnp",
+        "sport",
+        "=",
+        ":8080",
+    )
+    udp = port.model_copy(update={"parameters": {"port": 53, "protocol": "udp"}})
+    assert build_argv(udp, target_platform="darwin") == (
+        "lsof",
+        "-nP",
+        "-iUDP:53",
+    )
+    assert build_argv(udp, target_platform="linux")[1] == "-lunp"
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "parameters", "message"),
+    [
+        ("process.inspect", {"pid": 0}, "out of range"),
+        ("process.inspect", {"pid": "not-a-pid"}, "integer parameter"),
+        (
+            "network.port_owner",
+            {"port": 65_536, "protocol": "tcp"},
+            "out of range",
+        ),
+        (
+            "network.port_owner",
+            {"port": 80, "protocol": "sctp"},
+            "tcp or udp",
+        ),
+    ],
+)
+def test_process_and_port_profiles_reject_invalid_parameters(
+    profile_id: str, parameters: dict[str, str | int], message: str
+) -> None:
+    request = OperationRequest(
+        operation_id="invalid-1",
+        target_id="local",
+        profile_id=profile_id,
+        parameters=parameters,
+    )
+    with pytest.raises(ValueError, match=message):
+        build_argv(request, target_platform="linux")
+
+
 def test_evidence_requires_observable_output_and_redacts_exact_values() -> None:
     request = OperationRequest(
         operation_id="op-1",

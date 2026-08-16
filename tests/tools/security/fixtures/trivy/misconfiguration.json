@@ -1,0 +1,26 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "iac",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "main.tf",
+      "Class": "config",
+      "Type": "terraform",
+      "Misconfigurations": [
+        {
+          "ID": "AVD-SYNTHETIC-0001",
+          "Title": "Synthetic public bucket",
+          "Message": "Bucket is public.",
+          "Severity": "CRITICAL",
+          "CauseMetadata": {
+            "Resource": "aws_s3_bucket.public",
+            "StartLine": 1,
+            "EndLine": 4
+          },
+          "References": []
+        }
+      ]
+    }
+  ]
+}

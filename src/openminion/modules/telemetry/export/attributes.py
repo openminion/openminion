@@ -52,6 +52,14 @@ def attributes_for_event(
             flattened[f"openminion.{field_name}"] = str(value)
     if event.mode:
         flattened["openminion.mode"] = str(event.mode)
+    status = str(event.data.get("status") or "").strip()
+    if status:
+        flattened["openminion.status"] = status
+    error = event.data.get("error")
+    if isinstance(error, dict):
+        error_type = error.get("type") or error.get("code") or error.get("category")
+        if error_type:
+            flattened["error.type"] = str(error_type)
     _flatten_payload(
         event.data,
         prefix="openminion.payload",

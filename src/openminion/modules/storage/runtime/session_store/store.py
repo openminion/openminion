@@ -42,6 +42,7 @@ class SessionStore:
             list_participants=lambda session_id: self._participants.list_participants(
                 session_id
             ),
+            assert_session_turn_fence=self._assert_session_turn_fence_for_child,
         )
         self._messages = RuntimeSessionStoreMessages(
             self._backend,
@@ -77,6 +78,7 @@ class SessionStore:
         target: str,
         session_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        resume_existing: bool = True,
     ) -> SessionRecord:
         resolved = self._sessions.resolve_session(
             agent_id=agent_id,
@@ -86,7 +88,9 @@ class SessionStore:
             metadata=metadata,
         )
         if session_id:
-            return self._lifecycle.resume_session(session_id=resolved.id)
+            if resume_existing:
+                return self._lifecycle.resume_session(session_id=resolved.id)
+            return resolved
         if resolved.status != "active":
             raise ValueError(
                 f"Session {resolved.id!r} is {resolved.status}; "
@@ -361,6 +365,24 @@ class SessionStore:
             session_turn_fence_token=session_turn_fence_token,
         )
 
+    def event_high_water(self, *, session_id: str) -> int:
+        return self._lifecycle.event_high_water(session_id=session_id)
+
+    def list_events_after_id(
+        self,
+        *,
+        session_id: str,
+        after_id: int,
+        high_water_id: int,
+        limit: int = 1000,
+    ) -> list[EventRecord]:
+        return self._lifecycle.list_events_after_id(
+            session_id=session_id,
+            after_id=after_id,
+            high_water_id=high_water_id,
+            limit=limit,
+        )
+
     def list_events(
         self,
         *,
@@ -435,10 +457,12 @@ class SessionStore:
         *,
         session_id: str,
         patch: Mapping[str, Any],
+        session_turn_fence_token: int | None = None,
     ) -> SessionRecord:
         return self._sessions.update_session_metadata(
             session_id=session_id,
             patch=patch,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     def close_session(
@@ -457,10 +481,12 @@ class SessionStore:
         *,
         session_id: str,
         reason: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> SessionRecord:
         return self._lifecycle.resume_session(
             session_id=session_id,
             reason=reason,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     def mark_stale_sessions(self, timeout_seconds: int = 24 * 60 * 60) -> int:
@@ -534,8 +560,16 @@ class SessionStore:
             policy=policy,
         )
 
-    def ensure_session_context(self, *, session_id: str) -> SessionContextRecord:
-        return self._context.ensure_session_context(session_id=session_id)
+    def ensure_session_context(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None = None,
+    ) -> SessionContextRecord:
+        return self._context.ensure_session_context(
+            session_id=session_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
 
     def update_session_context(
         self,

@@ -81,7 +81,6 @@ def test_tool_package_root_no_longer_exports_v1_surface() -> None:
         "ResourceSelectors",
         "RuntimeMediationV1",
         "ToolContextV1",
-        "ToolExecutionResult",
         "ToolExecutionWrapperV1",
         "ToolImplV1",
         "ToolInputValidationError",

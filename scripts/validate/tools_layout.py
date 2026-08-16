@@ -53,6 +53,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "plan",
     "reaction",
     "search",
+    "security",
     "skill",
     "task",
     "time",

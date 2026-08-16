@@ -4,7 +4,7 @@ name: CLI Chat Smoke Test - Debugging
 version: 0.0.1
 description: Simple debugging skill for CLI chat smoke testing with systematic error triage.
 tags: [debugging, triage, smoke-test, cli]
-tools: [file, run_command]
+tools: [file.read, exec.run]
 scopes_required: ["tool.execute"]
 risk: low
 when_to_use:
@@ -24,7 +24,7 @@ outputs:
 # Skill Card
 - **Goal:** Systematically debug and triage errors for CLI chat smoke testing.
 - **Triggers:** Error triage, debugging requests, smoke test scenarios.
-- **Tools:** file, run_command
+- **Tools:** file.read, exec.run
 - **Hard rules:** Follow 5-step checklist; document each finding; end with recommendation.
 
 # Procedure

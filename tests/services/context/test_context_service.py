@@ -17,6 +17,9 @@ from openminion.modules.brain.constants import (
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.pinned_context import PinnedContextEntry
 from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.storage.runtime.session_store.turn_leases import (
+    RuntimeSessionTurnFenceError,
+)
 from openminion.modules.storage.runtime.sqlite import connect_database
 
 
@@ -653,6 +656,129 @@ class SessionContextServiceTests(unittest.TestCase):
         )
         self.assertEqual(len(enriched_events), 1)
         self.assertEqual(enriched_events[0].payload.get("mode"), "deferred")
+        next_lease = self.store.acquire_session_turn_lease(
+            session.id,
+            owner="after-enrichment",
+            request_id="after-enrichment",
+        )
+        self.assertTrue(
+            self.store.release_session_turn_lease(
+                session.id,
+                owner=next_lease.owner,
+                fence_token=next_lease.fence_token,
+            )
+        )
+
+    def test_deferred_summary_enrichment_busy_skip_keeps_active_lease(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="summary-busy"
+        )
+        for role, body in (
+            ("inbound", "u1"),
+            ("outbound", "a1"),
+            ("inbound", "u2"),
+            ("outbound", "a2"),
+        ):
+            self.store.append_message(session_id=session.id, role=role, body=body)
+        active = self.store.acquire_session_turn_lease(
+            session.id,
+            owner="foreground",
+            request_id="foreground",
+        )
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=1,
+            summary_enrichment_enabled=True,
+            summary_enricher=lambda summary: summary + "\n- enriched",
+            summary_enrichment_defer=lambda task: task(),
+        )
+
+        service.compact_session(session_id=session.id)
+
+        context = self.store.get_session_context(session_id=session.id)
+        assert context is not None
+        self.assertNotIn("enriched", context.rolling_summary)
+        self.assertTrue(
+            self.store.renew_session_turn_lease(
+                session.id,
+                owner=active.owner,
+                fence_token=active.fence_token,
+            )
+        )
+
+    def test_deferred_summary_enrichment_releases_lease_after_write_failure(
+        self,
+    ) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="summary-write-failure"
+        )
+        for role, body in (
+            ("inbound", "u1"),
+            ("outbound", "a1"),
+            ("inbound", "u2"),
+            ("outbound", "a2"),
+        ):
+            self.store.append_message(session_id=session.id, role=role, body=body)
+        deferred: list[object] = []
+        service = SessionContextService(
+            self.store,
+            keep_recent_messages=1,
+            summary_enrichment_enabled=True,
+            summary_enricher=lambda summary: summary + "\n- enriched",
+            summary_enrichment_defer=deferred.append,
+        )
+        service.compact_session(session_id=session.id)
+        self.assertEqual(len(deferred), 1)
+
+        with patch.object(
+            self.store,
+            "update_session_context",
+            side_effect=RuntimeError("write failed"),
+        ):
+            deferred[0]()
+
+        next_lease = self.store.acquire_session_turn_lease(
+            session.id,
+            owner="after-failure",
+            request_id="after-failure",
+        )
+        self.assertGreater(next_lease.fence_token, 0)
+
+    def test_compaction_rejects_stale_turn_fence(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="stale-compaction"
+        )
+        for role, body in (
+            ("inbound", "u1"),
+            ("outbound", "a1"),
+            ("inbound", "u2"),
+            ("outbound", "a2"),
+        ):
+            self.store.append_message(session_id=session.id, role=role, body=body)
+        stale = self.store.acquire_session_turn_lease(
+            session.id,
+            owner="stale",
+            request_id="stale",
+        )
+        self.store.release_session_turn_lease(
+            session.id,
+            owner=stale.owner,
+            fence_token=stale.fence_token,
+        )
+        self.store.acquire_session_turn_lease(
+            session.id,
+            owner="current",
+            request_id="current",
+        )
+        service = SessionContextService(self.store, keep_recent_messages=1)
+
+        with self.assertRaises(RuntimeSessionTurnFenceError):
+            service.compact_session(
+                session_id=session.id,
+                session_turn_fence_token=stale.fence_token,
+            )
+
+        self.assertIsNone(self.store.get_session_context(session_id=session.id))
 
     def test_summary_checkpoint_excludes_policy_confirmation_projection(self) -> None:
         session = self.store.resolve_session(

@@ -19,7 +19,12 @@ class _Runtime:
         self.api_runtime = SimpleNamespace(data_root=data_root)
 
 
-def _record_invocation(data_root: Path, invocation_id: str) -> None:
+def _record_invocation(
+    data_root: Path,
+    invocation_id: str,
+    *,
+    terminal_event: str = "agent.invocation.failed",
+) -> None:
     service = TelemetryService(data_root / "telemetry" / "telemetry.db")
 
     async def record() -> None:
@@ -35,16 +40,20 @@ def _record_invocation(data_root: Path, invocation_id: str) -> None:
                 data={},
             )
         )
+        status = terminal_event.rsplit(".", maxsplit=1)[-1]
+        terminal_data = {"status": status}
+        if status == "failed":
+            terminal_data["error"] = {"type": "TEST_FAILURE"}
         await service.record_event(
             TelemetryEvent(
                 session_id="session-1",
                 turn_id="turn-1",
                 invocation_id=invocation_id,
                 agent_id="agent-1",
-                event_type="agent.invocation.failed",
+                event_type=terminal_event,
                 timestamp=2.0,
                 event_id="failed-1",
-                data={"status": "failed", "error": {"type": "TEST_FAILURE"}},
+                data=terminal_data,
             )
         )
         await service.close()
@@ -80,6 +89,21 @@ def test_terminal_telemetry_supports_opaque_id_and_failed_selector(
         "/telemetry invocation invocation-1", runtime, tmp_path
     )
     assert "status: failed" in _run_slash("/telemetry failed", runtime, tmp_path)
+
+
+def test_terminal_telemetry_labels_latest_completed_invocation(
+    tmp_path: Path,
+) -> None:
+    _record_invocation(
+        tmp_path,
+        "invocation-completed",
+        terminal_event="agent.invocation.completed",
+    )
+    output = _run_slash("/telemetry", _Runtime(tmp_path), tmp_path)
+
+    assert output.startswith("latest invocation")
+    assert "latest failed invocation" not in output
+    assert "telemetryctl debug bundle invocation-completed" in output
 
 
 def test_terminal_telemetry_usage_and_missing_store_do_not_fall_through(

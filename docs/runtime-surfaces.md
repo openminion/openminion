@@ -135,16 +135,18 @@ The package-owned `examples/` tree is part of the public teaching surface:
 
 1. `examples/starter/provider.py`
 2. `examples/starter/channel.py`
-3. `examples/starter/plugin.py`
+3. `examples/starter/hello.py`
 4. `examples/starter/tool.py`
-5. `examples/starter/plugin.json`
+5. `examples/starter/hello.manifest.json`
 6. `examples/starter/quickstart.py`
 7. `examples/agents/hello/`
 8. `examples/skills/hello/`
 9. `examples/modules/sample/`
 
-These examples are meant to show direct usage patterns, not internal framework
-theater.
+The root `openminion` and `openminion.api` imports used by these examples are
+public package surfaces. Extension examples mirror the current scaffold output;
+their narrower deep imports are maintained teaching contracts for the pre-1.0
+line, not stability promises for the rest of their package trees.
 
 ## Not blanket public
 

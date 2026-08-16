@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from pydantic import BaseModel
 
 from openminion.modules.tool.schema_service import ToolSchemaService
+from openminion.modules.tool.exposure import ToolExposureProfile, ToolExposureService
 
 
 def test_build_prompt_tool_schemas_preserves_registry_order_without_query_ranking() -> (
@@ -125,6 +126,40 @@ def test_collect_execution_tool_schemas_from_model_provider_specs() -> None:
     assert schemas[0]["name"] == "web.search"
     assert schemas[0]["tool_lane"] == "execution"
     assert schemas[0]["dispatchable"] is True
+
+
+def test_collect_execution_tool_schemas_uses_session_exposure() -> None:
+    service = ToolExposureService()
+    service.register_profiles(
+        (
+            ToolExposureProfile(
+                profile_id="security_readonly",
+                title="Security",
+                summary="Read-only security scanning",
+                tool_names=frozenset({"security.scan_code"}),
+            ),
+        )
+    )
+    service.activate("security_readonly", session_id="brain-session")
+    registry = SimpleNamespace(
+        model_provider_specs=lambda: [
+            SimpleNamespace(
+                name="security.scan_code",
+                description="Scan code",
+                parameters={"type": "object", "properties": {}},
+            )
+        ],
+        exposure_service=service,
+    )
+
+    hidden = ToolSchemaService().collect_execution_tool_schemas(registry=registry)
+    exposed = ToolSchemaService().collect_execution_tool_schemas(
+        registry=registry,
+        metadata={"session_id": "brain-session"},
+    )
+
+    assert hidden == []
+    assert [schema["name"] for schema in exposed] == ["security.scan_code"]
 
 
 def test_tool_stub_surfaces_optional_fields_when_no_required_args_exist() -> None:

@@ -18,9 +18,30 @@ from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 class _FakeRuntime:
     def __init__(self, pairs: list[tuple[str, bool]] | None = None) -> None:
         self._pairs = pairs or []
+        self.active = False
 
     def list_tools(self) -> list[tuple[str, bool]]:
         return list(self._pairs)
+
+    def tool_exposure_status(self) -> dict[str, Any]:
+        return {
+            "profiles": [
+                {
+                    "profile_id": "security_readonly",
+                    "tier": "read",
+                    "active": self.active,
+                }
+            ]
+        }
+
+    def activate_tool_profile(self, profile_id: str, **kwargs: Any) -> dict[str, str]:
+        assert kwargs["approved"] is True
+        self.active = True
+        return {"profile_id": profile_id, "audit_id": "audit-1"}
+
+    def deactivate_tool_profile(self, profile_id: str, **kwargs: Any) -> bool:
+        self.active = False
+        return True
 
 
 class _StubOverlay:
@@ -33,10 +54,10 @@ def _make_console() -> tuple[Console, io.StringIO]:
     return console, buf
 
 
-async def _dispatch(runtime: Any) -> str:
+async def _dispatch(runtime: Any, text: str = "/tools") -> str:
     console, buf = _make_console()
     await _handle_slash(
-        "/tools",
+        text,
         runtime=runtime,
         console=console,
         transcript=TerminalTranscript(console),
@@ -94,6 +115,17 @@ def test_slash_tools_dispatch_renders_table() -> None:
     runtime = _FakeRuntime(pairs=[("Edit", True)])
     out = asyncio.run(_dispatch(runtime))
     assert "Edit" in out
+
+
+def test_slash_tools_dispatches_exposure_commands() -> None:
+    runtime = _FakeRuntime()
+    status = asyncio.run(_dispatch(runtime, "/tools status"))
+    activated = asyncio.run(
+        _dispatch(runtime, "/tools activate security_readonly approved=yes")
+    )
+
+    assert "hidden  security_readonly  (read)" in status
+    assert "Activated: security_readonly (audit-1)" in activated
 
 
 def test_slash_tools_does_NOT_fall_through() -> None:

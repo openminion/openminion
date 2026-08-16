@@ -1399,6 +1399,20 @@ class _FakeAgentService:
         )
 
 
+class _FakeGateway:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def run_once(self, **kwargs):  # noqa: ANN003
+        self.calls.append(dict(kwargs))
+        return Message(
+            channel=str(kwargs["channel"]),
+            target=str(kwargs["target"]),
+            body=f"ok:{kwargs['message']}",
+            metadata={"session_id": str(kwargs.get("session_id") or "session-1")},
+        )
+
+
 class _FakeSessions:
     def __init__(self) -> None:
         self._resolved = SimpleNamespace(id="session-1")
@@ -1415,6 +1429,7 @@ class _FakeSessions:
 class _FakeApp:
     def __init__(self, tmp_path: Path) -> None:
         self._agent = _FakeAgentService()
+        self._gateway = _FakeGateway()
         self.sessions = _FakeSessions()
         self.config = SimpleNamespace(
             agent=_AgentCfg(),
@@ -1441,8 +1456,12 @@ class _FakeApp:
         del agent_name
         return self._agent
 
+    def resolve_gateway(self, agent_name: str) -> _FakeGateway:
+        assert agent_name == "test-agent"
+        return self._gateway
 
-def test_run_agent_forwards_session_context_budget_settings(tmp_path: Path) -> None:
+
+def test_run_agent_routes_through_gateway_without_delivery(tmp_path: Path) -> None:
     app = _FakeApp(tmp_path)
     args = Namespace(
         message="hello",
@@ -1453,39 +1472,23 @@ def test_run_agent_forwards_session_context_budget_settings(tmp_path: Path) -> N
         deliver=False,
         json=False,
     )
-    session_context = mock.Mock()
-    session_context.build_history.return_value = []
-    memory_adapter = mock.Mock()
-    memory_adapter.build_context.return_value = None
-    mocked_context_service = mock.Mock(return_value=session_context)
-    mocked_memory_root = mock.Mock(return_value=tmp_path / "memory")
-    mocked_archive_root = mock.Mock(return_value=tmp_path / "archive")
-    mocked_disabled_memory = mock.Mock(return_value=memory_adapter)
-
-    with (
-        mock.patch.dict(
-            run_agent.__globals__,
-            {
-                "resolve_memory_root": mocked_memory_root,
-                "resolve_session_archive_root": mocked_archive_root,
-                "SessionContextService": mocked_context_service,
-                "DisabledMemoryGatewayAdapter": mocked_disabled_memory,
-            },
-        ),
-        redirect_stdout(io.StringIO()),
-    ):
+    with redirect_stdout(io.StringIO()):
         code = run_agent(args, app)
 
     assert code == 0
-    assert mocked_context_service.call_args is not None
-    assert mocked_context_service.call_args.kwargs["token_budget"] == 321
-    assert mocked_context_service.call_args.kwargs["chars_per_token"] == 3.25
-    assert (
-        mocked_context_service.call_args.kwargs["summary_enrichment_enabled"] is False
-    )
+    assert app._gateway.calls == [
+        {
+            "channel": "console",
+            "target": "chat",
+            "message": "hello",
+            "session_id": "session-1",
+            "deliver": False,
+            "inbound_metadata": {"caller_handles_delivery": "true"},
+        }
+    ]
 
 
-def test_run_agent_skips_session_context_for_minimal_session_store(
+def test_run_agent_forwards_explicit_delivery(
     tmp_path: Path,
 ) -> None:
     app = _FakeApp(tmp_path)
@@ -1495,29 +1498,14 @@ def test_run_agent_skips_session_context_for_minimal_session_store(
         channel="console",
         agent_id=None,
         session_id="session-1",
-        deliver=False,
+        deliver=True,
         json=False,
     )
-    memory_adapter = mock.Mock()
-    memory_adapter.build_context.return_value = None
-    mocked_memory_root = mock.Mock(return_value=tmp_path / "memory")
-    mocked_archive_root = mock.Mock(return_value=tmp_path / "archive")
-    mocked_disabled_memory = mock.Mock(return_value=memory_adapter)
-
-    with (
-        mock.patch.dict(
-            run_agent.__globals__,
-            {
-                "resolve_memory_root": mocked_memory_root,
-                "resolve_session_archive_root": mocked_archive_root,
-                "DisabledMemoryGatewayAdapter": mocked_disabled_memory,
-            },
-        ),
-        redirect_stdout(io.StringIO()),
-    ):
+    with redirect_stdout(io.StringIO()):
         code = run_agent(args, app)
 
     assert code == 0
+    assert app._gateway.calls[0]["deliver"] is True
 
 
 def test_schedule_command_is_thin_cron_alias() -> None:

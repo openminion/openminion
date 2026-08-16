@@ -1,12 +1,14 @@
 import asyncio
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
 
 from openminion.base.config import OTELExporterConfig
 from openminion.base.config.env import EnvironmentConfig
+from openminion.modules.telemetry.interfaces import TelemetryExportProbeResult
 from openminion.modules.telemetry.lifecycle import (
     build_component_identity,
     build_lifecycle_telemetry_event,
@@ -55,6 +57,42 @@ def test_record_event(temp_db):
         )
         await service.record_event(event)
         await service.close()
+
+    _run(_case())
+
+
+def test_async_close_does_not_block_the_event_loop_thread(temp_db):
+    class ThreadRecordingExporter:
+        close_thread_id: int | None = None
+
+        def export(self, event: TelemetryEvent) -> bool:
+            del event
+            return True
+
+        def delete_pending_invocation(self, invocation_id: str) -> int:
+            del invocation_id
+            return 0
+
+        def probe(
+            self,
+            event: TelemetryEvent,
+            timeout_seconds: float,
+        ) -> TelemetryExportProbeResult:
+            del event, timeout_seconds
+            return TelemetryExportProbeResult(True, "accepted", "completed")
+
+        def close(self) -> None:
+            self.close_thread_id = threading.get_ident()
+
+    async def _case() -> None:
+        exporter = ThreadRecordingExporter()
+        event_loop_thread_id = threading.get_ident()
+        service = TelemetryService(temp_db, external_exporter=exporter)
+
+        await service.close()
+
+        assert exporter.close_thread_id is not None
+        assert exporter.close_thread_id != event_loop_thread_id
 
     _run(_case())
 

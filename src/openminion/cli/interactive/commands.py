@@ -49,7 +49,8 @@ from openminion.cli.status.models import (
 from openminion.cli.ux.verbosity import write_focus_preferences
 from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
-from .widgets import FocusTranscript, PermissionsOverlay
+from .widgets import FocusTranscript, OverviewOverlay, PermissionsOverlay
+from .tool_exposure import tool_exposure_command
 
 
 class SlashCommandMixin:
@@ -91,71 +92,7 @@ class SlashCommandMixin:
         )
 
     def _tools_command_body(self, text: str) -> str:
-        try:
-            parts = shlex.split(text)
-        except ValueError as exc:
-            return f"Invalid /tools command: {exc}"
-        action = parts[1].lower() if len(parts) > 1 else "status"
-        if action == "list":
-            tools = self._runtime.list_tools()
-            return (
-                "\n".join(
-                    f"{'✓' if enabled else '✗'}  {name}" for name, enabled in tools
-                )
-                or "(none)"
-            )
-        if action == "status":
-            snapshot = self._runtime.tool_exposure_status()
-            rows = [
-                "  ".join(
-                    (
-                        "active" if profile.get("active") else "hidden",
-                        str(profile.get("profile_id", "")),
-                        f"({profile.get('tier', '')})",
-                    )
-                )
-                for profile in snapshot.get("profiles", [])
-            ]
-            return "Tool exposure profiles:\n" + ("\n".join(rows) or "(none)")
-        if action not in {"activate", "deactivate"} or len(parts) < 3:
-            return (
-                "Usage: /tools [status|list]\n"
-                "       /tools activate <profile> [key=value ...]\n"
-                "       /tools deactivate <profile> [target=<id>]"
-            )
-        profile_id = parts[2]
-        try:
-            options = dict(token.split("=", 1) for token in parts[3:])
-        except ValueError:
-            return "Tool profile options must use key=value syntax."
-        target_id = options.get("target", "")
-        if action == "deactivate":
-            changed = self._runtime.deactivate_tool_profile(
-                profile_id,
-                target_id=target_id,
-            )
-            return f"{'Deactivated' if changed else 'Not active'}: {profile_id}"
-        approved = options.get("approved", "").lower() in {"1", "true", "yes"}
-        try:
-            activation = self._runtime.activate_tool_profile(
-                profile_id,
-                target_id=target_id,
-                target_kind=options.get("target_kind", ""),
-                credential_scopes=self._option_tokens(options.get("credential", "")),
-                dependencies=self._option_tokens(options.get("dependency", "")),
-                approved=approved,
-                ttl_seconds=(float(options["ttl"]) if options.get("ttl") else None),
-                activation_reason=options.get("reason", ""),
-                approved_by=options.get("approved_by", ""),
-                policy_source=options.get("policy_source", ""),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            return f"Activation denied: {exc}"
-        return f"Activated: {activation['profile_id']} ({activation['audit_id']})"
-
-    @staticmethod
-    def _option_tokens(value: str) -> tuple[str, ...]:
-        return tuple(token.strip() for token in value.split(",") if token.strip())
+        return tool_exposure_command(self._runtime, text)
 
     def _slash_mcp(self, _args: str) -> None:
         body_getter = getattr(self._runtime, "mcp_status_report", None)
@@ -386,6 +323,15 @@ class SlashCommandMixin:
         from openminion.cli.presentation.visible_parity import render_context_report
 
         self._push_system_body(render_context_report(self._runtime))
+
+    def _slash_overview(self, _args: str) -> None:
+        from openminion.cli.status.overview import build_operations_overview
+
+        snapshot = build_operations_overview(
+            self._runtime,
+            working_dir=self._working_dir,
+        )
+        self.app.push_screen(OverviewOverlay(snapshot))
 
     def _slash_goal(self: Any, args: str) -> None:
         executor = getattr(self._runtime, "execute_goal_command", None)

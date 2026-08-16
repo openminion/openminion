@@ -24,9 +24,9 @@ Start with:
 
 1. `openminion/examples/starter/provider.py`
 2. `openminion/examples/starter/channel.py`
-3. `openminion/examples/starter/plugin.py`
+3. `openminion/examples/starter/hello.py`
 4. `openminion/examples/starter/tool.py`
-5. `openminion/examples/starter/plugin.json`
+5. `openminion/examples/starter/hello.manifest.json`
 6. `openminion/examples/starter/quickstart.py`
 
 ### 2. Agent bundles

@@ -133,6 +133,36 @@ class RuntimeSessionStoreLifecycle:
         )
         return [row_to_event(row) for row in rows]
 
+    def event_high_water(self, *, session_id: str) -> int:
+        row = self._backend.query_one(
+            "SELECT COALESCE(MAX(id), 0) AS high_water FROM events WHERE session_id = ?",
+            (session_id,),
+        )
+        return 0 if row is None else int(row["high_water"])
+
+    def list_events_after_id(
+        self,
+        *,
+        session_id: str,
+        after_id: int,
+        high_water_id: int,
+        limit: int = EVENT_PAGE_MAX,
+    ) -> list[EventRecord]:
+        safe_limit = max(0, min(int(limit), EVENT_PAGE_MAX))
+        if safe_limit == 0:
+            return []
+        rows = self._backend.query_dicts(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE session_id = ? AND id > ? AND id <= ?
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (session_id, max(0, int(after_id)), max(0, int(high_water_id)), safe_limit),
+        )
+        return [row_to_event(row) for row in rows]
+
     def touch_session_activity(
         self,
         *,
@@ -161,48 +191,54 @@ class RuntimeSessionStoreLifecycle:
         last_activity_at: str | None = None,
         closed_at: str | None | object = LIFECYCLE_UNSET,
         expires_at: str | None | object = LIFECYCLE_UNSET,
+        session_turn_fence_token: int | None = None,
     ) -> SessionRecord:
-        current = self._get_session(session_id)
-        if current is None:
-            raise ValueError(f"Session not found: {session_id}")
-
-        next_status = (status or current.status).strip() or current.status
-        next_last_activity = (
-            last_activity_at
-            if last_activity_at is not None
-            else current.last_activity_at
-        ).strip() or current.updated_at
-        next_closed_at = (
-            current.closed_at
-            if closed_at is LIFECYCLE_UNSET
-            else normalize_nullable_text(closed_at)
-        )
-        next_expires_at = (
-            current.expires_at
-            if expires_at is LIFECYCLE_UNSET
-            else normalize_nullable_text(expires_at)
-        )
-        now = utc_now_iso()
-        self._backend.execute_count(
-            """
-            UPDATE sessions
-            SET status = ?, last_activity_at = ?, closed_at = ?, expires_at = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                next_status,
-                next_last_activity,
-                next_closed_at,
-                next_expires_at,
-                now,
-                session_id,
-            ),
-        )
-        updated = self._get_session(session_id)
-        if updated is None:
-            raise RuntimeError(
-                f"Failed to update lifecycle for session_id={session_id}"
+        with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
             )
+            current = self._get_session(session_id)
+            if current is None:
+                raise ValueError(f"Session not found: {session_id}")
+
+            next_status = (status or current.status).strip() or current.status
+            next_last_activity = (
+                last_activity_at
+                if last_activity_at is not None
+                else current.last_activity_at
+            ).strip() or current.updated_at
+            next_closed_at = (
+                current.closed_at
+                if closed_at is LIFECYCLE_UNSET
+                else normalize_nullable_text(closed_at)
+            )
+            next_expires_at = (
+                current.expires_at
+                if expires_at is LIFECYCLE_UNSET
+                else normalize_nullable_text(expires_at)
+            )
+            now = utc_now_iso()
+            self._backend.execute_count(
+                """
+                UPDATE sessions
+                SET status = ?, last_activity_at = ?, closed_at = ?, expires_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    next_status,
+                    next_last_activity,
+                    next_closed_at,
+                    next_expires_at,
+                    now,
+                    session_id,
+                ),
+            )
+            updated = self._get_session(session_id)
+            if updated is None:
+                raise RuntimeError(
+                    f"Failed to update lifecycle for session_id={session_id}"
+                )
         return updated
 
     def set_session_status(
@@ -211,6 +247,7 @@ class RuntimeSessionStoreLifecycle:
         session_id: str,
         status: str,
         reason: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> SessionRecord:
         current = self._get_session(session_id)
         if current is None:
@@ -228,6 +265,7 @@ class RuntimeSessionStoreLifecycle:
             status=next_status,
             last_activity_at=now,
             closed_at=next_closed_at,
+            session_turn_fence_token=session_turn_fence_token,
         )
         if current.status != updated.status:
             self.append_event(
@@ -238,6 +276,7 @@ class RuntimeSessionStoreLifecycle:
                     "status": updated.status,
                     "reason": (reason or "").strip(),
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )
         if current.status != "closed" and updated.status == "closed":
             self.append_event(
@@ -247,6 +286,7 @@ class RuntimeSessionStoreLifecycle:
                     "closed_at": updated.closed_at or now,
                     "reason": (reason or "").strip(),
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )
         return updated
 
@@ -267,6 +307,7 @@ class RuntimeSessionStoreLifecycle:
         *,
         session_id: str,
         reason: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> SessionRecord:
         current = self._get_session(session_id)
         if current is None:
@@ -280,6 +321,7 @@ class RuntimeSessionStoreLifecycle:
             session_id=session_id,
             status="active",
             reason=reason or "explicit_resume",
+            session_turn_fence_token=session_turn_fence_token,
         )
         self.append_event(
             session_id=session_id,
@@ -288,6 +330,7 @@ class RuntimeSessionStoreLifecycle:
                 "previous_status": current.status,
                 "reason": (reason or "explicit_resume").strip(),
             },
+            session_turn_fence_token=session_turn_fence_token,
         )
         return updated
 

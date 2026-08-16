@@ -1,0 +1,6 @@
+rules:
+  - id: openminion.test.shell-true
+    languages: [python]
+    message: Avoid shell=True with dynamic input.
+    severity: ERROR
+    pattern: subprocess.run(..., shell=True, ...)

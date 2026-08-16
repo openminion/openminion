@@ -225,3 +225,16 @@ class TelemetryAdapterContract(Protocol):
         execution_id: str | None = ...,
         agent_id: str | None = ...,
     ) -> bool: ...
+
+    def repair_canonical_event_sync(
+        self,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: Optional[dict[str, Any]] = ...,
+        *,
+        event_id: str,
+        timestamp: float,
+        invocation_id: str,
+        agent_id: str | None = ...,
+    ) -> str: ...

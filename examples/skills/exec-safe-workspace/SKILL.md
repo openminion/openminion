@@ -4,7 +4,7 @@ name: Exec (Workspace Safe)
 version: 0.0.1
 description: Run safe diagnostics commands inside workspace sandbox.
 tags: [dev, diagnostics]
-tools: [exec]
+tools: [exec.run]
 scopes_required: ["tool.execute", "tool.exec"]
 risk: high
 when_to_use:
@@ -25,7 +25,7 @@ outputs:
 # Skill Card
 - **Goal:** Execute read-only or safe commands in sandbox.
 - **Triggers:** Tests, lint, status checks, file listing.
-- **Tools:** exec
+- **Tools:** exec.run
 - **Hard rules:** Deny rm/sudo/kill/chmod/chown/curl/wget by default.
 
 # Procedure
@@ -33,7 +33,7 @@ outputs:
 Check command against denylist and safe patterns.
 
 ## Step 2 - Execute
-Run via sandboxed exec with allowlist policy.
+Run via `exec.run` with the configured execution policy.
 
 ## Step 3 - Summarize
 Report stdout/stderr, interpretation, and the next safe command.

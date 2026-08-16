@@ -73,8 +73,10 @@ def _run(data_root: Path, db_path: Path, args: list[str], capsys) -> tuple[int, 
 def test_timing_report_uses_nearest_rank_and_direct_provider_attempts(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
 
     exit_code, payload = _run(data_root, db_path, [], capsys)
@@ -106,8 +108,10 @@ def test_timing_report_uses_nearest_rank_and_direct_provider_attempts(
 def test_timing_report_excludes_ambiguous_turn_pair(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
     service = TelemetryService(db_path)
     asyncio.run(
@@ -133,8 +137,13 @@ def test_timing_report_excludes_ambiguous_turn_pair(
     assert codes == {"AMBIGUOUS_TURN_CORRELATION", "NO_PHASE_TIMING_FACTS"}
 
 
-def test_timing_report_rejects_format_and_bad_bounds(tmp_path: Path, capsys) -> None:
+def test_timing_report_rejects_format_and_bad_bounds(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
 
     for args in (["--format", "json"], ["--recent", "0"], ["--limit", "1"]):

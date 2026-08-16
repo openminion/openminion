@@ -485,6 +485,10 @@ def build_gateway_service(
         data_root=data_root,
         retrieve_ctl=retrieve_ctl,
     )
+    if bool(getattr(config.runtime, "session_summary_enrichment_enabled", False)):
+        build_enricher = getattr(agent_service, "build_session_summary_enricher", None)
+        if callable(build_enricher):
+            resolved_session_context.configure_summary_enricher(build_enricher())
     resolved_memory = agent_memory or build_agent_memory_service(
         config=config,
         agent_id=profile_name,

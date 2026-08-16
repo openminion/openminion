@@ -90,14 +90,15 @@ def test_postgres_gc_and_retention_paths_round_trip(
         postgres_store.put(
             _record(
                 f"cap-{index}",
-                confidence=0.4 + (index * 0.05),
-                age_days=20,
+                confidence=0.31 + (index * 0.01),
+                age_days=1,
             )
         )
     postgres_store.put(
         _record(
             "summary-old",
             record_type="session_summary",
+            confidence=1.0,
             age_days=45,
             key="session_summary:old",
             content={
@@ -175,9 +176,10 @@ def test_postgres_gc_and_retention_paths_round_trip(
     assert result.deleted_records >= 2
     assert compressed is not None
     assert isinstance(compressed.content, dict)
-    assert compressed.content["decisions"] == []
-    assert compressed.content["corrections"] == []
-    assert compressed.content["open_questions"] == []
+    assert compressed.content["decisions"] == ["decided to use pytest"]
+    assert compressed.content["corrections"] == ["actually, wrong fixture"]
+    assert compressed.content["open_questions"] == ["what remains?"]
+    assert compressed.content["summary_text"] == "Decided to use pytest"
     assert postgres_store.get("summary-ancient") is None
     assert postgres_store.get("low-old") is None
     assert postgres_store.get("stale-insight") is None

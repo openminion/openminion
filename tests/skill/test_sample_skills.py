@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
+from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.skill.runtime.skill import Skill
 
 SAMPLES_ROOT = Path(__file__).resolve().parents[2] / "examples" / "skills"
+EXTERNAL_CATALOG_TOOLS = {"http_request"}
+
+
+@lru_cache(maxsize=1)
+def _known_tools() -> list[str]:
+    registry = build_default_tool_registry()
+    names = set(registry.list())
+    names.update(spec.name for spec in registry.model_provider_specs())
+    return sorted(names | EXTERNAL_CATALOG_TOOLS)
 
 
 def _cfg(tmp_path: Path) -> dict:
@@ -14,7 +25,7 @@ def _cfg(tmp_path: Path) -> dict:
             "wal": False,
             "default_status_filter": ["draft", "verified", "blessed"],
             "high_risk_status_filter": ["blessed", "verified", "draft"],
-            "known_tools": ["file", "exec", "web.search", "browser", "reactions"],
+            "known_tools": _known_tools(),
         }
     }
 
@@ -47,7 +58,7 @@ def test_plan_sample_matches_plan_intent(tmp_path: Path) -> None:
 
         matches = ctl.match(
             intent_text="Create an implementation plan with checkpoints and verification",
-            step_hint={"risk": "low", "verify": False, "tool_id": "file"},
+            step_hint={"risk": "low", "verify": False, "tool_id": "file.write"},
             agent_id="agent.docs",
             k=3,
         )

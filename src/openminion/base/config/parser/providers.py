@@ -1,5 +1,3 @@
-"""Provider config parsing helpers."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -50,6 +48,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
             "temperature": (_KIND_FLOAT, 0.2),
             "max_tokens": (_KIND_INT, 1024),
             "api_version": (_KIND_STR, "2023-06-01"),
+            "tool_call_strategy": (_KIND_STR, "native"),
         },
     ),
     "openrouter": (

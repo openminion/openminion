@@ -12,6 +12,7 @@ from .certification import (
     REPORT_SCHEMA_VERSION,
     RUN_SCHEMA_VERSION,
     CertificationManifest,
+    run_certification,
     validate_certification_manifest,
     write_certification_report,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "local_scenario_ids",
     "scenario_ids",
     "scenarios_for_suite",
+    "run_certification",
     "soak_pilot_specs",
     "soak_scenario_ids",
     "validate_certification_manifest",

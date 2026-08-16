@@ -321,6 +321,7 @@ def append_run_checkpoint_event(
     checkpoint: RunCheckpoint,
     conversation_id: str | None = None,
     thread_id: str | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> EventRecord:
     """Persist a typed ``RunCheckpoint`` via the existing event log."""
 
@@ -339,11 +340,14 @@ def append_run_checkpoint_event(
     if thread_value:
         payload["thread_id"] = thread_value
 
-    return sessions.append_event(
-        session_id=session_id,
-        event_type=RUN_CHECKPOINT_EVENT_TYPE,
-        payload=payload,
-    )
+    event_kwargs: Dict[str, Any] = {
+        "session_id": session_id,
+        "event_type": RUN_CHECKPOINT_EVENT_TYPE,
+        "payload": payload,
+    }
+    if session_turn_fence_token is not None:
+        event_kwargs["session_turn_fence_token"] = session_turn_fence_token
+    return sessions.append_event(**event_kwargs)
 
 
 def append_lifecycle_event(

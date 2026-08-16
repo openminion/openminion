@@ -19,6 +19,29 @@ from .flow_models import _RoutingResult
 
 
 class GatewayTurnRoutingMixin:
+    def _resolve_session_resume(
+        self,
+        *,
+        channel: str,
+        target: str,
+        session_id: str | None,
+        resolved_session: object | None,
+        resume_requested: bool,
+        reset_requested: bool,
+    ) -> tuple[object, bool, bool]:
+        session = resolved_session or self._sessions.resolve_session(
+            agent_id=self._agent_id,
+            channel=channel,
+            target=target,
+            session_id=session_id,
+        )
+        auto_resume = (
+            not resume_requested
+            and not reset_requested
+            and not str(session_id or "").strip()
+        )
+        return session, resume_requested or auto_resume, auto_resume
+
     def _pending_replay_response(
         self,
         *,
@@ -28,6 +51,8 @@ class GatewayTurnRoutingMixin:
         routing_action: str,
         routing_reason: str,
         routing: _RoutingResult,
+        session_turn_lease_owner: str,
+        session_turn_fence_token: int | None,
     ) -> _RoutingResult | None:
         pending = find_pending_outbound(
             self._sessions,
@@ -64,6 +89,11 @@ class GatewayTurnRoutingMixin:
         )
         if deliver:
             with active_chat_phase("response_delivery"):
+                self._renew_session_turn_lease(
+                    session_id=routing.session.id,
+                    owner=session_turn_lease_owner,
+                    fence_token=session_turn_fence_token,
+                )
                 self._channels.get(channel).send(replay)
         if deliver or caller_handles_delivery:
             with active_chat_phase("response_delivered_event"):
@@ -82,6 +112,7 @@ class GatewayTurnRoutingMixin:
                         "thread_decision_action": routing_action,
                         "thread_decision_reason": routing_reason,
                     },
+                    session_turn_fence_token=session_turn_fence_token,
                 )
         return _RoutingResult(early_return=replay)
 
@@ -94,6 +125,9 @@ class GatewayTurnRoutingMixin:
         request_id: str | None,
         inbound_metadata: dict[str, str] | None,
         deliver: bool,
+        resolved_session: object | None = None,
+        session_turn_lease_owner: str = "",
+        session_turn_fence_token: int | None = None,
     ) -> _RoutingResult:
         normalized_request_id = str(request_id or "").strip() or uuid4().hex
         normalized_inbound_metadata = _normalize_metadata(inbound_metadata)
@@ -104,20 +138,14 @@ class GatewayTurnRoutingMixin:
         reset_requested = parse_metadata_bool(
             normalized_inbound_metadata, "reset_session"
         ) or parse_metadata_bool(normalized_inbound_metadata, "reset")
-        auto_resume_inferred = False
-        session = self._sessions.resolve_session(
-            agent_id=self._agent_id,
+        session, resume_requested, auto_resume_inferred = self._resolve_session_resume(
             channel=channel,
             target=target,
             session_id=session_id,
+            resolved_session=resolved_session,
+            resume_requested=resume_requested,
+            reset_requested=reset_requested,
         )
-        if (
-            not resume_requested
-            and not reset_requested
-            and not str(session_id or "").strip()
-        ):
-            resume_requested = True
-            auto_resume_inferred = True
         explicit_conversation = bool(conversation_id)
         explicit_thread = bool(thread_id)
         if explicit_thread:
@@ -160,6 +188,8 @@ class GatewayTurnRoutingMixin:
                     session=session,
                     lifecycle=lifecycle,
                 ),
+                session_turn_lease_owner=session_turn_lease_owner,
+                session_turn_fence_token=session_turn_fence_token,
             )
             if replay is not None:
                 return replay

@@ -1,25 +1,29 @@
-import hashlib
 import logging
 import threading
 from collections import deque
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Callable
 
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
-from openminion.modules.memory.errors import MemctlError
+from openminion.modules.memory.gateway_turn import (
+    MEMORY_CAPSULE_REFRESH_FAILED_CODE,
+    MEMORY_CAPSULE_REFRESH_FAILED_REASON,
+    MEMORY_CONTEXT_BUILD_FAILED_CODE as MEMORY_CONTEXT_BUILD_FAILED_CODE,
+    MEMORY_CONTEXT_BUILD_FAILED_REASON as MEMORY_CONTEXT_BUILD_FAILED_REASON,
+    MEMORY_FOLLOWUP_FAILED_CODE,
+    MEMORY_FOLLOWUP_FAILED_REASON,
+    derive_memory_patch_id as _maybe_derive_patch_id,
+    emit_memory_write_events as _emit_memory_write_events,
+    memory_error_facts,
+    record_memory_failure as _record_memory_failure,
+    text_fingerprint as _text_fingerprint,
+)
 from openminion.services.constants import MEMORY_CAPSULE_STRATEGY_REFRESH_ON_WRITE
+from openminion.services.gateway.turn.lifecycle import RuntimeSessionTurnFenceError
 
 
 MemoryEventEmitter = Callable[..., None]
-
-MEMORY_CONTEXT_BUILD_FAILED_CODE = "MEMORY_CONTEXT_BUILD_FAILED"
-MEMORY_CONTEXT_BUILD_FAILED_REASON = "memory_context_build_failed"
-MEMORY_WRITE_FAILED_CODE = "MEMORY_WRITE_FAILED"
-MEMORY_WRITE_FAILED_REASON = "memory_write_failed"
-MEMORY_CAPSULE_REFRESH_FAILED_CODE = "MEMORY_CAPSULE_REFRESH_FAILED"
-MEMORY_CAPSULE_REFRESH_FAILED_REASON = "memory_capsule_refresh_failed"
-MEMORY_FOLLOWUP_FAILED_CODE = "MEMORY_FOLLOWUP_FAILED"
-MEMORY_FOLLOWUP_FAILED_REASON = "memory_followup_failed"
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,7 @@ class MemoryFollowupJob:
     thread_id: str
     attach_id: str
     emit_memory_event: MemoryEventEmitter
+    emit_followup_event: MemoryEventEmitter
     outbound_metadata: dict[str, str]
     patch_changed: bool
 
@@ -116,112 +121,6 @@ class MemoryFollowupQueue:
                 else:
                     self._active_by_session.pop(job.session_id, None)
                 self._condition.notify_all()
-
-
-def memory_error_facts(
-    exc: Exception,
-    *,
-    fallback_code: str,
-    fallback_reason: str,
-) -> dict[str, str]:
-    if isinstance(exc, MemctlError):
-        code = str(getattr(exc, "code", "") or "").strip() or fallback_code
-        details = dict(getattr(exc, "details", {}) or {})
-        reason_code = str(details.get("reason_code", "") or "").strip()
-        return {
-            "error_code": code,
-            "reason_code": reason_code or fallback_reason,
-            "error_type": type(exc).__name__,
-        }
-    return {
-        "error_code": fallback_code,
-        "reason_code": fallback_reason,
-        "error_type": type(exc).__name__,
-    }
-
-
-def _text_fingerprint(value: str) -> str:
-    text = str(value or "")
-    if not text:
-        return ""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
-def _maybe_derive_patch_id(
-    *,
-    agent_memory: Any,
-    session_id: str,
-    run_id: str,
-    request_id: str,
-    user_message: str,
-) -> str:
-    derive_patch_id = getattr(agent_memory, "derive_patch_id", None)
-    if not callable(derive_patch_id):
-        return ""
-    try:
-        return str(
-            derive_patch_id(
-                session_id=session_id,
-                run_id=run_id,
-                request_id=request_id,
-                user_message=user_message,
-            )
-            or ""
-        )
-    except Exception:
-        return ""
-
-
-def _emit_memory_write_events(
-    *,
-    emit_memory_event: MemoryEventEmitter,
-    session_id: str,
-    conversation_id: str,
-    thread_id: str,
-    attach_id: str,
-    run_id: str,
-    request_id: str,
-    memory_capsule_strategy: str,
-    patch_id_hint: str,
-    memory_patch: Any,
-    patch_changed: bool,
-) -> None:
-    emit_memory_event(
-        session_id=session_id,
-        event_type="memory.write.completed",
-        conversation_id=conversation_id or None,
-        thread_id=thread_id or None,
-        attach_id=attach_id or None,
-        payload={
-            "run_id": run_id,
-            "request_id": request_id,
-            "strategy": memory_capsule_strategy,
-            "patch_id": str(memory_patch.patch_id or ""),
-            "generation": str(int(memory_patch.generation or 0)),
-            "facts_added": str(memory_patch.facts_added),
-            "todos_added": str(memory_patch.todos_added),
-            "todos_completed": str(memory_patch.todos_completed),
-            "replayed_patches": str(int(memory_patch.replayed_patches or 0)),
-            "lock_recovered": str(bool(memory_patch.lock_recovered)).lower(),
-        },
-    )
-    emit_memory_event(
-        session_id=session_id,
-        event_type="memory.turn.recorded",
-        conversation_id=conversation_id or None,
-        thread_id=thread_id or None,
-        attach_id=attach_id or None,
-        payload={
-            "run_id": run_id,
-            "request_id": request_id,
-            "strategy": memory_capsule_strategy,
-            "facts_added": str(memory_patch.facts_added),
-            "todos_added": str(memory_patch.todos_added),
-            "todos_completed": str(memory_patch.todos_completed),
-            "patch_id": str(memory_patch.patch_id or patch_id_hint or ""),
-            "changed": str(patch_changed).lower(),
-        },
-    )
 
 
 def _refresh_capsule_after_write(
@@ -350,7 +249,7 @@ def _emit_followup_pending(job: MemoryFollowupJob) -> None:
     if checkpoint_pending:
         job.outbound_metadata["memory_summary_checkpoint_pending"] = "true"
     job.outbound_metadata["memory_followup_deferred"] = "true"
-    job.emit_memory_event(
+    job.emit_followup_event(
         session_id=job.session_id,
         event_type="memory.followup.pending",
         conversation_id=job.conversation_id or None,
@@ -359,6 +258,7 @@ def _emit_followup_pending(job: MemoryFollowupJob) -> None:
         payload={
             "run_id": job.run_id,
             "request_id": job.request_id,
+            "invocation_id": job.outbound_metadata.get("invocation_id", ""),
             "capsule_refresh": str(refresh_pending).lower(),
             "summary_checkpoint": str(checkpoint_pending).lower(),
         },
@@ -405,7 +305,7 @@ def run_memory_followup(job: MemoryFollowupJob) -> None:
             session_id=job.session_id,
             run_id=job.run_id,
         )
-        job.emit_memory_event(
+        job.emit_followup_event(
             session_id=job.session_id,
             event_type="memory.followup.completed",
             conversation_id=job.conversation_id or None,
@@ -414,11 +314,18 @@ def run_memory_followup(job: MemoryFollowupJob) -> None:
             payload={
                 "run_id": job.run_id,
                 "request_id": job.request_id,
+                "invocation_id": job.outbound_metadata.get("invocation_id", ""),
                 "capsule_refresh": str(
                     job.memory_capsule_strategy
                     == MEMORY_CAPSULE_STRATEGY_REFRESH_ON_WRITE
                     and job.patch_changed
                 ).lower(),
+                "capsule_refreshed": job.outbound_metadata.get(
+                    "memory_capsule_refreshed", "false"
+                ),
+                "capsule_error_code": job.outbound_metadata.get(
+                    "memory_capsule_refresh_error_code", ""
+                ),
             },
         )
     except Exception as exc:
@@ -434,7 +341,7 @@ def run_memory_followup(job: MemoryFollowupJob) -> None:
             job.run_id,
             exc,
         )
-        job.emit_memory_event(
+        job.emit_followup_event(
             session_id=job.session_id,
             event_type="memory.followup.failed",
             conversation_id=job.conversation_id or None,
@@ -443,10 +350,57 @@ def run_memory_followup(job: MemoryFollowupJob) -> None:
             payload={
                 "run_id": job.run_id,
                 "request_id": job.request_id,
+                "invocation_id": job.outbound_metadata.get("invocation_id", ""),
                 "error": str(exc),
                 **error_facts,
             },
         )
+
+
+def _discard_memory_event(**_kwargs: Any) -> None:
+    return None
+
+
+def _build_memory_followup_job(
+    *,
+    agent_memory: Any,
+    logger: logging.Logger,
+    agent_id: str,
+    memory_capsule_strategy: str,
+    memory_capsule_cache: dict[str, str],
+    session_id: str,
+    run_id: str,
+    request_id: str,
+    conversation_id: str,
+    thread_id: str,
+    attach_id: str,
+    emit_memory_event: MemoryEventEmitter,
+    emit_memory_followup: MemoryEventEmitter | None,
+    outbound_metadata: dict[str, str],
+    patch_changed: bool,
+    deferred: bool,
+) -> MemoryFollowupJob:
+    return MemoryFollowupJob(
+        agent_memory=agent_memory,
+        logger=logger,
+        agent_id=agent_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        memory_capsule_cache=memory_capsule_cache,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        conversation_id=conversation_id,
+        thread_id=thread_id,
+        attach_id=attach_id,
+        emit_memory_event=_discard_memory_event if deferred else emit_memory_event,
+        emit_followup_event=(
+            emit_memory_followup or _discard_memory_event
+            if deferred
+            else emit_memory_event
+        ),
+        outbound_metadata=outbound_metadata,
+        patch_changed=patch_changed,
+    )
 
 
 def record_memory_turn(
@@ -470,9 +424,15 @@ def record_memory_turn(
     outbound_metadata: dict[str, str],
     followup_queue: MemoryFollowupQueue | None = None,
     defer_followup: bool = False,
+    session_turn_fence_token: int | None = None,
+    emit_memory_followup: MemoryEventEmitter | None = None,
 ) -> None:
     patch_id_hint = ""
     patch_changed = False
+    fenced_emit_memory_event = partial(
+        emit_memory_event,
+        session_turn_fence_token=session_turn_fence_token,
+    )
     try:
         patch_id_hint = _maybe_derive_patch_id(
             agent_memory=agent_memory,
@@ -481,7 +441,7 @@ def record_memory_turn(
             request_id=request_id,
             user_message=user_message,
         )
-        emit_memory_event(
+        fenced_emit_memory_event(
             session_id=session_id,
             event_type="memory.write.started",
             conversation_id=conversation_id or None,
@@ -514,7 +474,7 @@ def record_memory_turn(
             or memory_patch.todos_completed > 0
         )
         _emit_memory_write_events(
-            emit_memory_event=emit_memory_event,
+            emit_memory_event=fenced_emit_memory_event,
             session_id=session_id,
             conversation_id=conversation_id,
             thread_id=thread_id,
@@ -526,74 +486,46 @@ def record_memory_turn(
             memory_patch=memory_patch,
             patch_changed=patch_changed,
         )
+    except RuntimeSessionTurnFenceError:
+        raise
     except Exception as exc:
-        error_facts = memory_error_facts(
-            exc,
-            fallback_code=MEMORY_WRITE_FAILED_CODE,
-            fallback_reason=MEMORY_WRITE_FAILED_REASON,
-        )
-        outbound_metadata["memory_enabled"] = "false"
-        outbound_metadata["memory_write_error_code"] = error_facts["error_code"]
-        outbound_metadata["memory_write_reason_code"] = error_facts["reason_code"]
-        logger.warning(
-            "agent memory record turn failed agent_id=%s session_id=%s run_id=%s error=%s",
-            agent_id,
-            session_id,
-            run_id,
-            exc,
-        )
-        emit_memory_event(
-            session_id=session_id,
-            event_type="memory.write.failed",
-            conversation_id=conversation_id or None,
-            thread_id=thread_id or None,
-            attach_id=attach_id or None,
-            payload={
-                "run_id": run_id,
-                "request_id": request_id,
-                "strategy": memory_capsule_strategy,
-                "patch_id": str(patch_id_hint or ""),
-                "error": str(exc),
-                **error_facts,
-            },
-        )
-        emit_memory_event(
-            session_id=session_id,
-            event_type="memory.turn.record_failed",
-            conversation_id=conversation_id or None,
-            thread_id=thread_id or None,
-            attach_id=attach_id or None,
-            payload={
-                "run_id": run_id,
-                "request_id": request_id,
-                "strategy": memory_capsule_strategy,
-                "error": str(exc),
-                **error_facts,
-            },
-        )
-    finally:
-        followup_job = MemoryFollowupJob(
-            agent_memory=agent_memory,
+        _record_memory_failure(
+            exc=exc,
             logger=logger,
             agent_id=agent_id,
-            memory_capsule_strategy=memory_capsule_strategy,
-            memory_capsule_cache=memory_capsule_cache,
             session_id=session_id,
             run_id=run_id,
             request_id=request_id,
             conversation_id=conversation_id,
             thread_id=thread_id,
             attach_id=attach_id,
-            emit_memory_event=emit_memory_event,
+            memory_capsule_strategy=memory_capsule_strategy,
+            patch_id_hint=patch_id_hint,
+            emit_memory_event=fenced_emit_memory_event,
             outbound_metadata=outbound_metadata,
-            patch_changed=patch_changed,
         )
-        if (
-            defer_followup
-            and followup_queue is not None
-            and _has_followup_work(followup_job)
-        ):
-            _emit_followup_pending(followup_job)
-            followup_queue.enqueue(followup_job)
-            return
-        run_memory_followup(followup_job)
+
+    deferred = bool(defer_followup and followup_queue is not None)
+    followup_job = _build_memory_followup_job(
+        agent_memory=agent_memory,
+        logger=logger,
+        agent_id=agent_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        memory_capsule_cache=memory_capsule_cache,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        conversation_id=conversation_id,
+        thread_id=thread_id,
+        attach_id=attach_id,
+        emit_memory_event=fenced_emit_memory_event,
+        emit_memory_followup=emit_memory_followup,
+        outbound_metadata=outbound_metadata,
+        patch_changed=patch_changed,
+        deferred=deferred,
+    )
+    if deferred and _has_followup_work(followup_job):
+        _emit_followup_pending(followup_job)
+        followup_queue.enqueue(followup_job)
+        return
+    run_memory_followup(followup_job)

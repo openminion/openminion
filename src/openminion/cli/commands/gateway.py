@@ -14,6 +14,36 @@ def run_gateway(args: Any, app: Any) -> int:
     if bool(getattr(args, "quiet", False)):
         apply_logging_mode("interactive")
 
+    if getattr(args, "gateway_command", "") == "repair-lifecycle":
+        session_id = str(getattr(args, "session_id", "") or "").strip()
+        if not session_id:
+            if args.json:
+                print_json_payload({"error": "session_id is required"})
+            else:
+                print("gateway lifecycle repair: session_id is required")
+            return 2
+        gateway = (
+            app.resolve_gateway(None)
+            if hasattr(app, "resolve_gateway")
+            else app.gateway
+        )
+        report = gateway.repair_invocation_lifecycle(session_id=session_id)
+        if args.json:
+            print_json_payload(report)
+        else:
+            print(
+                "gateway lifecycle repair: "
+                f"{report['status']} session_id={report['session_id']} "
+                f"created={report['created_count']} "
+                f"identical={report['identical_count']}"
+            )
+        status = str(report["status"])
+        if status in {"repaired", "unchanged"}:
+            return 0
+        if status in {"not_found", "invalid_source", "conflict"}:
+            return 1
+        return 3
+
     if hasattr(app, "resolve_agent_profile") and hasattr(app, "resolve_gateway"):
         agent_profile = app.resolve_agent_profile(getattr(args, "agent_id", None))
         gateway = app.resolve_gateway(agent_profile.name)
@@ -153,3 +183,15 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     add_progress_flag(gateway_run, include_aliases=False)
     add_json_output_flag(gateway_run)
     gateway_run.set_defaults(handler=run_gateway, needs_app=True)
+
+    gateway_repair = gateway_subcommands.add_parser(
+        "repair-lifecycle",
+        help="Repair invocation lifecycle telemetry for one session",
+    )
+    gateway_repair.add_argument(
+        "--session-id",
+        required=True,
+        help="Durable session id to repair",
+    )
+    add_json_output_flag(gateway_repair)
+    gateway_repair.set_defaults(handler=run_gateway, needs_app=True)

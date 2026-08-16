@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from time import perf_counter
+from uuid import uuid4
 
 from openminion.base.types import Message
 from openminion.cli.commands.agent.runner import _resolve_agent_profile_and_service
@@ -15,12 +16,24 @@ def run_agent_check(args, app) -> int:
     channel = (args.channel or agent_profile.default_channel).strip()
     target = args.target
     message_text = args.message
+    request_id = uuid4().hex
 
     started = perf_counter()
     try:
         app.channels.get(channel)
 
-        inbound = Message(channel=channel, target=target, body=message_text)
+        inbound = Message(
+            channel=channel,
+            target=target,
+            body=message_text,
+            metadata={
+                "session_id": f"runtime:agent-check:{request_id}",
+                "request_id": request_id,
+                "turn_id": request_id,
+                "invocation_scope": "runtime",
+                "diagnostic_scope": "runtime",
+            },
+        )
         response = asyncio.run(agent_service.run_turn(inbound))
         latency_ms = int((perf_counter() - started) * 1000)
 
@@ -44,6 +57,10 @@ def run_agent_check(args, app) -> int:
             "response_chars": len(response.text),
             "metadata": response.metadata,
             "delivered": bool(args.deliver),
+            "scope": "runtime",
+            "request_id": request_id,
+            "invocation_id": response.metadata.get("invocation_id", ""),
+            "execution_id": response.metadata.get("execution_id", ""),
         }
         if args.json:
             print_json_payload(payload)
@@ -63,6 +80,10 @@ def run_agent_check(args, app) -> int:
             "provider": agent_profile.provider,
             "channel": channel,
             "target": target,
+            "scope": "runtime",
+            "request_id": request_id,
+            "invocation_id": "",
+            "execution_id": "",
             "error": str(exc),
         }
         if args.json:

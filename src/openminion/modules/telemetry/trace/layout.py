@@ -2,6 +2,7 @@ import re
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 
 from openminion.base.config.env import resolve_environment_config
@@ -33,11 +34,28 @@ def resolve_trace_root(*, home_root: Path | None) -> Path:
     return data_root / "traces"
 
 
-def delete_invocation_trace_artifacts(trace_root: Path, *, invocation_id: str) -> int:
+def delete_invocation_trace_artifacts(
+    trace_root: Path,
+    *,
+    invocation_id: str,
+    artifact_paths: Iterable[str] = (),
+) -> int:
     if not trace_root.exists():
         return 0
+    resolved_root = trace_root.resolve(strict=False)
     removed = 0
+    removed_paths: set[Path] = set()
+    for relative_path in artifact_paths:
+        path = (resolved_root / str(relative_path)).resolve(strict=False)
+        if not path.is_relative_to(resolved_root) or not path.is_file():
+            continue
+        path.unlink()
+        removed_paths.add(path)
+        removed += 1
     for path in trace_root.rglob("*.json"):
+        resolved_path = path.resolve(strict=False)
+        if resolved_path in removed_paths:
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

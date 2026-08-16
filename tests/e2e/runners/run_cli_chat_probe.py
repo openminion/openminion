@@ -1263,6 +1263,11 @@ def main() -> int:
         action="store_true",
         help="Keep interactive phase-status lines enabled during the probe.",
     )
+    parser.add_argument(
+        "--auto-confirm",
+        action="store_true",
+        help="Approve permission prompts for an already isolated test workspace.",
+    )
     args = parser.parse_args()
 
     cmd = [
@@ -1396,6 +1401,7 @@ def main() -> int:
         messages=list(args.message),
         timeout_seconds=args.timeout,
         dump_debug_on_exit=args.dump_debug_on_exit,
+        auto_confirm=args.auto_confirm,
     )
 
     data_root = Path(env["OPENMINION_DATA_ROOT"]).resolve()

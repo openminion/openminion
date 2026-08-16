@@ -108,3 +108,77 @@ def test_summary_structurer_failure_is_observable(
 
     assert result is not None
     assert "session summary structurer unavailable" in caplog.text
+
+
+def test_background_summary_enrichment_is_wired_only_when_enabled(
+    monkeypatch, tmp_path
+) -> None:
+    config = OpenMinionConfig()
+    config.runtime.session_summary_enrichment_enabled = True
+
+    def enricher(summary: str) -> str:
+        return f"enriched:{summary}"
+
+    configured: list[object] = []
+    session_context = SimpleNamespace(
+        configure_summary_enricher=configured.append,
+    )
+    monkeypatch.setattr(bootstrap, "GatewayService", lambda *args, **kwargs: object())
+
+    bootstrap.build_gateway_service(
+        agent_service=SimpleNamespace(
+            build_session_summary_enricher=lambda: enricher,
+        ),
+        profile_name="agent",
+        config=config,
+        channels=object(),
+        sessions=object(),
+        idempotency=object(),
+        security_policy=object(),
+        channel_authenticity_policy=object(),
+        config_path=tmp_path / "config.json",
+        storage_path=tmp_path / "runtime.db",
+        memory_root=tmp_path / "memory",
+        home_root=tmp_path / "home",
+        data_root=tmp_path / "data",
+        logger=logging.getLogger("test.bootstrap.background-summary"),
+        session_context=session_context,
+        agent_memory=object(),
+    )
+
+    assert configured == [enricher]
+
+
+def test_background_summary_enrichment_remains_off_by_default(
+    monkeypatch, tmp_path
+) -> None:
+    configured: list[object] = []
+    session_context = SimpleNamespace(
+        configure_summary_enricher=configured.append,
+    )
+    monkeypatch.setattr(bootstrap, "GatewayService", lambda *args, **kwargs: object())
+
+    bootstrap.build_gateway_service(
+        agent_service=SimpleNamespace(
+            build_session_summary_enricher=lambda: pytest.fail(
+                "disabled enrichment must not resolve the provider"
+            )
+        ),
+        profile_name="agent",
+        config=OpenMinionConfig(),
+        channels=object(),
+        sessions=object(),
+        idempotency=object(),
+        security_policy=object(),
+        channel_authenticity_policy=object(),
+        config_path=tmp_path / "config.json",
+        storage_path=tmp_path / "runtime.db",
+        memory_root=tmp_path / "memory",
+        home_root=tmp_path / "home",
+        data_root=tmp_path / "data",
+        logger=logging.getLogger("test.bootstrap.background-summary-default"),
+        session_context=session_context,
+        agent_memory=object(),
+    )
+
+    assert configured == []

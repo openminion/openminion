@@ -34,10 +34,13 @@ from .inspection import (
     list_trace_files,
     open_telemetry_inspection,
     parse_invocation_id,
-    read_invocation_events,
     read_trace_file,
     telemetry_debug_exit,
     telemetry_storage_error_code,
+)
+from .invocation_inspection import (
+    build_invocation_snapshot,
+    select_invocation_snapshots,
 )
 from .service import TelemetryService
 from .retention import (
@@ -245,140 +248,37 @@ def _event_row(event) -> dict[str, Any]:
     }
 
 
-def _invocation_summary(invocation_id: str, events: list) -> dict[str, Any]:
-    input_tokens = 0
-    output_tokens = 0
-    cache_read_tokens = 0
-    cache_write_tokens = 0
-    cost_usd = 0.0
-    duration_ms = 0.0
-    policy_decisions: dict[str, int] = {}
-    executions: dict[str, dict[str, Any]] = {}
-    propagation = {"valid": 0, "invalid": 0, "unavailable": 0}
-    log_events: list[str] = []
-    for event in events:
-        data = event.data
-        usage = data.get("usage")
-        if isinstance(usage, dict):
-            input_tokens += int(
-                usage.get("input_tokens") or usage.get("prompt_tokens") or 0
-            )
-            output_tokens += int(
-                usage.get("output_tokens") or usage.get("completion_tokens") or 0
-            )
-            cache_read_tokens += int(
-                usage.get("cached_tokens") or usage.get("cache_read_tokens") or 0
-            )
-            cache_write_tokens += int(usage.get("cache_creation_tokens") or 0)
-        if data.get("cost_source") and isinstance(data.get("cost_usd"), (int, float)):
-            cost_usd += float(data["cost_usd"])
-        if isinstance(data.get("duration_ms"), (int, float)):
-            duration_ms += float(data["duration_ms"])
-        if event.event_type == "policy.decision":
-            decision = str(data.get("decision") or "unknown")
-            policy_decisions[decision] = policy_decisions.get(decision, 0) + 1
-        if event.event_type.startswith(
-            ("policy.", "safety.", "agent.handoff.", "tool.execution.failed")
-        ):
-            log_events.append(event.event_type)
-        propagation_status = str(data.get("trace_context_status") or "")
-        if propagation_status in propagation:
-            propagation[propagation_status] += 1
-        execution_id = event.execution_id or ""
-        if execution_id:
-            segment = executions.setdefault(
-                execution_id,
-                {
-                    "execution_id": execution_id,
-                    "agent_id": event.agent_id or "",
-                    "event_count": 0,
-                    "started_at": None,
-                    "ended_at": None,
-                    "status": "",
-                },
-            )
-            segment["event_count"] += 1
-            segment["started_at"] = (
-                event.timestamp
-                if segment["started_at"] is None
-                else min(segment["started_at"], event.timestamp)
-            )
-            segment["ended_at"] = (
-                event.timestamp
-                if segment["ended_at"] is None
-                else max(segment["ended_at"], event.timestamp)
-            )
-            if data.get("status"):
-                segment["status"] = str(data["status"])
-    return {
-        "invocation_id": invocation_id,
-        "event_count": len(events),
-        "segments": [executions[key] for key in sorted(executions)],
-        "summary": {
-            "cache_read_tokens": cache_read_tokens,
-            "cache_write_tokens": cache_write_tokens,
-            "cost_usd": round(cost_usd, 12),
-            "duration_ms": duration_ms,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "policy_decisions": {
-                key: policy_decisions[key] for key in sorted(policy_decisions)
-            },
-        },
-        "correlated_log_events": sorted(log_events),
-        "diagnostics": {
-            "legacy_identity_gap": False,
-            "orphan_terminal_events": sum(
-                1
-                for event in events
-                if event.event_type.endswith(
-                    (".completed", ".failed", ".cancelled", ".paused")
-                )
-                and not event.execution_id
-            ),
-            "propagation": propagation,
-        },
-    }
-
-
 async def _print_invocation(*, args, db_path) -> int:
     command = str(args.invocation_command)
     if command != "list":
         return _print_invocation_detail(args=args, db_path=db_path)
-    service = TelemetryService(db_path)
     try:
-        events = await service.get_events()
-        event_type = str(args.event_type or "").strip()
-        agent_id = str(args.agent_id or "").strip()
-        status = str(args.status or "").strip()
-        grouped: dict[str, list] = {}
-        legacy_count = 0
-        for event in events:
-            if event.invocation_id is None:
-                legacy_count += 1
-                continue
-            if event_type and event.event_type != event_type:
-                continue
-            if agent_id and event.agent_id != agent_id:
-                continue
-            if status and str(event.data.get("status") or "") != status:
-                continue
-            grouped.setdefault(event.invocation_id, []).append(event)
-        rows = [
-            _invocation_summary(invocation_id, grouped[invocation_id])
-            for invocation_id in sorted(
-                grouped,
-                key=lambda key: max(event.timestamp for event in grouped[key]),
-                reverse=True,
-            )[: args.limit]
-        ]
+        with open_telemetry_inspection(
+            db_path=db_path,
+            home_root=str(args.home_root or "").strip() or None,
+        ) as service:
+            if service is None:
+                rows, legacy_count = [], 0
+            else:
+                rows, legacy_count = select_invocation_snapshots(
+                    service,
+                    limit=args.limit,
+                    event_type=str(args.event_type or "").strip(),
+                    agent_id=str(args.agent_id or "").strip(),
+                    status=str(args.status or "").strip(),
+                )
         payload = {
             "count": len(rows),
             "invocations": rows,
             "diagnostics": {"legacy_event_count": legacy_count},
         }
-    finally:
-        await service.close()
+    except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
+        report = build_telemetry_debug_error(
+            telemetry_storage_error_code(exc),
+            "storage",
+        )
+        print_json_payload(report.to_dict())
+        return telemetry_debug_exit(report)
     print_json_payload(payload)
     return 0
 
@@ -406,7 +306,7 @@ def _print_invocation_detail(*, args: Any, db_path: Path) -> int:
                 print_json_payload(report.to_dict())
                 return telemetry_debug_exit(report)
             invocation_id = str(report.selection.selected_invocation_id)
-            events = read_invocation_events(service, invocation_id)
+            payload, events = build_invocation_snapshot(service, invocation_id)
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
         report = build_telemetry_debug_error(
             telemetry_storage_error_code(exc),
@@ -415,11 +315,18 @@ def _print_invocation_detail(*, args: Any, db_path: Path) -> int:
         print_json_payload(report.to_dict())
         return telemetry_debug_exit(report)
     event_type = str(args.event_type or "").strip()
-    if event_type:
-        events = [event for event in events if event.event_type == event_type]
-    payload = _invocation_summary(invocation_id, events)
+    filtered_events = (
+        [event for event in events if event.event_type == event_type]
+        if event_type
+        else events
+    )
     if args.invocation_command == "show":
-        payload["events"] = [_event_row(event) for event in events]
+        payload["events"] = [_event_row(event) for event in filtered_events]
+    elif event_type:
+        payload["event_filter"] = {
+            "event_type": event_type,
+            "matched_event_count": len(filtered_events),
+        }
     print_json_payload(payload)
     return 0
 

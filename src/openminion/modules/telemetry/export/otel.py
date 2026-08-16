@@ -446,16 +446,25 @@ class OpenTelemetryTraceExporter:
         assert self._sink is not None
         self._sink.emit_log(**record)
 
-    def _flush_execution(self, execution_id: str) -> None:
+    def _flush_execution(self, execution_id: str, trace_key: str) -> None:
         assert self._sink is not None
         spans = self._deferred_spans.pop(execution_id, [])
+        trace_keys = {trace_key}
+        trace_keys.update(str(span.get("trace_key") or "") for span in spans)
         spans.sort(key=lambda item: _span_depth(str(item.get("span_key") or "")))
         for span in spans:
             self._sink.emit_span(**span)
-        for record in self._deferred_events.pop(execution_id, []):
+        events = self._deferred_events.pop(execution_id, [])
+        logs = self._deferred_logs.pop(execution_id, [])
+        trace_keys.update(str(record.get("trace_key") or "") for record in events)
+        trace_keys.update(str(record.get("trace_key") or "") for record in logs)
+        for record in events:
             self._sink.emit_event(**record)
-        for record in self._deferred_logs.pop(execution_id, []):
+        for record in logs:
             self._sink.emit_log(**record)
+        for trace_key in trace_keys:
+            if trace_key:
+                self._sink.release_trace(trace_key)
 
     def _emit_performance_metrics(
         self,
@@ -573,7 +582,7 @@ class OpenTelemetryTraceExporter:
         if start_event_type == "agent.execution.started":
             self._sink.emit_span(**span)
             if execution_id:
-                self._flush_execution(execution_id)
+                self._flush_execution(execution_id, str(span["trace_key"]))
         else:
             self._emit_or_defer_span(
                 event=event,

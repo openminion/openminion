@@ -1,4 +1,5 @@
 import json
+import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -371,6 +372,30 @@ def _service_port_telemetryctl(service_port: Any) -> Any | None:
     return getattr(service, "_telemetryctl", None)
 
 
+async def _emit_llm_call_event(
+    telemetryctl: Any,
+    *,
+    session_id: str,
+    turn_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    status: str,
+    service_port: Any,
+) -> None:
+    try:
+        await telemetryctl.emit_canonical_event(
+            session_id,
+            turn_id,
+            event_type,
+            payload,
+            status=status,
+        )
+    except Exception:
+        service = getattr(service_port, "_service", None)
+        logger = getattr(service, "_logger", logging.getLogger(__name__))
+        logger.warning("llm call telemetry emit failed event_type=%s", event_type)
+
+
 async def generate_with_provider_call_telemetry(
     *,
     service_port: Any,
@@ -391,11 +416,12 @@ async def generate_with_provider_call_telemetry(
         if trace_publication
         else TraceArtifactPublication(complete=False)
     )
-    await telemetryctl.emit_canonical_event(
-        session_id,
-        turn_id,
-        "llm.call.started",
-        {
+    await _emit_llm_call_event(
+        telemetryctl,
+        session_id=session_id,
+        turn_id=turn_id,
+        event_type="llm.call.started",
+        payload={
             "llm_call_id": llm_call_id,
             "model": str(getattr(request, "model", "") or ""),
             "provider_name": provider_name,
@@ -403,6 +429,7 @@ async def generate_with_provider_call_telemetry(
             **publication.event_fields(final=False),
         },
         status="started",
+        service_port=service_port,
     )
     try:
         response = await generate()
@@ -413,28 +440,31 @@ async def generate_with_provider_call_telemetry(
                 if trace_publication
                 else TraceArtifactPublication(complete=False)
             )
-            await telemetryctl.emit_canonical_event(
-                session_id,
-                turn_id,
-                "llm.call.failed",
-                {
+            await _emit_llm_call_event(
+                telemetryctl,
+                session_id=session_id,
+                turn_id=turn_id,
+                event_type="llm.call.failed",
+                payload={
                     "llm_call_id": llm_call_id,
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
                     "error": {"type": type(exc).__name__},
                     **publication.event_fields(final=True),
                 },
                 status="failed",
+                service_port=service_port,
             )
     publication = (
         trace_publication()
         if trace_publication
         else TraceArtifactPublication(complete=False)
     )
-    await telemetryctl.emit_canonical_event(
-        session_id,
-        turn_id,
-        "llm.call.completed",
-        {
+    await _emit_llm_call_event(
+        telemetryctl,
+        session_id=session_id,
+        turn_id=turn_id,
+        event_type="llm.call.completed",
+        payload={
             "llm_call_id": llm_call_id,
             "response_model": str(getattr(response, "model", "") or ""),
             "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
@@ -445,6 +475,7 @@ async def generate_with_provider_call_telemetry(
             **publication.event_fields(final=True),
         },
         status="completed",
+        service_port=service_port,
     )
     return response
 

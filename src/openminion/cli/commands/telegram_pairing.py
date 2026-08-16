@@ -33,16 +33,16 @@ def print_pair_token_output(
     output: PairTokenOutputLike, *, config_path: str | None = None
 ) -> None:
     print("Pairing token created.")
+    print("1. Make sure the Telegram listener is running:")
+    print(telegram_command("run", config_path))
     if output.deep_link:
-        print("Open this link in Telegram:")
+        print("2. Open this link in Telegram:")
         print(output.deep_link)
         print("If Telegram does not open, send this message to the bot:")
     else:
-        print("Send this message to the bot:")
+        print("2. Send this message to the bot:")
     print(f"/start {output.token}")
-    print("Make sure the listener is running:")
-    print(telegram_command("run", config_path))
-    print("In Telegram, send /status or a plain message.")
+    print("3. Wait for the Paired confirmation, then send /status or a message.")
     print(
         "Security note: this chat can use OpenMinion control commands on this "
         "computer. Fine-grained ACL is not available yet."
@@ -81,8 +81,8 @@ def print_candidate(
 
 def print_pair_missing_ids_hint(config_path: str | None) -> None:
     print("Pairing needs Telegram IDs first.")
-    print("Easy path: " + telegram_command("pair", config_path) + " --wait")
-    print("Or discover IDs first: " + telegram_command("identify", config_path))
+    print("Recommended: " + telegram_command("pair", config_path) + " --wait")
+    print("Advanced: " + telegram_command("identify", config_path))
 
 
 def telegram_pair_command(

@@ -89,10 +89,35 @@ FocusStatusLine {
 }
 
 #focus-tools-overlay-title,
-#focus-session-overlay-title {
+#focus-session-overlay-title,
+#focus-overview-title {
     dock: top;
     padding: 1;
     text-style: bold;
+}
+
+OverviewOverlay {
+    align: center middle;
+    background: $background 85%;
+}
+
+#focus-overview-panel {
+    width: 92%;
+    max-width: 110;
+    height: 90%;
+    border: round $openminion-surface-divider;
+    background: $surface;
+    padding: 0 2;
+}
+
+#focus-overview-content {
+    height: auto;
+    padding: 1 0;
+}
+
+#focus-overview-hints {
+    color: $text-muted;
+    padding: 1 0;
 }
 
 /* FIU-02: bordered input chrome. The frame wraps the shared

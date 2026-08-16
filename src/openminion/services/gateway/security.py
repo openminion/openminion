@@ -18,7 +18,10 @@ from openminion.modules.policy import (
     SecurityPolicyEngine,
     default_internal_actor,
 )
-from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.storage.runtime.session_store import (
+    RuntimeSessionTurnFenceError,
+    SessionStore,
+)
 
 
 class GatewaySecurity:
@@ -105,6 +108,7 @@ class GatewaySecurity:
         session_id: str,
         run_id: str,
         decision: ChannelAuthenticityDecision,
+        session_turn_fence_token: int | None = None,
     ) -> None:
         if decision.allowed and not decision.warning:
             return
@@ -121,6 +125,7 @@ class GatewaySecurity:
             session_id=session_id,
             event_type=event_type,
             payload=payload,
+            session_turn_fence_token=session_turn_fence_token,
         )
         if decision.allowed:
             return
@@ -135,6 +140,7 @@ class GatewaySecurity:
         session_id: str,
         run_id: str,
         decision: SecurityPolicyDecision,
+        session_turn_fence_token: int | None = None,
     ) -> None:
         if decision.decision == DECISION_ALLOW:
             return
@@ -156,7 +162,10 @@ class GatewaySecurity:
                     "required_approval_level": decision.required_approval_level,
                     "details": decision.details,
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )
+        except RuntimeSessionTurnFenceError:
+            raise
         except Exception:
             pass
 
@@ -176,6 +185,7 @@ class GatewaySecurity:
         session_id: str,
         run_id: str,
         metadata: dict[str, str],
+        session_turn_fence_token: int | None = None,
     ) -> None:
         raw_events = str(metadata.get("security_events", "")).strip()
         if not raw_events:
@@ -191,6 +201,7 @@ class GatewaySecurity:
                     "run_id": run_id,
                     "reason_code": "invalid_security_events_payload",
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )
             return
 
@@ -202,6 +213,7 @@ class GatewaySecurity:
                     "run_id": run_id,
                     "reason_code": "invalid_security_events_type",
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )
             return
 
@@ -234,6 +246,7 @@ class GatewaySecurity:
                 session_id=session_id,
                 event_type=event_kind,
                 payload=payload,
+                session_turn_fence_token=session_turn_fence_token,
             )
 
     def _append_security_event(
@@ -242,12 +255,14 @@ class GatewaySecurity:
         session_id: str,
         event_type: str,
         payload: dict[str, object],
+        session_turn_fence_token: int | None = None,
     ) -> None:
         safe_payload, redaction_count = redact_mapping(payload)
         self._sessions.append_event(
             session_id=session_id,
             event_type=event_type,
             payload=safe_payload,
+            session_turn_fence_token=session_turn_fence_token,
         )
         if redaction_count > 0:
             self._sessions.append_event(
@@ -259,4 +274,5 @@ class GatewaySecurity:
                     "source_event_type": event_type,
                     "redacted_fields_count": str(redaction_count),
                 },
+                session_turn_fence_token=session_turn_fence_token,
             )

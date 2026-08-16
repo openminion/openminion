@@ -234,6 +234,24 @@ def _audit_event(
         )
 
 
+def _route_pre_access_pair_command(
+    runner: Any,
+    envelope: TelegramInboundEnvelope,
+    normalized_text: str,
+) -> bool:
+    if normalized_text.strip().casefold() != "/pair":
+        return False
+    runner._handle_local_command(envelope, normalized_text)  # noqa: SLF001
+    runner._audit_event(  # noqa: SLF001
+        "cp.route.local_command",
+        reason="local_command",
+        update_id=envelope.update_id,
+        chat_id=str(envelope.chat_id),
+    )
+    runner._answer_callback_if_needed(envelope)  # noqa: SLF001
+    return True
+
+
 def _as_str_or_none(value: Any) -> str | None:
     if value is None:
         return None

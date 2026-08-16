@@ -69,6 +69,58 @@ class GatewayTurnPersistenceDeliveryMixin:
             metadata=metadata,
         )
 
+    def _complete_suppressed_idle_tick(
+        self,
+        *,
+        routing: _RoutingResult,
+        run_id: str,
+        response: Any,
+        lifecycle_payload: dict[str, str],
+        typed_terminal_resolver: Callable[..., Any] | None,
+        session_turn_fence_token: int | None,
+    ) -> Message:
+        self._finish_run_record(
+            run_id,
+            status="completed",
+            input_tokens=0,
+            output_tokens=0,
+        )
+        outbound = self._suppressed_outbound_for_response(
+            routing=routing,
+            run_id=run_id,
+            response=response,
+        )
+        self._lifecycle_ops.emit_turn_event(
+            session_id=routing.session.id,
+            event_type="response.suppressed",
+            conversation_id=routing.conversation_id or None,
+            thread_id=routing.thread_id or None,
+            attach_id=routing.attach_id or None,
+            payload={"run_id": run_id, "reason": "pae_idle_tick_noop"},
+            session_turn_fence_token=session_turn_fence_token,
+        )
+        with active_chat_phase("terminal_event"):
+            self._lifecycle_ops.emit_terminal_run_state(
+                session_id=routing.session.id,
+                run_id=run_id,
+                legacy_state=RUN_STATE_COMPLETED,
+                current_step="turn.completed",
+                payload=self._lifecycle_ops.corr_payload(
+                    normalized_request_id=routing.normalized_request_id,
+                    lifecycle_payload=lifecycle_payload,
+                    extra={
+                        "response_chars": 0,
+                        "suppressed": "pae_idle_tick_noop",
+                    },
+                ),
+                conversation_id=routing.conversation_id or None,
+                thread_id=routing.thread_id or None,
+                attach_id=routing.attach_id or None,
+                typed_terminal_resolver=typed_terminal_resolver,
+                session_turn_fence_token=session_turn_fence_token,
+            )
+        return outbound
+
     def _build_outbound_and_persist(
         self,
         routing: _RoutingResult,
@@ -97,6 +149,7 @@ class GatewayTurnPersistenceDeliveryMixin:
                 session_id=session_id,
                 run_id=run_id,
             ),
+            session_turn_fence_token=session_turn_fence_token,
         )
         outbound = build_outbound_message(
             response=response,
@@ -214,6 +267,8 @@ class GatewayTurnPersistenceDeliveryMixin:
             outbound_metadata=outbound.metadata,
             followup_queue=self._memory_followup_queue,
             defer_followup=True,
+            session_turn_fence_token=session_turn_fence_token,
+            emit_memory_followup=self._emit_memory_followup,
         )
 
     def _deliver_and_complete(
@@ -229,6 +284,8 @@ class GatewayTurnPersistenceDeliveryMixin:
         outbound_record: Any,
         deliver: bool,
         typed_terminal_resolver: Callable[..., tuple[Any, ...] | None] | None = None,
+        session_turn_lease_owner: str = "",
+        session_turn_fence_token: int | None = None,
     ) -> None:
         session_id = routing.session.id
         conversation_id = routing.conversation_id
@@ -242,6 +299,11 @@ class GatewayTurnPersistenceDeliveryMixin:
 
         if deliver:
             with active_chat_phase("response_delivery"):
+                self._renew_session_turn_lease(
+                    session_id=session_id,
+                    owner=session_turn_lease_owner,
+                    fence_token=session_turn_fence_token,
+                )
                 self._channels.get(response.channel).send(outbound)
         if deliver or caller_handles_delivery:
             with active_chat_phase("response_delivered_event"):
@@ -258,6 +320,7 @@ class GatewayTurnPersistenceDeliveryMixin:
                         "channel": response.channel,
                         "target": response.target,
                     },
+                    session_turn_fence_token=session_turn_fence_token,
                 )
         with active_chat_phase("terminal_event"):
             self._lifecycle_ops.emit_terminal_run_state(
@@ -278,6 +341,7 @@ class GatewayTurnPersistenceDeliveryMixin:
                 thread_id=thread_id or None,
                 attach_id=attach_id or None,
                 typed_terminal_resolver=typed_terminal_resolver,
+                session_turn_fence_token=session_turn_fence_token,
             )
         self._logger.info(
             "gateway turn complete channel=%s target=%s session_id=%s run_id=%s request_id=%s",

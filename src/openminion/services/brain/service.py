@@ -488,6 +488,19 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
 
         return _structure_summary
 
+    def build_session_summary_enricher(self) -> Any:
+        def _enrich_summary(rolling_summary: str) -> str:
+            structured = _structure_session_summary(
+                service=self,
+                rolling_summary=rolling_summary,
+                turn_count=0,
+            )
+            if not structured:
+                return rolling_summary
+            return str(structured.get("summary_text", "") or rolling_summary)
+
+        return _enrich_summary
+
     def _get_runner(self) -> BrainRunner:
         if self._runner is not None:
             if self._llm_wrapper is None:

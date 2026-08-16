@@ -81,8 +81,10 @@ def _run(
 def test_keep_last_plan_is_deterministic_and_read_only(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
     before = {path.name: path.stat().st_mtime_ns for path in db_path.parent.iterdir()}
 
@@ -113,6 +115,7 @@ def test_older_than_uses_inclusive_cutoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
     monkeypatch.setattr(
         "openminion.modules.telemetry.retention.time.time", lambda: 160.0
@@ -140,9 +143,11 @@ def test_older_than_uses_inclusive_cutoff(
 def test_retention_rejects_invalid_or_mutating_grammar(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
     args: list[str],
 ) -> None:
     data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
     db_path = _seed(data_root)
 
     exit_code, payload = _run(data_root, db_path, args, capsys)

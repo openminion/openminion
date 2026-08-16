@@ -38,14 +38,14 @@ def test_no_command_prints_help_and_returns_zero() -> None:
 
 
 def test_list_command_returns_deterministic_json() -> None:
-    code, out = _run(["sample", "list"])
+    code, out = _run(["list"])
     assert code == 0
     payload = json.loads(out)
     assert payload["count"] == len(payload["providers"])
 
 
 def test_unknown_provider_returns_error_exit_code() -> None:
-    code, out = _run(["sample", "test", "--provider", "unknown", "--input", "ping"])
+    code, out = _run(["test", "--provider", "unknown", "--input", "ping"])
     assert code == 1
     payload = json.loads(out)
     assert payload["success"] is False

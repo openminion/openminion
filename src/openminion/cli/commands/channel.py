@@ -38,12 +38,17 @@ from openminion.cli.commands.telegram_pairing import (
     print_pair_token_output,
     telegram_command as _telegram_command,
 )
+from openminion.cli.commands.telegram_parser import register_telegram_subcommands
 from openminion.modules.controlplane.config import (
     ControlPlaneConfig,
     from_base_config as controlplane_from_base_config,
     load_config as load_controlplane_config,
 )
-from openminion.modules.controlplane.channels.telegram.bot_api import TelegramBotAPI
+from openminion.modules.controlplane.channels.telegram.bot_api import (
+    TelegramAPIError,
+    TelegramBotAPI,
+    TelegramTransportError,
+)
 from openminion.modules.controlplane.channels.telegram.config import (
     TelegramChannelConfig,
     from_base_config as telegram_from_base_config,
@@ -143,16 +148,22 @@ def telegram_setup(args: argparse.Namespace) -> int:
     config_path = resolve_config_path(getattr(args, "config", None))
     token_value, config_value, raw_secret = _resolve_setup_token(args)
     bot_info: dict[str, Any] | None = None
+    command_menu_error: str | None = None
     if token_value:
+        api = TelegramBotAPI(token_value)
         try:
-            bot_info = TelegramBotAPI(token_value).get_me()
-        except Exception as exc:
+            bot_info = api.get_me()
+        except (TelegramAPIError, TelegramTransportError, ValueError) as exc:
             print(
                 "Telegram bot token could not be validated. "
                 "Re-enter the token or run doctor after fixing the token reference."
             )
             print(f"Validation error: {exc}")
             return 2
+        try:
+            api.set_my_commands(TELEGRAM_BOT_COMMANDS)
+        except (TelegramAPIError, TelegramTransportError) as exc:
+            command_menu_error = str(exc)
 
     if raw_secret and _is_git_tracked(config_path) and not args.allow_tracked_secret:
         print(
@@ -176,6 +187,11 @@ def telegram_setup(args: argparse.Namespace) -> int:
     if username:
         print(f"Bot: @{username}")
     print("Token: [redacted]")
+    if command_menu_error:
+        print("Bot menu sync skipped: " + command_menu_error)
+        print("Retry: " + _telegram_command("commands-sync", str(config_path)))
+    elif bot_info is not None:
+        print(f"Bot menu: {len(TELEGRAM_BOT_COMMANDS)} commands synced")
     print("Next: " + _telegram_command("doctor", str(config_path)))
     return 0
 
@@ -186,7 +202,12 @@ def telegram_doctor(args: argparse.Namespace) -> int:
         print(json.dumps({"checks": checks}, indent=2, sort_keys=True))
     else:
         for check in checks:
-            status = "ok" if check["ok"] else "fail"
+            if check["ok"]:
+                status = "ok"
+            elif check["required"]:
+                status = "fail"
+            else:
+                status = "info"
             detail = f" - {check['detail']}" if check.get("detail") else ""
             print(f"[{status}] {check['id']}{detail}")
         print(_telegram_doctor_next_step(args, checks))
@@ -265,6 +286,7 @@ def telegram_status(args: argparse.Namespace) -> int:
     controlplane_payload = payload["controlplane"]
     daemon_payload = payload["daemon"]
     session_payload = payload["session"]
+    print(_telegram_status_summary(payload))
     print(f"telegram.enabled={telegram_payload['enabled']}")
     print(f"telegram.mode={telegram_payload['mode']}")
     print(f"telegram.poll_state={telegram_payload['poll_state']}")
@@ -298,6 +320,24 @@ def _telegram_status_payload(args: argparse.Namespace) -> dict[str, Any]:
         active_pairings=_count_active_pairings(cp_cfg.sqlite_path),
         chat_id=getattr(args, "chat_id", None),
         topic_id=getattr(args, "topic_id", None),
+    )
+
+
+def _telegram_status_summary(payload: dict[str, Any]) -> str:
+    telegram = payload["telegram"]
+    pairings = payload["pairings"]
+    daemon = payload["daemon"]
+    if not telegram["enabled"]:
+        return "Status: setup required; Telegram is disabled."
+    if int(pairings["active"]) <= 0:
+        return "Status: pairing required; no Telegram chats are paired."
+    if daemon["reachable"] and (
+        telegram["listener_alive"] is True or telegram["listener_state"] == "running"
+    ):
+        return "Status: ready; a paired chat and listener are active."
+    return (
+        "Status: paired; listener state is not observed from this process. "
+        "Start the Telegram runner if it is not already running."
     )
 
 
@@ -552,10 +592,10 @@ def _telegram_doctor_next_step(
     active_pairings = _check_detail_int(by_id.get("pairings.active"))
     daemon_ok = bool(by_id.get("daemon.reachable", {}).get("ok"))
     if active_pairings <= 0:
-        identify = _telegram_command("identify", config_path)
+        guided_pair = _telegram_command("pair", config_path) + " --wait"
         if daemon_ok:
-            return "Next: stop the Telegram runner, then " + identify
-        return "Next: " + identify
+            return "Next: stop the Telegram runner, then " + guided_pair
+        return "Next: " + guided_pair
     if not daemon_ok:
         return "Next: " + _telegram_command("run", config_path)
     return "Ready: send /status or a plain message to your Telegram bot."
@@ -917,61 +957,7 @@ def _count_active_pairings(sqlite_path: str) -> int:
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     channel = subparsers.add_parser("channel", help="Channel setup and operations")
     channel_subcommands = channel.add_subparsers(dest="channel_name", required=True)
-    telegram = channel_subcommands.add_parser(
-        "telegram", help="Telegram channel setup, pairing, and status"
-    )
-    telegram_subcommands = telegram.add_subparsers(
-        dest="telegram_command", required=True
-    )
-
-    setup = telegram_subcommands.add_parser("setup", help="Configure Telegram")
-    _add_config_arg(setup)
-    setup.add_argument("--bot-token-stdin", action="store_true")
-    setup.add_argument("--bot-token-file", default=None)
-    setup.add_argument("--bot-token-ref", default=None)
-    setup.add_argument("--unsafe-bot-token", default=None)
-    setup.add_argument("--allow-tracked-secret", action="store_true")
-    setup.set_defaults(handler=run_channel, needs_app=False)
-
-    doctor = telegram_subcommands.add_parser("doctor", help="Check Telegram setup")
-    _add_config_arg(doctor)
-    doctor.add_argument("--json", action="store_true")
-    _add_telegram_scope_args(doctor)
-    doctor.set_defaults(handler=run_channel, needs_app=False)
-
-    identify = telegram_subcommands.add_parser(
-        "identify", help="Discover Telegram user/chat IDs"
-    )
-    _add_config_arg(identify)
-    identify.add_argument("--timeout-seconds", type=int, default=30)
-    identify.set_defaults(handler=run_channel, needs_app=False)
-
-    pair = telegram_subcommands.add_parser("pair", help="Create a pairing token")
-    _add_config_arg(pair)
-    pair.add_argument("--user-id", type=int, default=None)
-    pair.add_argument("--chat-id", type=int, default=None)
-    pair.add_argument("--ttl-seconds", type=int, default=None)
-    pair.add_argument("--scopes", default=None)
-    pair.add_argument("--wait", action="store_true")
-    pair.add_argument("--timeout-seconds", type=int, default=30)
-    pair.set_defaults(handler=run_channel, needs_app=False)
-
-    run = telegram_subcommands.add_parser("run", help="Run the Telegram channel")
-    _add_config_arg(run)
-    run.add_argument("--once", action="store_true")
-    run.set_defaults(handler=run_channel, needs_app=False)
-
-    status = telegram_subcommands.add_parser("status", help="Show Telegram status")
-    _add_config_arg(status)
-    status.add_argument("--json", action="store_true")
-    _add_telegram_scope_args(status)
-    status.set_defaults(handler=run_channel, needs_app=False)
-
-    commands_sync = telegram_subcommands.add_parser(
-        "commands-sync", help="Sync Telegram slash-command menu"
-    )
-    _add_config_arg(commands_sync)
-    commands_sync.set_defaults(handler=run_channel, needs_app=False)
+    register_telegram_subcommands(channel_subcommands, handler=run_channel)
 
     from openminion.modules.controlplane.channels.slack.cli import (
         register_slack_subcommands,
@@ -979,13 +965,3 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     register_slack_subcommands(channel_subcommands, handler=run_channel)
     register_pairings_subcommands(channel_subcommands, handler=run_channel)
-
-
-def _add_config_arg(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", default=None, help="Config file path")
-
-
-def _add_telegram_scope_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--user-id", type=int, default=None)
-    parser.add_argument("--chat-id", type=int, default=None)
-    parser.add_argument("--topic-id", type=int, default=None)

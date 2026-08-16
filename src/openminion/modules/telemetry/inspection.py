@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import tempfile
@@ -255,9 +256,11 @@ def _selected_debug_report(
     export_health: TelemetryDebugExportHealth,
 ) -> TelemetryDebugReport:
     if _INVOCATION_ID_RE.fullmatch(selected_id):
+        quoted_id = shlex.quote(selected_id)
         commands = [
-            f"telemetryctl invocation graph {selected_id}",
-            f"telemetryctl invocation show {selected_id}",
+            f"telemetryctl debug bundle {quoted_id}",
+            f"telemetryctl invocation graph {quoted_id}",
+            f"telemetryctl invocation show {quoted_id}",
         ]
     else:
         diagnostics.append(
