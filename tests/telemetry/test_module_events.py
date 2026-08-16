@@ -29,6 +29,24 @@ def test_consume_telemetry_task_logs_warning_on_sink_failure() -> None:
     asyncio.run(_case())
 
 
+def test_consume_telemetry_task_ignores_cancelled_sink() -> None:
+    async def _case() -> None:
+        logger = logging.getLogger("openminion.tests.telemetry.events.module")
+        task = asyncio.create_task(asyncio.sleep(1))
+        task.cancel()
+        await asyncio.sleep(0)
+        handler = _ListHandler()
+        logger.addHandler(handler)
+        logger.setLevel(logging.WARNING)
+        try:
+            consume_telemetry_task(task, logger=logger)
+        finally:
+            logger.removeHandler(handler)
+        assert handler.messages == []
+
+    asyncio.run(_case())
+
+
 def test_run_telemetry_result_logs_warning_on_awaitable_failure() -> None:
     async def _boom() -> None:
         raise RuntimeError("boom")
