@@ -15,11 +15,16 @@ The tool family exposes eleven tools:
 - `ops.process.inspect`
 - `ops.network.port_owner`
 - `ops.command.observe`
+- `ops.command.plan`
+- `ops.command.run`
 - `ops.job.inspect`
 - `ops.job.cancel`
 
 Observation tools accept closed profile identifiers, not free-form commands or
-argument vectors. Results carry typed evidence and claim status. Operator
+argument vectors. `ops.command.plan` accepts structured argv and creates an
+immutable, expiring plan without execution. `ops.command.run` accepts only the
+plan id and hash and remains hidden behind the apply-tier approval profile.
+Results carry typed evidence and claim status. Operator
 surfaces receive redacted target views: credential references and host-key
 material never appear in model-visible or public payloads.
 
@@ -27,6 +32,64 @@ Local and container transports are available by default. Install the `remote`
 extra to enable the AsyncSSH transport. SSH targets must configure pinned host
 key material or an explicit known-hosts file; ambient SSH config and host-key
 trust are not assumed.
+
+Configure targets under `runtime.ops.targets`. This example uses a private key
+stored in an environment-backed credential reference; use `password` for a
+password credential:
+
+```yaml
+runtime:
+  ops:
+    targets:
+      - target_id: staging-web
+        kind: ssh
+        environment: staging
+        address: staging.example.test
+        username: openminion
+        ssh_auth_mode: private_key
+        credential_ref:
+          credential_id: staging-web-key
+          scope_kind: tool_family
+          scope_id: ops
+          source_kind: env
+          env_name: OPENMINION_OPS_SSH_KEY
+          rotation_policy: static
+        endpoint_trust:
+          host_key: "ssh-ed25519 AAAA..."
+        workspace_scopes:
+          - /srv/openminion
+        timeout_seconds: 30
+        max_concurrency: 1
+```
+
+The endpoint, username, credential reference, and trust material stay out of
+model-facing tool arguments. The model sees only the stable target id and a
+redacted target view.
+
+## Operator flow
+
+`opsctl` uses the same configured targets and persistent records as the normal
+runtime. Inspect readiness, create a plan, then run the exact reviewed hash:
+
+```bash
+opsctl status --config /path/to/openminion.yaml
+opsctl command-plan staging-web uname -a --config /path/to/openminion.yaml
+opsctl command-run opplan-... PLAN_HASH --confirm \
+  --config /path/to/openminion.yaml
+opsctl job-inspect opjob-... --config /path/to/openminion.yaml
+opsctl evidence-list --target-id staging-web \
+  --config /path/to/openminion.yaml
+```
+
+Plans, jobs, and redacted evidence are stored below
+`OPENMINION_DATA_ROOT/ops/`. A successful exit records process facts only; it
+does not claim that a server was semantically configured.
+
+The managed command path is intentionally bounded: one target, structured
+argv, no caller-provided shell, no environment/stdin forwarding, no PTY or
+file transfer, no bastion/fan-out, and no production or privileged mutation.
+Background worker pools and post-dispatch retry remain deferred until a real
+long-running command workflow requires them.
 
 Write-safe changes use a separate approval path with an allowed root, stale
 state check, atomic replacement, postcondition verification, and rollback.
@@ -80,7 +143,8 @@ OPENMINION_OPS_SSH_PASSWORD='...' \
 ```
 
 The smoke submits the closed `host.snapshot` profile through the normal service,
-durable-job, evidence, and pinned-key transport path. It never accepts an
-arbitrary remote command. After the run, revoke or rotate the dedicated
+durable-job, evidence, and pinned-key transport path. The bounded command path
+must first pass deterministic non-production tests before adding a harmless
+live command to this smoke. After the run, revoke or rotate the dedicated
 credential and remove its temporary target entry. Do not reuse production
 credentials for this check.

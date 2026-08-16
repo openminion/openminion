@@ -77,12 +77,14 @@ async def filter_call_without_policy(
 def provider_call_from_decision(
     *, call: Any, tool_name: str, tool_args: dict[str, Any], decision: Any
 ) -> Any:
-    return type(call)(
+    resolved = type(call)(
         name=tool_name,
         arguments=decision.modified_args or tool_args,
         id=str(getattr(call, "id", "") or ""),
         source=str(getattr(call, "source", "") or ""),
     )
+    resolved.approval_id = str(getattr(call, "approval_id", "") or "")
+    return resolved
 
 
 async def maybe_allow_denied_call_with_operator_approval(
@@ -105,9 +107,11 @@ async def maybe_allow_denied_call_with_operator_approval(
         )
     if not approved:
         return None
-    return provider_call_from_decision(
+    approved_call = provider_call_from_decision(
         call=call, tool_name=tool_name, tool_args=tool_args, decision=decision
     )
+    approved_call.approval_id = str(getattr(call, "id", "") or tool_name)
+    return approved_call
 
 
 def sidecar_denial_event(*, call: Any, tool_name: str, sidecar: str) -> dict[str, str]:

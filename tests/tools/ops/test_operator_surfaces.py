@@ -18,6 +18,7 @@ def test_operator_state_is_redacted_and_renderer_neutral() -> None:
         "tool_family",
         "targets",
         "jobs",
+        "plans",
         "evidence",
         "pending_approvals",
         "disabled_reasons",
@@ -31,10 +32,32 @@ def test_operator_state_is_redacted_and_renderer_neutral() -> None:
 
 def test_cli_status_matches_shared_api_envelope(monkeypatch) -> None:
     service = local_ops_service()
-    monkeypatch.setattr(cli, "local_ops_service", lambda: service)
+    monkeypatch.setattr(cli, "_configured_service", lambda _config: service)
 
     result = CliRunner().invoke(app, ["status"])
 
     assert result.exit_code == 0
     expected = json.loads(json.dumps(operator_state(service)))
     assert json.loads(result.stdout) == expected
+
+
+def test_cli_plan_and_confirmed_run_share_service(monkeypatch) -> None:
+    service = local_ops_service()
+    monkeypatch.setattr(cli, "_configured_service", lambda _config: service)
+    runner = CliRunner()
+
+    planned = runner.invoke(app, ["command-plan", "local", "printf", "ready"])
+    plan = json.loads(planned.stdout)
+    denied = runner.invoke(
+        app,
+        ["command-run", plan["plan_id"], plan["plan_hash"]],
+    )
+    completed = runner.invoke(
+        app,
+        ["command-run", plan["plan_id"], plan["plan_hash"], "--confirm"],
+    )
+
+    assert planned.exit_code == 0
+    assert denied.exit_code != 0
+    assert completed.exit_code == 0
+    assert json.loads(completed.stdout)["status"] == "succeeded"

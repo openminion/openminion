@@ -23,6 +23,10 @@ from openminion.modules.storage.runtime import (
 )
 from openminion.modules.telemetry import storage_hook
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
+from openminion.modules.runtime.credentials import (
+    InMemoryCredentialAuditLog,
+    resolve_credential_env_value,
+)
 from openminion.services.agent.memory import resolve_memory_root
 from openminion.services.brain.factory.retrieve import build_retrieve_service
 from openminion.services.channel.authenticity import build_channel_authenticity_policy
@@ -39,6 +43,7 @@ from openminion.services.runtime.bootstrap import (
 from openminion.services.runtime.env import apply_runtime_environment
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
+from openminion.tools.ops.service import OpsService, configured_ops_service
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,7 @@ def build_runtime_infrastructure(
         tool_registry=tools,
         data_root=paths.data,
     )
+    ops_service = _build_ops_service(base_config, manager, paths.data)
     support = _build_runtime_support(
         base_config=base_config,
         manager=manager,
@@ -179,6 +185,7 @@ def build_runtime_infrastructure(
             base_config.channel_authenticity
         ),
         "action_policy": action_policy,
+        "ops_service": ops_service,
         **support,
     }
 
@@ -196,6 +203,26 @@ def _build_security_policy(
         ),
         default_tool_required_scopes=frozenset(tool_policy.default_required_scopes),
         telemetryctl=telemetryctl,
+    )
+
+
+def _build_ops_service(
+    base_config: OpenMinionConfig,
+    manager: ConfigManager,
+    data_root: Path,
+) -> OpsService:
+    credential_audit = InMemoryCredentialAuditLog()
+    return configured_ops_service(
+        base_config.runtime.ops,
+        data_root=data_root,
+        credential_reader=lambda ref: resolve_credential_env_value(
+            ref,
+            caller_agent_id="",
+            caller_profile_id="ops",
+            access_site="tools.ops.ssh",
+            audit_log=credential_audit,
+            env=manager.env,
+        ),
     )
 
 

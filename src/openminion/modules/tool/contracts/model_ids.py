@@ -51,6 +51,8 @@ MODEL_OPS_NETWORK_INSPECT = "ops.network.inspect"
 MODEL_OPS_PROCESS_INSPECT = "ops.process.inspect"
 MODEL_OPS_NETWORK_PORT_OWNER = "ops.network.port_owner"
 MODEL_OPS_COMMAND_OBSERVE = "ops.command.observe"
+MODEL_OPS_COMMAND_PLAN = "ops.command.plan"
+MODEL_OPS_COMMAND_RUN = "ops.command.run"
 MODEL_OPS_JOB_INSPECT = "ops.job.inspect"
 MODEL_OPS_JOB_CANCEL = "ops.job.cancel"
 
@@ -64,6 +66,8 @@ OPS_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_OPS_PROCESS_INSPECT,
     MODEL_OPS_NETWORK_PORT_OWNER,
     MODEL_OPS_COMMAND_OBSERVE,
+    MODEL_OPS_COMMAND_PLAN,
+    MODEL_OPS_COMMAND_RUN,
     MODEL_OPS_JOB_INSPECT,
     MODEL_OPS_JOB_CANCEL,
 )

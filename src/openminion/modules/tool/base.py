@@ -21,6 +21,7 @@ class ToolExecutionContext:
     agent_query: Callable[[], list[dict[str, Any]]] | None = None
     blast_radius_adapter: Any | None = None
     telemetryctl: Any | None = None
+    ops_service: Any | None = None
     confirm: bool = False
 
 

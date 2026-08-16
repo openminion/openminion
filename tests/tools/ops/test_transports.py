@@ -78,6 +78,7 @@ def test_container_transport_builds_runtime_argv(monkeypatch) -> None:
         active,
         lock,
         output_sink,
+        cwd,
     ):
         captured["argv"] = argv
         captured["timeout"] = timeout_seconds
@@ -85,6 +86,7 @@ def test_container_transport_builds_runtime_argv(monkeypatch) -> None:
         captured["has_active_registry"] = active is not None
         captured["has_lock"] = lock is not None
         captured["output_sink"] = output_sink
+        captured["cwd"] = cwd
         return object()
 
     monkeypatch.setattr(
@@ -104,4 +106,5 @@ def test_container_transport_builds_runtime_argv(monkeypatch) -> None:
         "has_active_registry": True,
         "has_lock": True,
         "output_sink": None,
+        "cwd": "",
     }

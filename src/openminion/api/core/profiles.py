@@ -30,6 +30,7 @@ from openminion.modules.storage.runtime import (
 )
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 from openminion.modules.tool import ToolRegistry
+from openminion.tools.ops import OpsService
 from openminion.services.agent import AgentService
 from openminion.services.channel.authenticity import build_channel_authenticity_policy
 from openminion.services.gateway import GatewayService
@@ -204,6 +205,7 @@ class RuntimeProfilesMixin:
     knowledge_graphs: object | None
     sandbox_runner: object | None
     authored_tools: object | None
+    ops_service: OpsService | None
     runtime_manager: object
     config_manager: ConfigManager | None
     _agent_services: dict[str, AgentService]

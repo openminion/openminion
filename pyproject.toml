@@ -145,6 +145,7 @@ slack = [
 [project.scripts]
 openminion = "openminion.cli.main:main"
 telemetryctl = "openminion.modules.telemetry.cli:main"
+opsctl = "openminion.tools.ops.cli:app"
 openminiond = "openminion.daemon_main:main"
 openminion-tool = "openminion.modules.tool.cli:main"
 identityctl = "openminion.modules.identity.cli:main"

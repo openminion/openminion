@@ -10,6 +10,7 @@ from openminion.tools.ops.contracts import (
 )
 from openminion.tools.ops.service import (
     OpsService,
+    configured_ops_service,
     local_ops_service,
 )
 
@@ -30,8 +31,9 @@ class _RecordingTransport:
         timeout_seconds: float,
         operation_id: str = "",
         output_sink: object = None,
+        cwd: str = "",
     ) -> TransportResult:
-        del target, output_sink
+        del target, output_sink, cwd
         self.timeout_seconds = timeout_seconds
         self.operation_id = operation_id
         self.started.set()
@@ -139,3 +141,165 @@ def test_job_cancellation_reaches_active_transport() -> None:
     assert transport.cancelled.is_set()
     assert cancelled.status == "cancelled"
     assert service.inspect_job(running.job_id).status == "cancelled"
+
+
+def test_command_plan_run_is_hash_bound_and_records_evidence() -> None:
+    transport = _RecordingTransport()
+    service = OpsService(
+        targets=TargetRegistry(
+            (
+                OperationTarget(
+                    target_id="staging",
+                    kind="local",
+                    environment="staging",
+                    workspace_scopes=("/srv/app",),
+                ),
+            )
+        ),
+        transports={"local": transport},
+    )
+    plan = service.plan_command(
+        target_id="staging",
+        argv=("printf", "%s", "hello"),
+        cwd="/srv/app/releases",
+        session_id="session-1",
+    )
+
+    with pytest.raises(ValueError, match="hash changed"):
+        service.run_plan(
+            plan_id=plan.plan_id,
+            plan_hash="0" * 64,
+            approval_id="approval-1",
+        )
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        approval_id="approval-1",
+    )
+
+    assert job.status == "succeeded"
+    evidence = service.inspect_evidence(job.evidence_id)
+    assert evidence.approval_id == "approval-1"
+    assert evidence.command_hash
+    assert evidence.target_revision == 1
+
+
+@pytest.mark.parametrize(
+    "argv, error",
+    [
+        (("sh", "-c", "uname -a"), "shell executables"),
+        (("sudo", "uname", "-a"), "privileged"),
+        (("shutdown", "-h", "now"), "dangerous"),
+        (("rm", "-rf", "/tmp/example"), "dangerous"),
+        ((), "cannot be empty"),
+    ],
+)
+def test_command_plan_rejects_unsafe_argv(argv: tuple[str, ...], error: str) -> None:
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),))
+    )
+
+    with pytest.raises((ValueError, PermissionError), match=error):
+        service.plan_command(target_id="staging", argv=argv)
+
+
+def test_command_plan_denies_production_and_cwd_escape() -> None:
+    service = OpsService(
+        targets=TargetRegistry(
+            (
+                OperationTarget(
+                    target_id="staging",
+                    kind="local",
+                    workspace_scopes=("/srv/app",),
+                ),
+                OperationTarget(
+                    target_id="production",
+                    kind="local",
+                    environment="production",
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="outside configured workspace"):
+        service.plan_command(
+            target_id="staging",
+            argv=("uname", "-a"),
+            cwd="/tmp",
+        )
+    with pytest.raises(ValueError, match="inside a configured workspace"):
+        service.plan_command(
+            target_id="staging",
+            argv=("uname", "-a"),
+            cwd="/srv/app/../../tmp",
+        )
+    with pytest.raises(PermissionError, match="production"):
+        service.plan_command(target_id="production", argv=("uname", "-a"))
+
+
+def test_configured_service_persists_plans_jobs_and_evidence(tmp_path) -> None:
+    config = {"targets": [{"target_id": "staging", "kind": "local"}]}
+    service = configured_ops_service(config, data_root=tmp_path)
+    plan = service.plan_command(target_id="staging", argv=("printf", "ready"))
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        approval_id="approval-1",
+    )
+    evidence_id = job.evidence_id
+    service.close()
+
+    reopened = configured_ops_service(config, data_root=tmp_path)
+
+    assert reopened.plans.get(plan.plan_id) == plan
+    assert reopened.inspect_job(job.job_id).status == "succeeded"
+    assert reopened.inspect_evidence(evidence_id).stdout_preview == "ready"
+    reopened.close()
+
+
+def test_command_plan_rechecks_expiry_and_target_revision() -> None:
+    targets = TargetRegistry((OperationTarget(target_id="staging", kind="local"),))
+    service = OpsService(targets=targets)
+    expired = service.plan_command(
+        target_id="staging",
+        argv=("printf", "ready"),
+        ttl_seconds=-1,
+    )
+
+    with pytest.raises(ValueError, match="expired"):
+        service.run_plan(
+            plan_id=expired.plan_id,
+            plan_hash=expired.plan_hash,
+            approval_id="approval-1",
+        )
+    current = service.plan_command(target_id="staging", argv=("printf", "ready"))
+    targets.register(OperationTarget(target_id="staging", kind="local", revision=2))
+    with pytest.raises(ValueError, match="target revision changed"):
+        service.run_plan(
+            plan_id=current.plan_id,
+            plan_hash=current.plan_hash,
+            approval_id="approval-2",
+        )
+
+
+def test_command_evidence_redacts_configured_literals() -> None:
+    class SecretTransport(_RecordingTransport):
+        def run(self, *args: object, **kwargs: object) -> TransportResult:
+            result = super().run(*args, **kwargs)
+            return result.model_copy(update={"stdout": "token=secret-value"})
+
+    service = OpsService(
+        targets=TargetRegistry((OperationTarget(target_id="staging", kind="local"),)),
+        transports={"local": SecretTransport()},
+        redaction_resolver=lambda _target: ("secret-value",),
+    )
+    plan = service.plan_command(target_id="staging", argv=("printf", "ready"))
+    job = service.run_plan(
+        plan_id=plan.plan_id,
+        plan_hash=plan.plan_hash,
+        approval_id="approval-1",
+    )
+
+    evidence = service.inspect_evidence(job.evidence_id)
+    assert evidence.stdout_preview == "token=[REDACTED]"
+    assert "secret-value" not in evidence.model_dump_json()

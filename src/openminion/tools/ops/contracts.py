@@ -9,6 +9,7 @@ from openminion.modules.runtime.credentials import CredentialRef
 TargetKind = Literal["local", "container", "ssh"]
 TargetPlatform = Literal["linux", "darwin"]
 TargetEnvironment = Literal["fixture", "development", "staging", "production"]
+SshAuthMode = Literal["password", "private_key"]
 ClaimStatus = Literal["observed", "failed", "partial", "unknown", "rolled_back"]
 OperationRisk = Literal["read", "write_safe"]
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
@@ -34,6 +35,7 @@ class OperationTarget(StrictModel):
     username: str = ""
     container: str = ""
     credential_ref: CredentialRef | None = None
+    ssh_auth_mode: SshAuthMode = "password"
     endpoint_trust: EndpointTrust = EndpointTrust()
     policy_profile: str = "ops-readonly"
     capabilities: tuple[str, ...] = ()
@@ -49,13 +51,27 @@ class OperationTarget(StrictModel):
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> "OperationTarget":
-        if self.kind == "local" and (self.address or self.container):
-            raise ValueError("local targets cannot set address or container")
-        if self.kind == "container" and not self.container:
-            raise ValueError("container targets require a container name")
+        has_remote_fields = bool(
+            self.address
+            or self.username
+            or self.credential_ref
+            or self.endpoint_trust.host_key
+            or self.endpoint_trust.known_hosts_path
+        )
+        if self.kind == "local" and (self.container or has_remote_fields):
+            raise ValueError("local targets cannot set container or SSH fields")
+        if self.kind == "container":
+            if not self.container:
+                raise ValueError("container targets require a container name")
+            if has_remote_fields:
+                raise ValueError("container targets cannot set SSH fields")
         if self.kind == "ssh":
-            if not self.address or self.credential_ref is None:
-                raise ValueError("ssh targets require address and credential_ref")
+            if self.container:
+                raise ValueError("ssh targets cannot set a container name")
+            if not self.address or not self.username or self.credential_ref is None:
+                raise ValueError(
+                    "ssh targets require address, username, and credential_ref"
+                )
             if not (
                 self.endpoint_trust.host_key or self.endpoint_trust.known_hosts_path
             ):
@@ -67,6 +83,16 @@ class OperationTarget(StrictModel):
                 or credential.scope_id != "ops"
             ):
                 raise ValueError("ssh credentials must use the ops tool-family scope")
+            if (
+                not credential.credential_id
+                or credential.source_kind != "env"
+                or not credential.env_name
+            ):
+                raise ValueError(
+                    "ssh credentials must use a named environment reference"
+                )
+        elif self.ssh_auth_mode != "password":
+            raise ValueError("non-SSH targets cannot set ssh_auth_mode")
         return self
 
 
@@ -146,6 +172,25 @@ class OperationJob(StrictModel):
     error: str = ""
     expires_at: str = ""
     lease_owner: str = ""
+
+
+class CommandPlan(StrictModel):
+    plan_id: str = Field(min_length=1)
+    plan_hash: str = Field(min_length=64, max_length=64)
+    target_id: str = Field(min_length=1)
+    target_revision: int = Field(ge=1)
+    argv: tuple[str, ...] = Field(min_length=1)
+    cwd: str = ""
+    timeout_seconds: float = Field(gt=0, le=300)
+    session_id: str = ""
+    idempotency_key: str = ""
+    created_at: str = Field(min_length=1)
+    expires_at: str = Field(min_length=1)
+    policy_outcome: str = Field(min_length=1)
+
+
+class OpsConfig(StrictModel):
+    targets: tuple[OperationTarget, ...] = ()
 
 
 class ChangePlan(StrictModel):

@@ -60,7 +60,11 @@ class OperationJobStore:
                 )
 
     def submit(
-        self, request: OperationRequest, *, target_revision: int
+        self,
+        request: OperationRequest,
+        *,
+        target_revision: int,
+        target_limit: int | None = None,
     ) -> OperationJob:
         with self._lock:
             if request.idempotency_key:
@@ -77,7 +81,8 @@ class OperationJobStore:
                 "AND json_extract(request_json, '$.target_id') = ?",
                 (request.target_id,),
             ).fetchone()
-            if active is not None and int(active[0]) >= self._per_target_limit:
+            limit = target_limit or self._per_target_limit
+            if active is not None and int(active[0]) >= limit:
                 raise RuntimeError("target operation concurrency limit reached")
             now = utc_now_iso()
             expires_at = (utc_now() + timedelta(seconds=self._ttl_seconds)).isoformat()
@@ -229,3 +234,7 @@ class OperationJobStore:
                 "SELECT job_id FROM operation_jobs ORDER BY created_at, job_id"
             ).fetchall()
         return tuple(self.get(str(row[0])) for row in rows)
+
+    def close(self) -> None:
+        with self._lock:
+            self._connection.close()
