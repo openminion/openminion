@@ -11,6 +11,8 @@ async def _await_telemetry_result(result: Awaitable[Any]) -> Any:
 def consume_telemetry_task(task: "asyncio.Future[Any]", *, logger: Any) -> None:
     try:
         task.result()
+    except asyncio.CancelledError:
+        return
     except Exception:
         logger.warning("telemetry emit failed", exc_info=True)
 
@@ -37,6 +39,8 @@ def run_telemetry_result(
         except RuntimeError:
             try:
                 asyncio.run(_await_telemetry_result(result))
+            except asyncio.CancelledError:
+                return True
             except Exception:
                 logger.warning("telemetry emit failed", exc_info=True)
                 return False
