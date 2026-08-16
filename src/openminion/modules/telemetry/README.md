@@ -33,6 +33,12 @@ Typed config fields:
   `false`)
 - `sample_rate` (deterministic by trace key)
 
+For OTLP/HTTP, configure one receiver base URL. The exporter derives the
+standard `/v1/traces`, `/v1/metrics`, and `/v1/logs` signal paths. OTLP/gRPC
+uses the configured endpoint unchanged for all three signals. Unsupported
+protocol values disable external export and produce a warning rather than
+silently selecting another transport.
+
 Current exporter coverage:
 
 1. LLM calls emit paired spans with `gen_ai.*` semantic-convention

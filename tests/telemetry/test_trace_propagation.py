@@ -194,6 +194,8 @@ def test_sdk_exports_one_parented_trace_with_correlated_log() -> None:
     assert turn.parent.span_id == root.context.span_id
     assert model.parent.span_id == turn.context.span_id
     assert tool.parent.span_id == turn.context.span_id
+    assert tool.status.status_code.name == "ERROR"
+    assert sink._span_contexts == {}
 
     tool_log = next(
         record.log_record

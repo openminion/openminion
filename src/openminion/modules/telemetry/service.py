@@ -108,7 +108,7 @@ class TelemetryService:
         return TELEMETRY_INTERFACE_VERSION
 
     async def close(self) -> None:
-        self._external_exporter.close()
+        await asyncio.to_thread(self._external_exporter.close)
         await asyncio.to_thread(self._store.close)
 
     def close_sync(self) -> None:

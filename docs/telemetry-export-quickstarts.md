@@ -35,8 +35,11 @@ listener:
 }
 ```
 
-For OTLP/HTTP use protocol `http/protobuf` and the receiver's signal-specific
-URL. OpenTelemetry defines ports 4317 for gRPC and 4318 for HTTP by default.
+For OTLP/HTTP use protocol `http/protobuf` and the receiver's base URL, such as
+`http://<OTLP_HOST>:4318`. OpenMinion derives the standard `/v1/traces`,
+`/v1/metrics`, and `/v1/logs` paths for each signal. A configured URL already
+ending in one of those standard paths is rebased to the other signal paths.
+OpenTelemetry defines ports 4317 for gRPC and 4318 for HTTP by default.
 Search by `service.name`, `openminion.invocation_id`,
 `openminion.execution_id`, or `openminion.event_type`.
 

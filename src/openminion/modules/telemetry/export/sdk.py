@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from openminion.base.config import OTELExporterConfig
 
@@ -71,6 +72,8 @@ class OTELTraceSink(Protocol):
     def close(self) -> None: ...
 
     def force_flush(self, timeout_seconds: float) -> bool: ...
+
+    def release_trace(self, trace_key: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -230,6 +233,9 @@ class RecordingOTELTraceSink:
         del timeout_seconds
         return True
 
+    def release_trace(self, trace_key: str) -> None:
+        del trace_key
+
 
 class OpenTelemetrySDKSink:
     def __init__(
@@ -297,6 +303,10 @@ class OpenTelemetrySDKSink:
             kind=getattr(SpanKind, span_kind),
             links=_links(span_links),
         )
+        if attributes.get("error.type"):
+            from opentelemetry.trace import Status, StatusCode
+
+            child.set_status(Status(StatusCode.ERROR))
         if span_key:
             self._span_contexts[(trace_key, span_key)] = child.get_span_context()
         child.end(
@@ -422,6 +432,11 @@ class OpenTelemetrySDKSink:
                 return False
         return True
 
+    def release_trace(self, trace_key: str) -> None:
+        stale = [key for key in self._span_contexts if key[0] == trace_key]
+        for key in stale:
+            self._span_contexts.pop(key, None)
+
     def _metric_instrument(
         self,
         metric_name: str,
@@ -453,11 +468,18 @@ def create_otel_trace_sink(
     endpoint = str(config.endpoint or "").strip()
     if not config.enabled or not endpoint:
         return None
+    protocol = str(config.protocol or "").strip().lower()
+    if protocol not in {"http", "http/protobuf", "grpc"}:
+        logger.warning(
+            "Unsupported OpenTelemetry protocol %r; OTLP export disabled",
+            config.protocol,
+        )
+        return None
     span_exporter_class: Any
     metric_exporter_class: Any
     log_exporter_class: Any
     try:
-        if str(config.protocol or "").strip().lower() == "grpc":
+        if protocol == "grpc":
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
                 OTLPSpanExporter as GrpcSpanExporter,
             )
@@ -500,19 +522,33 @@ def create_otel_trace_sink(
         {"service.name": str(config.service_name or "openminion")}
     )
     trace_provider = TracerProvider(resource=resource)
-    exporter_kwargs: dict[str, Any] = {"endpoint": endpoint}
+    exporter_kwargs: dict[str, Any] = {}
     if config.headers:
         exporter_kwargs["headers"] = dict(config.headers)
+    signal_endpoints = (
+        {signal: endpoint for signal in ("traces", "metrics", "logs")}
+        if protocol == "grpc"
+        else {
+            signal: _http_signal_endpoint(endpoint, signal)
+            for signal in ("traces", "metrics", "logs")
+        }
+    )
     trace_provider.add_span_processor(
-        BatchSpanProcessor(span_exporter_class(**exporter_kwargs))
+        BatchSpanProcessor(
+            span_exporter_class(endpoint=signal_endpoints["traces"], **exporter_kwargs)
+        )
     )
     metric_reader = PeriodicExportingMetricReader(
-        metric_exporter_class(**exporter_kwargs)
+        metric_exporter_class(
+            endpoint=signal_endpoints["metrics"], **exporter_kwargs
+        )
     )
     metric_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
     logger_provider = LoggerProvider(resource=resource)
     logger_provider.add_log_record_processor(
-        BatchLogRecordProcessor(log_exporter_class(**exporter_kwargs))
+        BatchLogRecordProcessor(
+            log_exporter_class(endpoint=signal_endpoints["logs"], **exporter_kwargs)
+        )
     )
     return OpenTelemetrySDKSink(
         tracer=trace_provider.get_tracer("openminion.telemetry.otel"),
@@ -533,6 +569,17 @@ def _context_from_traceparent(traceparent: str, tracestate: str) -> Any | None:
     if tracestate:
         carrier["tracestate"] = tracestate
     return extract(carrier)
+
+
+def _http_signal_endpoint(endpoint: str, signal: str) -> str:
+    parsed = urlsplit(endpoint)
+    path = parsed.path.rstrip("/")
+    for known_signal in ("traces", "metrics", "logs"):
+        suffix = f"/v1/{known_signal}"
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunsplit(parsed._replace(path=f"{path}/v1/{signal}"))
 
 
 def _links(traceparents: tuple[str, ...]) -> list[Any]:
