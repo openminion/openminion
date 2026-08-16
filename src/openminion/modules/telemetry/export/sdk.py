@@ -539,9 +539,7 @@ def create_otel_trace_sink(
         )
     )
     metric_reader = PeriodicExportingMetricReader(
-        metric_exporter_class(
-            endpoint=signal_endpoints["metrics"], **exporter_kwargs
-        )
+        metric_exporter_class(endpoint=signal_endpoints["metrics"], **exporter_kwargs)
     )
     metric_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
     logger_provider = LoggerProvider(resource=resource)
