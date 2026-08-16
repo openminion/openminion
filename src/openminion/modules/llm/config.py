@@ -1,6 +1,7 @@
 import dataclasses
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import urlparse
 from collections.abc import Mapping
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -190,11 +191,12 @@ def resolve_provider_identity_translation(
     if normalized_provider != "openai":
         return {}
 
+    service_vendor = _resolve_openai_service_vendor(base_url)
     return {
         "transport_adapter": "openai_chat",
         "wire_protocol_family": "openai_chat_completions",
-        "service_vendor": _resolve_openai_service_vendor(base_url),
-        "model_family": _resolve_model_family(model),
+        "service_vendor": service_vendor,
+        "model_family": _resolve_model_family(model, service_vendor=service_vendor),
     }
 
 
@@ -353,6 +355,8 @@ def _read_env_value(key: str, *, env: Mapping[str, Any] | None = None) -> str:
 
 def _resolve_openai_service_vendor(base_url: str) -> str:
     endpoint = str(base_url or "").strip().lower()
+    if urlparse(endpoint).hostname == "api.cortensor.app":
+        return "cortensor"
     if (
         "dashscope.aliyuncs.com" in endpoint
         or "dashscope-us.aliyuncs.com" in endpoint
@@ -381,8 +385,10 @@ def _resolve_openai_service_vendor(base_url: str) -> str:
     return "openai"
 
 
-def _resolve_model_family(model: str) -> str:
+def _resolve_model_family(model: str, *, service_vendor: str = "") -> str:
     lowered = str(model or "").strip().lower()
+    if service_vendor == "cortensor":
+        return "oss" if lowered.startswith("oss-") else "unknown"
     if "minimax" in lowered:
         return "minimax"
     if "qwen" in lowered:

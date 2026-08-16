@@ -10,6 +10,7 @@ from uuid import uuid4
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import OPENMINION_TRACE_REQUESTS_ENV
 from openminion.modules.llm.client_call import usage_payload_from_response_usage
+from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
 from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
 from openminion.modules.telemetry.execution_lifecycle import (
@@ -372,6 +373,26 @@ def _service_port_telemetryctl(service_port: Any) -> Any | None:
     return getattr(service, "_telemetryctl", None)
 
 
+def _llm_correlation_fields(request: ProviderRequest) -> dict[str, str]:
+    metadata = dict(request.metadata or {})
+    return {
+        key: str(metadata.get(key) or "")
+        for key in ("request_id", "trace_id", "run_id", "invocation_id")
+        if metadata.get(key)
+    }
+
+
+def _llm_error_payload(error: BaseException) -> dict[str, Any]:
+    payload: dict[str, Any] = {"type": type(error).__name__}
+    if isinstance(error, ProviderError):
+        payload.update(
+            code=error.code,
+            message=error.message,
+            details=dict(error.details),
+        )
+    return payload
+
+
 async def _emit_llm_call_event(
     telemetryctl: Any,
     *,
@@ -403,6 +424,7 @@ async def generate_with_provider_call_telemetry(
     session_id: str,
     turn_id: str,
     provider_name: str,
+    service_vendor: str = "",
     generate: Callable[[], Awaitable[ProviderResponse]],
     trace_publication: Callable[[], TraceArtifactPublication] | None = None,
 ) -> ProviderResponse:
@@ -410,6 +432,7 @@ async def generate_with_provider_call_telemetry(
     if telemetryctl is None or not session_id:
         return await generate()
     llm_call_id = str(uuid4())
+    correlation = _llm_correlation_fields(request)
     started_at = time.monotonic()
     publication = (
         trace_publication()
@@ -425,7 +448,9 @@ async def generate_with_provider_call_telemetry(
             "llm_call_id": llm_call_id,
             "model": str(getattr(request, "model", "") or ""),
             "provider_name": provider_name,
+            "service_vendor": service_vendor or provider_name,
             "purpose": str(request.metadata.get("purpose") or "act"),
+            **correlation,
             **publication.event_fields(final=False),
         },
         status="started",
@@ -447,8 +472,11 @@ async def generate_with_provider_call_telemetry(
                 event_type="llm.call.failed",
                 payload={
                     "llm_call_id": llm_call_id,
+                    "provider_name": provider_name,
+                    "service_vendor": service_vendor or provider_name,
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
-                    "error": {"type": type(exc).__name__},
+                    "error": _llm_error_payload(exc),
+                    **correlation,
                     **publication.event_fields(final=True),
                 },
                 status="failed",
@@ -466,12 +494,15 @@ async def generate_with_provider_call_telemetry(
         event_type="llm.call.completed",
         payload={
             "llm_call_id": llm_call_id,
+            "provider_name": provider_name,
+            "service_vendor": service_vendor or provider_name,
             "response_model": str(getattr(response, "model", "") or ""),
             "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
             "usage": usage_payload_from_response_usage(
                 getattr(response, "usage", None)
             ),
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
+            **correlation,
             **publication.event_fields(final=True),
         },
         status="completed",
@@ -488,13 +519,18 @@ async def generate_with_provider_trace_telemetry(
     turn_id: str,
     trace_args: dict[str, Any],
 ) -> ProviderResponse:
-    publication = trace_provider_request(provider_request=request, **trace_args)
+    provider_trace_args = {
+        key: value for key, value in trace_args.items() if key != "service_vendor"
+    }
+    publication = trace_provider_request(
+        provider_request=request, **provider_trace_args
+    )
 
     async def generate() -> ProviderResponse:
         nonlocal publication
         response = await service_port.generate_normalized(request)
         publication = publication.merge(
-            trace_provider_response(provider_response=response, **trace_args)
+            trace_provider_response(provider_response=response, **provider_trace_args)
         )
         return response
 
@@ -504,6 +540,7 @@ async def generate_with_provider_trace_telemetry(
         session_id=session_id,
         turn_id=turn_id,
         provider_name=str(trace_args["provider_name"]),
+        service_vendor=str(trace_args.get("service_vendor") or ""),
         generate=generate,
         trace_publication=lambda: publication,
     )

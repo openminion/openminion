@@ -277,7 +277,10 @@ def test_http_response_trace_file_is_emitted_for_http_error(
     traced = json.loads(response_trace_path.read_text(encoding="utf-8"))
     assert traced["provider"] == "openai"
     assert traced["status_code"] == 429
-    assert traced["body_text"] == '{"error":"rate limited"}'
+    assert json.loads(traced["body_text"]) == {
+        "status_code": 429,
+        "upstream_message": "rate limited",
+    }
     assert traced["json"] is None
     assert traced["json_parse_error"] == ""
     assert traced["lane"]["status_code"] == 429

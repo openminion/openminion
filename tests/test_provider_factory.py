@@ -1,11 +1,18 @@
+import asyncio
 import os
 import unittest
+from types import SimpleNamespace
 from tests._csc_fixtures import _csc_install_default_agent
 
 
 from openminion.base.config import OpenMinionConfig
-from openminion.modules.llm.providers.base import ProviderError
-from openminion.modules.llm.providers.factory import build_provider, SUPPORTED_PROVIDERS
+from openminion.modules.llm.providers.base import ProviderError, ProviderRequest
+from openminion.modules.llm.schemas import LLMResponse, ResponseError
+from openminion.modules.llm.providers.factory import (
+    SUPPORTED_PROVIDERS,
+    build_provider,
+    build_runtime_llm_handle,
+)
 from openminion.modules.llm.providers.bridge import LLMCTLBridgeProvider
 
 
@@ -91,6 +98,67 @@ class ProviderFactoryTests(unittest.TestCase):
         finally:
             if previous is not None:
                 os.environ["TEST_OPENAI_KEY_MISSING"] = previous
+
+    def test_cortensor_portal_disables_retries_in_both_runtime_paths(self) -> None:
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config, provider="openai")
+        config.providers.openai.api_key = "fixture-key"
+        config.providers.openai.model = "oss-20b"
+        config.providers.openai.base_url = "https://api.cortensor.app/v1"
+        config.providers.openai.timeout_seconds = 480
+        config.providers.openai.provider_identity = {
+            "transport_adapter": "openai_chat",
+            "wire_protocol_family": "openai_chat_completions",
+            "service_vendor": "cortensor",
+            "model_family": "oss",
+        }
+
+        bridge = build_provider(config, logger=_logger())
+        runtime = build_runtime_llm_handle(config, logger=_logger())
+        try:
+            self.assertEqual(bridge._runtime.config.llmctl.retries.max_retries, 0)
+            self.assertEqual(runtime.client.llmctl.config.llmctl.retries.max_retries, 0)
+            self.assertTrue(runtime.retry_override_policy.disabled)
+        finally:
+            bridge.close()
+            runtime.close()
+
+    def test_bridge_preserves_provider_error_facts(self) -> None:
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config, provider="openai")
+        config.providers.openai.api_key = "fixture-key"
+        provider = build_provider(config, logger=_logger())
+        provider._client = SimpleNamespace(
+            complete=lambda **_kwargs: LLMResponse(
+                ok=False,
+                provider="openai",
+                model="model",
+                output_text="",
+                tool_calls=[],
+                usage={},
+                latency_ms=10,
+                finish_reason="",
+                error=ResponseError(
+                    code="RATE_LIMITED",
+                    message="capacity unavailable",
+                    details={"upstream_code": "capacity", "request_id": "req-1"},
+                ),
+            )
+        )
+        try:
+            with self.assertRaises(ProviderError) as raised:
+                asyncio.run(
+                    provider.generate(
+                        ProviderRequest(user_message="hello", system_prompt="system")
+                    )
+                )
+            self.assertEqual(raised.exception.code, "RATE_LIMITED")
+            self.assertEqual(
+                raised.exception.details,
+                {"upstream_code": "capacity", "request_id": "req-1"},
+            )
+        finally:
+            provider.close()
 
     def test_openai_provider_translates_legacy_minimax_identity_for_bridge(
         self,

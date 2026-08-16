@@ -178,7 +178,11 @@ class OpenAIProvider:
         if request.stop:
             payload["stop"] = request.stop
 
-        if request.tools and supports_native_tool_calling(tool_call_strategy):
+        if (
+            request.tools
+            and request_compat.include_native_tool_contract
+            and supports_native_tool_calling(tool_call_strategy)
+        ):
             payload["tools"] = build_openai_tools_payload(
                 request.tools,
                 canonical_to_external=(
@@ -504,6 +508,7 @@ class OpenAIProvider:
                 error=ResponseError(
                     code=exc.code,
                     message=f"openai stream error: {exc.message}",
+                    details=dict(exc.details),
                 ),
             )
         yield LLMStreamEvent(type="done")

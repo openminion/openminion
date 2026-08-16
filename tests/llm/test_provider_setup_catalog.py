@@ -23,7 +23,8 @@ def test_setup_catalog_covers_required_provider_matrix() -> None:
         "cerebras",
         "groq",
         "ollama",
-        "cortensor",
+        "cortensor-portal",
+        "cortensor-router",
         "minimax",
         "kimi",
         "zai",
@@ -64,6 +65,15 @@ def test_setup_catalog_covers_required_provider_matrix() -> None:
     assert preset_by_id["xai"].recommended_models == ("grok-4.5",)
     assert preset_by_id["mistral"].credential_env == "MISTRAL_API_KEY"
     assert preset_by_id["together"].default_base_url == "https://api.together.ai/v1"
+    portal = preset_by_id["cortensor-portal"]
+    assert portal.runtime_adapter == "openai"
+    assert portal.api_format_id == "openai-compatible"
+    assert portal.default_base_url == "https://api.cortensor.app/v1"
+    assert portal.credential_env == "CORTENSOR_API_KEY"
+    assert portal.recommended_models == ("oss-20b",)
+    assert portal.discovery_posture == "recommended_only"
+    assert portal.timeout_seconds == 480
+    assert preset_by_id["cortensor-router"].runtime_adapter == "cortensor"
     assert preset_by_id["custom-openai-compatible"].requires_base_url is True
     assert preset_by_id["custom-openai-compatible"].api_format_id == (
         "openai-compatible"
@@ -76,12 +86,25 @@ def test_setup_catalog_rejects_unsupported_provider_ids() -> None:
         get_setup_preset("made-up-provider")
 
 
+def test_legacy_cortensor_setup_id_resolves_only_to_direct_router() -> None:
+    assert get_setup_preset("cortensor") == get_setup_preset("cortensor-router")
+
+
 def test_primary_provider_menu_includes_local_ollama() -> None:
     first_ids = {preset.preset_id for preset in first_screen_presets()}
     more_ids = {preset.preset_id for preset in more_screen_presets()}
 
-    assert first_ids == {"openai", "anthropic", "openrouter", "minimax", "ollama"}
+    assert first_ids == {
+        "openai",
+        "anthropic",
+        "openrouter",
+        "cortensor-portal",
+        "minimax",
+        "ollama",
+    }
     assert "ollama" not in more_ids
+    assert "cortensor-router" in more_ids
+    assert "cortensor" not in first_ids | more_ids
     assert {
         "kimi",
         "zai",

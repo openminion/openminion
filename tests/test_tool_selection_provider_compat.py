@@ -549,6 +549,62 @@ def test_complete_with_provider_override_retry_uses_profile_policy_when_supplied
     )
 
 
+def test_cortensor_portal_policy_allows_one_physical_submission() -> None:
+    from openminion.modules.llm.providers.behavior import resolve_behavior_profile
+    from openminion.modules.llm.providers.tool_choice import (
+        complete_with_provider_override_retry,
+    )
+    from openminion.modules.llm.schemas import LLMResponse, ResponseError
+
+    profile = resolve_behavior_profile(
+        provider="openai",
+        model="oss-20b",
+        base_url="https://api.cortensor.app/v1",
+        provider_identity={
+            "transport_adapter": "openai_chat",
+            "wire_protocol_family": "openai_chat_completions",
+            "service_vendor": "cortensor",
+            "model_family": "oss",
+        },
+    )
+    calls = 0
+
+    def _fake_complete(**kwargs: object) -> LLMResponse:
+        nonlocal calls
+        del kwargs
+        calls += 1
+        return LLMResponse(
+            ok=False,
+            provider="openai",
+            model="oss-20b",
+            output_text="",
+            tool_calls=[],
+            usage={},
+            latency_ms=10,
+            finish_reason="",
+            error=ResponseError(
+                code="PROVIDER_ERROR",
+                message="tool_choice required is unsupported in thinking mode",
+            ),
+        )
+
+    result = complete_with_provider_override_retry(
+        complete_fn=_fake_complete,
+        provider_name="openai",
+        model_name="oss-20b",
+        messages=[{"role": "user", "content": "test"}],
+        tools=[{"name": "submit_output"}],
+        tool_choice="required",
+        metadata={},
+        thinking="minimal",
+        policy=profile.retry_override_policy,
+    )
+
+    assert calls == 1
+    assert result.response.ok is False
+    assert result.retry_override_id == ""
+
+
 def test_glm5_turbo_config_tool_call_strategy_is_not_hybrid() -> None:
     cfg = _load_config("per-agent-openrouter-glm-5-turbo.json")
     strategy = cfg["providers"]["openrouter"]["tool_call_strategy"]

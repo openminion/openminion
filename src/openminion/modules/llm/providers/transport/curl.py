@@ -16,6 +16,11 @@ from .debug import (
     truncate_debug_value,
     write_llm_debug_event,
 )
+from .error_facts import (
+    malformed_response_facts,
+    openai_error_facts,
+    openai_error_message,
+)
 from .trace import trace_http_json_request, trace_http_json_response
 
 _DebugWriter = Callable[[dict[str, Any]], None]
@@ -107,7 +112,6 @@ def curl_json_post(
         status_code=status_code,
         raw_body=raw_body,
         trace_id=trace_id,
-        max_chars=max_chars,
         env_owner=env_owner,
         write_event=write_event,
     )
@@ -248,12 +252,13 @@ def _trace_and_write_error(
     env_owner: EnvironmentConfig,
     write_event,
 ) -> None:
+    facts = openai_error_facts(raw_body, status_code=status_code)
     trace_http_json_response(
         trace_metadata=trace_metadata,
         provider_name=provider_name,
         url=url,
         status_code=status_code,
-        body_text=raw_body,
+        body_text=json.dumps(facts),
         transport="curl",
         env=env_owner,
     )
@@ -264,7 +269,7 @@ def _trace_and_write_error(
             "trace_id": trace_id,
             "url": url,
             "status": status_code,
-            "error": raw_body[:max_chars],
+            "error": openai_error_message(facts, status_code=status_code)[:max_chars],
             "transport": "curl",
         }
     )
@@ -276,16 +281,20 @@ def _raise_status_error(
     status_code: int,
     raw_body: str,
 ) -> None:
-    detail = raw_body.strip() or "(no response body)"
+    facts = openai_error_facts(raw_body, status_code=status_code)
+    detail = openai_error_message(facts, status_code=status_code)
     if status_code in {401, 403}:
-        raise LLMCtlError("AUTH_ERROR", f"{provider_name} auth failed: {detail}")
+        raise LLMCtlError("AUTH_ERROR", f"{provider_name} auth failed: {detail}", facts)
     if status_code == 429:
-        raise LLMCtlError("RATE_LIMITED", f"{provider_name} rate limited: {detail}")
+        raise LLMCtlError(
+            "RATE_LIMITED", f"{provider_name} rate limited: {detail}", facts
+        )
     if status_code in {408, 504}:
-        raise LLMCtlError("TIMEOUT", f"{provider_name} timeout: {detail}")
+        raise LLMCtlError("TIMEOUT", f"{provider_name} timeout: {detail}", facts)
     raise LLMCtlError(
         "PROVIDER_ERROR",
         f"{provider_name} request failed with HTTP {status_code}: {detail}",
+        facts,
     )
 
 
@@ -297,7 +306,6 @@ def _parse_curl_response(
     status_code: int,
     raw_body: str,
     trace_id: str,
-    max_chars: int,
     env_owner: EnvironmentConfig,
     write_event,
 ) -> dict[str, Any]:
@@ -305,12 +313,15 @@ def _parse_curl_response(
         parsed = json.loads(raw_body)
     except json.JSONDecodeError as exc:
         parse_error = f"{type(exc).__name__}: {exc}"
+        error_response = malformed_response_facts(
+            raw_body, status_code=status_code, error="invalid_json_response"
+        )
         trace_http_json_response(
             trace_metadata=trace_metadata,
             provider_name=provider_name,
             url=url,
             status_code=status_code,
-            body_text=raw_body,
+            body_text=json.dumps(error_response),
             transport="curl",
             parse_error=parse_error,
             env=env_owner,
@@ -322,7 +333,7 @@ def _parse_curl_response(
                 "trace_id": trace_id,
                 "url": url,
                 "error": "invalid_json_response",
-                "raw": raw_body[:max_chars],
+                "response_bytes": error_response["response_bytes"],
                 "transport": "curl",
             }
         )
@@ -330,18 +341,30 @@ def _parse_curl_response(
             "PROVIDER_ERROR", f"{provider_name} response was not valid JSON"
         ) from exc
 
+    if isinstance(parsed, dict):
+        trace_http_json_response(
+            trace_metadata=trace_metadata,
+            provider_name=provider_name,
+            url=url,
+            status_code=status_code,
+            body_text=raw_body,
+            transport="curl",
+            parsed_json=parsed,
+            env=env_owner,
+        )
+        return parsed
+    error_response = malformed_response_facts(
+        raw_body, status_code=status_code, error="response_not_object"
+    )
     trace_http_json_response(
         trace_metadata=trace_metadata,
         provider_name=provider_name,
         url=url,
         status_code=status_code,
-        body_text=raw_body,
+        body_text=json.dumps(error_response),
         transport="curl",
-        parsed_json=parsed,
         env=env_owner,
     )
-    if isinstance(parsed, dict):
-        return parsed
     write_event(
         {
             "event": "error",
@@ -349,7 +372,7 @@ def _parse_curl_response(
             "trace_id": trace_id,
             "url": url,
             "error": "response_not_object",
-            "raw": raw_body[:max_chars],
+            "response_bytes": error_response["response_bytes"],
             "transport": "curl",
         }
     )

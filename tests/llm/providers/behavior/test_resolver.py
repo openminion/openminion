@@ -413,6 +413,19 @@ class TestBuildToolSchemaNameMapProfileParameter:
 
 
 class TestResolverRetryOverridePolicy:
+    def test_cortensor_portal_disables_provider_override_retry(self) -> None:
+        profile = resolve_behavior_profile(
+            provider="openai",
+            model="oss-20b",
+            base_url="https://api.cortensor.app/v1",
+        )
+
+        assert profile.retry_override_policy.disabled is True
+        assert profile.retry_override_policy.disabled_reason == (
+            "cortensor_portal_no_idempotency"
+        )
+        assert profile.retry_override_policy.applicable_overrides == ()
+
     def test_openai_lane_carries_openai_applicable_overrides(self) -> None:
         profile = resolve_behavior_profile(
             provider="openai",

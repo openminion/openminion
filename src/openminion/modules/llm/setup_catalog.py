@@ -31,6 +31,7 @@ class ProviderSetupPreset:
     is_local: bool = False
     setup_help_url: str = ""
     requires_base_url: bool = False
+    timeout_seconds: int | None = None
 
     @property
     def requires_credential(self) -> bool:
@@ -125,10 +126,25 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         setup_help_url="https://console.groq.com/keys",
     ),
     ProviderSetupPreset(
-        preset_id="cortensor",
-        display_label="Cortensor",
+        preset_id="cortensor-portal",
+        display_label="Cortensor Portal",
+        runtime_adapter="openai",
+        api_format_label="OpenAI-compatible Portal API",
+        api_format_id="openai-compatible",
+        default_base_url="https://api.cortensor.app/v1",
+        credential_env="CORTENSOR_API_KEY",
+        recommended_models=("oss-20b",),
+        discovery_posture="recommended_only",
+        setup_help_url=(
+            "https://docs-v2.cortensor.network/products/portal-and-api-gateway/"
+        ),
+        timeout_seconds=480,
+    ),
+    ProviderSetupPreset(
+        preset_id="cortensor-router",
+        display_label="Cortensor Router (direct)",
         runtime_adapter="cortensor",
-        api_format_label="Cortensor completions",
+        api_format_label="Cortensor router completions",
         api_format_id="cortensor-completions",
         default_base_url="http://127.0.0.1:8080/api/v2/completions",
         credential_env="CORTENSOR_API_KEY",
@@ -285,7 +301,15 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
 )
 
 _PRESET_BY_ID = {preset.preset_id: preset for preset in _PRESETS}
-_FIRST_SCREEN_IDS = ("openai", "anthropic", "openrouter", "minimax", "ollama")
+_PRESET_ALIASES = {"cortensor": "cortensor-router"}
+_FIRST_SCREEN_IDS = (
+    "openai",
+    "anthropic",
+    "openrouter",
+    "cortensor-portal",
+    "minimax",
+    "ollama",
+)
 
 
 def list_setup_presets() -> tuple[ProviderSetupPreset, ...]:
@@ -307,6 +331,7 @@ def more_screen_presets() -> tuple[ProviderSetupPreset, ...]:
 
 def get_setup_preset(preset_id: str) -> ProviderSetupPreset:
     normalized = preset_id.strip().lower()
+    normalized = _PRESET_ALIASES.get(normalized, normalized)
     try:
         return _PRESET_BY_ID[normalized]
     except KeyError as exc:

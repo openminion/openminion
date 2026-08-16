@@ -5,6 +5,8 @@ from typing import Any
 from collections.abc import Mapping
 
 from openminion.modules.llm.providers.behavior.constants import (
+    CORTENSOR_PORTAL_RETRY_DISABLED_REASON,
+    CORTENSOR_SERVICE_VENDOR,
     DASHSCOPE_SERVICE_VENDOR,
     DEFAULT_FALLBACK_PARSER_POLICY,
     DEFAULT_REQUEST_DIALECT,
@@ -98,9 +100,12 @@ def resolve_behavior_profile(
         fallback_parser_policy=fallback_parser_policy,
     )
 
-    disabled, disabled_reason = provider_retry_overrides_disabled(
-        metadata=metadata, env=env
-    )
+    if _uses_cortensor_portal(resolved_identity):
+        disabled, disabled_reason = True, CORTENSOR_PORTAL_RETRY_DISABLED_REASON
+    else:
+        disabled, disabled_reason = provider_retry_overrides_disabled(
+            metadata=metadata, env=env
+        )
     applicable_overrides = (
         () if disabled else filter_provider_retry_overrides(provider_name)
     )
@@ -215,4 +220,14 @@ def _uses_minimax_openai_compat_lane(identity: ProviderIdentity | None) -> bool:
         and identity.model_family == MINIMAX_MODEL_FAMILY
         and identity.service_vendor
         in {MINIMAX_SERVICE_VENDOR, DASHSCOPE_SERVICE_VENDOR}
+    )
+
+
+def _uses_cortensor_portal(identity: ProviderIdentity | None) -> bool:
+    return bool(
+        identity
+        and identity.transport_adapter == OPENAI_CHAT_TRANSPORT_ADAPTER
+        and identity.wire_protocol_family
+        == OPENAI_CHAT_COMPLETIONS_WIRE_PROTOCOL_FAMILY
+        and identity.service_vendor == CORTENSOR_SERVICE_VENDOR
     )

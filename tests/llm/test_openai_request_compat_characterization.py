@@ -223,6 +223,13 @@ def test_openai_request_compat_characterization(
             "minimax",
             "https://api.together.ai/v1/chat/completions",
         ),
+        (
+            "cortensor-portal",
+            "oss-20b",
+            "cortensor",
+            "oss",
+            "https://api.cortensor.app/v1/chat/completions",
+        ),
     ],
 )
 def test_frontier_openai_compatible_presets_resolve_identity_and_endpoint(
@@ -257,15 +264,64 @@ def test_frontier_openai_compatible_presets_resolve_identity_and_endpoint(
     assert profile.provider_identity.model_family == expected_model_family
     assert url == expected_url
     assert body["model"] == model
-    assert "tools" in body
-    assert body["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "submit_output"},
-    }
+    if preset_id == "cortensor-portal":
+        assert request_compat == "cortensor_portal"
+        assert "tools" not in body
+        assert "tool_choice" not in body
+        assert "Tool-calling contract:" not in _rendered
+        assert "Native tool-calling contract:" not in _rendered
+    else:
+        assert "tools" in body
+        assert body["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
     if preset_id == "minimax":
         assert request_compat == "minimax_openai_compat"
-    else:
+    elif preset_id != "cortensor-portal":
         assert request_compat == "openai_default"
+
+
+def test_cortensor_portal_stream_payload_remains_text_only() -> None:
+    provider = OpenAIProvider()
+    request = LLMRequest.model_validate(
+        {
+            "model": "oss-20b",
+            "messages": [{"role": "user", "content": "Count 1, 2, 3."}],
+            "tools": [
+                {
+                    "name": "submit_output",
+                    "description": "return structured output",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "tool_choice": "required",
+        }
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_stream(**kwargs):
+        captured.update(kwargs["payload"])
+        yield "data: [DONE]"
+
+    with patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        side_effect=_fake_stream,
+    ):
+        events = list(
+            provider.stream(
+                request,
+                {
+                    "api_key": "fixture-key",
+                    "base_url": "https://api.cortensor.app/v1",
+                },
+            )
+        )
+
+    assert [event.type for event in events] == ["done"]
+    assert captured["stream"] is True
+    assert "tools" not in captured
+    assert "tool_choice" not in captured
 
 
 @pytest.mark.parametrize(
@@ -288,3 +344,28 @@ def test_dashscope_openai_compatible_endpoint_variants_resolve_structurally(
 
     assert identity["service_vendor"] == "dashscope"
     assert identity["model_family"] == "qwen"
+
+
+@pytest.mark.parametrize(
+    ("base_url", "model", "expected_vendor", "expected_family"),
+    [
+        ("https://api.cortensor.app/v1/", "oss-20b", "cortensor", "oss"),
+        ("https://api.cortensor.app:443/v1", "manual-model", "cortensor", "unknown"),
+        ("https://api.cortensor.app.evil.test/v1", "oss-20b", "openai", "openai"),
+        ("https://api.cortensor.app@evil.test/v1", "oss-20b", "openai", "openai"),
+    ],
+)
+def test_cortensor_portal_identity_uses_exact_parsed_host(
+    base_url: str,
+    model: str,
+    expected_vendor: str,
+    expected_family: str,
+) -> None:
+    identity = resolve_provider_identity_translation(
+        "openai",
+        model=model,
+        base_url=base_url,
+    )
+
+    assert identity["service_vendor"] == expected_vendor
+    assert identity["model_family"] == expected_family

@@ -45,6 +45,8 @@ def resolve_consolidation_model_handle(
         model=configured_model,
         client=primary_handle.client,
         tool_call_strategy=primary_handle.tool_call_strategy,
+        retry_override_policy=primary_handle.retry_override_policy,
+        service_vendor=primary_handle.service_vendor,
     )
 
 

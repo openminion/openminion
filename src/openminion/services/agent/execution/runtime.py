@@ -59,11 +59,11 @@ class ExecutorRuntime:
             }
         )
         apply_model_exposure(request, self._service_port.tools)
+        provider = self._service_port.provider
         trace_args = {
             "label": label,
-            "provider_name": str(
-                getattr(self._service_port.provider, "name", "") or ""
-            ),
+            "provider_name": str(getattr(provider, "name", "") or ""),
+            "service_vendor": str(getattr(provider, "service_vendor", "") or ""),
             "home_root": self._service_port.home_root,
             "inbound_metadata": inbound_meta,
             "turn_id": str(inbound.id),

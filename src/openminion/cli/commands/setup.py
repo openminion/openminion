@@ -345,6 +345,21 @@ def _print_preview(result: ProviderSetupResult) -> None:
         print(f"  base URL: {preview.base_url}")
     if preview.shared_adapter_isolated:
         print("  repair: existing agents remain unchanged")
+    _print_capability_note(result.preset)
+
+
+def _print_capability_note(preset: ProviderSetupPreset) -> None:
+    if preset.preset_id == "cortensor-portal":
+        print(
+            fill(
+                "  support: hosted text and text streaming; tool-backed tasks "
+                "require Portal gateway support",
+                width=80,
+                subsequent_indent="    ",
+            )
+        )
+    elif preset.preset_id == "cortensor-router":
+        print("  support: advanced direct Router connection")
 
 
 def _print_provider_listing() -> None:
@@ -362,6 +377,7 @@ def _print_provider_listing() -> None:
         )
         for label, value in details:
             print(fill(f"  {label}: {value}", width=80, subsequent_indent="    "))
+        _print_capability_note(preset)
     print()
     print(
         fill(
@@ -500,6 +516,8 @@ def run_setup(args) -> int:
             if preset_id:
                 provider_label = get_setup_preset(preset_id).display_label
         print(f"Configuration saved at {saved_path} (provider: {provider_label})")
+        if preset_id := str(getattr(args, "provider", "") or "").strip():
+            _print_capability_note(get_setup_preset(preset_id))
 
         doctor_code = _resolve_runtime_helper("_run_setup_doctor")(
             config_path=saved_path

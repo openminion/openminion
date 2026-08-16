@@ -40,6 +40,52 @@ def test_env_first_credentials_store_reference_not_secret(tmp_path: Path) -> Non
     assert result.preview.credential == "environment variable OPENAI_API_KEY"
 
 
+def test_cortensor_portal_setup_uses_openai_runtime_and_slow_timeout(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig()
+    existing.agents = {
+        "openai-main": AgentProfileConfig(name="openai-main", provider="openai")
+    }
+    existing.default_agent = "openai-main"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="cortensor-portal",
+            agent_id="portal",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"CORTENSOR_API_KEY": "fixture-key"},
+        ),
+        existing_config=existing,
+    )
+
+    portal = build_runtime_config(result.config, agent_id="portal")
+    assert portal.agents["portal"].provider == "openai"
+    assert portal.providers.openai.base_url == "https://api.cortensor.app/v1"
+    assert portal.providers.openai.model == "oss-20b"
+    assert portal.providers.openai.timeout_seconds == 480
+    assert portal.providers.openai.provider_identity["service_vendor"] == "cortensor"
+    assert result.config.providers.openai.base_url == "https://api.openai.com/v1"
+
+
+def test_cortensor_portal_runtime_preserves_larger_configured_timeout() -> None:
+    config = OpenMinionConfig()
+    config.agents = {
+        "portal": AgentProfileConfig(
+            name="portal",
+            provider="openai",
+            provider_config_overrides={"timeout_seconds": 720},
+        )
+    }
+    config.default_agent = "portal"
+
+    runtime = build_runtime_config(config, agent_id="portal")
+
+    assert runtime.providers.openai.timeout_seconds == 720
+
+
 def test_env_first_setup_clears_stale_stored_provider_secret(tmp_path: Path) -> None:
     existing = OpenMinionConfig()
     existing.agents = {"ops": AgentProfileConfig(name="ops", provider="openai")}

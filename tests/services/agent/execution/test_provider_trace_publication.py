@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
+from openminion.modules.llm.providers.base import (
+    ProviderError,
+    ProviderRequest,
+    ProviderResponse,
+)
 from openminion.modules.telemetry.trace.structured import TraceArtifactPublication
 from openminion.services.agent.telemetry import generate_with_provider_call_telemetry
 
@@ -28,7 +32,7 @@ def _request() -> ProviderRequest:
     return ProviderRequest(
         user_message="hello",
         system_prompt="system",
-        metadata={"purpose": "act"},
+        metadata={"purpose": "act", "request_id": "req-1", "trace_id": "trace-1"},
     )
 
 
@@ -60,6 +64,7 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
         session_id="session-1",
         turn_id="turn-1",
         provider_name="provider-1",
+        service_vendor="cortensor",
         generate=generate,
         trace_publication=lambda: publication,
     )
@@ -73,6 +78,10 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
     completed = ctl.events[1][1]
     assert started["trace_artifact_paths"] == ["llm/request.json"]
     assert started["trace_artifacts_complete"] is False
+    assert started["provider_name"] == "provider-1"
+    assert started["service_vendor"] == "cortensor"
+    assert started["request_id"] == "req-1"
+    assert started["trace_id"] == "trace-1"
     assert completed["trace_artifact_paths"] == [
         "llm/request.json",
         "llm/response.json",
@@ -93,15 +102,20 @@ async def test_failed_call_retains_published_request_and_raw_artifacts() -> None
 
     async def generate() -> ProviderResponse:
         order.append("provider_failed")
-        raise RuntimeError("provider failed")
+        raise ProviderError(
+            "capacity unavailable",
+            code="RATE_LIMITED",
+            details={"upstream_code": "capacity", "request_id": "req-1"},
+        )
 
-    with pytest.raises(RuntimeError, match="provider failed"):
+    with pytest.raises(ProviderError, match="capacity unavailable"):
         await generate_with_provider_call_telemetry(
             service_port=service_port,
             request=_request(),
             session_id="session-1",
             turn_id="turn-1",
             provider_name="provider-1",
+            service_vendor="cortensor",
             generate=generate,
             trace_publication=lambda: publication,
         )
@@ -113,6 +127,35 @@ async def test_failed_call_retains_published_request_and_raw_artifacts() -> None
         "llm/request-raw.txt",
     ]
     assert failed["trace_artifacts_complete"] is True
+    assert failed["service_vendor"] == "cortensor"
+    assert failed["error"] == {
+        "type": "ProviderError",
+        "code": "RATE_LIMITED",
+        "message": "capacity unavailable",
+        "details": {"upstream_code": "capacity", "request_id": "req-1"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_call_does_not_publish_untyped_exception_text() -> None:
+    order: list[str] = []
+    ctl = _TelemetryCtl(order)
+    service_port = SimpleNamespace(_service=SimpleNamespace(_telemetryctl=ctl))
+
+    async def generate() -> ProviderResponse:
+        raise RuntimeError("Bearer must-not-leak")
+
+    with pytest.raises(RuntimeError, match="must-not-leak"):
+        await generate_with_provider_call_telemetry(
+            service_port=service_port,
+            request=_request(),
+            session_id="session-1",
+            turn_id="turn-1",
+            provider_name="provider-1",
+            generate=generate,
+        )
+
+    assert ctl.events[-1][1]["error"] == {"type": "RuntimeError"}
 
 
 @pytest.mark.asyncio

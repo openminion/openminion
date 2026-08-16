@@ -1,7 +1,7 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-08-07
+Last updated: 2026-08-16
 
 Purpose: give contributors and automation authors a package-local bootstrap and
 execution summary for work inside the `openminion` repo.
@@ -50,7 +50,7 @@ Give me one safe read-only command to inspect the current directory.
 ```
 
 The first screen goes directly to the model provider. OpenAI, Anthropic,
-OpenRouter, MiniMax, and local Ollama appear first; additional providers,
+OpenRouter, Cortensor Portal, MiniMax, and local Ollama appear first; additional providers,
 custom endpoints, and config import remain available from the same menu.
 
 Demo mode is not part of normal onboarding. It remains available through the
@@ -64,7 +64,7 @@ Setup shows the three identities that matter during first run:
 
 1. provider, such as OpenAI, Anthropic, OpenRouter, Ollama, MiniMax,
    Kimi, Z.ai, DeepSeek, Qwen/DashScope, Gemini, xAI, Mistral, Together,
-   Cerebras, Groq, Cortensor, or a custom endpoint;
+   Cerebras, Groq, Cortensor Portal, Cortensor Router, or a custom endpoint;
 2. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`; and
 3. API adapter, such as OpenAI-compatible or Anthropic-compatible.
 
@@ -87,6 +87,7 @@ Built-in hosted presets currently include:
 | `openai` | OpenAI-compatible | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
 | `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
 | `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
+| `cortensor-portal` | OpenAI-compatible | `CORTENSOR_API_KEY` | `https://api.cortensor.app/v1` | recommended |
 | `minimax` | OpenAI-compatible | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
 | `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | recommended |
 | `zai` | OpenAI-compatible | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/` | recommended |
@@ -97,6 +98,30 @@ Built-in hosted presets currently include:
 | `xai` | OpenAI-compatible | `XAI_API_KEY` | `https://api.x.ai/v1` | recommended |
 | `mistral` | OpenAI-compatible | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | recommended |
 | `together` | OpenAI-compatible | `TOGETHER_API_KEY` | `https://api.together.ai/v1` | recommended |
+
+Cortensor Portal is the normal hosted path, similar to other hosted
+OpenAI-compatible endpoints: Portal owns routing, quota, capacity, and its
+internal request lifecycle. OpenMinion defaults its existing provider timeout
+to 480 seconds because responses can be slow; a larger configured
+`timeout_seconds` value is preserved by the runtime. Current Portal support is
+text and text streaming. Tool-backed tasks require the Portal gateway contract
+and are not emulated from prose.
+
+```bash
+export CORTENSOR_API_KEY="..."
+openminion setup --provider cortensor-portal --agent cortensor-portal --no-focus
+```
+
+The advanced direct Router path remains separate and keeps its Router session
+semantics. The legacy setup id `cortensor` resolves only to this direct path.
+
+```bash
+openminion setup --provider cortensor-router --agent cortensor-router --no-focus
+```
+
+`/v1/models` is useful for diagnostics, but it does not prove inference
+readiness. Add `--check-provider` only when a quota-consuming text request is
+authorized.
 
 Unless a setup run says `live`, a checked-in model is only a recommended
 fallback. Fixture-backed provider support means OpenMinion has local request and
