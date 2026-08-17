@@ -164,4 +164,3 @@ def _auth_error(exc: ClientAuthError) -> RouteResult:
         details={},
         retryable=False,
     )
-
