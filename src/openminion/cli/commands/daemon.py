@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +16,11 @@ from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.daemon_client import (
     DaemonEndpoint,
     daemon_is_reachable,
+    daemon_request,
     probe_daemon_endpoint,
     resolve_daemon_endpoint,
 )
+from openminion.api.server.client_auth import build_config_id
 from openminion.cli.bootstrap.loader import load_config
 
 _PROBE_STATUS_MISMATCH: str = "mismatch"
@@ -59,6 +64,13 @@ def run_daemon(args: Any) -> int:
             args.config,
             lines=lines,
             follow=bool(getattr(args, "follow", False)),
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
+    if action == "desktop-bootstrap":
+        return daemon_desktop_bootstrap(
+            args.config,
+            fd=int(getattr(args, "fd", 3)),
             home_root=getattr(args, "home_root", None),
             data_root=getattr(args, "data_root", None),
         )
@@ -299,6 +311,146 @@ def daemon_logs(
     return 0
 
 
+def daemon_desktop_bootstrap(
+    config_path: str | None,
+    *,
+    fd: int = 3,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
+    if fd != 3:
+        print("desktop bootstrap failed: invalid_readiness_fd", file=sys.stderr)
+        return 1
+    endpoint = resolve_daemon_endpoint(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    if not endpoint.token:
+        print("desktop bootstrap failed: desktop_ipc_token_required", file=sys.stderr)
+        return 1
+    try:
+        os.fstat(fd)
+        endpoint = ensure_daemon_running(
+            config_path,
+            auto_start=True,
+            home_root=home_root,
+            data_root=data_root,
+        )
+        status, response = daemon_request(
+            endpoint=endpoint,
+            method="POST",
+            path="/v1/client/leases",
+            payload={
+                "schema_version": 1,
+                "client": {
+                    "kind": "desktop",
+                    "version": _package_version(),
+                    "protocol_min": 1,
+                    "protocol_max": 1,
+                },
+                "requested_ttl_seconds": 43_200,
+            },
+            timeout_s=15.0,
+            max_response_bytes=64 * 1024,
+        )
+        record = _desktop_readiness_record(endpoint, status=status, response=response)
+        _write_readiness_record(fd, record)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        print("desktop bootstrap failed: daemon_bootstrap_failed", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _desktop_readiness_record(
+    endpoint: DaemonEndpoint,
+    *,
+    status: int,
+    response: dict[str, Any],
+) -> dict[str, object]:
+    if status != 200 or response.get("ok") is not True:
+        raise RuntimeError("lease mint failed")
+    if set(response) != {"ok", "lease", "meta"}:
+        raise RuntimeError("unexpected lease response")
+    meta = response.get("meta")
+    if not isinstance(meta, dict) or not set(meta).issubset(
+        {"request_id", "method", "path"}
+    ):
+        raise RuntimeError("invalid response metadata")
+    lease = response.get("lease")
+    if not isinstance(lease, dict) or set(lease) != {
+        "client_id",
+        "client_token",
+        "protocol",
+        "issued_at",
+        "expires_at",
+        "config_id",
+        "capabilities",
+    }:
+        raise RuntimeError("invalid lease payload")
+    expected_config_id = build_config_id(
+        endpoint.config_path,
+        endpoint.home_root,
+        endpoint.data_root,
+    )
+    if lease.get("config_id") != expected_config_id:
+        raise RuntimeError("daemon config mismatch")
+    client_id = str(lease.get("client_id") or "")
+    client_token = str(lease.get("client_token") or "")
+    expires_at = str(lease.get("expires_at") or "")
+    capabilities = lease.get("capabilities")
+    if not client_id or len(client_token) < 43:
+        raise RuntimeError("invalid lease identity")
+    if lease.get("protocol") != 1 or not _future_timestamp(expires_at):
+        raise RuntimeError("invalid lease version or expiry")
+    if not isinstance(capabilities, list) or not all(
+        isinstance(value, str) and value for value in capabilities
+    ):
+        raise RuntimeError("invalid capabilities")
+    if endpoint.host not in {"127.0.0.1", "::1"} or not 1 <= endpoint.port <= 65_535:
+        raise RuntimeError("invalid daemon endpoint")
+    return {
+        "schema_version": 1,
+        "event": "desktop.client.ready",
+        "host": endpoint.host,
+        "port": endpoint.port,
+        "protocol_min": 1,
+        "protocol_max": 1,
+        "daemon_version": _package_version(),
+        "config_id": expected_config_id,
+        "client_id": client_id,
+        "client_token": client_token,
+        "expires_at": expires_at,
+    }
+
+
+def _future_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed > datetime.now(UTC)
+
+
+def _write_readiness_record(fd: int, record: dict[str, object]) -> None:
+    encoded = (json.dumps(record, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(encoded) > 16 * 1024:
+        raise RuntimeError("readiness record is too large")
+    offset = 0
+    while offset < len(encoded):
+        written = os.write(fd, encoded[offset:])
+        if written <= 0:
+            raise RuntimeError("readiness fd closed")
+        offset += written
+
+
+def _package_version() -> str:
+    try:
+        return version("openminion")
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
 def _follow_log_file(log_file: Path, *, start_offset: int) -> None:
     offset = max(0, start_offset)
     try:
@@ -369,12 +521,18 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
     ]
 
     with log_file.open("a", encoding="utf-8") as stream:
+        daemon_env = os.environ.copy()
+        if endpoint.home_root:
+            daemon_env["OPENMINION_HOME"] = endpoint.home_root
+        if endpoint.data_root:
+            daemon_env["OPENMINION_DATA_ROOT"] = endpoint.data_root
         process = subprocess.Popen(  # noqa: S603
             command,
             stdout=stream,
             stderr=subprocess.STDOUT,
             start_new_session=True,
             close_fds=True,
+            env=daemon_env,
         )
 
     deadline = time.time() + 10
@@ -452,3 +610,15 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Keep streaming appended daemon log lines",
     )
     daemon_logs_cmd.set_defaults(handler=run_daemon, needs_app=False)
+
+    desktop_bootstrap = daemon_subcommands.add_parser(
+        "desktop-bootstrap",
+        help="Start or attach to the daemon and write a desktop lease to fd 3",
+    )
+    desktop_bootstrap.add_argument(
+        "--fd",
+        type=int,
+        default=3,
+        help="Inherited readiness descriptor (must be 3)",
+    )
+    desktop_bootstrap.set_defaults(handler=run_daemon, needs_app=False)

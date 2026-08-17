@@ -6,6 +6,7 @@ from pathlib import Path
 
 import openminion.daemon as daemon_core
 from openminion.cli.commands import daemon as daemon_command
+from openminion.cli.transport.daemon_client import DaemonEndpoint
 
 
 def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
@@ -86,3 +87,75 @@ def test_daemon_status_json_output_when_unreachable(monkeypatch, capsys) -> None
     assert payload["endpoint_status"] == "unreachable"
     assert payload["pid"] is None
     assert payload["pid_alive"] is False
+
+
+def test_desktop_bootstrap_writes_one_validated_private_record(monkeypatch) -> None:
+    endpoint = DaemonEndpoint(
+        config_path="/tmp/home/config.json",
+        host="127.0.0.1",
+        port=4100,
+        token="master-token",
+        home_root="/tmp/home",
+        data_root="/tmp/home/data",
+    )
+    config_id = daemon_command.build_config_id(
+        endpoint.config_path,
+        endpoint.home_root,
+        endpoint.data_root,
+    )
+    response = {
+        "ok": True,
+        "lease": {
+            "client_id": "client-1",
+            "client_token": "x" * 43,
+            "protocol": 1,
+            "issued_at": "2026-08-16T00:00:00Z",
+            "expires_at": "2999-08-16T12:00:00Z",
+            "config_id": config_id,
+            "capabilities": ["daemon.health"],
+        },
+        "meta": {
+            "request_id": "request-1",
+            "method": "POST",
+            "path": "/v1/client/leases",
+        },
+    }
+    captured: list[tuple[int, dict[str, object]]] = []
+    monkeypatch.setattr(daemon_command, "resolve_daemon_endpoint", lambda *_a, **_k: endpoint)
+    monkeypatch.setattr(daemon_command, "ensure_daemon_running", lambda *_a, **_k: endpoint)
+    monkeypatch.setattr(daemon_command, "daemon_request", lambda **_k: (200, response))
+    monkeypatch.setattr(daemon_command.os, "fstat", lambda _fd: object())
+    monkeypatch.setattr(
+        daemon_command,
+        "_write_readiness_record",
+        lambda fd, record: captured.append((fd, record)),
+    )
+
+    assert daemon_command.daemon_desktop_bootstrap("config.json", fd=3) == 0
+    assert len(captured) == 1
+    assert captured[0][0] == 3
+    assert captured[0][1]["event"] == "desktop.client.ready"
+    assert captured[0][1]["config_id"] == config_id
+
+
+def test_desktop_bootstrap_rejects_blank_token_without_start(monkeypatch, capsys) -> None:
+    endpoint = DaemonEndpoint(
+        config_path="/tmp/config.json",
+        host="127.0.0.1",
+        port=4100,
+        token="",
+    )
+    monkeypatch.setattr(daemon_command, "resolve_daemon_endpoint", lambda *_a, **_k: endpoint)
+    started = False
+
+    def _unexpected_start(*_args, **_kwargs):
+        nonlocal started
+        started = True
+
+    monkeypatch.setattr(daemon_command, "ensure_daemon_running", _unexpected_start)
+
+    assert daemon_command.daemon_desktop_bootstrap("config.json", fd=3) == 1
+    assert started is False
+    assert capsys.readouterr().err.strip() == (
+        "desktop bootstrap failed: desktop_ipc_token_required"
+    )

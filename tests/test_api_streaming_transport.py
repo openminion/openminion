@@ -20,6 +20,7 @@ from openminion.api.server import (
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.api.server.streaming import handle_turn_stream_request
+from openminion.api.server.client_auth import ClientAuthService
 
 
 def _install_json_body(handler: _OpenMinionAPIHandler, body: dict) -> None:
@@ -600,5 +601,33 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             runtime_bootstrap_error=None,
             request_headers=handler.headers,
             request_id="req-json-1",
+            client_auth=None,
+            client_identity=None,
         )
         handler._write_json.assert_called_once_with(HTTPStatus.OK, {"ok": True})  # type: ignore[attr-defined]
+
+    def test_client_auth_denial_happens_before_sse_headers(self) -> None:
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/turn/stream"
+        handler.headers = {"Accept": "text/event-stream"}
+        handler.config_path = None
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        handler.client_address = ("127.0.0.1", 1234)
+        handler.client_auth = ClientAuthService(
+            master_token="master-token",
+            config_path="config.json",
+            home_root=".",
+            data_root=".openminion",
+            bind_host="127.0.0.1",
+            daemon_version="0.0.9",
+        )
+        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
+        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
+
+        _OpenMinionAPIHandler.do_POST(handler)
+
+        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
+        status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
+        self.assertEqual(status, HTTPStatus.FORBIDDEN)
+        self.assertEqual(payload["error"]["code"], "forbidden")

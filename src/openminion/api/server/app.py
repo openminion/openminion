@@ -7,9 +7,9 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
-from openminion.api.core.validation import parse_json_request_body
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
+from openminion.api.server.client_auth import ClientAuthHTTPMixin, ClientAuthService
 from openminion.api.server.dispatch import dispatch_request
 from openminion.api.server.observability import (
     finalize_api_response as _finalize_api_response,
@@ -20,15 +20,17 @@ from openminion.api.server.observability import (
     reset_api_metrics,
 )
 
-
-class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
+class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
     config_path: str | None = None
     runtime: APIRuntime | None = None
     runtime_bootstrap_error: str | None = None
+    client_auth: ClientAuthService | None = None
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
         request_id = self.headers.get("X-Request-ID")
+        if not self._authenticate_request("GET", parsed.path, request_id):
+            return
         status, payload = dispatch_request(
             "GET",
             parsed.path,
@@ -38,6 +40,8 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
+            client_auth=self.client_auth,
+            client_identity=self.client_identity,
         )
         self._write_json(status, payload)
 
@@ -45,8 +49,10 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
+        if not self._authenticate_request("POST", path, request_id):
+            return
         try:
-            payload = self._read_optional_json_body()
+            payload = self._read_optional_json_body(path=path)
         except ValueError as exc:
             self._write_invalid_json("POST", path, request_id, started_at, exc)
             return
@@ -65,6 +71,8 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
+            client_auth=self.client_auth,
+            client_identity=self.client_identity,
         )
         self._write_json(status, response_payload)
 
@@ -72,8 +80,10 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
+        if not self._authenticate_request("DELETE", parsed.path, request_id):
+            return
         try:
-            payload = self._read_optional_json_body()
+            payload = self._read_optional_json_body(path=parsed.path)
         except ValueError as exc:
             self._write_invalid_json("DELETE", parsed.path, request_id, started_at, exc)
             return
@@ -87,22 +97,10 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
+            client_auth=self.client_auth,
+            client_identity=self.client_identity,
         )
         self._write_json(status, response_payload)
-
-    def _read_optional_json_body(self) -> dict[str, Any]:
-        content_length_raw = self.headers.get("Content-Length", "0")
-        try:
-            content_length = int(content_length_raw)
-        except ValueError as exc:
-            raise ValueError("Invalid Content-Length header.") from exc
-        if content_length <= 0:
-            return {}
-        raw_body = self.rfile.read(content_length).decode("utf-8")
-        return parse_json_request_body(
-            content_length_raw=content_length_raw,
-            raw_body=raw_body,
-        )
 
     def _handle_turn_stream(
         self, *, body: dict[str, Any], request_id: str | None

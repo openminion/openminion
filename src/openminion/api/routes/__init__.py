@@ -7,6 +7,7 @@ _HANDLER_MODULES = {
     "handle_admin_request": ".admin",
     "handle_agent_request": ".agent",
     "handle_cron_request": ".cron",
+    "handle_client_request": ".client",
     "handle_debug_request": ".debug",
     "handle_health_request": ".health",
     "handle_memory_request": ".memory",
@@ -31,9 +32,8 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "APIRouteContext",
-    "RouteResult",
-    "handle_a2a_request",
+    "APIRouteContext", "RouteResult",
+    "handle_a2a_request", "handle_client_request",
     "handle_admin_request",
     "handle_agent_request",
     "handle_cron_request",

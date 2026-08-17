@@ -5,6 +5,7 @@ from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
 from openminion.api.runtime import APIRuntime
+from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,8 @@ class APIRouteContext:
     runtime_bootstrap_error: str | None
     request_headers: Mapping[str, str] | None
     request_id: str
+    client_auth: ClientAuthService | None = None
+    client_identity: ClientIdentity | None = None
 
 
 @dataclass(frozen=True)
