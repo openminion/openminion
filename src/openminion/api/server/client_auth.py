@@ -55,9 +55,16 @@ _CLIENT_BODY_LIMITS = {
 _CLIENT_RESPONSE_LIMIT = 64 * 1024
 _ADMITTED_HEADERS = frozenset(
     {
-        "accept", "content-type", "x-request-id", "x-ipc-token",
-        "x-openminion-client-token", "host", "content-length", "connection",
-        "accept-encoding", "user-agent",
+        "accept",
+        "content-type",
+        "x-request-id",
+        "x-ipc-token",
+        "x-openminion-client-token",
+        "host",
+        "content-length",
+        "connection",
+        "accept-encoding",
+        "user-agent",
     }
 )
 
@@ -184,9 +191,13 @@ class ClientAuthService:
                 "Desktop admission requires a configured runtime.ipc_token.",
             )
         if not protocol_min <= PROTOCOL_VERSION <= protocol_max:
-            raise ClientAuthError("unsupported_protocol", "No supported protocol overlaps.")
+            raise ClientAuthError(
+                "unsupported_protocol", "No supported protocol overlaps."
+            )
         if not MIN_TTL_SECONDS <= ttl_seconds <= MAX_TTL_SECONDS:
-            raise ClientAuthError("invalid_request", "requested_ttl_seconds is out of range.")
+            raise ClientAuthError(
+                "invalid_request", "requested_ttl_seconds is out of range."
+            )
         token = secrets.token_urlsafe(32)
         now = datetime.now(UTC)
         expires_at = now + timedelta(seconds=ttl_seconds)

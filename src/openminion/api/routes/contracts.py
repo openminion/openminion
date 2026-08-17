@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
 from openminion.api.runtime import APIRuntime
-from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
+
+if TYPE_CHECKING:
+    from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 
 
 @dataclass(frozen=True)

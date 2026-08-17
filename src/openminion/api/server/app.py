@@ -20,6 +20,7 @@ from openminion.api.server.observability import (
     reset_api_metrics,
 )
 
+
 class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
     config_path: str | None = None
     runtime: APIRuntime | None = None

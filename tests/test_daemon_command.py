@@ -175,14 +175,18 @@ def test_desktop_bootstrap_writes_one_validated_private_record(
     assert output.err == ""
 
 
-def test_desktop_bootstrap_rejects_blank_token_without_start(monkeypatch, capsys) -> None:
+def test_desktop_bootstrap_rejects_blank_token_without_start(
+    monkeypatch, capsys
+) -> None:
     endpoint = DaemonEndpoint(
         config_path="/tmp/config.json",
         host="127.0.0.1",
         port=4100,
         token="",
     )
-    monkeypatch.setattr(daemon_command, "resolve_daemon_endpoint", lambda *_a, **_k: endpoint)
+    monkeypatch.setattr(
+        daemon_command, "resolve_daemon_endpoint", lambda *_a, **_k: endpoint
+    )
     started = False
 
     def _unexpected_start(*_args, **_kwargs):
@@ -234,9 +238,7 @@ def test_desktop_bootstrap_rejects_unavailable_inherited_fd(
     )
 
 
-def test_desktop_bootstrap_rejects_malformed_mint_response(
-    monkeypatch, capsys
-) -> None:
+def test_desktop_bootstrap_rejects_malformed_mint_response(monkeypatch, capsys) -> None:
     endpoint = DaemonEndpoint(
         config_path="/tmp/config.json",
         host="127.0.0.1",

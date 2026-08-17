@@ -40,7 +40,9 @@ def _mint_body(**overrides: object) -> dict[str, object]:
     return body
 
 
-def test_mint_uses_canonical_response_envelope_and_scoped_routes(tmp_path: Path) -> None:
+def test_mint_uses_canonical_response_envelope_and_scoped_routes(
+    tmp_path: Path,
+) -> None:
     service = _service(tmp_path)
     status, payload = dispatch_request(
         "POST",
@@ -187,9 +189,7 @@ def test_http_server_enforces_master_and_client_tokens_before_dispatch(
         status, capabilities = _http_json(
             Request(
                 f"{base_url}/v1/client/capabilities",
-                headers={
-                    "X-OpenMinion-Client-Token": minted["lease"]["client_token"]
-                },
+                headers={"X-OpenMinion-Client-Token": minted["lease"]["client_token"]},
             )
         )
         assert status == 200

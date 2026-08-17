@@ -58,7 +58,9 @@ def _mint(
     protocol_min = client.get("protocol_min")
     protocol_max = client.get("protocol_max")
     ttl_seconds = payload.get("requested_ttl_seconds")
-    if not all(type(value) is int for value in (protocol_min, protocol_max, ttl_seconds)):
+    if not all(
+        type(value) is int for value in (protocol_min, protocol_max, ttl_seconds)
+    ):
         return _invalid("Protocol and TTL fields must be integers.")
     try:
         lease = ctx.client_auth.mint(

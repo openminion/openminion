@@ -31,20 +31,29 @@ def _mint(service: ClientAuthService) -> dict[str, object]:
 
 def test_config_id_binds_config_home_and_data_roots(tmp_path: Path) -> None:
     base = build_config_id(tmp_path / "config", tmp_path / "home", tmp_path / "data")
-    assert base != build_config_id(tmp_path / "other", tmp_path / "home", tmp_path / "data")
-    assert base != build_config_id(tmp_path / "config", tmp_path / "other", tmp_path / "data")
-    assert base != build_config_id(tmp_path / "config", tmp_path / "home", tmp_path / "other")
+    assert base != build_config_id(
+        tmp_path / "other", tmp_path / "home", tmp_path / "data"
+    )
+    assert base != build_config_id(
+        tmp_path / "config", tmp_path / "other", tmp_path / "data"
+    )
+    assert base != build_config_id(
+        tmp_path / "config", tmp_path / "home", tmp_path / "other"
+    )
 
 
 def test_master_mints_scoped_client_and_revoke_fails_closed(tmp_path: Path) -> None:
     service = _service(tmp_path)
-    assert service.authorize(
-        method="POST",
-        path="/v1/client/leases",
-        master_tokens=("master-token",),
-        client_tokens=(),
-        peer_host="127.0.0.1",
-    ) is None
+    assert (
+        service.authorize(
+            method="POST",
+            path="/v1/client/leases",
+            master_tokens=("master-token",),
+            client_tokens=(),
+            peer_host="127.0.0.1",
+        )
+        is None
+    )
     lease = _mint(service)
     identity = service.authorize(
         method="GET",
@@ -121,13 +130,16 @@ def test_client_wrong_route_and_expired_lease_fail_closed(tmp_path: Path) -> Non
 
 def test_blank_master_preserves_legacy_but_blocks_desktop_mint(tmp_path: Path) -> None:
     service = _service(tmp_path, token="")
-    assert service.authorize(
-        method="GET",
-        path="/v1/health",
-        master_tokens=(),
-        client_tokens=(),
-        peer_host="127.0.0.1",
-    ) is None
+    assert (
+        service.authorize(
+            method="GET",
+            path="/v1/health",
+            master_tokens=(),
+            client_tokens=(),
+            peer_host="127.0.0.1",
+        )
+        is None
+    )
     with pytest.raises(ClientAuthError) as caught:
         service.authorize(
             method="POST",
@@ -139,7 +151,9 @@ def test_blank_master_preserves_legacy_but_blocks_desktop_mint(tmp_path: Path) -
     assert caught.value.code == "desktop_ipc_token_required"
 
 
-def test_duplicate_client_wrong_method_and_nonloopback_bind_fail(tmp_path: Path) -> None:
+def test_duplicate_client_wrong_method_and_nonloopback_bind_fail(
+    tmp_path: Path,
+) -> None:
     service = _service(tmp_path)
     lease = _mint(service)
     token = str(lease["client_token"])
