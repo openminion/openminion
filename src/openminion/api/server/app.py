@@ -153,6 +153,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        status, encoded = self._bounded_json_response(status, payload)
         self.send_response(int(status))
         self.send_header("Content-Type", "application/json")
         meta = payload.get("meta", {})
@@ -170,7 +171,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
                 if key in {"Cache-Control", "Referrer-Policy"}:
                     self.send_header(str(key), str(value))
         self.end_headers()
-        self.wfile.write(_json_dumps(payload).encode("utf-8"))
+        self.wfile.write(encoded)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return

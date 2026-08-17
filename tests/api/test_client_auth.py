@@ -7,9 +7,11 @@ import pytest
 
 from openminion.api.server.client_auth import (
     ClientAuthError,
+    ClientAuthHTTPMixin,
     ClientAuthService,
     build_config_id,
 )
+from http import HTTPStatus
 
 
 def _service(tmp_path: Path, *, token: str = "master-token") -> ClientAuthService:
@@ -136,3 +138,14 @@ def test_blank_master_preserves_legacy_but_blocks_desktop_mint(tmp_path: Path) -
         )
     assert caught.value.code == "desktop_ipc_token_required"
 
+
+def test_authenticated_response_is_replaced_when_it_exceeds_bound() -> None:
+    adapter = ClientAuthHTTPMixin()
+    adapter.client_response_limited = True
+    status, encoded = adapter._bounded_json_response(
+        HTTPStatus.OK,
+        {"ok": True, "value": "x" * (64 * 1024)},
+    )
+    assert status == HTTPStatus.BAD_GATEWAY
+    assert len(encoded) < 64 * 1024
+    assert b'"code":"response_too_large"' in encoded

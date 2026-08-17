@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import json
 import logging
 import secrets
 import threading
@@ -51,6 +52,14 @@ _CLIENT_BODY_LIMITS = {
     "/v1/client/leases/renew": 4 * 1024,
     "/v1/client/leases/current": 4 * 1024,
 }
+_CLIENT_RESPONSE_LIMIT = 64 * 1024
+_ADMITTED_HEADERS = frozenset(
+    {
+        "accept", "content-type", "x-request-id", "x-ipc-token",
+        "x-openminion-client-token", "host", "content-length", "connection",
+        "accept-encoding", "user-agent",
+    }
+)
 
 
 def build_config_id(
@@ -282,6 +291,8 @@ class ClientAuthHTTPMixin:
     headers: Any
     rfile: Any
     client_address: tuple[str, int]
+    client_request_path: str = ""
+    client_response_limited: bool = False
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         raise NotImplementedError
@@ -295,12 +306,20 @@ class ClientAuthHTTPMixin:
         if self.client_auth is None:
             self.client_identity = None
             return True
+        masters = _header_values(self.headers, MASTER_TOKEN_HEADER)
+        clients = _header_values(self.headers, CLIENT_TOKEN_HEADER)
+        self.client_request_path = path
+        self.client_response_limited = bool(clients) or path == "/v1/client/leases"
         try:
+            if (masters or clients or path == "/v1/client/leases") and any(
+                name.lower() not in _ADMITTED_HEADERS for name in self.headers.keys()
+            ):
+                raise ClientAuthError("forbidden", "Request is not authorized.")
             self.client_identity = self.client_auth.authorize(
                 method=method,
                 path=path,
-                master_tokens=_header_values(self.headers, MASTER_TOKEN_HEADER),
-                client_tokens=_header_values(self.headers, CLIENT_TOKEN_HEADER),
+                master_tokens=masters,
+                client_tokens=clients,
                 peer_host=_peer_host(self),
             )
             return True
@@ -328,6 +347,30 @@ class ClientAuthHTTPMixin:
             )
             self._write_json(resolved_status, response)
             return False
+
+    def _bounded_json_response(
+        self,
+        status: HTTPStatus,
+        payload: dict[str, Any],
+    ) -> tuple[HTTPStatus, bytes]:
+        encoded = _compact_json(payload)
+        if not self.client_response_limited or len(encoded) <= _CLIENT_RESPONSE_LIMIT:
+            return status, encoded
+        bounded_status, bounded = error_response(
+            HTTPStatus.BAD_GATEWAY,
+            code="response_too_large",
+            message="Authenticated client response exceeded its size limit.",
+            details={"limit_bytes": _CLIENT_RESPONSE_LIMIT},
+            retryable=False,
+        )
+        meta = payload.get("meta")
+        if isinstance(meta, dict):
+            bounded["meta"] = {
+                key: meta[key]
+                for key in ("request_id", "method", "path")
+                if key in meta
+            }
+        return bounded_status, _compact_json(bounded)
 
     def _read_optional_json_body(self, *, path: str) -> dict[str, Any]:
         body_limit = _CLIENT_BODY_LIMITS.get(path)
@@ -378,6 +421,14 @@ def _peer_host(handler: object) -> str:
     if isinstance(client_address, tuple) and client_address:
         return str(client_address[0])
     return "127.0.0.1"
+
+
+def _compact_json(payload: object) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def build_client_auth_service(

@@ -194,6 +194,17 @@ def test_http_server_enforces_master_and_client_tokens_before_dispatch(
         )
         assert status == 200
         assert capabilities["config_id"] == minted["lease"]["config_id"]
+        status, denied_header = _http_json(
+            Request(
+                f"{base_url}/v1/client/capabilities",
+                headers={
+                    "X-OpenMinion-Client-Token": minted["lease"]["client_token"],
+                    "X-Not-Admitted": "value",
+                },
+            )
+        )
+        assert status == 403
+        assert denied_header["error"]["code"] == "forbidden"
     finally:
         server.shutdown()
         server.server_close()
