@@ -27,6 +27,10 @@ from openminion.cli.bootstrap.loader import load_config
 _PROBE_STATUS_MISMATCH: str = "mismatch"
 
 
+class DaemonConfigMismatchError(RuntimeError):
+    """The configured daemon endpoint belongs to another config identity."""
+
+
 def _remote_config_path_from_probe_payload(payload: object) -> str:
     daemon_payload = (payload.get("daemon") or {}) if isinstance(payload, dict) else {}
     return str(daemon_payload.get("config_path", "")).strip()
@@ -95,7 +99,7 @@ def ensure_daemon_running(
         return endpoint
     if probe_status == _PROBE_STATUS_MISMATCH:
         remote_config_path = _remote_config_path_from_probe_payload(payload)
-        raise RuntimeError(
+        raise DaemonConfigMismatchError(
             "openminion daemon endpoint is occupied by a different config "
             f"(expected {endpoint.config_path}, got {remote_config_path or 'unknown'}). "
             "To recover: (a) stop the running daemon with `openminion daemon stop`, "
@@ -363,6 +367,9 @@ def daemon_desktop_bootstrap(
             daemon_version=daemon_version,
         )
         _write_readiness_record(fd, record)
+    except DaemonConfigMismatchError:
+        print("desktop bootstrap failed: daemon_config_mismatch", file=sys.stderr)
+        return 1
     except (OSError, RuntimeError, TypeError, ValueError):
         print("desktop bootstrap failed: daemon_bootstrap_failed", file=sys.stderr)
         return 1

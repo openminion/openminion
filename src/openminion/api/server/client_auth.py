@@ -333,7 +333,10 @@ class ClientAuthHTTPMixin:
                     raise ClientAuthError(
                         "invalid_request", "Invalid request body."
                     ) from exc
-                if self.headers.get("Transfer-Encoding") or content_length != 0:
+                transfer_encoding = self.headers.get("Transfer-Encoding")
+                if transfer_encoding or content_length != 0:
+                    if not transfer_encoding and 0 < content_length <= 4 * 1024:
+                        self.rfile.read(content_length)
                     self.close_connection = True
                     raise ClientAuthError(
                         "invalid_request", "GET does not accept a body."

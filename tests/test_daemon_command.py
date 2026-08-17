@@ -267,6 +267,31 @@ def test_desktop_bootstrap_rejects_malformed_mint_response(
     )
 
 
+def test_desktop_bootstrap_reports_config_mismatch(monkeypatch, capsys) -> None:
+    endpoint = DaemonEndpoint(
+        config_path="/tmp/config.json",
+        host="127.0.0.1",
+        port=4100,
+        token="master-token",
+    )
+    monkeypatch.setattr(
+        daemon_command, "resolve_daemon_endpoint", lambda *_a, **_k: endpoint
+    )
+    monkeypatch.setattr(daemon_command.os, "fstat", lambda _fd: object())
+    monkeypatch.setattr(
+        daemon_command,
+        "ensure_daemon_running",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            daemon_command.DaemonConfigMismatchError("different config")
+        ),
+    )
+
+    assert daemon_command.daemon_desktop_bootstrap("config.json", fd=3) == 1
+    assert capsys.readouterr().err.strip() == (
+        "desktop bootstrap failed: daemon_config_mismatch"
+    )
+
+
 def test_desktop_readiness_rejects_config_id_mismatch() -> None:
     endpoint = DaemonEndpoint(
         config_path="/tmp/home/config.json",
