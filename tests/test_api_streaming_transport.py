@@ -597,6 +597,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             "/v1/turn/stream",
             "cfg.json",
             body={"message": "hello"},
+            query="",
             runtime=None,
             runtime_bootstrap_error=None,
             request_headers=handler.headers,

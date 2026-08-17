@@ -123,7 +123,7 @@ class ClientAuthService:
         self.config_id = build_config_id(config_path, home_root, data_root)
         self.bind_host = str(bind_host or "").strip()
         self.daemon_version = str(daemon_version or "").strip()
-        self._leases: dict[bytes, _ClientLease] = {}
+        self._leases: dict[str, _ClientLease] = {}
         self._lock = threading.Lock()
 
     @property
@@ -198,7 +198,7 @@ class ClientAuthService:
         )
         digest = self._token_digest(token)
         with self._lock:
-            self._leases[digest] = _ClientLease(
+            self._leases[identity.client_id] = _ClientLease(
                 identity=identity,
                 token_digest=digest,
                 issued_at=now,
@@ -234,8 +234,11 @@ class ClientAuthService:
             raise self._forbidden()
         digest = self._token_digest(normalized)
         with self._lock:
-            lease = self._leases.get(digest)
-            if lease is None or not hmac.compare_digest(digest, lease.token_digest):
+            lease = None
+            for candidate in self._leases.values():
+                if hmac.compare_digest(digest, candidate.token_digest):
+                    lease = candidate
+            if lease is None:
                 raise self._forbidden()
             if lease.revoked or lease.expires_at <= datetime.now(UTC):
                 raise self._forbidden()
@@ -293,6 +296,7 @@ class ClientAuthHTTPMixin:
     client_address: tuple[str, int]
     client_request_path: str = ""
     client_response_limited: bool = False
+    close_connection: bool
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         raise NotImplementedError
@@ -322,11 +326,23 @@ class ClientAuthHTTPMixin:
                 client_tokens=clients,
                 peer_host=_peer_host(self),
             )
+            if clients and method.upper() == "GET":
+                try:
+                    content_length = int(self.headers.get("Content-Length", "0"))
+                except ValueError as exc:
+                    raise ClientAuthError(
+                        "invalid_request", "Invalid request body."
+                    ) from exc
+                if self.headers.get("Transfer-Encoding") or content_length != 0:
+                    self.close_connection = True
+                    raise ClientAuthError(
+                        "invalid_request", "GET does not accept a body."
+                    )
             return True
         except ClientAuthError as exc:
             status = (
                 HTTPStatus.BAD_REQUEST
-                if exc.code == "desktop_ipc_token_required"
+                if exc.code in {"desktop_ipc_token_required", "invalid_request"}
                 else HTTPStatus.FORBIDDEN
             )
             resolved_status, payload = error_response(

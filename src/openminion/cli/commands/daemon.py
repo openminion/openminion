@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -354,7 +355,13 @@ def daemon_desktop_bootstrap(
             timeout_s=15.0,
             max_response_bytes=64 * 1024,
         )
-        record = _desktop_readiness_record(endpoint, status=status, response=response)
+        daemon_version = _verified_daemon_version(endpoint, response)
+        record = _desktop_readiness_record(
+            endpoint,
+            status=status,
+            response=response,
+            daemon_version=daemon_version,
+        )
         _write_readiness_record(fd, record)
     except (OSError, RuntimeError, TypeError, ValueError):
         print("desktop bootstrap failed: daemon_bootstrap_failed", file=sys.stderr)
@@ -367,6 +374,7 @@ def _desktop_readiness_record(
     *,
     status: int,
     response: dict[str, Any],
+    daemon_version: str,
 ) -> dict[str, object]:
     if status != 200 or response.get("ok") is not True:
         raise RuntimeError("lease mint failed")
@@ -416,12 +424,42 @@ def _desktop_readiness_record(
         "port": endpoint.port,
         "protocol_min": 1,
         "protocol_max": 1,
-        "daemon_version": _package_version(),
+        "daemon_version": daemon_version,
         "config_id": expected_config_id,
         "client_id": client_id,
         "client_token": client_token,
         "expires_at": expires_at,
     }
+
+
+def _verified_daemon_version(
+    endpoint: DaemonEndpoint,
+    mint_response: dict[str, Any],
+) -> str:
+    lease = mint_response.get("lease")
+    if not isinstance(lease, dict):
+        raise RuntimeError("invalid lease payload")
+    status, payload = daemon_request(
+        endpoint=replace(
+            endpoint,
+            token="",
+            client_token=str(lease.get("client_token") or ""),
+        ),
+        method="GET",
+        path="/v1/client/capabilities",
+        timeout_s=15.0,
+        max_response_bytes=64 * 1024,
+    )
+    daemon_version = str(payload.get("daemon_version") or "")
+    if (
+        status != 200
+        or payload.get("ok") is not True
+        or payload.get("config_id") != lease.get("config_id")
+        or payload.get("protocol") != lease.get("protocol")
+        or daemon_version != _package_version()
+    ):
+        raise RuntimeError("daemon version or capability mismatch")
+    return daemon_version
 
 
 def _future_timestamp(value: str) -> bool:

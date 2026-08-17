@@ -205,6 +205,58 @@ def test_http_server_enforces_master_and_client_tokens_before_dispatch(
         )
         assert status == 403
         assert denied_header["error"]["code"] == "forbidden"
+        status, query_denied = _http_json(
+            Request(
+                f"{base_url}/v1/client/leases?unknown=1",
+                method="POST",
+                headers={
+                    "X-IPC-Token": "master-token",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps(_mint_body()).encode("utf-8"),
+            )
+        )
+        assert status == 400
+        assert query_denied["error"]["code"] == "invalid_request"
+        for request in (
+            Request(
+                f"{base_url}/v1/client/capabilities",
+                headers={
+                    "X-OpenMinion-Client-Token": minted["lease"]["client_token"],
+                    "Content-Length": "2",
+                },
+                data=b"{}",
+                method="GET",
+            ),
+            Request(
+                f"{base_url}/v1/client/leases",
+                method="POST",
+                headers={"X-IPC-Token": "master-token", "Content-Type": "text/plain"},
+                data=b"{}",
+            ),
+            Request(
+                f"{base_url}/v1/client/leases",
+                method="POST",
+                headers={
+                    "X-IPC-Token": "master-token",
+                    "Content-Type": "application/json",
+                },
+                data=b"{bad",
+            ),
+        ):
+            status, rejected = _http_json(request)
+            assert status == 400
+            assert rejected["error"]["code"] in {"invalid_request", "invalid_json"}
+        oversized = Request(
+            f"{base_url}/v1/client/leases",
+            method="POST",
+            headers={
+                "X-IPC-Token": "master-token",
+                "Content-Type": "application/json",
+            },
+            data=b"x" * (16 * 1024 + 1),
+        )
+        assert _http_status(oversized) == 400
     finally:
         server.shutdown()
         server.server_close()
@@ -217,3 +269,11 @@ def _http_json(request: Request) -> tuple[int, dict[str, object]]:
             return response.status, json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def _http_status(request: Request) -> int:
+    try:
+        with urlopen(request, timeout=5) as response:  # noqa: S310
+            return response.status
+    except HTTPError as exc:
+        return exc.code

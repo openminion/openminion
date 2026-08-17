@@ -139,6 +139,42 @@ def test_blank_master_preserves_legacy_but_blocks_desktop_mint(tmp_path: Path) -
     assert caught.value.code == "desktop_ipc_token_required"
 
 
+def test_duplicate_client_wrong_method_and_nonloopback_bind_fail(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    lease = _mint(service)
+    token = str(lease["client_token"])
+    for clients, method, path in (
+        ((token, token), "GET", "/v1/health"),
+        ((token,), "POST", "/v1/health"),
+    ):
+        with pytest.raises(ClientAuthError) as caught:
+            service.authorize(
+                method=method,
+                path=path,
+                master_tokens=(),
+                client_tokens=clients,
+                peer_host="127.0.0.1",
+            )
+        assert caught.value.code == "forbidden"
+    nonloopback = ClientAuthService(
+        master_token="master-token",
+        config_path=tmp_path / "config",
+        home_root=tmp_path,
+        data_root=tmp_path / "data",
+        bind_host="0.0.0.0",
+        daemon_version="0.0.9",
+    )
+    with pytest.raises(ClientAuthError) as caught:
+        nonloopback.authorize(
+            method="GET",
+            path="/v1/health",
+            master_tokens=("master-token",),
+            client_tokens=(),
+            peer_host="127.0.0.1",
+        )
+    assert caught.value.code == "forbidden"
+
+
 def test_authenticated_response_is_replaced_when_it_exceeds_bound() -> None:
     adapter = ClientAuthHTTPMixin()
     adapter.client_response_limited = True

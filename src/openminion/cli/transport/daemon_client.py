@@ -20,6 +20,7 @@ class DaemonEndpoint:
     token: str = ""
     home_root: str = ""
     data_root: str = ""
+    client_token: str = ""
 
     @property
     def base_url(self) -> str:
@@ -193,7 +194,9 @@ def _build_daemon_request(
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    if endpoint.token:
+    if endpoint.client_token:
+        headers["X-OpenMinion-Client-Token"] = endpoint.client_token
+    elif endpoint.token:
         headers["X-IPC-Token"] = endpoint.token
     return Request(
         url=f"{endpoint.base_url}{normalized_path}",

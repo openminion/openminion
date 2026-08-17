@@ -89,7 +89,9 @@ def test_daemon_status_json_output_when_unreachable(monkeypatch, capsys) -> None
     assert payload["pid_alive"] is False
 
 
-def test_desktop_bootstrap_writes_one_validated_private_record(monkeypatch) -> None:
+def test_desktop_bootstrap_writes_one_validated_private_record(
+    monkeypatch, capsys
+) -> None:
     endpoint = DaemonEndpoint(
         config_path="/tmp/home/config.json",
         host="127.0.0.1",
@@ -120,10 +122,17 @@ def test_desktop_bootstrap_writes_one_validated_private_record(monkeypatch) -> N
             "path": "/v1/client/leases",
         },
     }
+    capabilities = {
+        "ok": True,
+        "daemon_version": daemon_command._package_version(),
+        "config_id": config_id,
+        "protocol": 1,
+    }
+    replies = iter(((200, response), (200, capabilities)))
     captured: list[tuple[int, dict[str, object]]] = []
     monkeypatch.setattr(daemon_command, "resolve_daemon_endpoint", lambda *_a, **_k: endpoint)
     monkeypatch.setattr(daemon_command, "ensure_daemon_running", lambda *_a, **_k: endpoint)
-    monkeypatch.setattr(daemon_command, "daemon_request", lambda **_k: (200, response))
+    monkeypatch.setattr(daemon_command, "daemon_request", lambda **_k: next(replies))
     monkeypatch.setattr(daemon_command.os, "fstat", lambda _fd: object())
     monkeypatch.setattr(
         daemon_command,
@@ -136,6 +145,9 @@ def test_desktop_bootstrap_writes_one_validated_private_record(monkeypatch) -> N
     assert captured[0][0] == 3
     assert captured[0][1]["event"] == "desktop.client.ready"
     assert captured[0][1]["config_id"] == config_id
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
 
 
 def test_desktop_bootstrap_rejects_blank_token_without_start(monkeypatch, capsys) -> None:
@@ -158,4 +170,11 @@ def test_desktop_bootstrap_rejects_blank_token_without_start(monkeypatch, capsys
     assert started is False
     assert capsys.readouterr().err.strip() == (
         "desktop bootstrap failed: desktop_ipc_token_required"
+    )
+
+
+def test_desktop_bootstrap_rejects_bad_fd(monkeypatch, capsys) -> None:
+    assert daemon_command.daemon_desktop_bootstrap("config.json", fd=4) == 1
+    assert capsys.readouterr().err.strip() == (
+        "desktop bootstrap failed: invalid_readiness_fd"
     )

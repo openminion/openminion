@@ -46,7 +46,8 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         self._write_json(status, payload)
 
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
         if not self._authenticate_request("POST", path, request_id):
@@ -67,6 +68,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             path,
             self.config_path,
             body=payload,
+            query=parsed.query,
             runtime=self.runtime,
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
@@ -128,6 +130,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         started_at: float,
         exc: ValueError,
     ) -> None:
+        self.close_connection = True
         status, payload = error_response(
             HTTPStatus.BAD_REQUEST,
             code="invalid_json",
