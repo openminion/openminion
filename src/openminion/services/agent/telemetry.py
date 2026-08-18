@@ -31,7 +31,7 @@ from openminion.modules.telemetry.trace.metadata import (
 )
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.llm.thinking import serialize_thinking_blocks
-from openminion.modules.tool.dispatch import _get_registry_manager
+from openminion.modules.tool.dispatch import get_registry_manager
 
 
 def _serialize_thinking_blocks(raw_blocks: list[Any] | None) -> list[dict[str, Any]]:
@@ -69,7 +69,7 @@ def _trace_enabled() -> bool:
 
 
 def _provider_request_tools_payload(tools) -> list[dict[str, Any]]:
-    manager = _get_registry_manager()
+    manager = get_registry_manager()
 
     def _schema_for_tool_name(tool_name: str) -> dict[str, Any]:
         if manager is None or not callable(getattr(manager, "schema_for", None)):

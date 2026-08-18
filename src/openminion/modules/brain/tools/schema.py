@@ -1,7 +1,7 @@
 from typing import Any, TYPE_CHECKING
 
 from openminion.modules.tool.schema_service import ToolSchemaService
-from openminion.modules.tool.dispatch import _get_registry_manager
+from openminion.modules.tool.dispatch import get_registry_manager
 
 from .parser import normalize_tool_name_for_brain
 
@@ -16,7 +16,7 @@ def _normalize_execution_tool_name(raw_name: str) -> str | None:
     token = str(raw_name or "").strip()
     if not token:
         return None
-    manager = _get_registry_manager()
+    manager = get_registry_manager()
     return manager.normalize_raw_name(token) or normalize_tool_name_for_brain(token)
 
 

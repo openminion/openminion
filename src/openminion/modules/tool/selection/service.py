@@ -10,7 +10,7 @@ from openminion.modules.tool.config import (
 from openminion.modules.tool.contracts.provider_types import ProviderToolSpec
 from openminion.modules.tool.runtime.policy import ToolBindingPolicyManager
 from openminion.modules.tool.contracts import normalize_raw_model_tool_name
-from openminion.modules.tool.dispatch import _get_registry_manager
+from openminion.modules.tool.dispatch import get_registry_manager
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.exposure import get_model_exposure_specs
 
@@ -512,7 +512,7 @@ class ToolSelectionService:
         normalized = str(token or "").strip()
         if not normalized:
             return None
-        canonical = _get_registry_manager().normalize_raw_name(normalized)
+        canonical = get_registry_manager().normalize_raw_name(normalized)
         if not canonical and not _REGISTRY_MANAGER_WARMED:
             try:
                 from openminion.modules.tool.bootstrap import (
@@ -523,7 +523,7 @@ class ToolSelectionService:
             except Exception:
                 pass
             _REGISTRY_MANAGER_WARMED = True
-            canonical = _get_registry_manager().normalize_raw_name(normalized)
+            canonical = get_registry_manager().normalize_raw_name(normalized)
         if canonical:
             return canonical
         return normalize_raw_model_tool_name(normalized)

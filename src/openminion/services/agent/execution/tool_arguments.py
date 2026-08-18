@@ -3,7 +3,7 @@ from typing import Any
 from collections.abc import Callable, Mapping
 
 from openminion.modules.llm.providers.base import ProviderToolSpec
-from openminion.modules.tool.dispatch import _get_registry_manager
+from openminion.modules.tool.dispatch import get_registry_manager
 from .prompts import (
     build_required_tool_retry_prompt as _render_required_tool_retry_prompt,
 )
@@ -27,7 +27,7 @@ def _parameters_for_spec(spec: ProviderToolSpec | None) -> dict[str, Any]:
     if parameters and not _is_generic_open_object_schema(parameters):
         return parameters
 
-    manager = _get_registry_manager()
+    manager = get_registry_manager()
     if manager is not None and callable(getattr(manager, "schema_for", None)):
         try:
             schema = manager.schema_for(spec.name)

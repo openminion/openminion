@@ -29,9 +29,9 @@ def canonical_tool_name(tool_name: str) -> str:
     if not token:
         return ""
 
-    from ..dispatch import _get_registry_manager
+    from ..dispatch import get_registry_manager
 
-    mgr = _get_registry_manager()
+    mgr = get_registry_manager()
     model_tool_id = mgr.normalize_raw_name(token)
     if model_tool_id:
         return model_tool_id

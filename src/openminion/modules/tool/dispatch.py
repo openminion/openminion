@@ -36,11 +36,6 @@ def get_registry_manager() -> ToolRegistryManager:
     return _REGISTRY_MANAGER
 
 
-def _get_registry_manager() -> ToolRegistryManager:
-    """Internal alias for get_registry_manager(). Deprecated, use public getter."""
-    return get_registry_manager()
-
-
 def set_registry_manager(manager: ToolRegistryManager) -> None:
     """Set the global registry manager (called by bootstrap)."""
     global _REGISTRY_MANAGER
@@ -76,7 +71,7 @@ def resolve_binding_for_call(
     allow_runtime_direct: bool = True,
 ) -> BindingResolution | None:
     """Resolve binding for a tool call."""
-    mgr = manager if manager is not None else _get_registry_manager()
+    mgr = manager if manager is not None else get_registry_manager()
     available = {token for item in available_tool_names if (token := str(item).strip())}
     raw = str(raw_tool_name or "").strip()
     if not raw:
@@ -91,7 +86,7 @@ def resolve_binding_for_call(
             )
 
             wire_default_tool_registry_manager()
-            mgr = _get_registry_manager()
+            mgr = get_registry_manager()
             model_tool_id = mgr.normalize_raw_name(raw)
         except Exception:
             pass

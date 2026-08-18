@@ -1,7 +1,7 @@
 import json
 from typing import TYPE_CHECKING, Any, Callable, cast
 
-from openminion.modules.tool.dispatch import _get_registry_manager, get_registry
+from openminion.modules.tool.dispatch import get_registry, get_registry_manager
 
 from ...constants import (
     BRAIN_COMMAND_KIND_AGENT,
@@ -25,7 +25,7 @@ def normalize_tool_name_for_brain(raw_name: str) -> str | None:
     if not token:
         return None
 
-    mgr = _get_registry_manager()
+    mgr = get_registry_manager()
     normalized = mgr.normalize_model_input_name(token)
     if normalized:
         return normalized
