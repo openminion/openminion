@@ -6,6 +6,7 @@ from openminion.base.types import Message
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.modules.llm.providers.base import (
     LLMProvider,
+    ProviderError,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
@@ -170,7 +171,7 @@ class ProviderNeutralChatIntegrationTests(unittest.TestCase):
         self.assertEqual(echo_response.metadata["finish_reason"], "stop")
         self.assertEqual(int(echo_response.metadata.get("tool_calls_count", 0)), 0)
 
-    def test_chat_behavior_equivalent_error_response_by_canonical_fields(self):
+    def test_chat_behavior_empty_error_response_is_typed_failure(self):
 
         class ErrorProvider(LLMProvider):
             @property
@@ -195,9 +196,10 @@ class ProviderNeutralChatIntegrationTests(unittest.TestCase):
         )
 
         user_msg = Message(channel="console", target="user", body="trigger error")
-        error_response = _run_sync(error_service.run_turn(user_msg))
+        with self.assertRaises(ProviderError) as caught:
+            _run_sync(error_service.run_turn(user_msg))
 
-        self.assertEqual(error_response.metadata["finish_reason"], "error")
+        self.assertEqual(caught.exception.code, "EMPTY_PROVIDER_RESPONSE")
 
     def test_provider_bridge_consistent_with_different_configs(self):
         try:

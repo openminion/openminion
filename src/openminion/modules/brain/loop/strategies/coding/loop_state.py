@@ -24,6 +24,7 @@ class CodingLoopState:
     def append_tool_result(
         self,
         *,
+        call_id: str,
         tool_name: str,
         action_result: ActionResult,
     ) -> None:
@@ -34,6 +35,7 @@ class CodingLoopState:
         ]
         results.append(
             _tool_result_payload_from_action(
+                call_id=call_id,
                 tool_name=tool_name,
                 action_result=action_result,
             )

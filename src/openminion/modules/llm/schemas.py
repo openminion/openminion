@@ -155,6 +155,7 @@ class LLMResponse(BaseModel):
     latency_ms: int = 0
     cost_usd: Optional[float] = None
     finish_reason: str = ""
+    empty_payload_recovered: bool = False
     provider_raw: Optional[dict[str, Any]] = None
     error: Optional[ResponseError] = None
     pending_turn_context: Optional[dict[str, Any]] = None

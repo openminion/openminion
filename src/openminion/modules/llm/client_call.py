@@ -503,6 +503,9 @@ def llm_response_kwargs(
         ),
         "latency_ms": 0,
         "finish_reason": str(resp.finish_reason or ""),
+        "empty_payload_recovered": (
+            resp.normalization.get("empty_payload_recovered") is True
+        ),
         "provider_raw": None,
         "telemetry": {"trace_context": trace_context},
     }

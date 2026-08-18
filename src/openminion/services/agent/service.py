@@ -681,16 +681,16 @@ class AgentService(AgentTurnFlowMixin):
                 )
             )
 
+        contract_version = str(getattr(response, "contract_version", "v1"))
+        recovered_empty = getattr(response, "empty_payload_recovered", False) is True
         normalization = {
             "adapter": "llm_runtime_client",
-            "llm_response_contract_version": str(
-                getattr(response, "contract_version", "v1")
-            ),
+            "llm_response_contract_version": contract_version,
+            "empty_payload_recovered": recovered_empty,
         }
         if retry_override_id:
             normalization["provider_retry_override"] = retry_override_id
 
-        raw_thinking = list(getattr(response, "thinking", []) or [])
         provider_response = ProviderResponse(
             text=self._extract_llm_text(response),
             model=str(getattr(response, "model", "") or ""),
@@ -698,7 +698,7 @@ class AgentService(AgentTurnFlowMixin):
             tool_calls=tool_calls,
             finish_reason=str(getattr(response, "finish_reason", "") or ""),
             normalization=normalization,
-            thinking=raw_thinking,
+            thinking=list(getattr(response, "thinking", []) or []),
         )
         raw_finalization_status = getattr(response, STATE_KEY_FINALIZATION_STATUS, None)
         normalized = normalize_provider_response(

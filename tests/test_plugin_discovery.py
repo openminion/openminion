@@ -49,7 +49,9 @@ def test_loaded_plugin_module_uses_sha256_path_digest(tmp_path: Path) -> None:
 
     plugin = load_plugin_instance(discovered)
 
-    digest = hashlib.sha256(str(discovered.module_path).encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(str(discovered.module_path).encode("utf-8")).hexdigest()[
+        :12
+    ]
     assert plugin.__class__.__module__ == (
         f"openminion.extensions.dynamic.example_hello_{digest}"
     )

@@ -49,8 +49,10 @@ def _retry_answer_only_completion_if_needed(
     allowed_tools: list[str],
     stop_outcome: Any,
 ) -> tuple[Any, AdaptiveToolLoopOutcome | None]:
-    has_tool_attempt = bool(list(getattr(response, "tool_calls", []) or [])) or (
-        detect_raw_tool_payload_json(_extract_visible_response_text(response))
+    has_tool_attempt = (
+        bool(list(getattr(response, "tool_calls", []) or []))
+        or detect_raw_tool_payload_json(_extract_visible_response_text(response))
+        or getattr(response, "empty_payload_recovered", False) is True
     )
     if not has_tool_attempt:
         return response, None
@@ -59,6 +61,8 @@ def _retry_answer_only_completion_if_needed(
         return _normalize_finalization_status_response(response), None
 
     loop_state.scratchpad[retry_key] = True
+    _debit_llm_usage(loop_ctx, response)
+    loop_state.llm_calls += 1
     retry_messages = list(loop_state.messages)
     retry_messages.extend(list(getattr(response, "assistant_messages", []) or []))
     retry_messages.append(

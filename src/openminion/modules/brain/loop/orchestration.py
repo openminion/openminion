@@ -44,6 +44,7 @@ from openminion.modules.brain.schemas import (
     new_uuid,
 )
 from openminion.modules.brain.retry import build_entry_retry_message
+from openminion.modules.llm import ProviderError
 from openminion.modules.prompting.decision import (
     ENTRY_CLARIFY_RECONSIDERATION_MESSAGE,
 )
@@ -666,6 +667,7 @@ def decide(
 
     reconsider_clarification = False
     clarification_reconsidered = False
+    empty_payload_retry_used = False
     for attempt in range(max_retries + 1):
         logger.emit(
             "llm.identity_audit",
@@ -756,6 +758,14 @@ def decide(
             continue
         if not _is_empty_entry_response(response):
             break
+        if getattr(response, "empty_payload_recovered", False) is True:
+            if not empty_payload_retry_used and attempt < max_retries:
+                empty_payload_retry_used = True
+                continue
+            raise ProviderError(
+                "Provider returned no usable entry response after one recovery retry",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
         if (
             str(getattr(state, "run_trigger", "") or "") == "idle_tick"
             and last_detection is not None

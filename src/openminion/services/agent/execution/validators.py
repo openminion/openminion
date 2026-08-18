@@ -13,7 +13,7 @@ from .tool_arguments import (
 
 
 def is_empty_provider_response(response: Any) -> bool:
-    return (
+    return getattr(response, "empty_payload_recovered", False) is True or (
         not str(getattr(response, "text", "") or "").strip()
         and not list(getattr(response, "tool_calls", None) or [])
         and not bool(getattr(response, STATE_KEY_FINALIZATION_STATUS, None))

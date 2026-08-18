@@ -11,6 +11,10 @@ FINALIZED_ANSWER_RECOVERY_GUIDANCE = (
     "user-facing answer and its truthful finalization status. Preserve the "
     "user's exact requested labels, headings, and ordering."
 )
+EMPTY_FINALIZATION_RETRY_PROMPT = (
+    "The previous finalization was empty. Use the successful tool results already "
+    "in context and return only the final answer."
+)
 BUDGET_FINALIZATION_STATUS_RETRY_PROMPT = (
     "You already produced the user-facing final answer above. Do not repeat or "
     "expand it. Return only the structured finalization_status signal now. Do "

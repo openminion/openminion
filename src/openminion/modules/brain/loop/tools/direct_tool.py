@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
+from openminion.modules.brain.loop.constants import EMPTY_FINALIZATION_RETRY_PROMPT
+from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message
 
 from .budget import _debit_llm_usage, _profile_budget_exhausted, _token_budget_exhausted
@@ -396,6 +398,41 @@ def _direct_tool_batch_completed_successfully(
     return True
 
 
+def _direct_tool_closure_failure(
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    *,
+    public_mode_tag: str,
+    detail_text: str,
+    termination_reason: str,
+    error_message: str,
+) -> AdaptiveToolLoopOutcome:
+    loop_state.termination_reason = termination_reason
+    mode_state = (
+        "llm_error"
+        if termination_reason == ADAPTIVE_TERM_LLM_ERROR
+        else "direct_tool_closure_failed"
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} {detail_text}",
+        mode_state=mode_state,
+        termination_reason=termination_reason,
+    )
+    return AdaptiveToolLoopOutcome(
+        profile_name=profile.profile_name,
+        mode_name=profile.mode_name,
+        termination_reason=termination_reason,
+        state=loop_state,
+        allowed_tools=allowed_tools,
+        error_message=error_message,
+    )
+
+
 def _completed_direct_tool_batch_signature(
     *,
     signature: str,
@@ -650,89 +687,90 @@ def _force_direct_tool_answer_only_closure(
         mode_state="direct_tool_closure",
     )
     closure_start = time.monotonic()
-    try:
-        response = runtime.complete(
-            messages=loop_state.messages,
-            tools=[],
-            model=model,
-            tool_choice="none",
-            max_output_tokens=int(max_output_tokens)
-            if max_output_tokens is not None
-            else None,
-            metadata=metadata,
-        )
-    except Exception as exc:  # noqa: BLE001
-        loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} answer-only closure failed",
-            mode_state="llm_error",
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-        )
-        return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
+    tokens_used = 0
+    for attempt in range(2):
+        try:
+            response = runtime.complete(
+                messages=loop_state.messages,
+                tools=[],
+                model=model,
+                tool_choice="none",
+                max_output_tokens=max_output_tokens,
+                metadata=metadata,
+            )
+        except Exception as exc:  # noqa: BLE001
+            outcome = _direct_tool_closure_failure(
+                loop_ctx,
+                profile,
+                loop_state,
+                allowed_tools,
+                public_mode_tag=public_mode_tag,
+                detail_text=(
+                    "answer-only closure retry failed"
+                    if attempt
+                    else "answer-only closure failed"
+                ),
                 termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-                state=loop_state,
-                allowed_tools=allowed_tools,
                 error_message=str(exc),
-            ),
-            0,
-            0,
+            )
+            duration_ms = (
+                int((time.monotonic() - closure_start) * 1000) if attempt else 0
+            )
+            return outcome, duration_ms, tokens_used
+        usage = getattr(response, "usage", None)
+        tokens_used += int(getattr(usage, "input_tokens", 0) or 0) + int(
+            getattr(usage, "output_tokens", 0) or 0
+        )
+        _debit_llm_usage(loop_ctx, response)
+        loop_state.llm_calls += 1
+        if getattr(response, "empty_payload_recovered", False) is not True:
+            break
+        if attempt:
+            raise ProviderError(
+                "Direct-tool closure remained empty after retry",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
+        if _token_budget_exhausted(loop_ctx, loop_state) or _profile_budget_exhausted(
+            profile=profile,
+            state=loop_state,
+        ):
+            raise ProviderError(
+                "Provider returned no usable direct-tool closure before budget exhaustion",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
+        loop_state.messages.append(
+            Message(role="system", content=EMPTY_FINALIZATION_RETRY_PROMPT)
         )
     duration_ms = int((time.monotonic() - closure_start) * 1000)
-    usage = getattr(response, "usage", None)
-    tokens_used = int(getattr(usage, "input_tokens", 0) or 0) + int(
-        getattr(usage, "output_tokens", 0) or 0
-    )
-    _debit_llm_usage(loop_ctx, response)
-    loop_state.llm_calls += 1
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
         loop_state.messages.append(assistant_message)
     if not bool(getattr(response, "ok", False)):
         error = getattr(response, "error", None)
         error_message = str(getattr(error, "message", "") or "LLM returned not-ok")
-        loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} answer-only closure error",
-            mode_state="llm_error",
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-        )
         return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
+            _direct_tool_closure_failure(
+                loop_ctx,
+                profile,
+                loop_state,
+                allowed_tools,
+                public_mode_tag=public_mode_tag,
+                detail_text="answer-only closure error",
                 termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-                state=loop_state,
-                allowed_tools=allowed_tools,
                 error_message=error_message,
             ),
             duration_ms,
             tokens_used,
         )
     if list(getattr(response, "tool_calls", []) or []):
-        loop_state.termination_reason = ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} answer-only closure failed",
-            mode_state="direct_tool_closure_failed",
-            termination_reason=ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
-        )
         return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
+            _direct_tool_closure_failure(
+                loop_ctx,
+                profile,
+                loop_state,
+                allowed_tools,
+                public_mode_tag=public_mode_tag,
+                detail_text="answer-only closure failed",
                 termination_reason=ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
-                state=loop_state,
-                allowed_tools=allowed_tools,
                 error_message=(
                     "Answer-only closure returned more tool calls after the "
                     "requested direct-tool batch had already completed."
@@ -743,22 +781,15 @@ def _force_direct_tool_answer_only_closure(
         )
     final_text = _extract_visible_response_text(response)
     if not final_text:
-        loop_state.termination_reason = ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} answer-only closure failed",
-            mode_state="direct_tool_closure_failed",
-            termination_reason=ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
-        )
         return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
+            _direct_tool_closure_failure(
+                loop_ctx,
+                profile,
+                loop_state,
+                allowed_tools,
+                public_mode_tag=public_mode_tag,
+                detail_text="answer-only closure failed",
                 termination_reason=ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
-                state=loop_state,
-                allowed_tools=allowed_tools,
                 error_message=(
                     "Answer-only closure did not return a final answer after the "
                     "requested direct-tool batch had already completed."

@@ -320,6 +320,7 @@ def _handle_decompose_calls(
     )
     append_tool_result_payload(
         loop_state,
+        call_id=str(getattr(decompose_calls[0], "id", "") or ""),
         tool_name=_DECOMPOSE_TOOL_NAME,
         action_result=action_result,
     )
@@ -572,6 +573,7 @@ def _process_single_review_tool_call(
     if callable(append_tool_result_payload):
         append_tool_result_payload(
             loop_state,
+            call_id=str(getattr(tool_call, "id", "") or ""),
             tool_name=REVIEW_TOOL_NAME,
             action_result=action_result,
         )

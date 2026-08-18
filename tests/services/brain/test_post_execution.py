@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from openminion.base.config import OpenMinionConfig, build_runtime_config
 from openminion.base.types import AgentResponse
 from openminion.base.types import Message
@@ -11,7 +13,7 @@ from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.brain.loop.context.pending_turn import (
     PENDING_TURN_CONTEXT_MAX_STALE_TURNS,
 )
-from openminion.modules.llm.providers.base import ProviderResponse
+from openminion.modules.llm.providers.base import ProviderError, ProviderResponse
 from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
@@ -291,6 +293,30 @@ def test_run_turn_bridges_async_approval_into_sync_execution() -> None:
 
     assert callback_calls == [("file.write", {"path": "probe.txt"}, "approval-1")]
     assert response.text == "done"
+
+
+def test_run_turn_propagates_empty_provider_response_error() -> None:
+    bridge = DummyBridge()
+    bridge._logger = SimpleNamespace(info=lambda *args, **kwargs: None)  # type: ignore[attr-defined]
+    message = Message(channel="console", target="focus", body="hello")
+    exhausted = ProviderError(
+        "empty after retry",
+        code="EMPTY_PROVIDER_RESPONSE",
+    )
+
+    async def _prepare_turn(**_kwargs):
+        return SimpleNamespace(), "brain-session-1", "req-1", "turn-1", 0.0
+
+    def _execute_turn(**_kwargs):
+        raise exhausted
+
+    bridge._prepare_turn = _prepare_turn  # type: ignore[attr-defined]
+    bridge._execute_turn = _execute_turn  # type: ignore[attr-defined]
+
+    with pytest.raises(ProviderError) as raised:
+        asyncio.run(bridge.run_turn(message))
+
+    assert raised.value is exhausted
 
 
 def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -> None:

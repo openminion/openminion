@@ -94,6 +94,7 @@ def _requires_typed_finalization_contract(
 
 def _tool_result_payload_from_action(
     *,
+    call_id: str,
     tool_name: str,
     action_result: ActionResult,
 ) -> dict[str, Any]:
@@ -133,7 +134,7 @@ def _tool_result_payload_from_action(
         "error": error_message,
         "data": data,
         "error_code": error_code,
-        "call_id": str(getattr(action_result, "command_id", "") or ""),
+        "call_id": call_id,
         "source": "native",
     }
 
@@ -185,6 +186,7 @@ def _finalize_tool_result_from_context(
 def _append_tool_result_payload(
     loop_state: AdaptiveToolLoopState,
     *,
+    call_id: str,
     tool_name: str,
     action_result: ActionResult,
 ) -> None:
@@ -196,7 +198,9 @@ def _append_tool_result_payload(
     ]
     results.append(
         _tool_result_payload_from_action(
-            tool_name=tool_name, action_result=action_result
+            call_id=call_id,
+            tool_name=tool_name,
+            action_result=action_result,
         )
     )
     scratchpad["adaptive.tool_results"] = results

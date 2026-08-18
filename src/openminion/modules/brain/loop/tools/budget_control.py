@@ -17,13 +17,14 @@ from openminion.modules.brain.loop.constants import (
     BUDGET_ANSWER_ONLY_TEXT_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT,
+    EMPTY_FINALIZATION_RETRY_PROMPT,
     FINALIZATION_STATUS_TRAILER_GUIDANCE,
 )
 from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
     AskUserCommand,
 )
-from openminion.modules.llm import is_provider_recovery_fallback_text
+from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message
 from .runtime import _extract_visible_response_text
 from .runtime import _normalize_finalization_status_response
@@ -71,13 +72,7 @@ _INTERNAL_FAILURE_FINAL_TEXT = (
 
 
 def _is_internal_failure_final_text(text: str) -> bool:
-    """Do not surface runtime/provider fallback text as a user-facing answer."""
-    normalized = str(text or "").strip().lower()
-    if not normalized:
-        return False
-    if _INTERNAL_FAILURE_FINAL_TEXT in normalized:
-        return True
-    return is_provider_recovery_fallback_text(normalized)
+    return _INTERNAL_FAILURE_FINAL_TEXT in str(text or "").strip().lower()
 
 
 def _effective_cap(
@@ -697,6 +692,11 @@ def _force_budget_answer_only_finalization(
     response = _normalize_finalization_status_response(response)
     _debit_llm_usage(loop_ctx, response)
     loop_state.llm_calls += 1
+    if getattr(response, "empty_payload_recovered", False) is True:
+        raise ProviderError(
+            "Budget finalization remained empty after retry",
+            code="EMPTY_PROVIDER_RESPONSE",
+        )
     if not bool(getattr(response, "ok", False)):
         error = getattr(response, "error", None)
         error_message = str(getattr(error, "message", "") or "LLM returned not-ok")
@@ -946,21 +946,40 @@ def _force_circular_pattern_answer_only_finalization(
         detail_text=f"{public_mode_tag} answer-only circular-pattern finalization",
         mode_state="circular_pattern_answer_only_finalization",
     )
-    try:
-        response = runtime.complete(
-            messages=finalization_messages,
-            tools=[],
-            model=model,
-            tool_choice="none",
-            max_output_tokens=int(max_output_tokens)
-            if max_output_tokens is not None
-            else None,
-            metadata=metadata,
+    for attempt in range(2):
+        try:
+            response = runtime.complete(
+                messages=finalization_messages,
+                tools=[],
+                model=model,
+                tool_choice="none",
+                max_output_tokens=max_output_tokens,
+                metadata=metadata,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        _debit_llm_usage(loop_ctx, response)
+        loop_state.llm_calls += 1
+        if getattr(response, "empty_payload_recovered", False) is not True:
+            break
+        if attempt:
+            raise ProviderError(
+                "Circular finalization remained empty after retry",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
+        if not _llm_budget_available_for_answer_only(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            reserve_final_answer=True,
+        ):
+            raise ProviderError(
+                "Circular finalization recovery exceeded budget",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
+        finalization_messages.append(
+            Message(role="system", content=EMPTY_FINALIZATION_RETRY_PROMPT)
         )
-    except Exception:  # noqa: BLE001
-        return None
-    _debit_llm_usage(loop_ctx, response)
-    loop_state.llm_calls += 1
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
         loop_state.messages.append(assistant_message)
     if list(getattr(response, "tool_calls", []) or []):

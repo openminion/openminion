@@ -4,6 +4,12 @@ import asyncio
 from pathlib import Path
 
 from openminion.base.config import OpenMinionConfig
+from openminion.modules.llm.providers.base import (
+    LLMProvider,
+    ProviderError,
+    ProviderRequest,
+    ProviderResponse,
+)
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 from openminion.services.agent import AgentService
 from openminion.services.runtime.plugins import PluginRegistry
@@ -114,6 +120,44 @@ class InvocationTerminalLifecycleTests(GatewayServiceTestCase):
         ]
         assert facts[-1].payload["source_event_type"] == "run.failed"
         assert facts[-1].payload["resolved_state"] == "failed"
+
+    def test_exhausted_empty_response_projects_failed_terminal(self) -> None:
+        class _RepeatedRecoveredEmptyProvider(LLMProvider):
+            name = "repeated-recovered-empty"
+
+            async def generate(self, request: ProviderRequest) -> ProviderResponse:
+                del request
+                return ProviderResponse(
+                    text="display fallback",
+                    model="fake-model",
+                    normalization={"empty_payload_recovered": True},
+                )
+
+        gateway, _sink = self._build_gateway(
+            provider=_RepeatedRecoveredEmptyProvider(),
+            logger_name="openminion.tests.gateway.terminal.empty-response",
+            agent_logger_name="openminion.tests.gateway.terminal.empty-response.agent",
+            auto_resume=False,
+        )
+        facts = self._capture(gateway)
+
+        with self.assertRaises(ProviderError) as raised:
+            asyncio.run(
+                gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="fail structurally",
+                    session_id="terminal-empty-response",
+                    deliver=True,
+                )
+            )
+
+        self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
+        assert [fact.event_type for fact in facts] == [
+            "agent.invocation.started",
+            "agent.invocation.failed",
+        ]
+        assert facts[-1].payload["source_event_type"] == "run.failed"
 
     def test_deferred_delivery_closes_only_on_replay(self) -> None:
         facts = self._capture(self.gateway)

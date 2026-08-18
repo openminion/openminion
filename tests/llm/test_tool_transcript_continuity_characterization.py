@@ -53,6 +53,23 @@ def test_tool_only_provider_response_retains_assistant_call_owner() -> None:
     ]
 
 
+def test_provider_recovery_marker_survives_llm_response_conversion() -> None:
+    payload = llm_response_kwargs(
+        resp=ProviderResponse(
+            text="display fallback",
+            model="adapter-neutral-model",
+            normalization={"empty_payload_recovered": True, "ignored": "value"},
+        ),
+        req=SimpleNamespace(model="adapter-neutral-model"),
+        client_name="adapter-neutral",
+        structured_fields={},
+        trace_context={},
+    )
+
+    assert payload["empty_payload_recovered"] is True
+    assert "normalization" not in payload
+
+
 def test_openai_like_renderer_uses_assistant_call_as_argument_owner() -> None:
     request = LLMRequest(
         messages=[

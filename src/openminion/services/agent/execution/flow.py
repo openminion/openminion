@@ -211,17 +211,6 @@ async def _run_required_lane(
     )
 
 
-async def _call_initial_provider(*, executor, runtime, tool_call_strategy: str):
-    return await executor.call_provider(
-        ProviderRequest(
-            user_message=runtime.user_message,
-            system_prompt=runtime.system_prompt,
-            history=runtime.provider_history,
-        ),
-        tool_call_strategy=tool_call_strategy,
-    )
-
-
 async def _complete_unforced_lane(
     service,
     *,
@@ -234,11 +223,18 @@ async def _complete_unforced_lane(
     executor_deps: ExecutorDeps,
     finalize_response,
 ) -> AgentResponse:
-    response = await _call_initial_provider(
-        executor=executor,
-        runtime=runtime,
-        tool_call_strategy=tool_call_strategy,
+    request = ProviderRequest(
+        user_message=runtime.user_message,
+        system_prompt=runtime.system_prompt,
+        history=runtime.provider_history,
     )
+    for _ in range(2):
+        response = await executor.call_provider(
+            request, tool_call_strategy=tool_call_strategy
+        )
+        if not response.empty_payload_recovered:
+            break
+    response.raise_for_recovered_empty("Empty initial response after retry")
     unforced_result = await _handle_unforced_provider_response(
         service,
         executor=executor,
