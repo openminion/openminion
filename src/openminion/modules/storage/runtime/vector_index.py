@@ -195,7 +195,7 @@ class APIEmbeddingProvider(EmbeddingProvider):
         # Deterministic fallback until a real HTTP client is wired here.
 
     def embed(self, text: str) -> EmbeddingResult:
-        text_hash = hashlib.md5((text + self.model).encode()).hexdigest()
+        text_hash = hashlib.sha256((text + self.model).encode()).hexdigest()
 
         vector = []
         seed = int(text_hash[:16], 16)
@@ -734,7 +734,7 @@ class MockEmbeddingProvider(EmbeddingProvider):
     """Mock embedding provider for testing."""
 
     def embed(self, text: str) -> EmbeddingResult:
-        text_hash = hashlib.md5(text.encode()).hexdigest()
+        text_hash = hashlib.sha256(text.encode()).hexdigest()
         seed = int(text_hash[:16], 16)
 
         vector = [(seed ^ i) % 1000 / 1000.0 for i in range(128)]

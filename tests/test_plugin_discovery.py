@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -9,6 +10,10 @@ import pytest
 
 from openminion.base.config import OpenMinionConfig
 from openminion.services.runtime.plugins import build_default_plugin_registry
+from openminion.services.runtime.plugins.discovery import (
+    discover_plugin_manifests,
+    load_plugin_instance,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -35,6 +40,19 @@ def test_loads_custom_plugin_by_manifest_id(tmp_path: Path) -> None:
 
     assert registry.names() == ["hello"]
     assert registry.manifest_ids() == ["example.hello"]
+
+
+def test_loaded_plugin_module_uses_sha256_path_digest(tmp_path: Path) -> None:
+    custom_root = tmp_path / "plugins"
+    _write_custom_plugin(custom_root, module_alias="hello", manifest_id="example.hello")
+    discovered = discover_plugin_manifests([custom_root])[0]
+
+    plugin = load_plugin_instance(discovered)
+
+    digest = hashlib.sha256(str(discovered.module_path).encode("utf-8")).hexdigest()[:12]
+    assert plugin.__class__.__module__ == (
+        f"openminion.extensions.dynamic.example_hello_{digest}"
+    )
 
 
 def test_loads_custom_plugin_by_module_alias(tmp_path: Path) -> None:

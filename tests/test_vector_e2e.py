@@ -1,7 +1,9 @@
-import pytest
-import tempfile
+import hashlib
 import os
+import tempfile
 from pathlib import Path
+
+import pytest
 
 
 class TestVectorE2E:
@@ -53,6 +55,26 @@ class TestVectorE2E:
         assert len(result.vector) == 384
         assert result.provider == "local"
         assert result.model == "all-MiniLM-L6-v2"
+
+    def test_api_and_mock_fallbacks_use_sha256_deterministically(self):
+        from openminion.modules.storage.runtime.vector_index import (
+            APIEmbeddingProvider,
+            MockEmbeddingProvider,
+        )
+
+        text = "stable embedding input"
+        api_provider = APIEmbeddingProvider(api_key="test", model="test-model")
+        api_result = api_provider.embed(text)
+        api_digest = hashlib.sha256((text + "test-model").encode()).hexdigest()
+        api_seed = int(api_digest[:16], 16)
+        expected_api_first = (((api_seed % 1013) / 1013.0) * 2) - 1
+
+        mock_result = MockEmbeddingProvider().embed(text)
+        mock_seed = int(hashlib.sha256(text.encode()).hexdigest()[:16], 16)
+
+        assert api_result.vector[0] == expected_api_first
+        assert mock_result.vector[0] == (mock_seed % 1000) / 1000.0
+        assert api_provider.embed(text).vector == api_result.vector
 
     def test_embedding_similarity(self):
         from openminion.modules.storage.runtime.vector_index import (

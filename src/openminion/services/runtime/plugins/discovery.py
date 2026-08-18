@@ -101,7 +101,7 @@ def load_plugin_instance(discovered: DiscoveredPlugin) -> Plugin:
 
 
 def _import_plugin_module(discovered: DiscoveredPlugin) -> ModuleType:
-    digest = hashlib.md5(str(discovered.module_path).encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(str(discovered.module_path).encode("utf-8")).hexdigest()[:12]
     normalized_id = re.sub(r"[^a-zA-Z0-9_]", "_", discovered.manifest.id)
     module_name = f"openminion.extensions.dynamic.{normalized_id}_{digest}"
     spec = importlib.util.spec_from_file_location(module_name, discovered.module_path)
