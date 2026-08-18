@@ -212,7 +212,9 @@ def test_dispatcher_output_shape_is_observable_by_review_observer() -> None:
     )
     action_result = handle_review_tool_call(loop_ctx=None, arguments={"diff": diff})
     payload_entry = _tool_result_payload_from_action(
-        tool_name=REVIEW_TOOL_NAME, action_result=action_result
+        call_id="review-call",
+        tool_name=REVIEW_TOOL_NAME,
+        action_result=action_result,
     )
     fact = observe_review_invocation([payload_entry])
     assert fact.invoked is True

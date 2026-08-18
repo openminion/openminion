@@ -4,10 +4,13 @@ import asyncio
 import json
 import logging
 
+import pytest
+
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
 from openminion.modules.llm.providers.base import (
     LLMProvider,
+    ProviderError,
     ProviderRequest,
     ProviderResponse,
     ProviderToolCall,
@@ -165,7 +168,9 @@ def test_executor_characterization_budget_denial_metadata() -> None:
     assert budget["tool_calls_total"] >= 1
 
 
-def test_executor_characterization_required_tool_missing_metadata() -> None:
+def test_executor_characterization_required_tool_recovered_empty_is_typed_error() -> (
+    None
+):
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
     config.runtime.tool_selection.allow_runtime_direct_fallback = False
@@ -177,19 +182,15 @@ def test_executor_characterization_required_tool_missing_metadata() -> None:
         tools=ToolRegistry([_RequiredWeatherTool()]),
     )
 
-    response = _run(
-        service.run_turn(
-            Message(channel="console", target="cli", body="what's weather in sf?"),
-            forced_tools=["weather.openmeteo.current"],
+    with pytest.raises(ProviderError) as caught:
+        _run(
+            service.run_turn(
+                Message(channel="console", target="cli", body="what's weather in sf?"),
+                forced_tools=["weather.openmeteo.current"],
+            )
         )
-    )
 
-    assert response.text == "Required tool call missing"
-    assert (
-        response.metadata["tool_loop_termination_reason"]
-        == "required_tool_call_missing"
-    )
-    assert response.metadata["tool_execution_count"] == "0"
+    assert caught.value.code == "EMPTY_PROVIDER_RESPONSE"
 
 
 def test_executor_characterization_invalid_argument_exhaustion_metadata() -> None:

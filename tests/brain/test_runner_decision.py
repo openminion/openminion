@@ -31,6 +31,7 @@ from tests.brain.runner_test_support import (
 )
 
 from openminion.modules.llm.errors import LLMCtlError
+from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.llm.schemas import (
     LLMRequest,
     LLMResponse,
@@ -92,6 +93,12 @@ def _empty_entry_response() -> LLMResponse:
     )
 
 
+def _marked_entry_response() -> LLMResponse:
+    response = _entry_text_response("display fallback")
+    response.empty_payload_recovered = True
+    return response
+
+
 class _StaticEntryLLM:
     def __init__(self, response_or_exc: LLMResponse | Exception) -> None:
         self._response_or_exc = response_or_exc
@@ -108,6 +115,17 @@ class _StaticEntryLLM:
         if isinstance(self._response_or_exc, Exception):
             raise self._response_or_exc
         return self._response_or_exc
+
+
+class _SequenceEntryLLM(_StaticEntryLLM):
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        super().__init__(responses[0])
+        self.responses = list(responses)
+
+    def call(self, request: LLMRequest) -> LLMResponse:
+        self.call_count += 1
+        self.last_request = request
+        return self.responses[self.call_count - 1]
 
 
 class RunnerDecisionTests(unittest.TestCase):
@@ -227,6 +245,71 @@ class RunnerDecisionTests(unittest.TestCase):
         self.assertEqual(decision.respond_kind, "answer")
         self.assertEqual(decision.reason_code, "llm_empty_response")
         self.assertIn("internal decision error", str(decision.answer or "").lower())
+
+    def test_decide_retries_marked_entry_response_once(self) -> None:
+        llm_api = _SequenceEntryLLM(
+            [_marked_entry_response(), _entry_text_response("valid answer")]
+        )
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=llm_api,
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id="s-marked-entry-retry",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+        )
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+        ):
+            decision = runner._decide(
+                state=state,
+                user_input="answer this",
+                logger=fake_logger(),
+            )
+
+        self.assertEqual(decision.reason_code, "entry_text_response")
+        self.assertEqual(decision.answer, "valid answer")
+        self.assertEqual(llm_api.call_count, 2)
+
+    def test_decide_repeated_marked_entry_response_raises_typed_error(self) -> None:
+        marked = _marked_entry_response()
+        llm_api = _SequenceEntryLLM([marked, marked])
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=llm_api,
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id="s-marked-entry-exhausted",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+        )
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+            self.assertRaises(ProviderError) as raised,
+        ):
+            runner._decide(
+                state=state,
+                user_input="answer this",
+                logger=fake_logger(),
+            )
+
+        self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
+        self.assertEqual(llm_api.call_count, 2)
 
     def test_decide_confirmation_replay_uses_continuation_guidance_not_goal(
         self,

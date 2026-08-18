@@ -18,6 +18,7 @@ from openminion.modules.brain.schemas import (
     WorkingState,
     new_uuid,
 )
+from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.brain.loop.tools.engine import (
     _force_budget_answer_only_finalization,
     _force_duplicate_batch_answer_only_closure,
@@ -1096,12 +1097,13 @@ class TestToolResultPayloadFromAction:
             outputs={"k": "v"},
         )
         payload = _tool_result_payload_from_action(
-            tool_name="file.read", action_result=ar
+            call_id="call-1", tool_name="file.read", action_result=ar
         )
         assert payload["ok"] is True
         assert payload["verified"] is True
         assert payload["tool_name"] == "file.read"
         assert payload["error"] == ""
+        assert payload["call_id"] == "call-1"
 
     def test_failed_with_error_object(self) -> None:
         ar = ActionResult(
@@ -1111,7 +1113,7 @@ class TestToolResultPayloadFromAction:
             error=ActionError(code="E1", message="bad", details={"d": 1}),
         )
         payload = _tool_result_payload_from_action(
-            tool_name="exec.run", action_result=ar
+            call_id="call-2", tool_name="exec.run", action_result=ar
         )
         assert payload["ok"] is False
         assert payload["error_code"] == "E1"
@@ -1125,7 +1127,7 @@ class TestToolResultPayloadFromAction:
             summary="Denied by policy",
         )
         payload = _tool_result_payload_from_action(
-            tool_name="exec.run", action_result=ar
+            call_id="call-2b", tool_name="exec.run", action_result=ar
         )
         assert payload["ok"] is False
         assert payload["verified"] is False
@@ -1137,12 +1139,16 @@ class TestToolResultPayloadFromAction:
             summary="",
             outputs={"error": "explicit-msg"},
         )
-        payload = _tool_result_payload_from_action(tool_name="t", action_result=ar)
+        payload = _tool_result_payload_from_action(
+            call_id="call-3", tool_name="t", action_result=ar
+        )
         assert payload["error"] == "explicit-msg"
 
     def test_empty_tool_name_falls_back(self) -> None:
         ar = ActionResult(command_id="x", status="success", summary="ok")
-        payload = _tool_result_payload_from_action(tool_name="", action_result=ar)
+        payload = _tool_result_payload_from_action(
+            call_id="call-x", tool_name="", action_result=ar
+        )
         assert payload["tool_name"] == "unknown"
 
 
@@ -1150,8 +1156,11 @@ class TestAppendToolResultPayload:
     def test_appends_to_scratchpad(self) -> None:
         st = AdaptiveToolLoopState(messages=[])
         ar = ActionResult(command_id="x", status="success", summary="ok")
-        _append_tool_result_payload(st, tool_name="file.read", action_result=ar)
+        _append_tool_result_payload(
+            st, call_id="call-x", tool_name="file.read", action_result=ar
+        )
         assert len(st.scratchpad["adaptive.tool_results"]) == 1
+        assert st.scratchpad["adaptive.tool_results"][0]["call_id"] == "call-x"
 
 
 # Build helpers — recovery messages, enrichment, missing action results
@@ -2619,6 +2628,62 @@ def test_loop_general_adaptive_profile_finalization_blocked() -> None:
         ADAPTIVE_TERM_FINAL_TEXT,
         "finalization_contract_missing",
     }
+
+
+def test_loop_retries_marked_no_tool_response_once() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="display fallback",
+                empty_payload_recovered=True,
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="valid final reply",
+            ),
+        ]
+    )
+
+    outcome = run_adaptive_tool_loop(
+        _LoopContext(state=_state()),
+        profile=_profile(allowed_tools=frozenset()),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="answer")],
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "valid final reply"
+    assert len(runtime.calls) == 2
+
+
+def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
+    marked = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="display fallback",
+        empty_payload_recovered=True,
+    )
+    runtime = _FakeRuntime(responses=[marked, marked])
+
+    with pytest.raises(ProviderError, match="EMPTY_PROVIDER_RESPONSE"):
+        run_adaptive_tool_loop(
+            _LoopContext(state=_state()),
+            profile=_profile(allowed_tools=frozenset()),
+            runtime=runtime,
+            model="m",
+            initial_messages=[Message(role="user", content="answer")],
+            tool_specs=[],
+        )
+
+    assert len(runtime.calls) == 2
 
 
 def test_loop_general_adaptive_profile_finalization_incomplete() -> None:
@@ -5201,7 +5266,7 @@ class TestFinalizeIterationCapExit:
         assert len(runtime.calls) == 2
         assert all(message.content != leaked_text for message in st_loop.messages)
 
-    def test_force_finalization_rejects_provider_fallback_text(self) -> None:
+    def test_force_finalization_accepts_identical_unmarked_text(self) -> None:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
         )
@@ -5238,11 +5303,42 @@ class TestFinalizeIterationCapExit:
         )
 
         assert result is not None
-        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        assert (
-            st_loop.scratchpad["budget_answer_only_finalization_error"]
-            == "internal_failure_final_text"
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == (
+            "I could not parse a usable model response on this turn. Please retry."
         )
+
+    def test_force_finalization_retries_marked_response_once(self) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            total_tool_calls=1,
+        )
+        marked = LLMResponse(
+            ok=True,
+            provider="fake",
+            model="m",
+            output_text="display fallback",
+            empty_payload_recovered=True,
+        )
+        runtime = _FakeRuntime(responses=[marked, marked])
+
+        with pytest.raises(ProviderError, match="EMPTY_PROVIDER_RESPONSE"):
+            _force_budget_answer_only_finalization(
+                loop_ctx=_LoopContext(state=_state()),
+                profile=prof,
+                loop_state=st_loop,
+                runtime=runtime,
+                model="m",
+                max_output_tokens=None,
+                metadata=None,
+                allowed_tools=frozenset({"x"}),
+                public_mode_tag="act",
+            )
+
+        assert len(runtime.calls) == 2
 
     def test_force_finalization_does_not_classify_answer_prose(self) -> None:
         prof = _profile(
@@ -5985,7 +6081,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
         assert out.final_text == "I read the file successfully."
 
-    def test_returns_none_on_provider_fallback_final_text(self) -> None:
+    def test_returns_none_on_marked_provider_fallback_final_text(self) -> None:
         signature = "sig-provider-fallback"
         st_loop = self._prepare_state_with_facts(signature)
         prof = _profile(allowed_tools=frozenset({"file.read"}))
@@ -6001,6 +6097,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
                         "Please retry."
                     ),
                     finish_reason="stop",
+                    empty_payload_recovered=True,
                 ),
             ]
         )
@@ -6022,9 +6119,42 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         assert dur >= 0
         assert tok >= 0
         assert (
-            st_loop.scratchpad["duplicate_batch_closure_invalid_final_text"]
-            == "I could not parse a usable model response on this turn. Please retry."
+            st_loop.scratchpad["duplicate_batch_closure_empty_payload_recovered"]
+            is True
         )
+
+    def test_accepts_identical_unmarked_provider_fallback_text(self) -> None:
+        signature = "sig-unmarked-provider-fallback"
+        st_loop = self._prepare_state_with_facts(signature)
+        text = "I could not parse a usable model response on this turn. Please retry."
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="openrouter",
+                    model="m",
+                    output_text=text,
+                )
+            ]
+        )
+
+        out, _, _ = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=_LoopContext(state=_state()),
+            profile=_profile(allowed_tools=frozenset({"file.read"})),
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.read", arguments={})],
+            tool_specs=_tool_specs("file.read"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.read"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is not None
+        assert out.final_text == text
 
     def test_returns_none_on_raw_tool_markup_final_text(self) -> None:
         signature = "sig-raw-markup"

@@ -194,6 +194,7 @@ class CodingResumeMixin:
         self._record_verifier_candidate(replay_command, action_result)
         tool_name = str(getattr(replay_command, "tool_name", "") or "").strip()
         self._loop_state.append_tool_result(
+            call_id=str(getattr(replay_command, "command_id", "") or ""),
             tool_name=tool_name,
             action_result=action_result,
         )

@@ -90,6 +90,17 @@ class ProviderResponse:
     normalization: dict[str, Any] = field(default_factory=dict)
     thinking: list[ThinkingBlock] = field(default_factory=list)
 
+    @property
+    def empty_payload_recovered(self) -> bool:
+        return (
+            self.normalization.get("empty_payload_recovered") is True
+            and not self.tool_calls
+        )
+
+    def raise_for_recovered_empty(self, message: str) -> None:
+        if self.empty_payload_recovered:
+            raise ProviderError(message, code="EMPTY_PROVIDER_RESPONSE")
+
 
 @runtime_checkable
 class ProviderResponseCompatible(Protocol):

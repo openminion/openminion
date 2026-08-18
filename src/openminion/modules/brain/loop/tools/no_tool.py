@@ -7,6 +7,7 @@ from typing import Any
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.schemas import Message
+from openminion.modules.llm import ProviderError
 
 from .budget_finalization import (
     _recover_budget_finalization_status,
@@ -310,6 +311,20 @@ class AdaptiveLoopRunnerNoToolMixin:
         salvage_text = payloads["salvage_text"]
         confident_complete = payloads["confident_complete"]
         normalized_final_text = str(final_text or "").strip()
+        if getattr(prepared.response, "empty_payload_recovered", False) is True:
+            retry_key = "empty_payload_recovery_retry_used"
+            if not bool(self.loop_state.scratchpad.get(retry_key, False)):
+                self.loop_state.scratchpad[retry_key] = True
+                return self._retry_with_system_message(
+                    "The previous provider response contained no usable answer or "
+                    "tool call. Continue from the structured context already "
+                    "available and return a usable answer or canonical tool call.",
+                    discard_assistant_text=normalized_final_text,
+                )
+            raise ProviderError(
+                "Provider returned no usable response after one recovery retry",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
         raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
         )

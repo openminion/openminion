@@ -100,9 +100,9 @@ def final_model_phase_result(
     final_response: ProviderResponse,
     context: CompletionContext,
 ) -> _PhaseResult:
-    empty = is_empty_provider_response(final_response)
+    final_response.raise_for_recovered_empty("Empty final response after retry")
     extra: dict[str, Any] = dict(context.shared_capability_meta)
-    if empty:
+    if is_empty_provider_response(final_response):
         text = "Provider returned an empty response with no tool calls or finalization status."
         termination_reason = "empty_provider_response"
         extra["error_code"] = "EMPTY_PROVIDER_RESPONSE"

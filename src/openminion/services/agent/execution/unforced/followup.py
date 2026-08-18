@@ -144,15 +144,11 @@ def denied_tool_recovery_hint(batch: ToolExecutionBatch) -> str | None:
     def _tool_error_details(data: object) -> dict[str, object]:
         if not isinstance(data, dict):
             return {}
-        raw_details = data.get("error_details")
-        if isinstance(raw_details, dict):
-            return dict(raw_details)
+        details = data.get("error_details")
         raw_error = data.get("error")
-        if isinstance(raw_error, dict):
-            nested_details = raw_error.get("details")
-            if isinstance(nested_details, dict):
-                return dict(nested_details)
-        return {}
+        if not isinstance(details, dict) and isinstance(raw_error, dict):
+            details = raw_error.get("details")
+        return dict(details) if isinstance(details, dict) else {}
 
     for result in list(getattr(batch, "results", []) or []):
         if bool(getattr(result, "ok", False)):
@@ -266,9 +262,9 @@ def _terminal_response(
     runner, *, state: LoopState, deps: ExecutorDeps
 ) -> AgentResponse | None:
     batch = state.last_batch
-    if batch is None:
-        return None
+    assert batch is not None
     if is_empty_provider_response(state.response):
+        state.response.raise_for_recovered_empty("Empty tool follow-up after retry")
         return empty_provider_response_response(
             runner,
             deps=deps,
@@ -338,7 +334,10 @@ async def finish_iteration(
         batch=batch,
         tool_calls_count=len(state.initial_response.tool_calls or []),
     ).get("tool_results", "[]")
-    if looks_like_tool_call_envelope(state.response.text):
+    if (
+        looks_like_tool_call_envelope(state.response.text)
+        or state.response.empty_payload_recovered
+    ):
         state.response = await runner.runtime_ops.call_provider(
             build_plain_text_retry_request(
                 runner,
@@ -351,8 +350,10 @@ async def finish_iteration(
             tool_call_strategy=state.tool_call_strategy,
         )
         state.response = recover_text_tool_calls(runner, response=state.response)
-    if requires_status and not bool(
-        getattr(state.response, STATE_KEY_FINALIZATION_STATUS, None)
+    if (
+        requires_status
+        and not state.response.empty_payload_recovered
+        and not bool(getattr(state.response, STATE_KEY_FINALIZATION_STATUS, None))
     ):
         retry_message = build_finalization_status_retry_feedback(
             payload=str(payload), guidance=FINALIZATION_STATUS_RETRY_GUIDANCE

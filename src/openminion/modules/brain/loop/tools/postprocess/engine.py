@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message
 from ..budget import (
     _debit_llm_usage,
@@ -205,6 +206,11 @@ class AdaptiveLoopRunnerPostprocessMixin(
             self.loop_state.messages.append(assistant_message)
         if not bool(getattr(response, "ok", False)):
             return None
+        if getattr(response, "empty_payload_recovered", False) is True:
+            raise ProviderError(
+                "Provider returned no usable compact closeout after one recovery retry",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
         final_text = _extract_visible_response_text(response)
         if final_text and not _is_internal_failure_final_text(final_text):
             self.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT

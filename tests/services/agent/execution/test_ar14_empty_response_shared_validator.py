@@ -38,6 +38,13 @@ class _FakeResponse:
     text: str = ""
     tool_calls: list[Any] = field(default_factory=list)
     finalization_status: Any = None
+    normalization: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def empty_payload_recovered(self) -> bool:
+        return bool(
+            self.normalization.get("empty_payload_recovered") and not self.tool_calls
+        )
 
 
 def _attach_finalization(response: _FakeResponse, payload: Any) -> _FakeResponse:
@@ -59,6 +66,15 @@ def test_predicate_skips_visible_text() -> None:
     assert (
         is_empty_provider_response(_FakeResponse(text="answer", tool_calls=[])) is False
     )
+
+
+def test_predicate_rejects_marked_display_fallback_text() -> None:
+    response = _FakeResponse(
+        text="I could not parse a usable model response on this turn. Please retry.",
+        normalization={"empty_payload_recovered": True},
+    )
+
+    assert is_empty_provider_response(response) is True
 
 
 def test_predicate_skips_when_tool_calls_present() -> None:

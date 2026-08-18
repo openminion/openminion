@@ -74,6 +74,7 @@ async def phase_provider_call(
                 tool_calls=[],
                 finish_reason="error",
             )
+        retry_response.raise_for_recovered_empty("Required-tool retry remained empty")
         if retry_response.tool_calls:
             response = retry_response
     return _PhaseResult(

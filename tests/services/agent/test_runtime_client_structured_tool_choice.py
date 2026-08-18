@@ -40,6 +40,7 @@ class _FakeOkResponse:
         output_text: str = "",
         finish_reason: str | None = None,
         usage: object | None = None,
+        empty_payload_recovered: bool = False,
     ) -> None:
         self.ok = True
         self.error = None
@@ -55,6 +56,7 @@ class _FakeOkResponse:
             else "stop"
         )
         self.contract_version = "v1"
+        self.empty_payload_recovered = empty_payload_recovered
 
 
 class _FakeErrorResponse:
@@ -195,6 +197,21 @@ def _structured_request(*, metadata: dict[str, str] | None = None) -> ProviderRe
 
 
 class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
+    def test_runtime_client_preserves_empty_payload_recovery_marker(self) -> None:
+        service = _service(client=_CapturingRuntimeClient())
+
+        response = service._llm_response_to_provider_response(
+            _FakeOkResponse(
+                output_text="display fallback",
+                empty_payload_recovered=True,
+            )
+        )
+
+        self.assertIs(
+            response.normalization.get("empty_payload_recovered"),
+            True,
+        )
+
     def test_runtime_client_preserves_function_targeted_tool_choice_dict(self) -> None:
         client = _CapturingRuntimeClient()
         service = _service(client=client)

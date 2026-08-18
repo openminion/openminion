@@ -33,7 +33,7 @@ from tests.services.agent._agent_service_support import (
     logging,
 )
 from tests._csc_fixtures import _csc_install_default_agent
-from openminion.modules.llm.providers.base import ProviderToolCall
+from openminion.modules.llm.providers.base import ProviderError, ProviderToolCall
 from openminion.modules.tool.registry import ToolExecutionBatch
 
 
@@ -51,6 +51,20 @@ class _IdBearingToolCallProvider(LLMProvider):
             tool_calls=list(self._calls),
             finish_reason="tool_calls",
         )
+
+
+class _RecoveredEmptySequenceProvider(LLMProvider):
+    name = "fake-recovered-empty"
+
+    def __init__(self, *responses: ProviderResponse) -> None:
+        self.responses = list(responses)
+        self.call_count = 0
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        del request
+        response = self.responses[self.call_count]
+        self.call_count += 1
+        return response
 
 
 class _ReasonAliasFinalizationProvider(LLMProvider):
@@ -164,6 +178,138 @@ class _EmbeddedEnvelopeFollowUpProvider(LLMProvider):
 
 
 class AgentServiceExecutionTests(AgentServiceTestCase):
+    def test_initial_marked_response_retries_once_and_accepts_valid_reply(self) -> None:
+        marked = ProviderResponse(
+            text="display fallback",
+            model="fake-model",
+            normalization={"empty_payload_recovered": True},
+        )
+        provider = _RecoveredEmptySequenceProvider(
+            marked,
+            ProviderResponse(text="valid reply", model="fake-model"),
+        )
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            provider,
+            logging.getLogger("openminion.tests"),
+        )
+
+        response = asyncio.run(
+            service.run_turn(Message(channel="console", target="me", body="hello"))
+        )
+
+        self.assertEqual(response.text, "valid reply")
+        self.assertEqual(provider.call_count, 2)
+
+    def test_repeated_initial_marked_response_raises_typed_provider_error(self) -> None:
+        marked = ProviderResponse(
+            text="display fallback",
+            model="fake-model",
+            normalization={"empty_payload_recovered": True},
+        )
+        provider = _RecoveredEmptySequenceProvider(marked, marked)
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            provider,
+            logging.getLogger("openminion.tests"),
+        )
+
+        with self.assertRaises(ProviderError) as raised:
+            asyncio.run(
+                service.run_turn(Message(channel="console", target="me", body="hello"))
+            )
+
+        self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
+        self.assertEqual(provider.call_count, 2)
+
+    def test_post_tool_marked_response_retries_once_and_keeps_tool_result(self) -> None:
+        marked = ProviderResponse(
+            text="display fallback",
+            model="fake-model",
+            normalization={"empty_payload_recovered": True},
+        )
+        provider = _RecoveredEmptySequenceProvider(
+            ProviderResponse(
+                text="",
+                model="fake-model",
+                tool_calls=[
+                    ProviderToolCall(
+                        id="weather-call",
+                        name="weather.openmeteo.current",
+                        arguments={"city": "Tokyo"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            marked,
+            ProviderResponse(text="Tokyo is clear.", model="fake-model"),
+        )
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            provider,
+            logging.getLogger("openminion.tests"),
+            tools=ToolRegistry([_StubWeatherTool()]),
+        )
+
+        response = asyncio.run(
+            service.run_turn(Message(channel="console", target="me", body="weather"))
+        )
+
+        self.assertEqual(response.text, "Tokyo is clear.")
+        self.assertEqual(provider.call_count, 3)
+        self.assertEqual(response.metadata["tool_execution_count"], "1")
+
+    def test_repeated_post_tool_marked_response_raises_typed_error(self) -> None:
+        marked = ProviderResponse(
+            text="display fallback",
+            model="fake-model",
+            normalization={"empty_payload_recovered": True},
+        )
+        provider = _RecoveredEmptySequenceProvider(
+            ProviderResponse(
+                text="",
+                model="fake-model",
+                tool_calls=[
+                    ProviderToolCall(
+                        id="weather-call",
+                        name="weather.openmeteo.current",
+                        arguments={"city": "Tokyo"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            marked,
+            marked,
+        )
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            provider,
+            logging.getLogger("openminion.tests"),
+            tools=ToolRegistry([_StubWeatherTool()]),
+        )
+
+        with self.assertRaises(ProviderError) as raised:
+            asyncio.run(
+                service.run_turn(
+                    Message(channel="console", target="me", body="weather")
+                )
+            )
+
+        self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
+        self.assertEqual(provider.call_count, 3)
+
     def test_tool_batch_metadata_keeps_small_tool_output_inline(self) -> None:
         config = OpenMinionConfig()
         _csc_install_default_agent(config)  # type: ignore[attr-defined]

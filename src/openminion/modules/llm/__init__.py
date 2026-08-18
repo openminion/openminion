@@ -8,6 +8,7 @@ __all__ = [
     "LLMRequest",
     "LLMResponse",
     "Message",
+    "ProviderError",
     "ResponseError",
     "RuntimeLLMHandle",
     "ToolCall",
@@ -16,11 +17,11 @@ __all__ = [
     "UsageInfo",
     "is_provider_recovery_fallback_text",
 ]
-
 if TYPE_CHECKING:  # pragma: no cover
     from .runtime.client import LLMCTL, LLMClient
     from .errors import ErrorCode, LLMCtlError
     from .providers.factory import RuntimeLLMHandle
+    from .providers.contracts import ProviderError
     from .providers.normalization import is_provider_recovery_fallback_text
     from .schemas import (
         LLMRequest,
@@ -33,12 +34,14 @@ if TYPE_CHECKING:  # pragma: no cover
         UsageInfo,
     )
 
+_PROVIDER_FALLBACK = "is_provider_recovery_fallback_text"
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "LLMCTL": (".runtime.client", "LLMCTL"),
     "LLMClient": (".runtime.client", "LLMClient"),
     "LLMCtlError": (".errors", "LLMCtlError"),
     "ErrorCode": (".errors", "ErrorCode"),
     "Message": (".schemas", "Message"),
+    "ProviderError": (".providers.contracts", "ProviderError"),
     "ToolChoice": (".schemas", "ToolChoice"),
     "ToolSpec": (".schemas", "ToolSpec"),
     "ToolCall": (".schemas", "ToolCall"),
@@ -47,10 +50,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "LLMResponse": (".schemas", "LLMResponse"),
     "ResponseError": (".schemas", "ResponseError"),
     "RuntimeLLMHandle": (".providers.factory", "RuntimeLLMHandle"),
-    "is_provider_recovery_fallback_text": (
-        ".providers.normalization",
-        "is_provider_recovery_fallback_text",
-    ),
+    _PROVIDER_FALLBACK: (".providers.normalization", _PROVIDER_FALLBACK),
 }
 
 

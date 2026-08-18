@@ -103,8 +103,9 @@ def _with_finalization_guidance(message: str) -> str:
 
 
 def _needs_plain_text_retry(response: ProviderResponse) -> bool:
-    return not response.tool_calls and _looks_like_embedded_tool_response_text(
-        getattr(response, "text", "")
+    return response.empty_payload_recovered or (
+        not response.tool_calls
+        and _looks_like_embedded_tool_response_text(response.text)
     )
 
 
@@ -172,7 +173,8 @@ async def _retry_plain_text_final_response(
         tool_call_strategy=context.tool_call_strategy,
     )
     final_response = recover_text_tool_calls(runner, response=final_response)
-    if not _needs_plain_text_retry(final_response):
+    recovered_empty = final_response.empty_payload_recovered
+    if recovered_empty or not _needs_plain_text_retry(final_response):
         return final_response
     final_response = await runner.runtime_ops.call_provider(
         _retry_request(

@@ -223,6 +223,7 @@ def _run_seeded_command_step(
     if command_kind == "tool":
         append_tool_result_payload(
             loop_state,
+            call_id=str(getattr(action_result, "command_id", "") or ""),
             tool_name=tool_name or command_label,
             action_result=action_result,
         )

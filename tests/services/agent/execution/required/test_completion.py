@@ -22,6 +22,7 @@ from openminion.services.agent.execution.required.completion import (
 )
 from openminion.services.agent.execution.required.completion_retry import (
     _looks_like_embedded_tool_response_text,
+    _retry_plain_text_final_response,
 )
 from openminion.services.agent.execution.required.state import CompletionContext
 
@@ -157,6 +158,80 @@ def test_required_lane_initial_follow_up_recovers_minimax_tool_json_batch() -> N
     assert len(final_response.tool_calls) == 2
     assert final_response.tool_calls[0].name == "web.fetch"
     assert final_response.tool_calls[1].name == "file.write"
+
+
+def test_required_lane_finalization_retries_marked_response_once() -> None:
+    marked = ProviderResponse(
+        text="display fallback",
+        model="fake-model",
+        normalization={"empty_payload_recovered": True},
+    )
+    runtime_ops = _FakeRuntimeOps(
+        provider_responses=[
+            ProviderResponse(text="valid final reply", model="fake-model")
+        ]
+    )
+    context = CompletionContext(
+        response=ProviderResponse(text="draft", model="fake-model"),
+        batch=ToolExecutionBatch(results=[]),
+        intent_category="test",
+        tool_call_strategy="auto",
+        tool_budget_state=None,
+        attempted_tools=[],
+        capability_fallback_trigger_reason=None,
+        tool_calls_sig="[]",
+        shared_capability_meta={},
+    )
+
+    final_response = asyncio.run(
+        _retry_plain_text_final_response(
+            _runner(runtime_ops),
+            final_response=marked,
+            tool_feedback_payload="[]",
+            tool_feedback_message="Tool execution results:\n[]",
+            requires_finalization_status=False,
+            context=context,
+        )
+    )
+
+    assert final_response.text == "valid final reply"
+    assert len(runtime_ops.provider_requests) == 1
+
+
+def test_required_lane_finalization_preserves_repeated_marker_for_terminal_owner() -> (
+    None
+):
+    marked = ProviderResponse(
+        text="display fallback",
+        model="fake-model",
+        normalization={"empty_payload_recovered": True},
+    )
+    runtime_ops = _FakeRuntimeOps(provider_responses=[marked])
+    context = CompletionContext(
+        response=ProviderResponse(text="draft", model="fake-model"),
+        batch=ToolExecutionBatch(results=[]),
+        intent_category="test",
+        tool_call_strategy="auto",
+        tool_budget_state=None,
+        attempted_tools=[],
+        capability_fallback_trigger_reason=None,
+        tool_calls_sig="[]",
+        shared_capability_meta={},
+    )
+
+    final_response = asyncio.run(
+        _retry_plain_text_final_response(
+            _runner(runtime_ops),
+            final_response=marked,
+            tool_feedback_payload="[]",
+            tool_feedback_message="Tool execution results:\n[]",
+            requires_finalization_status=False,
+            context=context,
+        )
+    )
+
+    assert final_response.normalization["empty_payload_recovered"] is True
+    assert len(runtime_ops.provider_requests) == 1
 
 
 def test_required_lane_retries_when_follow_up_repeats_pre_tool_draft() -> None:

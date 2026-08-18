@@ -50,6 +50,10 @@ def _response_usage_payload(response: Any) -> dict[str, Any]:
 
 def _is_empty_entry_response(response: Any) -> bool:
     detection = detect_entry_path(response)
+    if getattr(response, "empty_payload_recovered", False) is True and not list(
+        getattr(response, "tool_calls", []) or []
+    ):
+        return True
     if (
         str(getattr(response, "finish_reason", "") or "").strip() == "tool_calls"
         and not detection.tool_call_names

@@ -31,6 +31,7 @@ from ...preflight import ValidationResult
 from openminion.modules.prompting.continuation import (
     build_plan_checkpoint_continuation_message,
 )
+from openminion.modules.llm import ProviderError
 
 
 def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: Any):
@@ -111,6 +112,16 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
             state=state,
             logger=logger,
             request=request,
+        )
+    except ProviderError as exc:
+        if exc.code == "EMPTY_PROVIDER_RESPONSE":
+            raise
+        return _dispatch_runtime_error(
+            runner=runner,
+            state=state,
+            logger=logger,
+            user_input=effective_user_input,
+            exc=exc,
         )
     except Exception as exc:  # noqa: BLE001
         return _dispatch_runtime_error(

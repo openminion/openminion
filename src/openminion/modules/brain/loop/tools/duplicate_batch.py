@@ -527,6 +527,9 @@ def _force_duplicate_batch_answer_only_closure(
     if _looks_like_unexecutable_tool_markup_final_text(final_text):
         loop_state.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"] = True
         return None, duration_ms, tokens_used
+    if getattr(response, "empty_payload_recovered", False) is True:
+        loop_state.scratchpad["duplicate_batch_closure_empty_payload_recovered"] = True
+        return None, duration_ms, tokens_used
     if _is_internal_failure_final_text(final_text):
         loop_state.scratchpad["duplicate_batch_closure_invalid_final_text"] = str(
             final_text or ""
