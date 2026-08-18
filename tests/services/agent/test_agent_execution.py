@@ -67,6 +67,14 @@ class _RecoveredEmptySequenceProvider(LLMProvider):
         return response
 
 
+def _recovered_empty_response() -> ProviderResponse:
+    return ProviderResponse(
+        text="display fallback",
+        model="fake-model",
+        normalization={"empty_payload_recovered": True},
+    )
+
+
 class _ReasonAliasFinalizationProvider(LLMProvider):
     name = "fake-reason-alias-finalization"
 
@@ -179,11 +187,7 @@ class _EmbeddedEnvelopeFollowUpProvider(LLMProvider):
 
 class AgentServiceExecutionTests(AgentServiceTestCase):
     def test_initial_marked_response_retries_once_and_accepts_valid_reply(self) -> None:
-        marked = ProviderResponse(
-            text="display fallback",
-            model="fake-model",
-            normalization={"empty_payload_recovered": True},
-        )
+        marked = _recovered_empty_response()
         provider = _RecoveredEmptySequenceProvider(
             marked,
             ProviderResponse(text="valid reply", model="fake-model"),
@@ -205,11 +209,7 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         self.assertEqual(provider.call_count, 2)
 
     def test_repeated_initial_marked_response_raises_typed_provider_error(self) -> None:
-        marked = ProviderResponse(
-            text="display fallback",
-            model="fake-model",
-            normalization={"empty_payload_recovered": True},
-        )
+        marked = _recovered_empty_response()
         provider = _RecoveredEmptySequenceProvider(marked, marked)
         config = OpenMinionConfig()
         _csc_install_default_agent(config)  # type: ignore[attr-defined]
@@ -229,11 +229,7 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         self.assertEqual(provider.call_count, 2)
 
     def test_post_tool_marked_response_retries_once_and_keeps_tool_result(self) -> None:
-        marked = ProviderResponse(
-            text="display fallback",
-            model="fake-model",
-            normalization={"empty_payload_recovered": True},
-        )
+        marked = _recovered_empty_response()
         provider = _RecoveredEmptySequenceProvider(
             ProviderResponse(
                 text="",
@@ -269,11 +265,7 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         self.assertEqual(response.metadata["tool_execution_count"], "1")
 
     def test_repeated_post_tool_marked_response_raises_typed_error(self) -> None:
-        marked = ProviderResponse(
-            text="display fallback",
-            model="fake-model",
-            normalization={"empty_payload_recovered": True},
-        )
+        marked = _recovered_empty_response()
         provider = _RecoveredEmptySequenceProvider(
             ProviderResponse(
                 text="",

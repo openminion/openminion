@@ -34,36 +34,36 @@ if TYPE_CHECKING:  # pragma: no cover
         UsageInfo,
     )
 
-_PROVIDER_FALLBACK = "is_provider_recovery_fallback_text"
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "ErrorCode": (".errors", "ErrorCode"),
     "LLMCTL": (".runtime.client", "LLMCTL"),
     "LLMClient": (".runtime.client", "LLMClient"),
     "LLMCtlError": (".errors", "LLMCtlError"),
-    "ErrorCode": (".errors", "ErrorCode"),
-    "Message": (".schemas", "Message"),
-    "ProviderError": (".providers.contracts", "ProviderError"),
-    "ToolChoice": (".schemas", "ToolChoice"),
-    "ToolSpec": (".schemas", "ToolSpec"),
-    "ToolCall": (".schemas", "ToolCall"),
-    "UsageInfo": (".schemas", "UsageInfo"),
     "LLMRequest": (".schemas", "LLMRequest"),
     "LLMResponse": (".schemas", "LLMResponse"),
+    "Message": (".schemas", "Message"),
+    "ProviderError": (".providers.contracts", "ProviderError"),
     "ResponseError": (".schemas", "ResponseError"),
     "RuntimeLLMHandle": (".providers.factory", "RuntimeLLMHandle"),
-    _PROVIDER_FALLBACK: (".providers.normalization", _PROVIDER_FALLBACK),
+    "ToolCall": (".schemas", "ToolCall"),
+    "ToolChoice": (".schemas", "ToolChoice"),
+    "ToolSpec": (".schemas", "ToolSpec"),
+    "UsageInfo": (".schemas", "UsageInfo"),
+    "is_provider_recovery_fallback_text": (
+        ".providers.normalization",
+        "is_provider_recovery_fallback_text",
+    ),
 }
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover
-    target = _LAZY_EXPORTS.get(name)
-    if not target:
+    if name not in _LAZY_EXPORTS:
         raise AttributeError(name)
-    module_name, attr_name = target
+    module_name, attr_name = _LAZY_EXPORTS[name]
     module = __import__(__name__ + module_name, fromlist=[attr_name])
-    value = getattr(module, attr_name)
-    globals()[name] = value
-    return value
+    globals()[name] = getattr(module, attr_name)
+    return globals()[name]
 
 
 def __dir__() -> list[str]:  # pragma: no cover
-    return sorted(set(list(globals().keys()) + list(_LAZY_EXPORTS.keys())))
+    return sorted(globals().keys() | _LAZY_EXPORTS.keys())

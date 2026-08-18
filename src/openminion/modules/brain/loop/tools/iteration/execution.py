@@ -161,7 +161,7 @@ def execute_iteration_results(
         )
         append_tool_result_payload(
             loop_state,
-            call_id=str(getattr(tool_call, "id", "") or ""),
+            call_id=tool_call.id,
             tool_name=tool_name,
             action_result=action_result,
         )

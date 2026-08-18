@@ -228,7 +228,7 @@ async def _complete_unforced_lane(
         system_prompt=runtime.system_prompt,
         history=runtime.provider_history,
     )
-    for _attempt in range(2):
+    for _ in range(2):
         response = await executor.call_provider(
             request, tool_call_strategy=tool_call_strategy
         )

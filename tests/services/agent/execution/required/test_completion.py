@@ -116,6 +116,20 @@ def _runner(runtime_ops: _FakeRuntimeOps) -> Any:
     )
 
 
+def _completion_context() -> CompletionContext:
+    return CompletionContext(
+        response=ProviderResponse(text="draft", model="fake-model"),
+        batch=ToolExecutionBatch(results=[]),
+        intent_category="test",
+        tool_call_strategy="auto",
+        tool_budget_state=None,
+        attempted_tools=[],
+        capability_fallback_trigger_reason=None,
+        tool_calls_sig="[]",
+        shared_capability_meta={},
+    )
+
+
 def test_required_lane_embedded_tool_response_uses_generic_markup_detector() -> None:
     assert _looks_like_embedded_tool_response_text(
         '<minimax:tool_call><invoke name="web.search"></invoke></minimax:tool_call>'
@@ -171,18 +185,6 @@ def test_required_lane_finalization_retries_marked_response_once() -> None:
             ProviderResponse(text="valid final reply", model="fake-model")
         ]
     )
-    context = CompletionContext(
-        response=ProviderResponse(text="draft", model="fake-model"),
-        batch=ToolExecutionBatch(results=[]),
-        intent_category="test",
-        tool_call_strategy="auto",
-        tool_budget_state=None,
-        attempted_tools=[],
-        capability_fallback_trigger_reason=None,
-        tool_calls_sig="[]",
-        shared_capability_meta={},
-    )
-
     final_response = asyncio.run(
         _retry_plain_text_final_response(
             _runner(runtime_ops),
@@ -190,7 +192,7 @@ def test_required_lane_finalization_retries_marked_response_once() -> None:
             tool_feedback_payload="[]",
             tool_feedback_message="Tool execution results:\n[]",
             requires_finalization_status=False,
-            context=context,
+            context=_completion_context(),
         )
     )
 
@@ -207,18 +209,6 @@ def test_required_lane_finalization_preserves_repeated_marker_for_terminal_owner
         normalization={"empty_payload_recovered": True},
     )
     runtime_ops = _FakeRuntimeOps(provider_responses=[marked])
-    context = CompletionContext(
-        response=ProviderResponse(text="draft", model="fake-model"),
-        batch=ToolExecutionBatch(results=[]),
-        intent_category="test",
-        tool_call_strategy="auto",
-        tool_budget_state=None,
-        attempted_tools=[],
-        capability_fallback_trigger_reason=None,
-        tool_calls_sig="[]",
-        shared_capability_meta={},
-    )
-
     final_response = asyncio.run(
         _retry_plain_text_final_response(
             _runner(runtime_ops),
@@ -226,7 +216,7 @@ def test_required_lane_finalization_preserves_repeated_marker_for_terminal_owner
             tool_feedback_payload="[]",
             tool_feedback_message="Tool execution results:\n[]",
             requires_finalization_status=False,
-            context=context,
+            context=_completion_context(),
         )
     )
 

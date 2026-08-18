@@ -134,7 +134,7 @@ def _tool_result_payload_from_action(
         "error": error_message,
         "data": data,
         "error_code": error_code,
-        "call_id": str(call_id or ""),
+        "call_id": call_id,
         "source": "native",
     }
 

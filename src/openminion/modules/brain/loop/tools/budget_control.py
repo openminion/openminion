@@ -72,9 +72,7 @@ _INTERNAL_FAILURE_FINAL_TEXT = (
 
 
 def _is_internal_failure_final_text(text: str) -> bool:
-    """Do not surface the internal decision failure as a user-facing answer."""
-    normalized = str(text or "").strip().lower()
-    return bool(normalized and _INTERNAL_FAILURE_FINAL_TEXT in normalized)
+    return _INTERNAL_FAILURE_FINAL_TEXT in str(text or "").strip().lower()
 
 
 def _effective_cap(

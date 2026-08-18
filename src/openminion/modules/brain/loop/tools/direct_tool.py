@@ -687,17 +687,17 @@ def _force_direct_tool_answer_only_closure(
         mode_state="direct_tool_closure",
     )
     closure_start = time.monotonic()
-    complete_kwargs = {
-        "tools": [],
-        "model": model,
-        "tool_choice": "none",
-        "max_output_tokens": max_output_tokens,
-        "metadata": metadata,
-    }
     tokens_used = 0
     for attempt in range(2):
         try:
-            response = runtime.complete(messages=loop_state.messages, **complete_kwargs)
+            response = runtime.complete(
+                messages=loop_state.messages,
+                tools=[],
+                model=model,
+                tool_choice="none",
+                max_output_tokens=max_output_tokens,
+                metadata=metadata,
+            )
         except Exception as exc:  # noqa: BLE001
             outcome = _direct_tool_closure_failure(
                 loop_ctx,

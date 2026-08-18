@@ -42,8 +42,9 @@ class _FakeResponse:
 
     @property
     def empty_payload_recovered(self) -> bool:
-        return bool(
-            self.normalization.get("empty_payload_recovered") and not self.tool_calls
+        return (
+            self.normalization.get("empty_payload_recovered") is True
+            and not self.tool_calls
         )
 
 

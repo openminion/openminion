@@ -207,10 +207,7 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
             )
         )
 
-        self.assertIs(
-            response.normalization.get("empty_payload_recovered"),
-            True,
-        )
+        self.assertIs(response.normalization.get("empty_payload_recovered"), True)
 
     def test_runtime_client_preserves_function_targeted_tool_choice_dict(self) -> None:
         client = _CapturingRuntimeClient()
