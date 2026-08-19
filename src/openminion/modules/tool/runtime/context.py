@@ -31,6 +31,7 @@ from .repositories import (
 
 __all__ = [
     "RuntimeContext",
+    "enforce_watch_target_binding",
     "preferred_artifact_ref",
     "resolve_audit_repository",
     "resolve_cron_repository",
@@ -41,6 +42,29 @@ __all__ = [
 
 
 _LOG = get_logger("tool.runtime")
+
+
+def enforce_watch_target_binding(
+    arguments: Mapping[str, Any],
+    metadata: Mapping[str, Any] | None,
+) -> None:
+    if not isinstance(metadata, Mapping):
+        return
+    bound_target = str(metadata.get("watch_target_id", "") or "").strip()
+    if not bound_target or "target_id" not in arguments:
+        return
+    requested_target = str(arguments.get("target_id", "") or "").strip()
+    if requested_target == bound_target:
+        return
+    raise ToolRuntimeError(
+        "POLICY_DENIED",
+        "Watch tool invocation does not match the bound target",
+        {
+            "reason_code": "watch_target_mismatch",
+            "bound_target_id": bound_target,
+            "requested_target_id": requested_target,
+        },
+    )
 
 
 def _context_metadata_from_policy(policy: Policy | None) -> dict[str, Any]:
@@ -206,6 +230,7 @@ class RuntimeContext:
     telemetry_session_id: Optional[str] = None
     telemetry_turn_id: Optional[str] = None
     ops_service: Any | None = None
+    tool_registry: Any | None = None
     artifactctl: Optional[Any] = None
     memory_service: MemoryToolRuntimeService | None = None
     sandbox_runner: Any | None = None

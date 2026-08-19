@@ -28,6 +28,7 @@ from openminion.modules.tool import (
     ToolSpec,
     build_runtime_repositories,
     create_run_root,
+    enforce_watch_target_binding,
     new_run_id,
     resolve_binding_for_call,
 )
@@ -104,6 +105,11 @@ def _child_workspace_policy(
 
 def _is_confirm_required_code(code: Any) -> bool:
     return str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
+
+
+def _policy_context_metadata(policy: Policy) -> Any:
+    raw = getattr(policy, "raw", {}) or {}
+    return raw.get("context_metadata") if isinstance(raw, Mapping) else None
 
 
 try:
@@ -610,17 +616,15 @@ class ToolAdapter:
             )
         )
 
+        context_metadata = _policy_context_metadata(policy_for_run)
+        enforce_watch_target_binding(validated_args, context_metadata)
         ctx = RuntimeContext(
             policy=policy_for_run,
             workspace=effective_workspace_root,
             run_root=run_root,
             scope=policy_for_run.max_scope(),
             confirm=auto_confirm,
-            repositories=build_runtime_repositories(
-                context_metadata=(getattr(policy_for_run, "raw", {}) or {}).get(
-                    "context_metadata"
-                )
-            ),
+            repositories=build_runtime_repositories(context_metadata=context_metadata),
             logs=[],
             artifacts=[],
             safety_adapter=AllowAllSafetyAdapter(),
@@ -630,6 +634,7 @@ class ToolAdapter:
             a2a_delegate_api=self.a2a_delegate_api,
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
+            tool_registry=self.registry,
         )
         ctx.session_id = session_id
         ctx.trace_id = trace_id

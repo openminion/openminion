@@ -948,6 +948,7 @@ def execute_calls(
     *,
     context: ToolExecutionContext,
 ) -> ToolExecutionBatch:
+    context.tool_registry = registry
     normalized_calls = [normalize_tool_call(raw_call) for raw_call in tool_calls]
     if not normalized_calls:
         return ToolExecutionBatch(results=[])

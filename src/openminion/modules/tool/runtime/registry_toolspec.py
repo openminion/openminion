@@ -15,6 +15,7 @@ from openminion.modules.tool.runtime.argument_repair import (
 )
 from openminion.modules.tool.runtime.result_cleaner import strip_tool_result_noise
 from openminion.modules.tool.runtime.grounding_footer import with_source_footer
+from openminion.modules.tool.runtime.context import enforce_watch_target_binding
 
 _POLICY_REPLAY_SOURCE = "policy_replay"
 _CONFIRMATION_SOURCE_METADATA_KEY = "confirmation_source"
@@ -154,6 +155,7 @@ def _build_tool_runtime_context(
         ).strip()
         or None,
         ops_service=context.ops_service,
+        tool_registry=context.tool_registry,
     )
     runtime_ctx.session_id = str(context.session_id or "").strip() or None
     runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()
@@ -243,6 +245,7 @@ def execute_tool_spec_call(
     )
     if isinstance(validated_args, ToolExecutionResult):
         return validated_args
+    enforce_watch_target_binding(validated_args, context.metadata)
     runtime_ctx = _build_tool_runtime_context(
         tool=tool,
         tool_name=tool_name,

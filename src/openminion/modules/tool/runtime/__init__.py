@@ -2,12 +2,10 @@
 
 from openminion.base.time import utc_now_iso as iso_now
 
-from .audit import (
-    ToolRuntimeAuditSink,
-    resolve_tool_runtime_audit_mode,
-)
+from .audit import ToolRuntimeAuditSink, resolve_tool_runtime_audit_mode
 from .context import (
     RuntimeContext,
+    enforce_watch_target_binding,
     preferred_artifact_ref,
     resolve_audit_repository,
     resolve_cron_repository,
@@ -36,6 +34,7 @@ __all__ = [
     "ToolRuntimeAuditSink",
     "build_runtime_repositories",
     "create_run_root",
+    "enforce_watch_target_binding",
     "iso_now",
     "make_error_envelope",
     "make_ok_envelope",

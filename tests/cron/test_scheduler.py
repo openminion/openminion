@@ -332,6 +332,50 @@ def test_scheduler_skips_watch_delivery_until_requested() -> None:
     assert store.deleted_job_ids == []
 
 
+def test_scheduler_delivers_nonterminal_watch_without_deleting_it() -> None:
+    store = FakeCronStore()
+    store.add_job(
+        job_id="job-watch-alert",
+        payload={
+            "kind": "agentTurn",
+            "message": "check",
+            "_openminion_watch": {"description": "watch"},
+        },
+        delivery={"mode": "announce", "to": "cli:ops"},
+    )
+    store.seed_due("job-watch-alert")
+    deliveries: list[tuple[str, str]] = []
+
+    def _exec_agent(job: dict, run: dict) -> dict:  # noqa: ANN001
+        del job, run
+        return {
+            "summary": "Condition met; monitoring continues.",
+            "output": {"watch_delivery_requested": True, "watch_terminal": False},
+        }
+
+    def _deliver(mode: str, to_value: str, job: dict, run: dict, result) -> None:  # noqa: ANN001
+        del job, run, result
+        deliveries.append((mode, to_value))
+
+    scheduler = CronScheduler(
+        store=store,
+        daemon_id="daemon-watch-alert",
+        tick_seconds=0.05,
+        lease_ttl_seconds=2,
+        max_concurrent_runs=1,
+        execute_agent_turn=_exec_agent,
+        delivery_handler=_deliver,
+    )
+    scheduler.start()
+    try:
+        assert store.finished.wait(timeout=3.0)
+    finally:
+        scheduler.shutdown(grace_s=1.0)
+
+    assert deliveries == [("announce", "cli:ops")]
+    assert store.deleted_job_ids == []
+
+
 def test_scheduler_deletes_terminal_watch_after_delivery() -> None:
     store = FakeCronStore()
     store.add_job(

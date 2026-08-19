@@ -174,6 +174,9 @@ def _watch_profile_overrides(ctx: ExecutionContext) -> dict[str, Any] | None:
         "allowed_tools": allowed_tools,
         "max_iterations": max(1, min(int(raw.get("max_iterations", 3) or 3), 3)),
         "write_authorized": bool(raw.get("write_authorized", False)),
+        "profile_id": str(raw.get("profile_id", "") or "").strip(),
+        "target_id": str(raw.get("target_id", "") or "").strip(),
+        "task_id": str(raw.get("cron_job_id", "") or "").strip(),
     }
 
 

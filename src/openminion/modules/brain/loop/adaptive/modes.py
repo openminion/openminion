@@ -367,10 +367,16 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             decision_reason_code=decision_reason_code,
             entry_response=seed_response,
         )
+        exposure_metadata = {"session_id": str(ctx.state.session_id or "")}
+        if watch_overrides is not None:
+            exposure_metadata.update(
+                task_id=str(watch_overrides.get("task_id", "") or ""),
+                target_id=str(watch_overrides.get("target_id", "") or ""),
+            )
         full_tool_specs = build_runtime_tool_specs(
             runner,
             allowed_tools=effective_allowed_tools,
-            metadata={"session_id": str(ctx.state.session_id or "")},
+            metadata=exposure_metadata,
         )
         # compute the per-turn soft cap from typed Decision fields
         _aib_config = getattr(ctx.options, "adaptive_budget_config", None)

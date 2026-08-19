@@ -31,6 +31,7 @@ from openminion.modules.policy.adapters.composition import (
 from openminion.modules.tool.selection import ToolSelectionService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 from openminion.services.runtime.sidecars import ensure_sidecar_autostart
+from openminion.tools.ops.service import local_ops_service
 
 
 def run_tools(args) -> int:
@@ -485,6 +486,7 @@ def _inproc_tool_run(
                 blast_radius_adapter=build_default_composition_boundary_adapter(
                     seam_id=SEAM_CLI_TOOLS,
                 ),
+                ops_service=local_ops_service(),
                 confirm=bool(confirm),
             ),
         )

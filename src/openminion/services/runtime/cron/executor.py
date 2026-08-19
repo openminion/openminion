@@ -17,9 +17,13 @@ from openminion.modules.task.cron_payloads import (
     build_cron_request_payload,
     build_expired_watch_result,
     mark_idle_tick_request,
-    watch_condition_met as is_watch_condition_met,
+    monitoring_delivery_state,
+    persist_watch_progress,
+    watch_condition_value,
+    watch_output,
     watch_terminal_state,
 )
+from openminion.modules.task.watch_execution import execute_watch_check_turn
 from openminion.tools.task.constants import (
     CONSOLIDATION_PAYLOAD_KEY,
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -103,16 +107,30 @@ class CronTurnExecutor:
         current_checks = int(watch.get("checks_completed", 0) or 0)
         if expired_precheck:
             return build_expired_watch_result(
-                watch_output=self._watch_output,
+                watch_output=watch_output,
                 watch_terminal_summary=self._watch_terminal_summary,
                 watch=watch,
                 checks_completed=current_checks,
             )
 
-        result = self._execute_agent_turn(job=job, run=run, payload=payload)
+        result = execute_watch_check_turn(
+            runtime=self._runtime,
+            execute_turn=self._execute_agent_turn,
+            job=job,
+            run=run,
+            payload=payload,
+            watch=watch,
+        )
         checks_completed = current_checks + 1
         metadata = dict(result.get("metadata") or {})
-        watch_condition_met = is_watch_condition_met(metadata)
+        condition_value = (
+            None if bool(result.get("error")) else watch_condition_value(metadata)
+        )
+        previous_condition = bool(watch.get("last_condition_met", False))
+        effective_condition = (
+            previous_condition if condition_value is None else condition_value
+        )
+        checked_at = datetime.now(timezone.utc)
         watch_summary = str(metadata.get("watch_summary", "") or "").strip()
         summary = str(result.get("summary", "") or "").strip() or watch_summary
         terminal_state = watch_terminal_state(
@@ -121,13 +139,20 @@ class CronTurnExecutor:
             job=job,
             watch=watch,
             checks_completed=checks_completed,
-            condition_met=watch_condition_met,
+            condition_met=condition_value,
             summary=summary,
         )
         terminal = terminal_state["terminal"]
         deliver = terminal_state["deliver"]
         terminal_reason = str(terminal_state["terminal_reason"])
         summary = str(terminal_state["summary"])
+        deliver, delivery_transition, alert_requested_at = monitoring_delivery_state(
+            watch=watch,
+            condition_value=condition_value,
+            checked_at=checked_at,
+            terminal=terminal,
+            terminal_delivery=deliver,
+        )
         action_executed, action_summary, write_audit_entries, summary = (
             self._maybe_execute_watch_action(
                 job=job,
@@ -139,25 +164,31 @@ class CronTurnExecutor:
             )
         )
 
-        self._persist_watch_progress(
+        persist_watch_progress(
+            cron_store=self._cron_store,
             job=job,
             payload=payload,
             watch=watch,
             checks_completed=checks_completed,
             summary=summary,
-            condition_met=watch_condition_met,
+            condition_met=effective_condition,
+            condition_valid=condition_value is not None,
             terminal_reason=terminal_reason,
+            checked_at=checked_at,
+            alert_requested_at=alert_requested_at,
             write_audit_entries=write_audit_entries
             if bool(watch.get("write_authorized", False))
             else (),
         )
-        output = self._watch_output(
-            condition_met=watch_condition_met,
+        output = watch_output(
+            condition_met=effective_condition,
+            condition_valid=condition_value is not None,
             terminal=terminal,
             deliver=deliver,
             checks_completed=checks_completed,
             terminal_reason=terminal_reason,
             summary=summary,
+            delivery_transition=delivery_transition,
             action_executed=action_executed,
             action_summary=action_summary,
         )
@@ -698,6 +729,12 @@ class CronTurnExecutor:
         watch.setdefault("timeout_seconds", DEFAULT_WATCH_TIMEOUT_SECONDS)
         watch.setdefault("max_iterations", DEFAULT_WATCH_MAX_ITERATIONS)
         watch.setdefault("allowed_tools", list(WATCH_DEFAULT_ALLOWED_TOOLS))
+        watch.setdefault("check_profile_id", None)
+        watch.setdefault("target_id", None)
+        watch.setdefault("stop_on_condition", True)
+        watch.setdefault("delivery_cooldown_minutes", 0)
+        watch.setdefault("deliver_resolution", False)
+        watch.setdefault("last_alert_requested_at", None)
         watch.setdefault("turn_kind", WATCH_TURN_KIND_CHECK)
         watch.setdefault("write_authorized", False)
         watch.setdefault("write_audit", [])
@@ -717,41 +754,6 @@ class CronTurnExecutor:
             or DEFAULT_WATCH_TTL_MINUTES
         )
         return created + timedelta(minutes=ttl_minutes) <= now
-
-    def _persist_watch_progress(
-        self,
-        *,
-        job: dict[str, Any],
-        payload: dict[str, Any],
-        watch: dict[str, Any],
-        checks_completed: int,
-        summary: str,
-        condition_met: bool,
-        terminal_reason: str,
-        write_audit_entries: tuple[dict[str, Any], ...] = (),
-    ) -> None:
-        replacer = getattr(self._cron_store, "replace_cron_job_payload", None)
-        if not callable(replacer):
-            return
-        updated_watch = dict(watch)
-        updated_watch["checks_completed"] = checks_completed
-        updated_watch["last_check_at"] = datetime.now(timezone.utc).isoformat()
-        updated_watch["last_check_summary"] = summary
-        updated_watch["last_condition_met"] = bool(condition_met)
-        updated_watch["last_terminal_reason"] = terminal_reason
-        if write_audit_entries:
-            existing_audit = [
-                item
-                for item in list(updated_watch.get("write_audit", []) or [])
-                if isinstance(item, dict)
-            ]
-            updated_watch["write_audit"] = [*existing_audit, *write_audit_entries]
-        updated_payload = dict(payload)
-        updated_payload[WATCH_PAYLOAD_KEY] = updated_watch
-        try:
-            replacer(str(job.get("job_id", "") or "").strip(), updated_payload)
-        except Exception:
-            return
 
     def _watch_terminal_summary(
         self,
@@ -775,29 +777,6 @@ class CronTurnExecutor:
                 )
             return fallback or "Watch expired after reaching max checks."
         return fallback
-
-    def _watch_output(
-        self,
-        *,
-        condition_met: bool,
-        terminal: bool,
-        deliver: bool,
-        checks_completed: int,
-        terminal_reason: str,
-        summary: str,
-        action_executed: bool = False,
-        action_summary: str = "",
-    ) -> dict[str, Any]:
-        return {
-            "watch_delivery_requested": bool(deliver),
-            "watch_terminal": bool(terminal),
-            "watch_condition_met": bool(condition_met),
-            "watch_checks_completed": int(checks_completed),
-            "watch_terminal_reason": str(terminal_reason or ""),
-            "watch_summary": str(summary or ""),
-            "watch_action_executed": bool(action_executed),
-            "watch_action_summary": str(action_summary or ""),
-        }
 
     def _watch_action_message(
         self,

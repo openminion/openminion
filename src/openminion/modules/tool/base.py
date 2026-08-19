@@ -22,6 +22,7 @@ class ToolExecutionContext:
     blast_radius_adapter: Any | None = None
     telemetryctl: Any | None = None
     ops_service: Any | None = None
+    tool_registry: Any | None = None
     confirm: bool = False
 
 

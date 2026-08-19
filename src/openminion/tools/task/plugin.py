@@ -46,7 +46,6 @@ from .constants import (
     TASK_REASON_STORAGE_EXEC_ERROR,
     TASK_REASON_STORAGE_UNAVAILABLE,
     TASK_REASON_STORAGE_UNCONFIGURED,
-    WATCH_DEFAULT_ALLOWED_TOOLS,
     WATCH_PAYLOAD_KEY,
     WATCH_TURN_KIND_CHECK,
 )
@@ -75,6 +74,7 @@ from .scheduled_task.views import (
     _task_list_payload,
     _task_show_payload,
 )
+from .watch import watch_profile_tools
 
 
 def _tool_error(
@@ -491,6 +491,7 @@ def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     manager = _resolve_task_manager(ctx)
     agent_id = _agent_id_from_context(ctx)
     origin = _origin_delivery_context(ctx)
+    allowed_tools = watch_profile_tools(ctx=ctx, validated=validated)
     job_id = uuid4().hex
     watch_session_id = f"watch:{job_id}"
     interval_minutes = int(validated.interval_minutes)
@@ -500,6 +501,7 @@ def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         interval_minutes=interval_minutes,
         timeout_seconds=timeout_seconds,
         write_authorized=write_authorized,
+        allowed_tools=allowed_tools,
     )
     if validated.routine is not None:
         watch_metadata["routine"] = validated.routine.model_dump(mode="json")
@@ -546,6 +548,9 @@ def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         "delivery": validated.delivery,
         "on_condition_action": validated.on_condition_action,
         "write_authorized": write_authorized,
+        "check_profile_id": validated.check_profile_id,
+        "target_id": validated.target_id,
+        "stop_on_condition": validated.stop_on_condition,
         "max_checks": int(validated.max_checks),
         "checks_completed": 0,
         "watch_session_id": watch_session_id,
@@ -563,6 +568,7 @@ def _watch_metadata_from_args(
     interval_minutes: int,
     timeout_seconds: int,
     write_authorized: bool,
+    allowed_tools: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "description": validated.description,
@@ -576,7 +582,12 @@ def _watch_metadata_from_args(
         "ttl_minutes": int(validated.ttl_minutes),
         "timeout_seconds": timeout_seconds,
         "max_iterations": DEFAULT_WATCH_MAX_ITERATIONS,
-        "allowed_tools": list(WATCH_DEFAULT_ALLOWED_TOOLS),
+        "allowed_tools": list(allowed_tools),
+        "check_profile_id": validated.check_profile_id,
+        "target_id": validated.target_id,
+        "stop_on_condition": bool(validated.stop_on_condition),
+        "delivery_cooldown_minutes": int(validated.delivery_cooldown_minutes),
+        "deliver_resolution": bool(validated.deliver_resolution),
         "turn_kind": WATCH_TURN_KIND_CHECK,
         "write_authorized": write_authorized,
         "write_audit": [],
@@ -584,6 +595,7 @@ def _watch_metadata_from_args(
         "last_check_at": None,
         "last_check_summary": None,
         "last_condition_met": False,
+        "last_alert_requested_at": None,
         "last_terminal_reason": "",
     }
 

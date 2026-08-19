@@ -12,8 +12,10 @@ from openminion.modules.task.constants import (
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
+from openminion.tools.ops.service import local_ops_service
 from openminion.tools.task.plugin import (
     _h_task_cancel,
     _h_task_consolidate_memory,
@@ -32,6 +34,7 @@ def _ctx(
     *,
     agent_id: str,
     metadata: dict[str, str] | None = None,
+    monitoring: bool = False,
 ) -> RuntimeContext:
     workspace = tmp_path / "workspace"
     run_root = tmp_path / "run"
@@ -60,6 +63,8 @@ def _ctx(
         run_root=run_root,
         scope="WRITE_SAFE",
         confirm=False,
+        tool_registry=build_default_tool_registry(strict=False) if monitoring else None,
+        ops_service=local_ops_service() if monitoring else None,
     )
 
 
@@ -549,6 +554,124 @@ def test_task_watch_creates_watch_payload_and_stable_session_id(
     assert watch["checks_completed"] == 0
     assert watch["max_checks"] == 3
     assert watch["created_at"] == row.get("created_at")
+    assert watch["check_profile_id"] is None
+    assert watch["target_id"] is None
+    assert watch["stop_on_condition"] is True
+    assert watch["delivery_cooldown_minutes"] == 0
+    assert watch["deliver_resolution"] is False
+
+
+def test_task_watch_creates_profile_bound_continuous_monitor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    ctx = _ctx(tmp_path, agent_id="agent-a", monitoring=True)
+
+    created = _h_task_watch(
+        {
+            "description": "Watch local service health",
+            "check_instruction": "Inspect the local service health.",
+            "interval_minutes": 5,
+            "max_checks": 4,
+            "alert_condition": "the service is unhealthy",
+            "check_profile_id": "ops_minimal",
+            "target_id": "local",
+            "stop_on_condition": False,
+            "delivery_cooldown_minutes": 15,
+            "deliver_resolution": True,
+        },
+        ctx,
+    )
+
+    row = _resolve_cron_store(ctx).get_cron_job(created["task_id"])
+    assert row is not None
+    watch = dict((row.get("payload") or {}).get("_openminion_watch") or {})
+    profile = ctx.tool_registry.exposure_service.profile("ops_minimal")
+    assert profile is not None
+    assert watch["allowed_tools"] == sorted(profile.tool_names)
+    assert "exec.run" not in watch["allowed_tools"]
+    assert watch["check_profile_id"] == "ops_minimal"
+    assert watch["target_id"] == "local"
+    assert watch["stop_on_condition"] is False
+    assert watch["delivery_cooldown_minutes"] == 15
+    assert watch["deliver_resolution"] is True
+    assert watch["write_authorized"] is False
+    assert watch["on_condition_action"] is None
+
+    listed = _h_task_list({"limit": 10}, ctx)
+    view = listed["tasks"][0]["watch"]
+    assert view["check_profile_id"] == "ops_minimal"
+    assert view["target_id"] == "local"
+    assert view["last_alert_requested_at"] is None
+    assert view["last_terminal_reason"] == ""
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"write_authorized": True},
+        {"on_condition_action": "restart the service"},
+        {"target_id": None},
+    ],
+)
+def test_task_watch_rejects_invalid_monitoring_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict[str, object],
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    ctx = _ctx(tmp_path, agent_id="agent-a", monitoring=True)
+    args: dict[str, object] = {
+        "description": "Watch local service health",
+        "check_instruction": "Inspect the local service health.",
+        "interval_minutes": 5,
+        "alert_condition": "the service is unhealthy",
+        "check_profile_id": "ops_minimal",
+        "target_id": "local",
+        "stop_on_condition": False,
+    }
+    args.update(overrides)
+
+    with pytest.raises(ValueError):
+        _h_task_watch(args, ctx)
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "target_id", "reason_code"),
+    [
+        ("missing_profile", "local", "watch_profile_not_found"),
+        ("ops_minimal", "missing-target", "watch_target_not_found"),
+    ],
+)
+def test_task_watch_rejects_unknown_monitoring_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_id: str,
+    target_id: str,
+    reason_code: str,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    ctx = _ctx(tmp_path, agent_id="agent-a", monitoring=True)
+
+    with pytest.raises(ToolRuntimeError) as exc:
+        _h_task_watch(
+            {
+                "description": "Watch local service health",
+                "check_instruction": "Inspect the local service health.",
+                "interval_minutes": 5,
+                "alert_condition": "the service is unhealthy",
+                "check_profile_id": profile_id,
+                "target_id": target_id,
+                "stop_on_condition": False,
+            },
+            ctx,
+        )
+
+    assert exc.value.details["reason_code"] == reason_code
 
 
 def test_task_watch_rejects_background_write_without_operator_authorization(
