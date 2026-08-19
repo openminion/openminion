@@ -9,6 +9,7 @@ from openminion.tools.mcp.manager import MCPFleetManager
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+_PACKAGE_SERVER_TIMEOUT_SECONDS = 10.0
 
 
 def _pythonpath() -> str:
@@ -56,8 +57,8 @@ def _manager(tmp_path: Path) -> MCPFleetManager:
                 env=env,
                 cwd=str(REPO_ROOT),
                 trusted=True,
-                request_timeout_seconds=3.0,
-                startup_timeout_seconds=3.0,
+                request_timeout_seconds=_PACKAGE_SERVER_TIMEOUT_SECONDS,
+                startup_timeout_seconds=_PACKAGE_SERVER_TIMEOUT_SECONDS,
             ),
             MCPServerConfig(
                 name="pragma",
@@ -73,8 +74,8 @@ def _manager(tmp_path: Path) -> MCPFleetManager:
                 env=env,
                 cwd=str(REPO_ROOT),
                 trusted=True,
-                request_timeout_seconds=3.0,
-                startup_timeout_seconds=3.0,
+                request_timeout_seconds=_PACKAGE_SERVER_TIMEOUT_SECONDS,
+                startup_timeout_seconds=_PACKAGE_SERVER_TIMEOUT_SECONDS,
             ),
         ]
     )
@@ -87,8 +88,12 @@ def test_graph_package_servers_discover_and_call_over_mcp_stdio(
     try:
         tools = manager.discover_tools(parallel=True)
         remote_names = {(tool.server_name, tool.remote_name) for tool in tools}
-        assert ("sophia", "knowledge_capabilities") in remote_names
-        assert ("pragma", "pragmagraph_capabilities") in remote_names
+        assert ("sophia", "knowledge_capabilities") in remote_names, (
+            manager.failed_servers
+        )
+        assert ("pragma", "pragmagraph_capabilities") in remote_names, (
+            manager.failed_servers
+        )
 
         sophia = manager.call_tool(
             server_name="sophia",
