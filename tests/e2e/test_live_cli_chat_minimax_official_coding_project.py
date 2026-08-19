@@ -34,6 +34,20 @@ _OFFICIAL_CONFIG = resolve_live_config_path(
 _AGENT_ID = "minimax-m2-7"
 _TODAY = date.today().isoformat()
 _INTERNAL_TRACE_TOOL_NAMES = frozenset({"submit_output"})
+_SAMPLE_TASKS_CSV_REQUIREMENT = (
+    "Create CSV data with header `id,title,owner,due_date,status,priority` "
+    "and exactly these rows: `1,Critical fix,alice,2000-01-01,open,high`; "
+    "`2,Completed old task,alice,2000-01-01,done,high`; "
+    "`3,Later cleanup,bob,2099-01-01,open,low`; "
+    "`4,Second urgent task,bob,2000-01-01,in_progress,high`."
+)
+_PROJECT_TEST_REQUIREMENT = (
+    "Create a small valid pytest module for the generated project. It must "
+    "write task rows named `Critical fix`, `Completed old task`, `Later "
+    "cleanup`, and `Second urgent task`; assert owner totals count all rows; "
+    "assert overdue count is 2; assert the highest-priority open-items output "
+    "includes unfinished high-priority rows and excludes `Completed old task`."
+)
 _MISSING_FILE_REPAIR_INSTRUCTIONS = {
     "pyproject.toml": (
         "Create a minimal Python project file using setuptools as the build "
@@ -46,13 +60,7 @@ _MISSING_FILE_REPAIR_INSTRUCTIONS = {
         "commands for `python -m pytest -q tests` and "
         "`python -m task_summary.report sample_tasks.csv report.md`."
     ),
-    "sample_tasks.csv": (
-        "Create CSV data with header `id,title,owner,due_date,status,priority` "
-        "and these rows: `1,Critical fix,alice,2000-01-01,open,high`; "
-        "`2,Completed old task,alice,2000-01-01,done,high`; "
-        "`3,Later cleanup,bob,2099-01-01,open,low`; "
-        "`4,Second urgent task,bob,2000-01-01,in_progress,high`."
-    ),
+    "sample_tasks.csv": _SAMPLE_TASKS_CSV_REQUIREMENT,
     "task_summary/__init__.py": (
         "Create a syntactically valid package marker with only a short module "
         "docstring."
@@ -69,11 +77,7 @@ _MISSING_FILE_REPAIR_INSTRUCTIONS = {
         "while allowing tests to patch `date.today()`, and make `cli(None)` "
         "read `sys.argv[1:]`."
     ),
-    "tests/test_report.py": (
-        "Create a small valid pytest module for the generated project. Keep it "
-        "simple and behavior-oriented; it should import the generated package "
-        "and exercise the public report builder or CLI with temporary files."
-    ),
+    "tests/test_report.py": _PROJECT_TEST_REQUIREMENT,
 }
 
 
@@ -100,6 +104,18 @@ def _run_local_pytest(workspace: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
+
+
+def _remove_blocking_parent_file(workspace: Path, missing_file: str) -> None:
+    relative_path = Path(missing_file)
+    assert not relative_path.is_absolute()
+    assert ".." not in relative_path.parts
+
+    parent = workspace
+    for part in relative_path.parts[:-1]:
+        parent = parent / part
+        if parent.is_file():
+            parent.unlink()
 
 
 def _run_generated_project_oracle_pytest(
@@ -337,6 +353,7 @@ def _repair_project_after_missing_files(
     verify_after_write: bool,
 ) -> CLISessionResult:
     missing_file = missing_files[0]
+    _remove_blocking_parent_file(workspace, missing_file)
     repair_instruction = _MISSING_FILE_REPAIR_INSTRUCTIONS.get(
         missing_file,
         "Create this missing project file with syntactically valid, minimal content.",
@@ -786,6 +803,8 @@ def test_live_minimax_m2_7_coding_builds_scratch_project() -> None:
         "that patch `task_summary.report.date` do not turn parsed dates into mocks; "
         "use the patchable `date.today()` only for today's date. cli(None) must "
         "read paths from `sys.argv[1:]`, not from `sys.argv` directly. "
+        f"{_SAMPLE_TASKS_CSV_REQUIREMENT} "
+        f"tests/test_report.py must satisfy this contract: {_PROJECT_TEST_REQUIREMENT} "
         "Add tests and run "
         "pytest until it passes. If pytest fails and you edit code or tests, "
         "rerun the exact command `python -m pytest -q tests` before the final "
