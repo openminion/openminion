@@ -404,7 +404,6 @@ class ClientApprovalCoordinator:
                     "request_id": record.trace_id,
                     "state": "pending",
                 },
-                trace_id=record.trace_id,
             )
         except Exception:
             return False
@@ -432,7 +431,6 @@ class ClientApprovalCoordinator:
                     "request_id": record.trace_id,
                     "state": "terminal",
                 },
-                trace_id=record.trace_id,
             )
         except Exception:
             return False

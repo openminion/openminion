@@ -199,7 +199,6 @@ def handle_cancel_request(
             session_id=session_id,
         )
     try:
-        approvals.cancel_trace(ctx, session_id, trace_id)
         try:
             result = cancel_client_turn(
                 manager,
@@ -209,6 +208,7 @@ def handle_cancel_request(
             )
         except SessionQueryError as exc:
             return _query_error(exc, session_id=session_id)
+        approvals.cancel_trace(ctx, session_id, trace_id)
         if code := result.get("error"):
             return _cancel_error(
                 str(code),
