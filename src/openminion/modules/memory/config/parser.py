@@ -502,7 +502,7 @@ def _parse_retention(value: Any) -> RetentionConfig:
 def _parse_candidate_learning(value: Any) -> CandidateLearningConfig:
     data = dict(value or {}) if isinstance(value, MutableMapping) else {}
     return CandidateLearningConfig(
-        auto_extract_enabled=bool(data.get("auto_extract_enabled", False)),
+        auto_extract_enabled=bool(data.get("auto_extract_enabled", True)),
         auto_extract_notify=bool(data.get("auto_extract_notify", True)),
         w_reconfirmation=_coerce_non_negative_float(
             data.get("w_reconfirmation", 0.25), "candidate_learning.w_reconfirmation"
