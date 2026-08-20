@@ -17,7 +17,7 @@ from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.mcp import resolve_mcp_server_env
 
 from .auth import MCPTokenStore, discover_oauth_metadata, refresh_oauth_access_token
-from .contracts import MCP_PROTOCOL_VERSION
+from .contracts import MCP_MODERN_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION
 from .transport_protocol import build_server_request_response
 from .transport_protocol import dispatch_server_notification
 from .transport_protocol import extract_result_message
@@ -668,9 +668,11 @@ class StreamableHTTPMCPTransport:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode(
             "utf-8"
         )
-        headers = self._base_headers(
-            protocol_version=protocol_version_from_payload(payload)
-        )
+        protocol_version = protocol_version_from_payload(payload)
+        headers = self._base_headers(protocol_version=protocol_version)
+        use_session = protocol_version != MCP_MODERN_PROTOCOL_VERSION
+        if not use_session:
+            self._session.clear()
         if method_name:
             headers["Mcp-Method"] = method_name
         mcp_name = mcp_name_header(method_name=method_name, params=params)
@@ -685,7 +687,8 @@ class StreamableHTTPMCPTransport:
                 headers["Authorization"] = auth_header
             elif "Authorization" in headers:
                 del headers["Authorization"]
-            headers.update(self._session.request_headers())
+            if use_session:
+                headers.update(self._session.request_headers())
             request = urllib_request.Request(
                 url=self._server.url,
                 method="POST",
@@ -712,7 +715,8 @@ class StreamableHTTPMCPTransport:
                     content_type = str(
                         response.headers.get("Content-Type", "") or ""
                     ).strip()
-                    self._session.capture(response.headers)
+                    if use_session:
+                        self._session.capture(response.headers)
                     raw = response.read()
                     break
             except urllib_error.HTTPError as exc:
@@ -816,12 +820,20 @@ class StreamableHTTPMCPTransport:
                 details={"status_code": status_code, "method": method_name},
             ) from exc
         if status_code in {401, 403}:
+            authenticate = str(
+                exc.headers.get("WWW-Authenticate", "") if exc.headers else ""
+            )
+            challenge = parse_www_authenticate(authenticate)
+            reason_code = (
+                "mcp_authorization_scope_insufficient"
+                if status_code == 403 and challenge.get("error") == "insufficient_scope"
+                else "mcp_authorization_error"
+            )
             raise MCPAuthorizationError(
                 f"MCP server '{self.server_name}' authorization failed with HTTP {status_code}.",
                 status_code=status_code,
-                www_authenticate=str(
-                    exc.headers.get("WWW-Authenticate", "") if exc.headers else ""
-                ),
+                www_authenticate=authenticate,
+                reason_code=reason_code,
             ) from exc
         raise MCPRemoteTransportError(
             f"MCP server '{self.server_name}' returned HTTP {status_code} for {method_name!r}.",

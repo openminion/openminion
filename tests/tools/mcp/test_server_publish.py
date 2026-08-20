@@ -17,6 +17,7 @@ from openminion.tools.mcp.server import (
     invoke_published_tool,
     render_tools_list_payload,
 )
+from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 
 
 def test_default_catalog_has_expected_minimum_four_families() -> None:
@@ -258,3 +259,40 @@ def test_published_mcp_jsonrpc_handler_supports_tools_list_and_call() -> None:
     assert called["id"] == 2
     assert called["result"]["content"][0]["type"] == "text"
     assert json.loads(called["result"]["content"][0]["text"]) == {"echo": {"x": 1}}
+
+
+def test_published_server_supports_modern_discovery_and_request_metadata() -> None:
+    tools = [
+        PublishedTool(
+            name="zeta",
+            description="last",
+            input_schema={"type": "object"},
+            handler=lambda _args: "z",
+        ),
+        PublishedTool(
+            name="alpha",
+            description="first",
+            input_schema={"type": "object"},
+            handler=lambda _args: "a",
+        ),
+    ]
+    discovered = handle_published_mcp_request(
+        tools,
+        {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}},
+    )
+    assert discovered is not None
+    assert MCP_MODERN_PROTOCOL_VERSION in discovered["result"]["supportedVersions"]
+
+    meta = {
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": MCP_MODERN_PROTOCOL_VERSION
+        }
+    }
+    listed = handle_published_mcp_request(
+        tools,
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": meta},
+    )
+    assert listed is not None
+    assert [item["name"] for item in listed["result"]["tools"]] == ["alpha", "zeta"]
+    assert listed["result"]["resultType"] == "complete"
+    assert listed["result"]["cacheScope"] == "private"

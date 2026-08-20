@@ -67,6 +67,15 @@ class MCPFleetHandle(Protocol):
 
     def unsubscribe_resource(self, *, server_name: str, resource_uri: str) -> None: ...
 
+    def cancel_task(self, *, server_name: str, task_id: str) -> dict[str, Any]: ...
+
+    def listen(
+        self,
+        *,
+        server_name: str,
+        subscriptions: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+
     def set_log_level(self, *, server_name: str, level: str) -> None: ...
 
     def complete(

@@ -11,6 +11,7 @@ from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.tools.mcp.schemas import (
+    MCPArgumentValidationError,
     MCPUnsupportedSchemaError,
     prepare_mcp_registration_schema,
     validate_mcp_arguments,
@@ -146,17 +147,22 @@ def test_tagged_union_schema_is_supported_and_validated() -> None:
     )
 
 
-def test_conflicting_tagged_union_discriminator_raises() -> None:
-    with pytest.raises(
-        MCPUnsupportedSchemaError, match="conflicting branch value types"
-    ):
-        prepare_mcp_registration_schema(CONFLICTING_TAGGED_UNION_SCHEMA)
+def test_composed_schema_accepts_mixed_discriminator_types() -> None:
+    prepared = prepare_mcp_registration_schema(CONFLICTING_TAGGED_UNION_SCHEMA)
+    assert prepared.mode == "strict"
+    payload = {"payload": {"kind": 7, "count": 2}}
+    assert (
+        validate_mcp_arguments(
+            schema=CONFLICTING_TAGGED_UNION_SCHEMA,
+            arguments=payload,
+        )
+        == payload
+    )
 
 
-def test_unsupported_anyof_schema_falls_back_to_passthrough() -> None:
+def test_anyof_schema_is_strictly_validated() -> None:
     prepared = prepare_mcp_registration_schema(UNSUPPORTED_ANYOF_SCHEMA)
-    assert prepared.mode == "passthrough"
-    assert "anyOf" in prepared.note
+    assert prepared.mode == "strict"
 
     payload = {"payload": 7}
     assert (
@@ -166,6 +172,36 @@ def test_unsupported_anyof_schema_falls_back_to_passthrough() -> None:
         )
         == payload
     )
+    with pytest.raises(
+        MCPArgumentValidationError,
+        match="not valid under any of the given schemas",
+    ):
+        validate_mcp_arguments(
+            schema=UNSUPPORTED_ANYOF_SCHEMA,
+            arguments={"payload": []},
+        )
+
+
+def test_invalid_json_schema_is_rejected_at_registration() -> None:
+    with pytest.raises(MCPUnsupportedSchemaError, match="JSON Schema 2020-12"):
+        prepare_mcp_registration_schema({"type": "not-a-json-schema-type"})
+
+
+def test_json_schema_2020_12_references_and_composition_are_supported() -> None:
+    schema = {
+        "$defs": {
+            "label": {"type": "string", "minLength": 2},
+        },
+        "type": "object",
+        "properties": {"label": {"$ref": "#/$defs/label"}},
+        "allOf": [{"required": ["label"]}],
+        "additionalProperties": {"type": "integer"},
+    }
+
+    payload = {"label": "ok", "count": 2}
+    assert validate_mcp_arguments(schema=schema, arguments=payload) == payload
+    with pytest.raises(MCPArgumentValidationError, match="is too short"):
+        validate_mcp_arguments(schema=schema, arguments={"label": "x"})
 
 
 def test_registered_schema_variants_execute_through_bootstrap() -> None:

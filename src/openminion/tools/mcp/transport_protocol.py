@@ -200,4 +200,6 @@ def mcp_name_header(*, method_name: str, params: dict[str, Any]) -> str:
         return str(params.get("uri", "") or "").strip()
     if method_name == "prompts/get":
         return str(params.get("name", "") or "").strip()
+    if method_name.startswith("tasks/"):
+        return str(params.get("taskId", "") or "").strip()
     return ""

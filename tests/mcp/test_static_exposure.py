@@ -74,7 +74,7 @@ def test_build_runtime_bootstrap_registers_mcp_tools() -> None:
         ]
         assert len(mcp_records) == 1
         assert mcp_records[0].status == "registered"
-        assert "passthrough_mcp_tools=" in str(mcp_records[0].error or "")
+        assert str(mcp_records[0].error or "") == ""
     finally:
         _close_bootstrap(bootstrap)
 

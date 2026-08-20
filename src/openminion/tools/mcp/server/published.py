@@ -12,6 +12,19 @@ from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.contracts import ProviderToolCall
 
+from ..constants import (
+    MCP_INITIALIZE_METHOD,
+    MCP_INITIALIZED_NOTIFICATION,
+    MCP_SERVER_DISCOVER_METHOD,
+    MCP_TOOLS_CALL_METHOD,
+    MCP_TOOLS_LIST_METHOD,
+)
+from ..contracts import (
+    MCP_MODERN_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION,
+    MCP_SUPPORTED_PROTOCOL_VERSIONS,
+)
+
 
 class MCPServerError(RuntimeError):
     """Raised by :func:`invoke_published_tool` for unknown / failed tools."""
@@ -90,20 +103,42 @@ def handle_published_mcp_request(
     request_id = request.get("id")
     if not method:
         return _jsonrpc_error(request_id, code=-32600, message="method is required")
-    if method == "initialize":
+    if method == MCP_SERVER_DISCOVER_METHOD:
         return _jsonrpc_result(
             request_id,
             {
-                "protocolVersion": "2025-03-26",
+                "supportedVersions": list(MCP_SUPPORTED_PROTOCOL_VERSIONS),
+                "serverInfo": {"name": "openminion", "version": OPENMINION_VERSION},
+                "capabilities": {"tools": {}},
+                "resultType": "complete",
+            },
+        )
+    if method == MCP_INITIALIZE_METHOD:
+        return _jsonrpc_result(
+            request_id,
+            {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {"name": "openminion", "version": OPENMINION_VERSION},
                 "capabilities": {"tools": {}},
             },
         )
-    if method == "notifications/initialized":
+    if method == MCP_INITIALIZED_NOTIFICATION:
         return None
-    if method == "tools/list":
-        return _jsonrpc_result(request_id, render_tools_list_payload(tools))
-    if method == "tools/call":
+    modern = _is_modern_request(request)
+    if method == MCP_TOOLS_LIST_METHOD:
+        result = render_tools_list_payload(
+            sorted(tools, key=lambda tool: tool.name) if modern else tools
+        )
+        if modern:
+            result.update(
+                {
+                    "resultType": "complete",
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                }
+            )
+        return _jsonrpc_result(request_id, result)
+    if method == MCP_TOOLS_CALL_METHOD:
         params = request.get("params")
         if not isinstance(params, dict):
             return _jsonrpc_error(
@@ -118,16 +153,29 @@ def handle_published_mcp_request(
                 message="tools/call arguments must be an object",
             )
         try:
-            return _jsonrpc_result(
-                request_id,
-                invoke_published_tool(tools, name=name, arguments=arguments),
-            )
+            result = invoke_published_tool(tools, name=name, arguments=arguments)
+            if modern:
+                result["resultType"] = "complete"
+            return _jsonrpc_result(request_id, result)
         except MCPServerError as exc:
             return _jsonrpc_error(request_id, code=-32000, message=str(exc))
     return _jsonrpc_error(
         request_id,
         code=-32601,
         message=f"unsupported MCP server method: {method}",
+    )
+
+
+def _is_modern_request(request: dict[str, Any]) -> bool:
+    params = request.get("params", {})
+    if not isinstance(params, dict):
+        return False
+    meta = params.get("_meta", {})
+    if not isinstance(meta, dict):
+        return False
+    return (
+        str(meta.get("io.modelcontextprotocol/protocolVersion", "") or "").strip()
+        == MCP_MODERN_PROTOCOL_VERSION
     )
 
 
