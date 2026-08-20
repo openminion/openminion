@@ -67,6 +67,7 @@ class ClientApprovalCoordinator:
         self._tombstones: OrderedDict[tuple[str, str, str, str], _ApprovalRecord] = (
             OrderedDict()
         )
+        self._cancel_events: dict[tuple[str, str, str, str], Event] = {}
         self._closing_sessions: dict[str, int] = {}
         self._admitting_clients: dict[str, int] = {}
         self._revoked_clients: set[str] = set()
@@ -108,18 +109,20 @@ class ClientApprovalCoordinator:
         with self._lock:
             self._purge_tombstones_locked()
             self._active[record.key] = record
+            self._cancel_events[record.key] = request.cancel_event
             closed = self._closed
             revoked = identity.client_id in self._revoked_clients
             session_blocked = self._session_blocked_locked(record.session_id)
+            turn_cancelled = request.cancel_event.is_set()
             lease_active = self._client_auth.is_active(identity)
             self._release_admission_locked(identity.client_id)
-        if closed or revoked or session_blocked or not lease_active:
+        if closed or revoked or session_blocked or turn_cancelled or not lease_active:
             self._resolve_automatic(
                 record.key,
                 "interrupted"
                 if closed
                 else "cancelled"
-                if revoked or session_blocked
+                if revoked or session_blocked or turn_cancelled
                 else "expired",
             )
             return False
@@ -180,7 +183,7 @@ class ClientApprovalCoordinator:
             client_id=identity.client_id,
             session_id=request.session_id,
             trace_id=request.trace_id,
-            approval_id=secrets.token_urlsafe(24),
+            approval_id=secrets.token_hex(24),
             call_id=request.call_id,
             tool_name=request.tool_name,
             argument_keys=request.argument_keys,
@@ -203,6 +206,15 @@ class ClientApprovalCoordinator:
             record = self._active.get(key)
             if record is None:
                 return self._repeat_result_locked(key, decision)
+            cancel_event = self._cancel_events.get(key)
+            if self._closed:
+                self._resolve_locked(record, decision=None, outcome="interrupted")
+                raise _approval_error("approval_cancelled")
+            if self._session_blocked_locked(session_id) or (
+                cancel_event is not None and cancel_event.is_set()
+            ):
+                self._resolve_locked(record, decision=None, outcome="cancelled")
+                raise _approval_error("approval_cancelled")
             if not self._client_auth.is_active(identity):
                 self._resolve_locked(record, decision=None, outcome="expired")
                 raise _approval_error("approval_expired")
@@ -218,25 +230,27 @@ class ClientApprovalCoordinator:
         with self._lock:
             if self._admitting_clients.get(client_id, 0):
                 self._revoked_clients.add(client_id)
-        self._cancel_matching(lambda record: record.client_id == client_id, "cancelled")
+            self._cancel_matching(
+                lambda record: record.client_id == client_id, "cancelled"
+            )
 
     def revoke_client(self, identity: ClientIdentity) -> None:
         with self._lock:
             self._client_auth.revoke(identity)
             if self._admitting_clients.get(identity.client_id, 0):
                 self._revoked_clients.add(identity.client_id)
-        self._cancel_matching(
-            lambda record: record.client_id == identity.client_id, "cancelled"
-        )
+            self._cancel_matching(
+                lambda record: record.client_id == identity.client_id, "cancelled"
+            )
 
     def cancel_session(self, session_id: str, _reason: str) -> Any:
         with self._lock:
             self._closing_sessions[session_id] = (
                 self._closing_sessions.get(session_id, 0) + 1
             )
-        self._cancel_matching(
-            lambda record: record.session_id == session_id, "cancelled"
-        )
+            self._cancel_matching(
+                lambda record: record.session_id == session_id, "cancelled"
+            )
         return lambda: self._finish_session_close(session_id)
 
     def cancel_trace(
@@ -258,7 +272,7 @@ class ClientApprovalCoordinator:
     def close(self, _reason: str = "shutdown") -> None:
         with self._lock:
             self._closed = True
-        self._cancel_matching(lambda _record: True, "interrupted")
+            self._cancel_matching(lambda _record: True, "interrupted")
 
     def recovery_outcome(
         self,
@@ -284,9 +298,9 @@ class ClientApprovalCoordinator:
 
     def _cancel_matching(self, matches: Any, outcome: str) -> None:
         with self._lock:
-            keys = [record.key for record in self._active.values() if matches(record)]
-        for key in keys:
-            self._resolve_automatic(key, outcome)
+            records = [record for record in self._active.values() if matches(record)]
+            for record in records:
+                self._resolve_locked(record, decision=None, outcome=outcome)
 
     def _finish_session_close(self, session_id: str) -> None:
         with self._lock:
@@ -347,6 +361,7 @@ class ClientApprovalCoordinator:
         record.state = outcome if persisted else "event_failed"
         record.resolved_at = resolved_at
         self._active.pop(record.key, None)
+        self._cancel_events.pop(record.key, None)
         self._tombstones[record.key] = record
         self._purge_tombstones_locked()
         record.wait_event.set()

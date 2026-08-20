@@ -29,6 +29,7 @@ class _Sessions:
         self.statuses = {"session-1": "active", "session-2": "active"}
         self.append_started = Event()
         self.release_append: Event | None = None
+        self.block_event: str | None = None
 
     def append_event(self, **event: Any) -> str:
         if event["event_type"] == self.fail_event:
@@ -38,6 +39,10 @@ class _Sessions:
             and self.release_append is not None
         ):
             self.append_started.set()
+            self.release_append.wait(timeout=2)
+        if event["event_type"] == self.block_event:
+            self.append_started.set()
+            assert self.release_append is not None
             self.release_append.wait(timeout=2)
         self.events.append(event)
         return f"event-{len(self.events)}"
@@ -225,12 +230,15 @@ def test_wrong_identity_cancel_and_expiry_fail_closed(
     status, payload = _decide(coordinator, service, other, approval_id, "allow_once")
     assert status == 404
     assert payload["error"]["code"] == "approval_not_found"
-    cancel.set()
-    thread.join(timeout=2)
-    assert result == [False]
-    status, payload = _decide(coordinator, service, identity, approval_id, "allow_once")
+    with coordinator._lock:
+        cancel.set()
+        status, payload = _decide(
+            coordinator, service, identity, approval_id, "allow_once"
+        )
     assert status == 409
     assert payload["error"]["code"] == "approval_cancelled"
+    thread.join(timeout=2)
+    assert result == [False]
 
     thread, _cancel, _chunks, result, approval_id = _start_request(
         coordinator,
@@ -489,16 +497,6 @@ def test_turn_timeout_releases_approval_and_rejects_late_allow(
     elapsed = monotonic() - started
     guard.cancel()
 
-    _wait_for(
-        lambda: (
-            bool(sessions.events)
-            and sessions.events[-1]["event_type"] == "desktop.approval.resolved"
-        )
-    )
-    assert cancel.is_set()
-    assert elapsed < 0.5
-    assert response.errors[0].code == "turn_timeout"
-    assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
     approval_id = sessions.events[0]["payload"]["approval_id"]
     status, payload = dispatch_request(
         "POST",
@@ -511,6 +509,70 @@ def test_turn_timeout_releases_approval_and_rejects_late_allow(
     )
     assert int(status) == 409
     assert payload["error"]["code"] == "approval_cancelled"
+    _wait_for(
+        lambda: (
+            bool(sessions.events)
+            and sessions.events[-1]["event_type"] == "desktop.approval.resolved"
+        )
+    )
+    assert cancel.is_set()
+    assert elapsed < 0.5
+    assert response.errors[0].code == "turn_timeout"
+    assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
+
+
+@pytest.mark.parametrize("cancel_owner", ["trace", "session", "shutdown"])
+def test_cancellation_transition_serializes_before_decision(
+    approval_owner: tuple[
+        ClientAuthService,
+        ClientApprovalCoordinator,
+        _Sessions,
+        ClientIdentity,
+    ],
+    cancel_owner: str,
+) -> None:
+    service, coordinator, sessions, identity = approval_owner
+    request_thread, _cancel, _chunks, result, approval_id = _start_request(
+        coordinator, identity
+    )
+    sessions.append_started.clear()
+    sessions.release_append = Event()
+    sessions.block_event = "desktop.approval.resolved"
+
+    def cancel() -> None:
+        if cancel_owner == "trace":
+            coordinator.cancel_trace(
+                identity.client_id, "session-1", "trace-1", "cancelled"
+            )
+        elif cancel_owner == "session":
+            coordinator.cancel_session("session-1", "session_closed")
+        else:
+            coordinator.close("shutdown")
+
+    cancel_thread = Thread(target=cancel, daemon=True)
+    cancel_thread.start()
+    assert sessions.append_started.wait(timeout=2)
+    decision: list[tuple[int, dict[str, Any]]] = []
+    decision_thread = Thread(
+        target=lambda: decision.append(
+            _decide(coordinator, service, identity, approval_id, "allow_once")
+        ),
+        daemon=True,
+    )
+    decision_thread.start()
+    sleep(0.02)
+    assert decision_thread.is_alive()
+    sessions.release_append.set()
+    cancel_thread.join(timeout=2)
+    decision_thread.join(timeout=2)
+    request_thread.join(timeout=2)
+
+    assert result == [False]
+    assert decision[0][0] == 409
+    assert decision[0][1]["error"]["code"] == "approval_cancelled"
+    assert sessions.events[-1]["payload"]["outcome"] == (
+        "interrupted" if cancel_owner == "shutdown" else "cancelled"
+    )
 
 
 def test_event_failures_and_argument_bounds_never_allow(
