@@ -20,7 +20,7 @@ from openminion.api.server.client_approvals import ClientApprovalCoordinator
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.dispatch import dispatch_request
 from openminion.base.version import OPENMINION_VERSION
-from openminion.base.config import OpenMinionConfig, save_config
+from openminion.base.config import AgentProfileConfig, OpenMinionConfig, save_config
 from openminion.modules.storage.runtime.session_store.models import SessionRecord
 from openminion.services.runtime.daemon import execute_turn
 from openminion.services.runtime.ingress import TurnTimeoutError
@@ -849,12 +849,18 @@ def test_decision_route_rejects_malformed_requests(
     assert payload["error"]["code"] == "invalid_request"
 
 
+@pytest.mark.timeout(120)
 def test_desktop_approval_http_stream_session_event_matrix(tmp_path: Path) -> None:
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
     _csc_install_default_agent(config, provider="echo")  # type: ignore[attr-defined]
+    config.agents["research"] = AgentProfileConfig(
+        name="research",
+        provider="echo",
+        default_channel="console",
+    )
     config.runtime.log_level = "ERROR"
     config.runtime.ipc_token = "synthetic-master-token"
     config.storage.path = str(data_root / "state" / "api.db")
@@ -889,7 +895,11 @@ def test_desktop_approval_http_stream_session_event_matrix(tmp_path: Path) -> No
                     trace_id=request.trace_id,
                     tool_name="workspace.search",
                     call_id=f"call-{request.trace_id}",
-                    argument_keys=("path", "query"),
+                    argument_keys=(
+                        ("x" * 257,)
+                        if request.trace_id == "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                        else ("path", "query")
+                    ),
                     emit_chunk=emit_chunk,
                     cancel_event=cancel_event,
                 )
@@ -921,6 +931,7 @@ def test_desktop_approval_http_stream_session_event_matrix(tmp_path: Path) -> No
     thread.start()
     port = int(server.server_address[1])
     base_headers = {"X-IPC-Token": "synthetic-master-token"}
+    server_closed = False
     try:
         token = _mint_fixture_token(port, base_headers)
         client_headers = {"X-OpenMinion-Client-Token": token}
@@ -1032,13 +1043,50 @@ def test_desktop_approval_http_stream_session_event_matrix(tmp_path: Path) -> No
         ]
         assert len(approval_events) == 6
         assert {
-            (event["trace_id"], event["facts"]["approval_id"])
+            (
+                event["trace_id"],
+                event["facts"]["approval_id"],
+                event["facts"]["call_id"],
+                event["facts"]["tool_name"],
+            )
             for event in approval_events
         } == {
-            ("11111111-1111-4111-8111-111111111111", approval_id),
-            ("22222222-2222-4222-8222-222222222222", deny_approval),
-            ("33333333-3333-4333-8333-333333333333", cancel_approval),
+            (
+                "11111111-1111-4111-8111-111111111111",
+                approval_id,
+                "call-11111111-1111-4111-8111-111111111111",
+                "workspace.search",
+            ),
+            (
+                "22222222-2222-4222-8222-222222222222",
+                deny_approval,
+                "call-22222222-2222-4222-8222-222222222222",
+                "workspace.search",
+            ),
+            (
+                "33333333-3333-4333-8333-333333333333",
+                cancel_approval,
+                "call-33333333-3333-4333-8333-333333333333",
+                "workspace.search",
+            ),
         }
+        for turn, trace_id, approval in (
+            (allow, "11111111-1111-4111-8111-111111111111", approval_id),
+            (deny, "22222222-2222-4222-8222-222222222222", deny_approval),
+            (
+                cancelled,
+                "33333333-3333-4333-8333-333333333333",
+                cancel_approval,
+            ),
+        ):
+            requested = _approval_chunk(turn, "approval_required")
+            resolved = _approval_chunk(turn, "approval_resolved")
+            assert requested["trace_id"] == resolved["trace_id"] == trace_id
+            assert requested["data"]["approval_id"] == approval
+            assert resolved["data"]["approval_id"] == approval
+            assert requested["data"]["call_id"] == resolved["data"]["call_id"]
+            assert requested["data"]["tool_name"] == "workspace.search"
+            assert resolved["data"]["tool_name"] == "workspace.search"
         assert executions == [
             (
                 "11111111-1111-4111-8111-111111111111",
@@ -1050,6 +1098,188 @@ def test_desktop_approval_http_stream_session_event_matrix(tmp_path: Path) -> No
             in json.dumps([allow.frames, deny.frames, cancelled.frames, events])
             for forbidden in ("synthetic-master-token", token, "/private", "secret")
         )
+
+        wrong_identity = _start_http_turn(
+            port, token, session_id, "66666666-6666-4666-8666-666666666666"
+        )
+        wrong_approval = _wait_for_approval_frame(wrong_identity)
+        other_token = _mint_fixture_token(port, base_headers)
+        wrong_path = (
+            f"/v1/client/sessions/{session_id}/turns/66666666-6666-4666-8666-666666666666/approvals/"
+            f"{wrong_approval}"
+        )
+        status, wrong = _http_fixture_json(
+            port,
+            "POST",
+            wrong_path,
+            {"decision": "allow_once"},
+            {"X-OpenMinion-Client-Token": other_token},
+        )
+        assert status == 404
+        assert wrong["error"]["code"] == "approval_not_found"
+        for malformed_path, malformed_body in (
+            (f"{wrong_path}?unexpected=1", {"decision": "allow_once"}),
+            (wrong_path, {"decision": "allow_once", "extra": True}),
+            (wrong_path, {"decision": "always"}),
+        ):
+            status, malformed = _http_fixture_json(
+                port,
+                "POST",
+                malformed_path,
+                malformed_body,
+                client_headers,
+            )
+            assert status == 400
+            assert malformed["error"]["code"] == "invalid_request"
+        status, denied_wrong_identity = _http_fixture_json(
+            port,
+            "POST",
+            wrong_path,
+            {"decision": "deny"},
+            client_headers,
+        )
+        assert status == 200
+        assert denied_wrong_identity["approval"]["outcome"] == "denied"
+        _join_http_turn(wrong_identity)
+
+        oversized = _start_http_turn(
+            port, token, session_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        )
+        _join_http_turn(oversized)
+        assert not any(
+            name == "chunk" and payload.get("kind") == "approval_required"
+            for name, payload in oversized.frames
+        )
+
+        append_event = server._runtime.sessions.append_event  # type: ignore[union-attr]
+        requested_failure_trace = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+        def fail_requested(**event: Any) -> str:
+            if (
+                event.get("event_type") == "desktop.approval.requested"
+                and event.get("payload", {}).get("request_id")
+                == requested_failure_trace
+            ):
+                raise RuntimeError("fixture requested append failure")
+            return str(append_event(**event))
+
+        with mock.patch.object(
+            server._runtime.sessions,  # type: ignore[union-attr]
+            "append_event",
+            side_effect=fail_requested,
+        ):
+            requested_failure = _start_http_turn(
+                port, token, session_id, requested_failure_trace
+            )
+            _join_http_turn(requested_failure)
+        assert not any(
+            name == "chunk" and payload.get("kind") == "approval_required"
+            for name, payload in requested_failure.frames
+        )
+
+        resolved_failure_trace = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+        def fail_resolved(**event: Any) -> str:
+            if (
+                event.get("event_type") == "desktop.approval.resolved"
+                and event.get("payload", {}).get("request_id") == resolved_failure_trace
+            ):
+                raise RuntimeError("fixture resolved append failure")
+            return str(append_event(**event))
+
+        with mock.patch.object(
+            server._runtime.sessions,  # type: ignore[union-attr]
+            "append_event",
+            side_effect=fail_resolved,
+        ):
+            resolved_failure = _start_http_turn(
+                port, token, session_id, resolved_failure_trace
+            )
+            failed_approval = _wait_for_approval_frame(resolved_failure)
+            failed_path = (
+                f"/v1/client/sessions/{session_id}/turns/{resolved_failure_trace}/approvals/"
+                f"{failed_approval}"
+            )
+            status, failed = _http_fixture_json(
+                port,
+                "POST",
+                failed_path,
+                {"decision": "allow_once"},
+                client_headers,
+            )
+            assert status == 500
+            assert failed["error"]["code"] == "approval_event_failed"
+            status, repeated_failure = _http_fixture_json(
+                port,
+                "POST",
+                failed_path,
+                {"decision": "allow_once"},
+                client_headers,
+            )
+            assert status == 500
+            assert repeated_failure["error"]["code"] == "approval_event_failed"
+            _join_http_turn(resolved_failure)
+        assert not any(
+            name == "chunk" and payload.get("kind") == "approval_resolved"
+            for name, payload in resolved_failure.frames
+        )
+        assert len(executions) == 1
+
+        short_lease = _mint_fixture_lease(port, base_headers, ttl_seconds=60)
+        sleep(2)
+        deadline_token = _mint_fixture_token(port, base_headers, ttl_seconds=300)
+        deadline_session, _ = _create_fixture_session(
+            port,
+            deadline_token,
+            title="Approval deadline",
+            agent_id="openminion",
+        )
+        expiry_token = str(short_lease["client_token"])
+        expiry_session, _ = _create_fixture_session(
+            port,
+            expiry_token,
+            title="Lease expiry",
+            agent_id="research",
+        )
+        deadline_started = monotonic()
+        deadline = _start_http_turn(
+            port,
+            deadline_token,
+            deadline_session,
+            "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        )
+        expiry = _start_http_turn(
+            port,
+            expiry_token,
+            expiry_session,
+            "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            agent_id="research",
+        )
+        deadline_approval = _wait_for_approval_frame(deadline)
+        expiry_approval = _wait_for_approval_frame(expiry)
+        deadline_required = _approval_chunk(deadline, "approval_required")
+        expiry_required = _approval_chunk(expiry, "approval_required")
+        assert deadline_required["data"]["approval_id"] == deadline_approval
+        assert expiry_required["data"]["approval_id"] == expiry_approval
+        assert datetime.fromisoformat(
+            str(short_lease["expires_at"]).replace("Z", "+00:00")
+        ) < datetime.fromisoformat(
+            str(expiry_required["data"]["expires_at"]).replace("Z", "+00:00")
+        )
+        _join_http_turn(expiry, timeout=70)
+        expiry_elapsed = monotonic() - deadline_started
+        _join_http_turn(deadline, timeout=70)
+        deadline_elapsed = monotonic() - deadline_started
+        assert 55 <= expiry_elapsed < deadline_elapsed
+        assert deadline_elapsed >= 59
+        assert _approval_chunk(expiry, "approval_resolved")["data"]["outcome"] == (
+            "expired"
+        )
+        assert (
+            _approval_chunk(deadline, "approval_resolved")["data"]["outcome"]
+            == "expired"
+        )
+        assert len(executions) == 1
 
         revoked = _start_http_turn(
             port, token, session_id, "44444444-4444-4444-8444-444444444444"
@@ -1112,18 +1342,51 @@ def test_desktop_approval_http_stream_session_event_matrix(tmp_path: Path) -> No
         assert status == 409
         assert late_after_close["error"]["code"] == "approval_cancelled"
         assert len(executions) == 1
-    finally:
+
+        shutdown_session, _ = _create_fixture_session(
+            port,
+            closer_token,
+            title="Shutdown release",
+        )
+        shutdown_turn = _start_http_turn(
+            port,
+            closer_token,
+            shutdown_session,
+            "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        )
+        shutdown_approval = _wait_for_approval_frame(shutdown_turn)
         server.shutdown()
         server.server_close()
+        server_closed = True
         thread.join(timeout=2)
+        _join_http_turn(shutdown_turn)
+        shutdown_resolved = _approval_chunk(shutdown_turn, "approval_resolved")
+        assert shutdown_resolved["data"] == {
+            "approval_id": shutdown_approval,
+            "call_id": "call-ffffffff-ffff-4fff-8fff-ffffffffffff",
+            "tool_name": "workspace.search",
+            "decision": None,
+            "outcome": "interrupted",
+            "resolved_at": shutdown_resolved["data"]["resolved_at"],
+        }
+        assert len(executions) == 1
+    finally:
+        if not server_closed:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
 
 class _HTTPFixtureTurn:
     def __init__(
-        self, thread: Thread, frames: list[tuple[str, dict[str, Any]]]
+        self,
+        thread: Thread,
+        frames: list[tuple[str, dict[str, Any]]],
+        errors: list[Exception],
     ) -> None:
         self.thread = thread
         self.frames = frames
+        self.errors = errors
 
 
 def _http_fixture_json(
@@ -1151,6 +1414,14 @@ def _mint_fixture_token(
     headers: dict[str, str],
     ttl_seconds: int = 300,
 ) -> str:
+    return str(_mint_fixture_lease(port, headers, ttl_seconds)["client_token"])
+
+
+def _mint_fixture_lease(
+    port: int,
+    headers: dict[str, str],
+    ttl_seconds: int = 300,
+) -> dict[str, Any]:
     status, payload = _http_fixture_json(
         port,
         "POST",
@@ -1168,7 +1439,28 @@ def _mint_fixture_token(
         headers,
     )
     assert status == 200
-    return str(payload["lease"]["client_token"])
+    return dict(payload["lease"])
+
+
+def _create_fixture_session(
+    port: int,
+    token: str,
+    *,
+    title: str,
+    agent_id: str = "openminion",
+) -> tuple[str, str]:
+    status, payload = _http_fixture_json(
+        port,
+        "POST",
+        "/v1/client/sessions",
+        {"title": title, "agent_id": agent_id},
+        {"X-OpenMinion-Client-Token": token},
+    )
+    assert status == 200
+    return (
+        str(payload["session"]["session_id"]),
+        str(payload["session"]["event_cursor"]),
+    )
 
 
 def _start_http_turn(
@@ -1176,56 +1468,66 @@ def _start_http_turn(
     token: str,
     session_id: str,
     trace_id: str,
+    *,
+    agent_id: str = "openminion",
 ) -> _HTTPFixtureTurn:
     frames: list[tuple[str, dict[str, Any]]] = []
+    errors: list[Exception] = []
 
     def read_stream() -> None:
-        connection = HTTPConnection("127.0.0.1", port, timeout=10)
-        body = json.dumps(
-            {
-                "trace_id": trace_id,
-                "session_id": session_id,
-                "agent_id": "openminion",
-                "input_text": trace_id,
-                "mode": "oneshot",
-                "stream": True,
-                "channel": "console",
-                "user": "api-user",
-                "idempotency_key": trace_id,
-            },
-            separators=(",", ":"),
-        )
-        connection.request(
-            "POST",
-            "/v1/turn/stream",
-            body=body,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream",
-                "X-Request-ID": f"request-{trace_id}",
-                "X-OpenMinion-Client-Token": token,
-            },
-        )
-        response = connection.getresponse()
-        assert response.status == 200
-        event_name = ""
-        while True:
-            line = response.readline().decode("utf-8").rstrip("\n")
-            if not line:
-                continue
-            if line.startswith("event: "):
-                event_name = line[7:]
-                continue
-            if line.startswith("data: "):
-                frames.append((event_name, json.loads(line[6:])))
-                if event_name == "done":
-                    break
-        response.close()
-        connection.close()
+        connection = HTTPConnection("127.0.0.1", port, timeout=75)
+        try:
+            body = json.dumps(
+                {
+                    "trace_id": trace_id,
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "input_text": trace_id,
+                    "mode": "oneshot",
+                    "stream": True,
+                    "channel": "console",
+                    "user": "api-user",
+                    "idempotency_key": trace_id,
+                },
+                separators=(",", ":"),
+            )
+            connection.request(
+                "POST",
+                "/v1/turn/stream",
+                body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                    "X-Request-ID": f"request-{trace_id}",
+                    "X-OpenMinion-Client-Token": token,
+                },
+            )
+            response = connection.getresponse()
+            assert response.status == 200
+            event_name = ""
+            while True:
+                raw = response.readline()
+                if raw == b"":
+                    raise AssertionError("stream ended before the done event")
+                line = raw.decode("utf-8").rstrip("\n")
+                if not line:
+                    continue
+                if line.startswith("event: "):
+                    event_name = line[7:]
+                    continue
+                if line.startswith("data: "):
+                    frames.append((event_name, json.loads(line[6:])))
+                    if event_name == "done":
+                        break
+            response.close()
+        except Exception as exc:  # surfaced by _join_http_turn
+            errors.append(exc)
+        finally:
+            connection.close()
 
     thread = Thread(target=read_stream, daemon=True)
     thread.start()
-    return _HTTPFixtureTurn(thread, frames)
+    return _HTTPFixtureTurn(thread, frames, errors)
 
 
 def _wait_for_approval_frame(turn: _HTTPFixtureTurn) -> str:
@@ -1249,7 +1551,19 @@ def _wait_for_approval_frame(turn: _HTTPFixtureTurn) -> str:
     return str(frame["data"]["approval_id"])
 
 
-def _join_http_turn(turn: _HTTPFixtureTurn) -> None:
-    turn.thread.join(timeout=5)
+def _approval_chunk(
+    turn: _HTTPFixtureTurn,
+    kind: str,
+) -> dict[str, Any]:
+    return next(
+        payload
+        for name, payload in turn.frames
+        if name == "chunk" and payload.get("kind") == kind
+    )
+
+
+def _join_http_turn(turn: _HTTPFixtureTurn, *, timeout: float = 5) -> None:
+    turn.thread.join(timeout=timeout)
     assert not turn.thread.is_alive()
+    assert not turn.errors, turn.errors
     assert turn.frames[-1][0] == "done"
