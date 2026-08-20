@@ -115,16 +115,19 @@ class ClientApprovalCoordinator:
             session_blocked = self._session_blocked_locked(record.session_id)
             turn_cancelled = request.cancel_event.is_set()
             lease_active = self._client_auth.is_active(identity)
-            self._release_admission_locked(identity.client_id)
-        if closed or revoked or session_blocked or turn_cancelled or not lease_active:
-            self._resolve_automatic(
-                record.key,
+            blocked_outcome = (
                 "interrupted"
                 if closed
                 else "cancelled"
                 if revoked or session_blocked or turn_cancelled
-                else "expired",
+                else "expired"
+                if not lease_active
+                else None
             )
+            if blocked_outcome is not None:
+                self._resolve_locked(record, decision=None, outcome=blocked_outcome)
+            self._release_admission_locked(identity.client_id)
+        if blocked_outcome is not None:
             return False
         try:
             request.emit_chunk(
@@ -144,7 +147,6 @@ class ClientApprovalCoordinator:
         except Exception:
             self._resolve_automatic(record.key, "interrupted")
             return False
-
         while not record.wait_event.wait(timeout=0.1):
             if request.cancel_event.is_set():
                 self._resolve_automatic(record.key, "cancelled")

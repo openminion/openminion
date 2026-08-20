@@ -30,6 +30,7 @@ class _Sessions:
         self.append_started = Event()
         self.release_append: Event | None = None
         self.block_event: str | None = None
+        self.block_release: Event | None = None
 
     def append_event(self, **event: Any) -> str:
         if event["event_type"] == self.fail_event:
@@ -42,8 +43,8 @@ class _Sessions:
             self.release_append.wait(timeout=2)
         if event["event_type"] == self.block_event:
             self.append_started.set()
-            assert self.release_append is not None
-            self.release_append.wait(timeout=2)
+            assert self.block_release is not None
+            self.block_release.wait(timeout=2)
         self.events.append(event)
         return f"event-{len(self.events)}"
 
@@ -364,7 +365,7 @@ def test_revoke_during_requested_event_append_is_cancelled(
         ClientIdentity,
     ],
 ) -> None:
-    _service, coordinator, sessions, identity = approval_owner
+    service, coordinator, sessions, identity = approval_owner
     sessions.release_append = Event()
     result: list[bool] = []
     thread = Thread(
@@ -373,9 +374,9 @@ def test_revoke_during_requested_event_append_is_cancelled(
                 identity,
                 DesktopApprovalRequest(
                     session_id="session-1",
-                    trace_id="trace-revoke-race",
+                    trace_id="trace-1",
                     tool_name="workspace.search",
-                    call_id="call-revoke-race",
+                    call_id="call-1",
                     argument_keys=("query",),
                     emit_chunk=lambda _chunk: pytest.fail("unexpected live frame"),
                     cancel_event=Event(),
@@ -387,14 +388,95 @@ def test_revoke_during_requested_event_append_is_cancelled(
     thread.start()
     assert sessions.append_started.wait(timeout=2)
     coordinator.revoke_client(identity)
+    sessions.append_started.clear()
+    sessions.block_event = "desktop.approval.resolved"
+    sessions.block_release = Event()
     sessions.release_append.set()
+    assert sessions.append_started.wait(timeout=2)
+    approval_id = sessions.events[0]["payload"]["approval_id"]
+    decision: list[tuple[int, dict[str, Any]]] = []
+    decision_thread = Thread(
+        target=lambda: decision.append(
+            _decide(coordinator, service, identity, approval_id, "allow_once")
+        ),
+        daemon=True,
+    )
+    decision_thread.start()
+    sleep(0.02)
+    assert decision_thread.is_alive()
+    sessions.block_release.set()
     thread.join(timeout=2)
+    decision_thread.join(timeout=2)
 
     assert result == [False]
+    assert decision[0][0] == 409
+    assert decision[0][1]["error"]["code"] == "approval_cancelled"
     assert [event["event_type"] for event in sessions.events] == [
         "desktop.approval.requested",
         "desktop.approval.resolved",
     ]
+    assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
+
+
+def test_failed_session_close_cannot_release_captured_admission_fence(
+    approval_owner: tuple[
+        ClientAuthService,
+        ClientApprovalCoordinator,
+        _Sessions,
+        ClientIdentity,
+    ],
+) -> None:
+    service, coordinator, sessions, identity = approval_owner
+    sessions.release_append = Event()
+    result: list[bool] = []
+    request_thread = Thread(
+        target=lambda: result.append(
+            coordinator.request(
+                identity,
+                DesktopApprovalRequest(
+                    session_id="session-1",
+                    trace_id="trace-1",
+                    tool_name="workspace.search",
+                    call_id="call-1",
+                    argument_keys=("query",),
+                    emit_chunk=lambda _chunk: pytest.fail("unexpected live frame"),
+                    cancel_event=Event(),
+                ),
+            )
+        ),
+        daemon=True,
+    )
+    request_thread.start()
+    assert sessions.append_started.wait(timeout=2)
+    finish_failed_close = coordinator.cancel_session("session-1", "session_closed")
+    sessions.append_started.clear()
+    sessions.block_event = "desktop.approval.resolved"
+    sessions.block_release = Event()
+    sessions.release_append.set()
+    assert sessions.append_started.wait(timeout=2)
+    approval_id = sessions.events[0]["payload"]["approval_id"]
+
+    cleanup_thread = Thread(target=finish_failed_close, daemon=True)
+    decision: list[tuple[int, dict[str, Any]]] = []
+    decision_thread = Thread(
+        target=lambda: decision.append(
+            _decide(coordinator, service, identity, approval_id, "allow_once")
+        ),
+        daemon=True,
+    )
+    cleanup_thread.start()
+    decision_thread.start()
+    sleep(0.02)
+    assert cleanup_thread.is_alive()
+    assert decision_thread.is_alive()
+    sessions.block_release.set()
+    request_thread.join(timeout=2)
+    cleanup_thread.join(timeout=2)
+    decision_thread.join(timeout=2)
+
+    assert result == [False]
+    assert decision[0][0] == 409
+    assert decision[0][1]["error"]["code"] == "approval_cancelled"
     assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
 
 
@@ -536,8 +618,8 @@ def test_cancellation_transition_serializes_before_decision(
         coordinator, identity
     )
     sessions.append_started.clear()
-    sessions.release_append = Event()
     sessions.block_event = "desktop.approval.resolved"
+    sessions.block_release = Event()
 
     def cancel() -> None:
         if cancel_owner == "trace":
@@ -562,7 +644,7 @@ def test_cancellation_transition_serializes_before_decision(
     decision_thread.start()
     sleep(0.02)
     assert decision_thread.is_alive()
-    sessions.release_append.set()
+    sessions.block_release.set()
     cancel_thread.join(timeout=2)
     decision_thread.join(timeout=2)
     request_thread.join(timeout=2)
