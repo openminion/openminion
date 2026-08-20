@@ -11,7 +11,7 @@ from openminion.api.core.deps import (
     v1_tool_schema,
     v1_tool_specs,
 )
-from openminion.api.core.validation import v1_tool_arguments
+from openminion.api.core.validation import parse_bool_query_value, v1_tool_arguments
 from openminion.api.operations.tools import (
     execute_tool_run,
     normalize_tool_run_request,
@@ -31,10 +31,7 @@ _TOOL_SCHEMA_RE = re.compile(r"/v1/tools/([^/]+)/schema")
 _TOOL_RUN_RE = re.compile(r"/v1/tools/([^/]+)/run")
 
 
-def _with_runtime(
-    ctx: APIRouteContext,
-    fn,
-) -> RouteResult:
+def _with_runtime(ctx: APIRouteContext, fn) -> RouteResult:
     _, active_runtime, own_runtime = resolve_runtime_manager(
         config_path=ctx.config_path,
         runtime=ctx.runtime,
@@ -46,11 +43,16 @@ def _with_runtime(
             active_runtime.close()
 
 
-def _handle_list_tools(ctx: APIRouteContext) -> RouteResult:
+def _handle_list_tools(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
+    readiness = parse_bool_query_value(query_value(query, "readiness"))
+
     def _build(active_runtime) -> RouteResult:
         return RouteResult(
             status=HTTPStatus.OK,
-            payload={"ok": True, "tools": v1_tool_specs(active_runtime)},
+            payload={
+                "ok": True,
+                "tools": v1_tool_specs(active_runtime, readiness=readiness),
+            },
         )
 
     return _with_runtime(ctx, _build)
@@ -244,7 +246,7 @@ def handle_request(
     query: str | None,
 ) -> RouteResult | None:
     if method_name == "GET" and path == "/v1/tools":
-        return _handle_list_tools(ctx)
+        return _handle_list_tools(ctx, query=query)
 
     if method_name == "GET" and path == "/v1/tools/exposure":
         return _handle_exposure_status(ctx, query=query)

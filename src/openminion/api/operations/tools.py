@@ -59,29 +59,29 @@ def execute_tool_run(
         target=target,
         session_id=requested_session_id,
     )
+    workspace_root = getattr(runtime, "tool_workspace_root", None)
+    workspace_root = workspace_root or runtime.config.runtime.tool_workspace_root
+    runtime_env: dict[str, Any] = dict(
+        getattr(getattr(runtime.config, "runtime", None), "env", {}) or {}
+    )
+    metadata: dict[str, Any] = {
+        "trace_id": request_id,
+        "session_id": session.id,
+        "origin": "api.v1.tools.run",
+        "workspace_root": str(workspace_root or ""),
+        "runtime_env": runtime_env,
+        **build_runtime_tool_routing_metadata(runtime.config.runtime.tools),
+        **ToolSelectionService(
+            runtime.config.runtime.tool_selection,
+            runtime.tools,
+        ).runtime_binding_policy_metadata(),
+    }
     context = ToolExecutionContext(
         channel=channel,
         target=target,
         session_id=session.id,
         authored_tools_api=getattr(runtime, "authored_tools", None),
-        metadata={
-            "trace_id": request_id,
-            "session_id": session.id,
-            "origin": "api.v1.tools.run",
-            "runtime_env": dict(
-                getattr(
-                    getattr(runtime.config, "runtime", None),
-                    "env",
-                    {},
-                )
-                or {}
-            ),
-            **build_runtime_tool_routing_metadata(runtime.config.runtime.tools),
-            **ToolSelectionService(
-                runtime.config.runtime.tool_selection,
-                runtime.tools,
-            ).runtime_binding_policy_metadata(),
-        },
+        metadata=metadata,
         blast_radius_adapter=build_default_composition_boundary_adapter(
             seam_id=SEAM_API_TOOLS,
         ),

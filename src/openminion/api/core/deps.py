@@ -84,8 +84,10 @@ def configured_agent_ids(runtime: APIRuntime) -> list[str]:
     return sorted(item for item in configured if item)
 
 
-def v1_tool_specs(runtime: APIRuntime) -> list[dict[str, Any]]:
-    return runtime.tool_inventory_report()
+def v1_tool_specs(
+    runtime: APIRuntime, *, readiness: bool = False
+) -> list[dict[str, Any]]:
+    return runtime.tool_inventory_report(readiness=readiness)
 
 
 def v1_tool_schema(runtime: APIRuntime, *, tool_name: str) -> Optional[dict[str, Any]]:

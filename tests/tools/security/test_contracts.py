@@ -14,6 +14,10 @@ from openminion.tools.security.config import (
     resolve_local_target,
     resolve_security_config,
 )
+from openminion.tools.security.dependencies import (
+    SEMGREP_DEPENDENCY,
+    TRIVY_DEPENDENCY,
+)
 from openminion.tools.security.schemas import LocalScanArgs
 
 
@@ -21,23 +25,44 @@ def test_security_family_contract_and_hidden_profile() -> None:
     registry = build_default_tool_registry(strict=False)
     assert REGISTRAR.get_manifest(None) == derive_manifest(SECURITY_FAMILY)
     assert set(ALL_SECURITY_TOOLS).issubset(registry.list())
+    profile = next(
+        item
+        for item in SECURITY_FAMILY.exposure_profiles
+        if item.profile_id == "security_readonly"
+    )
+    assert profile.dependencies == frozenset()
+    assert registry.get("security.scan_code").dependencies == (SEMGREP_DEPENDENCY,)
+    for tool_name in (
+        "security.scan_dependencies",
+        "security.scan_artifact",
+        "security.scan_secrets",
+    ):
+        assert registry.get(tool_name).dependencies == (TRIVY_DEPENDENCY,)
 
     inactive = get_model_exposure_specs(registry, metadata={"session_id": "s1"})
     assert {spec.name for spec in inactive}.isdisjoint(ALL_SECURITY_TOOLS)
 
-    with pytest.raises(ToolRuntimeError, match="dependency"):
-        registry.exposure_service.activate(
-            "security_readonly", session_id="s1", approved=True
-        )
+    registry.exposure_service.activate(
+        "security_readonly",
+        session_id="s1",
+        approved=True,
+    )
+    visible = get_model_exposure_specs(registry, metadata={"session_id": "s1"})
+    assert set(ALL_SECURITY_TOOLS).issubset({spec.name for spec in visible})
 
+    registry.exposure_service.deactivate("security_readonly", session_id="s1")
     registry.exposure_service.activate(
         "security_readonly",
         session_id="s1",
         dependencies=("binary:semgrep", "binary:trivy"),
         approved=True,
     )
-    visible = get_model_exposure_specs(registry, metadata={"session_id": "s1"})
-    assert set(ALL_SECURITY_TOOLS).issubset({spec.name for spec in visible})
+    visible_with_legacy_tokens = get_model_exposure_specs(
+        registry, metadata={"session_id": "s1"}
+    )
+    assert set(ALL_SECURITY_TOOLS).issubset(
+        {spec.name for spec in visible_with_legacy_tokens}
+    )
 
 
 def test_scan_args_are_bounded_and_reject_scanner_controls() -> None:

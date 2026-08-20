@@ -49,6 +49,7 @@ def run_tools(args) -> int:
 
 def _tools_list(args) -> int:
     verbose = getattr(args, "verbose", False)
+    readiness = bool(getattr(args, "readiness", False))
     filter_available = getattr(args, "available", False)
     filter_blocked = getattr(args, "blocked", False)
     filter_disabled = getattr(args, "disabled", False)
@@ -56,11 +57,13 @@ def _tools_list(args) -> int:
     payload = _from_daemon_or_inproc(
         args,
         daemon_call=lambda endpoint: daemon_get(
-            endpoint, path="/v1/tools", timeout_s=10
+            endpoint,
+            path="/v1/tools?readiness=true" if readiness else "/v1/tools",
+            timeout_s=10,
         ),
         inproc_call=lambda: {
             "ok": True,
-            "tools": _inproc_tool_specs(args),
+            "tools": _inproc_tool_specs(args, readiness=readiness),
         },
     )
 
@@ -332,9 +335,21 @@ def _local_tool_runtime(args_or_config_path: object) -> Iterator[tuple[Any, Any]
             tools.mcp_manager.close()
 
 
-def _inproc_tool_specs(args_or_config_path: object) -> list[dict]:
-    with _local_tool_runtime(args_or_config_path) as (_config, tools):
-        return build_tool_inventory_report(SimpleNamespace(tools=tools))
+def _inproc_tool_specs(
+    args_or_config_path: object, *, readiness: bool = False
+) -> list[dict]:
+    with _local_tool_runtime(args_or_config_path) as (config, tools):
+        configured_workspace = str(config.runtime.tool_workspace_root or "").strip()
+        runtime = SimpleNamespace(
+            tools=tools,
+            config=config,
+            tool_workspace_root=(
+                Path(configured_workspace).expanduser()
+                if configured_workspace
+                else None
+            ),
+        )
+        return build_tool_inventory_report(runtime, readiness=readiness)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -356,6 +371,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     tools_list.add_argument(
         "--disabled", action="store_true", help="Show disabled tools"
+    )
+    tools_list.add_argument(
+        "--readiness",
+        action="store_true",
+        help="Probe current external-tool dependencies",
     )
     add_runtime_source_flag(tools_list)
     tools_list.set_defaults(handler=run_tools, needs_app=False)
@@ -476,6 +496,9 @@ def _inproc_tool_run(
                 metadata={
                     "session_id": session_id,
                     "origin": "openminion.tools.inproc",
+                    "workspace_root": str(
+                        config.runtime.tool_workspace_root or Path.cwd()
+                    ),
                     "runtime_env": dict(config.runtime.env or {}),
                     **build_runtime_tool_routing_metadata(config.runtime.tools),
                     **ToolSelectionService(

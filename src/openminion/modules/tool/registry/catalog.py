@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel
 
 from openminion.modules.tool.base import Tool, ToolCategoryInfo
+from openminion.modules.tool.contracts.dependencies import ToolDependencyDecl
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.blast_radius import (
     SandboxKind,
@@ -43,6 +44,7 @@ class ToolSpec:
     block_under_readonly: bool = False
     blast_radius: ToolBlastRadius | None = None
     sandbox_kind: SandboxKind | None = None
+    dependencies: tuple[ToolDependencyDecl, ...] = ()
 
     def resolved_capabilities(self) -> tuple[str, ...]:
         return self.capabilities or self.tags

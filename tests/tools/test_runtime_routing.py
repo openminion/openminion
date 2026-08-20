@@ -35,6 +35,25 @@ def test_build_runtime_tool_routing_metadata_serializes_config() -> None:
     }
 
 
+def test_runtime_tool_routing_preserves_gws_family_config() -> None:
+    payload = build_runtime_tool_routing_metadata(
+        ToolRuntimeConfig(gws={"gws_path": "/opt/tools/gws", "enabled": True})
+    )
+
+    assert payload == {
+        "runtime_tools": {
+            "gws": {"gws_path": "/opt/tools/gws", "enabled": True}
+        }
+    }
+    context = SimpleNamespace(
+        policy=SimpleNamespace(raw={"context_metadata": payload})
+    )
+    assert resolve_runtime_tool_config(context).gws == {
+        "gws_path": "/opt/tools/gws",
+        "enabled": True,
+    }
+
+
 def test_resolve_runtime_tool_family_config_reads_policy_context_metadata() -> None:
     context = SimpleNamespace(
         policy=SimpleNamespace(

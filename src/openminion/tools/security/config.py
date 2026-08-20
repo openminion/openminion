@@ -12,9 +12,9 @@ from openminion.tools.config import (
     resolve_tool_workspace_root,
 )
 
-_SEMGREP_EXECUTABLE_ENV = "OPENMINION_SECURITY_SEMGREP_EXECUTABLE"
+SEMGREP_EXECUTABLE_ENV = "OPENMINION_SECURITY_SEMGREP_EXECUTABLE"
 _SEMGREP_CONFIG_ENV = "OPENMINION_SECURITY_SEMGREP_CONFIG"
-_TRIVY_EXECUTABLE_ENV = "OPENMINION_SECURITY_TRIVY_EXECUTABLE"
+TRIVY_EXECUTABLE_ENV = "OPENMINION_SECURITY_TRIVY_EXECUTABLE"
 _ALLOWED_ROOTS_ENV = "OPENMINION_SECURITY_ALLOWED_ROOTS"
 
 
@@ -41,11 +41,11 @@ def resolve_security_config(ctx: Any) -> SecurityConfig:
         workspace_root=workspace_root,
         allowed_roots=allowed_roots,
         semgrep_executable=get_tool_env(
-            _SEMGREP_EXECUTABLE_ENV, "semgrep", context=ctx
+            SEMGREP_EXECUTABLE_ENV, "semgrep", context=ctx
         ).strip(),
         semgrep_config=get_tool_env(_SEMGREP_CONFIG_ENV, "", context=ctx).strip(),
         trivy_executable=get_tool_env(
-            _TRIVY_EXECUTABLE_ENV, "trivy", context=ctx
+            TRIVY_EXECUTABLE_ENV, "trivy", context=ctx
         ).strip(),
     )
 
@@ -87,6 +87,8 @@ def _within(target: Path, root: Path) -> bool:
 
 __all__ = [
     "SecurityConfig",
+    "SEMGREP_EXECUTABLE_ENV",
+    "TRIVY_EXECUTABLE_ENV",
     "display_target",
     "resolve_local_target",
     "resolve_security_config",

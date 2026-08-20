@@ -16,6 +16,7 @@ from openminion.tools.gws.plugin import (
     _h_call,
     _h_schema,
 )
+from openminion.tools.gws.dependencies import GWS_DEPENDENCY
 
 
 def _ctx(
@@ -26,19 +27,21 @@ def _ctx(
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
-    tools_cfg: dict = {
+    tools_cfg = {
         "allow_prefix": ["gws_"],
         "deny_exact": [],
         "deny_prefix": [],
     }
-    if gws_cfg is not None:
-        tools_cfg["gws"] = gws_cfg
+    context_metadata = (
+        {"runtime_tools": {"gws": gws_cfg}} if gws_cfg is not None else {}
+    )
 
     policy = Policy(
         raw={
             "workspace_root": str(tmp_path / "runs"),
             "plugins": {"allow": ["openminion.tools.gws"], "deny": []},
             "tools": tools_cfg,
+            "context_metadata": context_metadata,
             "paths": {
                 "read_allow": [str(workspace)],
                 "write_allow": [str(workspace)],
@@ -113,6 +116,8 @@ def test_plugin_registers_tools() -> None:
     assert "gws.auth.setup" in names
     assert "gws.auth.login" in names
     assert "gws.auth.export" in names
+    for tool in registry.list().values():
+        assert tool.dependencies == (GWS_DEPENDENCY,)
 
 
 def test_gws_plugin_has_interface_contract() -> None:

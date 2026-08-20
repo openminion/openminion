@@ -264,6 +264,11 @@ def execute_tool_spec_call(
         )
 
     try:
+        from openminion.modules.tool.runtime.dependencies import (
+            enforce_tool_dependencies,
+        )
+
+        enforce_tool_dependencies(tool, runtime_context=runtime_ctx)
         payload = invoke_tool_spec_handler(
             handler=handler,
             arguments=validated_args,

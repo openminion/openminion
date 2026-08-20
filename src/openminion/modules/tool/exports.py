@@ -35,18 +35,23 @@ PUBLIC_EXPORTS = [
     "_WEATHER_SOURCE",
     "build_default_tool_registry",
     "build_default_tool_registry_debug_report",
+    "binary_dependency",
     "build_runtime_bootstrap",
     "build_runtime_repositories",
     "blast_radius_requires_verification",
     "canonical_tool_name",
     "create_run_root",
+    "dependency_probe_context_from_api_runtime",
+    "evaluate_tool_dependencies",
     "enforce_watch_target_binding",
     "new_run_id",
     "preferred_artifact_ref",
     "reorder_runtime_chain",
     "resolve_binding_for_call",
+    "resolve_runtime_tool_config",
     "tool_result_blast_radius",
     "tool_family_for_argument_repair",
+    "tool_dependency_report_fields",
     "validate_plugin_contract",
 ]
 
@@ -131,6 +136,7 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
         ".facade",
         "build_default_tool_registry_debug_report",
     ),
+    "binary_dependency": (".runtime.dependencies", "binary_dependency"),
     "build_runtime_bootstrap": (".bootstrap", "build_runtime_bootstrap"),
     "build_runtime_repositories": (".runtime", "build_runtime_repositories"),
     "blast_radius_requires_verification": (
@@ -139,15 +145,31 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     ),
     "canonical_tool_name": (".runtime.policy", "canonical_tool_name"),
     "create_run_root": (".runtime", "create_run_root"),
+    "dependency_probe_context_from_api_runtime": (
+        ".runtime.dependencies",
+        "dependency_probe_context_from_api_runtime",
+    ),
+    "evaluate_tool_dependencies": (
+        ".runtime.dependencies",
+        "evaluate_tool_dependencies",
+    ),
     "enforce_watch_target_binding": (".runtime", "enforce_watch_target_binding"),
     "new_run_id": (".runtime", "new_run_id"),
     "preferred_artifact_ref": (".runtime", "preferred_artifact_ref"),
     "reorder_runtime_chain": (".runtime.policy", "reorder_runtime_chain"),
     "resolve_binding_for_call": (".runtime.dispatch", "resolve_binding_for_call"),
+    "resolve_runtime_tool_config": (
+        ".runtime.routing",
+        "resolve_runtime_tool_config",
+    ),
     "tool_result_blast_radius": (".runtime.blast_radius", "tool_result_blast_radius"),
     "tool_family_for_argument_repair": (
         ".runtime.argument_repair",
         "tool_family_for_argument_repair",
+    ),
+    "tool_dependency_report_fields": (
+        ".runtime.dependencies",
+        "tool_dependency_report_fields",
     ),
     "validate_plugin_contract": (".interfaces", "validate_plugin_contract"),
 }
