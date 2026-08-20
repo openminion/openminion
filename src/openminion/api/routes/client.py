@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
+from urllib.parse import unquote
 
 from openminion.api.server.client_auth import ClientAuthError
 
 from .contracts import APIRouteContext, RouteResult, error_route_result
+from .client_sessions import (
+    handle_cancel_request,
+    handle_request as handle_client_sessions_request,
+)
+
+
+_TURN_CANCEL_PATH = re.compile(r"/v1/turn/([^/]+)/cancel")
 
 
 def handle_request(
@@ -18,6 +27,27 @@ def handle_request(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
+    if (
+        ctx.client_identity is not None
+        and method_name == "POST"
+        and (cancel_match := _TURN_CANCEL_PATH.fullmatch(path)) is not None
+    ):
+        return handle_cancel_request(
+            ctx,
+            path=path,
+            trace_id=unquote(cancel_match.group(1)),
+            body=body,
+            query=query,
+        )
+    session_result = handle_client_sessions_request(
+        ctx,
+        method_name=method_name,
+        path=path,
+        body=body,
+        query=query,
+    )
+    if session_result is not None:
+        return session_result
     if path == "/v1/client/leases" and method_name == "POST":
         return _mint(ctx, body=body, query=query)
     if path == "/v1/client/capabilities" and method_name == "GET":
@@ -64,9 +94,9 @@ def _mint(
         return _invalid("Protocol and TTL fields must be integers.")
     try:
         lease = ctx.client_auth.mint(
-            protocol_min=protocol_min,
-            protocol_max=protocol_max,
-            ttl_seconds=ttl_seconds,
+            protocol_min=cast(int, protocol_min),
+            protocol_max=cast(int, protocol_max),
+            ttl_seconds=cast(int, ttl_seconds),
         )
     except ClientAuthError as exc:
         return _auth_error(exc)

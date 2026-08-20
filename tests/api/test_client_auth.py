@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import io
 from pathlib import Path
 
 import pytest
@@ -109,7 +110,7 @@ def test_client_wrong_route_and_expired_lease_fail_closed(tmp_path: Path) -> Non
     with pytest.raises(ClientAuthError) as wrong_route:
         service.authorize(
             method="POST",
-            path="/v1/turn/stream",
+            path="/v1/admin/kill",
             master_tokens=(),
             client_tokens=(token,),
             peer_host="127.0.0.1",
@@ -126,6 +127,44 @@ def test_client_wrong_route_and_expired_lease_fail_closed(tmp_path: Path) -> Non
             peer_host="127.0.0.1",
         )
     assert expired.value.code == "forbidden"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/v1/client/sessions"),
+        ("POST", "/v1/client/sessions"),
+        ("GET", "/v1/client/sessions/session-1"),
+        ("DELETE", "/v1/client/sessions/session-1"),
+        ("GET", "/v1/client/sessions/session-1/events"),
+        ("POST", "/v1/turn/stream"),
+        ("POST", "/v1/turn/trace-1/cancel"),
+    ],
+)
+def test_client_session_and_turn_routes_are_capability_admitted(
+    tmp_path: Path,
+    method: str,
+    path: str,
+) -> None:
+    service = _service(tmp_path)
+    lease = _mint(service)
+    identity = service.authorize(
+        method=method,
+        path=path,
+        master_tokens=(),
+        client_tokens=(str(lease["client_token"]),),
+        peer_host="127.0.0.1",
+    )
+    assert identity is not None
+    assert {
+        "sessions.list",
+        "sessions.create",
+        "sessions.load",
+        "sessions.close",
+        "sessions.events",
+        "turns.submit",
+        "turns.cancel",
+    }.issubset(identity.capabilities)
 
 
 def test_blank_master_preserves_legacy_but_blocks_desktop_mint(tmp_path: Path) -> None:
@@ -199,3 +238,27 @@ def test_authenticated_response_is_replaced_when_it_exceeds_bound() -> None:
     assert status == HTTPStatus.BAD_GATEWAY
     assert len(encoded) < 64 * 1024
     assert b'"code":"response_too_large"' in encoded
+
+
+@pytest.mark.parametrize(
+    ("path", "limit"),
+    [
+        ("/v1/client/sessions", 32 * 1024),
+        ("/v1/client/sessions/session-1", 8 * 1024),
+        ("/v1/turn/stream", 256 * 1024),
+        ("/v1/turn/trace-1/cancel", 16 * 1024),
+    ],
+)
+def test_authenticated_route_body_limits_fail_before_read(
+    path: str,
+    limit: int,
+) -> None:
+    adapter = ClientAuthHTTPMixin()
+    adapter.client_body_limited = True
+    adapter.headers = {
+        "Content-Length": str(limit + 1),
+        "Content-Type": "application/json",
+    }
+    adapter.rfile = io.BytesIO(b"")
+    with pytest.raises(ValueError, match="exceeds"):
+        adapter._read_optional_json_body(path=path)

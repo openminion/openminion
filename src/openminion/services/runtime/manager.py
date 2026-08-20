@@ -178,7 +178,7 @@ class TurnHandle:
         trace_id: str,
         on_cancel: Callable[[str], bool],
     ) -> None:
-        self.trace_id = trace_id
+        self.trace_id, self.session_id = trace_id, ""
         self._on_cancel = on_cancel
         self._cancel_event = Event()
         self._result_ready = Event()
@@ -412,7 +412,6 @@ class AgentRuntimeManager:
             self.start()
         if not self._accepting:
             raise RuntimeError("runtime manager is not accepting new turns")
-
         trace_id = str(req.trace_id or "").strip() or _new_trace_id()
         request = TurnRequest(
             trace_id=trace_id,
@@ -430,12 +429,10 @@ class AgentRuntimeManager:
             raise ValueError("session_id must be non-empty")
         if not request.input_text.strip():
             raise ValueError("input_text must be non-empty")
-
         self.get_or_create_agent(request.agent_id)
         handle = TurnHandle(trace_id=request.trace_id, on_cancel=self.cancel_turn)
-        queued = _QueuedTurn(
-            request=request, handle=handle, enqueued_at_mono=monotonic()
-        )
+        handle.session_id = request.session_id
+        queued = _QueuedTurn(request, handle, monotonic())
         with self._lock:
             self._traces[request.trace_id] = handle
             instance = self._instances[request.agent_id]
@@ -452,19 +449,25 @@ class AgentRuntimeManager:
         return handle
 
     def cancel_turn(self, trace_id: str) -> bool:
+        return self.cancel_session_turn(trace_id, "") != "not_active"
+
+    def cancel_session_turn(self, trace_id: str, session_id: str) -> str:
         normalized = str(trace_id or "").strip()
-        if not normalized:
-            return False
         with self._lock:
             handle = self._traces.get(normalized)
             if handle is None:
-                return False
+                return "not_active"
+            if session_id and handle.session_id != str(session_id).strip():
+                return "session_mismatch"
+            state = "already_requested" if handle.cancel_event.is_set() else "requested"
             handle.cancel_event.set()
+        if state == "already_requested":
+            return state
         self._emit(
             "runtime.turn.cancelled",
             {"trace_id": normalized, "requested_at": _utc_now_iso()},
         )
-        return True
+        return state
 
     def kill_switch(self, grace_s: float = 2.0) -> None:
         with self._lock:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Event
 from time import monotonic, sleep
 
 from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
@@ -79,6 +80,55 @@ def test_cancel_queued_turn() -> None:
         assert cancelled.errors
         assert cancelled.errors[0].code == "cancelled"
     finally:
+        manager.shutdown()
+
+
+def test_cancel_session_turn_is_session_bound_and_idempotent() -> None:
+    started = Event()
+    release = Event()
+
+    def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+        del emit_chunk
+        started.set()
+        while not release.is_set() and not cancel_event.is_set():
+            sleep(0.01)
+        return TurnResponse(final_text=f"done:{req.trace_id}")
+
+    manager = AgentRuntimeManager(
+        turn_executor=_executor,
+        max_agents_hot=1,
+        max_global_concurrency=1,
+    )
+    manager.start()
+    try:
+        handle = manager.submit_turn(
+            TurnRequest(
+                trace_id="trace-session-bound",
+                agent_id="ops",
+                session_id="session-a",
+                input_text="wait",
+            )
+        )
+        assert started.wait(timeout=1)
+        assert (
+            manager.cancel_session_turn("trace-session-bound", "session-b")
+            == "session_mismatch"
+        )
+        assert (
+            manager.cancel_session_turn("trace-session-bound", "session-a")
+            == "requested"
+        )
+        assert (
+            manager.cancel_session_turn("trace-session-bound", "session-a")
+            == "already_requested"
+        )
+        handle.result(timeout_s=2)
+        assert (
+            manager.cancel_session_turn("trace-session-bound", "session-a")
+            == "not_active"
+        )
+    finally:
+        release.set()
         manager.shutdown()
 
 

@@ -7,6 +7,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import secrets
 import threading
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from http import HTTPStatus
 from os import PathLike
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Iterable, cast
+from typing import Any, Iterable
 
 from openminion.api.core.validation import parse_json_request_body
 from openminion.api.responses.serialization import error_response, normalize_request_id
@@ -37,22 +38,23 @@ _CLIENT_CAPABILITIES = (
     "client.capabilities",
     "client.lease.renew",
     "client.lease.revoke",
-)
-_CLIENT_ROUTES = frozenset(
-    {
-        ("GET", "/v1/health"),
-        ("GET", "/v1/ready"),
-        ("GET", "/v1/client/capabilities"),
-        ("POST", "/v1/client/leases/renew"),
-        ("DELETE", "/v1/client/leases/current"),
-    }
+    "sessions.list",
+    "sessions.create",
+    "sessions.load",
+    "sessions.close",
+    "sessions.events",
+    "turns.submit",
+    "turns.cancel",
 )
 _CLIENT_BODY_LIMITS = {
     "/v1/client/leases": 16 * 1024,
     "/v1/client/leases/renew": 4 * 1024,
     "/v1/client/leases/current": 4 * 1024,
 }
-_CLIENT_RESPONSE_LIMIT = 64 * 1024
+_SESSION_PATH = re.compile(r"/v1/client/sessions/[^/]+")
+_SESSION_EVENTS_PATH = re.compile(r"/v1/client/sessions/[^/]+/events")
+_TURN_CANCEL_PATH = re.compile(r"/v1/turn/[^/]+/cancel")
+_DEFAULT_CLIENT_RESPONSE_LIMIT = 64 * 1024
 _ADMITTED_HEADERS = frozenset(
     {
         "accept",
@@ -130,6 +132,7 @@ class ClientAuthService:
         self.config_id = build_config_id(config_path, home_root, data_root)
         self.bind_host = str(bind_host or "").strip()
         self.daemon_version = str(daemon_version or "").strip()
+        self._cursor_key = secrets.token_bytes(32)
         self._leases: dict[str, _ClientLease] = {}
         self._lock = threading.Lock()
 
@@ -166,7 +169,8 @@ class ClientAuthService:
         if clients:
             self._require_loopback(peer_host)
             identity = self._authenticate_client(clients[0])
-            if (method.upper(), path) not in _CLIENT_ROUTES:
+            capability = _client_route_capability(method, path)
+            if capability is None or capability not in identity.capabilities:
                 raise self._forbidden()
             return identity
         if path == "/v1/client/leases" and not self._master_token:
@@ -239,6 +243,12 @@ class ClientAuthService:
             "capabilities": list(identity.capabilities),
         }
 
+    def sign_cursor(self, payload: bytes) -> bytes:
+        return hmac.digest(self._cursor_key, payload, "sha256")
+
+    def verify_cursor(self, payload: bytes, signature: bytes) -> bool:
+        return hmac.compare_digest(self.sign_cursor(payload), signature)
+
     def _authenticate_client(self, token: str) -> ClientIdentity:
         normalized = str(token or "").strip()
         if not normalized:
@@ -306,7 +316,9 @@ class ClientAuthHTTPMixin:
     rfile: Any
     client_address: tuple[str, int]
     client_request_path: str = ""
+    client_request_method: str = ""
     client_response_limited: bool = False
+    client_body_limited: bool = False
     close_connection: bool
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -320,11 +332,15 @@ class ClientAuthHTTPMixin:
     ) -> bool:
         if self.client_auth is None:
             self.client_identity = None
+            self.client_response_limited = False
+            self.client_body_limited = False
             return True
         masters = _header_values(self.headers, MASTER_TOKEN_HEADER)
         clients = _header_values(self.headers, CLIENT_TOKEN_HEADER)
         self.client_request_path = path
+        self.client_request_method = method.upper()
         self.client_response_limited = bool(clients) or path == "/v1/client/leases"
+        self.client_body_limited = bool(clients) or path == "/v1/client/leases"
         try:
             if (masters or clients or path == "/v1/client/leases") and any(
                 name.lower() not in _ADMITTED_HEADERS for name in self.headers.keys()
@@ -337,6 +353,16 @@ class ClientAuthHTTPMixin:
                 client_tokens=clients,
                 peer_host=_peer_host(self),
             )
+            if (
+                clients
+                and method.upper() == "POST"
+                and path == "/v1/turn/stream"
+                and not self._accepts_event_stream()
+            ):
+                raise ClientAuthError(
+                    "invalid_request",
+                    "Desktop turn streams require Accept: text/event-stream.",
+                )
             if clients and method.upper() == "GET":
                 try:
                     content_length = int(self.headers.get("Content-Length", "0"))
@@ -378,19 +404,26 @@ class ClientAuthHTTPMixin:
             self._write_json(resolved_status, response)
             return False
 
+    def _accepts_event_stream(self) -> bool:
+        return "text/event-stream" in str(self.headers.get("Accept", "") or "").lower()
+
     def _bounded_json_response(
         self,
         status: HTTPStatus,
         payload: dict[str, Any],
     ) -> tuple[HTTPStatus, bytes]:
         encoded = _compact_json(payload)
-        if not self.client_response_limited or len(encoded) <= _CLIENT_RESPONSE_LIMIT:
+        response_limit = _client_response_limit(
+            self.client_request_method,
+            self.client_request_path,
+        )
+        if not self.client_response_limited or len(encoded) <= response_limit:
             return status, encoded
         bounded_status, bounded = error_response(
             HTTPStatus.BAD_GATEWAY,
             code="response_too_large",
             message="Authenticated client response exceeded its size limit.",
-            details={"limit_bytes": _CLIENT_RESPONSE_LIMIT},
+            details={"limit_bytes": response_limit},
             retryable=False,
         )
         meta = payload.get("meta")
@@ -403,7 +436,7 @@ class ClientAuthHTTPMixin:
         return bounded_status, _compact_json(bounded)
 
     def _read_optional_json_body(self, *, path: str) -> dict[str, Any]:
-        body_limit = _CLIENT_BODY_LIMITS.get(path)
+        body_limit = _client_body_limit(path) if self.client_body_limited else None
         if body_limit is not None and self.headers.get("Transfer-Encoding"):
             raise ValueError("Chunked client request bodies are not supported.")
         content_length_raw = self.headers.get("Content-Length", "0")
@@ -428,12 +461,9 @@ class ClientAuthHTTPMixin:
             raw_body = self.rfile.read(content_length).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError("Request body must be valid UTF-8.") from exc
-        return cast(
-            dict[str, Any],
-            parse_json_request_body(
-                content_length_raw=content_length_raw,
-                raw_body=raw_body,
-            ),
+        return parse_json_request_body(
+            content_length_raw=content_length_raw,
+            raw_body=raw_body,
         )
 
 
@@ -444,6 +474,53 @@ def _header_values(headers: object, name: str) -> tuple[str, ...]:
     get = getattr(headers, "get", None)
     value = get(name) if callable(get) else None
     return (str(value),) if value is not None else ()
+
+
+def _client_route_capability(method: str, path: str) -> str | None:
+    exact = {
+        ("GET", "/v1/health"): "daemon.health",
+        ("GET", "/v1/ready"): "daemon.ready",
+        ("GET", "/v1/client/capabilities"): "client.capabilities",
+        ("POST", "/v1/client/leases/renew"): "client.lease.renew",
+        ("DELETE", "/v1/client/leases/current"): "client.lease.revoke",
+        ("GET", "/v1/client/sessions"): "sessions.list",
+        ("POST", "/v1/client/sessions"): "sessions.create",
+        ("POST", "/v1/turn/stream"): "turns.submit",
+    }
+    method_name = method.upper()
+    if capability := exact.get((method_name, path)):
+        return capability
+    if _SESSION_EVENTS_PATH.fullmatch(path) and method_name == "GET":
+        return "sessions.events"
+    if _SESSION_PATH.fullmatch(path):
+        return {"GET": "sessions.load", "DELETE": "sessions.close"}.get(method_name)
+    if _TURN_CANCEL_PATH.fullmatch(path) and method_name == "POST":
+        return "turns.cancel"
+    return None
+
+
+def _client_body_limit(path: str) -> int | None:
+    if path in _CLIENT_BODY_LIMITS:
+        return _CLIENT_BODY_LIMITS[path]
+    if path == "/v1/client/sessions":
+        return 32 * 1024
+    if path == "/v1/turn/stream":
+        return 256 * 1024
+    if _SESSION_PATH.fullmatch(path):
+        return 8 * 1024
+    if _TURN_CANCEL_PATH.fullmatch(path):
+        return 16 * 1024
+    return None
+
+
+def _client_response_limit(method: str, path: str) -> int:
+    if method == "GET" and path == "/v1/client/sessions":
+        return 256 * 1024
+    if method == "GET" and _SESSION_PATH.fullmatch(path):
+        return 512 * 1024
+    if method == "GET" and _SESSION_EVENTS_PATH.fullmatch(path):
+        return 1024 * 1024
+    return _DEFAULT_CLIENT_RESPONSE_LIMIT
 
 
 def _peer_host(handler: object) -> str:

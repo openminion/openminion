@@ -45,6 +45,7 @@ class _FakeHandle:
         self._chunks = chunks
         self._result = result
         self._result_exc = result_exc
+        self.cancelled = False
 
     def stream(self, timeout_s: float):  # noqa: ANN001
         del timeout_s
@@ -55,6 +56,10 @@ class _FakeHandle:
         if self._result_exc is not None:
             raise self._result_exc
         return self._result
+
+    def cancel(self) -> bool:
+        self.cancelled = True
+        return True
 
 
 @dataclass
@@ -75,6 +80,22 @@ class _FakeSubmission:
 class _BusyError(RuntimeError):
     code = "SESSION_TURN_BUSY"
     retry_after_s = 7
+
+
+def _desktop_turn_body(**overrides: object) -> dict[str, object]:
+    body: dict[str, object] = {
+        "trace_id": "11111111-1111-4111-8111-111111111111",
+        "session_id": "desktop-session",
+        "agent_id": "openminion",
+        "input_text": "hello",
+        "mode": "oneshot",
+        "stream": True,
+        "channel": "console",
+        "user": "api-user",
+        "idempotency_key": "22222222-2222-4222-8222-222222222222",
+    }
+    body.update(overrides)
+    return body
 
 
 class APIStreamingTransportTests(unittest.TestCase):
@@ -139,6 +160,167 @@ class APIStreamingTransportTests(unittest.TestCase):
         )
         self.assertEqual(observed_status, [200])
         close_submission.assert_called_once()
+
+    def test_desktop_stream_validates_exact_body_and_echoes_identity(self) -> None:
+        rejected: list[tuple[HTTPStatus, dict]] = []
+        with mock.patch(
+            "openminion.api.server.streaming.open_turn_submission"
+        ) as open_submission:
+            handle_turn_stream_request(
+                body=_desktop_turn_body(extra=True),
+                request_id="33333333-3333-4333-8333-333333333333",
+                config_path=None,
+                runtime=None,
+                start_sse_response=lambda: self.fail("SSE should not start"),
+                write_sse_event=lambda **_kwargs: self.fail("SSE should not write"),
+                write_json=lambda status, payload: rejected.append((status, payload)),
+                observe_request_metrics=lambda **_kwargs: 0,
+                log_request_done=lambda **_kwargs: None,
+                perf_counter=lambda: 0.0,
+                desktop_client=True,
+            )
+        open_submission.assert_not_called()
+        self.assertEqual(rejected[0][0], HTTPStatus.BAD_REQUEST)
+        self.assertEqual(rejected[0][1]["error"]["code"], "invalid_request")
+
+        events: list[tuple[str, object]] = []
+        submission = _FakeSubmission(
+            handle=_FakeHandle(chunks=[], result=object()),
+            request=_FakeRequest(
+                session_id="desktop-session",
+                trace_id="11111111-1111-4111-8111-111111111111",
+            ),
+            timeout_s=1.0,
+            session_id="desktop-session",
+            run_id="11111111-1111-4111-8111-111111111111",
+        )
+        with (
+            mock.patch(
+                "openminion.api.server.streaming.open_turn_submission",
+                return_value=submission,
+            ),
+            mock.patch("openminion.api.server.streaming.close_submission"),
+            mock.patch(
+                "openminion.api.server.streaming.turn_response_to_dict",
+                return_value={"final_text": "ok"},
+            ),
+        ):
+            handle_turn_stream_request(
+                body=_desktop_turn_body(),
+                request_id="33333333-3333-4333-8333-333333333333",
+                config_path=None,
+                runtime=None,
+                start_sse_response=lambda: None,
+                write_sse_event=lambda *, event, data: events.append((event, data)),
+                write_json=lambda *_args: self.fail("unexpected JSON response"),
+                observe_request_metrics=lambda **_kwargs: 0,
+                log_request_done=lambda **_kwargs: None,
+                perf_counter=lambda: 0.0,
+                desktop_client=True,
+            )
+        self.assertEqual(events[0][0], "meta")
+        self.assertEqual(
+            events[0][1],
+            {
+                "request_id": "33333333-3333-4333-8333-333333333333",
+                "trace_id": "11111111-1111-4111-8111-111111111111",
+                "session_id": "desktop-session",
+            },
+        )
+
+    def test_desktop_stream_bounds_events_without_changing_legacy_streams(self) -> None:
+        desktop_events: list[tuple[str, object]] = []
+        desktop_handle = _FakeHandle(chunks=[_FakeChunk(1)], result=object())
+        desktop_submission = _FakeSubmission(
+            handle=desktop_handle,
+            request=_FakeRequest(
+                session_id="desktop-session",
+                trace_id="11111111-1111-4111-8111-111111111111",
+            ),
+            timeout_s=1.0,
+            session_id="desktop-session",
+            run_id="11111111-1111-4111-8111-111111111111",
+        )
+        with (
+            mock.patch(
+                "openminion.api.server.streaming.open_turn_submission",
+                return_value=desktop_submission,
+            ),
+            mock.patch("openminion.api.server.streaming.close_submission"),
+            mock.patch(
+                "openminion.api.server.streaming.turn_chunk_to_dict",
+                return_value={"data": "x" * (256 * 1024)},
+            ),
+        ):
+            handle_turn_stream_request(
+                body=_desktop_turn_body(),
+                request_id="33333333-3333-4333-8333-333333333333",
+                config_path=None,
+                runtime=None,
+                start_sse_response=lambda: None,
+                write_sse_event=lambda *, event, data: desktop_events.append(
+                    (event, data)
+                ),
+                write_json=lambda *_args: self.fail("unexpected JSON response"),
+                observe_request_metrics=lambda **_kwargs: 0,
+                log_request_done=lambda **_kwargs: None,
+                perf_counter=lambda: 0.0,
+                desktop_client=True,
+            )
+        self.assertTrue(desktop_handle.cancelled)
+        self.assertEqual(
+            [event for event, _ in desktop_events],
+            ["meta", "error", "done"],
+        )
+        self.assertEqual(
+            desktop_events[1][1]["code"],  # type: ignore[index]
+            "stream_limit_exceeded",
+        )
+
+        legacy_events: list[tuple[str, object]] = []
+        legacy_handle = _FakeHandle(chunks=[_FakeChunk(1)], result=object())
+        legacy_submission = _FakeSubmission(
+            handle=legacy_handle,
+            request=_FakeRequest(session_id="legacy", trace_id="legacy-trace"),
+            timeout_s=1.0,
+            session_id="legacy",
+            run_id="legacy-trace",
+        )
+        with (
+            mock.patch(
+                "openminion.api.server.streaming.open_turn_submission",
+                return_value=legacy_submission,
+            ),
+            mock.patch("openminion.api.server.streaming.close_submission"),
+            mock.patch(
+                "openminion.api.server.streaming.turn_chunk_to_dict",
+                return_value={"data": "x" * (256 * 1024)},
+            ),
+            mock.patch(
+                "openminion.api.server.streaming.turn_response_to_dict",
+                return_value={"final_text": "ok"},
+            ),
+        ):
+            handle_turn_stream_request(
+                body={"message": "legacy"},
+                request_id="legacy-request",
+                config_path=None,
+                runtime=None,
+                start_sse_response=lambda: None,
+                write_sse_event=lambda *, event, data: legacy_events.append(
+                    (event, data)
+                ),
+                write_json=lambda *_args: self.fail("unexpected JSON response"),
+                observe_request_metrics=lambda **_kwargs: 0,
+                log_request_done=lambda **_kwargs: None,
+                perf_counter=lambda: 0.0,
+                desktop_client=False,
+            )
+        self.assertFalse(legacy_handle.cancelled)
+        self.assertEqual(
+            [event for event, _ in legacy_events],
+            ["meta", "chunk", "response", "done"],
+        )
 
     def test_streaming_timeout_emits_error_and_done_error_status(self) -> None:
         events: list[tuple[str, object]] = []
@@ -632,3 +814,37 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
         self.assertEqual(status, HTTPStatus.FORBIDDEN)
         self.assertEqual(payload["error"]["code"], "forbidden")
+
+    def test_desktop_stream_requires_event_stream_accept_header(self) -> None:
+        service = ClientAuthService(
+            master_token="master-token",
+            config_path="config.json",
+            home_root=".",
+            data_root=".openminion",
+            bind_host="127.0.0.1",
+            daemon_version="0.0.9",
+        )
+        lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/turn/stream"
+        handler.headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-OpenMinion-Client-Token": lease["client_token"],
+            "X-Request-ID": "33333333-3333-4333-8333-333333333333",
+        }
+        handler.config_path = None
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        handler.client_address = ("127.0.0.1", 1234)
+        handler.client_auth = service
+        _install_json_body(handler, _desktop_turn_body())
+        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
+        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
+
+        _OpenMinionAPIHandler.do_POST(handler)
+
+        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
+        status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
+        self.assertEqual(status, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(payload["error"]["code"], "invalid_request")

@@ -1,8 +1,10 @@
 """Server-sent-event handling for streaming turn responses."""
 
 import logging
+import json
 from http import HTTPStatus
 from typing import Any, Callable
+from uuid import UUID
 
 from openminion.api.core.turn_execution import (
     TurnSubmission,
@@ -16,6 +18,24 @@ from openminion.api.responses.serialization import (
     normalize_request_id,
 )
 from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response_to_dict
+
+
+_DESKTOP_TURN_KEYS = {
+    "trace_id",
+    "session_id",
+    "agent_id",
+    "input_text",
+    "mode",
+    "stream",
+    "channel",
+    "user",
+    "idempotency_key",
+}
+_DESKTOP_SSE_EVENT_LIMIT = 256 * 1024
+
+
+class _StreamLimitExceeded(RuntimeError):
+    pass
 
 
 def _record_stream_response(
@@ -129,7 +149,15 @@ def _safe_stream_event(
     event: str,
     data: object,
     write_sse_event: Callable[..., None],
+    max_event_bytes: int | None = None,
 ) -> bool:
+    if max_event_bytes is not None:
+        encoded = (
+            f"event: {event}\ndata: "
+            f"{json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        ).encode("utf-8")
+        if len(encoded) > max_event_bytes:
+            raise _StreamLimitExceeded(event)
     try:
         write_sse_event(event=event, data=data)
         return True
@@ -142,6 +170,7 @@ def _emit_stream_chunks(
     submission: TurnSubmission,
     run_id_for_meta: str | None,
     write_sse_event: Callable[..., None],
+    max_event_bytes: int | None = None,
 ) -> bool:
     for chunk in submission.handle.stream(timeout_s=0.25):
         chunk_payload = turn_chunk_to_dict(chunk)
@@ -152,9 +181,40 @@ def _emit_stream_chunks(
             event="chunk",
             data=chunk_payload,
             write_sse_event=write_sse_event,
+            max_event_bytes=max_event_bytes,
         ):
             return False
     return True
+
+
+def _emit_result_error(
+    status: HTTPStatus,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    write_sse_event: Callable[..., None],
+    max_event_bytes: int | None,
+    retry_after_ms: int | None = None,
+    details: dict[str, Any] | None = None,
+) -> tuple[HTTPStatus, dict[str, Any]]:
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+    }
+    if retry_after_ms is not None:
+        error["retry_after_ms"] = retry_after_ms
+    if details is not None:
+        error["details"] = details
+    payload = {"ok": False, "error": error}
+    _safe_stream_event(
+        event="error",
+        data=error,
+        write_sse_event=write_sse_event,
+        max_event_bytes=max_event_bytes,
+    )
+    return status, payload
 
 
 def _collect_stream_result(
@@ -163,87 +223,131 @@ def _collect_stream_result(
     run_id_for_meta: str | None,
     client_disconnected: bool,
     write_sse_event: Callable[..., None],
+    max_event_bytes: int | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
     try:
         turn_response = submission.handle.result(
             timeout_s=max(0.0, float(submission.timeout_s))
         )
     except TimeoutError as exc:
-        payload = {
-            "ok": False,
-            "error": {
-                "code": "turn_timeout",
-                "message": str(exc),
-                "retryable": True,
-            },
-        }
-        _safe_stream_event(
-            event="error",
-            data=payload["error"],
+        return _emit_result_error(
+            HTTPStatus.GATEWAY_TIMEOUT,
+            code="turn_timeout",
+            message=str(exc),
+            retryable=True,
             write_sse_event=write_sse_event,
+            max_event_bytes=max_event_bytes,
         )
-        return HTTPStatus.GATEWAY_TIMEOUT, payload
     except RuntimeError as exc:
         if getattr(exc, "code", "") == "SESSION_TURN_BUSY":
             retry_after_ms = max(1000, int(getattr(exc, "retry_after_s", 1)) * 1000)
-            payload = {
-                "ok": False,
-                "error": {
-                    "code": "SESSION_TURN_BUSY",
-                    "message": str(exc),
-                    "retryable": True,
-                    "retry_after_ms": retry_after_ms,
-                    "details": {"retry_after_s": retry_after_ms // 1000},
-                },
-            }
-            _safe_stream_event(
-                event="error",
-                data=payload["error"],
+            return _emit_result_error(
+                HTTPStatus.CONFLICT,
+                code="SESSION_TURN_BUSY",
+                message=str(exc),
+                retryable=True,
+                retry_after_ms=retry_after_ms,
+                details={"retry_after_s": retry_after_ms // 1000},
                 write_sse_event=write_sse_event,
+                max_event_bytes=max_event_bytes,
             )
-            return HTTPStatus.CONFLICT, payload
-        payload = {
-            "ok": False,
-            "error": {
-                "code": "turn_failed",
-                "message": str(exc),
-                "retryable": False,
-            },
-        }
-        _safe_stream_event(
-            event="error",
-            data=payload["error"],
+        return _emit_result_error(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            code="turn_failed",
+            message=str(exc),
+            retryable=False,
             write_sse_event=write_sse_event,
+            max_event_bytes=max_event_bytes,
         )
-        return HTTPStatus.INTERNAL_SERVER_ERROR, payload
     except Exception as exc:  # noqa: BLE001
-        payload = {
-            "ok": False,
-            "error": {
-                "code": "turn_failed",
-                "message": str(exc),
-                "retryable": False,
-            },
-        }
-        _safe_stream_event(
-            event="error",
-            data=payload["error"],
+        return _emit_result_error(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            code="turn_failed",
+            message=str(exc),
+            retryable=False,
             write_sse_event=write_sse_event,
+            max_event_bytes=max_event_bytes,
         )
-        return HTTPStatus.INTERNAL_SERVER_ERROR, payload
-
     if not client_disconnected:
         response_payload = turn_response_to_dict(turn_response)
         response_payload.setdefault("final_text", "")
         _safe_stream_event(
             event="response",
-            data={
-                "trace_id": run_id_for_meta,
-                **response_payload,
-            },
+            data={"trace_id": run_id_for_meta, **response_payload},
             write_sse_event=write_sse_event,
+            max_event_bytes=max_event_bytes,
         )
     return HTTPStatus.OK, {"ok": True}
+
+
+def _serve_stream_submission(
+    submission: TurnSubmission,
+    *,
+    request_id: str,
+    desktop_client: bool,
+    start_sse_response: Callable[[], None],
+    write_sse_event: Callable[..., None],
+) -> tuple[HTTPStatus, dict[str, Any], str | None, str | None]:
+    session_id = submission.session_id
+    run_id = submission.run_id
+    max_event_bytes = _DESKTOP_SSE_EVENT_LIMIT if desktop_client else None
+    client_disconnected = False
+    try:
+        start_sse_response()
+        try:
+            client_disconnected = not _safe_stream_event(
+                event="meta",
+                data={
+                    "request_id": request_id,
+                    "trace_id": run_id,
+                    "session_id": session_id,
+                },
+                write_sse_event=write_sse_event,
+                max_event_bytes=max_event_bytes,
+            )
+            if not client_disconnected:
+                client_disconnected = not _emit_stream_chunks(
+                    submission=submission,
+                    run_id_for_meta=run_id,
+                    write_sse_event=write_sse_event,
+                    max_event_bytes=max_event_bytes,
+                )
+            status, payload = _collect_stream_result(
+                submission=submission,
+                run_id_for_meta=run_id,
+                client_disconnected=client_disconnected,
+                write_sse_event=write_sse_event,
+                max_event_bytes=max_event_bytes,
+            )
+            _safe_stream_event(
+                event="done",
+                data={"status": "complete" if status == HTTPStatus.OK else "error"},
+                write_sse_event=write_sse_event,
+                max_event_bytes=max_event_bytes,
+            )
+        except _StreamLimitExceeded:
+            submission.handle.cancel()
+            status, payload = _stream_error_payload(
+                HTTPStatus.BAD_GATEWAY,
+                code="stream_limit_exceeded",
+                message="Desktop stream event exceeded its size limit.",
+                retryable=False,
+            )
+            if _safe_stream_event(
+                event="error",
+                data=payload["error"],
+                write_sse_event=write_sse_event,
+                max_event_bytes=max_event_bytes,
+            ):
+                _safe_stream_event(
+                    event="done",
+                    data={"status": "error"},
+                    write_sse_event=write_sse_event,
+                    max_event_bytes=max_event_bytes,
+                )
+    finally:
+        close_submission(submission)
+    return status, payload, session_id, run_id
 
 
 def handle_turn_stream_request(
@@ -258,12 +362,34 @@ def handle_turn_stream_request(
     observe_request_metrics: Callable[..., int],
     log_request_done: Callable[..., None],
     perf_counter: Callable[[], float],
+    desktop_client: bool = False,
 ) -> None:
     resolved_request_id = normalize_request_id(request_id)
     started_at = perf_counter()
     session_id_for_meta: str | None = None
     run_id_for_meta: str | None = None
     logger = logging.getLogger("openminion.api")
+
+    if desktop_client and (message := _validate_desktop_turn_body(body)):
+        validation_status, validation_payload = _stream_error_payload(
+            HTTPStatus.BAD_REQUEST,
+            code="invalid_request",
+            message=message,
+            retryable=False,
+        )
+        _record_stream_response(
+            status=validation_status,
+            payload=validation_payload,
+            resolved_request_id=resolved_request_id,
+            session_id_for_meta=None,
+            run_id_for_meta=None,
+            started_at=started_at,
+            logger=logger,
+            observe_request_metrics=observe_request_metrics,
+            log_request_done=log_request_done,
+            write_json=write_json,
+        )
+        return
 
     submission, error_status, error_payload = _open_stream_submission(
         body=body,
@@ -286,43 +412,18 @@ def handle_turn_stream_request(
         )
         return
 
-    session_id_for_meta = submission.session_id
-    run_id_for_meta = submission.run_id
-    client_disconnected = False
-
-    try:
-        start_sse_response()
-        if not _safe_stream_event(
-            event="meta",
-            data={
-                "request_id": resolved_request_id,
-                "trace_id": run_id_for_meta,
-                "session_id": session_id_for_meta,
-            },
-            write_sse_event=write_sse_event,
-        ):
-            client_disconnected = True
-        if not client_disconnected:
-            client_disconnected = not _emit_stream_chunks(
-                submission=submission,
-                run_id_for_meta=run_id_for_meta,
-                write_sse_event=write_sse_event,
-            )
-        status_for_metrics, payload_for_metrics = _collect_stream_result(
-            submission=submission,
-            run_id_for_meta=run_id_for_meta,
-            client_disconnected=client_disconnected,
-            write_sse_event=write_sse_event,
-        )
-        _safe_stream_event(
-            event="done",
-            data={
-                "status": "complete" if status_for_metrics == HTTPStatus.OK else "error"
-            },
-            write_sse_event=write_sse_event,
-        )
-    finally:
-        close_submission(submission)
+    (
+        status_for_metrics,
+        payload_for_metrics,
+        session_id_for_meta,
+        run_id_for_meta,
+    ) = _serve_stream_submission(
+        submission,
+        request_id=resolved_request_id,
+        desktop_client=desktop_client,
+        start_sse_response=start_sse_response,
+        write_sse_event=write_sse_event,
+    )
 
     _record_stream_response(
         status=status_for_metrics,
@@ -335,6 +436,30 @@ def handle_turn_stream_request(
         observe_request_metrics=observe_request_metrics,
         log_request_done=log_request_done,
     )
+
+
+def _validate_desktop_turn_body(body: dict[str, Any]) -> str | None:
+    if set(body) != _DESKTOP_TURN_KEYS:
+        return "Desktop turn fields do not match the protocol 1 schema."
+    for key in ("trace_id", "session_id", "agent_id", "input_text", "idempotency_key"):
+        value = body.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return f"{key} must be a non-empty string."
+    if body.get("mode") != "oneshot" or body.get("stream") is not True:
+        return "Desktop turns require oneshot streaming mode."
+    if body.get("channel") != "console" or body.get("user") != "api-user":
+        return "Desktop turn channel identity is invalid."
+    for key in ("trace_id", "idempotency_key"):
+        try:
+            UUID(str(body[key]))
+        except ValueError:
+            return f"{key} must be a UUID."
+    encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    if len(encoded) > 256 * 1024:
+        return "Desktop turn body exceeds its size limit."
+    return None
 
 
 __all__ = ["handle_turn_stream_request"]

@@ -59,8 +59,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             self._write_invalid_json("POST", path, request_id, started_at, exc)
             return
 
-        accept_header = (self.headers.get("Accept") or "").lower()
-        if path == "/v1/turn/stream" and "text/event-stream" in accept_header:
+        if path == "/v1/turn/stream" and self._accepts_event_stream():
             self._handle_turn_stream(body=payload, request_id=request_id)
             return
 
@@ -121,6 +120,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             observe_request_metrics=_observe_request_metrics,
             log_request_done=_log_request_done,
             perf_counter=perf_counter,
+            desktop_client=self.client_identity is not None,
         )
 
     def _write_invalid_json(

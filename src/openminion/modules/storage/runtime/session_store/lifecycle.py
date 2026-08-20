@@ -140,6 +140,52 @@ class RuntimeSessionStoreLifecycle:
         )
         return 0 if row is None else int(row["high_water"])
 
+    def event_cursor_exists(self, *, session_id: str, event_id: int) -> bool:
+        if event_id == 0:
+            return True
+        row = self._backend.query_one(
+            "SELECT 1 AS present FROM events WHERE session_id = ? AND id = ?",
+            (session_id, event_id),
+        )
+        return row is not None
+
+    def latest_run_event_for_request(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+    ) -> EventRecord | None:
+        row = self._backend.query_one(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE session_id = ?
+              AND event_type IN (
+                'run.queued', 'run.running', 'run.waiting_tool',
+                'run.responding', 'run.completed', 'run.failed', 'run.cancelled'
+              )
+              AND json_extract(payload_json, '$.request_id') = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (session_id, request_id),
+        )
+        return None if row is None else row_to_event(row)
+
+    def has_cancel_request(self, *, session_id: str, request_id: str) -> bool:
+        row = self._backend.query_one(
+            """
+            SELECT 1 AS present
+            FROM events
+            WHERE session_id = ?
+              AND event_type = 'run.cancel_requested'
+              AND json_extract(payload_json, '$.request_id') = ?
+            LIMIT 1
+            """,
+            (session_id, request_id),
+        )
+        return row is not None
+
     def list_events_after_id(
         self,
         *,

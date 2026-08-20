@@ -307,6 +307,41 @@ class RuntimeSessionStoreSessions:
         )
         return [row_to_session(row) for row in rows]
 
+    def list_client_sessions(
+        self,
+        *,
+        limit: int,
+        before_updated_at: str | None = None,
+        before_session_id: str | None = None,
+    ) -> list[SessionRecord]:
+        safe_limit = max(0, int(limit))
+        if safe_limit == 0:
+            return []
+        clauses = [
+            "channel = ?",
+            "target = ?",
+            "status IN ('active', 'idle', 'paused', 'stale', 'closed')",
+            "(expires_at IS NULL OR expires_at > ?)",
+            "length(id) BETWEEN 1 AND 256",
+            "id GLOB '[A-Za-z0-9]*'",
+            "id NOT GLOB '*[^A-Za-z0-9._:-]*'",
+        ]
+        params: list[object] = ["console", "api-user", utc_now_iso()]
+        if before_updated_at is not None and before_session_id is not None:
+            clauses.append("(updated_at < ? OR (updated_at = ? AND id < ?))")
+            params.extend((before_updated_at, before_updated_at, before_session_id))
+        rows = self._backend.query_dicts(
+            f"""
+            SELECT {SESSION_COLUMNS}
+            FROM sessions
+            WHERE {" AND ".join(clauses)}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            [*params, safe_limit],
+        )
+        return [row_to_session(row) for row in rows]
+
     def delete_session(self, session_id: str) -> bool:
         normalized_session_id = session_id.strip()
         if not normalized_session_id:
