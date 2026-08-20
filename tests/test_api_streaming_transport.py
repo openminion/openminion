@@ -136,6 +136,38 @@ class APIStreamingTransportTests(unittest.TestCase):
             },
         )
 
+    def test_desktop_tool_completion_accepts_nullable_metrics(self) -> None:
+        projected = _desktop_chunk(
+            {
+                "trace_id": "trace-1",
+                "kind": "tool_completed",
+                "ts": "2026-08-20T00:00:00Z",
+                "data": {
+                    "tool_name": "workspace.search",
+                    "call_id": "call-1",
+                    "state": "ok",
+                    "ok": True,
+                },
+            }
+        )
+
+        self.assertEqual(
+            projected,
+            {
+                "trace_id": "trace-1",
+                "kind": "tool_completed",
+                "ts": "2026-08-20T00:00:00Z",
+                "data": {
+                    "tool_name": "workspace.search",
+                    "call_id": "call-1",
+                    "state": "ok",
+                    "ok": True,
+                    "duration_ms": None,
+                    "exit_code": None,
+                },
+            },
+        )
+
     def setUp(self) -> None:
         reset_api_metrics()
 

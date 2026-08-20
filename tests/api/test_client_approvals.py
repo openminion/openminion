@@ -271,6 +271,24 @@ def test_shared_session_close_and_lease_revoke_release_waits(
     assert first[3] == [False]
     assert second[3] == [False]
 
+    events_after_close = len(_sessions.events)
+    assert (
+        coordinator.request(
+            identity,
+            DesktopApprovalRequest(
+                session_id="session-1",
+                trace_id="trace-after-close",
+                tool_name="workspace.search",
+                call_id="call-after-close",
+                argument_keys=("query",),
+                emit_chunk=lambda _chunk: pytest.fail("unexpected live frame"),
+                cancel_event=Event(),
+            ),
+        )
+        is False
+    )
+    assert len(_sessions.events) == events_after_close
+
     third = _start_request(
         coordinator,
         identity,

@@ -236,9 +236,11 @@ def _desktop_chunk(chunk: dict[str, Any]) -> dict[str, Any] | None:
         if (
             None in {tool_name, call_id, state}
             or type(data.get("ok")) is not bool
-            or type(duration_ms) is not int
-            or duration_ms < 0
-            or type(exit_code) is not int
+            or (
+                duration_ms is not None
+                and (type(duration_ms) is not int or duration_ms < 0)
+            )
+            or (exit_code is not None and type(exit_code) is not int)
         ):
             return None
         projected = {

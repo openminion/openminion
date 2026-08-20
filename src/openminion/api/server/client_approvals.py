@@ -67,6 +67,7 @@ class ClientApprovalCoordinator:
         self._tombstones: OrderedDict[tuple[str, str, str, str], _ApprovalRecord] = (
             OrderedDict()
         )
+        self._closed_sessions: set[str] = set()
         self._lock = RLock()
         self._closed = False
 
@@ -85,6 +86,9 @@ class ClientApprovalCoordinator:
             identity
         ):
             return False
+        with self._lock:
+            if self._closed or request.session_id in self._closed_sessions:
+                return False
         now = datetime.now(UTC)
         deadline = now + timedelta(seconds=_APPROVAL_TTL_SECONDS)
         record = _ApprovalRecord(
@@ -104,11 +108,16 @@ class ClientApprovalCoordinator:
             self._purge_tombstones_locked()
             self._active[record.key] = record
             closed = self._closed
+            session_closed = record.session_id in self._closed_sessions
             lease_active = self._client_auth.is_active(identity)
-        if closed or not lease_active:
+        if closed or session_closed or not lease_active:
             self._resolve_automatic(
                 record.key,
-                "interrupted" if closed else "expired",
+                "interrupted"
+                if closed
+                else "cancelled"
+                if session_closed
+                else "expired",
             )
             return False
         try:
@@ -187,6 +196,8 @@ class ClientApprovalCoordinator:
         self._cancel_matching(lambda record: record.client_id == client_id, "cancelled")
 
     def cancel_session(self, session_id: str, _reason: str) -> None:
+        with self._lock:
+            self._closed_sessions.add(session_id)
         self._cancel_matching(
             lambda record: record.session_id == session_id, "cancelled"
         )
