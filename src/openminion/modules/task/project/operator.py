@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openminion.modules.task.autonomy import AutonomyRunStatus
 from openminion.modules.task.runtime.lifecycle import (
+    ProjectCycleClaim,
     TaskLifecycleRecord,
     TaskLifecycleState,
 )
@@ -45,6 +46,16 @@ class ProjectOperatorInboxItem(BaseModel):
     resume_action: ProjectOperatorResumeAction
     resume_hint: str | None = None
     artifact_refs: tuple[str, ...] = ()
+    current_milestone: str | None = None
+    committed_cycle_count: int = Field(default=0, ge=0)
+    remaining_cycle_count: int = Field(default=0, ge=0)
+    progress_refs: tuple[str, ...] = ()
+    verifier_refs: tuple[str, ...] = ()
+    effect_refs: tuple[str, ...] = ()
+    next_wake_job_id: str | None = None
+    claim_owner_id: str | None = None
+    claim_fence_token: int | None = Field(default=None, ge=1)
+    claim_expires_at: str | None = None
 
     @model_validator(mode="after")
     def _waiting_and_blocked_need_resume_hint(self) -> "ProjectOperatorInboxItem":
@@ -63,6 +74,7 @@ def build_project_operator_inbox_item(
     current_step_ref: str | None = None,
     next_resume_action: str | None = None,
     artifact_refs: tuple[str, ...] = (),
+    claim: ProjectCycleClaim | None = None,
 ) -> ProjectOperatorInboxItem:
     state = _operator_state(project_run.status, task_record)
     return ProjectOperatorInboxItem(
@@ -82,6 +94,19 @@ def build_project_operator_inbox_item(
             blocked_reason=project_run.blocked_reason,
         ),
         artifact_refs=artifact_refs,
+        current_milestone=project_run.current_milestone,
+        committed_cycle_count=project_run.committed_cycle_count,
+        remaining_cycle_count=max(
+            0,
+            project_run.cycle_limit - project_run.committed_cycle_count,
+        ),
+        progress_refs=project_run.progress_refs,
+        verifier_refs=project_run.verifier_refs,
+        effect_refs=project_run.effect_refs,
+        next_wake_job_id=project_run.next_wake_job_id,
+        claim_owner_id=claim.owner_id if claim is not None else None,
+        claim_fence_token=claim.fence_token if claim is not None else None,
+        claim_expires_at=claim.expires_at if claim is not None else None,
     )
 
 

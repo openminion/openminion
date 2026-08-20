@@ -1,5 +1,6 @@
 from .checkpoints import (
     build_project_run_projection,
+    commit_project_run_checkpoint,
     find_open_project_worker,
     link_project_run_to_task,
     load_latest_project_checkpoint,
@@ -65,6 +66,8 @@ from .verification import (
     ProjectVerificationClosure,
     ProjectVerificationDomain,
     evaluate_project_verification_closure,
+    run_project_verification_commands,
+    validate_project_verifier,
 )
 
 __all__ = [
@@ -102,12 +105,15 @@ __all__ = [
     "build_project_operator_inbox_item",
     "build_project_policy_state",
     "build_project_run_projection",
+    "commit_project_run_checkpoint",
     "classify_autonomy_loop_condition",
     "consume_project_permission_grant",
     "evaluate_project_budget",
     "evaluate_project_effect_replay",
     "evaluate_project_permission",
     "evaluate_project_verification_closure",
+    "run_project_verification_commands",
+    "validate_project_verifier",
     "find_open_project_worker",
     "issue_project_permission_grant",
     "link_project_run_to_task",

@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import shlex
+import shutil
+import subprocess
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from openminion.modules.task.autonomy import (
+    TestEvidence,
+    TestEvidenceStatus,
+    now_ms,
+)
 
 
 class ProjectVerificationDomain(StrEnum):
@@ -38,6 +48,7 @@ class ProjectDomainVerificationEvidence(BaseModel):
     needs_user_reason: str | None = None
     malformed: bool = False
     prose_only_completion: bool = False
+    verifier_failed: bool = False
 
     @model_validator(mode="after")
     def _require_evidence_refs(self) -> "ProjectDomainVerificationEvidence":
@@ -69,6 +80,13 @@ def evaluate_project_verification_closure(
             domain=contract.domain,
             status=ProjectDomainVerificationStatus.FAILED,
             reason="malformed_or_prose_only_evidence",
+            evidence_refs=evidence.evidence_refs,
+        )
+    if evidence.verifier_failed:
+        return ProjectVerificationClosure(
+            domain=contract.domain,
+            status=ProjectDomainVerificationStatus.FAILED,
+            reason="verifier_failed",
             evidence_refs=evidence.evidence_refs,
         )
     unsupported_reason = (evidence.unsupported_reason or "").strip()
@@ -109,6 +127,92 @@ def evaluate_project_verification_closure(
     )
 
 
+def validate_project_verifier(
+    commands: tuple[str, ...],
+    *,
+    workspace: Path,
+    required: bool,
+) -> None:
+    if not workspace.is_dir():
+        raise ValueError(f"project workspace is not a directory: {workspace}")
+    if required and not commands:
+        raise ValueError("project verification commands are required")
+    for command in commands:
+        try:
+            argv = tuple(shlex.split(command))
+        except ValueError as exc:
+            raise ValueError(
+                f"verification command could not be parsed: {exc}"
+            ) from exc
+        if not argv:
+            raise ValueError("verification command must not be empty")
+        executable = Path(argv[0]).expanduser()
+        if executable.is_absolute() or len(executable.parts) > 1:
+            candidate = (
+                executable if executable.is_absolute() else workspace / executable
+            )
+            if not candidate.is_file():
+                raise ValueError(f"verification executable is unavailable: {argv[0]}")
+        elif shutil.which(argv[0]) is None:
+            raise ValueError(f"verification executable is unavailable: {argv[0]}")
+
+
+def run_project_verification_commands(
+    commands: tuple[str, ...],
+    *,
+    workspace: Path,
+) -> tuple[TestEvidence, ...]:
+    return tuple(
+        _run_project_verification(command, workspace=workspace) for command in commands
+    )
+
+
+def _run_project_verification(command: str, *, workspace: Path) -> TestEvidence:
+    started = now_ms()
+    argv = tuple(shlex.split(command))
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=workspace,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return TestEvidence(
+            command=argv,
+            cwd_ref=str(workspace),
+            started_at_ms=started,
+            ended_at_ms=now_ms(),
+            exit_code=None,
+            status=TestEvidenceStatus.FAILED,
+            summary=f"verification command failed to run: {type(exc).__name__}",
+        )
+    output = str(completed.stdout or "").strip()
+    first_line = next(
+        (line.strip() for line in output.splitlines() if line.strip()), ""
+    )
+    passed = completed.returncode == 0
+    return TestEvidence(
+        command=argv,
+        cwd_ref=str(workspace),
+        started_at_ms=started,
+        ended_at_ms=now_ms(),
+        exit_code=completed.returncode,
+        passed=1 if passed else 0,
+        failed=0 if passed else 1,
+        status=TestEvidenceStatus.PASSED if passed else TestEvidenceStatus.FAILED,
+        summary=first_line
+        or (
+            "verification command passed"
+            if passed
+            else f"verification command failed with exit code {completed.returncode}"
+        ),
+    )
+
+
 __all__ = [
     "ProjectDomainVerificationContract",
     "ProjectDomainVerificationEvidence",
@@ -116,4 +220,6 @@ __all__ = [
     "ProjectVerificationClosure",
     "ProjectVerificationDomain",
     "evaluate_project_verification_closure",
+    "run_project_verification_commands",
+    "validate_project_verifier",
 ]

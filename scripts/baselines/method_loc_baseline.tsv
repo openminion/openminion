@@ -1,5 +1,4 @@
 # path	qualname	loc	reason
-src/openminion/cli/commands/autonomy.py	_execute_or_fail	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/daemon.py	run_server	149	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/context/bridges/session.py	BridgeSessionClient._to_session_slice	150	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/llm/local.py	LocalLLMAdapter.call_structured	215	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

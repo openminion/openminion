@@ -46,6 +46,18 @@ class TaskLifecycleRepositorySchemaMixin:
                 ON task_checkpoints(task_id, created_at DESC, checkpoint_id DESC)
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS project_cycle_claims (
+                    task_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    fence_token INTEGER NOT NULL,
+                    expected_checkpoint_id TEXT,
+                    expires_at TEXT NOT NULL,
+                    FOREIGN KEY(task_id) REFERENCES scheduled_tasks(task_id)
+                )
+                """
+            )
             columns = {
                 str(row[1])
                 for row in self._conn.execute("PRAGMA table_info(scheduled_tasks)")

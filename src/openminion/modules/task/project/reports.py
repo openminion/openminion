@@ -11,7 +11,7 @@ from openminion.modules.task.project import (
     load_latest_project_checkpoint,
 )
 from openminion.modules.task.project.capabilities import ProjectCapabilityMatrix
-from openminion.modules.task.runtime.lifecycle import TaskManager
+from openminion.modules.task.runtime.lifecycle import ProjectCycleClaim, TaskManager
 
 
 class _StrictReportModel(BaseModel):
@@ -68,6 +68,7 @@ class ProjectReport(_StrictReportModel):
     baseline_comparisons: tuple[ProjectMetricComparison, ...] = ()
     capability_matrix: ProjectCapabilityMatrix | None = None
     proof_refs: tuple[str, ...] = ()
+    cycle_claim: ProjectCycleClaim | None = None
     safety_notes: tuple[str, ...] = ()
     ux_notes: tuple[str, ...] = ()
     generated_at_ms: int = Field(default_factory=now_ms, ge=0)
@@ -83,6 +84,7 @@ def build_project_report(
     proof_refs: tuple[str, ...] = (),
     safety_notes: tuple[str, ...] = (),
     ux_notes: tuple[str, ...] = (),
+    cycle_claim: ProjectCycleClaim | None = None,
 ) -> ProjectReport:
     current_metrics = metrics or ProjectMetricSnapshot()
     return ProjectReport(
@@ -95,6 +97,7 @@ def build_project_report(
         ),
         capability_matrix=capability_matrix,
         proof_refs=proof_refs,
+        cycle_claim=cycle_claim,
         safety_notes=safety_notes,
         ux_notes=ux_notes,
     )
@@ -130,6 +133,7 @@ def build_project_report_from_task(
         checkpoint.project_run,
         metrics=metrics,
         proof_refs=proof_refs,
+        cycle_claim=task_manager.lifecycle_repository.get_project_cycle_claim(task_id),
     )
 
 
@@ -187,6 +191,13 @@ def render_project_report(report: ProjectReport) -> str:
     if report.proof_refs:
         lines.append("proof_refs:")
         lines.extend(f"  - {ref}" for ref in report.proof_refs)
+    if report.cycle_claim is not None:
+        lines.append(
+            "cycle_claim: "
+            f"owner={report.cycle_claim.owner_id} "
+            f"fence={report.cycle_claim.fence_token} "
+            f"expires={report.cycle_claim.expires_at}"
+        )
     if report.safety_notes:
         lines.append("safety_notes:")
         lines.extend(f"  - {note}" for note in report.safety_notes)

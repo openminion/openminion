@@ -1,0 +1,23 @@
+{
+  "corpus_date": "2026-08-15",
+  "sources": [
+    {
+      "source_id": "source-alpha",
+      "date": "2026-08-10",
+      "available": true,
+      "claim": "The service supports bounded local execution."
+    },
+    {
+      "source_id": "source-beta",
+      "date": "2026-08-11",
+      "available": true,
+      "claim": "The service does not support bounded local execution."
+    },
+    {
+      "source_id": "source-gamma",
+      "date": "2026-08-12",
+      "available": false,
+      "claim": null
+    }
+  ]
+}

@@ -119,6 +119,23 @@ class TaskLifecycleRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ProjectCycleClaim:
+    task_id: str
+    owner_id: str
+    fence_token: int
+    expected_checkpoint_id: str | None
+    expires_at: str
+
+
+class ProjectCycleClaimUnavailable(RuntimeError):
+    """Raised when another live project cycle owns the expected checkpoint."""
+
+
+class StaleProjectCycleClaim(RuntimeError):
+    """Raised when a project cycle no longer has checkpoint commit authority."""
+
+
 def _new_task_id() -> str:
     return str(uuid.uuid4())
 
@@ -150,6 +167,9 @@ class _NullCronRepository:
 
 
 __all__ = [
+    "ProjectCycleClaim",
+    "ProjectCycleClaimUnavailable",
+    "StaleProjectCycleClaim",
     "TaskCronStoreProtocol",
     "TaskLifecycleRecord",
     "TaskLifecycleState",

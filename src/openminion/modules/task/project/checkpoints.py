@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from openminion.modules.task.autonomy import AutonomyRun, now_ms
 from openminion.modules.task.runtime.lifecycle import (
+    ProjectCycleClaim,
     TaskLifecycleRecord,
     TaskLifecycleState,
     TaskManager,
@@ -63,6 +64,8 @@ def build_project_run_projection(
         capability_plan_ref=capability_plan_ref,
         metrics_summary_ref=metrics_summary_ref,
         workspace_ref=workspace_ref,
+        session_id=autonomy_run.session_id,
+        execution_selectors=autonomy_run.execution_selectors,
         status=autonomy_run.status,
         phase=autonomy_run.phase,
         created_at_ms=autonomy_run.created_at_ms,
@@ -73,6 +76,7 @@ def build_project_run_projection(
         or (autonomy_run.last_error.message if autonomy_run.last_error else None),
         verification_state=verification_state,
         task_state=task_record.state if task_record is not None else None,
+        cycle_limit=autonomy_run.continuation_policy.max_iterations,
     )
 
 
@@ -153,6 +157,35 @@ def save_project_run_checkpoint(
         checkpoint_id,
         checkpoint.model_dump(mode="json"),
     )
+    return checkpoint
+
+
+def commit_project_run_checkpoint(
+    task_manager: TaskManager,
+    project_run: ProjectRun,
+    *,
+    claim: ProjectCycleClaim,
+    checkpoint_id: str,
+    payload: dict[str, object] | None = None,
+    triggering_cron_job_id: str | None = None,
+    next_wake_job_id: str | None = None,
+) -> ProjectCheckpoint:
+    checkpoint = ProjectCheckpoint(
+        checkpoint_id=checkpoint_id,
+        project_run=project_run.model_copy(
+            update={"last_checkpoint_id": checkpoint_id}
+        ),
+        payload=dict(payload or {}),
+        expected_checkpoint_id=claim.expected_checkpoint_id,
+        triggering_cron_job_id=triggering_cron_job_id,
+        next_wake_job_id=next_wake_job_id,
+    )
+    task_manager.lifecycle_repository.commit_project_cycle_checkpoint(
+        claim,
+        checkpoint_id=checkpoint_id,
+        state=checkpoint.model_dump(mode="json"),
+    )
+    link_project_run_to_task(task_manager, checkpoint.project_run)
     return checkpoint
 
 
@@ -254,6 +287,7 @@ def replay_project_cycles(
 
 __all__ = [
     "build_project_run_projection",
+    "commit_project_run_checkpoint",
     "find_open_project_worker",
     "link_project_run_to_task",
     "load_latest_project_checkpoint",

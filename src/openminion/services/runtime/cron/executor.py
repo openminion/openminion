@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from openminion.base.config.core import resolve_default_agent_id
@@ -24,6 +25,20 @@ from openminion.modules.task.cron_payloads import (
     watch_terminal_state,
 )
 from openminion.modules.task.watch_execution import execute_watch_check_turn
+from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
+from openminion.modules.task import (
+    AutonomyRunStore,
+    ProjectCycleDecision,
+    TaskLifecycleRepository,
+    TaskManager,
+)
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
+from openminion.modules.task.project import run_project_verification_commands
+from openminion.services.runtime.project_worker import (
+    ProjectWorker,
+    ProjectWorkerResult,
+    project_turn_from_payload,
+)
 from openminion.tools.task.constants import (
     CONSOLIDATION_PAYLOAD_KEY,
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -78,6 +93,8 @@ class CronTurnExecutor:
             payload = {}
         if payload.get("kind") == "agentIdleTick":
             return self._execute_idle_tick_turn(job=job, run=run, payload=payload)
+        if payload.get("kind") == "projectCycle":
+            return self._execute_project_cycle(job=job, run=run, payload=payload)
         watch = self._watch_metadata(payload)
         if watch is not None:
             routine = self._routine_dispatcher.routine_for(payload)
@@ -94,6 +111,159 @@ class CronTurnExecutor:
             )
 
         return self._execute_agent_turn(job=job, run=run, payload=payload)
+
+    def _execute_project_cycle(
+        self,
+        *,
+        job: dict[str, Any],
+        run: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        run_id = str(payload.get("run_id") or "").strip()
+        task_id = str(payload.get("task_id") or "").strip()
+        if not run_id or not task_id:
+            return {"summary": "project cycle missing run_id or task_id", "error": True}
+        worker, task_manager = self._project_worker(
+            job=job,
+            run=run,
+            payload=payload,
+            run_id=run_id,
+        )
+        try:
+            result = worker.run_cycle(
+                run_id,
+                triggering_cron_job_id=str(job.get("job_id") or "").strip() or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - cron execution boundary
+            return {
+                "summary": f"Project cycle failed: {type(exc).__name__}: {exc}",
+                "error": True,
+            }
+        next_job_id = self._record_project_wake(
+            result,
+            payload=payload,
+            task_manager=task_manager,
+        )
+        return {
+            "summary": result.run.operator_summary or "Project cycle completed.",
+            "metadata": {
+                "autonomy_run_id": run_id,
+                "project_run_id": result.project_run.project_run_id,
+                "task_id": task_id,
+                "checkpoint_id": result.project_run.last_checkpoint_id,
+                "decision": result.decision.value,
+                "next_wake_job_id": next_job_id,
+                "reconciled_only": result.reconciled_only,
+            },
+        }
+
+    def _project_worker(
+        self,
+        *,
+        job: dict[str, Any],
+        run: dict[str, Any],
+        payload: dict[str, Any],
+        run_id: str,
+    ) -> tuple[ProjectWorker, TaskManager]:
+        autonomy_store = AutonomyRunStore()
+        autonomy_run = autonomy_store.require(run_id)
+        runtime_env = getattr(self._runtime.config.runtime, "env", None)
+        raw_home_root = str(getattr(self._runtime, "home_root", "") or "").strip()
+        home_root = resolve_module_home_root(
+            Path(raw_home_root) if raw_home_root else None,
+            runtime_env,
+            fallback_to_cwd=True,
+        )
+        data_root = resolve_module_data_root(home_root=home_root, env=runtime_env)
+        assert data_root is not None
+        task_db = (data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+        task_manager = TaskManager(
+            cron_repository=self._cron_store,
+            lifecycle_repository=TaskLifecycleRepository(db_path=task_db),
+        )
+        workspace = self._project_workspace(autonomy_run.workspace_ref)
+        worker = ProjectWorker(
+            task_manager=task_manager,
+            autonomy_store=autonomy_store,
+            turn=lambda request: project_turn_from_payload(
+                request,
+                payload=payload,
+                execute=lambda turn_payload: self._execute_agent_turn(
+                    job=job,
+                    run=run,
+                    payload=turn_payload,
+                ),
+            ),
+            verify=lambda: run_project_verification_commands(
+                autonomy_run.execution_selectors.verification_commands,
+                workspace=workspace,
+            ),
+            owner_id=f"cron:{str(run.get('run_id') or job.get('job_id') or 'project')}",
+        )
+        return worker, task_manager
+
+    def _record_project_wake(
+        self,
+        result: ProjectWorkerResult,
+        *,
+        payload: dict[str, Any],
+        task_manager: TaskManager,
+    ) -> str | None:
+        next_job_id = None
+        if result.decision == ProjectCycleDecision.CONTINUE:
+            next_job_id = self._ensure_project_wake(result.project_run, payload=payload)
+            if next_job_id:
+                task = task_manager.get_task(result.project_run.task_id)
+                if task is not None:
+                    metadata = dict(task.metadata)
+                    metadata["linked_cron_job_id"] = next_job_id
+                    task_manager.update_task_metadata(
+                        task_id=result.project_run.task_id,
+                        metadata=metadata,
+                    )
+        return next_job_id
+
+    def _ensure_project_wake(
+        self,
+        project_run: Any,
+        *,
+        payload: dict[str, Any],
+    ) -> str | None:
+        job_id = str(project_run.next_wake_job_id or "").strip()
+        if not job_id:
+            return None
+        if self._cron_store.get_cron_job(job_id) is not None:
+            return job_id
+        next_payload = dict(payload)
+        next_payload["kind"] = "projectCycle"
+        return str(
+            self._cron_store.add_cron_job(
+                name=f"Project cycle {project_run.autonomy_run_id}",
+                schedule={
+                    "kind": "at",
+                    "at": (
+                        datetime.now(timezone.utc) + timedelta(seconds=1)
+                    ).isoformat(),
+                },
+                payload=next_payload,
+                agent_id=project_run.execution_selectors.agent_id,
+                session_target="isolated",
+                delivery={"mode": "none"},
+                delete_after_run=True,
+                max_concurrency=1,
+                job_id=job_id,
+            )
+        )
+
+    @staticmethod
+    def _project_workspace(workspace_ref: str | None) -> Path:
+        if not workspace_ref or not workspace_ref.startswith("local:"):
+            raise ValueError("project cycle requires a local workspace reference")
+        raw_path = workspace_ref.removeprefix("local:").split("#", 1)[0]
+        workspace = Path(raw_path).expanduser().resolve(strict=False)
+        if not workspace.is_dir():
+            raise ValueError(f"project workspace is unavailable: {workspace}")
+        return workspace
 
     def _execute_watch_turn(
         self,

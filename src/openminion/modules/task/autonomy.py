@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 import time
 from enum import StrEnum
 from pathlib import Path
@@ -61,6 +63,26 @@ class ContinuationPolicy(_StrictAutonomyModel):
     permission_profile_id: str = "local-safe"
 
 
+VerificationDomain = Literal[
+    "coding",
+    "research",
+    "operations",
+    "cross_application",
+]
+
+
+class AutonomyExecutionSelectors(_StrictAutonomyModel):
+    agent_id: str = "default"
+    config_ref: str | None = None
+    default_act_profile: str | None = None
+    verification_domain: VerificationDomain = "cross_application"
+    verifier_ref: str = "command"
+    verification_commands: tuple[str, ...] = ()
+    verification_waiver_reason: str | None = None
+    required_evidence_kinds: tuple[str, ...] = ("verification",)
+    budget_policy_id: str = "continuation"
+
+
 class AutonomyRunError(_StrictAutonomyModel):
     code: str
     message: str
@@ -78,6 +100,9 @@ class AutonomyRun(_StrictAutonomyModel):
     status: AutonomyRunStatus = AutonomyRunStatus.QUEUED
     phase: AutonomyRunPhase = AutonomyRunPhase.INTAKE
     continuation_policy: ContinuationPolicy = Field(default_factory=ContinuationPolicy)
+    execution_selectors: AutonomyExecutionSelectors = Field(
+        default_factory=AutonomyExecutionSelectors
+    )
     permission_profile_id: str = "local-safe"
     proof_packet_ref: str | None = None
     last_error: AutonomyRunError | None = None
@@ -229,6 +254,14 @@ def build_autonomy_run(
     workspace_ref: str | None,
     max_iterations: int,
     permission_profile_id: str = "local-safe",
+    agent_id: str = "default",
+    config_ref: str | None = None,
+    default_act_profile: str | None = None,
+    verification_domain: VerificationDomain = "cross_application",
+    verifier_ref: str = "command",
+    verification_commands: tuple[str, ...] = (),
+    verification_waiver_reason: str | None = None,
+    required_evidence_kinds: tuple[str, ...] = ("verification",),
 ) -> AutonomyRun:
     timestamp = now_ms()
     policy = ContinuationPolicy(
@@ -242,6 +275,16 @@ def build_autonomy_run(
         session_id=session_id,
         workspace_ref=workspace_ref,
         continuation_policy=policy,
+        execution_selectors=AutonomyExecutionSelectors(
+            agent_id=agent_id,
+            config_ref=config_ref,
+            default_act_profile=default_act_profile,
+            verification_domain=verification_domain,
+            verifier_ref=verifier_ref,
+            verification_commands=verification_commands,
+            verification_waiver_reason=verification_waiver_reason,
+            required_evidence_kinds=required_evidence_kinds,
+        ),
         permission_profile_id=permission_profile_id,
         created_at_ms=timestamp,
         updated_at_ms=timestamp,
@@ -266,7 +309,7 @@ class AutonomyRunStore:
 
     def save(self, run: AutonomyRun) -> None:
         self.runs_root.mkdir(parents=True, exist_ok=True)
-        self._run_path(run.run_id).write_text(_dump_model(run), encoding="utf-8")
+        _write_text_atomic(self._run_path(run.run_id), _dump_model(run))
 
     def get(self, run_id: str) -> AutonomyRun | None:
         path = self._run_path(run_id)
@@ -327,7 +370,7 @@ class AutonomyRunStore:
     def write_proof_packet(self, packet: AutonomyProofPacket) -> Path:
         self.proof_root.mkdir(parents=True, exist_ok=True)
         path = self.proof_root / f"{packet.run_id}.json"
-        path.write_text(_dump_model(packet), encoding="utf-8")
+        _write_text_atomic(path, _dump_model(packet))
         run = self.require(packet.run_id)
         self.save(run.model_copy(update={"proof_packet_ref": str(path)}))
         return path
@@ -395,6 +438,27 @@ def _dump_model(model: BaseModel) -> str:
     )
 
 
+def _write_text_atomic(path: Path, content: str) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def _git_output(root: Path, *args: str) -> str | None:
     try:
         completed = subprocess.run(
@@ -413,6 +477,7 @@ def _git_output(root: Path, *args: str) -> str | None:
 
 
 __all__ = (
+    "AutonomyExecutionSelectors",
     "AutonomyProofPacket",
     "AutonomyRun",
     "AutonomyRunError",

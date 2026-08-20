@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import shlex
-import subprocess
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from openminion.api.turns import run_turn
 from openminion.base.types import Message
+from openminion.cli.commands.autonomy_project import (
+    apply_resume_overrides,
+    configured_cron_store,
+    initialize_project,
+    persisted_verification_waiver,
+    project_task_manager,
+    resume_project_task,
+    schedule_unattended_project,
+    verifier_preflight_error,
+)
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.task.autonomy import (
@@ -23,7 +31,6 @@ from openminion.modules.task.autonomy import (
     DelegatedRoleEvidence,
     EvidenceStatus,
     TestEvidence,
-    TestEvidenceStatus,
     VerificationWaiver,
     build_autonomy_run,
     build_local_workspace_ref,
@@ -31,19 +38,29 @@ from openminion.modules.task.autonomy import (
     now_ms,
 )
 from openminion.modules.task.project import (
+    AutonomyLoopConditionKind,
     ProjectControlAction,
+    ProjectCycleDecision,
     ProjectOperatorInboxItem,
     apply_project_control,
     build_project_operator_inbox_item,
     load_latest_project_checkpoint,
     render_project_control_result,
     render_project_operator_inbox_item,
+    run_project_verification_commands,
 )
 from openminion.modules.task.project.reports import (
     build_project_report_from_task,
     render_project_report,
 )
-from openminion.modules.task import TaskManager
+from openminion.modules.task import TaskLifecycleState, TaskManager
+from openminion.services.runtime.project_worker import (
+    ProjectTurnRequest,
+    ProjectTurnResult,
+    ProjectWorker,
+    ProjectWorkerResult,
+    project_metadata_refs,
+)
 from openminion.modules.context.budget import (
     ContextBudgetConfig,
     assemble_budgeted_context,
@@ -71,6 +88,8 @@ def run_autonomy(args: argparse.Namespace) -> int:
 def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     goal = _resolve_goal(args)
     workspace = _resolve_workspace(args)
+    verification_commands = tuple(getattr(args, "verify_command", ()) or ())
+    waiver = _verification_waiver(args)
     run = build_autonomy_run(
         goal_text=goal,
         goal_id=_clean(getattr(args, "goal_id", None)) or None,
@@ -79,6 +98,22 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         max_iterations=max(0, int(getattr(args, "max_iterations", 1))),
         permission_profile_id=_clean(getattr(args, "permission_profile", None))
         or "local-safe",
+        agent_id=_clean(getattr(args, "agent", None)) or "default",
+        config_ref=_clean(getattr(args, "config", None)) or None,
+        verification_domain=str(
+            getattr(args, "verification_domain", "cross_application")
+        ),
+        verification_commands=verification_commands,
+        verification_waiver_reason=waiver.reason if waiver is not None else None,
+        required_evidence_kinds=("waiver",)
+        if waiver is not None
+        else ("verification",),
+    )
+    run = run.model_copy(
+        update={
+            "goal_id": run.goal_id or f"goal_{run.run_id}",
+            "task_id": f"task_{run.run_id}",
+        }
     )
     store.create(run)
     if run.continuation_policy.max_iterations < 1:
@@ -102,39 +137,112 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             final_operator_summary="Autonomy run blocked before execution.",
         )
 
+    verifier_error = verifier_preflight_error(
+        run,
+        workspace=workspace,
+        waiver=waiver,
+    )
+    if verifier_error is not None:
+        blocked = store.transition(
+            run.run_id,
+            status=AutonomyRunStatus.BLOCKED,
+            phase=AutonomyRunPhase.CLOSED,
+            operator_summary="Autonomy run blocked before provider execution.",
+            next_action_hint="Resume after configuring an available verifier.",
+            error=verifier_error,
+        )
+        return _write_terminal_output(
+            args,
+            store,
+            blocked,
+            validation_summary="Blocked before provider execution by verifier preflight.",
+            final_operator_summary="Autonomy run blocked by verifier preflight.",
+        )
+
     running = store.transition(
         run.run_id,
         status=AutonomyRunStatus.RUNNING,
         phase=AutonomyRunPhase.EXECUTE,
         operator_summary="Autonomy run started.",
     )
-    completed = _execute_or_fail(args, store, running, goal=goal, workspace=workspace)
-    return _print_run(args, completed)
+    manager = project_task_manager(args)
+    initialize_project(manager, store, running)
+    if bool(getattr(args, "unattended", False)):
+        scheduled = schedule_unattended_project(args, store, manager, running)
+        return _print_run(args, scheduled)
+    result = _execute_project(args, store, manager, running, workspace=workspace)
+    return _print_run(args, result.run)
 
 
 def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     run = store.require(str(args.run_id))
     if run.status in {AutonomyRunStatus.COMPLETED, AutonomyRunStatus.CANCELLED}:
         raise RuntimeError(f"autonomy run cannot be resumed from {run.status}")
+    workspace = _workspace_path_from_ref(run.workspace_ref) or Path.cwd()
+    waiver = _verification_waiver(args)
+    run = apply_resume_overrides(args, store, run, waiver=waiver)
+    verifier_error = verifier_preflight_error(
+        run,
+        workspace=workspace,
+        waiver=waiver,
+    )
+    if verifier_error is not None:
+        blocked = run.model_copy(
+            update={
+                "status": AutonomyRunStatus.BLOCKED,
+                "phase": AutonomyRunPhase.CLOSED,
+                "operator_summary": "Autonomy run blocked before provider execution.",
+                "next_action_hint": "Resume after configuring an available verifier.",
+                "last_error": verifier_error,
+                "updated_at_ms": now_ms(),
+            }
+        )
+        store.save(blocked)
+        return _write_terminal_output(
+            args,
+            store,
+            blocked,
+            validation_summary="Blocked before provider execution by verifier preflight.",
+            final_operator_summary="Autonomy run blocked by verifier preflight.",
+        )
     running = store.transition(
         run.run_id,
         status=AutonomyRunStatus.RUNNING,
         phase=AutonomyRunPhase.EXECUTE,
         operator_summary="Autonomy run resumed.",
     )
-    workspace = _workspace_path_from_ref(running.workspace_ref) or Path.cwd()
-    completed = _execute_or_fail(
-        args,
-        store,
-        running,
-        goal=running.goal_text,
-        workspace=workspace,
-    )
-    return _print_run(args, completed)
+    manager = project_task_manager(args)
+    resume_project_task(manager, store, running)
+    if bool(getattr(args, "unattended", False)):
+        scheduled = schedule_unattended_project(args, store, manager, running)
+        return _print_run(args, scheduled)
+    result = _execute_project(args, store, manager, running, workspace=workspace)
+    return _print_run(args, result.run)
 
 
 def _cancel(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     run = store.require(str(args.run_id))
+    if run.task_id:
+        manager = project_task_manager(args)
+        task = manager.get_task(run.task_id)
+        if task is not None and task.state in {
+            TaskLifecycleState.ACTIVE,
+            TaskLifecycleState.PAUSED,
+        }:
+            linked_job_id = str(task.metadata.get("linked_cron_job_id") or "").strip()
+            manager.transition_task(
+                task_id=run.task_id,
+                to_state=TaskLifecycleState.CANCELLED,
+            )
+            if linked_job_id:
+                cron_store = configured_cron_store(
+                    args,
+                    config_ref=run.execution_selectors.config_ref,
+                )
+                try:
+                    cron_store.delete_cron_job(linked_job_id)
+                finally:
+                    cron_store.close()
     cancelled = store.transition(
         run.run_id,
         status=AutonomyRunStatus.CANCELLED,
@@ -200,177 +308,178 @@ def _show(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     return 0
 
 
-def _execute_or_fail(
+def _execute_project(
     args: argparse.Namespace,
     store: AutonomyRunStore,
+    manager: TaskManager,
     run: AutonomyRun,
     *,
-    goal: str,
     workspace: Path,
-) -> AutonomyRun:
-    started = now_ms()
-    command = _command_evidence(args, workspace=workspace, started_at_ms=started)
+) -> ProjectWorkerResult:
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: _project_turn(args, run=run, request=request),
+        verify=lambda: run_project_verification_commands(
+            run.execution_selectors.verification_commands,
+            workspace=workspace,
+        ),
+    )
+    checkpoint = load_latest_project_checkpoint(manager, task_id=str(run.task_id))
+    committed = checkpoint.project_run.committed_cycle_count if checkpoint else 0
+    remaining = max(1, run.continuation_policy.max_iterations - committed)
     try:
-        delegation_results = _delegated_role_evidence(args)
-        delegation_aggregation = _delegation_aggregation(delegation_results)
-        context_budget = _context_budget_evidence(
-            args,
-            goal=goal,
-            delegation_results=delegation_results,
-        )
-        summary = _synthesize_parent_summary(
-            _execute_goal(args, run=run, goal=goal),
-            delegation_results=delegation_results,
-        )
+        result = worker.run(run.run_id, max_cycles=remaining)
     except Exception as exc:
         failed = store.transition(
             run.run_id,
             status=AutonomyRunStatus.FAILED,
             phase=AutonomyRunPhase.CLOSED,
-            operator_summary="Autonomy run failed.",
-            next_action_hint="Inspect proof packet and resume after fixing the blocker.",
+            operator_summary="Autonomy project failed.",
+            next_action_hint="Inspect the proof packet before resuming.",
             error=AutonomyRunError(
                 code=type(exc).__name__,
                 message=str(exc) or type(exc).__name__,
             ),
         )
-        failed_command = command.model_copy(
-            update={
-                "ended_at_ms": now_ms(),
-                "exit_code": 1,
-                "status": EvidenceStatus.FAILED,
-                "summary": f"autonomy start failed: {type(exc).__name__}",
-            }
-        )
         _write_terminal_proof(
             store,
             failed,
-            validation_summary="Runtime execution failed.",
-            final_operator_summary="Autonomy run failed.",
-            commands_run=(failed_command,),
+            validation_summary="Project worker execution failed.",
+            final_operator_summary="Autonomy project failed.",
         )
-        return store.require(run.run_id)
+        checkpoint = load_latest_project_checkpoint(manager, task_id=str(run.task_id))
+        if checkpoint is None:
+            raise RuntimeError(
+                "project checkpoint missing after worker failure"
+            ) from exc
+        return ProjectWorkerResult(
+            run=store.require(run.run_id),
+            project_run=checkpoint.project_run,
+            decision=ProjectCycleDecision.BLOCKED,
+            verification=(),
+        )
+    return _finalize_project_result(args, store, result)
 
-    verification = _run_verification_commands(args, workspace=workspace)
-    waiver = _verification_waiver(args)
-    if not verification and bool(getattr(args, "require_verification", False)):
-        if waiver is None:
-            blocked = store.transition(
-                run.run_id,
-                status=AutonomyRunStatus.BLOCKED,
-                phase=AutonomyRunPhase.CLOSED,
-                operator_summary="Autonomy run blocked because verification is required.",
-                next_action_hint=(
-                    "Resume with --verify-command or provide an explicit "
-                    "--verification-waiver reason."
-                ),
-                error=AutonomyRunError(
-                    code="VERIFICATION_REQUIRED",
-                    message="verification was required but no verification command ran",
-                ),
-            )
-            blocked_command = command.model_copy(
-                update={
-                    "ended_at_ms": now_ms(),
-                    "exit_code": 0,
-                    "status": EvidenceStatus.SUCCEEDED,
-                    "summary": "autonomy run reached required verification gate",
-                }
-            )
-            _write_terminal_proof(
-                store,
-                blocked,
-                validation_summary="Runtime execution completed, but verification was required.",
-                final_operator_summary="Autonomy run blocked by required verification gate.",
-                commands_run=(blocked_command,),
-            )
-            return store.require(run.run_id)
-    failed_verification = next(
-        (item for item in verification if item.status != TestEvidenceStatus.PASSED),
-        None,
-    )
-    if failed_verification is not None and waiver is None:
-        blocked = store.transition(
-            run.run_id,
-            status=AutonomyRunStatus.BLOCKED,
-            phase=AutonomyRunPhase.CLOSED,
-            operator_summary="Autonomy run blocked by verification failure.",
-            next_action_hint="Fix the failing verification command and resume the run.",
-            error=AutonomyRunError(
-                code="VERIFICATION_FAILED",
-                message=failed_verification.summary,
-            ),
+
+def _project_turn(
+    args: argparse.Namespace,
+    *,
+    run: AutonomyRun,
+    request: ProjectTurnRequest,
+) -> ProjectTurnResult:
+    replay_response = _clean(getattr(args, "replay_response", None))
+    metadata: dict[str, object] = {}
+    if replay_response:
+        summary = replay_response
+    else:
+        response = run_turn(
+            config_path=run.execution_selectors.config_ref,
+            payload={
+                "message": request.prompt,
+                "agent_id": run.execution_selectors.agent_id,
+                "session_id": request.session_id,
+                "channel": "console",
+                "target": "autonomy",
+                "deliver": False,
+                "inbound_metadata": {
+                    "source": "openminion.autonomy.project",
+                    "autonomy_run_id": request.run_id,
+                    "project_run_id": request.project_run_id,
+                    "task_id": request.task_id,
+                    "goal_id": request.goal_id,
+                    "cycle_id": request.cycle_id,
+                },
+            },
         )
-        blocked_command = command.model_copy(
+        summary = (
+            str(response.get("final_text", "") or response.get("body", "")).strip()
+            or "Project cycle completed without visible final text."
+        )
+        raw_metadata = response.get("metadata")
+        if isinstance(raw_metadata, dict):
+            metadata = raw_metadata
+
+    summary = _synthesize_parent_summary(
+        summary,
+        delegation_results=_delegated_role_evidence(args),
+    )
+    evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
+    evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
+    tool_call_count = metadata.get("tool_call_count", 0)
+    return ProjectTurnResult(
+        summary=summary,
+        condition=AutonomyLoopConditionKind(
+            str(metadata.get("project_condition") or "productive")
+        ),
+        evidence_refs=tuple(dict.fromkeys(evidence_refs)),
+        evidence_kinds=tuple(dict.fromkeys(evidence_kinds)),
+        effect_refs=project_metadata_refs(metadata, "effect_refs"),
+        tool_call_count=int(tool_call_count) if isinstance(tool_call_count, int) else 0,
+    )
+
+
+def _finalize_project_result(
+    args: argparse.Namespace,
+    store: AutonomyRunStore,
+    result: ProjectWorkerResult,
+) -> ProjectWorkerResult:
+    run = result.run
+    error = None
+    if result.decision in {
+        ProjectCycleDecision.BLOCKED,
+        ProjectCycleDecision.NEEDS_INPUT,
+    }:
+        reason = result.project_run.blocked_reason or "verification_failed"
+        normalized_reason = reason.upper().replace(":", "_").replace("-", "_")
+        code = (
+            normalized_reason
+            if normalized_reason.startswith("VERIFICATION_")
+            else f"PROJECT_{normalized_reason}"
+        )
+        error = AutonomyRunError(
+            code=code,
+            message=reason,
+        )
+        run = run.model_copy(update={"last_error": error})
+        store.save(run)
+    if result.decision != ProjectCycleDecision.CONTINUE:
+        waiver = _verification_waiver(args) or persisted_verification_waiver(run)
+        delegation_results = _delegated_role_evidence(args)
+        workspace = _workspace_path_from_ref(run.workspace_ref) or Path.cwd()
+        command = _command_evidence(args, workspace=workspace, started_at_ms=now_ms())
+        command = command.model_copy(
             update={
                 "ended_at_ms": now_ms(),
                 "exit_code": 0,
                 "status": EvidenceStatus.SUCCEEDED,
-                "summary": "autonomy run reached verification",
+                "summary": "autonomy project reached terminal verification",
             }
         )
         _write_terminal_proof(
             store,
-            blocked,
-            validation_summary="Runtime execution completed, but verification failed.",
-            final_operator_summary="Autonomy run blocked by verification failure.",
-            commands_run=(blocked_command,),
-            tests_run=verification,
+            run,
+            validation_summary=_validation_summary(result.verification, waiver=waiver),
+            final_operator_summary=run.operator_summary or "Autonomy project closed.",
+            commands_run=(command,),
+            tests_run=result.verification,
+            verification_waiver=waiver,
+            delegation_results=delegation_results,
+            delegation_aggregation=_delegation_aggregation(delegation_results),
+            context_budget=_context_budget_evidence(
+                args,
+                goal=run.goal_text,
+                delegation_results=delegation_results,
+            ),
         )
-        return store.require(run.run_id)
-
-    completed = store.transition(
-        run.run_id,
-        status=AutonomyRunStatus.COMPLETED,
-        phase=AutonomyRunPhase.CLOSED,
-        operator_summary=summary,
-        next_action_hint=None,
+        run = store.require(run.run_id)
+    return ProjectWorkerResult(
+        run=run,
+        project_run=result.project_run,
+        decision=result.decision,
+        verification=result.verification,
+        reconciled_only=result.reconciled_only,
     )
-    succeeded_command = command.model_copy(
-        update={
-            "ended_at_ms": now_ms(),
-            "exit_code": 0,
-            "status": EvidenceStatus.SUCCEEDED,
-            "summary": "autonomy run completed",
-        }
-    )
-    _write_terminal_proof(
-        store,
-        completed,
-        validation_summary=_validation_summary(verification, waiver=waiver),
-        final_operator_summary=summary,
-        commands_run=(succeeded_command,),
-        tests_run=verification,
-        verification_waiver=waiver,
-        delegation_results=delegation_results,
-        delegation_aggregation=delegation_aggregation,
-        context_budget=context_budget,
-    )
-    return store.require(run.run_id)
-
-
-def _execute_goal(args: argparse.Namespace, *, run: AutonomyRun, goal: str) -> str:
-    replay_response = _clean(getattr(args, "replay_response", None))
-    if replay_response:
-        return replay_response
-    turn = run_turn(
-        config_path=getattr(args, "config", None),
-        payload={
-            "message": goal,
-            "agent_id": _clean(getattr(args, "agent", None)) or "default",
-            "session_id": run.session_id,
-            "channel": "console",
-            "target": "autonomy",
-            "deliver": False,
-            "inbound_metadata": {
-                "source": "openminion.autonomy",
-                "autonomy_run_id": run.run_id,
-                "goal_id": run.goal_id or "",
-            },
-        },
-    )
-    final_text = str(turn.get("final_text", "") or turn.get("body", "")).strip()
-    return final_text or "Autonomy run completed without visible final text."
 
 
 def _write_terminal_output(
@@ -540,98 +649,6 @@ def _verification_waiver(args: argparse.Namespace) -> VerificationWaiver | None:
     return VerificationWaiver(reason=reason, recorded_at_ms=now_ms())
 
 
-def _run_verification_commands(
-    args: argparse.Namespace,
-    *,
-    workspace: Path,
-) -> tuple[TestEvidence, ...]:
-    commands = tuple(
-        command
-        for command in getattr(args, "verify_command", ()) or ()
-        if _clean(command)
-    )
-    if not commands:
-        return ()
-    return tuple(
-        _run_verification_command(command, workspace=workspace) for command in commands
-    )
-
-
-def _run_verification_command(command: str, *, workspace: Path) -> TestEvidence:
-    started = now_ms()
-    try:
-        argv = tuple(shlex.split(command))
-    except ValueError as exc:
-        ended = now_ms()
-        return TestEvidence(
-            command=command,
-            cwd_ref=str(workspace),
-            started_at_ms=started,
-            ended_at_ms=ended,
-            exit_code=None,
-            status=TestEvidenceStatus.FAILED,
-            summary=f"verification command could not be parsed: {exc}",
-        )
-    if not argv:
-        ended = now_ms()
-        return TestEvidence(
-            command=command,
-            cwd_ref=str(workspace),
-            started_at_ms=started,
-            ended_at_ms=ended,
-            exit_code=None,
-            status=TestEvidenceStatus.SKIPPED,
-            summary="verification command was empty",
-        )
-    try:
-        completed = subprocess.run(
-            argv,
-            cwd=workspace,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=120,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        ended = now_ms()
-        return TestEvidence(
-            command=argv,
-            cwd_ref=str(workspace),
-            started_at_ms=started,
-            ended_at_ms=ended,
-            exit_code=None,
-            status=TestEvidenceStatus.FAILED,
-            summary=f"verification command failed to run: {type(exc).__name__}",
-        )
-    ended = now_ms()
-    status = (
-        TestEvidenceStatus.PASSED
-        if completed.returncode == 0
-        else TestEvidenceStatus.FAILED
-    )
-    return TestEvidence(
-        command=argv,
-        cwd_ref=str(workspace),
-        started_at_ms=started,
-        ended_at_ms=ended,
-        exit_code=completed.returncode,
-        passed=1 if completed.returncode == 0 else 0,
-        failed=0 if completed.returncode == 0 else 1,
-        status=status,
-        summary=_verification_summary(completed.returncode, completed.stdout),
-    )
-
-
-def _verification_summary(exit_code: int, output: str) -> str:
-    first_line = next(
-        (line.strip() for line in output.splitlines() if line.strip()), ""
-    )
-    if exit_code == 0:
-        return first_line or "verification command passed"
-    return first_line or f"verification command failed with exit code {exit_code}"
-
-
 def _validation_summary(
     verification: tuple[TestEvidence, ...],
     *,
@@ -720,6 +737,7 @@ def _project_operator_inbox(
         checkpoint.project_run,
         task_record=record,
         current_step_ref=current_step_ref,
+        claim=manager.lifecycle_repository.get_project_cycle_claim(task_id),
     )
 
 
@@ -911,6 +929,17 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     start.add_argument("--workspace", default="", help="Local workspace root")
     start.add_argument("--max-iterations", type=int, default=1)
     start.add_argument("--permission-profile", default="local-safe")
+    start.add_argument(
+        "--verification-domain",
+        choices=("coding", "research", "operations", "cross_application"),
+        default="cross_application",
+    )
+    start.add_argument(
+        "--unattended",
+        action="store_true",
+        help="Schedule bounded project cycles through the existing daemon",
+    )
+    start.add_argument("--task-db", default="", help=argparse.SUPPRESS)
     _add_execution_proof_args(start)
     add_json_output_flag(start)
     start.set_defaults(handler=run_autonomy, needs_app=False)
@@ -938,12 +967,21 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     resume = autonomy_sub.add_parser("resume", help="Resume an autonomy run")
     resume.add_argument("run_id")
     resume.add_argument("--agent", default=None, help="Agent id for runtime execution")
+    resume.add_argument("--max-iterations", type=int, default=None)
+    resume.add_argument(
+        "--verification-domain",
+        choices=("coding", "research", "operations", "cross_application"),
+        default=None,
+    )
+    resume.add_argument("--unattended", action="store_true")
+    resume.add_argument("--task-db", default="", help=argparse.SUPPRESS)
     _add_execution_proof_args(resume)
     add_json_output_flag(resume)
     resume.set_defaults(handler=run_autonomy, needs_app=False)
 
     cancel = autonomy_sub.add_parser("cancel", help="Cancel an autonomy run")
     cancel.add_argument("run_id")
+    cancel.add_argument("--task-db", default="", help=argparse.SUPPRESS)
     add_json_output_flag(cancel)
     cancel.set_defaults(handler=run_autonomy, needs_app=False)
     _register_project_commands(autonomy_sub)
