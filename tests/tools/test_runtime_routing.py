@@ -41,13 +41,9 @@ def test_runtime_tool_routing_preserves_gws_family_config() -> None:
     )
 
     assert payload == {
-        "runtime_tools": {
-            "gws": {"gws_path": "/opt/tools/gws", "enabled": True}
-        }
+        "runtime_tools": {"gws": {"gws_path": "/opt/tools/gws", "enabled": True}}
     }
-    context = SimpleNamespace(
-        policy=SimpleNamespace(raw={"context_metadata": payload})
-    )
+    context = SimpleNamespace(policy=SimpleNamespace(raw={"context_metadata": payload}))
     assert resolve_runtime_tool_config(context).gws == {
         "gws_path": "/opt/tools/gws",
         "enabled": True,
