@@ -66,7 +66,9 @@ def test_master_mints_scoped_client_and_revoke_fails_closed(tmp_path: Path) -> N
     )
     assert identity is not None
     assert identity.config_id == service.config_id
+    assert service.is_active(identity) is True
     service.revoke(identity)
+    assert service.is_active(identity) is False
     with pytest.raises(ClientAuthError, match="not authorized"):
         service.authorize(
             method="GET",
@@ -140,6 +142,10 @@ def test_client_wrong_route_and_expired_lease_fail_closed(tmp_path: Path) -> Non
         ("GET", "/v1/client/sessions/session-1/events"),
         ("POST", "/v1/turn/stream"),
         ("POST", "/v1/turn/trace-1/cancel"),
+        (
+            "POST",
+            "/v1/client/sessions/session-1/turns/trace-1/approvals/approval-1",
+        ),
     ],
 )
 def test_client_session_and_turn_routes_are_capability_admitted(
@@ -165,6 +171,8 @@ def test_client_session_and_turn_routes_are_capability_admitted(
         "sessions.events",
         "turns.submit",
         "turns.cancel",
+        "turns.tool_progress",
+        "approvals.decide",
     }.issubset(identity.capabilities)
 
 

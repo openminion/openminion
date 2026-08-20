@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import re
 from http import HTTPStatus
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote
 
-from openminion.api.server.client_auth import ClientAuthError
-
 from .contracts import APIRouteContext, RouteResult, error_route_result
+from .client_approvals import handle_request as handle_client_approval_request
 from .client_sessions import (
     handle_cancel_request,
     handle_request as handle_client_sessions_request,
 )
+
+if TYPE_CHECKING:
+    from openminion.api.server.client_auth import ClientAuthError
 
 
 _TURN_CANCEL_PATH = re.compile(r"/v1/turn/([^/]+)/cancel")
@@ -27,6 +29,15 @@ def handle_request(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
+    approval_result = handle_client_approval_request(
+        ctx,
+        method_name=method_name,
+        path=path,
+        body=body,
+        query=query,
+    )
+    if approval_result is not None:
+        return approval_result
     if (
         ctx.client_identity is not None
         and method_name == "POST"
@@ -65,6 +76,8 @@ def _mint(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult:
+    from openminion.api.server.client_auth import ClientAuthError
+
     if query:
         return _invalid("Query fields are not supported.")
     if ctx.client_auth is None:
@@ -125,6 +138,8 @@ def _renew(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult:
+    from openminion.api.server.client_auth import ClientAuthError
+
     if body or query:
         return _invalid("Lease renewal accepts only an empty JSON body.")
     if ctx.client_auth is None or ctx.client_identity is None:
@@ -142,6 +157,8 @@ def _revoke(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult:
+    from openminion.api.server.client_auth import ClientAuthError
+
     if body or query:
         return _invalid("Lease revocation accepts only an empty JSON body.")
     if ctx.client_auth is None or ctx.client_identity is None:
@@ -150,6 +167,8 @@ def _revoke(
         ctx.client_auth.revoke(ctx.client_identity)
     except ClientAuthError as exc:
         return _auth_error(exc)
+    if ctx.client_approvals is not None:
+        ctx.client_approvals.cancel_client(ctx.client_identity.client_id, "revoked")
     return RouteResult(status=HTTPStatus.OK, payload={"ok": True, "revoked": True})
 
 

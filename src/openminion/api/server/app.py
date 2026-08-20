@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthHTTPMixin, ClientAuthService
+from openminion.api.server.client_approvals import close_approvals, install_approvals
 from openminion.api.server.dispatch import dispatch_request
 from openminion.api.server.observability import (
     finalize_api_response as _finalize_api_response,
@@ -26,6 +27,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
     runtime: APIRuntime | None = None
     runtime_bootstrap_error: str | None = None
     client_auth: ClientAuthService | None = None
+    client_approvals: Any = None
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
@@ -41,8 +43,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
-            client_auth=self.client_auth,
-            client_identity=self.client_identity,
+            **self._client_dispatch_context(),
         )
         self._write_json(status, payload)
 
@@ -73,8 +74,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
-            client_auth=self.client_auth,
-            client_identity=self.client_identity,
+            **self._client_dispatch_context(),
         )
         self._write_json(status, response_payload)
 
@@ -99,8 +99,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             runtime_bootstrap_error=self.runtime_bootstrap_error,
             request_headers=dict(self.headers.items()),
             request_id=request_id,
-            client_auth=self.client_auth,
-            client_identity=self.client_identity,
+            **self._client_dispatch_context(),
         )
         self._write_json(status, response_payload)
 
@@ -121,6 +120,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             log_request_done=_log_request_done,
             perf_counter=perf_counter,
             desktop_client=self.client_identity is not None,
+            desktop_approval_requester=self._approval_requester(),
         )
 
     def _write_invalid_json(
@@ -196,9 +196,11 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(server_address, handler_cls)
         self._runtime = runtime
+        self._client_approvals = install_approvals(handler_cls, runtime)
 
     def server_close(self) -> None:
         try:
+            close_approvals(self._client_approvals)
             if self._runtime is not None:
                 self._runtime.close()
         finally:
@@ -217,9 +219,7 @@ def _start_sse_stream_response(
 
 
 __all__ = [
-    "_OpenMinionAPIHandler",
-    "dispatch_request",
-    "get_api_metrics_consistency_stamp",
-    "get_api_metrics_snapshot",
+    "_OpenMinionAPIHandler", "dispatch_request",
+    "get_api_metrics_consistency_stamp", "get_api_metrics_snapshot",
     "reset_api_metrics",
-]
+]  # fmt: skip

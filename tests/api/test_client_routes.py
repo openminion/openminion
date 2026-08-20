@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -129,6 +130,7 @@ def test_renew_and_revoke_apply_only_to_authenticated_identity(tmp_path: Path) -
     )
     assert renew_status == 200
     assert "client_token" not in renewed["lease"]
+    cancelled: list[tuple[str, str]] = []
     revoke_status, revoked = dispatch_request(
         "DELETE",
         "/v1/client/leases/current",
@@ -136,9 +138,16 @@ def test_renew_and_revoke_apply_only_to_authenticated_identity(tmp_path: Path) -
         body={},
         client_auth=service,
         client_identity=identity,
+        client_approvals=SimpleNamespace(
+            cancel_client=lambda client_id, reason: cancelled.append(
+                (client_id, reason)
+            )
+        ),
     )
     assert revoke_status == 200
     assert revoked["revoked"] is True
+    assert cancelled == [(identity.client_id, "revoked")]
+    assert service.is_active(identity) is False
 
 
 def test_http_server_enforces_master_and_client_tokens_before_dispatch(

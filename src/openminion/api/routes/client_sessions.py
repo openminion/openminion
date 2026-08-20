@@ -8,15 +8,12 @@ from urllib.parse import unquote
 from openminion.api.core.deps import resolve_runtime_manager
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.queries.sessions import (
-    SessionQueryError,
-    cancel_client_turn,
-    close_client_session,
-    create_client_session,
-    list_client_event_page,
-    list_client_session_page,
+    SessionQueryError, cancel_client_turn, close_client_session,
+    create_client_session, list_client_event_page, list_client_session_page,
     load_client_session,
-)
+)  # fmt: skip
 
+from . import client_approvals as approvals
 from .contracts import (
     APIRouteContext,
     RouteResult,
@@ -132,6 +129,7 @@ def _execute(
             session_id=session_id,
             body=body,
             query=query,
+            cancel_pending=approvals.session_cancel_callback(ctx),
         )
     return list_client_event_page(
         **shared,
@@ -140,6 +138,7 @@ def _execute(
         verify_cursor=ctx.client_auth.verify_cursor,
         request_id=ctx.request_id,
         path=path,
+        approval_recovery=approvals.recovery_callback(ctx, session_id),
     )
 
 
@@ -200,6 +199,7 @@ def handle_cancel_request(
             session_id=session_id,
         )
     try:
+        approvals.cancel_trace(ctx, session_id, trace_id)
         try:
             result = cancel_client_turn(
                 manager,

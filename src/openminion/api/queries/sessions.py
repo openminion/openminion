@@ -21,6 +21,7 @@ from openminion.modules.context.trace_inspection import (
     ContextTraceLookupError,
     list_context_traces,
 )
+from openminion.modules.telemetry.events.catalog import DESKTOP_APPROVAL_REQUESTED
 
 
 @dataclass
@@ -49,6 +50,19 @@ _CLIENT_EVENT_FACTS = frozenset(
         "delivery_mode",
         "channel",
         "target",
+        "approval_id",
+        "call_id",
+        "command_id",
+        "tool_name",
+        "decision",
+        "outcome",
+        "requested_at",
+        "expires_at",
+        "resolved_at",
+        "argument_keys_count",
+        "duration_ms",
+        "ok",
+        "summary_status",
     }
 )
 _SESSION_LIST_LIMIT = 100
@@ -118,21 +132,43 @@ def client_message_payload(record: Any) -> dict[str, Any] | None:
     }
 
 
-def client_event_payload(record: Any, *, cursor: str) -> dict[str, Any]:
+def client_event_payload(
+    record: Any,
+    *,
+    cursor: str,
+    approval_recovery: Callable[[str, str, str], str] | None = None,
+) -> dict[str, Any]:
     payload = getattr(record, "payload", {})
     payload = payload if isinstance(payload, dict) else {}
-    facts = {
+    facts: dict[str, Any] = {
         key: value
         for key in _CLIENT_EVENT_FACTS
         if (value := _client_fact(payload.get(key))) is not None
     }
+    if "argument_keys" in payload:
+        facts["argument_keys"] = _client_argument_keys(
+            payload["argument_keys"],
+            expected_count=facts.get("argument_keys_count"),
+        )
+    trace_id = _optional_identifier(payload.get("request_id")) or _optional_identifier(
+        getattr(record, "trace_id", None)
+    )
+    if str(record.event_type) == DESKTOP_APPROVAL_REQUESTED and approval_recovery:
+        approval_id = _optional_identifier(payload.get("approval_id"))
+        expires_at = _optional_identifier(payload.get("expires_at"))
+        if approval_id is None or trace_id is None or expires_at is None:
+            raise SessionQueryError(
+                "Approval recovery facts are invalid.",
+                code="event_invalid",
+            )
+        facts["outcome"] = approval_recovery(trace_id, approval_id, expires_at)
     return {
         "schema_version": 1,
         "event_type": str(record.event_type),
         "cursor": cursor,
         "created_at": str(record.created_at),
         "run_id": _optional_identifier(payload.get("run_id")),
-        "trace_id": _optional_identifier(payload.get("request_id")),
+        "trace_id": trace_id,
         "state": _optional_identifier(payload.get("state")),
         "facts": facts,
     }
@@ -163,6 +199,29 @@ def _client_fact(value: Any) -> str | int | float | bool | None:
     if isinstance(value, float) and math.isfinite(value):
         return value
     return None
+
+
+def _client_argument_keys(value: Any, *, expected_count: Any) -> list[str]:
+    if not isinstance(value, list) or len(value) > 64:
+        raise SessionQueryError(
+            "Approval argument keys are invalid.", code="event_invalid"
+        )
+    if any(
+        not isinstance(item, str) or len(item.encode("utf-8")) > 256 for item in value
+    ):
+        raise SessionQueryError(
+            "Approval argument keys are invalid.", code="event_invalid"
+        )
+    if (
+        type(expected_count) is not int
+        or expected_count != len(value)
+        or value != sorted(set(value))
+        or _compact_size(value) > 8 * 1024
+    ):
+        raise SessionQueryError(
+            "Approval argument keys are invalid.", code="event_invalid"
+        )
+    return list(value)
 
 
 def list_client_session_page(
@@ -381,6 +440,7 @@ def close_client_session(
     body: dict[str, Any] | None,
     query: str | None,
     sign_cursor: CursorSigner,
+    cancel_pending: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     if query:
         raise SessionQueryError("Session close does not accept query fields.")
@@ -388,6 +448,8 @@ def close_client_session(
     if set(payload) - {"reason"}:
         raise SessionQueryError("Session close contains unknown fields.")
     _client_session(runtime, session_id)
+    if cancel_pending is not None:
+        cancel_pending(session_id)
     record = runtime.sessions.close_session(
         session_id=session_id,
         reason=_optional_scalar(payload.get("reason"), "reason") or "desktop_close",
@@ -415,6 +477,7 @@ def list_client_event_page(
     verify_cursor: CursorVerifier,
     request_id: str,
     path: str,
+    approval_recovery: Callable[[str, str, str], str] | None = None,
 ) -> dict[str, Any]:
     fields = _query_fields(query, {"after", "limit"})
     limit = _bounded_int(fields.get("limit"), default=100, maximum=_EVENT_LIMIT)
@@ -444,7 +507,11 @@ def list_client_event_page(
             position=row.id,
             sign_cursor=sign_cursor,
         )
-        event = client_event_payload(row, cursor=candidate_cursor)
+        event = client_event_payload(
+            row,
+            cursor=candidate_cursor,
+            approval_recovery=approval_recovery,
+        )
         if _compact_size(event) > _EVENT_BYTES:
             raise SessionQueryError(
                 "A canonical event exceeds the client event limit.",

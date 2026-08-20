@@ -2,8 +2,34 @@ from __future__ import annotations
 
 from threading import Event
 from time import monotonic, sleep
+from types import SimpleNamespace
 
 from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
+from openminion.services.runtime.daemon import _desktop_approval_callback
+
+
+def test_daemon_adapter_passes_only_argument_keys_to_desktop_requester() -> None:
+    captured: list[object] = []
+    cancel = Event()
+    emitted: list[object] = []
+    request = SimpleNamespace(
+        session_id="session-1",
+        trace_id="trace-1",
+        desktop_approval_requester=lambda value: captured.append(value) or True,
+    )
+    callback = _desktop_approval_callback(request, emitted.append, cancel)
+    assert (
+        callback(
+            "workspace.search",
+            {"query": "secret", "path": "/private"},
+            "call-1",
+        )
+        is True
+    )
+    approval = captured[0]
+    assert approval.argument_keys == ("path", "query")
+    assert approval.cancel_event is cancel
+    assert not hasattr(approval, "arguments")
 
 
 def test_per_agent_fifo_serialization() -> None:

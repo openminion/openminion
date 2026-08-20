@@ -1,11 +1,14 @@
 """Shared turn-submission helpers for API sync and streaming flows."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
 from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response_to_dict
+
+if TYPE_CHECKING:
+    from openminion.services.runtime.manager import DesktopApprovalRequester
 
 
 @dataclass
@@ -31,13 +34,17 @@ def open_turn_submission(
     config_path: str | None,
     runtime: APIRuntime | None,
     body: dict[str, Any],
+    desktop_approval_requester: DesktopApprovalRequester | None = None,
 ) -> TurnSubmission:
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,
         runtime=runtime,
     )
     try:
-        runtime_handle = active_runtime.submit_turn(payload=body)
+        runtime_handle = active_runtime.submit_turn(
+            payload=body,
+            desktop_approval_requester=desktop_approval_requester,
+        )
         return TurnSubmission(
             active_runtime=active_runtime,
             own_runtime=own_runtime,

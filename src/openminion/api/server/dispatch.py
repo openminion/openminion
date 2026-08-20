@@ -25,6 +25,7 @@ from openminion.api.routes import (
 )
 from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
+from openminion.api.server.client_approvals import ClientApprovalCoordinator
 from openminion.api.server.observability import finalize_api_response
 
 
@@ -55,6 +56,7 @@ def dispatch_request(
     request_id: str | None = None,
     client_auth: ClientAuthService | None = None,
     client_identity: ClientIdentity | None = None,
+    client_approvals: ClientApprovalCoordinator | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
     from openminion.api import server
 
@@ -77,6 +79,7 @@ def dispatch_request(
             request_id=resolved_request_id,
             client_auth=client_auth,
             client_identity=client_identity,
+            client_approvals=client_approvals,
         ),
         method_name=method_name,
         path=path,

@@ -7,6 +7,7 @@ from openminion.api.responses.serialization import error_response
 from openminion.api.runtime import APIRuntime
 
 if TYPE_CHECKING:
+    from openminion.api.server.client_approvals import ClientApprovalCoordinator
     from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 
 
@@ -19,6 +20,7 @@ class APIRouteContext:
     request_id: str
     client_auth: ClientAuthService | None = None
     client_identity: ClientIdentity | None = None
+    client_approvals: ClientApprovalCoordinator | None = None
 
 
 @dataclass(frozen=True)

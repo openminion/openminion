@@ -4,7 +4,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from openminion.base.config import combine_run_profile_overrides, resolve_agent_identity
-from openminion.services.runtime.manager import TurnRequest
+from openminion.services.runtime.manager import DesktopApprovalRequester, TurnRequest
 
 from .payloads import (
     apply_inbound_overrides,
@@ -79,6 +79,7 @@ def build_manager_turn_request(
     payload: dict[str, Any],
     *,
     default_agent_id: str,
+    desktop_approval_requester: DesktopApprovalRequester | None = None,
 ) -> TurnRequest:
     trace_id = _optional_text(payload.get("trace_id")) or ""
     agent_id = _optional_text(payload.get("agent_id")) or default_agent_id
@@ -108,6 +109,7 @@ def build_manager_turn_request(
         mode=mode,
         stream=bool(payload.get("stream")),
         meta=_manager_meta_from_payload(payload),
+        desktop_approval_requester=desktop_approval_requester,
     )
 
 

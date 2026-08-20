@@ -4,22 +4,19 @@ from datetime import datetime, timezone
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
 from time import monotonic
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, NamedTuple
 from uuid import uuid4
 
 from openminion.modules.brain.diagnostics.status import phase_status_from_runtime
 from openminion.base.runtime.constants import (
-    RUNTIME_TURN_STATUS_CANCELLED,
-    RUNTIME_TURN_STATUS_COMPLETED,
-    RUNTIME_TURN_STATUS_ERROR,
-    RUNTIME_TURN_STATUS_FAILED,
+    RUNTIME_TURN_STATUS_CANCELLED, RUNTIME_TURN_STATUS_COMPLETED,
+    RUNTIME_TURN_STATUS_ERROR, RUNTIME_TURN_STATUS_FAILED,
     RUNTIME_TURN_STATUS_STARTED,
-)
+)  # fmt: skip
 from openminion.base.runtime.interfaces import RUNTIME_INTERFACE_VERSION
 from openminion.modules.telemetry.lifecycle import (
-    build_agent_runtime_component_identity,
-    build_runtime_manager_component_identity,
-)
+    build_agent_runtime_component_identity, build_runtime_manager_component_identity,
+)  # fmt: skip
 from .events import emit_runtime_operation
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
@@ -74,6 +71,19 @@ class TurnChunk:
     ts: str = field(default_factory=_utc_now_iso)
 
 
+class DesktopApprovalRequest(NamedTuple):
+    session_id: str
+    trace_id: str
+    tool_name: str
+    call_id: str
+    argument_keys: tuple[str, ...]
+    emit_chunk: Callable[[TurnChunk], None]
+    cancel_event: Event
+
+
+DesktopApprovalRequester = Callable[[DesktopApprovalRequest], bool]
+
+
 @dataclass(frozen=True)
 class TurnRequest:
     trace_id: str
@@ -84,6 +94,7 @@ class TurnRequest:
     mode: str = "oneshot"
     stream: bool = False
     meta: dict[str, Any] = field(default_factory=dict)
+    desktop_approval_requester: DesktopApprovalRequester | None = None
 
 
 @dataclass(frozen=True)
@@ -303,11 +314,10 @@ class AgentRuntimeManager:
             reason="manager_started",
             status="ok",
             metrics={
-                "max_agents_hot": self._max_agents_hot,
-                "max_global_concurrency": self._max_global_concurrency,
+                "max_agents_hot": self._max_agents_hot, "max_global_concurrency": self._max_global_concurrency,
                 "sweep_interval_seconds": self._sweep_interval_seconds,
             },
-        )
+        )  # fmt: skip
 
     def shutdown(self, grace_s: float = 10) -> None:
         with self._lock:
@@ -348,11 +358,8 @@ class AgentRuntimeManager:
             component=self._runtime_manager_component(),
             reason="manual_stop",
             status="ok",
-            metrics={
-                "active_traces": active_trace_count,
-                "active_agents": active_agent_count,
-            },
-        )
+            metrics={"active_traces": active_trace_count, "active_agents": active_agent_count},
+        )  # fmt: skip
 
     def get_or_create_agent(self, agent_id: str) -> AgentHandle:
         normalized_agent_id = str(agent_id or "").strip()
@@ -373,11 +380,10 @@ class AgentRuntimeManager:
                 self._emit(
                     "runtime.agent.created",
                     {
-                        "agent_id": normalized_agent_id,
-                        "created_at": instance.created_at,
+                        "agent_id": normalized_agent_id, "created_at": instance.created_at,
                         "native_lifecycle_emitted": True,
                     },
-                )
+                )  # fmt: skip
                 self._emit_lifecycle(
                     event_type="component.started",
                     component=self._agent_runtime_component(normalized_agent_id),
@@ -422,6 +428,7 @@ class AgentRuntimeManager:
             mode=str(req.mode or "oneshot"),
             stream=bool(req.stream),
             meta=dict(req.meta or {}),
+            desktop_approval_requester=req.desktop_approval_requester,
         )
         if not request.agent_id:
             raise ValueError("agent_id must be non-empty")
@@ -440,12 +447,10 @@ class AgentRuntimeManager:
             self._emit(
                 "runtime.turn.enqueued",
                 {
-                    "trace_id": request.trace_id,
-                    "agent_id": request.agent_id,
-                    "session_id": request.session_id,
-                    "queued_at": _utc_now_iso(),
+                    "trace_id": request.trace_id, "agent_id": request.agent_id,
+                    "session_id": request.session_id, "queued_at": _utc_now_iso(),
                 },
-            )
+            )  # fmt: skip
         return handle
 
     def cancel_turn(self, trace_id: str) -> bool:
@@ -479,11 +484,10 @@ class AgentRuntimeManager:
         self._emit(
             "runtime.manager.kill",
             {
-                "active_traces": len(traces),
-                "at": _utc_now_iso(),
+                "active_traces": len(traces), "at": _utc_now_iso(),
                 "native_lifecycle_emitted": True,
             },
-        )
+        )  # fmt: skip
         self._emit_lifecycle(
             event_type="component.crashed",
             component=self._runtime_manager_component(),
@@ -520,11 +524,10 @@ class AgentRuntimeManager:
             reason="heartbeat",
             status="ok",
             metrics={
-                "active_agents": active_agents,
-                "active_traces": active_traces,
+                "active_agents": active_agents, "active_traces": active_traces,
                 "sweep_interval_seconds": self._sweep_interval_seconds,
             },
-        )
+        )  # fmt: skip
 
     def _evict_over_limit_locked(self) -> None:
         overflow = max(0, len(self._instances) - self._max_agents_hot)
@@ -581,12 +584,10 @@ class AgentRuntimeManager:
         self._emit(
             "runtime.agent.evicted",
             {
-                "agent_id": agent_id,
-                "reason": reason,
-                "at": _utc_now_iso(),
+                "agent_id": agent_id, "reason": reason, "at": _utc_now_iso(),
                 "native_lifecycle_emitted": True,
             },
-        )
+        )  # fmt: skip
         self._emit_lifecycle(
             event_type="component.stopped",
             component=self._agent_runtime_component(agent_id),
@@ -836,19 +837,14 @@ class AgentRuntimeManager:
         self._emit(
             event_type,
             {
-                "component": dict(component),
-                "module_id": "openminion-runtime",
+                "component": dict(component), "module_id": "openminion-runtime",
                 "session_id": f"lifecycle:{component_kind}:{component_id}",
-                "turn_id": (
-                    f"{component_kind}:{component_id}:{event_type.rsplit('.', 1)[-1]}:{self._lifecycle_sequence}"
-                ),
-                "reason": reason,
-                "status": status,
-                "metrics": dict(metrics or {}),
-                "evidence": dict(evidence or {}),
+                "turn_id": f"{component_kind}:{component_id}:{event_type.rsplit('.', 1)[-1]}:{self._lifecycle_sequence}",
+                "reason": reason, "status": status,
+                "metrics": dict(metrics or {}), "evidence": dict(evidence or {}),
                 "source_classification": "native_canonical",
             },
-        )
+        )  # fmt: skip
 
     def _runtime_manager_component(self) -> dict[str, Any]:
         return build_runtime_manager_component_identity()

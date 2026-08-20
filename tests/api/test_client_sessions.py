@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -10,6 +11,10 @@ import pytest
 from tests._csc_fixtures import _csc_install_default_agent
 
 from openminion.api.runtime import APIRuntime
+from openminion.api.queries.sessions import (
+    SessionQueryError,
+    client_event_payload,
+)
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.dispatch import dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
@@ -63,6 +68,7 @@ def _request(
     body: dict[str, Any] | None = None,
     query: str | None = None,
     request_id: str = "desktop-request",
+    client_approvals: Any = None,
 ) -> tuple[int, dict[str, Any]]:
     config_path, runtime, service, identity = client_runtime
     status, payload = dispatch_request(
@@ -74,6 +80,7 @@ def _request(
         runtime=runtime,
         client_auth=service,
         client_identity=identity,
+        client_approvals=client_approvals,
         request_id=request_id,
     )
     return int(status), payload
@@ -91,6 +98,83 @@ def _create(
     )
     assert status == 200
     return payload["session"]
+
+
+def test_approval_event_projection_keeps_only_bounded_recovery_facts() -> None:
+    event = client_event_payload(
+        SimpleNamespace(
+            id=1,
+            event_type="desktop.approval.requested",
+            created_at="2026-08-20T00:00:00Z",
+            trace_id="trace-fallback",
+            payload={
+                "approval_id": "approval-1",
+                "call_id": "call-1",
+                "tool_name": "workspace.search",
+                "argument_keys": ["path", "query"],
+                "argument_keys_count": 2,
+                "requested_at": "2026-08-20T00:00:00Z",
+                "expires_at": "2026-08-20T00:01:00Z",
+                "state": "pending",
+                "args": {"path": "/private", "query": "secret"},
+            },
+        ),
+        cursor="cursor-1",
+        approval_recovery=lambda trace_id, approval_id, expires_at: (
+            "pending"
+            if (trace_id, approval_id, expires_at)
+            == (
+                "trace-fallback",
+                "approval-1",
+                "2026-08-20T00:01:00Z",
+            )
+            else "interrupted"
+        ),
+    )
+    assert event["trace_id"] == "trace-fallback"
+    assert event["facts"] == {
+        "approval_id": "approval-1",
+        "call_id": "call-1",
+        "tool_name": "workspace.search",
+        "argument_keys": ["path", "query"],
+        "argument_keys_count": 2,
+        "requested_at": "2026-08-20T00:00:00Z",
+        "expires_at": "2026-08-20T00:01:00Z",
+        "outcome": "pending",
+    }
+
+    with pytest.raises(SessionQueryError, match="argument keys"):
+        client_event_payload(
+            SimpleNamespace(
+                event_type="desktop.approval.requested",
+                created_at="2026-08-20T00:00:00Z",
+                trace_id="trace-1",
+                payload={
+                    "approval_id": "approval-1",
+                    "argument_keys": [
+                        f"{index:02d}-{'x' * 195}" for index in range(64)
+                    ],
+                    "expires_at": "2026-08-20T00:01:00Z",
+                },
+            ),
+            cursor="cursor-2",
+        )
+
+    with pytest.raises(SessionQueryError, match="argument keys"):
+        client_event_payload(
+            SimpleNamespace(
+                event_type="desktop.approval.requested",
+                created_at="2026-08-20T00:00:00Z",
+                trace_id="trace-1",
+                payload={
+                    "approval_id": "approval-1",
+                    "argument_keys": ["path", "query"],
+                    "argument_keys_count": 1,
+                    "expires_at": "2026-08-20T00:01:00Z",
+                },
+            ),
+            cursor="cursor-3",
+        )
 
 
 def test_client_session_lifecycle_uses_exact_redacted_shapes(
@@ -184,14 +268,21 @@ def test_client_session_lifecycle_uses_exact_redacted_shapes(
     assert completed["facts"] == {"provider": "echo"}
     assert "secret" not in str(events)
 
+    cancelled_sessions: list[tuple[str, str]] = []
     status, closed = _request(
         client_runtime,
         "DELETE",
         f"/v1/client/sessions/{session_id}",
         body={"reason": "done"},
+        client_approvals=SimpleNamespace(
+            cancel_session=lambda supplied_session_id, reason: (
+                cancelled_sessions.append((supplied_session_id, reason))
+            )
+        ),
     )
     assert status == 200
     assert closed["session"]["status"] == "closed"
+    assert cancelled_sessions == [(session_id, "session_closed")]
 
 
 def test_session_and_message_pagination_use_bound_opaque_cursors(
@@ -534,14 +625,30 @@ def test_active_duplicate_mismatch_and_stale_cancellation_are_typed(
         "openminion.api.routes.client_sessions.resolve_runtime_manager",
         lambda **_kwargs: (manager, runtime, False),
     )
+    cancelled_approvals: list[tuple[str, str, str, str]] = []
     status, first = _request(
         client_runtime,
         "POST",
         "/v1/turn/trace-active/cancel",
         body={"session_id": session_id},
+        client_approvals=SimpleNamespace(
+            cancel_trace=lambda client_id, supplied_session_id, trace_id, reason: (
+                cancelled_approvals.append(
+                    (client_id, supplied_session_id, trace_id, reason)
+                )
+            )
+        ),
     )
     assert status == 202
     assert first["cancellation"]["state"] == "requested"
+    assert cancelled_approvals == [
+        (
+            client_runtime[3].client_id,
+            session_id,
+            "trace-active",
+            "cancelled",
+        )
+    ]
     manager.state = "already_requested"
     status, duplicate = _request(
         client_runtime,

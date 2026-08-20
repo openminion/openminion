@@ -37,14 +37,12 @@ from .types import (
 
 if TYPE_CHECKING:
     from openminion.services.runtime.interfaces import RuntimeFacade
+    from openminion.services.runtime.manager import DesktopApprovalRequester
 
 __all__ = [
-    "RuntimeTurnHandle",
-    "RuntimeTurnRequest",
-    "RuntimeTurnResult",
-    "TurnRequestError",
-    "TurnTimeoutError",
-    "_build_turn_context",
+    "RuntimeTurnHandle", "RuntimeTurnRequest",
+    "RuntimeTurnResult", "TurnRequestError",
+    "TurnTimeoutError", "_build_turn_context",
     "_mutable_inbound_metadata",
     "apply_workspace_root",
     "apply_inbound_overrides",
@@ -58,7 +56,7 @@ __all__ = [
     "runtime_turn_request_from_manager_request",
     "runtime_turn_request_from_payload",
     "submit_turn_payload",
-]
+]  # fmt: skip
 
 
 def run_turn_payload(
@@ -102,6 +100,7 @@ def submit_turn_payload(
     *,
     runtime: "RuntimeFacade",
     payload: dict[str, Any],
+    desktop_approval_requester: "DesktopApprovalRequester | None" = None,
 ) -> RuntimeTurnHandle:
     manager = getattr(runtime, "runtime_manager", None)
     if manager is None:
@@ -109,6 +108,7 @@ def submit_turn_payload(
     request = build_manager_turn_request(
         payload,
         default_agent_id=resolve_default_agent_id(runtime.config),
+        desktop_approval_requester=desktop_approval_requester,
     )
     timeout_s = resolve_timeout_seconds(
         payload=payload,

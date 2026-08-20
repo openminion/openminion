@@ -45,6 +45,8 @@ _CLIENT_CAPABILITIES = (
     "sessions.events",
     "turns.submit",
     "turns.cancel",
+    "turns.tool_progress",
+    "approvals.decide",
 )
 _CLIENT_BODY_LIMITS = {
     "/v1/client/leases": 16 * 1024,
@@ -54,6 +56,7 @@ _CLIENT_BODY_LIMITS = {
 _SESSION_PATH = re.compile(r"/v1/client/sessions/[^/]+")
 _SESSION_EVENTS_PATH = re.compile(r"/v1/client/sessions/[^/]+/events")
 _TURN_CANCEL_PATH = re.compile(r"/v1/turn/[^/]+/cancel")
+_APPROVAL_PATH = re.compile(r"/v1/client/sessions/[^/]+/turns/[^/]+/approvals/[^/]+")
 _DEFAULT_CLIENT_RESPONSE_LIMIT = 64 * 1024
 _ADMITTED_HEADERS = frozenset(
     {
@@ -233,6 +236,14 @@ class ClientAuthService:
         with self._lock:
             self._lease_for_identity(identity).revoked = True
 
+    def is_active(self, identity: ClientIdentity) -> bool:
+        with self._lock:
+            try:
+                lease = self._lease_for_identity(identity)
+            except ClientAuthError:
+                return False
+            return lease.identity == identity
+
     def capabilities(self, identity: ClientIdentity) -> dict[str, object]:
         return {
             "protocol_min": PROTOCOL_VERSION,
@@ -323,6 +334,19 @@ class ClientAuthHTTPMixin:
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         raise NotImplementedError
+
+    def _client_dispatch_context(self) -> dict[str, Any]:
+        return {
+            "client_auth": self.client_auth,
+            "client_identity": self.client_identity,
+            "client_approvals": getattr(self, "client_approvals", None),
+        }
+
+    def _approval_requester(self) -> Any:
+        coordinator = getattr(self, "client_approvals", None)
+        if coordinator is None or self.client_identity is None:
+            return None
+        return coordinator.bind(self.client_identity)
 
     def _authenticate_request(
         self,
@@ -508,6 +532,8 @@ def _client_route_capability(method: str, path: str) -> str | None:
         return {"GET": "sessions.load", "DELETE": "sessions.close"}.get(method_name)
     if _TURN_CANCEL_PATH.fullmatch(path) and method_name == "POST":
         return "turns.cancel"
+    if _APPROVAL_PATH.fullmatch(path) and method_name == "POST":
+        return "approvals.decide"
     return None
 
 
@@ -522,6 +548,8 @@ def _client_body_limit(path: str) -> int | None:
         return 8 * 1024
     if _TURN_CANCEL_PATH.fullmatch(path):
         return 16 * 1024
+    if _APPROVAL_PATH.fullmatch(path):
+        return 8 * 1024
     return None
 
 

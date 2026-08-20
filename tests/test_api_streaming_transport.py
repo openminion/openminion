@@ -19,7 +19,7 @@ from openminion.api.server import (
 )
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
-from openminion.api.server.streaming import handle_turn_stream_request
+from openminion.api.server.streaming import _desktop_chunk, handle_turn_stream_request
 from openminion.api.server.client_auth import ClientAuthService
 from openminion.base.version import OPENMINION_VERSION
 
@@ -100,6 +100,42 @@ def _desktop_turn_body(**overrides: object) -> dict[str, object]:
 
 
 class APIStreamingTransportTests(unittest.TestCase):
+    def test_desktop_chunk_projection_drops_raw_tool_values(self) -> None:
+        projected = _desktop_chunk(
+            {
+                "trace_id": "trace-1",
+                "kind": "tool_completed",
+                "ts": "2026-08-20T00:00:00Z",
+                "data": {
+                    "tool_name": "workspace.search",
+                    "call_id": "call-1",
+                    "state": "ok",
+                    "ok": True,
+                    "duration_ms": 12,
+                    "exit_code": 0,
+                    "args": {"path": "/private", "query": "secret"},
+                    "content": "sensitive result",
+                    "runtime_binding_id": "private-binding",
+                },
+            }
+        )
+        self.assertEqual(
+            projected,
+            {
+                "trace_id": "trace-1",
+                "kind": "tool_completed",
+                "ts": "2026-08-20T00:00:00Z",
+                "data": {
+                    "tool_name": "workspace.search",
+                    "call_id": "call-1",
+                    "state": "ok",
+                    "ok": True,
+                    "duration_ms": 12,
+                    "exit_code": 0,
+                },
+            },
+        )
+
     def setUp(self) -> None:
         reset_api_metrics()
 
@@ -252,6 +288,10 @@ class APIStreamingTransportTests(unittest.TestCase):
                 "openminion.api.server.streaming.turn_chunk_to_dict",
                 return_value={"data": "x" * (256 * 1024)},
             ),
+            mock.patch(
+                "openminion.api.server.streaming.turn_response_to_dict",
+                return_value={"final_text": "done"},
+            ),
         ):
             handle_turn_stream_request(
                 body=_desktop_turn_body(),
@@ -268,15 +308,12 @@ class APIStreamingTransportTests(unittest.TestCase):
                 perf_counter=lambda: 0.0,
                 desktop_client=True,
             )
-        self.assertTrue(desktop_handle.cancelled)
+        self.assertFalse(desktop_handle.cancelled)
         self.assertEqual(
             [event for event, _ in desktop_events],
-            ["meta", "error", "done"],
+            ["meta", "response", "done"],
         )
-        self.assertEqual(
-            desktop_events[1][1]["code"],  # type: ignore[index]
-            "stream_limit_exceeded",
-        )
+        self.assertNotIn("x" * 1024, repr(desktop_events))
 
         legacy_events: list[tuple[str, object]] = []
         legacy_handle = _FakeHandle(chunks=[_FakeChunk(1)], result=object())
@@ -821,6 +858,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             request_id="req-json-1",
             client_auth=None,
             client_identity=None,
+            client_approvals=None,
         )
         handler._write_json.assert_called_once_with(HTTPStatus.OK, {"ok": True})  # type: ignore[attr-defined]
 
