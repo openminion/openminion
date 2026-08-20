@@ -50,7 +50,7 @@ Inspect and activate the exact profile in Focus:
 
 ```text
 /tools status
-/tools activate security_readonly approved=yes dependency=binary:semgrep,binary:trivy
+/tools activate security_readonly approved=yes
 ```
 
 Then ask for a bounded local audit, for example:
@@ -66,9 +66,11 @@ Deactivate the profile when the audit ends:
 /tools deactivate security_readonly
 ```
 
-Activation does not prove that binaries or local databases exist. Each tool
-checks its configured scanner at invocation time and returns its observed
-version when available.
+Activation is a policy decision, not proof that binaries or local databases
+exist. `/tools status` checks current executable readiness, and each invocation
+checks its own declared executable again before its handler starts. Legacy
+`dependency=...` activation arguments remain accepted but are not readiness
+evidence.
 
 ## Results and evidence
 

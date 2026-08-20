@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from openminion.base.config.core import resolve_default_agent_id
@@ -17,8 +18,26 @@ from openminion.modules.task.cron_payloads import (
     build_cron_request_payload,
     build_expired_watch_result,
     mark_idle_tick_request,
-    watch_condition_met as is_watch_condition_met,
+    monitoring_delivery_state,
+    persist_watch_progress,
+    watch_condition_value,
+    watch_output,
     watch_terminal_state,
+)
+from openminion.modules.task.watch_execution import execute_watch_check_turn
+from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
+from openminion.modules.task import (
+    AutonomyRunStore,
+    ProjectCycleDecision,
+    TaskLifecycleRepository,
+    TaskManager,
+)
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
+from openminion.modules.task.project import run_project_verification_commands
+from openminion.services.runtime.project_worker import (
+    ProjectWorker,
+    ProjectWorkerResult,
+    project_turn_from_payload,
 )
 from openminion.tools.task.constants import (
     CONSOLIDATION_PAYLOAD_KEY,
@@ -74,6 +93,8 @@ class CronTurnExecutor:
             payload = {}
         if payload.get("kind") == "agentIdleTick":
             return self._execute_idle_tick_turn(job=job, run=run, payload=payload)
+        if payload.get("kind") == "projectCycle":
+            return self._execute_project_cycle(job=job, run=run, payload=payload)
         watch = self._watch_metadata(payload)
         if watch is not None:
             routine = self._routine_dispatcher.routine_for(payload)
@@ -91,6 +112,159 @@ class CronTurnExecutor:
 
         return self._execute_agent_turn(job=job, run=run, payload=payload)
 
+    def _execute_project_cycle(
+        self,
+        *,
+        job: dict[str, Any],
+        run: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        run_id = str(payload.get("run_id") or "").strip()
+        task_id = str(payload.get("task_id") or "").strip()
+        if not run_id or not task_id:
+            return {"summary": "project cycle missing run_id or task_id", "error": True}
+        worker, task_manager = self._project_worker(
+            job=job,
+            run=run,
+            payload=payload,
+            run_id=run_id,
+        )
+        try:
+            result = worker.run_cycle(
+                run_id,
+                triggering_cron_job_id=str(job.get("job_id") or "").strip() or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - cron execution boundary
+            return {
+                "summary": f"Project cycle failed: {type(exc).__name__}: {exc}",
+                "error": True,
+            }
+        next_job_id = self._record_project_wake(
+            result,
+            payload=payload,
+            task_manager=task_manager,
+        )
+        return {
+            "summary": result.run.operator_summary or "Project cycle completed.",
+            "metadata": {
+                "autonomy_run_id": run_id,
+                "project_run_id": result.project_run.project_run_id,
+                "task_id": task_id,
+                "checkpoint_id": result.project_run.last_checkpoint_id,
+                "decision": result.decision.value,
+                "next_wake_job_id": next_job_id,
+                "reconciled_only": result.reconciled_only,
+            },
+        }
+
+    def _project_worker(
+        self,
+        *,
+        job: dict[str, Any],
+        run: dict[str, Any],
+        payload: dict[str, Any],
+        run_id: str,
+    ) -> tuple[ProjectWorker, TaskManager]:
+        autonomy_store = AutonomyRunStore()
+        autonomy_run = autonomy_store.require(run_id)
+        runtime_env = getattr(self._runtime.config.runtime, "env", None)
+        raw_home_root = str(getattr(self._runtime, "home_root", "") or "").strip()
+        home_root = resolve_module_home_root(
+            Path(raw_home_root) if raw_home_root else None,
+            runtime_env,
+            fallback_to_cwd=True,
+        )
+        data_root = resolve_module_data_root(home_root=home_root, env=runtime_env)
+        assert data_root is not None
+        task_db = (data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
+        task_manager = TaskManager(
+            cron_repository=self._cron_store,
+            lifecycle_repository=TaskLifecycleRepository(db_path=task_db),
+        )
+        workspace = self._project_workspace(autonomy_run.workspace_ref)
+        worker = ProjectWorker(
+            task_manager=task_manager,
+            autonomy_store=autonomy_store,
+            turn=lambda request: project_turn_from_payload(
+                request,
+                payload=payload,
+                execute=lambda turn_payload: self._execute_agent_turn(
+                    job=job,
+                    run=run,
+                    payload=turn_payload,
+                ),
+            ),
+            verify=lambda: run_project_verification_commands(
+                autonomy_run.execution_selectors.verification_commands,
+                workspace=workspace,
+            ),
+            owner_id=f"cron:{str(run.get('run_id') or job.get('job_id') or 'project')}",
+        )
+        return worker, task_manager
+
+    def _record_project_wake(
+        self,
+        result: ProjectWorkerResult,
+        *,
+        payload: dict[str, Any],
+        task_manager: TaskManager,
+    ) -> str | None:
+        next_job_id = None
+        if result.decision == ProjectCycleDecision.CONTINUE:
+            next_job_id = self._ensure_project_wake(result.project_run, payload=payload)
+            if next_job_id:
+                task = task_manager.get_task(result.project_run.task_id)
+                if task is not None:
+                    metadata = dict(task.metadata)
+                    metadata["linked_cron_job_id"] = next_job_id
+                    task_manager.update_task_metadata(
+                        task_id=result.project_run.task_id,
+                        metadata=metadata,
+                    )
+        return next_job_id
+
+    def _ensure_project_wake(
+        self,
+        project_run: Any,
+        *,
+        payload: dict[str, Any],
+    ) -> str | None:
+        job_id = str(project_run.next_wake_job_id or "").strip()
+        if not job_id:
+            return None
+        if self._cron_store.get_cron_job(job_id) is not None:
+            return job_id
+        next_payload = dict(payload)
+        next_payload["kind"] = "projectCycle"
+        return str(
+            self._cron_store.add_cron_job(
+                name=f"Project cycle {project_run.autonomy_run_id}",
+                schedule={
+                    "kind": "at",
+                    "at": (
+                        datetime.now(timezone.utc) + timedelta(seconds=1)
+                    ).isoformat(),
+                },
+                payload=next_payload,
+                agent_id=project_run.execution_selectors.agent_id,
+                session_target="isolated",
+                delivery={"mode": "none"},
+                delete_after_run=True,
+                max_concurrency=1,
+                job_id=job_id,
+            )
+        )
+
+    @staticmethod
+    def _project_workspace(workspace_ref: str | None) -> Path:
+        if not workspace_ref or not workspace_ref.startswith("local:"):
+            raise ValueError("project cycle requires a local workspace reference")
+        raw_path = workspace_ref.removeprefix("local:").split("#", 1)[0]
+        workspace = Path(raw_path).expanduser().resolve(strict=False)
+        if not workspace.is_dir():
+            raise ValueError(f"project workspace is unavailable: {workspace}")
+        return workspace
+
     def _execute_watch_turn(
         self,
         *,
@@ -103,16 +277,30 @@ class CronTurnExecutor:
         current_checks = int(watch.get("checks_completed", 0) or 0)
         if expired_precheck:
             return build_expired_watch_result(
-                watch_output=self._watch_output,
+                watch_output=watch_output,
                 watch_terminal_summary=self._watch_terminal_summary,
                 watch=watch,
                 checks_completed=current_checks,
             )
 
-        result = self._execute_agent_turn(job=job, run=run, payload=payload)
+        result = execute_watch_check_turn(
+            runtime=self._runtime,
+            execute_turn=self._execute_agent_turn,
+            job=job,
+            run=run,
+            payload=payload,
+            watch=watch,
+        )
         checks_completed = current_checks + 1
         metadata = dict(result.get("metadata") or {})
-        watch_condition_met = is_watch_condition_met(metadata)
+        condition_value = (
+            None if bool(result.get("error")) else watch_condition_value(metadata)
+        )
+        previous_condition = bool(watch.get("last_condition_met", False))
+        effective_condition = (
+            previous_condition if condition_value is None else condition_value
+        )
+        checked_at = datetime.now(timezone.utc)
         watch_summary = str(metadata.get("watch_summary", "") or "").strip()
         summary = str(result.get("summary", "") or "").strip() or watch_summary
         terminal_state = watch_terminal_state(
@@ -121,13 +309,20 @@ class CronTurnExecutor:
             job=job,
             watch=watch,
             checks_completed=checks_completed,
-            condition_met=watch_condition_met,
+            condition_met=condition_value,
             summary=summary,
         )
         terminal = terminal_state["terminal"]
         deliver = terminal_state["deliver"]
         terminal_reason = str(terminal_state["terminal_reason"])
         summary = str(terminal_state["summary"])
+        deliver, delivery_transition, alert_requested_at = monitoring_delivery_state(
+            watch=watch,
+            condition_value=condition_value,
+            checked_at=checked_at,
+            terminal=terminal,
+            terminal_delivery=deliver,
+        )
         action_executed, action_summary, write_audit_entries, summary = (
             self._maybe_execute_watch_action(
                 job=job,
@@ -139,25 +334,31 @@ class CronTurnExecutor:
             )
         )
 
-        self._persist_watch_progress(
+        persist_watch_progress(
+            cron_store=self._cron_store,
             job=job,
             payload=payload,
             watch=watch,
             checks_completed=checks_completed,
             summary=summary,
-            condition_met=watch_condition_met,
+            condition_met=effective_condition,
+            condition_valid=condition_value is not None,
             terminal_reason=terminal_reason,
+            checked_at=checked_at,
+            alert_requested_at=alert_requested_at,
             write_audit_entries=write_audit_entries
             if bool(watch.get("write_authorized", False))
             else (),
         )
-        output = self._watch_output(
-            condition_met=watch_condition_met,
+        output = watch_output(
+            condition_met=effective_condition,
+            condition_valid=condition_value is not None,
             terminal=terminal,
             deliver=deliver,
             checks_completed=checks_completed,
             terminal_reason=terminal_reason,
             summary=summary,
+            delivery_transition=delivery_transition,
             action_executed=action_executed,
             action_summary=action_summary,
         )
@@ -698,6 +899,12 @@ class CronTurnExecutor:
         watch.setdefault("timeout_seconds", DEFAULT_WATCH_TIMEOUT_SECONDS)
         watch.setdefault("max_iterations", DEFAULT_WATCH_MAX_ITERATIONS)
         watch.setdefault("allowed_tools", list(WATCH_DEFAULT_ALLOWED_TOOLS))
+        watch.setdefault("check_profile_id", None)
+        watch.setdefault("target_id", None)
+        watch.setdefault("stop_on_condition", True)
+        watch.setdefault("delivery_cooldown_minutes", 0)
+        watch.setdefault("deliver_resolution", False)
+        watch.setdefault("last_alert_requested_at", None)
         watch.setdefault("turn_kind", WATCH_TURN_KIND_CHECK)
         watch.setdefault("write_authorized", False)
         watch.setdefault("write_audit", [])
@@ -717,41 +924,6 @@ class CronTurnExecutor:
             or DEFAULT_WATCH_TTL_MINUTES
         )
         return created + timedelta(minutes=ttl_minutes) <= now
-
-    def _persist_watch_progress(
-        self,
-        *,
-        job: dict[str, Any],
-        payload: dict[str, Any],
-        watch: dict[str, Any],
-        checks_completed: int,
-        summary: str,
-        condition_met: bool,
-        terminal_reason: str,
-        write_audit_entries: tuple[dict[str, Any], ...] = (),
-    ) -> None:
-        replacer = getattr(self._cron_store, "replace_cron_job_payload", None)
-        if not callable(replacer):
-            return
-        updated_watch = dict(watch)
-        updated_watch["checks_completed"] = checks_completed
-        updated_watch["last_check_at"] = datetime.now(timezone.utc).isoformat()
-        updated_watch["last_check_summary"] = summary
-        updated_watch["last_condition_met"] = bool(condition_met)
-        updated_watch["last_terminal_reason"] = terminal_reason
-        if write_audit_entries:
-            existing_audit = [
-                item
-                for item in list(updated_watch.get("write_audit", []) or [])
-                if isinstance(item, dict)
-            ]
-            updated_watch["write_audit"] = [*existing_audit, *write_audit_entries]
-        updated_payload = dict(payload)
-        updated_payload[WATCH_PAYLOAD_KEY] = updated_watch
-        try:
-            replacer(str(job.get("job_id", "") or "").strip(), updated_payload)
-        except Exception:
-            return
 
     def _watch_terminal_summary(
         self,
@@ -775,29 +947,6 @@ class CronTurnExecutor:
                 )
             return fallback or "Watch expired after reaching max checks."
         return fallback
-
-    def _watch_output(
-        self,
-        *,
-        condition_met: bool,
-        terminal: bool,
-        deliver: bool,
-        checks_completed: int,
-        terminal_reason: str,
-        summary: str,
-        action_executed: bool = False,
-        action_summary: str = "",
-    ) -> dict[str, Any]:
-        return {
-            "watch_delivery_requested": bool(deliver),
-            "watch_terminal": bool(terminal),
-            "watch_condition_met": bool(condition_met),
-            "watch_checks_completed": int(checks_completed),
-            "watch_terminal_reason": str(terminal_reason or ""),
-            "watch_summary": str(summary or ""),
-            "watch_action_executed": bool(action_executed),
-            "watch_action_summary": str(action_summary or ""),
-        }
 
     def _watch_action_message(
         self,

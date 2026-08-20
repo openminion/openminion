@@ -173,6 +173,7 @@ class ExecutionResources:
             agent_query=getattr(self._runtime, "agent_discovery_snapshot", None),
             telemetryctl=_service_port_telemetryctl(self._service_port),
             ops_service=self._service_port.ops_service,
+            tool_registry=self._service_port.tools,
         )
 
     def build_context_with_overrides(

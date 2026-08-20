@@ -1,4 +1,6 @@
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from sqlite3 import Error as SQLiteError
 from typing import Any
 
 from openminion.tools.task.constants import (
@@ -9,6 +11,7 @@ from openminion.tools.task.constants import (
     DEFAULT_WATCH_MAX_ITERATIONS,
     DEFAULT_WATCH_TIMEOUT_SECONDS,
     WATCH_DEFAULT_ALLOWED_TOOLS,
+    WATCH_PAYLOAD_KEY,
     WATCH_TURN_KIND_ACTION,
     WATCH_TURN_KIND_CHECK,
 )
@@ -36,7 +39,8 @@ def build_expired_watch_result(
     return {
         "summary": summary,
         "output": watch_output(
-            condition_met=False,
+            condition_met=bool(watch.get("last_condition_met", False)),
+            condition_valid=False,
             terminal=True,
             deliver=True,
             checks_completed=checks_completed,
@@ -46,8 +50,131 @@ def build_expired_watch_result(
     }
 
 
+def watch_condition_value(metadata: dict[str, Any]) -> bool | None:
+    value = metadata.get("watch_condition_met")
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
 def watch_condition_met(metadata: dict[str, Any]) -> bool:
-    return str(metadata.get("watch_condition_met", "") or "").strip().lower() == "true"
+    return watch_condition_value(metadata) is True
+
+
+def monitoring_delivery_state(
+    *,
+    watch: dict[str, Any],
+    condition_value: bool | None,
+    checked_at: datetime,
+    terminal: bool,
+    terminal_delivery: bool,
+) -> tuple[bool, str, str | None]:
+    if bool(watch.get("stop_on_condition", True)) or terminal:
+        return terminal_delivery, "", None
+    if condition_value is None:
+        return False, "", None
+    previous_condition = bool(watch.get("last_condition_met", False))
+    if condition_value is False:
+        if previous_condition and bool(watch.get("deliver_resolution", False)):
+            return True, "resolved", checked_at.isoformat()
+        return False, "", None
+    if not previous_condition:
+        return True, "open", checked_at.isoformat()
+
+    cooldown_minutes = max(
+        0,
+        int(watch.get("delivery_cooldown_minutes", 0) or 0),
+    )
+    if cooldown_minutes == 0:
+        return True, "repeat", checked_at.isoformat()
+    last_requested_at = str(watch.get("last_alert_requested_at", "") or "").strip()
+    if not last_requested_at:
+        return True, "repeat", checked_at.isoformat()
+    try:
+        last_requested = datetime.fromisoformat(
+            last_requested_at.replace("Z", "+00:00")
+        )
+    except ValueError:
+        return True, "repeat", checked_at.isoformat()
+    if last_requested.tzinfo is None:
+        last_requested = last_requested.replace(tzinfo=timezone.utc)
+    if checked_at >= last_requested + timedelta(minutes=cooldown_minutes):
+        return True, "repeat", checked_at.isoformat()
+    return False, "", None
+
+
+def persist_watch_progress(
+    *,
+    cron_store: Any,
+    job: dict[str, Any],
+    payload: dict[str, Any],
+    watch: dict[str, Any],
+    checks_completed: int,
+    summary: str,
+    condition_met: bool,
+    condition_valid: bool,
+    terminal_reason: str,
+    checked_at: datetime,
+    alert_requested_at: str | None,
+    write_audit_entries: tuple[dict[str, Any], ...] = (),
+) -> None:
+    replacer = getattr(cron_store, "replace_cron_job_payload", None)
+    if not callable(replacer):
+        return
+    updated_watch = dict(watch)
+    updated_watch["checks_completed"] = checks_completed
+    updated_watch["last_check_at"] = checked_at.isoformat()
+    updated_watch["last_check_summary"] = summary
+    if condition_valid:
+        updated_watch["last_condition_met"] = bool(condition_met)
+    if alert_requested_at is not None:
+        updated_watch["last_alert_requested_at"] = alert_requested_at
+    updated_watch["last_terminal_reason"] = terminal_reason
+    if write_audit_entries:
+        existing_audit = [
+            item
+            for item in list(updated_watch.get("write_audit", []) or [])
+            if isinstance(item, dict)
+        ]
+        updated_watch["write_audit"] = [*existing_audit, *write_audit_entries]
+    updated_payload = dict(payload)
+    updated_payload[WATCH_PAYLOAD_KEY] = updated_watch
+    try:
+        replacer(str(job.get("job_id", "") or "").strip(), updated_payload)
+    except (NotImplementedError, OSError, SQLiteError, ValueError):
+        return
+
+
+def watch_output(
+    *,
+    condition_met: bool,
+    condition_valid: bool = True,
+    terminal: bool,
+    deliver: bool,
+    checks_completed: int,
+    terminal_reason: str,
+    summary: str,
+    delivery_transition: str = "",
+    action_executed: bool = False,
+    action_summary: str = "",
+) -> dict[str, Any]:
+    return {
+        "watch_delivery_requested": bool(deliver),
+        "watch_terminal": bool(terminal),
+        "watch_condition_met": bool(condition_met),
+        "watch_condition_valid": bool(condition_valid),
+        "watch_checks_completed": int(checks_completed),
+        "watch_terminal_reason": str(terminal_reason or ""),
+        "watch_summary": str(summary or ""),
+        "watch_delivery_transition": str(delivery_transition or ""),
+        "watch_action_executed": bool(action_executed),
+        "watch_action_summary": str(action_summary or ""),
+    }
 
 
 def watch_terminal_state(
@@ -57,11 +184,11 @@ def watch_terminal_state(
     job: dict[str, Any],
     watch: dict[str, Any],
     checks_completed: int,
-    condition_met: bool,
+    condition_met: bool | None,
     summary: str,
 ) -> dict[str, Any]:
     terminal_reason = ""
-    deliver = terminal = condition_met
+    deliver = terminal = False
     if checks_completed >= _int_or_default(
         watch.get("max_checks"),
         DEFAULT_WATCH_MAX_CHECKS,
@@ -73,7 +200,9 @@ def watch_terminal_state(
         terminal = True
         deliver = True
         terminal_reason = "ttl_expired"
-    elif condition_met:
+    elif condition_met is True and bool(watch.get("stop_on_condition", True)):
+        terminal = True
+        deliver = True
         terminal_reason = "condition_met"
     if terminal_reason in {"max_checks_reached", "ttl_expired"}:
         summary = watch_terminal_summary(
@@ -224,6 +353,17 @@ def _add_watch_cron_meta(cron_meta: dict[str, str], watch: dict[str, Any]) -> No
     cron_meta["watch_alert_condition"] = str(
         watch.get("alert_condition", "") or ""
     ).strip()
+    for metadata_key, watch_key in (
+        ("watch_profile_id", "check_profile_id"),
+        ("watch_target_id", "target_id"),
+    ):
+        value = str(watch.get(watch_key, "") or "").strip()
+        if value:
+            cron_meta[metadata_key] = value
+    if cron_meta.get("watch_target_id"):
+        cron_meta["target_id"] = cron_meta["watch_target_id"]
+    if cron_meta.get("cron_job_id"):
+        cron_meta["task_id"] = cron_meta["cron_job_id"]
     if watch_turn_kind == WATCH_TURN_KIND_CHECK:
         cron_meta["watch_allowed_tools"] = _watch_allowed_tools_text(watch)
     if watch_turn_kind == WATCH_TURN_KIND_ACTION:

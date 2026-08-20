@@ -12,6 +12,7 @@ from openminion.modules.tool.contracts.manifest import (
     RuntimeBindingDef,
     ToolBindingManifest,
 )
+from openminion.modules.tool.contracts.dependencies import ToolDependencyDecl
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import Scope, ToolRegistry
 from openminion.modules.tool.registry.catalog import ToolSpec
@@ -40,6 +41,7 @@ class ToolDecl:
     capabilities: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
     block_under_readonly: bool = False
+    dependencies: tuple[ToolDependencyDecl, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,7 @@ def derive_tool_specs(family: ToolFamilySpec) -> list[ToolSpec]:
                 tags=merged_tags,
                 capabilities=merged_caps,
                 block_under_readonly=tool.block_under_readonly,
+                dependencies=tool.dependencies,
             )
         )
     return specs

@@ -62,3 +62,24 @@ def test_tools_command_rejects_unstructured_options() -> None:
         tab._tools_command_body("/tools activate ops_job_control invalid")
         == "Tool profile options must use key=value syntax."
     )
+
+
+def test_tools_status_includes_unprofiled_dependency_tools() -> None:
+    runtime = _Runtime()
+    runtime.tool_exposure_status = lambda: {
+        "profiles": [],
+        "unprofiled_dependency_tools": [
+            {
+                "tool_name": "gws.call",
+                "dependency_readiness": "degraded",
+                "dependency_statuses": [
+                    {"dependency_id": "binary:gws", "state": "missing"}
+                ],
+            }
+        ],
+    }
+
+    output = _commands(runtime)._tools_command_body("/tools status")
+
+    assert "gws.call: degraded (binary:gws)" in output
+    assert "Run /tools status again after operator setup." in output

@@ -21,17 +21,50 @@ def tool_exposure_command(runtime: Any, text: str) -> str:
             or "(none)"
         )
     if action == "status":
-        profiles = runtime.tool_exposure_status().get("profiles", [])
-        rows = [
-            "  ".join(
-                (
-                    "active" if profile.get("active") else "hidden",
-                    str(profile.get("profile_id", "")),
-                    f"({profile.get('tier', '')})",
+        snapshot = runtime.tool_exposure_status()
+        profiles = snapshot.get("profiles", [])
+        rows: list[str] = []
+        for profile in profiles:
+            rows.append(
+                "  ".join(
+                    (
+                        "active" if profile.get("active") else "hidden",
+                        str(profile.get("profile_id", "")),
+                        f"({profile.get('tier', '')})",
+                        str(profile.get("dependency_readiness", "ready")),
+                    )
                 )
             )
-            for profile in profiles
-        ]
+            for dependency_status in profile.get("dependency_statuses", []):
+                if dependency_status.get("state") == "ready":
+                    detail = dependency_status.get("version") or dependency_status.get(
+                        "resolved_path"
+                    )
+                else:
+                    hints = dependency_status.get("setup_hints", [])
+                    detail = hints[0].get("label", "") if hints else ""
+                rows.append(
+                    f"  - {dependency_status.get('dependency_id', '')}: "
+                    f"{dependency_status.get('state', '')}"
+                    + (f" ({detail})" if detail else "")
+                )
+        unprofiled = snapshot.get("unprofiled_dependency_tools", [])
+        if unprofiled:
+            rows.append("Other tool dependencies:")
+            for tool in unprofiled:
+                dependency_ids = ", ".join(
+                    item.get("dependency_id", "")
+                    for item in tool.get("dependency_statuses", [])
+                )
+                rows.append(
+                    f"  {tool.get('tool_name', '')}: "
+                    f"{tool.get('dependency_readiness', '')}"
+                    + (f" ({dependency_ids})" if dependency_ids else "")
+                )
+        if any(
+            profile.get("dependency_readiness") == "degraded" for profile in profiles
+        ) or any(tool.get("dependency_readiness") == "degraded" for tool in unprofiled):
+            rows.append("Run /tools status again after operator setup.")
         return "Tool exposure profiles:\n" + ("\n".join(rows) or "(none)")
     if action not in {"activate", "deactivate"} or len(parts) < 3:
         return (

@@ -201,6 +201,8 @@ def test_autonomy_start_replay_writes_terminal_proof(tmp_path: Path) -> None:
             "ship the proof packet",
             "--replay-response",
             "completed from replay",
+            "--verification-waiver",
+            "replay fixture has no external verifier",
             "--json",
         ]
     )
@@ -349,6 +351,8 @@ def test_autonomy_list_and_show_use_same_store(tmp_path: Path) -> None:
             "inspect me",
             "--replay-response",
             "done",
+            "--verification-waiver",
+            "replay fixture has no external verifier",
             "--json",
         ]
     )
@@ -378,6 +382,8 @@ def test_autonomy_show_can_include_terminal_proof(tmp_path: Path) -> None:
             "inspect proof",
             "--replay-response",
             "done",
+            "--verification-waiver",
+            "replay fixture has no external verifier",
             "--json",
         ]
     )
@@ -417,6 +423,8 @@ def test_autonomy_start_records_delegated_role_evidence(tmp_path: Path) -> None:
             "explorer:success:checked owner surfaces",
             "--delegate-result",
             "reviewer:success:reviewed verification evidence",
+            "--verification-waiver",
+            "replay fixture has no external verifier",
             "--json",
         ]
     )
@@ -454,6 +462,8 @@ def test_autonomy_start_records_context_budget_evidence(tmp_path: Path) -> None:
             "40",
             "--context-required-fact",
             "must keep sqlite migration note",
+            "--verification-waiver",
+            "replay fixture has no external verifier",
             "--json",
         ]
     )
@@ -517,6 +527,10 @@ def test_autonomy_resume_blocked_run_completes_with_replay(tmp_path: Path) -> No
             run_id,
             "--replay-response",
             "resumed successfully",
+            "--max-iterations",
+            "1",
+            "--verification-waiver",
+            "replay fixture has no external verifier",
             "--json",
         ]
     )
@@ -551,6 +565,71 @@ def test_autonomy_cancel_writes_cancelled_proof(tmp_path: Path) -> None:
     assert code == 0
     assert run["status"] == "cancelled"
     assert proof["status"] == "cancelled"
+
+
+def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class CronStore:
+        def __init__(self) -> None:
+            self.jobs: dict[str, dict[str, object]] = {}
+
+        def add_cron_job(self, *, job_id, **kwargs):  # noqa: ANN001, ANN003
+            self.jobs[job_id] = kwargs
+            return job_id
+
+        def delete_cron_job(self, job_id):  # noqa: ANN001
+            self.jobs.pop(job_id, None)
+
+        def close(self) -> None:
+            return None
+
+    cron_store = CronStore()
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.configured_cron_store",
+        lambda _args, config_ref: cron_store,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.configured_cron_store",
+        lambda _args, config_ref: cron_store,
+    )
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(0)'"
+    code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "run in the daemon",
+            "--workspace",
+            str(tmp_path),
+            "--verify-command",
+            verify_command,
+            "--unattended",
+            "--json",
+        ]
+    )
+    run = json.loads(output)["run"]
+    job_id = next(iter(cron_store.jobs))
+
+    assert code == 0
+    assert run["status"] == "running"
+    assert cron_store.jobs[job_id]["payload"]["kind"] == "projectCycle"
+
+    cancel_code, cancelled_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "cancel",
+            run["run_id"],
+            "--json",
+        ]
+    )
+
+    assert cancel_code == 0
+    assert json.loads(cancelled_output)["run"]["status"] == "cancelled"
+    assert cron_store.jobs == {}
 
 
 def test_autonomy_start_requires_goal(tmp_path: Path) -> None:

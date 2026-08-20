@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from openminion.modules.tool import (
+    dependency_probe_context_from_api_runtime,
+    evaluate_tool_dependencies,
+)
+
 
 class RuntimeToolExposureMixin:
     def tool_exposure_status(
@@ -14,11 +19,45 @@ class RuntimeToolExposureMixin:
         task_id: str = "",
         target_id: str = "",
     ) -> dict[str, Any]:
-        return self.tools.exposure_service.snapshot(
+        snapshot = self.tools.exposure_service.snapshot(
             session_id=session_id,
             task_id=task_id,
             target_id=target_id,
         )
+        readiness = evaluate_tool_dependencies(
+            getattr(self, "tools"),
+            context=dependency_probe_context_from_api_runtime(self),
+        )
+        profiled_tools: set[str] = set()
+        for profile in snapshot.get("profiles", []):
+            profiled_tools.update(str(name) for name in profile.get("tool_names", []))
+            statuses = {
+                status.dependency_id: status
+                for tool_name in profile.get("tool_names", [])
+                for status in readiness.get(str(tool_name), ())
+            }
+            profile["dependency_readiness"] = (
+                "degraded"
+                if any(status.state != "ready" for status in statuses.values())
+                else "ready"
+            )
+            profile["dependency_statuses"] = [
+                statuses[key].as_dict() for key in sorted(statuses)
+            ]
+        snapshot["unprofiled_dependency_tools"] = [
+            {
+                "tool_name": tool_name,
+                "dependency_readiness": (
+                    "degraded"
+                    if any(status.state != "ready" for status in statuses)
+                    else "ready"
+                ),
+                "dependency_statuses": [status.as_dict() for status in statuses],
+            }
+            for tool_name, statuses in sorted(readiness.items())
+            if tool_name not in profiled_tools
+        ]
+        return snapshot
 
     def activate_tool_profile(
         self,

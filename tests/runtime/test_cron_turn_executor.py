@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from openminion.services.runtime.cron.delivery import CronDeliveryBridge
 from openminion.services.runtime.cron.executor import CronTurnExecutor
+from openminion.modules.tool import build_default_tool_registry
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.exposure import ToolExposureProfile
+from openminion.modules.tool import enforce_watch_target_binding
+from openminion.tools.ops.service import OpsService, local_ops_service
 
 
 class _FakeHandle:
@@ -88,6 +95,7 @@ def _runtime(
     agent_name: str = "agent-main",
     registered_agents: list[str] | None = None,
     goal_runtime: object | None = None,
+    monitoring: bool = False,
 ):
     runtime_manager = _FakeRuntimeManager(list(responses))
     runner = SimpleNamespace(goal_runtime=goal_runtime)
@@ -102,8 +110,47 @@ def _runtime(
         list_registered_agents=(lambda: list(registered_agents or [])),
         sessions=_FakeSessions(),
         resolve_agent_service=(lambda _agent_id: agent_service),
+        tools=build_default_tool_registry(strict=False) if monitoring else None,
+        ops_service=local_ops_service() if monitoring else None,
     )
     return runtime, runtime_manager
+
+
+def _monitoring_job(
+    *,
+    last_condition_met: bool = False,
+    last_alert_requested_at: str | None = None,
+    checks_completed: int = 0,
+    max_checks: int = 10,
+    deliver_resolution: bool = True,
+    profile_id: str = "ops_minimal",
+) -> dict[str, object]:
+    return {
+        "job_id": "job-monitor",
+        "agent_id": "agent-main",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "payload": {
+            "kind": "agentTurn",
+            "message": "inspect local service health",
+            "session_id": "watch:job-monitor",
+            "_openminion_watch": {
+                "description": "Watch local service health",
+                "check_instruction": "Inspect local service health.",
+                "alert_condition": "the service is unhealthy",
+                "check_profile_id": profile_id,
+                "target_id": "local",
+                "stop_on_condition": False,
+                "delivery_cooldown_minutes": 60,
+                "deliver_resolution": deliver_resolution,
+                "checks_completed": checks_completed,
+                "max_checks": max_checks,
+                "ttl_minutes": 60,
+                "timeout_seconds": 45,
+                "last_condition_met": last_condition_met,
+                "last_alert_requested_at": last_alert_requested_at,
+            },
+        },
+    }
 
 
 def _request_builder(payload: dict[str, object], agent_id: str) -> object:
@@ -518,6 +565,291 @@ def test_cron_turn_executor_watch_without_trailer_fails_closed() -> None:
     assert result["output"]["watch_condition_met"] is False
     assert result["output"]["watch_delivery_requested"] is False
     assert result["output"]["watch_terminal"] is False
+
+
+def test_monitoring_watch_uses_exact_default_profile_and_stays_active() -> None:
+    store = _FakeCronStore()
+    runtime, runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="Service is unhealthy.",
+                metadata={
+                    "watch_condition_met": "true",
+                    "watch_summary": "Service is unhealthy.",
+                },
+            )
+        ],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    result = executor.execute(
+        _monitoring_job(),
+        {"run_id": "run-open", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    profile = runtime.tools.exposure_service.profile("ops_minimal")
+    assert profile is not None
+    request = runtime_manager.submitted[0]
+    assert set(request.meta["watch_allowed_tools"].split(",")) == set(
+        profile.tool_names
+    )
+    assert "exec.run" not in request.meta["watch_allowed_tools"]
+    assert request.meta["watch_profile_id"] == "ops_minimal"
+    assert request.meta["watch_target_id"] == "local"
+    assert request.meta["target_id"] == "local"
+    assert result["output"]["watch_delivery_requested"] is True
+    assert result["output"]["watch_delivery_transition"] == "open"
+    assert result["output"]["watch_terminal"] is False
+    stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
+    assert stored_watch["last_condition_met"] is True
+    assert stored_watch["last_alert_requested_at"]
+    assert not any(
+        event["event"] == "activated" for event in runtime.tools.exposure_service.events
+    )
+
+
+def test_monitoring_watch_repeat_cooldown_and_resolution() -> None:
+    now = datetime.now(timezone.utc)
+    cases = [
+        (
+            "true",
+            True,
+            now.isoformat(),
+            False,
+            "",
+            True,
+        ),
+        (
+            "true",
+            True,
+            (now - timedelta(hours=2)).isoformat(),
+            True,
+            "repeat",
+            True,
+        ),
+        ("false", True, now.isoformat(), True, "resolved", False),
+    ]
+    for index, (
+        condition,
+        previous,
+        last_requested,
+        expected_delivery,
+        expected_transition,
+        expected_condition,
+    ) in enumerate(cases):
+        store = _FakeCronStore()
+        runtime, _runtime_manager = _runtime(
+            [
+                SimpleNamespace(
+                    final_text="monitoring result",
+                    metadata={"watch_condition_met": condition},
+                )
+            ],
+            registered_agents=["agent-main"],
+            monitoring=True,
+        )
+        executor = CronTurnExecutor(
+            runtime=runtime,
+            cron_store=store,
+            request_builder=_request_builder,
+            timeout_s=90.0,
+            max_attempts=1,
+        )
+
+        result = executor.execute(
+            _monitoring_job(
+                last_condition_met=previous,
+                last_alert_requested_at=last_requested,
+            ),
+            {
+                "run_id": f"run-transition-{index}",
+                "due_at": "2026-08-19T00:00:00Z",
+            },
+        )
+
+        assert result["output"]["watch_delivery_requested"] is expected_delivery
+        assert result["output"]["watch_delivery_transition"] == expected_transition
+        assert result["output"]["watch_terminal"] is False
+        stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
+        assert stored_watch["last_condition_met"] is expected_condition
+
+
+def test_monitoring_watch_invalid_result_preserves_condition_state() -> None:
+    store = _FakeCronStore()
+    runtime, _runtime_manager = _runtime(
+        [SimpleNamespace(final_text="missing typed condition", metadata={})],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    result = executor.execute(
+        _monitoring_job(last_condition_met=True),
+        {"run_id": "run-invalid", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    assert result["output"]["watch_condition_valid"] is False
+    assert result["output"]["watch_condition_met"] is True
+    assert result["output"]["watch_delivery_requested"] is False
+    stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
+    assert stored_watch["last_condition_met"] is True
+
+
+def test_monitoring_watch_unavailable_target_preserves_state_before_turn() -> None:
+    store = _FakeCronStore()
+    runtime, runtime_manager = _runtime(
+        [],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    runtime.ops_service = OpsService()
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    result = executor.execute(
+        _monitoring_job(last_condition_met=True),
+        {"run_id": "run-unavailable", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    assert runtime_manager.submitted == []
+    assert result["error"] is True
+    assert result["metadata"]["watch_preflight_reason"] == "watch_target_unavailable"
+    assert result["output"]["watch_condition_valid"] is False
+    assert result["output"]["watch_condition_met"] is True
+    stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
+    assert stored_watch["last_condition_met"] is True
+
+
+def test_monitoring_watch_max_checks_closes_without_resolution() -> None:
+    store = _FakeCronStore()
+    runtime, _runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="Service is healthy.",
+                metadata={"watch_condition_met": "false"},
+            )
+        ],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    result = executor.execute(
+        _monitoring_job(
+            last_condition_met=True,
+            checks_completed=1,
+            max_checks=2,
+        ),
+        {"run_id": "run-close", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    assert result["output"]["watch_terminal"] is True
+    assert result["output"]["watch_terminal_reason"] == "max_checks_reached"
+    assert result["output"]["watch_delivery_transition"] == ""
+
+
+def test_monitoring_watch_ttl_closure_preserves_open_condition() -> None:
+    runtime, runtime_manager = _runtime(
+        [],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+    job = _monitoring_job(last_condition_met=True)
+    job["created_at"] = "2020-01-01T00:00:00+00:00"
+    payload = dict(job["payload"])
+    watch = dict(payload["_openminion_watch"])
+    watch["created_at"] = "2020-01-01T00:00:00+00:00"
+    payload["_openminion_watch"] = watch
+    job["payload"] = payload
+
+    result = executor.execute(
+        job,
+        {"run_id": "run-ttl", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    assert runtime_manager.submitted == []
+    assert result["output"]["watch_terminal_reason"] == "ttl_expired"
+    assert result["output"]["watch_condition_met"] is True
+    assert result["output"]["watch_condition_valid"] is False
+
+
+def test_monitoring_watch_reconstructs_hidden_profile_activation() -> None:
+    store = _FakeCronStore()
+    runtime, runtime_manager = _runtime(
+        [SimpleNamespace(final_text="ok", metadata={"watch_condition_met": "false"})],
+        registered_agents=["agent-main"],
+        monitoring=True,
+    )
+    runtime.tools.exposure_service.register_profiles(
+        [
+            ToolExposureProfile(
+                profile_id="monitor_read",
+                title="Monitor read",
+                summary="One hidden read tool.",
+                tool_names=frozenset({"file.read"}),
+            )
+        ]
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=store,
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    executor.execute(
+        _monitoring_job(profile_id="monitor_read"),
+        {"run_id": "run-hidden", "due_at": "2026-08-19T00:00:00Z"},
+    )
+
+    assert runtime_manager.submitted[0].meta["watch_allowed_tools"] == "file.read"
+    events = runtime.tools.exposure_service.events
+    assert [event["event"] for event in events[-2:]] == ["activated", "deactivated"]
+    assert events[-2]["target_id"] == "local"
+    assert events[-2]["task_id"] == "job-monitor"
+
+
+def test_watch_target_binding_rejects_mismatch_before_invocation() -> None:
+    with pytest.raises(ToolRuntimeError) as exc:
+        enforce_watch_target_binding(
+            {"target_id": "other"},
+            {"watch_target_id": "local"},
+        )
+
+    assert exc.value.details["reason_code"] == "watch_target_mismatch"
 
 
 def test_cron_turn_executor_watch_does_not_fire_action_when_condition_is_false() -> (

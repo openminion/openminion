@@ -127,6 +127,44 @@ Read-only diagnosis does not authorize a patch, process signal, service
 restart, package install, or remote change. Those actions remain separately
 owned and approved.
 
+## Long-running project execution
+
+`openminion autonomy start` runs a bounded project through durable task
+checkpoints. Each cycle loads the latest committed checkpoint, performs one
+normal agent turn, runs the configured verifier, and commits only through the
+project-cycle claim. Assistant prose never marks the project complete.
+
+Provide a verifier and a cycle limit explicitly:
+
+```bash
+openminion autonomy start \
+  --goal "Repair the failing package and verify it" \
+  --workspace /path/to/project \
+  --verification-domain coding \
+  --verify-command "python -m pytest -q" \
+  --max-iterations 4
+```
+
+Use `openminion autonomy resume RUN_ID` after a blocked cycle. Persisted agent,
+configuration, workspace, verifier, permission profile, and budget selectors
+are reused unless the operator supplies an explicit override. An explicit
+verification waiver is durable and appears in the proof packet.
+
+`--unattended` is opt-in. It schedules one immediate `projectCycle` job in the
+existing cron store; each daemon wake runs at most one fenced cycle and creates
+at most one deterministic next wake. Foreground execution remains the default.
+Cancellation closes the task and removes its linked wake. Normal chat and
+ordinary `agentTurn` cron jobs do not use the project worker.
+
+Project status and report commands expose stable run/task/goal/checkpoint IDs,
+the current milestone, committed and remaining cycles, progress/effect/verifier
+references, the next wake, blocker, and the latest claim fence:
+
+```bash
+openminion autonomy project --task-db /path/to/task.db status TASK_ID
+openminion autonomy project --task-db /path/to/task.db report TASK_ID
+```
+
 ## Opt-in SSH smoke
 
 The live SSH smoke is separate from deterministic CI. It requires a dedicated

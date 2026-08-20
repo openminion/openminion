@@ -5,6 +5,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openminion.modules.task.autonomy import (
+    AutonomyExecutionSelectors,
     AutonomyRunPhase,
     AutonomyRunStatus,
     now_ms,
@@ -88,6 +89,10 @@ class ProjectRun(_StrictProjectModel):
     capability_plan_ref: str = Field(min_length=1)
     metrics_summary_ref: str = Field(min_length=1)
     workspace_ref: str = Field(min_length=1)
+    session_id: str | None = None
+    execution_selectors: AutonomyExecutionSelectors = Field(
+        default_factory=AutonomyExecutionSelectors
+    )
     status: AutonomyRunStatus
     phase: AutonomyRunPhase
     created_at_ms: int = Field(ge=0)
@@ -97,6 +102,14 @@ class ProjectRun(_StrictProjectModel):
     blocked_reason: str | None = None
     verification_state: ProjectVerificationState = ProjectVerificationState.NOT_STARTED
     task_state: TaskLifecycleState | None = None
+    current_milestone: str | None = None
+    committed_cycle_count: int = Field(default=0, ge=0)
+    cycle_limit: int = Field(default=0, ge=0)
+    progress_refs: tuple[str, ...] = ()
+    effect_refs: tuple[str, ...] = ()
+    verifier_refs: tuple[str, ...] = ()
+    triggering_cron_job_id: str | None = None
+    next_wake_job_id: str | None = None
 
 
 class ProjectCheckpoint(_StrictProjectModel):
@@ -104,6 +117,9 @@ class ProjectCheckpoint(_StrictProjectModel):
     checkpoint_id: str = Field(min_length=1)
     project_run: ProjectRun
     payload: dict[str, object] = Field(default_factory=dict)
+    expected_checkpoint_id: str | None = None
+    triggering_cron_job_id: str | None = None
+    next_wake_job_id: str | None = None
 
 
 class ProjectCycleRecord(_StrictProjectModel):

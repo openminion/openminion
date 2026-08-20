@@ -41,7 +41,7 @@ config/runtime/profile.py	369	13	95	4
 config/runtime/profile_overrides.py	177	9	35	2
 config/runtime/reasoning.py	115	4	34	6
 config/runtime/telemetry.py	19	0	0	0
-config/runtime/tools.py	207	8	63	2
+config/runtime/tools.py	206	7	63	2
 config/settings.py	110	7	17	3
 config/skill_selection.py	72	6	15	2
 config/tool_selection/__init__.py	25	0	0	0

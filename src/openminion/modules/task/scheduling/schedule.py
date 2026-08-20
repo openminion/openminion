@@ -18,6 +18,7 @@ from .constants import (
     ALLOWED_WAKE_MODES,
     DEFAULT_TOP_OF_HOUR_STAGGER_MS,
     PAYLOAD_KIND_AGENT_IDLE_TICK,
+    PAYLOAD_KIND_PROJECT_CYCLE,
     PAYLOAD_KIND_SYSTEM_EVENT,
 )
 
@@ -60,7 +61,9 @@ def normalize_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("payload must be an object")
     kind = str(payload.get("kind", "")).strip()
     if kind not in ALLOWED_PAYLOAD_KINDS:
-        raise ValueError("payload.kind must be systemEvent or agentTurn")
+        raise ValueError(
+            "payload.kind must be systemEvent, agentTurn, agentIdleTick, or projectCycle"
+        )
     data = dict(payload)
     data["kind"] = kind
     if kind == PAYLOAD_KIND_SYSTEM_EVENT:
@@ -97,6 +100,13 @@ def normalize_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             except (TypeError, ValueError):
                 grace_int = 0
             data["user_activity_grace_seconds"] = grace_int
+    elif kind == PAYLOAD_KIND_PROJECT_CYCLE:
+        run_id = str(data.get("run_id", "")).strip()
+        task_id = str(data.get("task_id", "")).strip()
+        if not run_id or not task_id:
+            raise ValueError("projectCycle payload requires run_id and task_id")
+        data["run_id"] = run_id
+        data["task_id"] = task_id
     return data
 
 
@@ -163,8 +173,13 @@ def normalize_schedule(schedule: Mapping[str, Any]) -> dict[str, Any]:
 def validate_target_payload_pair(*, session_target: str, payload_kind: str) -> None:
     if session_target == "main" and payload_kind != PAYLOAD_KIND_SYSTEM_EVENT:
         raise ValueError("session_target=main requires payload.kind=systemEvent")
-    if session_target == "isolated" and payload_kind != "agentTurn":
-        raise ValueError("session_target=isolated requires payload.kind=agentTurn")
+    if session_target == "isolated" and payload_kind not in {
+        "agentTurn",
+        PAYLOAD_KIND_PROJECT_CYCLE,
+    }:
+        raise ValueError(
+            "session_target=isolated requires payload.kind=agentTurn or projectCycle"
+        )
     if (
         session_target == "agent_session"
         and payload_kind != PAYLOAD_KIND_AGENT_IDLE_TICK

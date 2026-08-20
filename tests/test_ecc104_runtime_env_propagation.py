@@ -319,6 +319,7 @@ def test_cli_inproc_tool_run_injects_runtime_env(monkeypatch):
     )
     assert payload["ok"] is True
     assert captured["context"].metadata["runtime_env"] == {"ECC_104_CLI": "enabled"}
+    assert captured["context"].ops_service.inspect_target("local").target_id == "local"
     assert captured["context"].confirm is True
 
 

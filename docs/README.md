@@ -15,6 +15,7 @@ package source and release surface.
 | Understand supported CLI, Python, API, gateway, and runtime surfaces | [`runtime-surfaces.md`](runtime-surfaces.md) |
 | Operate local diagnostics, status, evidence, and runtime tools | [`system-operations.md`](system-operations.md) |
 | Run bounded local Semgrep and Trivy audits | [`security-scanning.md`](security-scanning.md) |
+| Check and set up external tool dependencies | [`tool-dependency-readiness.md`](tool-dependency-readiness.md) |
 | Validate a source checkout or release candidate | [`testing-and-validation.md`](testing-and-validation.md) |
 | See which claims are safe to make publicly | [`standalone-claim-alignment.md`](standalone-claim-alignment.md) and [`certification-readiness-matrix.md`](certification-readiness-matrix.md) |
 | Find where code belongs before contributing | [`source-tree-owner-map.md`](source-tree-owner-map.md) |
@@ -33,6 +34,8 @@ package source and release surface.
   capability facts, request requirements, and deterministic pre-call routing.
 - [`security-scanning.md`](security-scanning.md): bounded local Semgrep and
   Trivy setup, exposure, evidence, and safety limits.
+- [`tool-dependency-readiness.md`](tool-dependency-readiness.md): explicit
+  readiness checks and operator-owned setup for external tool binaries.
 - [`long-horizon-project-worker.md`](long-horizon-project-worker.md):
   checkpointed, operator-visible project-worker primitives and claim
   boundaries.

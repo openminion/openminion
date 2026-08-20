@@ -107,6 +107,13 @@ def _watch_metadata_from_payload(
         "alert_condition": _safe_str(watch, "alert_condition"),
         "on_condition_action": _safe_str(watch, "on_condition_action"),
         "delivery": _safe_str(watch, "delivery", "announce"),
+        "check_profile_id": _safe_str(watch, "check_profile_id") or None,
+        "target_id": _safe_str(watch, "target_id") or None,
+        "stop_on_condition": bool(watch.get("stop_on_condition", True)),
+        "delivery_cooldown_minutes": int(
+            watch.get("delivery_cooldown_minutes", 0) or 0
+        ),
+        "deliver_resolution": bool(watch.get("deliver_resolution", False)),
         "max_checks": int(
             watch.get("max_checks", DEFAULT_WATCH_MAX_CHECKS)
             or DEFAULT_WATCH_MAX_CHECKS
@@ -125,6 +132,7 @@ def _watch_metadata_from_payload(
         "last_check_at": watch.get("last_check_at"),
         "last_check_summary": watch.get("last_check_summary"),
         "last_condition_met": bool(watch.get("last_condition_met", False)),
+        "last_alert_requested_at": watch.get("last_alert_requested_at"),
         "last_terminal_reason": _safe_str(watch, "last_terminal_reason"),
     }
 

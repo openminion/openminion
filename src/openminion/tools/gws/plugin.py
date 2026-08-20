@@ -24,6 +24,7 @@ from openminion.modules.tool.family.events import emit_family_event
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime.context import RuntimeContext
+from openminion.modules.tool import resolve_runtime_tool_config
 
 from .runtime import base_request_payload as _base_request_payload
 from .runtime import extract_error_payload as _extract_error_payload
@@ -43,6 +44,7 @@ from .constants import (
     GWS_WRITE_METHODS,
 )
 from .interfaces import GWS_INTERFACE_VERSION
+from .dependencies import GWS_DEPENDENCY
 from .schemas import (
     GWS_AUTH_EXPORT_INPUT_SCHEMA,
     GWS_AUTH_INPUT_SCHEMA,
@@ -97,16 +99,7 @@ class _CommandResult:
 
 
 def _tool_config_payload(ctx: RuntimeContext) -> Mapping[str, Any]:
-    raw = getattr(ctx.policy, "raw", {})
-    if not isinstance(raw, Mapping):
-        return {}
-    tools_cfg = raw.get("tools", {})
-    if not isinstance(tools_cfg, Mapping):
-        return {}
-    candidate = tools_cfg.get("gws", {})
-    if not isinstance(candidate, Mapping):
-        return {}
-    return candidate
+    return resolve_runtime_tool_config(ctx).gws or {}
 
 
 def _resolve_config(ctx: RuntimeContext) -> GwsToolConfig:
@@ -861,6 +854,7 @@ def register(registry: ToolRegistry) -> None:
                 "tool.gws.write",
                 "tool.gws.admin",
             ),
+            dependencies=(GWS_DEPENDENCY,),
         )
     )
     registry.add(
@@ -873,6 +867,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=True,
             tags=("plugin", "gws", "google-workspace", "schema"),
             capabilities=("tool.execute", "tool.gws.read"),
+            dependencies=(GWS_DEPENDENCY,),
         )
     )
     registry.add(
@@ -885,6 +880,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=False,
             tags=("plugin", "gws", "google-workspace", "auth"),
             capabilities=("tool.execute", "tool.gws.admin"),
+            dependencies=(GWS_DEPENDENCY,),
         )
     )
     registry.add(
@@ -897,6 +893,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=False,
             tags=("plugin", "gws", "google-workspace", "auth"),
             capabilities=("tool.execute", "tool.gws.read"),
+            dependencies=(GWS_DEPENDENCY,),
         )
     )
     registry.add(
@@ -909,6 +906,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=False,
             tags=("plugin", "gws", "google-workspace", "auth"),
             capabilities=("tool.execute", "tool.gws.admin"),
+            dependencies=(GWS_DEPENDENCY,),
         )
     )
 

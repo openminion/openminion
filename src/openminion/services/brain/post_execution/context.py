@@ -293,6 +293,8 @@ def _attach_watch_resume_context(
         "alert_condition": str(
             inbound_metadata.get("watch_alert_condition", "") or ""
         ).strip(),
+        "profile_id": str(inbound_metadata.get("watch_profile_id", "") or "").strip(),
+        "target_id": str(inbound_metadata.get("watch_target_id", "") or "").strip(),
         "allowed_tools": [
             item.strip() for item in raw_tools.split(",") if item.strip()
         ],

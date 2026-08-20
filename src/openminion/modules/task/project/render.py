@@ -50,6 +50,9 @@ def render_project_operator_inbox_item(item: ProjectOperatorInboxItem) -> str:
         f"project_run_id: {item.project_run_id or '-'}",
         f"goal_id: {item.goal_id or '-'}",
         f"checkpoint: {item.last_checkpoint_id or '-'}",
+        f"milestone: {item.current_milestone or '-'}",
+        f"cycles: {item.committed_cycle_count}",
+        f"cycles_remaining: {item.remaining_cycle_count}",
     ]
     if item.current_step_ref:
         lines.append(f"current_step: {item.current_step_ref}")
@@ -59,6 +62,19 @@ def render_project_operator_inbox_item(item: ProjectOperatorInboxItem) -> str:
         lines.append(f"resume_hint: {item.resume_hint}")
     if item.artifact_refs:
         lines.append(f"artifacts: {', '.join(item.artifact_refs)}")
+    if item.progress_refs:
+        lines.append(f"progress_refs: {', '.join(item.progress_refs)}")
+    if item.verifier_refs:
+        lines.append(f"verifier_refs: {', '.join(item.verifier_refs)}")
+    if item.effect_refs:
+        lines.append(f"effect_refs: {', '.join(item.effect_refs)}")
+    if item.next_wake_job_id:
+        lines.append(f"next_wake: {item.next_wake_job_id}")
+    if item.claim_owner_id:
+        lines.append(
+            f"claim: owner={item.claim_owner_id} fence={item.claim_fence_token} "
+            f"expires={item.claim_expires_at}"
+        )
     return "\n".join(lines)
 
 

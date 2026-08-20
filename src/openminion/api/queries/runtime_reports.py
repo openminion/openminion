@@ -10,6 +10,7 @@ from openminion.modules.brain.bootstrap.route_catalog import (
     get_route_descriptor,
 )
 from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
+from openminion.modules.tool import tool_dependency_report_fields as _dependency_fields
 from openminion.tools.mcp.exposure import (
     build_mcp_exposure_report,
     scoped_mcp_registry_view,
@@ -23,10 +24,12 @@ def build_tool_inventory_report(
     *,
     agent_id: str | None = None,
     profile: Any | None = None,
+    readiness: bool = False,
 ) -> list[dict[str, Any]]:
     registry = _tool_registry_for_agent(runtime, agent_id=agent_id, profile=profile)
     provider_specs, dispatch_map = get_visible_tool_specs_and_dispatch_map(registry)
     runtime_tools = _tool_runtime_lookup(registry)
+    dependency_fields = _dependency_fields(runtime, registry, readiness=readiness)
     inventory: list[dict[str, Any]] = []
     for spec in provider_specs:
         mapping = (
@@ -35,9 +38,8 @@ def build_tool_inventory_report(
             else {}
         )
         runtime_tool_name = str(mapping.get("runtime_tool_name", "") or "").strip()
-        runtime_tool = runtime_tools.get(runtime_tool_name) or runtime_tools.get(
-            spec.name
-        )
+        runtime_tool = runtime_tools.get(runtime_tool_name)
+        runtime_tool = runtime_tool or runtime_tools.get(spec.name)
         item = {
             "name": spec.name,
             "description": spec.description,
@@ -57,6 +59,7 @@ def build_tool_inventory_report(
         plugin_origin = _tool_plugin_origin(runtime_tool)
         if plugin_origin:
             item["plugin_origin"] = plugin_origin
+        item.update(dependency_fields.get(runtime_tool_name or spec.name, {}))
         inventory.append(item)
     return sorted(inventory, key=lambda item: item["name"])
 
@@ -389,18 +392,13 @@ def build_runtime_posture_report(
 
 
 def _tool_runtime_lookup(registry: Any) -> dict[str, Any]:
-    list_fn = getattr(registry, "list", None)
-    if not callable(list_fn):
-        return {}
     try:
-        listed = list_fn()
+        listed = registry.list()
     except Exception:
         return {}
     if not isinstance(listed, dict):
         return {}
-    return {
-        str(name).strip(): tool for name, tool in listed.items() if str(name).strip()
-    }
+    return dict(listed)
 
 
 def _tool_registry_for_agent(

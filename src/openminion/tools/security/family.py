@@ -10,6 +10,7 @@ from .interfaces import (
     TOOL_SECURITY_SCAN_DEPENDENCIES,
     TOOL_SECURITY_SCAN_SECRETS,
 )
+from .dependencies import SEMGREP_DEPENDENCY, TRIVY_DEPENDENCY
 from .plugin import (
     _h_scan_artifact,
     _h_scan_code,
@@ -29,7 +30,6 @@ SECURITY_FAMILY = ToolFamilySpec(
             title="Security scanning",
             summary="Bounded local source, dependency, IaC, and secret scans.",
             tool_names=frozenset(ALL_SECURITY_TOOLS),
-            dependencies=frozenset({"binary:semgrep", "binary:trivy"}),
             evidence_expectations=(
                 "return scanner identity, version, bounded findings, and evidence refs",
             ),
@@ -44,6 +44,7 @@ SECURITY_FAMILY = ToolFamilySpec(
             _h_scan_code,
             "Scan approved local source with configured Semgrep rules.",
             idempotent=True,
+            dependencies=(SEMGREP_DEPENDENCY,),
         ),
         ToolDecl(
             TOOL_SECURITY_SCAN_DEPENDENCIES,
@@ -51,6 +52,7 @@ SECURITY_FAMILY = ToolFamilySpec(
             _h_scan_dependencies,
             "Scan approved local dependency manifests with Trivy.",
             idempotent=True,
+            dependencies=(TRIVY_DEPENDENCY,),
         ),
         ToolDecl(
             TOOL_SECURITY_SCAN_ARTIFACT,
@@ -58,6 +60,7 @@ SECURITY_FAMILY = ToolFamilySpec(
             _h_scan_artifact,
             "Scan approved local filesystem or IaC artifacts with Trivy.",
             idempotent=True,
+            dependencies=(TRIVY_DEPENDENCY,),
         ),
         ToolDecl(
             TOOL_SECURITY_SCAN_SECRETS,
@@ -65,6 +68,7 @@ SECURITY_FAMILY = ToolFamilySpec(
             _h_scan_secrets,
             "Scan approved local files for secret findings with Trivy.",
             idempotent=True,
+            dependencies=(TRIVY_DEPENDENCY,),
         ),
     ),
 )

@@ -50,9 +50,9 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
     def llm(self) -> RuntimeLLMHandle:
         return self.llm_runtime
 
-    def tool_inventory_report(self) -> list[dict[str, Any]]:
+    def tool_inventory_report(self, *, readiness: bool = False) -> list[dict[str, Any]]:
         reports = import_module("openminion.api.queries.runtime_reports")
-        return reports.build_tool_inventory_report(self)
+        return reports.build_tool_inventory_report(self, readiness=readiness)
 
     def tool_schema_report(self, *, tool_name: str) -> dict[str, Any] | None:
         reports = import_module("openminion.api.queries.runtime_reports")

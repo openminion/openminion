@@ -128,6 +128,28 @@ class TaskWatchArgs(BaseModel):
     delivery: str = Field(
         default="announce", description="Delivery mode: announce, webhook, or none"
     )
+    check_profile_id: str | None = Field(
+        default=None,
+        description="Existing read-only tool exposure profile used for each check",
+    )
+    target_id: str | None = Field(
+        default=None,
+        description="Configured operations target bound to the selected check profile",
+    )
+    stop_on_condition: bool = Field(
+        default=True,
+        description="Stop after the first true condition; false enables monitoring mode",
+    )
+    delivery_cooldown_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=10_080,
+        description="Minimum minutes between repeated true-condition deliveries",
+    )
+    deliver_resolution: bool = Field(
+        default=False,
+        description="Request one delivery when an open condition returns to false",
+    )
     on_condition_action: str | None = Field(
         default=None,
         description=(
@@ -177,6 +199,17 @@ class TaskWatchArgs(BaseModel):
                 raise ValueError(
                     "routine_kind='github_pr_review' requires interval_minutes >= 5"
                 )
+        profile_bound = self.check_profile_id is not None or self.target_id is not None
+        if profile_bound and not (self.check_profile_id and self.target_id):
+            raise ValueError("check_profile_id and target_id must be provided together")
+        if not self.stop_on_condition and not profile_bound:
+            raise ValueError(
+                "continuous monitoring requires check_profile_id and target_id"
+            )
+        if profile_bound and (self.write_authorized or self.on_condition_action):
+            raise ValueError(
+                "profile-bound monitoring does not allow writes or on-condition actions"
+            )
         return self
 
     @field_validator(
@@ -204,6 +237,12 @@ class TaskWatchArgs(BaseModel):
     @field_validator("on_condition_action", mode="before")
     @classmethod
     def _normalize_optional_action(cls, value: Any) -> str | None:
+        token = _text(value)
+        return token or None
+
+    @field_validator("check_profile_id", "target_id", mode="before")
+    @classmethod
+    def _normalize_optional_identifier(cls, value: Any) -> str | None:
         token = _text(value)
         return token or None
 
