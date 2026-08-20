@@ -34,7 +34,7 @@ def open_turn_submission(
     config_path: str | None,
     runtime: APIRuntime | None,
     body: dict[str, Any],
-    desktop_approval_requester: DesktopApprovalRequester | None = None,
+    desktop_approval_requester: "DesktopApprovalRequester | None" = None,
 ) -> TurnSubmission:
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,

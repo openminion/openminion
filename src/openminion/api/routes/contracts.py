@@ -18,9 +18,9 @@ class APIRouteContext:
     runtime_bootstrap_error: str | None
     request_headers: Mapping[str, str] | None
     request_id: str
-    client_auth: ClientAuthService | None = None
-    client_identity: ClientIdentity | None = None
-    client_approvals: ClientApprovalCoordinator | None = None
+    client_auth: "ClientAuthService | None" = None
+    client_identity: "ClientIdentity | None" = None
+    client_approvals: "ClientApprovalCoordinator | None" = None
 
 
 @dataclass(frozen=True)

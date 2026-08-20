@@ -107,7 +107,7 @@ def _open_stream_submission(
     body: dict[str, Any],
     config_path: str | None,
     runtime: APIRuntime | None,
-    desktop_approval_requester: DesktopApprovalRequester | None = None,
+    desktop_approval_requester: "DesktopApprovalRequester | None" = None,
 ) -> tuple[TurnSubmission | None, HTTPStatus | None, dict[str, Any] | None]:
     try:
         submission = open_turn_submission(
@@ -511,7 +511,7 @@ def handle_turn_stream_request(
     log_request_done: Callable[..., None],
     perf_counter: Callable[[], float],
     desktop_client: bool = False,
-    desktop_approval_requester: DesktopApprovalRequester | None = None,
+    desktop_approval_requester: "DesktopApprovalRequester | None" = None,
 ) -> None:
     resolved_request_id = normalize_request_id(request_id)
     started_at = perf_counter()
