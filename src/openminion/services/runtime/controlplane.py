@@ -56,6 +56,7 @@ class ControlPlaneRuntimeComponents:
     dispatcher: ControlPlaneDispatcher
     rate_limiter: ControlPlaneRateLimiter
     delivery_registry: ChannelRegistry
+    authorizer: ScopeAuthorizer
     inbox_worker: InboxWorker
     outbox_worker: OutboxWorker
     metrics: MetricsRegistry
@@ -111,7 +112,6 @@ def build_controlplane_runtime_components(
         parser=parser,
         command_registry=command_registry,
         brain_client=brain,
-        outbound_sender=lambda _payload: None,
         audit_logger=audit_logger,
         identity_api=identity_api,
     )
@@ -127,10 +127,15 @@ def build_controlplane_runtime_components(
         ),
     )
     delivery_registry = ChannelRegistry()
+    authorizer = ScopeAuthorizer(
+        store=store,
+        identity_api=identity_api,
+        command_registry=command_registry,
+    )
     inbox_worker = InboxWorker(
         store=store,
         dispatcher=dispatcher,
-        authorizer=ScopeAuthorizer(store=store, identity_api=identity_api),
+        authorizer=authorizer,
         rate_limiter=rate_limiter,
         audit_logger=audit_logger,
         max_attempts=cp_cfg.inbox_max_attempts,
@@ -155,6 +160,7 @@ def build_controlplane_runtime_components(
         dispatcher=dispatcher,
         rate_limiter=rate_limiter,
         delivery_registry=delivery_registry,
+        authorizer=authorizer,
         inbox_worker=inbox_worker,
         outbox_worker=outbox_worker,
         metrics=metrics,

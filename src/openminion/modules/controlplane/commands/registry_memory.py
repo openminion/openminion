@@ -51,11 +51,7 @@ class CommandRegistryMemorySkillMixin:
                     error={"code": "MEMORY_QUERY_FAILED", "message": str(exc)},
                     data={"candidates": []},
                 )
-        return CommandResult(
-            ok=True,
-            text="Memory listing not wired (no memctl config).",
-            data={"candidates": []},
-        )
+        return self._feature_unavailable("Memory listing", data={"candidates": []})
 
     def _memory_promote(
         self, command: ParsedCommand, ctx: ResolvedContext
@@ -97,8 +93,8 @@ class CommandRegistryMemorySkillMixin:
                     error={"code": "MEMORY_PROMOTE_FAILED", "message": str(exc)},
                     data={"candidate_id": candidate_id, "target_scope": target_scope},
                 )
-        return CommandResult(
-            ok=True, text=f"Memory {command.args[0]} promoted (stub).", data={}
+        return self._feature_unavailable(
+            "Memory promotion", data={"candidate_id": command.args[0]}
         )
 
     def _skill_ingest(

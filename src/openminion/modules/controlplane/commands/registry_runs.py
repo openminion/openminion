@@ -10,15 +10,11 @@ from openminion.modules.controlplane.contracts.models import (
 
 class CommandRegistryRuntimeMixin:
     def _job_ls(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
-        return CommandResult(ok=True, text="No active jobs.", data={"jobs": []})
+        return self._run_show(command, ctx)
 
     def _run_show(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         if self.runtime_client is None:
-            return CommandResult(
-                ok=True,
-                text="No active runs.",
-                data={"runs": [], "note": "runtime not connected"},
-            )
+            return self._feature_unavailable("Run management", data={"runs": []})
         runs = self.runtime_client.list_runs(ctx.session_id)
         if not runs:
             return CommandResult(ok=True, text="No active runs.", data={"runs": []})
@@ -41,15 +37,7 @@ class CommandRegistryRuntimeMixin:
             return CommandResult(ok=False, text="Usage: /run status <run_id>")
         run_id = command.args[0]
         if self.runtime_client is None:
-            return CommandResult(
-                ok=True,
-                text=f"Run {run_id}: status=unknown (runtime not connected)",
-                data={
-                    "run_id": run_id,
-                    "status": "unknown",
-                    "note": "runtime not connected",
-                },
-            )
+            return self._feature_unavailable("Run management", data={"run_id": run_id})
         status = self.runtime_client.get_run_status(run_id)
         if status is None:
             return CommandResult(
@@ -121,14 +109,9 @@ class CommandRegistryRuntimeMixin:
             until_seconds = 3600
 
         if self.policy_client is None:
-            return CommandResult(
-                ok=True,
-                text=f"Approved {request_id} ({grant}) - policy service not connected",
-                data={
-                    "request_id": request_id,
-                    "grant": grant,
-                    "note": "policy not connected",
-                },
+            return self._feature_unavailable(
+                "Policy approvals",
+                data={"request_id": request_id, "grant": grant},
             )
 
         success = self.policy_client.approve_request(request_id, action, until_seconds)
@@ -150,10 +133,8 @@ class CommandRegistryRuntimeMixin:
         request_id = command.args[0]
 
         if self.policy_client is None:
-            return CommandResult(
-                ok=True,
-                text=f"Denied {request_id} - policy service not connected",
-                data={"request_id": request_id, "note": "policy not connected"},
+            return self._feature_unavailable(
+                "Policy approvals", data={"request_id": request_id}
             )
 
         success = self.policy_client.deny_request(request_id)
@@ -169,11 +150,7 @@ class CommandRegistryRuntimeMixin:
 
     def _grants(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         if self.policy_client is None:
-            return CommandResult(
-                ok=True,
-                text="No active grants.",
-                data={"grants": [], "note": "policy not connected"},
-            )
+            return self._feature_unavailable("Policy grants", data={"grants": []})
         grants = self.policy_client.list_grants(ctx.session_id)
         if not grants:
             return CommandResult(ok=True, text="No active grants.", data={"grants": []})
@@ -188,47 +165,44 @@ class CommandRegistryRuntimeMixin:
     def _diag(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         return CommandResult(
             ok=True,
-            text="controlplane: ok; dispatch=sync(default); durable inbox/outbox=enabled (sqlite backend).",
-            data={"status": "ok"},
+            text="controlplane: ok; durable inbox/outbox=enabled; "
+            f"run management={'connected' if self.runtime_client else 'not connected'}.",
+            data={
+                "status": "ok",
+                "durable_pipeline": True,
+                "run_management_connected": self.runtime_client is not None,
+            },
         )
 
     def _logs(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         if not command.args:
             return CommandResult(ok=False, text="Usage: /logs <run_id>")
         run_id = command.args[0]
-        return CommandResult(
-            ok=True,
-            text=f"Logs for {run_id} are not wired yet.",
-            data={"run_id": run_id, "lines": []},
+        return self._feature_unavailable(
+            "Run logs", data={"run_id": run_id, "lines": []}
         )
 
     def _artifact_ls(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        return CommandResult(
-            ok=True,
-            text="Artifact listing not wired (no artifactctl config).",
-            data={"artifacts": []},
-        )
+        return self._feature_unavailable("Artifact listing", data={"artifacts": []})
 
     def _artifact_purge(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        return CommandResult(ok=True, text="Artifact purge triggered (stub).", data={})
+        return self._feature_unavailable("Artifact purge")
 
     def _config_show(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        return CommandResult(ok=True, text="Config display not wired.", data={})
+        return self._feature_unavailable("Config display")
 
     def _config_set(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
         if len(command.args) < 2:
             return CommandResult(ok=False, text="Usage: /config set <key> <value>")
-        key, value = command.args[0], command.args[1]
-        return CommandResult(
-            ok=True,
-            text=f"Config {key}={value} set (stub).",
-            data={"key": key, "value": value},
+        return self._feature_unavailable(
+            "Config mutation",
+            data={"key": command.args[0]},
         )

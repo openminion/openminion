@@ -1,0 +1,96 @@
+name: Controlplane live validation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: controlplane-live-validation
+  cancel-in-progress: true
+
+jobs:
+  telegram:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_LIVE_CHAT_ID: ${{ secrets.TELEGRAM_LIVE_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install OpenMinion
+        run: python -m pip install -e ".[dev]"
+      - name: Check Telegram credentials
+        id: credentials
+        shell: bash
+        run: |
+          if [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_LIVE_CHAT_ID" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Telegram live validation skipped: repository secrets are not configured." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Run Telegram live delivery smoke
+        if: steps.credentials.outputs.available == 'true'
+        run: python -m pytest -q -m telegram_live tests/controlplane/telegram/integration/test_live_smoke.py
+
+  slack:
+    runs-on: ubuntu-latest
+    env:
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_APP_TOKEN: ${{ secrets.SLACK_APP_TOKEN }}
+      SLACK_TEST_CHANNEL: ${{ secrets.SLACK_TEST_CHANNEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install OpenMinion with Slack support
+        run: python -m pip install -e ".[dev,slack]"
+      - name: Check Slack credentials
+        id: credentials
+        shell: bash
+        run: |
+          if [[ -n "$SLACK_BOT_TOKEN" && -n "$SLACK_APP_TOKEN" && -n "$SLACK_TEST_CHANNEL" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Slack live validation skipped: repository secrets are not configured." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Run Slack live delivery smoke
+        if: steps.credentials.outputs.available == 'true'
+        run: python -m pytest -q -m slack_live tests/controlplane/slack/integration/test_live_smoke.py
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OPENMINION_TEST_POSTGRES_URL: postgresql://postgres:test@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install OpenMinion with Postgres support
+        run: python -m pip install -e ".[dev,postgres]"
+      - name: Run Postgres dispatcher roundtrip
+        run: python -m pytest -q -m postgres tests/controlplane/test_postgres_dispatcher_roundtrip.py

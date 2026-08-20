@@ -1014,7 +1014,7 @@ def test_pair_revoke_reaches_shared_command_runtime(tmp_path: Path) -> None:
     )
 
 
-def test_diag_local_command_returns_adapter_status(tmp_path: Path) -> None:
+def test_diag_command_routes_through_shared_runtime(tmp_path: Path) -> None:
     api = _FakeAPI([[_private_message_update(1, "/diag", user_id=111)]])
     runner, runtime = _runner(
         api,
@@ -1027,10 +1027,7 @@ def test_diag_local_command_returns_adapter_status(tmp_path: Path) -> None:
 
     runner.run_once()
 
-    assert runtime.inputs == []
-    assert any(
-        "telegram adapter diag" in payload["text"] for payload in api.sent_payloads
-    )
+    assert runtime.inputs == ["/diag"]
 
 
 def test_run_forever_uses_configured_backoff_on_errors(tmp_path: Path) -> None:

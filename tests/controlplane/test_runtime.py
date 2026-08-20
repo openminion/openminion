@@ -951,8 +951,8 @@ def test_command_job_ls() -> None:
     registry = CommandRegistry(store=store)
     cmd = ParsedCommand(canonical="job.ls", original_text="/job ls", args=[])
     result = registry.execute(cmd, _ctx())
-    assert result.ok
-    assert result.data["jobs"] == []
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
 
 
 def test_command_artifact_ls() -> None:
@@ -962,7 +962,8 @@ def test_command_artifact_ls() -> None:
     registry = CommandRegistry(store=store)
     cmd = ParsedCommand(canonical="artifact.ls", original_text="/artifact ls", args=[])
     result = registry.execute(cmd, _ctx())
-    assert result.ok
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
 
 
 def test_command_memory_ls() -> None:
@@ -972,7 +973,8 @@ def test_command_memory_ls() -> None:
     registry = CommandRegistry(store=store)
     cmd = ParsedCommand(canonical="memory.ls", original_text="/memory ls", args=[])
     result = registry.execute(cmd, _ctx())
-    assert result.ok
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
     assert result.data["candidates"] == []
 
 
@@ -983,10 +985,11 @@ def test_command_config_show() -> None:
     registry = CommandRegistry(store=store)
     cmd = ParsedCommand(canonical="config.show", original_text="/config show", args=[])
     result = registry.execute(cmd, _ctx())
-    assert result.ok
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
 
 
-def test_command_config_set_allowed_for_admin() -> None:
+def test_command_config_set_is_unavailable_after_admin_gate() -> None:
     from openminion.modules.controlplane.contracts.models import ParsedCommand
 
     store = InMemoryControlPlaneStore()
@@ -996,9 +999,9 @@ def test_command_config_set_allowed_for_admin() -> None:
         canonical="config.set", original_text="/config set k v", args=["k", "v"]
     )
     result = registry.execute(cmd, _ctx(user_key="user:admin"))
-    assert result.ok
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
     assert result.data["key"] == "k"
-    assert result.data["value"] == "v"
 
 
 def test_command_memory_promote_with_arg() -> None:
@@ -1013,11 +1016,12 @@ def test_command_memory_promote_with_arg() -> None:
         args=["mem-1"],
     )
     result = registry.execute(cmd, _ctx(user_key="user:admin"))
-    assert result.ok
-    assert "mem-1" in result.text
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
+    assert result.data["candidate_id"] == "mem-1"
 
 
-def test_command_artifact_purge_allowed_for_admin() -> None:
+def test_command_artifact_purge_is_unavailable_after_admin_gate() -> None:
     from openminion.modules.controlplane.contracts.models import ParsedCommand
 
     store = InMemoryControlPlaneStore()
@@ -1027,7 +1031,8 @@ def test_command_artifact_purge_allowed_for_admin() -> None:
         canonical="artifact.purge", original_text="/artifact purge", args=[]
     )
     result = registry.execute(cmd, _ctx(user_key="user:admin"))
-    assert result.ok
+    assert not result.ok
+    assert result.error["code"] == "FEATURE_UNAVAILABLE"
 
 
 def test_help_hides_admin_commands_from_user() -> None:
@@ -1043,7 +1048,7 @@ def test_help_hides_admin_commands_from_user() -> None:
     assert "memory.promote" not in result.text
 
 
-def test_help_shows_admin_commands_to_admin() -> None:
+def test_help_hides_unavailable_admin_commands_from_admin() -> None:
     from openminion.modules.controlplane.contracts.models import ParsedCommand
 
     store = InMemoryControlPlaneStore()
@@ -1052,7 +1057,7 @@ def test_help_shows_admin_commands_to_admin() -> None:
     cmd = ParsedCommand(canonical="help", original_text="/help", args=[])
     result = registry.execute(cmd, _ctx(user_key="user:admin"))
     assert result.ok
-    assert "artifact.purge" in result.text
+    assert "artifact.purge" not in result.text
 
 
 # InMemoryControlPlaneStore — extended

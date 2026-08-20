@@ -46,11 +46,7 @@ class CommandRegistrySessionMixin:
 
     def _sessions(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         if not hasattr(self.store, "list_sessions"):
-            return CommandResult(
-                ok=True,
-                text="Sessions listing is not available in this backend.",
-                data={"sessions": []},
-            )
+            return self._feature_unavailable("Session listing", data={"sessions": []})
         sessions = self.store.list_sessions(ctx.user_key, ctx.chat_key)
         if not sessions:
             return CommandResult(
@@ -138,12 +134,9 @@ class CommandRegistrySessionMixin:
         fmt = command.args[0].lower() if command.args else "md"
         if fmt not in {"md", "json"}:
             return CommandResult(ok=False, text="Usage: /export [md|json]")
-        turns = self._list_turns(ctx.session_id)
-        label = "JSON" if fmt == "json" else "Markdown"
-        return CommandResult(
-            ok=True,
-            text=f"Exported {len(turns)} turns as {label} (stub).",
-            data={"format": fmt, "turns": len(turns)},
+        return self._feature_unavailable(
+            "Session export",
+            data={"format": fmt, "session_id": ctx.session_id},
         )
 
     def _agent_show(

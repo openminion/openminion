@@ -423,6 +423,7 @@ def _build_telegram_adapter(
         outbox_worker=components.outbox_worker,
         rate_limiter=components.rate_limiter,
         brain_client=components.brain_client,
+        authorizer=components.authorizer,
     )
     components.delivery_registry.register(runner)
     setattr(runner, "_binding_warning_count", binding_warning_count)

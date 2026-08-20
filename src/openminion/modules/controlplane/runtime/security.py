@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Protocol
 
 from ..constants import (
     AUTH_ROLE_UNPAIRED,
@@ -15,6 +16,12 @@ _COMMAND_SCOPE_OVERRIDES: dict[str, tuple[str, ...]] = {
 }
 
 
+class CommandScopeRegistry(Protocol):
+    def get_command_required_scopes(
+        self, command_name: str
+    ) -> tuple[str, ...] | None: ...
+
+
 def is_pair_command(text: str) -> bool:
     return (text or "").strip().lower().startswith("/pair")
 
@@ -23,6 +30,7 @@ def is_pair_command(text: str) -> bool:
 class ScopeAuthorizer:
     store: object | None = None
     identity_api: object | None = None
+    command_registry: CommandScopeRegistry | None = None
     default_scopes: tuple[str, ...] = DEFAULT_MINIMAL_SCOPES
 
     def _auth_from_principal_mapping(
@@ -99,14 +107,30 @@ class ScopeAuthorizer:
     def command_allowed(
         self, command: ParsedCommand, auth: AuthContext
     ) -> tuple[bool, str]:
-        required = self.required_scopes(command)
+        return self._scopes_allowed(self.required_scopes(command), auth)
+
+    def message_allowed(self, auth: AuthContext) -> tuple[bool, str]:
+        if "chat.interact" in auth.scopes:
+            return True, "ok"
+        return self._scopes_allowed(("cp.message.write", "run.start"), auth)
+
+    def required_scopes(self, command: ParsedCommand) -> tuple[str, ...]:
+        if self.command_registry is not None:
+            configured = self.command_registry.get_command_required_scopes(
+                command.canonical
+            )
+            if configured is not None:
+                return configured
+        return _COMMAND_SCOPE_OVERRIDES.get(command.canonical, self.default_scopes)
+
+    @staticmethod
+    def _scopes_allowed(
+        required: tuple[str, ...], auth: AuthContext
+    ) -> tuple[bool, str]:
         missing = [scope for scope in required if scope not in set(auth.scopes)]
         if missing:
             return False, f"missing scopes: {', '.join(missing)}"
         return True, "ok"
-
-    def required_scopes(self, command: ParsedCommand) -> tuple[str, ...]:
-        return _COMMAND_SCOPE_OVERRIDES.get(command.canonical, self.default_scopes)
 
     def _touch_channel_subject(self, *, channel: str, subject_id: str) -> None:
         if self.store is None:

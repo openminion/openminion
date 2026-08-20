@@ -72,8 +72,14 @@ def test_telegram_and_slack_share_one_controlplane_runtime(tmp_path: Path) -> No
     assert components.inbox_worker.store is components.store
     assert components.inbox_worker.dispatcher is components.dispatcher
     assert components.inbox_worker.authorizer is not None
+    assert components.inbox_worker.authorizer is components.authorizer
     assert components.inbox_worker.authorizer.store is components.store
     assert components.inbox_worker.authorizer.identity_api is components.identity_api
+    assert (
+        components.inbox_worker.authorizer.command_registry
+        is components.command_registry
+    )
+    assert telegram._authorizer is components.authorizer
     assert components.inbox_worker.rate_limiter is components.rate_limiter
     assert components.inbox_worker.audit_logger is components.audit_logger
     assert telegram._outbox_worker is components.outbox_worker

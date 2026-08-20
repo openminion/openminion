@@ -33,7 +33,7 @@ def _ctx(user_key: str) -> ResolvedContext:
         ("deny", ["req-1"]),
     ],
 )
-def test_admin_commands_require_admin_role(
+def test_admin_commands_reject_non_admin_before_execution(
     canonical: str,
     args: list[str],
 ) -> None:
@@ -52,8 +52,10 @@ def test_admin_commands_require_admin_role(
     assert denied.error is not None
     assert denied.error["code"] == "PERMISSION_DENIED"
 
-    allowed = registry.execute(command, _ctx("user:admin"))
-    assert allowed.ok is True
+    unavailable = registry.execute(command, _ctx("user:admin"))
+    assert unavailable.ok is False
+    assert unavailable.error is not None
+    assert unavailable.error["code"] == "FEATURE_UNAVAILABLE"
 
 
 def test_non_admin_command_skips_admin_gate() -> None:

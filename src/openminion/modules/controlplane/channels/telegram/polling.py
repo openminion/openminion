@@ -3,7 +3,6 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from openminion.modules.controlplane.interfaces import (
@@ -146,6 +145,7 @@ class TelegramPollingRunner:
         outbox_worker: object | None = None,
         rate_limiter: object | None = None,
         brain_client: object | None = None,
+        authorizer: ScopeAuthorizer | None = None,
     ) -> None:
         self._config = config
         self._api = api
@@ -175,7 +175,7 @@ class TelegramPollingRunner:
                 logger=self._log,
             )
         self._auth_store = _resolve_controlplane_auth_store(self._runtime)
-        self._authorizer = (
+        self._authorizer = authorizer or (
             ScopeAuthorizer(store=self._auth_store)
             if self._auth_store is not None
             else None
@@ -835,13 +835,6 @@ class TelegramPollingRunner:
         if not stripped.startswith("/"):
             return False
 
-        command = stripped.split(maxsplit=1)[0].lower()
-        if command == "/diag":
-            self._send_local_text(
-                envelope, self._build_diag_text(), payload_type="diag"
-            )
-            return True
-
         if stripped.casefold() == "/pair":
             if (
                 self._pairing is None
@@ -865,16 +858,6 @@ class TelegramPollingRunner:
             return True
 
         return False
-
-    def _build_diag_text(self) -> str:
-        return (
-            "telegram adapter diag\n"
-            "mode=polling\n"
-            f"last_update_id={self._last_update_id}\n"
-            f"last_poll_started={_format_ts(self._last_poll_started_ts)}\n"
-            f"last_poll_success={_format_ts(self._last_poll_success_ts)}\n"
-            f"last_error={self._last_poll_error or 'none'}"
-        )
 
     def _maybe_send_pairing_hint(
         self, envelope: TelegramInboundEnvelope, *, reason: str
@@ -949,10 +932,14 @@ class TelegramPollingRunner:
             )
             return None
 
-        if parsed is None or is_pair_command(inbound.text):
+        if is_pair_command(inbound.text):
             return inbound
 
-        allowed, reason = self._authorizer.command_allowed(parsed, auth)
+        allowed, reason = (
+            self._authorizer.message_allowed(auth)
+            if parsed is None
+            else self._authorizer.command_allowed(parsed, auth)
+        )
         if allowed:
             return inbound
 
@@ -979,9 +966,3 @@ def _as_str_or_none(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
-
-
-def _format_ts(value: float | None) -> str:
-    if value is None:
-        return "never"
-    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
