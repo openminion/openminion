@@ -49,37 +49,86 @@ class RuntimeSessionStoreLifecycle:
         payload: Mapping[str, Any] | None = None,
         session_turn_fence_token: int | None = None,
     ) -> EventRecord:
-        from .rows import metadata_json
-
-        now = utc_now_iso()
         with self._backend.transaction():
             self._assert_fence_if_requested(
                 session_id=session_id,
                 session_turn_fence_token=session_turn_fence_token,
             )
-            event_id = self._backend.insert(
-                "events",
-                {
-                    "session_id": session_id,
-                    "event_type": event_type,
-                    "payload_json": metadata_json(payload),
-                    "created_at": now,
-                },
+            return self._append_event_locked(
+                session_id=session_id,
+                event_type=event_type,
+                payload=payload,
             )
-            row = self._backend.query_one(
-                """
-                SELECT id, session_id, event_type, payload_json, created_at
-                FROM events
-                WHERE id = ?
-                """,
-                (event_id,),
+
+    def append_cancel_request_once(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+        run_id: str | None,
+    ) -> tuple[EventRecord, bool]:
+        with self._backend.transaction():
+            latest = self.latest_run_event_for_request(
+                session_id=session_id,
+                request_id=request_id,
             )
-            if row is None:
-                raise RuntimeError(f"Failed to read inserted event: {event_id}")
-            self._backend.execute_count(
-                "UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?",
-                (now, now, session_id),
+            if latest is not None and latest.event_type in {
+                "run.completed",
+                "run.failed",
+                "run.cancelled",
+            }:
+                return latest, False
+            existing = self._cancel_request(
+                session_id=session_id,
+                request_id=request_id,
             )
+            if existing is not None:
+                return existing, False
+            payload = {"request_id": request_id, "trace_id": request_id}
+            if run_id:
+                payload["run_id"] = run_id
+            return (
+                self._append_event_locked(
+                    session_id=session_id,
+                    event_type="run.cancel_requested",
+                    payload=payload,
+                ),
+                True,
+            )
+
+    def _append_event_locked(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: Mapping[str, Any] | None,
+    ) -> EventRecord:
+        from .rows import metadata_json
+
+        now = utc_now_iso()
+        event_id = self._backend.insert(
+            "events",
+            {
+                "session_id": session_id,
+                "event_type": event_type,
+                "payload_json": metadata_json(payload),
+                "created_at": now,
+            },
+        )
+        row = self._backend.query_one(
+            """
+            SELECT id, session_id, event_type, payload_json, created_at
+            FROM events
+            WHERE id = ?
+            """,
+            (event_id,),
+        )
+        if row is None:
+            raise RuntimeError(f"Failed to read inserted event: {event_id}")
+        self._backend.execute_count(
+            "UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?",
+            (now, now, session_id),
+        )
         return row_to_event(row)
 
     def list_events(
@@ -173,9 +222,23 @@ class RuntimeSessionStoreLifecycle:
         return None if row is None else row_to_event(row)
 
     def has_cancel_request(self, *, session_id: str, request_id: str) -> bool:
+        return (
+            self._cancel_request(
+                session_id=session_id,
+                request_id=request_id,
+            )
+            is not None
+        )
+
+    def _cancel_request(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+    ) -> EventRecord | None:
         row = self._backend.query_one(
             """
-            SELECT 1 AS present
+            SELECT id, session_id, event_type, payload_json, created_at
             FROM events
             WHERE session_id = ?
               AND event_type = 'run.cancel_requested'
@@ -184,7 +247,7 @@ class RuntimeSessionStoreLifecycle:
             """,
             (session_id, request_id),
         )
-        return row is not None
+        return None if row is None else row_to_event(row)
 
     def list_events_after_id(
         self,

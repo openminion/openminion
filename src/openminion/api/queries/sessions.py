@@ -494,6 +494,7 @@ def cancel_client_turn(
     session_id: str,
     trace_id: str,
 ) -> dict[str, Any]:
+    _client_session(runtime, session_id)
     correlation = _run_correlation(runtime, session_id, trace_id)
     if correlation is not None and correlation[1] in {
         "completed",
@@ -513,25 +514,26 @@ def cancel_client_turn(
     if state == "not_active":
         return _inactive_cancellation(runtime, session_id, trace_id)
     run_id = correlation[0] if correlation is not None else None
-    if not runtime.sessions.has_cancel_request(
-        session_id=session_id,
-        request_id=trace_id,
-    ):
-        payload = {"request_id": trace_id, "trace_id": trace_id}
-        if run_id:
-            payload["run_id"] = run_id
-        try:
-            runtime.sessions.append_event(
-                session_id=session_id,
-                event_type="run.cancel_requested",
-                payload=payload,
-            )
-        except (OSError, RuntimeError, ValueError, sqlite3.Error):
-            return _cancellation_error(
-                "cancellation_event_failed",
-                run_id=run_id,
-                retryable=True,
-            )
+    try:
+        cancellation_event, inserted = runtime.sessions.append_cancel_request_once(
+            session_id=session_id,
+            request_id=trace_id,
+            run_id=run_id,
+        )
+    except (OSError, RuntimeError, ValueError, sqlite3.Error):
+        return _cancellation_error(
+            "cancellation_event_failed",
+            run_id=run_id,
+            retryable=True,
+        )
+    if cancellation_event.event_type in {
+        "run.completed",
+        "run.failed",
+        "run.cancelled",
+    }:
+        return _terminal_cancellation(session_id, trace_id, cancellation_event)
+    if not inserted:
+        state = "already_requested"
     return _cancellation(
         session_id,
         trace_id,
@@ -559,6 +561,23 @@ def _inactive_cancellation(
             terminal=True,
         )
     return _cancellation_error("stale_trace", run_id=run_id)
+
+
+def _terminal_cancellation(
+    session_id: str,
+    trace_id: str,
+    event: Any,
+) -> dict[str, Any]:
+    run_id = str(event.payload.get("run_id", "") or "").strip() or None
+    state = str(event.payload.get("state", "") or "").strip()
+    state = state or str(event.event_type).removeprefix("run.")
+    return _cancellation(
+        session_id,
+        trace_id,
+        run_id=run_id,
+        state=state,
+        terminal=True,
+    )
 
 
 def _run_correlation(
@@ -745,7 +764,14 @@ def _b64(value: bytes) -> str:
 
 
 def _unb64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    decoded = base64.b64decode(
+        value + "=" * (-len(value) % 4),
+        altchars=b"-_",
+        validate=True,
+    )
+    if not value or _b64(decoded) != value:
+        raise binascii.Error("non-canonical base64")
+    return decoded
 
 
 def _response_size(

@@ -413,6 +413,19 @@ class SessionStore:
             request_id=request_id,
         )
 
+    def append_cancel_request_once(
+        self,
+        *,
+        session_id: str,
+        request_id: str,
+        run_id: str | None,
+    ) -> tuple[EventRecord, bool]:
+        return self._lifecycle.append_cancel_request_once(
+            session_id=session_id,
+            request_id=request_id,
+            run_id=run_id,
+        )
+
     def list_events_after_id(
         self,
         *,

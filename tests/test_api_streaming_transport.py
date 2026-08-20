@@ -756,6 +756,40 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         handler._write_json.assert_not_called()  # type: ignore[attr-defined]
         dispatch.assert_not_called()
 
+    def test_desktop_stream_rejects_query_before_stream_dispatch(self) -> None:
+        service = ClientAuthService(
+            master_token="master-token",
+            config_path="config.json",
+            home_root=".",
+            data_root=".openminion",
+            bind_host="127.0.0.1",
+            daemon_version="0.0.9",
+        )
+        lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
+        handler = object.__new__(_OpenMinionAPIHandler)
+        handler.path = "/v1/turn/stream?unexpected=1"
+        handler.headers = {
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+            "X-OpenMinion-Client-Token": lease["client_token"],
+            "X-Request-ID": "33333333-3333-4333-8333-333333333333",
+        }
+        handler.config_path = None
+        handler.runtime = None
+        handler.runtime_bootstrap_error = None
+        handler.client_address = ("127.0.0.1", 1234)
+        handler.client_auth = service
+        _install_json_body(handler, _desktop_turn_body())
+        handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
+        handler._write_json = mock.Mock()  # type: ignore[attr-defined]
+
+        _OpenMinionAPIHandler.do_POST(handler)
+
+        handler._handle_turn_stream.assert_not_called()  # type: ignore[attr-defined]
+        status, payload = handler._write_json.call_args.args  # type: ignore[attr-defined]
+        self.assertEqual(status, HTTPStatus.BAD_REQUEST)
+        self.assertEqual(payload["error"]["code"], "invalid_request")
+
     def test_do_post_turn_stream_defaults_to_json_dispatch(self) -> None:
         handler = object.__new__(_OpenMinionAPIHandler)
         handler.path = "/v1/turn/stream"

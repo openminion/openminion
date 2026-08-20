@@ -166,9 +166,6 @@ def _query_error(
     )
 
 
-__all__ = ["handle_request"]
-
-
 def handle_cancel_request(
     ctx: APIRouteContext,
     *,
@@ -203,12 +200,15 @@ def handle_cancel_request(
             session_id=session_id,
         )
     try:
-        result = cancel_client_turn(
-            manager,
-            runtime,
-            session_id=session_id,
-            trace_id=trace_id,
-        )
+        try:
+            result = cancel_client_turn(
+                manager,
+                runtime,
+                session_id=session_id,
+                trace_id=trace_id,
+            )
+        except SessionQueryError as exc:
+            return _query_error(exc, session_id=session_id)
         if code := result.get("error"):
             return _cancel_error(
                 str(code),

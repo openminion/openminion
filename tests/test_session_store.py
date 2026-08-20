@@ -288,6 +288,28 @@ class SessionStoreTests(unittest.TestCase):
         self.assertIsNotNone(latest)
         assert latest is not None
         self.assertEqual(latest.event_type, "run.completed")
+
+        terminal, inserted = self.store.append_cancel_request_once(
+            session_id=session.id,
+            request_id="trace-1",
+            run_id="run-1",
+        )
+        self.assertEqual(terminal.event_type, "run.completed")
+        self.assertFalse(inserted)
+
+        first_cancel, inserted = self.store.append_cancel_request_once(
+            session_id=session.id,
+            request_id="trace-2",
+            run_id=None,
+        )
+        duplicate_cancel, duplicate_inserted = self.store.append_cancel_request_once(
+            session_id=session.id,
+            request_id="trace-2",
+            run_id=None,
+        )
+        self.assertEqual(first_cancel.id, duplicate_cancel.id)
+        self.assertTrue(inserted)
+        self.assertFalse(duplicate_inserted)
         self.assertTrue(
             self.store.has_cancel_request(
                 session_id=session.id,

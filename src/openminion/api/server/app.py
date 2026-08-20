@@ -51,7 +51,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
         path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not self._authenticate_request("POST", path, request_id):
+        if not self._authenticate_request("POST", path, request_id, query=parsed.query):
             return
         try:
             payload = self._read_optional_json_body(path=path)

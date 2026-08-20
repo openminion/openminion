@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
 from typing import Any
 
 import pytest
@@ -308,6 +310,7 @@ def test_session_routes_reject_unknown_or_malformed_input(
 
 def test_session_routes_hide_incompatible_surfaces_and_unknown_agents(
     client_runtime: tuple[Path, APIRuntime, ClientAuthService, ClientIdentity],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, runtime, _, _ = client_runtime
     runtime.sessions.resolve_session(
@@ -334,6 +337,42 @@ def test_session_routes_hide_incompatible_surfaces_and_unknown_agents(
     assert status == 404
     assert missing["error"]["code"] == "session_not_found"
 
+    runtime.sessions.append_event(
+        session_id="cli-session",
+        event_type="run.completed",
+        payload={
+            "run_id": "cli-run",
+            "request_id": "cli-trace",
+            "state": "completed",
+        },
+    )
+
+    class CancelManager:
+        calls = 0
+
+        def cancel_session_turn(self, _trace_id: str, _session_id: str) -> str:
+            self.calls += 1
+            return "requested"
+
+    manager = CancelManager()
+    monkeypatch.setattr(
+        "openminion.api.routes.client_sessions.resolve_runtime_manager",
+        lambda **_kwargs: (manager, runtime, False),
+    )
+    for session_id, trace_id in (
+        ("cli-session", "cli-trace"),
+        ("slack-session", "active-trace"),
+    ):
+        status, hidden = _request(
+            client_runtime,
+            "POST",
+            f"/v1/turn/{trace_id}/cancel",
+            body={"session_id": session_id},
+        )
+        assert status == 404
+        assert hidden["error"]["code"] == "session_not_found"
+    assert manager.calls == 0
+
     status, invalid_agent = _request(
         client_runtime,
         "POST",
@@ -346,6 +385,7 @@ def test_session_routes_hide_incompatible_surfaces_and_unknown_agents(
 
 def test_terminal_cancellation_is_idempotent_and_session_bound(
     client_runtime: tuple[Path, APIRuntime, ClientAuthService, ClientIdentity],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _create(client_runtime)
     other = _create(client_runtime)
@@ -358,6 +398,19 @@ def test_terminal_cancellation_is_idempotent_and_session_bound(
             "request_id": "trace-terminal",
             "state": "completed",
         },
+    )
+
+    class CancelManager:
+        calls = 0
+
+        def cancel_session_turn(self, _trace_id: str, _session_id: str) -> str:
+            self.calls += 1
+            return "not_active"
+
+    manager = CancelManager()
+    monkeypatch.setattr(
+        "openminion.api.routes.client_sessions.resolve_runtime_manager",
+        lambda **_kwargs: (manager, runtime, False),
     )
     for _ in range(2):
         status, payload = _request(
@@ -374,6 +427,7 @@ def test_terminal_cancellation_is_idempotent_and_session_bound(
             "state": "completed",
             "terminal": True,
         }
+    assert manager.calls == 0
 
     status, unknown = _request(
         client_runtime,
@@ -383,6 +437,79 @@ def test_terminal_cancellation_is_idempotent_and_session_bound(
     )
     assert status == 404
     assert unknown["error"]["code"] == "trace_not_found"
+    assert manager.calls == 1
+
+
+def test_cancellation_rechecks_terminal_state_and_serializes_duplicates(
+    client_runtime: tuple[Path, APIRuntime, ClientAuthService, ClientIdentity],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = _create(client_runtime)["session_id"]
+    _, runtime, _, _ = client_runtime
+
+    class CompletionRaceManager:
+        def cancel_session_turn(self, trace_id: str, supplied_session_id: str) -> str:
+            runtime.sessions.append_event(
+                session_id=supplied_session_id,
+                event_type="run.completed",
+                payload={
+                    "run_id": "race-run",
+                    "request_id": trace_id,
+                    "state": "completed",
+                },
+            )
+            return "requested"
+
+    monkeypatch.setattr(
+        "openminion.api.routes.client_sessions.resolve_runtime_manager",
+        lambda **_kwargs: (CompletionRaceManager(), runtime, False),
+    )
+    status, terminal = _request(
+        client_runtime,
+        "POST",
+        "/v1/turn/race-terminal/cancel",
+        body={"session_id": session_id},
+    )
+    assert status == 200
+    assert terminal["cancellation"]["state"] == "completed"
+    assert terminal["cancellation"]["terminal"] is True
+
+    barrier = threading.Barrier(2)
+
+    class ConcurrentManager:
+        def cancel_session_turn(self, _trace_id: str, _session_id: str) -> str:
+            barrier.wait(timeout=5)
+            return "requested"
+
+    manager = ConcurrentManager()
+    monkeypatch.setattr(
+        "openminion.api.routes.client_sessions.resolve_runtime_manager",
+        lambda **_kwargs: (manager, runtime, False),
+    )
+
+    def cancel() -> tuple[int, dict[str, Any]]:
+        return _request(
+            client_runtime,
+            "POST",
+            "/v1/turn/race-duplicate/cancel",
+            body={"session_id": session_id},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: cancel(), range(2)))
+
+    assert {status for status, _payload in results} == {200, 202}
+    assert {payload["cancellation"]["state"] for _status, payload in results} == {
+        "requested",
+        "already_requested",
+    }
+    cancel_events = [
+        event
+        for event in runtime.sessions.list_events(session_id=session_id, limit=20)
+        if event.event_type == "run.cancel_requested"
+        and event.payload.get("request_id") == "race-duplicate"
+    ]
+    assert len(cancel_events) == 1
 
 
 def test_active_duplicate_mismatch_and_stale_cancellation_are_typed(
@@ -471,7 +598,7 @@ def test_active_duplicate_mismatch_and_stale_cancellation_are_typed(
     def fail_append(**_kwargs: Any) -> None:
         raise RuntimeError("private storage detail")
 
-    monkeypatch.setattr(runtime.sessions, "append_event", fail_append)
+    monkeypatch.setattr(runtime.sessions, "append_cancel_request_once", fail_append)
     status, failed = _request(
         client_runtime,
         "POST",

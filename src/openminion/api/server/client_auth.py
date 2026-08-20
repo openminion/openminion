@@ -329,6 +329,8 @@ class ClientAuthHTTPMixin:
         method: str,
         path: str,
         request_id: str | None,
+        *,
+        query: str | None = None,
     ) -> bool:
         if self.client_auth is None:
             self.client_identity = None
@@ -353,6 +355,16 @@ class ClientAuthHTTPMixin:
                 client_tokens=clients,
                 peer_host=_peer_host(self),
             )
+            if (
+                clients
+                and method.upper() == "POST"
+                and path == "/v1/turn/stream"
+                and query
+            ):
+                raise ClientAuthError(
+                    "invalid_request",
+                    "Desktop turn streams do not accept query fields.",
+                )
             if (
                 clients
                 and method.upper() == "POST"
