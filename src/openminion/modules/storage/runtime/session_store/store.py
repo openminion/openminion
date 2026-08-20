@@ -407,12 +407,6 @@ class SessionStore:
             request_id=request_id,
         )
 
-    def has_cancel_request(self, *, session_id: str, request_id: str) -> bool:
-        return self._lifecycle.has_cancel_request(
-            session_id=session_id,
-            request_id=request_id,
-        )
-
     def append_cancel_request_once(
         self,
         *,

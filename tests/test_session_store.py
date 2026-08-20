@@ -310,12 +310,6 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(first_cancel.id, duplicate_cancel.id)
         self.assertTrue(inserted)
         self.assertFalse(duplicate_inserted)
-        self.assertTrue(
-            self.store.has_cancel_request(
-                session_id=session.id,
-                request_id="trace-1",
-            )
-        )
 
     def test_list_events_supports_prefix_and_descending_order(self) -> None:
         session = self.store.resolve_session(

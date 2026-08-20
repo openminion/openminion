@@ -221,15 +221,6 @@ class RuntimeSessionStoreLifecycle:
         )
         return None if row is None else row_to_event(row)
 
-    def has_cancel_request(self, *, session_id: str, request_id: str) -> bool:
-        return (
-            self._cancel_request(
-                session_id=session_id,
-                request_id=request_id,
-            )
-            is not None
-        )
-
     def _cancel_request(
         self,
         *,
