@@ -1,3 +1,4 @@
+import asyncio
 import json
 from contextlib import suppress
 from dataclasses import asdict
@@ -38,7 +39,6 @@ _CRONCTL_LOGGER = get_logger("cronctl")
 class _LifecycleTelemetryBridge:
     def __init__(self, runtime: "RuntimeFacade") -> None:
         self._runtime = runtime
-        # reuse the runtime's pre-built TelemetryService so the
         existing = getattr(runtime, "telemetry_service", None)
         if existing is not None:
             self._telemetry: TelemetryService = existing
@@ -321,6 +321,7 @@ def execute_turn(
             duration_ms=_duration_since_ms(started),
         )
     except TurnTimeoutError as exc:
+        cancel_event.set()
         return _turn_error_response(
             code="turn_timeout",
             message=str(exc),
@@ -373,15 +374,14 @@ def _execute_runtime_turn_with_timer(
 
 
 def _desktop_approval_callback(request: Any, emit_chunk: Any, cancel_event: Any) -> Any:
-    requester = getattr(request, "desktop_approval_requester", None)
-    if requester is None:
+    if (requester := getattr(request, "desktop_approval_requester", None)) is None:
         return None
 
-    def approve(tool_name: str, args: dict[str, Any], call_id: str) -> bool:
+    async def approve(tool_name: str, args: dict[str, Any], call_id: str) -> bool:
         if not isinstance(args, dict) or any(not isinstance(key, str) for key in args):
             return False
         approval = DesktopApprovalRequest(request.session_id, request.trace_id, str(tool_name or ""), str(call_id or ""), tuple(sorted(args)), emit_chunk, cancel_event)  # fmt: skip
-        return bool(requester(approval))
+        return bool(await asyncio.to_thread(requester, approval))
 
     return approve
 

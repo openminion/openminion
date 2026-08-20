@@ -164,11 +164,12 @@ def _revoke(
     if ctx.client_auth is None or ctx.client_identity is None:
         return _forbidden()
     try:
-        ctx.client_auth.revoke(ctx.client_identity)
+        if ctx.client_approvals is None:
+            ctx.client_auth.revoke(ctx.client_identity)
+        else:
+            ctx.client_approvals.revoke_client(ctx.client_identity)
     except ClientAuthError as exc:
         return _auth_error(exc)
-    if ctx.client_approvals is not None:
-        ctx.client_approvals.cancel_client(ctx.client_identity.client_id, "revoked")
     return RouteResult(status=HTTPStatus.OK, payload={"ok": True, "revoked": True})
 
 

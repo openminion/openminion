@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
 from time import monotonic, sleep
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -13,6 +15,8 @@ from openminion.api.server.client_approvals import ClientApprovalCoordinator
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.dispatch import dispatch_request
 from openminion.base.version import OPENMINION_VERSION
+from openminion.services.runtime.daemon import execute_turn
+from openminion.services.runtime.ingress import TurnTimeoutError
 from openminion.services.runtime.manager import DesktopApprovalRequest
 
 
@@ -20,12 +24,25 @@ class _Sessions:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
         self.fail_event: str | None = None
+        self.statuses = {"session-1": "active", "session-2": "active"}
+        self.append_started = Event()
+        self.release_append: Event | None = None
 
     def append_event(self, **event: Any) -> str:
         if event["event_type"] == self.fail_event:
             raise RuntimeError("event write failed")
+        if (
+            event["event_type"] == "desktop.approval.requested"
+            and self.release_append is not None
+        ):
+            self.append_started.set()
+            self.release_append.wait(timeout=2)
         self.events.append(event)
         return f"event-{len(self.events)}"
+
+    def get_session(self, session_id: str) -> dict[str, str] | None:
+        status = self.statuses.get(session_id)
+        return {"status": status} if status is not None else None
 
 
 @pytest.fixture
@@ -265,7 +282,9 @@ def test_shared_session_close_and_lease_revoke_release_waits(
     other = _identity(service, ttl_seconds=300)
     first = _start_request(coordinator, identity, trace_id="trace-a", call_id="call-a")
     second = _start_request(coordinator, other, trace_id="trace-b", call_id="call-b")
-    coordinator.cancel_session("session-1", "session_closed")
+    finish_close = coordinator.cancel_session("session-1", "session_closed")
+    _sessions.statuses["session-1"] = "closed"
+    finish_close()
     first[0].join(timeout=2)
     second[0].join(timeout=2)
     assert first[3] == [False]
@@ -289,6 +308,17 @@ def test_shared_session_close_and_lease_revoke_release_waits(
     )
     assert len(_sessions.events) == events_after_close
 
+    _sessions.statuses["session-1"] = "active"
+    resumed = _start_request(
+        coordinator,
+        identity,
+        trace_id="trace-after-resume",
+        call_id="call-after-resume",
+    )
+    resumed[1].set()
+    resumed[0].join(timeout=2)
+    assert resumed[3] == [False]
+
     third = _start_request(
         coordinator,
         identity,
@@ -296,10 +326,117 @@ def test_shared_session_close_and_lease_revoke_release_waits(
         trace_id="trace-c",
         call_id="call-c",
     )
-    service.revoke(identity)
-    coordinator.cancel_client(identity.client_id, "revoked")
+    coordinator.revoke_client(identity)
     third[0].join(timeout=2)
     assert third[3] == [False]
+
+
+def test_revoke_during_requested_event_append_is_cancelled(
+    approval_owner: tuple[
+        ClientAuthService,
+        ClientApprovalCoordinator,
+        _Sessions,
+        ClientIdentity,
+    ],
+) -> None:
+    _service, coordinator, sessions, identity = approval_owner
+    sessions.release_append = Event()
+    result: list[bool] = []
+    thread = Thread(
+        target=lambda: result.append(
+            coordinator.request(
+                identity,
+                DesktopApprovalRequest(
+                    session_id="session-1",
+                    trace_id="trace-revoke-race",
+                    tool_name="workspace.search",
+                    call_id="call-revoke-race",
+                    argument_keys=("query",),
+                    emit_chunk=lambda _chunk: pytest.fail("unexpected live frame"),
+                    cancel_event=Event(),
+                ),
+            )
+        ),
+        daemon=True,
+    )
+    thread.start()
+    assert sessions.append_started.wait(timeout=2)
+    coordinator.revoke_client(identity)
+    sessions.release_append.set()
+    thread.join(timeout=2)
+
+    assert result == [False]
+    assert [event["event_type"] for event in sessions.events] == [
+        "desktop.approval.requested",
+        "desktop.approval.resolved",
+    ]
+    assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
+
+
+def test_turn_timeout_releases_approval_and_rejects_late_allow(
+    approval_owner: tuple[
+        ClientAuthService,
+        ClientApprovalCoordinator,
+        _Sessions,
+        ClientIdentity,
+    ],
+) -> None:
+    service, coordinator, sessions, identity = approval_owner
+    cancel = Event()
+    chunks: list[Any] = []
+    approval_results: list[bool] = []
+    approval_thread: list[Thread] = []
+    request = SimpleNamespace(
+        meta={},
+        session_id="session-1",
+        trace_id="trace-timeout",
+        desktop_approval_requester=coordinator.bind(identity),
+    )
+
+    def time_out(*, approval_callback: Any, **_kwargs: Any) -> None:
+        thread = Thread(
+            target=lambda: approval_results.append(
+                asyncio.run(
+                    approval_callback(
+                        "workspace.search", {"query": "secret"}, "call-timeout"
+                    )
+                )
+            ),
+            daemon=True,
+        )
+        approval_thread.append(thread)
+        thread.start()
+        _wait_for(lambda: bool(sessions.events))
+        raise TurnTimeoutError("turn timed out")
+
+    with mock.patch(
+        "openminion.services.runtime.daemon._execute_runtime_turn_with_timer",
+        side_effect=time_out,
+    ):
+        response = execute_turn(
+            runtime=SimpleNamespace(),
+            request=request,
+            emit_chunk=chunks.append,
+            cancel_event=cancel,
+        )
+
+    approval_thread[0].join(timeout=2)
+    assert cancel.is_set()
+    assert response.errors[0].code == "turn_timeout"
+    assert approval_results == [False]
+    assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
+    approval_id = sessions.events[0]["payload"]["approval_id"]
+    status, payload = dispatch_request(
+        "POST",
+        f"/v1/client/sessions/session-1/turns/trace-timeout/approvals/{approval_id}",
+        None,
+        body={"decision": "allow_once"},
+        client_auth=service,
+        client_identity=identity,
+        client_approvals=coordinator,
+    )
+    assert int(status) == 409
+    assert payload["error"]["code"] == "approval_cancelled"
 
 
 def test_event_failures_and_argument_bounds_never_allow(

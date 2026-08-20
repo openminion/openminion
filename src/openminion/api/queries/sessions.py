@@ -440,7 +440,7 @@ def close_client_session(
     body: dict[str, Any] | None,
     query: str | None,
     sign_cursor: CursorSigner,
-    cancel_pending: Callable[[str], None] | None = None,
+    cancel_pending: Callable[[str], Callable[[], None]] | None = None,
 ) -> dict[str, Any]:
     if query:
         raise SessionQueryError("Session close does not accept query fields.")
@@ -448,12 +448,15 @@ def close_client_session(
     if set(payload) - {"reason"}:
         raise SessionQueryError("Session close contains unknown fields.")
     _client_session(runtime, session_id)
-    if cancel_pending is not None:
-        cancel_pending(session_id)
-    record = runtime.sessions.close_session(
-        session_id=session_id,
-        reason=_optional_scalar(payload.get("reason"), "reason") or "desktop_close",
-    )
+    finish_close = cancel_pending(session_id) if cancel_pending is not None else None
+    try:
+        record = runtime.sessions.close_session(
+            session_id=session_id,
+            reason=_optional_scalar(payload.get("reason"), "reason") or "desktop_close",
+        )
+    finally:
+        if finish_close is not None:
+            finish_close()
     return {
         "ok": True,
         "session": client_session_payload(

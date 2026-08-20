@@ -139,8 +139,9 @@ def test_renew_and_revoke_apply_only_to_authenticated_identity(tmp_path: Path) -
         client_auth=service,
         client_identity=identity,
         client_approvals=SimpleNamespace(
-            cancel_client=lambda client_id, reason: cancelled.append(
-                (client_id, reason)
+            revoke_client=lambda value: (
+                service.revoke(value),
+                cancelled.append((value.client_id, "revoked")),
             )
         ),
     )
