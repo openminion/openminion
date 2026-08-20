@@ -8,10 +8,15 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import pytest
+
 from openminion.cli.main import main
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.task import TaskManager, load_latest_project_checkpoint
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
+
+
+pytestmark = pytest.mark.e2e
 
 
 def _root_args(tmp_path: Path) -> list[str]:

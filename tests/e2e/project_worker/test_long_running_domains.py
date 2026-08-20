@@ -8,10 +8,13 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
+import pytest
+
 from openminion.cli.main import main
 
 
 _FIXTURES = Path(__file__).parent / "fixtures"
+pytestmark = pytest.mark.e2e
 
 
 def _run_project(
