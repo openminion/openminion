@@ -246,8 +246,12 @@ def _append_filter_sql(
         params.extend([service._normalize_source_type(item) for item in filters.types])
     tags = _normalize_filter_tags(filters.tags)
     if tags:
-        where.append("(" + " OR ".join("LOWER(d.tags_json) LIKE ?" for _ in tags) + ")")
-        params.extend(f"%{json.dumps(tag)}%" for tag in tags)
+        tag_query = (
+            "EXISTS (SELECT 1 FROM json_each(d.tags_json) AS tag "
+            "WHERE LOWER(tag.value) = ?)"
+        )
+        where.append("(" + " OR ".join(tag_query for _ in tags) + ")")
+        params.extend(tags)
     if filters.time_window_hours is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(
             hours=float(filters.time_window_hours)

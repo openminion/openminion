@@ -159,6 +159,42 @@ def test_diagnose_retrieval_reports_counts_and_no_result_reason(tmp_path: Path) 
         service.close()
 
 
+def test_tag_filter_matches_exact_json_value_case_insensitively(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    try:
+        service.ingest_source(
+            source_type="doc",
+            source_ref="doc://tags/exact",
+            text="shared tag filter marker exact",
+            scope="project",
+            tags=["Ops"],
+            title="Exact tag",
+        )
+        service.ingest_source(
+            source_type="doc",
+            source_ref="doc://tags/substring",
+            text="shared tag filter marker substring",
+            scope="project",
+            tags=["devops"],
+            title="Substring tag",
+        )
+
+        rows = service.retrieve(
+            query="shared tag filter marker",
+            purpose="act",
+            scope={"project": True},
+            k=5,
+            strategy="contextual",
+            filters={"tags": ["ops"]},
+        )
+
+        assert [row["ref_id"].split("#u=", 1)[0] for row in rows] == [
+            "doc://tags/exact"
+        ]
+    finally:
+        service.close()
+
+
 def test_raptor_build_and_retrieve_mix_internal_and_leaf(tmp_path: Path) -> None:
     service = _service(tmp_path)
     try:

@@ -514,20 +514,34 @@ class TestPluginEvidencePipeline(unittest.TestCase):
         self.assertEqual(len(r1.calls), 1)
         self.assertEqual(len(r2.calls), 1)
 
-    def test_raising_retriever_silently_skipped(self):
+    def test_raising_retriever_is_logged_and_skipped(self):
         reg = PluginRegistry()
         reg.register_retriever(_RaisingRetriever())
         svc, _ = self._svc(reg)
-        pack = svc.build_pack(self._req())  # must not raise
+        with self.assertLogs(
+            "openminion.modules.context.service", level="WARNING"
+        ) as logs:
+            pack = svc.build_pack(self._req())
         self.assertIsNotNone(pack)
+        self.assertIn(
+            "context retriever failed name=raising_retriever session_id=s1",
+            "\n".join(logs.output),
+        )
 
-    def test_raising_compressor_silently_skipped(self):
+    def test_raising_compressor_is_logged_and_skipped(self):
         reg = PluginRegistry()
         reg.register_retriever(_StubRetriever(_make_ev_items(3)))
         reg.register_compressor(_RaisingCompressor())
         svc, _ = self._svc(reg)
-        pack = svc.build_pack(self._req())  # must not raise
+        with self.assertLogs(
+            "openminion.modules.context.service", level="WARNING"
+        ) as logs:
+            pack = svc.build_pack(self._req())
         self.assertIsNotNone(pack)
+        self.assertIn(
+            "context compressor failed name=raising_compressor session_id=s1",
+            "\n".join(logs.output),
+        )
 
     def test_no_retrievers_pipeline_not_invoked(self):
         compressor = _StubCompressor()

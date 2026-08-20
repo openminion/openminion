@@ -798,8 +798,13 @@ class ContextCtlService:
                     filters={},
                 )
                 all_items.extend(items)
-            except Exception:
-                pass
+            except Exception as exc:
+                _logger.warning(
+                    "context retriever failed name=%s session_id=%s error=%s",
+                    name,
+                    request.session_id,
+                    exc,
+                )
         for name in self._plugin_registry.compressor_names:
             compressor = self._plugin_registry.get_compressor(name)
             if compressor is None:
@@ -810,8 +815,13 @@ class ContextCtlService:
                     items=all_items,
                     budget_tokens=k * 120,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                _logger.warning(
+                    "context compressor failed name=%s session_id=%s error=%s",
+                    name,
+                    request.session_id,
+                    exc,
+                )
         return all_items
 
     def _apply_trim_ladder(

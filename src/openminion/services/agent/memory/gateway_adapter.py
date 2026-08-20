@@ -112,7 +112,6 @@ class MemoryServiceGatewayAdapter(
             logger=self._logger,
             agent_id=self._agent_id,
             retrieval_max_chars=self._retrieval_max_chars,
-            feedback_boost_on_reference=self._feedback_boost_on_reference,
             trace_fn=self._trace,
         )
 
@@ -162,10 +161,6 @@ class MemoryServiceGatewayAdapter(
         self._retrieval_min_confidence = coerce_float(
             config_value(retrieval_cfg, "min_confidence_default", 0.6),
             0.6,
-        )
-        self._feedback_boost_on_reference = coerce_float(
-            config_value(retrieval_cfg, "feedback_boost_on_reference", 0.1),
-            0.1,
         )
         self._feedback_demote_on_correction = coerce_float(
             config_value(retrieval_cfg, "feedback_demote_on_correction", 0.3),
@@ -354,7 +349,6 @@ class MemoryServiceGatewayAdapter(
         self._auto_extract_enabled = False
         self._auto_extract_halflife_days = 14
         self._auto_extract_notify = True
-        self._feedback_boost_on_reference = 0.1
         self._feedback_demote_on_correction = 0.3
         self._reflection_enabled = True
         self._reflection_interval_sessions = 5

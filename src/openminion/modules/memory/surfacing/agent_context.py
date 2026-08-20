@@ -596,7 +596,6 @@ class ContextBuildersMixin:
                 config=self._config,
                 ranking_config=self._ranking_config,
                 retrieve_ctl=self._retrieve_ctl,
-                feedback_boost_on_reference=self._feedback_boost_on_reference,
                 trace_fn=self._trace,
             )
             content, meta, retrieve_hits, merged_hits = self._pipeline.rank_and_format(
