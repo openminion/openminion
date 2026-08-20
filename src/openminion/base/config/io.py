@@ -1,7 +1,5 @@
 """Config path resolution and JSON load/save helpers."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
@@ -31,7 +29,8 @@ def resolve_config_path(config_path: str | None, home_root: Path | None = None) 
             home_root = Path(env_home).expanduser()
 
     config_root = _resolve_config_root(home_root)
-    return (config_root / str(DEFAULT_CONFIG_FILENAME)).resolve()
+    filename: str = DEFAULT_CONFIG_FILENAME
+    return (config_root / filename).resolve()
 
 
 def _resolve_config_root(home_root: Path | None) -> Path:

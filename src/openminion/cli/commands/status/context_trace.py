@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.cli.commands.status.session_store import build_status_session_store

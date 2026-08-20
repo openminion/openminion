@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from sqlite3 import Error as SQLiteError
 from typing import Any, Callable

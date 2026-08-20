@@ -1,17 +1,11 @@
 """Approval-decision helpers for the developer API."""
 
-from __future__ import annotations
-
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from openminion.api.config import close_api_runtime_if_owned
 from openminion.api.core.deps import resolve_runtime_manager
-
-APPROVAL_CHOICES: tuple[str, ...] = (
-    "allow_once",
-    "allow_session",
-    "allow_forever",
-    "deny",
+from openminion.modules.policy.constants import (
+    POLICY_APPROVAL_CHOICES as APPROVAL_CHOICES,
 )
 
 
@@ -56,7 +50,7 @@ def _missing_field_error(field: str) -> dict[str, Any]:
 
 def process_approval_decision(
     *,
-    config_path: Optional[str],
+    config_path: str | None,
     runtime: Any,
     body: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -85,7 +79,7 @@ def process_approval_decision(
         runtime=runtime,
     )
     try:
-        policyctl = _resolve_policyctl(active_runtime)
+        policyctl = getattr(active_runtime, "action_policy", None)
         if policyctl is None:
             return {
                 "ok": False,
@@ -108,17 +102,6 @@ def process_approval_decision(
         }
     finally:
         close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)
-
-
-def _resolve_policyctl(runtime: Any) -> Any:
-    """Return the runtime PolicyCtl when one is exposed."""
-    for attr in ("policyctl", "policy_ctl", "policy", "action_policy"):
-        candidate = getattr(runtime, attr, None)
-        if candidate is None:
-            continue
-        if hasattr(candidate, "create_grant_from_confirmation"):
-            return candidate
-    return None
 
 
 __all__ = [

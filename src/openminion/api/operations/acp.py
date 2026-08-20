@@ -1,7 +1,5 @@
 """Local Agent Client Protocol v1 adapter over :class:`APIRuntime`."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Awaitable, Callable
 from concurrent.futures import Future
@@ -414,7 +412,7 @@ def _prompt_text(blocks: list[Any]) -> str:
 def _runtime_channel(runtime: Any) -> str:
     agent_id = resolve_default_agent_id(runtime.config)
     profile = runtime.config.agents[agent_id]
-    return str(getattr(profile, "default_channel", "console") or "console")
+    return str(profile.default_channel or "console")
 
 
 def _progress_text_and_trace(payload: object) -> tuple[str, str]:

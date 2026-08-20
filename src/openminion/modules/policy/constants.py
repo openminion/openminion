@@ -106,6 +106,13 @@ POLICY_CONFIRM_RESPONSE_CHOICES: tuple[str, ...] = (
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
 )
 
+POLICY_APPROVAL_CHOICES: tuple[str, ...] = (
+    "allow_once",
+    "allow_session",
+    "allow_forever",
+    "deny",
+)
+
 POLICY_SUBJECT_ID_LOCAL = "local"
 
 DEFAULT_STANDALONE_SQLITE_SUBPATH = Path(".openminion") / "policy" / "policy.db"

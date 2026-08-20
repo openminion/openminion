@@ -1,7 +1,5 @@
 """Validation helpers for runtime and provider environment variables."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from openminion.base.config.core import OpenMinionConfig
@@ -65,7 +63,7 @@ def validate_for_provider(
     env: EnvironmentConfig,
     config: OpenMinionConfig | None = None,
 ) -> EnvValidationResult:
-    provider = str(provider_name or "").strip().lower() or "echo"
+    provider = provider_name.strip().lower() or "echo"
     provider = "anthropic" if provider == "claude" else provider
 
     if provider in _KEYLESS_PROVIDERS:
@@ -77,20 +75,17 @@ def validate_for_provider(
             ok=False,
             errors=(f"Unknown provider '{provider}'.",),
         )
-    required = [required_name] if required_name else []
-    errors: list[str] = []
-
-    for key in required:
-        if not env.has(key):
-            errors.append(
-                f"{provider} provider requires env var {key} (or provider api_key in config)."
-            )
-
-    return EnvValidationResult(
-        ok=not errors,
-        errors=tuple(errors),
-        required_vars=tuple(required),
-    )
+    required_vars = (required_name,) if required_name else ()
+    if required_name and not env.has(required_name):
+        return EnvValidationResult(
+            ok=False,
+            errors=(
+                f"{provider} provider requires env var {required_name} "
+                "(or provider api_key in config).",
+            ),
+            required_vars=required_vars,
+        )
+    return EnvValidationResult(ok=True, required_vars=required_vars)
 
 
 def _provider_env_name(
@@ -99,9 +94,9 @@ def _provider_env_name(
     configured_env: str,
     default_env: str,
 ) -> str:
-    if str(config_value or "").strip():
+    if config_value.strip():
         return ""
-    return str(configured_env or "").strip() or default_env
+    return configured_env.strip() or default_env
 
 
 def _required_provider_env_name(

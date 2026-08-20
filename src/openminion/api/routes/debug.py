@@ -1,12 +1,11 @@
 """Debug route handlers for the developer API."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from urllib.parse import unquote
 
 from openminion.api.core.deps import is_debug_api_enabled, register_api_debug_providers
+from openminion.base.debug import DebugRegistry
 from openminion.services.diagnostics.debug import get_debug_registry
 
 from .contracts import (
@@ -36,7 +35,7 @@ def _debug_disabled_response(path: str) -> RouteResult:
     )
 
 
-def _build_debug_registry(ctx: APIRouteContext):
+def _build_debug_registry(ctx: APIRouteContext) -> DebugRegistry:
     registry = get_debug_registry()
     register_api_debug_providers(registry, ctx.runtime)
     return registry
@@ -89,7 +88,7 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, object] | None,
     query: str | None,
 ) -> RouteResult | None:
     del body, query

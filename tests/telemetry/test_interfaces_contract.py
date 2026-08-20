@@ -29,7 +29,7 @@ class TestTelemetryInterfaceContract:
         assert "v0" in str(exc_info.value)
 
     def test_telemetry_runtime_implements_contract(self, tmp_path: Path):
-        service = TelemetryService(db_path=tmp_path / "telemetry.db")
+        service = TelemetryService(db_path=tmp_path / ".openminion" / "telemetry.db")
         assert hasattr(service, "contract_version")
         assert service.contract_version == "v1"
         assert hasattr(service, "get_module_summary")
@@ -62,7 +62,7 @@ class TestTelemetryInterfaceContract:
             )
 
     def test_telemetry_compatibility_with_current_implementation(self, tmp_path: Path):
-        service = TelemetryService(db_path=tmp_path / "telemetry.db")
+        service = TelemetryService(db_path=tmp_path / ".openminion" / "telemetry.db")
         result = ensure_telemetry_interface_compatibility(service.contract_version)
         assert result is True
 

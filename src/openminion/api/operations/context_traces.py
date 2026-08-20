@@ -1,7 +1,5 @@
 """Route support for session context-trace inspection."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from urllib.parse import parse_qs, unquote

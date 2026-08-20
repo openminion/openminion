@@ -32,6 +32,14 @@ def pytest_sessionfinish() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_openminion_runtime_roots(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT_ENFORCEMENT", "soft")
+
+
+@pytest.fixture(autouse=True)
 def _restore_logging_state():
     """Prevent logging configuration tests from contaminating later tests."""
     root = logging.getLogger()

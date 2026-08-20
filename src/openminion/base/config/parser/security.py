@@ -1,7 +1,5 @@
 """Gateway, channel policy, and security parsing helpers."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.base.config.core import (

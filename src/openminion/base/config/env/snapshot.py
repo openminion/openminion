@@ -1,10 +1,8 @@
 """Snapshot-backed environment accessors for runtime config."""
 
-from __future__ import annotations
-
+import os
 from dataclasses import dataclass
 from typing import Mapping, Sequence
-import os
 
 from openminion.base.constants import (
     BASE_BOOL_FALSE_VALUES,
@@ -44,7 +42,7 @@ def _normalize_env_map(raw: Mapping[str, object] | None) -> dict[str, str]:
 
 
 def _parse_bool(raw: str | None, default: bool) -> bool:
-    value = str(raw or "").strip().lower()
+    value = (raw or "").strip().lower()
     if not value:
         return default
     if value in BASE_BOOL_TRUE_VALUES:
@@ -85,13 +83,13 @@ class EnvironmentConfig:
         return cls(values=_merged_env_values(runtime_env, process_env))
 
     def has(self, name: str) -> bool:
-        return bool(str(self.get(name, "")).strip())
+        return bool(self.get(name, "").strip())
 
     def get(self, name: str, default: str = "") -> str:
-        key = str(name or "").strip()
+        key = name.strip()
         if not key:
-            return str(default or "")
-        return str(self.values.get(key, default) or "")
+            return default
+        return self.values.get(key, default) or ""
 
     def get_bool(self, name: str, default: bool = False) -> bool:
         return _parse_bool(self.get(name, ""), default)
@@ -100,15 +98,15 @@ class EnvironmentConfig:
         raw = self.get(name, "")
         try:
             return int(raw)
-        except (TypeError, ValueError):
-            return int(default)
+        except ValueError:
+            return default
 
     def get_float(self, name: str, default: float = 0.0) -> float:
         raw = self.get(name, "")
         try:
             return float(raw)
-        except (TypeError, ValueError):
-            return float(default)
+        except ValueError:
+            return default
 
     def get_list(
         self,
@@ -119,7 +117,7 @@ class EnvironmentConfig:
     ) -> list[str]:
         raw = self.get(name, "")
         if not raw:
-            return [str(item).strip() for item in (default or []) if str(item).strip()]
+            return [item.strip() for item in (default or []) if item.strip()]
         parts = [item.strip() for item in raw.split(separator)]
         return [item for item in parts if item]
 

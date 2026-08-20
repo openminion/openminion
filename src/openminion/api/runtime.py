@@ -1,10 +1,8 @@
 """Runtime bootstrap and API-facing runtime facade."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any
+from typing import Any, Callable
 
 from openminion.base.config import EnvironmentConfig, RunProfileOverrides
 from openminion.modules.llm import RuntimeLLMHandle
@@ -36,9 +34,8 @@ _DISABLE_SECURITY_POLICY_ENV = "OPENMINION_DISABLE_SECURITY_POLICY"
 class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposureMixin):
     @staticmethod
     def _security_policy_disabled(runtime_env: object) -> bool:
-        return EnvironmentConfig.from_sources(runtime_env=runtime_env).get_bool(
-            _DISABLE_SECURITY_POLICY_ENV, False
-        )
+        environment = EnvironmentConfig.from_sources(runtime_env=runtime_env)
+        return bool(environment.get_bool(_DISABLE_SECURITY_POLICY_ENV, False))
 
     def __post_init__(self) -> None:
         self._finalizer = initialize_runtime_components(
@@ -52,11 +49,11 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
 
     def tool_inventory_report(self, *, readiness: bool = False) -> list[dict[str, Any]]:
         reports = import_module("openminion.api.queries.runtime_reports")
-        return reports.build_tool_inventory_report(self, readiness=readiness)
+        return reports.build_tool_inventory_report(self, readiness=readiness)  # type: ignore[no-any-return]
 
     def tool_schema_report(self, *, tool_name: str) -> dict[str, Any] | None:
         reports = import_module("openminion.api.queries.runtime_reports")
-        return reports.build_tool_schema_report(self, tool_name=tool_name)
+        return reports.build_tool_schema_report(self, tool_name=tool_name)  # type: ignore[no-any-return]
 
     def capability_report(
         self,
@@ -64,7 +61,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, Any]:
         reports = import_module("openminion.api.queries.runtime_reports")
-        return reports.build_capability_report(
+        return reports.build_capability_report(  # type: ignore[no-any-return]
             self,
             agent_id=agent_id,
             overrides=overrides,
@@ -76,7 +73,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, Any]:
         reports = import_module("openminion.api.queries.runtime_reports")
-        return reports.build_runtime_posture_report(
+        return reports.build_runtime_posture_report(  # type: ignore[no-any-return]
             self,
             agent_id=agent_id,
             overrides=overrides,
@@ -97,8 +94,9 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             agent_id=agent_id,
             overrides=overrides,
         )
-        self._emit_runtime_self_model_snapshot(snapshot.model_dump(mode="json"))
-        return snapshot.model_dump(mode="json")
+        payload = snapshot.model_dump(mode="json")
+        self._emit_runtime_self_model_snapshot(payload)
+        return payload  # type: ignore[no-any-return]
 
     def _emit_runtime_self_model_snapshot(self, snapshot: dict[str, Any]) -> None:
         try:
@@ -128,33 +126,32 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         *,
         payload: dict[str, object],
         request_id: str | None = None,
-        progress_callback=None,  # noqa: ANN001
-        approval_callback=None,  # noqa: ANN001
+        progress_callback: Callable[[object], None] | None = None,
+        approval_callback: Any | None = None,
     ) -> dict[str, object]:
         from openminion.services.runtime.ingress import run_turn_payload
 
         return run_turn_payload(
             runtime=self,
-            payload=dict(payload),
+            payload=payload,
             request_id=request_id,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
         )
 
-    def submit_turn(self, *, payload: dict[str, object]):
+    def submit_turn(self, *, payload: dict[str, object]) -> Any:
         from openminion.services.runtime.ingress import submit_turn_payload
 
-        return submit_turn_payload(runtime=self, payload=dict(payload))
+        return submit_turn_payload(runtime=self, payload=payload)
 
     def evict_agent(self, agent_id: str, *, reason: str = "manual") -> bool:
-        normalized = str(agent_id or "").strip()
-        if not normalized:
+        if not (normalized := agent_id.strip()):
             return False
         with self._agent_runtime_lock:
             had_gateway = normalized in self._gateways
             had_agent = normalized in self._agent_services
         self.evict_agent_runtime(agent_id=normalized, reason=reason)
-        return bool(had_gateway or had_agent)
+        return had_gateway or had_agent
 
     def close(self) -> None:
         if self._closed:

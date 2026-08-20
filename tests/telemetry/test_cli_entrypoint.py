@@ -54,7 +54,7 @@ def test_debug_routes_and_existing_invocation_routes_accept_opaque_ids(
     capsys,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "telemetry.db"
+    path = tmp_path / ".openminion" / "telemetry.db"
     _record(path)
     before = _digest(path)
 
@@ -76,8 +76,8 @@ def test_debug_routes_and_existing_invocation_routes_accept_opaque_ids(
 def test_debug_exit_contract_and_missing_store_no_create(
     capsys, tmp_path: Path
 ) -> None:
-    parent = tmp_path / "existing"
-    parent.mkdir()
+    parent = tmp_path / ".openminion" / "existing"
+    parent.mkdir(parents=True)
     path = parent / "telemetry.db"
 
     assert main(["debug", "latest", "--db", str(path)]) == 0
@@ -91,7 +91,7 @@ def test_debug_exit_contract_and_missing_store_no_create(
     assert not path.exists()
     assert list(parent.iterdir()) == []
 
-    unavailable = tmp_path / "missing" / "telemetry.db"
+    unavailable = tmp_path / ".openminion" / "missing" / "telemetry.db"
     assert main(["debug", "latest", "--db", str(unavailable)]) == 3
     assert (
         json.loads(capsys.readouterr().out)["error"]["code"]
@@ -122,14 +122,14 @@ def test_debug_rejects_unreviewed_format_flag_in_subprocess(tmp_path: Path) -> N
 def test_installed_debug_subprocess_preserves_all_exit_codes(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[2]
     executable = str(root / ".venv/bin/telemetryctl")
-    parent = tmp_path / "existing"
-    parent.mkdir()
+    parent = tmp_path / ".openminion" / "existing"
+    parent.mkdir(parents=True)
     empty_path = parent / "telemetry.db"
     cases = (
         (["debug", "latest", "--db", str(empty_path)], 0),
         (["debug", "invocation", "missing", "--db", str(empty_path)], 1),
         (["debug", "invocation", "../bad", "--db", str(empty_path)], 2),
-        (["debug", "latest", "--db", str(tmp_path / "missing/db")], 3),
+        (["debug", "latest", "--db", str(tmp_path / ".openminion/missing/db")], 3),
     )
     for arguments, expected in cases:
         result = subprocess.run(

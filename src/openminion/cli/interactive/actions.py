@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.cli.presentation import copy_to_clipboard
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 

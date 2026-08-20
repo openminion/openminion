@@ -1,7 +1,5 @@
 """Provider, mode, plugin, and tool runtime policy resolution."""
 
-from __future__ import annotations
-
 from typing import Mapping
 
 from openminion.base.config.base import ConfigError
@@ -193,9 +191,9 @@ def _normalized_modes(
     values: Mapping[str, ModeRuntimePolicyConfig] | None,
 ) -> dict[str, ModeRuntimePolicyConfig]:
     return {
-        str(name).strip().lower(): config
+        name.strip().lower(): config
         for name, config in (values or {}).items()
-        if str(name).strip()
+        if name.strip()
     }
 
 

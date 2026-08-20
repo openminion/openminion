@@ -1,7 +1,5 @@
 """Parse and serialize OpenMinion config payloads."""
 
-from __future__ import annotations
-
 from copy import deepcopy
 from typing import Any
 
@@ -165,10 +163,10 @@ def openminion_config_to_dict(config: OpenMinionConfig) -> dict[str, Any]:
             "providers": _providers_config_to_payload(config.providers),
         },
     }
-    if str(config.default_agent or "").strip():
-        payload["default_agent"] = str(config.default_agent).strip()
-    for key, value in dict(getattr(config, "module_configs", {}) or {}).items():
-        if not str(key).strip() or not isinstance(value, dict):
+    if default_agent := config.default_agent.strip():
+        payload["default_agent"] = default_agent
+    for key, value in config.module_configs.items():
+        if not key.strip():
             continue
-        payload[str(key)] = dict(value)
+        payload[key] = dict(value)
     return payload

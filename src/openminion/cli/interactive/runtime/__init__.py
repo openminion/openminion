@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import inspect
 import json
 import time
@@ -49,7 +47,6 @@ _LIVE_USAGE_THROTTLE_SECONDS = 0.5
 
 
 def _session_sort_key(session: Any) -> str:
-    """Sort sessions by most-recent-activity first for candidate selection."""
     return (
         str(getattr(session, "last_activity_at", "") or "")
         or str(getattr(session, "updated_at", "") or "")
@@ -987,6 +984,4 @@ class OpenMinionRuntime(
     @staticmethod
     def _normalize_working_dir(working_dir: str | None) -> str | None:
         raw = str(working_dir or "").strip()
-        if not raw:
-            return None
-        return str(Path(raw).expanduser().resolve(strict=False))
+        return str(Path(raw).expanduser().resolve(strict=False)) if raw else None

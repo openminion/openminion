@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,8 +6,6 @@ from openminion.modules.runtime.project_instructions import (
     ProjectInstructionTarget,
     resolve_project_instruction_target,
 )
-
-_PROJECT_CONTEXT_MAX_BYTES = PROJECT_INSTRUCTION_MAX_BYTES
 
 
 @dataclass(frozen=True)
@@ -32,7 +28,7 @@ class ProjectContextInfo:
 def resolve_project_context(
     working_dir: str | Path | None,
     *,
-    max_bytes: int = _PROJECT_CONTEXT_MAX_BYTES,
+    max_bytes: int = PROJECT_INSTRUCTION_MAX_BYTES,
 ) -> ProjectContextInfo | None:
     target = resolve_project_instruction_target(working_dir, max_bytes=max_bytes)
     if target.exists:

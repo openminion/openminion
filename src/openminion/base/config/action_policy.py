@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import replace
 
 from openminion.base.config.core import ActionPolicyConfig
@@ -20,14 +18,14 @@ ACTION_POLICY_USER_MODES = frozenset({"ask", "auto", "bypass"})
 
 
 def normalize_action_policy_mode_override(mode: str | None) -> str | None:
-    normalized = str(mode or "").strip().lower()
+    normalized = (mode or "").strip().lower()
     if not normalized:
         return None
     return normalized if normalized in ACTION_POLICY_USER_MODES else None
 
 
 def map_action_policy_mode(mode: str) -> str:
-    normalized = str(mode or "").strip().lower()
+    normalized = mode.strip().lower()
     return _ACTION_POLICY_MODE_MAP.get(normalized, _ACTION_POLICY_MODE_ENFORCE)
 
 

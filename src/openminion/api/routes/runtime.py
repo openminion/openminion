@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from http import HTTPStatus
 
 from openminion.api.core.deps import (
@@ -22,7 +20,7 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, object] | None,
     query: str | None,
 ) -> RouteResult | None:
     del body
@@ -70,8 +68,7 @@ def handle_request(
             active_runtime.close()
 
 
-def _status_for_payload(payload: dict) -> HTTPStatus:
-    if "self_model" not in payload:
-        return HTTPStatus.OK
-    self_model = dict(payload.get("self_model", {}) or {})
-    return HTTPStatus.OK if self_model else HTTPStatus.SERVICE_UNAVAILABLE
+def _status_for_payload(payload: dict[str, object]) -> HTTPStatus:
+    if "self_model" in payload and not payload["self_model"]:
+        return HTTPStatus.SERVICE_UNAVAILABLE
+    return HTTPStatus.OK

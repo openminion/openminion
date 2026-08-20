@@ -1,7 +1,5 @@
 """Canonical OpenMinion environment variable registry."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

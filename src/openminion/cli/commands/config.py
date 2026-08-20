@@ -72,21 +72,20 @@ def config_show(args) -> int:
 
 
 def _is_sensitive_env_key(name: str) -> bool:
-    token = str(name or "").strip().upper()
-    if not token:
-        return False
-    return any(part in token for part in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
+    token = name.strip().upper()
+    return bool(token) and any(
+        part in token for part in ("KEY", "TOKEN", "SECRET", "PASSWORD")
+    )
 
 
 def _sanitized_config_payload(
     config: OpenMinionConfig, *, include_secrets: bool = False
 ) -> dict[str, object]:
     payload = config.to_dict()
-    if include_secrets:
-        return payload
-    comments: list[str] = []
-    _strip_secrets_in_place(payload, comments=comments, path=())
-    payload["_portable_export_comments"] = comments
+    if not include_secrets:
+        comments: list[str] = []
+        _strip_secrets_in_place(payload, comments=comments, path=())
+        payload["_portable_export_comments"] = comments
     return payload
 
 

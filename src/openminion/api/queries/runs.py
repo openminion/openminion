@@ -1,7 +1,5 @@
 """Run query helpers for the developer API."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,7 +31,7 @@ def list_runs(
     if not normalized_session_id:
         raise RunQueryError("`session_id` is required.", code="invalid_request")
 
-    safe_limit = max(1, min(int(limit), 500))
+    safe_limit = max(1, min(limit, 500))
 
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,
@@ -83,7 +81,7 @@ def list_run_events(
     if not normalized_run_id:
         raise RunQueryError("`run_id` is required.", code="invalid_request")
 
-    safe_limit = max(1, min(int(limit), 1000))
+    safe_limit = max(1, min(limit, 1000))
 
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,

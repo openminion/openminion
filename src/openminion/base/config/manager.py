@@ -1,7 +1,5 @@
 """Instance-scoped config manager for derived module configs."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,11 +29,7 @@ class ConfigManager:
 
     def __post_init__(self) -> None:
         runtime_env = self.base_config.runtime.env or {}
-        object.__setattr__(
-            self,
-            "env",
-            EnvironmentConfig.from_sources(runtime_env=runtime_env),
-        )
+        self.env = EnvironmentConfig.from_sources(runtime_env=runtime_env)
 
     @classmethod
     def load(
@@ -46,7 +40,7 @@ class ConfigManager:
         data_root: Path | None = None,
     ) -> "ConfigManager":
         env_config = EnvironmentConfig.from_sources()
-        raw_config_path = str(config_path or "").strip()
+        raw_config_path = (config_path or "").strip()
         normalized_config_path: str | None = None
         if raw_config_path:
             candidate = Path(raw_config_path).expanduser()
@@ -77,7 +71,7 @@ class ConfigManager:
         )
 
     def register(self, name: str, factory: ModuleConfigFactory[Any]) -> None:
-        key = str(name or "").strip()
+        key = name.strip()
         if not key:
             raise ConfigManagerError("module name is required")
         if key in self._factories:
@@ -85,13 +79,13 @@ class ConfigManager:
         self._factories[key] = factory
 
     def is_registered(self, name: str) -> bool:
-        key = str(name or "").strip()
+        key = name.strip()
         if not key:
             return False
         return key in self._factories
 
     def get(self, name: str) -> Any:
-        key = str(name or "").strip()
+        key = name.strip()
         if not key:
             raise ConfigManagerError("module name is required")
         if key in self._cache:
@@ -111,7 +105,7 @@ class ConfigManager:
         if name is None:
             self._cache.clear()
             return
-        key = str(name or "").strip()
+        key = name.strip()
         if not key:
             return
         self._cache.pop(key, None)

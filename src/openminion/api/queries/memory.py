@@ -1,7 +1,5 @@
 """Memory record and provenance query adapters."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -17,8 +15,7 @@ def bootstrap_env(
     generated_root: Path | str | None = None,
 ) -> None:
     """Set up OPENMINION_* environment variables for bootstrap."""
-    home_root_str = str(home_root)
-    os.environ.setdefault(OPENMINION_HOME_ENV, home_root_str)
+    os.environ.setdefault(OPENMINION_HOME_ENV, str(home_root))
 
     if data_root is not None:
         os.environ.setdefault(OPENMINION_DATA_ROOT_ENV, str(data_root))

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.cli.parser.flags import add_json_output_flag
 
 

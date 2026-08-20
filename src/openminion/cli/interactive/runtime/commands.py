@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.cli.commands.agent.delegation import (
     render_agent_delegate_result,
     request_from_slash_args,

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from os import PathLike
 from typing import Any
@@ -27,11 +25,11 @@ def get_owner_status(
     home_root: str | PathLike[str] | None = None,
     data_root: str | PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    if int(session_limit) <= 0:
+    if session_limit <= 0:
         raise OwnerStatusQueryError("`session_limit` must be greater than zero.")
-    if int(run_limit_per_session) <= 0:
+    if run_limit_per_session <= 0:
         raise OwnerStatusQueryError("`run_limit` must be greater than zero.")
-    if int(window_hours) <= 0:
+    if window_hours <= 0:
         raise OwnerStatusQueryError("`hours` must be greater than zero.")
 
     own_runtime = runtime is None
@@ -44,9 +42,9 @@ def get_owner_status(
         return build_owner_status(
             config_path=config_path,
             runtime=active_runtime,
-            session_limit=int(session_limit),
-            run_limit_per_session=int(run_limit_per_session),
-            window_hours=int(window_hours),
+            session_limit=session_limit,
+            run_limit_per_session=run_limit_per_session,
+            window_hours=window_hours,
         )
     finally:
         if own_runtime:

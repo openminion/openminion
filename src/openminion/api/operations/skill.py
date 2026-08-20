@@ -1,7 +1,5 @@
 """Skill catalog, proposal, and suggestion API operations."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from http import HTTPStatus
 from typing import Any
@@ -11,6 +9,10 @@ from openminion.api.responses.serialization import error_response
 from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.skill.constants import SKILL_STATUS_DEPRECATED
 from openminion.modules.skill.errors import SkillError
+from openminion.modules.skill.proposal.queue import (
+    ProposalNotFoundError,
+    ProposalQueueError,
+)
 from openminion.modules.skill.runtime.skill import Skill
 
 from openminion.api.routes.contracts import APIRouteContext, RouteResult
@@ -55,9 +57,9 @@ def _with_skill(
         ctl.close()
 
 
-def _proposal_queue_error(exc: Exception, *, proposal_id: str) -> RouteResult:
+def _proposal_queue_error(exc: ProposalQueueError, *, proposal_id: str) -> RouteResult:
     message = str(exc)
-    not_found = "not found" in message.lower()
+    not_found = isinstance(exc, ProposalNotFoundError)
     return _error(
         HTTPStatus.NOT_FOUND if not_found else HTTPStatus.BAD_REQUEST,
         code="NOT_FOUND" if not_found else "invalid_request",
@@ -184,14 +186,11 @@ def list_proposals(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
     )
 
     def _build(ctl: Skill) -> RouteResult:
-        from openminion.modules.skill.proposal.queue import (
-            ProposalQueueError,
-            list_proposals,
-        )
+        from openminion.modules.skill.proposal.queue import list_proposals
 
         try:
             rows = list_proposals(
-                ctl.store, queue_state=queue_state, limit=max(1, min(500, int(limit)))
+                ctl.store, queue_state=queue_state, limit=max(1, min(500, limit))
             )
         except ProposalQueueError as exc:
             return _error(
@@ -272,10 +271,7 @@ def review_proposal(
         )
 
     def _build(ctl: Skill) -> RouteResult:
-        from openminion.modules.skill.proposal.queue import (
-            ProposalQueueError,
-            record_proposal_review,
-        )
+        from openminion.modules.skill.proposal.queue import record_proposal_review
 
         try:
             review = record_proposal_review(
@@ -308,10 +304,7 @@ def review_proposal(
 
 def apply_proposal(ctx: APIRouteContext, *, proposal_id: str) -> RouteResult:
     def _build(ctl: Skill) -> RouteResult:
-        from openminion.modules.skill.proposal.queue import (
-            ProposalQueueError,
-            apply_proposal,
-        )
+        from openminion.modules.skill.proposal.queue import apply_proposal
 
         catalog_rows = ctl.list_skills({}) or []
         try:
@@ -350,7 +343,7 @@ def suggestion_inbox(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
     def _build(ctl: Skill) -> RouteResult:
         from openminion.modules.skill.suggestion import list_active_suggestions
 
-        rows = list_active_suggestions(ctl.store, limit=max(1, min(500, int(limit))))
+        rows = list_active_suggestions(ctl.store, limit=max(1, min(500, limit)))
         return RouteResult(
             status=HTTPStatus.OK,
             payload={

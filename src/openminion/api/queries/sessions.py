@@ -1,7 +1,5 @@
 """Session query helpers for the developer API."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -33,7 +31,7 @@ def list_session_messages(
     if not normalized_session_id:
         raise SessionQueryError("`session_id` is required.", code="invalid_request")
 
-    safe_limit = max(1, min(int(limit), 500))
+    safe_limit = max(1, min(limit, 500))
 
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,

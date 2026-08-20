@@ -1,7 +1,5 @@
 """Runtime profile resolution and override helpers."""
 
-from __future__ import annotations
-
 from dataclasses import asdict, replace
 from typing import Any, Mapping
 
@@ -54,7 +52,7 @@ def resolve_runtime_profile(
         system_policy=config.runtime.provider_policy,
         agent_policy=selected.provider_policy,
         code_default_provider="echo",
-        legacy_agent_provider=str(selected.provider or ""),
+        legacy_agent_provider=selected.provider,
         invocation_provider=effective_overrides.provider,
     )
     mode_resolution = resolve_mode_runtime_policy(
@@ -91,7 +89,7 @@ def build_runtime_config(
 ) -> OpenMinionConfig:
     effective_overrides = overrides or RunProfileOverrides()
     selected_profile = resolve_agent_config(config, agent_id)
-    selected_agent_id = str(agent_id or "").strip()
+    selected_agent_id = (agent_id or "").strip()
     effective_profile = resolve_runtime_profile(
         config,
         agent_id=agent_id,
@@ -120,7 +118,7 @@ def build_runtime_config(
         runtime_set=config.runtime.has_trailer_guidance_variant,
     )
     new_agents = dict(config.agents)
-    effective_id = selected_agent_id or str(effective_profile.name or "").strip()
+    effective_id = selected_agent_id or effective_profile.name.strip()
     if effective_id and effective_id in new_agents:
         new_agents[effective_id] = effective_profile
     effective_config = replace(
@@ -192,7 +190,7 @@ def build_capability_runtime_diagnostics(
         system_policy=config.runtime.provider_policy,
         agent_policy=selected.provider_policy,
         code_default_provider="echo",
-        legacy_agent_provider=str(selected.provider or ""),
+        legacy_agent_provider=selected.provider,
         invocation_provider=effective_overrides.provider,
     )
     mode_resolution = resolve_mode_runtime_policy(
@@ -276,11 +274,11 @@ def _select_profile_provider_config_overrides(
 ) -> dict[str, Any]:
     if effective_overrides.provider:
         return {}
-    selected_provider = str(selected_profile.provider or "").strip().lower()
-    effective_provider = str(effective_profile.provider or "").strip().lower()
+    selected_provider = selected_profile.provider.strip().lower()
+    effective_provider = effective_profile.provider.strip().lower()
     if not selected_provider or selected_provider != effective_provider:
         return {}
-    return dict(getattr(selected_profile, "provider_config_overrides", {}) or {})
+    return dict(selected_profile.provider_config_overrides)
 
 
 def _apply_provider_config_patch(
@@ -338,7 +336,7 @@ def _thinking_resolution_to_dict(
 def _mode_resolution_to_dict(resolution: ModeRuntimeResolution) -> dict[str, Any]:
     return {
         "effective": {
-            name: {"enabled": bool(config.enabled)}
+            name: {"enabled": config.enabled}
             for name, config in sorted(resolution.effective_modes.items())
         },
         "blocked_reasons": dict(resolution.blocked_reasons),

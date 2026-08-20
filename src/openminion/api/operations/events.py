@@ -1,7 +1,5 @@
 """Route support for appending session events."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any
 

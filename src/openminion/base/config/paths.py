@@ -1,7 +1,5 @@
 """Home, data-root, and storage path resolution helpers."""
 
-from __future__ import annotations
-
 import os
 import warnings
 from dataclasses import dataclass

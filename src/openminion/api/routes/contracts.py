@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Mapping
@@ -27,10 +25,10 @@ class RouteResult:
 
 
 def query_value(query: str | None, name: str) -> str | None:
-    values = parse_qs(str(query or ""), keep_blank_values=False).get(name, [])
+    values = parse_qs(query or "", keep_blank_values=False).get(name, [])
     if not values:
         return None
-    return str(values[0] or "").strip() or None
+    return values[0].strip() or None
 
 
 def error_route_result(

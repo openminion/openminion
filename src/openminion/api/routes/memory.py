@@ -1,7 +1,5 @@
 """Memory provenance API routes."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.api.queries.memory import record_query, traces_by_memory, turn_trace

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import time
 from pathlib import Path
@@ -191,7 +189,6 @@ class FocusScreen(
         self._tick_thinking_elapsed()
 
     def _tick_thinking_elapsed(self) -> None:
-        """Refresh the interactive thinking indicator elapsed time."""
         try:
             indicator = self.query_one(ThinkingIndicator)
         except (QueryError, AttributeError):
@@ -268,7 +265,6 @@ class FocusScreen(
         self._update_debug_snapshot()
 
     def _active_theme_name(self) -> str:
-        """Return the active interactive CLI theme name."""
         active = getattr(self.app, "active_theme", None)
         name = getattr(active, "name", "") if active is not None else ""
         if name:
@@ -370,7 +366,6 @@ class FocusScreen(
         return True
 
     def on_input_changed(self, event) -> None:  # type: ignore[no-untyped-def]
-        """Update overlays for single-line input changes."""
         input_widget = getattr(event, "input", None)
         if input_widget is None or getattr(input_widget, "id", "") != "focus-input":
             return
@@ -380,7 +375,6 @@ class FocusScreen(
         self._push_input_state("typing" if value.strip() else "empty")
 
     def on_text_area_changed(self, event) -> None:  # type: ignore[no-untyped-def]
-        """Update overlays for multiline editor changes."""
         text_area = getattr(event, "text_area", None)
         if text_area is None or getattr(text_area, "id", "") != "focus-editor":
             return
@@ -394,7 +388,6 @@ class FocusScreen(
         self._push_input_state("typing" if value.strip() else "empty")
 
     def _push_input_state(self, input_state: str) -> None:
-        """Push the current input-state hint onto the status line."""
         if self._busy:
             return
         try:
@@ -502,7 +495,6 @@ class FocusScreen(
                 self._start_next_queued_turn(expected_queue_id=expected_queue_id)
 
     def _drop_empty_streaming_turn(self, chat: FocusTranscript, turn) -> None:
-        """Prune an assistant streaming turn that produced no visible text."""
         widget = getattr(turn, "_widget", None)
         if widget is None:
             return
@@ -655,7 +647,6 @@ class FocusScreen(
         indicator.view_model = refreshed
 
     def _push_durable_activity_row(self, payload: dict[str, Any]) -> bool:
-        """Push a durable non-tool activity row when the payload matches."""
         try:
             from openminion.cli.status.activity_ledger import (
                 KIND_APPROVAL,

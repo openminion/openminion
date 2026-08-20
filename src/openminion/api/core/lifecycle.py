@@ -1,7 +1,5 @@
 """Close API runtime resources in dependency-safe order."""
 
-from __future__ import annotations
-
 from contextlib import suppress
 from collections.abc import Callable
 from typing import Protocol, cast

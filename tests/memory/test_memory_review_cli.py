@@ -27,6 +27,7 @@ def _seed(db: Path) -> None:
 def test_review_cli_full_approve_flow(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(tmp_path / "data" / "runtime"))
     source_db = tmp_path / "source.db"
     target_db = tmp_path / "target.db"
     _seed(source_db)
@@ -124,6 +125,7 @@ def test_review_cli_full_approve_flow(tmp_path, monkeypatch) -> None:
 def test_review_cli_reject_and_markdown_fail_closed(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(tmp_path / "data" / "runtime"))
     db = tmp_path / "memory.db"
     _seed(db)
     runner = CliRunner()

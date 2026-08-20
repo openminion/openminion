@@ -33,9 +33,7 @@ from .infrastructure import (
 
 
 def _resolve_root(value: str | PathLike[str] | None) -> Path | None:
-    if value is None:
-        return None
-    if isinstance(value, str) and not value.strip():
+    if value is None or (isinstance(value, str) and not value.strip()):
         return None
     return Path(value).expanduser().resolve()
 

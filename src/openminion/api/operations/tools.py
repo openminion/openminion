@@ -1,7 +1,5 @@
 """Tool-run helpers for the developer API."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any
 
@@ -61,9 +59,7 @@ def execute_tool_run(
     )
     workspace_root = getattr(runtime, "tool_workspace_root", None)
     workspace_root = workspace_root or runtime.config.runtime.tool_workspace_root
-    runtime_env: dict[str, Any] = dict(
-        getattr(getattr(runtime.config, "runtime", None), "env", {}) or {}
-    )
+    runtime_env: dict[str, Any] = dict(runtime.config.runtime.env)
     metadata: dict[str, Any] = {
         "trace_id": request_id,
         "session_id": session.id,
@@ -85,7 +81,7 @@ def execute_tool_run(
         blast_radius_adapter=build_default_composition_boundary_adapter(
             seam_id=SEAM_API_TOOLS,
         ),
-        confirm=bool(confirm),
+        confirm=confirm,
     )
     batch = runtime.tools.execute_calls(
         [
@@ -110,20 +106,20 @@ def execute_tool_run(
         payload={
             "trace_id": request_id,
             "tool": result.tool_name,
-            "ok": bool(result.ok),
-            "verified": bool(result.verified),
+            "ok": result.ok,
+            "verified": result.verified,
             "artifact_refs": artifact_refs,
         },
     )
     status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_REQUEST
     payload = {
-        "ok": bool(result.ok),
+        "ok": result.ok,
         "trace_id": request_id,
         "artifact_refs": artifact_refs,
         "tool": {
             "name": result.tool_name,
-            "ok": bool(result.ok),
-            "verified": bool(result.verified),
+            "ok": result.ok,
+            "verified": result.verified,
             "content": result.content,
             "error": result.error,
             "data": dict(result.data or {}),

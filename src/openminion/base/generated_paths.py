@@ -21,7 +21,7 @@ _BASE_GENERATED_STATE_DIRNAME = "state"
 
 
 def _resolve_base_home_root(home_root: str | Path | None = None) -> Path:
-    if home_root is not None and str(home_root).strip():
+    if home_root:
         return Path(home_root).expanduser().resolve(strict=False)
 
     env_home = os.getenv(OPENMINION_HOME_ENV, "").strip()
@@ -39,9 +39,8 @@ def resolve_generated_root(home_root: str | Path | None = None) -> Path:
     generated_root = (data_root / _BASE_GENERATED_RUNTIME_DIRNAME).resolve(strict=False)
 
     configured = os.getenv(OPENMINION_GENERATED_ROOT_ENV, "").strip()
-    candidate = generated_root
+    candidate = Path(configured).expanduser() if configured else generated_root
     if configured:
-        candidate = Path(configured).expanduser()
         if not candidate.is_absolute():
             candidate = generated_root / candidate
         elif resolve_data_root_enforcement_mode() == "soft":
@@ -57,8 +56,8 @@ def resolve_generated_root(home_root: str | Path | None = None) -> Path:
                     RuntimeWarning,
                 )
                 candidate = rewritten
+    resolved: Path
     resolved = ensure_under_data_root(candidate, generated_root, label="generated_root")
-    assert isinstance(resolved, Path)
     return resolved
 
 

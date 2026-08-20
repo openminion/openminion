@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 import json
-from typing import Any, Optional
+from typing import Any
 
 
 def parse_json_request_body(
@@ -29,7 +27,7 @@ def parse_json_request_body(
     return payload
 
 
-def parse_bool_query_value(raw_value: Optional[str]) -> bool:
+def parse_bool_query_value(raw_value: str | None) -> bool:
     if raw_value is None:
         return False
     normalized = str(raw_value).strip().lower()
@@ -42,7 +40,7 @@ def parse_bool_query_value(raw_value: Optional[str]) -> bool:
 
 def parse_positive_int_query_value(
     *,
-    raw_value: Optional[str],
+    raw_value: str | None,
     default_value: int,
     field_name: str,
 ) -> int:

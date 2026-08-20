@@ -20,6 +20,7 @@ from openminion.api.constants import API_METRICS_TOKEN_ENV, API_METRICS_TOKEN_HE
 from openminion.api.runtime import APIRuntime
 from openminion.services.bootstrap.config import bootstrap_config_manager
 from openminion.services.diagnostics.debug import (
+    DebugProvider,
     DebugRegistry,
     DebugStatus,
     ModuleDebugPayload,
@@ -47,12 +48,6 @@ def resolve_api_config_hint(config_path: Optional[str | Path]) -> str:
     return candidate or _DEFAULT_API_CONFIG_HINT
 
 
-def resolve_api_tool_provider_specs_and_dispatch_map(
-    runtime_tools: Any,
-) -> tuple[list[Any], dict[str, Any]]:
-    return get_visible_tool_specs_and_dispatch_map(runtime_tools)
-
-
 def resolve_runtime_manager(
     *,
     config_path: Optional[str],
@@ -67,21 +62,6 @@ def resolve_runtime_manager(
         close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)
         raise RuntimeError("runtime manager is unavailable")
     return manager, active_runtime, own_runtime
-
-
-def configured_agent_ids(runtime: APIRuntime) -> list[str]:
-    listed = getattr(runtime, "list_registered_agents", None)
-    if callable(listed):
-        try:
-            resolved = listed()
-            if isinstance(resolved, list):
-                return sorted(
-                    str(item).strip() for item in resolved if str(item).strip()
-                )
-        except Exception:
-            pass
-    configured = {str(item).strip() for item in runtime.config.agents.keys()}
-    return sorted(item for item in configured if item)
 
 
 def v1_tool_specs(
@@ -175,25 +155,6 @@ def _runtime_subsystem_health(runtime: APIRuntime) -> dict[str, Any]:
     }
 
 
-def _register_debug_provider(
-    registry: DebugRegistry,
-    *,
-    module_name: str,
-    probe_fn: Callable[[], ModuleDebugPayload],
-) -> None:
-    registry.register(
-        type(
-            "DebugProvider",
-            (),
-            {
-                "module_name": module_name,
-                "probe_fn": probe_fn,
-                "wiring_check_fn": None,
-            },
-        )()
-    )
-
-
 def register_api_debug_providers(
     registry: DebugRegistry, runtime: Optional[APIRuntime]
 ) -> None:
@@ -225,9 +186,7 @@ def register_api_debug_providers(
             ),
         )
     else:
-        tool_count = len(
-            resolve_api_tool_provider_specs_and_dispatch_map(runtime.tools)[0]
-        )
+        tool_count = len(get_visible_tool_specs_and_dispatch_map(runtime.tools)[0])
         plugin_names = runtime.plugins.names()
         provider = getattr(runtime, "provider", None)
         provider_name = str(getattr(provider, "name", "") or "unknown")
@@ -253,10 +212,11 @@ def register_api_debug_providers(
         )
 
     for module_name, status, wiring, details in provider_specs:
-        _register_debug_provider(
-            registry,
-            module_name=module_name,
-            probe_fn=make_probe(module_name, status, wiring, details),
+        registry.register(
+            DebugProvider(
+                module_name=module_name,
+                probe_fn=make_probe(module_name, status, wiring, details),
+            )
         )
 
 

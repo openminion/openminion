@@ -84,8 +84,8 @@ def _well_formed_body(decision: str = "allow_once") -> dict:
 @pytest.fixture
 def fake_runtime():
     runtime = MagicMock()
-    runtime.policyctl = MagicMock()
-    runtime.policyctl.create_grant_from_confirmation = MagicMock(
+    runtime.action_policy = MagicMock()
+    runtime.action_policy.create_grant_from_confirmation = MagicMock(
         return_value="gr_test123"
     )
     return runtime
@@ -106,9 +106,9 @@ def test_process_creates_grant_for_each_typed_decision(
     assert result["ok"] is True
     assert result["decision"] == decision
     assert result["grant_id"] == "gr_test123"
-    fake_runtime.policyctl.create_grant_from_confirmation.assert_called_once()
-    call_kwargs = fake_runtime.policyctl.create_grant_from_confirmation.call_args.kwargs
-    assert call_kwargs["action"] == decision
+    create_grant = fake_runtime.action_policy.create_grant_from_confirmation
+    create_grant.assert_called_once()
+    assert create_grant.call_args.kwargs["action"] == decision
 
 
 def test_process_rejects_non_typed_decision_no_inference(fake_runtime, monkeypatch):
@@ -124,7 +124,7 @@ def test_process_rejects_non_typed_decision_no_inference(fake_runtime, monkeypat
     assert result["error"]["code"] == "INVALID_DECISION"
     assert "choices" in result["error"]["details"]
     assert result["error"]["details"]["choices"] == list(APPROVAL_CHOICES)
-    fake_runtime.policyctl.create_grant_from_confirmation.assert_not_called()
+    fake_runtime.action_policy.create_grant_from_confirmation.assert_not_called()
 
 
 @pytest.mark.parametrize("missing_field", ["approval_id", "invocation", "ctx"])
@@ -143,7 +143,7 @@ def test_process_rejects_missing_required_field(
     assert result["ok"] is False
     assert result["error"]["code"] == "INVALID_REQUEST"
     assert result["error"]["details"]["field"] == missing_field
-    fake_runtime.policyctl.create_grant_from_confirmation.assert_not_called()
+    fake_runtime.action_policy.create_grant_from_confirmation.assert_not_called()
 
 
 def test_process_rejects_non_mapping_body(fake_runtime, monkeypatch):
@@ -160,7 +160,7 @@ def test_process_rejects_non_mapping_body(fake_runtime, monkeypatch):
     assert result["error"]["code"] == "INVALID_REQUEST"
 
 
-def test_process_returns_policy_unavailable_when_runtime_lacks_policyctl(
+def test_process_returns_policy_unavailable_when_runtime_lacks_action_policy(
     monkeypatch,
 ):
     runtime = MagicMock(spec=[])  # explicitly no attributes
@@ -214,4 +214,4 @@ def test_non_typed_decision_rejected_no_inference(
     )
     assert result["ok"] is False
     assert result["error"]["code"] == "INVALID_DECISION"
-    fake_runtime.policyctl.create_grant_from_confirmation.assert_not_called()
+    fake_runtime.action_policy.create_grant_from_confirmation.assert_not_called()

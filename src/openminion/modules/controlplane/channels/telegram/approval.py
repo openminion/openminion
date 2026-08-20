@@ -1,15 +1,9 @@
 from typing import Any
 
-from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
-
-
-# Canonical typed approval choices shared by channel-facing approval payloads.
-APPROVAL_CHOICES: tuple[str, ...] = (
-    "allow_once",
-    "allow_session",
-    "allow_forever",
-    "deny",
+from openminion.modules.policy.constants import (
+    POLICY_APPROVAL_CHOICES as APPROVAL_CHOICES,
 )
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
 
 def _normalized_choices(raw: Any) -> list[str]:

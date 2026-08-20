@@ -1,7 +1,5 @@
 """Ordered API route dispatch."""
 
-from __future__ import annotations
-
 import logging
 from http import HTTPStatus
 from typing import Any, Mapping
@@ -78,7 +76,6 @@ def dispatch_request(
         path=path,
         body=body,
         query=query,
-        runtime_bootstrap_error=runtime_bootstrap_error,
     )
     return result.status, finalize_api_response(
         payload=result.payload,
@@ -100,7 +97,6 @@ def _select_route(
     path: str,
     body: dict[str, Any] | None,
     query: str | None,
-    runtime_bootstrap_error: str | None,
 ) -> RouteResult:
     result = handle_health_request(
         ctx,
@@ -117,7 +113,7 @@ def _select_route(
             body=body,
             query=query,
         )
-    if result is None and runtime_bootstrap_error:
+    if result is None and ctx.runtime_bootstrap_error:
         return _error_result(
             HTTPStatus.SERVICE_UNAVAILABLE,
             code="runtime_unavailable",
@@ -127,7 +123,7 @@ def _select_route(
             ),
             details={
                 "path": path,
-                "bootstrap_error": runtime_bootstrap_error,
+                "bootstrap_error": ctx.runtime_bootstrap_error,
                 "recovery_path": "/health",
                 "recommendation": "Check `degraded_recovery` in GET /health and run `openminion doctor --json`.",
             },

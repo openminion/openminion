@@ -241,6 +241,7 @@ def test_live_certification_rejects_compressed_execution(
 ) -> None:
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
     payload = _manifest(tmp_path)
     now = datetime.now(UTC)
     payload["approved_start_utc"] = (now - timedelta(minutes=1)).isoformat()

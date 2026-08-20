@@ -1,7 +1,5 @@
 """Health, metrics, and owner-status route handlers."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs
@@ -34,10 +32,7 @@ _READINESS_PATHS = {"/ready", "/v1/ready", "/health/ready", "/v1/health/ready"}
 
 def _parse_probe_session_id(query: str | None) -> str | None:
     query_args = parse_qs(query or "", keep_blank_values=False)
-    probe_session_raw = query_args.get("session_id", [None])[0]
-    probe_session_id = (
-        str(probe_session_raw).strip() if isinstance(probe_session_raw, str) else None
-    )
+    probe_session_id = query_args.get("session_id", [""])[0].strip()
     return probe_session_id or None
 
 

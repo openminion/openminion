@@ -9,12 +9,13 @@ from openminion.modules.storage.record_store import RecordStoreSQLite
 
 
 def test_shared_fixture_isolates_all_openminion_roots(tmp_path: Path) -> None:
-    data_root = tmp_path / ".openminion"
+    data_root = tmp_path
+    generated_root = tmp_path / "runtime"
 
     assert Path(os.environ["OPENMINION_HOME"]) == tmp_path
     assert Path(os.environ["OPENMINION_DATA_ROOT"]) == data_root
-    assert "OPENMINION_GENERATED_ROOT" not in os.environ
-    assert resolve_generated_root() == data_root / "runtime"
+    assert Path(os.environ["OPENMINION_GENERATED_ROOT"]) == generated_root
+    assert resolve_generated_root() == generated_root
 
 
 def test_record_store_memory_mode_does_not_create_disk_files(

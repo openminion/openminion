@@ -1,9 +1,8 @@
 """Agent-route handlers for the developer API."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
+from typing import Any
 from urllib.parse import unquote
 
 from openminion.api.operations.agent import evict_agent_runtime
@@ -68,11 +67,11 @@ def _handle_evict_agent(
     *,
     path: str,
     agent_id: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
 ) -> RouteResult:
     reason = "admin_request"
-    if body is not None and isinstance(body.get("reason"), str):
-        reason = str(body.get("reason")).strip() or reason
+    if body is not None and isinstance(requested_reason := body.get("reason"), str):
+        reason = requested_reason.strip() or reason
     try:
         payload = evict_agent_runtime(
             config_path=ctx.config_path,
@@ -90,7 +89,7 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
     del query

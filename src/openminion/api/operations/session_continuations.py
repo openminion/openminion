@@ -1,7 +1,5 @@
 """Transport-neutral API operations for local session continuation."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any
 
@@ -39,7 +37,7 @@ def handle_build_continuation(
     denied = _local_runtime_error(ctx, session_id=source_session_id)
     if denied is not None:
         return denied
-    payload = dict(body or {})
+    payload = body or {}
     target_agent_id = str(payload.get("target_agent_id") or "").strip()
     if not target_agent_id:
         return _invalid_continuation_request(

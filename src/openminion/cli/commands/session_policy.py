@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.base.config import ActionPolicyConfig, resolve_agent_config
 from openminion.base.config.action_policy import (
     ACTION_POLICY_SESSION_OVERRIDE_KEY,

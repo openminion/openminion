@@ -1,7 +1,5 @@
 """Session share API operations."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from typing import Any
@@ -105,13 +103,13 @@ def _share_service_or_error(
 
 
 def _share_error_result(
-    exc: Exception,
+    exc: SessionShareError,
     *,
     session_id: str | None = None,
     share_id: str | None = None,
 ) -> RouteResult:
-    code = str(getattr(exc, "code", "SESSION_SHARE_ERROR"))
-    details = dict(getattr(exc, "details", {}) or {})
+    code = exc.code
+    details = dict(exc.details)
     if share_id is not None:
         details["share_id"] = share_id
     return exception_route_result(

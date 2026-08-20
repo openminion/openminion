@@ -887,14 +887,12 @@ def _env_snapshot() -> dict[str, str]:
 
 
 def _daemon_reachable(config_path: str | None) -> bool:
-    status, _payload = _daemon_probe(config_path)
-    return status == "ok"
+    return _daemon_probe(config_path)[0] == "ok"
 
 
 def _daemon_probe(config_path: str | None) -> tuple[str, dict[str, Any]]:
     try:
-        endpoint = resolve_daemon_endpoint(config_path)
-        return probe_daemon_endpoint(endpoint)
+        return probe_daemon_endpoint(resolve_daemon_endpoint(config_path))
     except Exception:
         return "unreachable", {}
 

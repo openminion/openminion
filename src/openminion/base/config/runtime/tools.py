@@ -1,7 +1,5 @@
 """Runtime tool-family config normalization."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -181,7 +179,7 @@ def coerce_tool_runtime_config(value: object) -> ToolRuntimeConfig:
     raw_gws = value.get("gws")
     if raw_gws is not None and not isinstance(raw_gws, Mapping):
         raise ConfigError("runtime.tools.gws must be an object.")
-    normalized["gws"] = dict(raw_gws) if isinstance(raw_gws, Mapping) else None
+    normalized["gws"] = dict(raw_gws) if raw_gws is not None else None
     return ToolRuntimeConfig(**normalized)
 
 
@@ -199,7 +197,7 @@ def tool_runtime_config_to_dict(config: ToolRuntimeConfig | None) -> dict[str, A
         if family_cfg.provider_order:
             family_payload["provider_order"] = list(family_cfg.provider_order)
         if family_cfg.allow_fallback is not None:
-            family_payload["allow_fallback"] = bool(family_cfg.allow_fallback)
+            family_payload["allow_fallback"] = family_cfg.allow_fallback
         payload[family_name] = family_payload
     if normalized.gws is not None:
         payload["gws"] = dict(normalized.gws)

@@ -89,7 +89,7 @@ def test_truncation_records_original_and_retained_size() -> None:
 def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
     exporter = _Exporter()
     service = TelemetryService(
-        str(tmp_path / "telemetry.db"),
+        str(tmp_path / ".openminion" / "telemetry.db"),
         include_local_content=False,
         otel_exporter_config=OTELExporterConfig(include_assistant_body=True),
         external_exporter=exporter,

@@ -1,6 +1,5 @@
 # path	loc	reason
 src/openminion/__init__.py	50	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
-src/openminion/api/routes/__init__.py	51	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/api/server/__init__.py	107	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/base/config/runtime/__init__.py	301	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.
 src/openminion/base/runtime/__init__.py	74	VOL-28 existing init-file volume baseline; shrink through VOL-05..14 or a later owner-specific slice.

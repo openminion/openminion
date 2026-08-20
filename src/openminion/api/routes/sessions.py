@@ -1,7 +1,5 @@
 """Session route handlers for runs, messages, and events."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from typing import Any
@@ -43,13 +41,13 @@ def _parse_limit(
     default: int,
     session_id: str,
     run_id: str | None = None,
-) -> tuple[int | None, RouteResult | None]:
+) -> tuple[int, RouteResult | None]:
     if raw_value is None:
         return default, None
     try:
         return int(raw_value), None
     except ValueError:
-        return None, error_route_result(
+        return default, error_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
             message="`limit` must be an integer.",
@@ -74,7 +72,6 @@ def _handle_list_runs(
     )
     if invalid is not None:
         return invalid
-    assert limit is not None
     try:
         runs_payload = list_runs(
             config_path=ctx.config_path,
@@ -82,8 +79,11 @@ def _handle_list_runs(
             limit=limit,
             runtime=ctx.runtime,
         )
-        status = HTTPStatus.OK
-        payload = {"ok": True, **runs_payload}
+        return RouteResult(
+            status=HTTPStatus.OK,
+            payload={"ok": True, **runs_payload},
+            session_id=session_id,
+        )
     except RunQueryError as exc:
         return exception_route_result(
             HTTPStatus.NOT_FOUND
@@ -95,7 +95,6 @@ def _handle_list_runs(
             retryable=False,
             session_id=session_id,
         )
-    return RouteResult(status=status, payload=payload, session_id=session_id)
 
 
 def _handle_list_run_events(
@@ -114,7 +113,6 @@ def _handle_list_run_events(
     )
     if invalid is not None:
         return invalid
-    assert limit is not None
     try:
         runs_payload = list_run_events(
             config_path=ctx.config_path,
@@ -123,8 +121,12 @@ def _handle_list_run_events(
             limit=limit,
             runtime=ctx.runtime,
         )
-        status = HTTPStatus.OK
-        payload = {"ok": True, **runs_payload}
+        return RouteResult(
+            status=HTTPStatus.OK,
+            payload={"ok": True, **runs_payload},
+            session_id=session_id,
+            run_id=run_id,
+        )
     except RunQueryError as exc:
         return exception_route_result(
             HTTPStatus.NOT_FOUND
@@ -137,12 +139,6 @@ def _handle_list_run_events(
             session_id=session_id,
             run_id=run_id,
         )
-    return RouteResult(
-        status=status,
-        payload=payload,
-        session_id=session_id,
-        run_id=run_id,
-    )
 
 
 def _handle_list_session_messages(
@@ -159,7 +155,6 @@ def _handle_list_session_messages(
     )
     if invalid is not None:
         return invalid
-    assert limit is not None
     try:
         session_payload = list_session_messages(
             config_path=ctx.config_path,
@@ -167,8 +162,11 @@ def _handle_list_session_messages(
             limit=limit,
             runtime=ctx.runtime,
         )
-        status = HTTPStatus.OK
-        payload = {"ok": True, **session_payload}
+        return RouteResult(
+            status=HTTPStatus.OK,
+            payload={"ok": True, **session_payload},
+            session_id=session_id,
+        )
     except SessionQueryError as exc:
         return exception_route_result(
             HTTPStatus.NOT_FOUND
@@ -180,7 +178,6 @@ def _handle_list_session_messages(
             retryable=False,
             session_id=session_id,
         )
-    return RouteResult(status=status, payload=payload, session_id=session_id)
 
 
 def handle_request(

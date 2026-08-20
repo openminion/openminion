@@ -1,7 +1,5 @@
 """Task route handlers for the developer API."""
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -186,7 +184,7 @@ def _apply_pending_action(
             details={"decision_id": decision_id, "action": action},
             retryable=False,
         )
-    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+    except (AttributeError, TypeError, RuntimeError) as exc:
         return _task_error(exc)
 
 
@@ -201,11 +199,11 @@ def _task_error(exc: Exception) -> RouteResult:
 
 
 def _first_query_value(params: dict[str, list[str]], key: str) -> str:
-    return str((params.get(key) or [""])[0]).strip()
+    return (params.get(key) or [""])[0].strip()
 
 
 def _safe_int(value: str, *, default: int) -> int:
     try:
         return max(1, int(value))
-    except (TypeError, ValueError):
+    except ValueError:
         return default

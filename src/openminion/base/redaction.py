@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -17,7 +15,7 @@ _GENERIC_CREDENTIAL_RE = re.compile(
 
 
 def redact_sensitive_text(text: str) -> tuple[str, int]:
-    value = str(text or "")
+    value = text or ""
     if not value:
         return value, 0
 
