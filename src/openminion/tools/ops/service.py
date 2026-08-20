@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import platform
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from openminion.modules.runtime.credentials import CredentialRef
 
 from .evidence import EvidenceStore, build_evidence
-from .interfaces import TargetTransport
+from .interfaces import FileReadTransport, TargetTransport
 from .jobs import OperationJobStore
 from .plans import CommandPlanStore, build_command_plan, validate_command_plan
 from .policy import OperationPolicyDecision, decide_operation_policy
@@ -22,8 +23,9 @@ from .contracts import (
     OperationRequest,
     OperationTarget,
     TargetPlatform,
+    TransportResult,
 )
-from .transports import ContainerTransport, LocalTransport, SshTransport
+from .transports import build_transports, registration_map
 
 RedactionResolver = Callable[[OperationTarget], tuple[str, ...]]
 
@@ -38,6 +40,7 @@ class OpsService:
         evidence: EvidenceStore | None = None,
         plans: CommandPlanStore | None = None,
         redaction_resolver: RedactionResolver | None = None,
+        transport_capabilities: Mapping[str, frozenset[str]] | None = None,
     ) -> None:
         self.targets = targets or TargetRegistry()
         self.jobs = jobs or OperationJobStore()
@@ -45,18 +48,41 @@ class OpsService:
         self.plans = plans or CommandPlanStore()
         self._redaction_resolver = redaction_resolver or (lambda _target: ())
         if transports is None:
-            self._transports: dict[str, TargetTransport] = {
-                "local": LocalTransport(),
-                "container": ContainerTransport(),
+            self._transports = build_transports(
+                ("local", "container"),
+                credential_reader=lambda _ref: "",
+            )
+            self._transport_capabilities = {
+                kind: registration.capabilities
+                for kind, registration in registration_map().items()
+                if kind in self._transports
             }
         else:
             self._transports = dict(transports)
+            self._transport_capabilities = dict(transport_capabilities or {})
 
     def list_targets(self) -> tuple[OperationTarget, ...]:
         return self.targets.list()
 
     def inspect_target(self, target_id: str) -> OperationTarget:
         return self.targets.get(target_id)
+
+    def transport_capabilities(self, target_id: str) -> tuple[str, ...]:
+        target = self.targets.get(target_id)
+        return tuple(sorted(self._transport_capabilities.get(target.kind, ())))
+
+    def transport_for(self, target_id: str, *, expected_kind: str) -> TargetTransport:
+        target = self.targets.get(target_id)
+        if target.kind != expected_kind:
+            raise ValueError(
+                f"target {target_id!r} is not configured for {expected_kind}"
+            )
+        try:
+            return self._transports[target.kind]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"transport unavailable for target kind: {target.kind}"
+            ) from exc
 
     def policy_for(self, request: OperationRequest) -> OperationPolicyDecision:
         return decide_operation_policy(self.targets.get(request.target_id), risk="read")
@@ -258,6 +284,59 @@ class OpsService:
     def inspect_evidence(self, evidence_id: str) -> EvidenceRecord:
         return self.evidence.get(evidence_id)
 
+    def read_file(
+        self,
+        *,
+        target_id: str,
+        path: str,
+        max_bytes: int,
+        timeout_seconds: float,
+        session_id: str = "",
+    ) -> EvidenceRecord:
+        target = self.targets.get(target_id)
+        if "file_read" not in self._transport_capabilities.get(target.kind, ()):
+            raise ValueError(f"file read is unsupported for target kind: {target.kind}")
+        requested = Path(path)
+        if not requested.is_absolute():
+            raise ValueError("file read path must be absolute")
+        resolved = requested.resolve(strict=False)
+        scopes = tuple(
+            Path(scope).resolve(strict=False)
+            for scope in (*target.workspace_scopes, *target.log_scopes)
+        )
+        if not scopes or not any(resolved.is_relative_to(scope) for scope in scopes):
+            raise ValueError("file read path is outside configured scopes")
+        transport = cast(FileReadTransport, self._transports[target.kind])
+        result = transport.read(
+            target,
+            str(resolved),
+            max_bytes=max_bytes,
+            timeout_seconds=min(timeout_seconds, target.timeout_seconds),
+        )
+        request = OperationRequest(
+            operation_id=f"file-read:{uuid.uuid4()}",
+            target_id=target_id,
+            profile_id="file.read",
+            timeout_seconds=timeout_seconds,
+            session_id=session_id,
+            tool_id="ops.file.read",
+        )
+        return self.evidence.put(
+            build_evidence(
+                request,
+                TransportResult(
+                    argv=("file.read",),
+                    return_code=0,
+                    stdout=result.content,
+                    truncated=result.truncated,
+                ),
+                redactions=self._redaction_resolver(target),
+                target_revision=target.revision,
+                transport=target.kind,
+                policy_outcome="allow",
+            )
+        )
+
     def list_evidence(
         self, *, target_id: str = "", session_id: str = ""
     ) -> tuple[EvidenceRecord, ...]:
@@ -302,24 +381,22 @@ def configured_ops_service(
                 platform=local_platform,
             )
         )
-    transports: dict[str, TargetTransport] = {
-        "local": LocalTransport(),
-        "container": ContainerTransport(),
-    }
     cache: dict[str, str] = {}
 
     def read_credential(ref: CredentialRef) -> str:
         key = ref.credential_id
         if key not in cache:
             if credential_reader is None:
-                raise RuntimeError("SSH credential resolver is unavailable")
+                raise RuntimeError("operations credential resolver is unavailable")
             cache[key] = credential_reader(ref)
             if not cache[key]:
-                raise RuntimeError("SSH credential is unavailable")
+                raise RuntimeError("operations credential is unavailable")
         return cache[key]
 
-    if any(target.kind == "ssh" for target in targets.list()):
-        transports["ssh"] = SshTransport(read_credential)
+    transports = build_transports(
+        {target.kind for target in targets.list()} | {"local", "container"},
+        credential_reader=read_credential,
+    )
     storage_root = data_root / "ops"
     storage_root.mkdir(parents=True, exist_ok=True)
     jobs = OperationJobStore(storage_root / "jobs.db")
@@ -335,4 +412,9 @@ def configured_ops_service(
             if target.credential_ref is not None
             else ()
         ),
+        transport_capabilities={
+            kind: registration.capabilities
+            for kind, registration in registration_map().items()
+            if kind in transports
+        },
     )

@@ -58,3 +58,9 @@ class CommandPlanArgs(TargetArgs):
 class CommandRunArgs(StrictArgs):
     plan_id: str = Field(min_length=1)
     plan_hash: str = Field(min_length=64, max_length=64)
+
+
+class FileReadArgs(TargetArgs):
+    path: str = Field(min_length=1)
+    max_bytes: int = Field(default=16_384, ge=1, le=131_072)
+    timeout_seconds: float = Field(default=30.0, gt=0, le=300)

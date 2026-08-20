@@ -83,6 +83,49 @@ def test_ops_plugin_records_concrete_tool_id_in_evidence() -> None:
     assert result["data"]["tool_id"] == TOOL_OPS_HOST_SNAPSHOT
 
 
+def test_ops_transport_telemetry_is_structural_and_redacted() -> None:
+    class Telemetry:
+        def __init__(self) -> None:
+            self.events = []
+
+        def emit_module_operation(self, *args, **kwargs):
+            self.events.append((args, kwargs))
+
+    registry = ToolRegistry()
+    REGISTRAR.register(registry)
+    telemetry = Telemetry()
+    context = ToolExecutionContext(
+        channel="cli",
+        target="local",
+        session_id="ops-telemetry",
+        telemetryctl=telemetry,
+        ops_service=local_ops_service(),
+    )
+
+    result = registry.get(TOOL_OPS_HOST_SNAPSHOT).handler(
+        {"target_id": "local"}, context
+    )
+
+    assert result["ok"] is True
+    assert [event[0][3] for event in telemetry.events] == [
+        "transport.dispatch",
+        "transport.result",
+    ]
+    result_facts = telemetry.events[-1][1]["extra"]
+    assert set(result_facts) == {
+        "target_id",
+        "target_revision",
+        "transport_kind",
+        "capability",
+        "duration_ms",
+        "timed_out",
+        "truncated",
+        "error_code",
+        "provider_request_id_digest",
+    }
+    assert not {"argv", "stdout", "stderr", "content", "credential"} & set(result_facts)
+
+
 def test_process_inspect_records_typed_local_evidence() -> None:
     registry = ToolRegistry()
     REGISTRAR.register(registry)

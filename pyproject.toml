@@ -64,6 +64,15 @@ animations = [
 remote = [
   "asyncssh>=2.14,<3",
 ]
+remote-winrm = [
+  "pywinrm>=0.5,<0.6",
+]
+remote-kubernetes = [
+  "kubernetes>=36,<37",
+]
+remote-aws = [
+  "boto3>=1.43,<2",
+]
 dev = [
   # Exercise the optional ACP adapter in the standard development/CI suite.
   "agent-client-protocol>=0.12,<0.13",

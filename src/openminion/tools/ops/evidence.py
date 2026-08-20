@@ -68,6 +68,9 @@ def build_evidence(
         after_facts=after_facts or {},
         failure=stderr if status in {"failed", "partial"} else "",
         rollback_state=rollback_state,
+        provider_request_id=result.provider_request_id,
+        timed_out=result.timed_out,
+        truncated=result.truncated,
     )
 
 

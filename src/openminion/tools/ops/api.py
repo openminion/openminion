@@ -8,6 +8,13 @@ from .guidance import OPS_GUIDANCE_ID
 from .interfaces import ALL_OPS_TOOLS
 from .service import OpsService
 
+_DEPENDENCIES = {
+    "ssh": ("asyncssh", "install the 'remote' extra"),
+    "winrm": ("winrm", "install the 'remote-winrm' extra"),
+    "kubernetes": ("kubernetes", "install the 'remote-kubernetes' extra"),
+    "ssm": ("boto3", "install the 'remote-aws' extra"),
+}
+
 
 def target_view(target: OperationTarget) -> dict[str, Any]:
     """Return the public target contract without credential or trust details."""
@@ -39,11 +46,19 @@ def target_view(target: OperationTarget) -> dict[str, Any]:
 def operator_state(service: OpsService) -> dict[str, Any]:
     """Return the shared operator view used by CLI, API, and TUI adapters."""
     targets = service.list_targets()
-    disabled = {
-        target.target_id: "install the 'remote' extra to enable SSH operations"
-        for target in targets
-        if target.kind == "ssh" and importlib.util.find_spec("asyncssh") is None
-    }
+    disabled = {}
+    for target in targets:
+        dependency = _DEPENDENCIES.get(target.kind)
+        if dependency is not None and importlib.util.find_spec(dependency[0]) is None:
+            disabled[target.target_id] = dependency[1]
+    target_payloads = []
+    for target in targets:
+        payload = target_view(target)
+        payload["transport_capabilities"] = service.transport_capabilities(
+            target.target_id
+        )
+        payload["transport_ready"] = target.target_id not in disabled
+        target_payloads.append(payload)
     return {
         "ok": True,
         "data": {
@@ -52,7 +67,7 @@ def operator_state(service: OpsService) -> dict[str, Any]:
                 "tools": list(ALL_OPS_TOOLS),
                 "guidance": OPS_GUIDANCE_ID,
             },
-            "targets": [target_view(target) for target in targets],
+            "targets": target_payloads,
             "jobs": [job.model_dump(mode="json") for job in service.jobs.list()],
             "plans": [plan.model_dump(mode="json") for plan in service.plans.list()],
             "evidence": [

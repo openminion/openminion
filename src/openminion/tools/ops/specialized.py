@@ -87,6 +87,33 @@ def evidence_result(
     }
 
 
+def live_evidence_result(
+    *,
+    family_id: str,
+    operation: str,
+    args: BaseModel,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    sanitized = redact(payload)
+    serialized = repr((family_id, operation, args.model_dump(mode="json"), sanitized))
+    return {
+        "ok": True,
+        "verified": True,
+        "content": f"{family_id}:{operation} observed",
+        "data": {
+            "target": args.model_dump(mode="json"),
+            "evidence": {
+                "family_id": family_id,
+                "operation": operation,
+                "source": "live",
+                "claim_status": "observed",
+                "evidence_digest": hashlib.sha256(serialized.encode()).hexdigest(),
+            },
+            "result": sanitized,
+        },
+    }
+
+
 def make_handler(
     family_id: str, operation: str, args_model: type[BaseModel]
 ) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
@@ -97,6 +124,28 @@ def make_handler(
             operation=operation,
             args=parsed,
             ctx=ctx,
+        )
+
+    return handler
+
+
+def make_live_handler(
+    family_id: str,
+    operation: str,
+    args_model: type[BaseModel],
+    live_handler: Callable[[Any, Any], Mapping[str, Any]],
+) -> Callable[[dict[str, Any], Any], dict[str, Any]]:
+    fixture_handler = make_handler(family_id, operation, args_model)
+
+    def handler(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+        parsed = args_model.model_validate(args)
+        if str(getattr(parsed, "scope", "fixture")) != "live":
+            return fixture_handler(args, ctx)
+        return live_evidence_result(
+            family_id=family_id,
+            operation=operation,
+            args=parsed,
+            payload=live_handler(parsed, ctx),
         )
 
     return handler

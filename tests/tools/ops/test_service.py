@@ -8,6 +8,7 @@ from openminion.tools.ops.contracts import (
     OperationTarget,
     TransportResult,
 )
+from openminion.tools.ops.transports import LocalTransport
 from openminion.tools.ops.service import (
     OpsService,
     configured_ops_service,
@@ -68,6 +69,75 @@ def test_service_observes_closed_profile() -> None:
     evidence = local_ops_service().observe(_request())
     assert evidence.claim_status == "observed"
     assert evidence.output_digest
+
+
+def test_file_read_is_bounded_to_configured_scopes(tmp_path) -> None:
+    allowed = tmp_path / "workspace"
+    allowed.mkdir()
+    source = allowed / "status.txt"
+    source.write_text("visible-secret", encoding="utf-8")
+    service = OpsService(
+        targets=TargetRegistry(
+            (
+                OperationTarget(
+                    target_id="local",
+                    kind="local",
+                    workspace_scopes=(str(allowed),),
+                ),
+            )
+        ),
+        transports={"local": LocalTransport()},
+        transport_capabilities={"local": frozenset({"command", "file_read"})},
+        redaction_resolver=lambda _target: ("secret",),
+    )
+
+    evidence = service.read_file(
+        target_id="local",
+        path=str(source),
+        max_bytes=8,
+        timeout_seconds=2,
+    )
+
+    assert evidence.stdout_preview == "visible-"
+    assert evidence.claim_status == "observed"
+    with pytest.raises(ValueError, match="must be absolute"):
+        service.read_file(
+            target_id="local",
+            path="status.txt",
+            max_bytes=10,
+            timeout_seconds=2,
+        )
+    with pytest.raises(ValueError, match="outside configured scopes"):
+        service.read_file(
+            target_id="local",
+            path=str(tmp_path / "outside.txt"),
+            max_bytes=10,
+            timeout_seconds=2,
+        )
+
+
+def test_file_read_rejects_command_only_transport_before_dispatch(tmp_path) -> None:
+    service = OpsService(
+        targets=TargetRegistry(
+            (
+                OperationTarget(
+                    target_id="local",
+                    kind="local",
+                    workspace_scopes=(str(tmp_path),),
+                ),
+            )
+        ),
+        transports={"local": _RecordingTransport()},
+        transport_capabilities={"local": frozenset({"command"})},
+    )
+
+    with pytest.raises(ValueError, match="unsupported"):
+        service.read_file(
+            target_id="local",
+            path=str(tmp_path / "status.txt"),
+            max_bytes=10,
+            timeout_seconds=2,
+        )
 
 
 def test_service_rejects_stale_target_and_unknown_profile() -> None:

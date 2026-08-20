@@ -18,7 +18,7 @@ from openminion.tools.ops import (
     decide_operation_policy,
 )
 from openminion.tools.ops.api import target_view
-from openminion.tools.ops.contracts import OpsConfig
+from openminion.tools.ops.contracts import OpsConfig, SshTarget
 from openminion.base.time import utc_now
 
 
@@ -102,9 +102,56 @@ def test_ops_config_is_strict_and_supports_private_key_auth() -> None:
 
     config = OpsConfig.model_validate(payload)
 
+    assert isinstance(config.targets[0], SshTarget)
     assert config.targets[0].ssh_auth_mode == "private_key"
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         OpsConfig.model_validate({**payload, "host": "ad-hoc.example"})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"target_id": "local", "kind": "local", "container": "app"},
+        {
+            "target_id": "container",
+            "kind": "container",
+            "container": "app",
+            "username": "operator",
+        },
+        {"target_id": "unknown", "kind": "winrm"},
+        {"target_id": "local", "kind": "local", "password": "secret"},
+    ],
+)
+def test_configured_target_variants_reject_cross_kind_and_unknown_fields(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        OpsConfig.model_validate({"targets": [payload]})
+
+
+def test_container_target_remote_selection_is_runtime_specific() -> None:
+    docker = OpsConfig.model_validate(
+        {
+            "targets": [
+                {
+                    "target_id": "docker",
+                    "kind": "container",
+                    "container": "app",
+                    "docker_context": "staging",
+                }
+            ]
+        }
+    ).targets[0]
+    assert docker.docker_context == "staging"
+
+    with pytest.raises(ValidationError, match="Docker context"):
+        OperationTarget(
+            target_id="invalid",
+            kind="container",
+            container="app",
+            container_runtime="podman",
+            docker_context="staging",
+        )
 
 
 def test_target_registry_requires_monotonic_revisions() -> None:

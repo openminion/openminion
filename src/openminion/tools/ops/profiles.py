@@ -9,6 +9,17 @@ ProfileBuilder = Callable[
 ]
 
 
+def _powershell(script: str, *parameters: str) -> tuple[str, ...]:
+    return (
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        script,
+        *parameters,
+    )
+
+
 def _required(parameters: Mapping[str, str | int | bool], name: str) -> str:
     value = str(parameters.get(name, "")).strip()
     if not value:
@@ -17,8 +28,13 @@ def _required(parameters: Mapping[str, str | int | bool], name: str) -> str:
 
 
 def _host_snapshot(
-    _: Mapping[str, str | int | bool], __: TargetPlatform
+    _: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
+    if target_platform == "windows":
+        return _powershell(
+            "Get-CimInstance Win32_OperatingSystem | "
+            "Select-Object Caption,Version,LastBootUpTime"
+        )
     return ("uname", "-a")
 
 
@@ -26,6 +42,8 @@ def _service_inspect_argv(
     parameters: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
     service = _required(parameters, "service")
+    if target_platform == "windows":
+        return _powershell("Get-Service -Name $args[0]", service)
     if target_platform == "darwin":
         return ("launchctl", "print", service)
     return ("systemctl", "show", service, "--no-pager")
@@ -36,6 +54,13 @@ def _logs(
 ) -> tuple[str, ...]:
     service = _required(parameters, "service")
     limit = min(max(int(parameters.get("limit", 100)), 1), 500)
+    if target_platform == "windows":
+        return _powershell(
+            "Get-WinEvent -LogName Application -MaxEvents $args[1] | "
+            "Where-Object ProviderName -EQ $args[0]",
+            service,
+            str(limit),
+        )
     if target_platform == "darwin":
         return (
             "log",
@@ -53,26 +78,41 @@ def _logs(
 def _network(
     _: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
+    if target_platform == "windows":
+        return _powershell("Get-NetTCPConnection")
     if target_platform == "darwin":
         return ("netstat", "-an")
     return ("ss", "-tunlp")
 
 
-def _disk(_: Mapping[str, str | int | bool], __: TargetPlatform) -> tuple[str, ...]:
+def _disk(
+    _: Mapping[str, str | int | bool], target_platform: TargetPlatform
+) -> tuple[str, ...]:
+    if target_platform == "windows":
+        return _powershell(
+            "Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,Size,FreeSpace"
+        )
     return ("df", "-h")
 
 
 def _memory(
     _: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
+    if target_platform == "windows":
+        return _powershell(
+            "Get-CimInstance Win32_OperatingSystem | "
+            "Select-Object TotalVisibleMemorySize,FreePhysicalMemory"
+        )
     if target_platform == "darwin":
         return ("vm_stat",)
     return ("free", "-h")
 
 
 def _processes(
-    _: Mapping[str, str | int | bool], __: TargetPlatform
+    _: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
+    if target_platform == "windows":
+        return _powershell("Get-Process | Select-Object Id,Name,CPU,WorkingSet")
     return ("ps", "-axo", "pid,ppid,user,%cpu,%mem,command")
 
 
@@ -94,9 +134,11 @@ def _bounded_int(
 
 
 def _process_inspect_argv(
-    parameters: Mapping[str, str | int | bool], _: TargetPlatform
+    parameters: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
     pid = _bounded_int(parameters, "pid", 4_194_304)
+    if target_platform == "windows":
+        return _powershell("Get-Process -Id $args[0]", str(pid))
     return ("ps", "-p", str(pid), "-o", "pid=,ppid=,user=,%cpu=,%mem=,etime=,comm=")
 
 
@@ -107,6 +149,13 @@ def _port_owner(
     protocol = _required(parameters, "protocol").lower()
     if protocol not in {"tcp", "udp"}:
         raise ValueError("operation profile protocol must be tcp or udp")
+    if target_platform == "windows":
+        command = (
+            "Get-NetTCPConnection -LocalPort $args[0]"
+            if protocol == "tcp"
+            else "Get-NetUDPEndpoint -LocalPort $args[0]"
+        )
+        return _powershell(command, str(port))
     if target_platform == "darwin":
         selector = f"-i{protocol.upper()}:{port}"
         return (

@@ -103,6 +103,25 @@ def command_plan(
     typer.echo(plan.model_dump_json())
 
 
+@app.command("file-read")
+def file_read(
+    target_id: str,
+    path: str,
+    max_bytes: int = typer.Option(4096, "--max-bytes", min=1, max=131072),
+    timeout_seconds: float = typer.Option(30.0, "--timeout", min=0.1, max=300),
+    session_id: str = typer.Option("", "--session"),
+    config: str | None = typer.Option(None, "--config"),
+) -> None:
+    evidence = _configured_service(config).read_file(
+        target_id=target_id,
+        path=path,
+        max_bytes=max_bytes,
+        timeout_seconds=timeout_seconds,
+        session_id=session_id,
+    )
+    typer.echo(evidence.model_dump_json())
+
+
 @app.command("command-run")
 def command_run(
     plan_id: str,
