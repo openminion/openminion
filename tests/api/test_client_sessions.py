@@ -13,6 +13,7 @@ from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.dispatch import dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
+from openminion.base.version import OPENMINION_VERSION
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def client_runtime(
         home_root=home_root,
         data_root=data_root,
         bind_host="127.0.0.1",
-        daemon_version="0.0.9",
+        daemon_version=OPENMINION_VERSION,
     )
     lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
     identity = service.authorize(

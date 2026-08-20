@@ -12,6 +12,7 @@ from openminion.api.server import build_api_server
 from openminion.api.server.client_auth import ClientAuthService
 from openminion.api.server.dispatch import dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
+from openminion.base.version import OPENMINION_VERSION
 
 
 def _service(tmp_path: Path) -> ClientAuthService:
@@ -21,7 +22,7 @@ def _service(tmp_path: Path) -> ClientAuthService:
         home_root=tmp_path / "home",
         data_root=tmp_path / "data",
         bind_host="127.0.0.1",
-        daemon_version="0.0.9",
+        daemon_version=OPENMINION_VERSION,
     )
 
 

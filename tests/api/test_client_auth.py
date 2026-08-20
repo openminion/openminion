@@ -12,6 +12,7 @@ from openminion.api.server.client_auth import (
     ClientAuthService,
     build_config_id,
 )
+from openminion.base.version import OPENMINION_VERSION
 from http import HTTPStatus
 
 
@@ -22,7 +23,7 @@ def _service(tmp_path: Path, *, token: str = "master-token") -> ClientAuthServic
         home_root=tmp_path / "home",
         data_root=tmp_path / "data",
         bind_host="127.0.0.1",
-        daemon_version="0.0.9",
+        daemon_version=OPENMINION_VERSION,
     )
 
 
@@ -215,7 +216,7 @@ def test_duplicate_client_wrong_method_and_nonloopback_bind_fail(
         home_root=tmp_path,
         data_root=tmp_path / "data",
         bind_host="0.0.0.0",
-        daemon_version="0.0.9",
+        daemon_version=OPENMINION_VERSION,
     )
     with pytest.raises(ClientAuthError) as caught:
         nonloopback.authorize(

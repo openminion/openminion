@@ -21,6 +21,7 @@ from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.api.server.streaming import handle_turn_stream_request
 from openminion.api.server.client_auth import ClientAuthService
+from openminion.base.version import OPENMINION_VERSION
 
 
 def _install_json_body(handler: _OpenMinionAPIHandler, body: dict) -> None:
@@ -763,7 +764,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             home_root=".",
             data_root=".openminion",
             bind_host="127.0.0.1",
-            daemon_version="0.0.9",
+            daemon_version=OPENMINION_VERSION,
         )
         lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
         handler = object.__new__(_OpenMinionAPIHandler)
@@ -837,7 +838,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             home_root=".",
             data_root=".openminion",
             bind_host="127.0.0.1",
-            daemon_version="0.0.9",
+            daemon_version=OPENMINION_VERSION,
         )
         handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
         handler._write_json = mock.Mock()  # type: ignore[attr-defined]
@@ -856,7 +857,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             home_root=".",
             data_root=".openminion",
             bind_host="127.0.0.1",
-            daemon_version="0.0.9",
+            daemon_version=OPENMINION_VERSION,
         )
         lease = service.mint(protocol_min=1, protocol_max=1, ttl_seconds=60)
         handler = object.__new__(_OpenMinionAPIHandler)
