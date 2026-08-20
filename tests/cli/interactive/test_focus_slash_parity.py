@@ -50,6 +50,7 @@ async def test_help_lists_every_registered_command_including_fcpp_06_additions()
         "/help",
         "/compact",
         "/cost",
+        "/tokens",
         "/mcp",
         "/model",
         "/resume",
@@ -160,6 +161,27 @@ async def test_cost_command_renders_usage_when_runtime_has_data() -> None:
     assert "42" in body
     assert "5000" in body
     assert "200000" in body
+    assert "cost" in body
+    assert "unavailable" in body
+
+
+@pytest.mark.asyncio
+async def test_tokens_command_renders_durable_usage_report() -> None:
+    class _UsageRuntime(_DemoFocusRuntime):
+        def token_usage_report(self) -> str:
+            return "status tokens: session=usage-test\ntotals: provider=42"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _UsageRuntime(working_dir=tmp, session="usage-test")
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.screen._handle_command("/tokens")
+            await pilot.pause()
+            body = _last_system_body(app.screen.query_one(FocusTranscript))
+
+    assert "session=usage-test" in body
+    assert "provider=42" in body
 
 
 @pytest.mark.asyncio

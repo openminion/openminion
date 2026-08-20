@@ -60,6 +60,8 @@ class RuntimeControlsMixin:
 
         def token_usage_snapshot(self) -> Any: ...
 
+        def token_usage_report(self) -> str: ...
+
     def list_models(self) -> list[tuple[str, str, bool]]:
         result: list[tuple[str, str, bool]] = []
         providers_cfg = getattr(getattr(self._rt, "config", None), "providers", None)

@@ -20,7 +20,7 @@ PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     / /agents /browser /compact /context /cost /delegate /details /editor /effort
     /export /goal /help /mcp /memory /model /normal /permissions /queue /quiet
     /readonly /new /resume /review /sessions /skills /status /statusline /tasks
-    /telemetry /theme /tools /trace /undo /verbose
+    /telemetry /theme /tokens /tools /trace /undo /verbose
     """.split()
 )
 
@@ -35,6 +35,10 @@ def handle_debug_output_slash(
 ) -> bool:
     if cmd == "/cost":
         cost_renderer(runtime=runtime, console=console)
+        return True
+    if cmd == "/tokens":
+        report = runtime.token_usage_report().strip()
+        console.print(report or "(no durable token usage data)")
         return True
     if cmd == "/telemetry":
         renderer = render_telemetry_slash

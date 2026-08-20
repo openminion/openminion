@@ -13,6 +13,8 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
 )
 from openminion.modules.llm.providers.normalization import normalize_provider_response
+from openminion.modules.llm.client_call import response_cost_payload
+from openminion.modules.llm.client_call import usage_payload_from_response_usage
 from openminion.modules.llm.providers.tool_calling import (
     detect_raw_envelope,
     detect_raw_tool_markup,
@@ -314,32 +316,12 @@ def _normalize_follow_up_response(self, *, raw_follow_up: Any) -> ProviderRespon
 
 
 def _usage_payload_from_provider_response(raw_follow_up: Any) -> dict[str, Any]:
-    if isinstance(raw_follow_up, dict):
-        raw_usage = raw_follow_up.get("usage")
-        if isinstance(raw_usage, dict):
-            return dict(raw_usage)
-        return {}
-    raw_usage = getattr(raw_follow_up, "usage", None)
-    if isinstance(raw_usage, dict):
-        return dict(raw_usage)
-    if hasattr(raw_usage, "model_dump"):
-        dumped = raw_usage.model_dump(mode="json", exclude_none=True)
-        return dict(dumped) if isinstance(dumped, dict) else {}
-    if raw_usage is not None:
-        payload: dict[str, Any] = {}
-        for key in (
-            "input_tokens",
-            "output_tokens",
-            "total_tokens",
-            "total_source",
-            "cached_tokens",
-            "cache_creation_tokens",
-        ):
-            value = getattr(raw_usage, key, None)
-            if value is not None:
-                payload[key] = value
-        return payload
-    return {}
+    raw_usage = (
+        raw_follow_up.get("usage")
+        if isinstance(raw_follow_up, dict)
+        else getattr(raw_follow_up, "usage", None)
+    )
+    return usage_payload_from_response_usage(raw_usage)
 
 
 def _finalize_tool_follow_up_text(
@@ -433,6 +415,7 @@ async def _follow_up_after_tool(
             ),
             **({"run_id": run_id} if run_id else {}),
             "usage": _usage_payload_from_provider_response(follow_up),
+            **response_cost_payload(follow_up),
         },
         trace_id=trace_id,
     )

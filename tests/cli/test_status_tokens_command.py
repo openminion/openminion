@@ -382,6 +382,7 @@ def test_status_tokens_recent_rollup_shows_cross_session_insights(
     ) in output
     assert "session trends:" in output
     assert "context:20" in output
+    assert "delta:+14" in output
     assert "top sessions:" in output
     assert "provider coverage: openai/gpt-a=records:1 provider:6" in output
     assert "coverage health:" in output
@@ -459,6 +460,10 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
     assert trend["cache_read_tokens"] == 0
     assert trend["cache_write_tokens"] == 0
     assert trend["total_visible_tokens"] == 5
+    assert trend["provider_cost_usd"] is None
+    assert trend["estimated_cost_usd"] is None
+    assert trend["provider_token_delta"] is None
+    assert trend["visible_token_delta"] is None
     assert set(trend["advisory_codes"]) == {
         "missing_run_correlation",
         "missing_call_correlation",

@@ -145,27 +145,39 @@ def _seed_usage(installed_bin: Path, home_root: Path, data_root: Path) -> str:
         "sessctl create-session",
     )
     events = (
-        {
-            "run_id": "run-token-pipe",
-            "provider": "echo",
-            "model": "echo-test",
-            "prompt": "do not export this prompt",
-            "api_key": "do-not-export-secret",
-            "usage": {
-                "input_tokens": 9,
-                "output_tokens": 4,
-                "total_tokens": 13,
-                "cache_read_tokens": 2,
+        (
+            "llm.call.completed",
+            {
+                "run_id": "run-token-pipe",
+                "provider": "echo",
+                "model": "echo-test",
+                "prompt": "do not export this prompt",
+                "api_key": "do-not-export-secret",
+                "cost_usd": 0.003,
+                "cost_source": "provider",
+                "usage": {
+                    "input_tokens": 9,
+                    "output_tokens": 4,
+                    "total_tokens": 13,
+                    "cache_read_tokens": 2,
+                },
             },
-        },
-        {
-            "run_id": "run-token-pipe",
-            "provider": "echo",
-            "model": "echo-test",
-            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
-        },
+        ),
+        (
+            "llm.call.failed",
+            {
+                "run_id": "run-token-pipe",
+                "provider": "echo",
+                "model": "echo-test",
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 2,
+                    "total_tokens": 5,
+                },
+            },
+        ),
     )
-    for payload in events:
+    for event_type, payload in events:
         _require_success(
             _run(
                 [
@@ -176,7 +188,7 @@ def _seed_usage(installed_bin: Path, home_root: Path, data_root: Path) -> str:
                     "--session-id",
                     session_id,
                     "--event-type",
-                    "llm.call.completed",
+                    event_type,
                     "--payload-json",
                     json.dumps(payload, sort_keys=True),
                 ],
@@ -214,6 +226,12 @@ def _assert_usage_payload(payload: dict[str, Any]) -> None:
     totals = payload.get("totals") or {}
     if totals.get("provider_tokens") != 18:
         raise RuntimeError(f"unexpected provider total: {totals}")
+    costs = payload.get("costs") or {}
+    if costs.get("provider_cost_usd") != 0.003:
+        raise RuntimeError(f"unexpected provider cost: {costs}")
+    coverage = payload.get("coverage") or {}
+    if coverage.get("failed_llm_call_events") != 1:
+        raise RuntimeError(f"unexpected failed-call coverage: {coverage}")
     rendered = json.dumps(payload, sort_keys=True)
     if "do not export" in rendered or "do-not-export-secret" in rendered:
         raise RuntimeError("prompt or secret content leaked into token usage payload")
@@ -349,33 +367,31 @@ def run_installed_pipe(args: argparse.Namespace) -> dict[str, Any]:
     _assert_no_source_injection(env)
     _write_minimal_config(home_root)
     session_id = _seed_usage(installed_bin, home_root, data_root)
-    usage = _json_stdout(
-        _run(
-            [
-                str(installed_bin / "openminion"),
-                "--home-root",
-                str(home_root),
-                "--data-root",
-                str(data_root),
-                "--no-interactive",
-                "status",
-                "tokens",
-                "--session-id",
-                session_id,
-                "--json",
-            ],
-            cwd=WORKSPACE_ROOT,
-            env=env,
-        ),
-        "openminion status tokens",
+    usage_result = _run(
+        [
+            str(installed_bin / "openminion"),
+            "--home-root",
+            str(home_root),
+            "--data-root",
+            str(data_root),
+            "--no-interactive",
+            "status",
+            "tokens",
+            "--session-id",
+            session_id,
+            "--json",
+        ],
+        cwd=WORKSPACE_ROOT,
+        env=env,
     )
+    usage = _json_stdout(usage_result, "openminion status tokens")
     _assert_usage_payload(usage)
     census = _json_stdout(
         _run(
             [str(installed_bin / "tokencensus"), "inspect", "-", "--json"],
             cwd=WORKSPACE_ROOT,
             env=env,
-            input_text=json.dumps(usage),
+            input_text=usage_result.stdout,
         ),
         "tokencensus inspect",
     )

@@ -83,7 +83,13 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/mcp", "Show configured MCP servers and tools", "_slash_mcp", "_slash_mcp"
     ),
     SlashCommandMetadata(
-        "/cost", "Show current session token / cost usage", "_slash_cost", "_slash_cost"
+        "/cost",
+        "Show live token usage and available cost",
+        "_slash_cost",
+        "_slash_cost",
+    ),
+    SlashCommandMetadata(
+        "/tokens", "Show durable token usage details", "_slash_tokens", "_slash_tokens"
     ),
     SlashCommandMetadata(
         "/context", "Show visual context usage", "_slash_context", "_slash_context"
@@ -230,6 +236,7 @@ _BUSY_SAFE_SLASH_COMMANDS = frozenset(
         "/status",
         "/tasks",
         "/telemetry",
+        "/tokens",
         "/trace",
         "/verbose",
     }

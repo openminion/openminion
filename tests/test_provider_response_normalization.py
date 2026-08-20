@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from openminion.modules.llm.providers.behavior import resolve_behavior_profile
-from openminion.modules.llm.client_call import usage_payload_from_response_usage
+from openminion.modules.llm.client_call import (
+    response_cost_payload,
+    usage_payload_from_response_usage,
+)
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.llm.providers.normalization import (
     is_provider_recovery_fallback_text,
@@ -16,6 +19,7 @@ def test_normalize_provider_response_coerces_object_shape() -> None:
         output_text="Tool call pending",
         model="",
         usage=SimpleNamespace(input_tokens=11, output_tokens=7, total_tokens=None),
+        cost_usd=0.004,
         tool_calls=[
             SimpleNamespace(
                 id="call-1",
@@ -40,6 +44,7 @@ def test_normalize_provider_response_coerces_object_shape() -> None:
     assert normalized.usage["completion_tokens"] == 7
     assert normalized.usage["total_tokens"] == 18
     assert normalized.usage["total_source"] == "derived"
+    assert normalized.cost_usd == 0.004
     assert len(normalized.tool_calls) == 1
     assert normalized.tool_calls[0].name == "weather"
     assert normalized.tool_calls[0].source == "requested"
@@ -104,6 +109,15 @@ def test_usage_payload_preserves_generic_object_provenance_and_cache_aliases() -
         "cache_creation_tokens": 3,
         "total_source": "derived",
     }
+
+
+def test_response_cost_payload_preserves_only_valid_provider_cost() -> None:
+    assert response_cost_payload(SimpleNamespace(cost_usd=0.0123)) == {
+        "cost_usd": 0.0123,
+        "cost_source": "provider",
+    }
+    assert response_cost_payload({"cost_usd": -1}) == {}
+    assert response_cost_payload({"cost_usd": "unknown"}) == {}
 
 
 def test_normalize_provider_response_does_not_recover_tool_call_from_text() -> None:

@@ -25,6 +25,7 @@ from openminion.modules.brain.loop.tools.runtime import (
     DefaultAdaptiveToolLoopLLMRuntime,
     build_runtime_tool_specs,
 )
+from openminion.modules.llm.client_call import response_cost_payload
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
@@ -885,6 +886,7 @@ def decide(
             "model": model,
             "prompt_context_id": context.get("prompt_context_id"),
             "usage": usage_payload,
+            **response_cost_payload(response),
             "entry_tool_spec_count": len(tool_specs),
             **request_metrics,
             "response_bytes": _entry_response_bytes(response),

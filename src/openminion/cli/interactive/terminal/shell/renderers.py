@@ -297,4 +297,10 @@ def _render_cost_snapshot(*, runtime: Any, console: Console) -> None:
     if not summary:
         console.print(Text("(no usage data yet)", style=_MUTED_ITALIC_STYLE))
         return
-    console.print(Text(f"cost: {summary}", style="bold"))
+    cost_usd = getattr(snapshot, "cost_usd", None)
+    cost_summary = (
+        f"; estimated cost ${float(cost_usd):.4f}"
+        if isinstance(cost_usd, (int, float))
+        else "; cost unavailable"
+    )
+    console.print(Text(f"cost: {summary}{cost_summary}", style="bold"))

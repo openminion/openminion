@@ -23,6 +23,7 @@
     },
     "coverage": {
         "llm_call_events": 1,
+        "failed_llm_call_events": 0,
         "context_manifest_events": 0,
         "cache_metric_events": 0,
         "provider_identified_llm_call_events": 1,
@@ -65,7 +66,9 @@
             "estimated": false,
             "prompt_cache_key": "",
             "static_prefix_hash": "",
-            "cache_hit": null
+            "cache_hit": null,
+            "cost_usd": 0.0,
+            "cost_source": ""
         },
         {
             "session_id": "session-fixture",
@@ -95,7 +98,9 @@
             "estimated": false,
             "prompt_cache_key": "",
             "static_prefix_hash": "",
-            "cache_hit": null
+            "cache_hit": null,
+            "cost_usd": 0.0,
+            "cost_source": ""
         },
         {
             "session_id": "session-fixture",
@@ -125,9 +130,15 @@
             "estimated": false,
             "prompt_cache_key": "",
             "static_prefix_hash": "",
-            "cache_hit": null
+            "cache_hit": null,
+            "cost_usd": 0.0,
+            "cost_source": ""
         }
     ],
+    "costs": {
+        "provider_cost_usd": null,
+        "estimated_cost_usd": null
+    },
     "totals": {
         "provider_tokens": 15,
         "derived_tokens": 0,

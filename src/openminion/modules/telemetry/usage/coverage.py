@@ -9,6 +9,7 @@ from .contracts import (
     TokenUsageCoveragePayload,
     TokenUsageDimensionCoveragePayload,
 )
+from .constants import LLM_USAGE_EVENT_TYPES
 from .types import coerce_non_negative_int
 
 INPUT_TOKEN_KEYS = ("input_tokens", "prompt_tokens", "total_input_tokens_used")
@@ -90,6 +91,7 @@ class TokenUsageDimensionCoverage:
 @dataclass(frozen=True)
 class TokenUsageCoverage:
     llm_call_events: int = 0
+    failed_llm_call_events: int = 0
     context_manifest_events: int = 0
     cache_metric_events: int = 0
     provider_identified_llm_call_events: int = 0
@@ -116,6 +118,7 @@ class TokenUsageCoverage:
     def __post_init__(self) -> None:
         for field_name in (
             "llm_call_events",
+            "failed_llm_call_events",
             "context_manifest_events",
             "cache_metric_events",
             "provider_identified_llm_call_events",
@@ -133,6 +136,7 @@ class TokenUsageCoverage:
     def as_payload(self) -> TokenUsageCoveragePayload:
         return {
             "llm_call_events": self.llm_call_events,
+            "failed_llm_call_events": self.failed_llm_call_events,
             "context_manifest_events": self.context_manifest_events,
             "cache_metric_events": self.cache_metric_events,
             "provider_identified_llm_call_events": (
@@ -176,7 +180,8 @@ def coverage_from_session_events(
     llm_events = [
         event
         for event in events
-        if _coverage_event_text(event, "event_type") == "llm.call.completed"
+        if _coverage_event_text(event, "event_type") in LLM_USAGE_EVENT_TYPES
+        and isinstance(_coverage_payload(event).get("usage"), Mapping)
     ]
     llm_payloads = [_coverage_payload(event) for event in llm_events]
 
@@ -205,6 +210,10 @@ def coverage_from_session_events(
     payloads = [_coverage_payload(event) for event in events]
     return TokenUsageCoverage(
         llm_call_events=len(llm_events),
+        failed_llm_call_events=sum(
+            _coverage_event_text(event, "event_type") == "llm.call.failed"
+            for event in llm_events
+        ),
         context_manifest_events=event_types.count("context.manifest.created"),
         cache_metric_events=event_types.count("llm.cache.metrics"),
         provider_identified_llm_call_events=sum(

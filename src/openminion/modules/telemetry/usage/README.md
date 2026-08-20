@@ -17,14 +17,22 @@ apply optimization policy.
 
 The additive v1 `coverage` block reports whether provider token dimensions were
 reported, missing, or invalid, plus identity and correlation-field presence.
-This keeps an explicit provider-reported zero distinct from unavailable data
-without changing token totals or inventing missing usage.
+Completed and failed LLM terminal events participate when they contain a
+structured `usage` mapping; failures without usage remain failure facts rather
+than becoming zero-token calls. This keeps an explicit provider-reported zero
+distinct from unavailable data without changing token totals or inventing
+missing usage.
 
 Each `llm_total` record identifies its `total_source`: `provider` means the
 provider supplied the total, while `derived` means OpenMinion summed the input
 and output dimensions. The export keeps those amounts separate as
 `totals.provider_tokens` and `totals.derived_tokens`; cache dimensions remain
 independent and are never added to either total.
+
+Provider-reported and explicitly estimated cost are kept separate as
+`provider_cost_usd` and `estimated_cost_usd`. Cost is attached once to the
+`llm_total` record. Missing cost remains unavailable; the projection does not
+derive pricing from model names or a local price table.
 
 OpenMinion callers should import the supported Python surface from
 `openminion.modules.telemetry.usage`. A future external optimization package

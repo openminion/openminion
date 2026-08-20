@@ -86,7 +86,7 @@ def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]
     event_type = str(event.event_type or "").strip()
     if event_type == "chat.phase_timing":
         return _chat_phase_metrics(payload)
-    if event_type in {"llm.call.completed", "llm_call"}:
+    if event_type in {"llm.call.completed", "llm.call.failed", "llm_call"}:
         return _model_provider_metrics(payload)
     if event_type.startswith("agent.invocation."):
         return _lifecycle_metrics(payload, family="invocation", terminal=event_type)
@@ -234,6 +234,8 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for token_type, keys in (
         ("input", ("input_tokens", "prompt_tokens")),
         ("output", ("output_tokens", "completion_tokens")),
+        ("cache_read", ("cached_tokens", "cache_read_tokens")),
+        ("cache_write", ("cache_creation_tokens", "cache_write_tokens")),
     ):
         value = _first_present(usage_map, *keys)
         _append_metric(

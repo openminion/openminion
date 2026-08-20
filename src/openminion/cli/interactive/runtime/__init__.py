@@ -263,6 +263,17 @@ class OpenMinionRuntime(
             updated_at_monotonic=self._usage_updated_at_monotonic,
         )
 
+    def token_usage_report(self) -> str:
+        if not self.is_bound:
+            return "No active session."
+        from openminion.cli.commands.status.token_report import format_token_summary
+        from openminion.modules.telemetry.usage import StatsService
+
+        summary = StatsService(self._rt.sessions).get_session_token_usage(
+            self.session_id
+        )
+        return format_token_summary(summary)
+
     def context_budget_snapshot(self) -> dict[str, Any]:
         if not self.is_bound:
             return {}

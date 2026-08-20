@@ -29,6 +29,11 @@ from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_LLM_PROMPT,
     SURFACE_LLM_TOTAL,
 )
+from .token_costs import (
+    format_cost_totals,
+    format_optional_cost_usd,
+    token_cost_rollup,
+)
 
 _LLM_USAGE_SURFACES = frozenset(
     {
@@ -95,6 +100,10 @@ def _record_tokens(record: TokenUsageRecord) -> int:
 
 def _format_token_count(value: int) -> str:
     return f"{int(value):,}"
+
+
+def _format_delta(value: int | None) -> str:
+    return "-" if value is None else f"{value:+,}"
 
 
 def _ratio_bps(numerator: int, denominator: int) -> int:
@@ -579,8 +588,9 @@ def _session_trend_payload(
     summaries: tuple[TokenUsageSummary, ...],
 ) -> list[TokenUsageSessionTrendPayload]:
     trends: list[TokenUsageSessionTrendPayload] = []
-    for summary in summaries:
+    for index, summary in enumerate(summaries):
         context_tokens = summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0)
+        previous = summaries[index + 1] if index + 1 < len(summaries) else None
         trends.append(
             {
                 "session_id": summary.session_id,
@@ -593,6 +603,26 @@ def _session_trend_payload(
                 "cache_read_tokens": summary.total_cache_read_tokens,
                 "cache_write_tokens": summary.total_cache_write_tokens,
                 "total_visible_tokens": _summary_visible_tokens(summary),
+                "provider_cost_usd": (
+                    summary.total_provider_cost_usd
+                    if summary.has_provider_cost
+                    else None
+                ),
+                "estimated_cost_usd": (
+                    summary.total_estimated_cost_usd
+                    if summary.has_estimated_cost
+                    else None
+                ),
+                "provider_token_delta": (
+                    summary.total_provider_tokens - previous.total_provider_tokens
+                    if previous is not None
+                    else None
+                ),
+                "visible_token_delta": (
+                    _summary_visible_tokens(summary) - _summary_visible_tokens(previous)
+                    if previous is not None
+                    else None
+                ),
                 "advisory_codes": _summary_advisory_codes(summary),
             }
         )
@@ -609,7 +639,17 @@ def _format_session_trends(summaries: tuple[TokenUsageSummary, ...]) -> list[str
             f"provider:{_format_token_count(trend['provider_tokens'])}",
             f"derived:{_format_token_count(trend['derived_tokens'])}",
             f"context:{_format_token_count(trend['context_estimated_tokens'])}",
+            f"delta:{_format_delta(trend['visible_token_delta'])}",
         ]
+        if (
+            trend["provider_cost_usd"] is not None
+            or trend["estimated_cost_usd"] is not None
+        ):
+            segments.append(
+                "cost:"
+                f"{format_optional_cost_usd(trend['provider_cost_usd'])}/"
+                f"{format_optional_cost_usd(trend['estimated_cost_usd'])}"
+            )
         if trend["cache_read_tokens"] or trend["cache_write_tokens"]:
             segments.append(
                 "cache:"
@@ -641,7 +681,9 @@ def _format_provider_coverage(
     return ["provider coverage: " + "; ".join(parts)]
 
 
-def _rollup_totals_payload(summaries: tuple[TokenUsageSummary, ...]) -> dict[str, int]:
+def _rollup_totals_payload(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> dict[str, int]:
     return {
         "provider_tokens": sum(summary.total_provider_tokens for summary in summaries),
         "derived_tokens": sum(summary.total_derived_tokens for summary in summaries),
@@ -665,6 +707,9 @@ def _rollup_coverage_payload(
         "source_event_count": sum(summary.source_event_count for summary in summaries),
         "llm_call_events": sum(
             summary.coverage.llm_call_events for summary in summaries
+        ),
+        "failed_llm_call_events": sum(
+            summary.coverage.failed_llm_call_events for summary in summaries
         ),
         "provider_identified_llm_call_events": sum(
             summary.coverage.provider_identified_llm_call_events
@@ -739,6 +784,7 @@ def format_token_rollup(
         return "no sessions found"
     token_summaries = tuple(summary for summary in summaries if summary.records)
     totals = _rollup_totals_payload(token_summaries)
+    costs = token_cost_rollup(token_summaries)
     lines = [
         (
             "status tokens: "
@@ -756,7 +802,11 @@ def format_token_rollup(
         f"derived={_format_token_count(totals['derived_tokens'])} "
         f"context_estimated={_format_token_count(totals['context_estimated_tokens'])} "
         f"cache_read={_format_token_count(totals['cache_read_tokens'])} "
-        f"cache_write={_format_token_count(totals['cache_write_tokens'])}",
+        f"cache_write={_format_token_count(totals['cache_write_tokens'])} "
+        + format_cost_totals(
+            costs["provider_cost_usd"],
+            costs["estimated_cost_usd"],
+        ),
     ]
     surface_totals: dict[str, int] = defaultdict(int)
     context_buckets: dict[str, int] = defaultdict(int)
@@ -822,6 +872,7 @@ def token_rollup_json_payload(
         "only_warnings": only_warnings,
         "complete": all(summary.complete for summary in summaries),
         "totals": _rollup_totals_payload(summaries),
+        "costs": token_cost_rollup(summaries),
         "coverage": _rollup_coverage_payload(summaries),
         "provider_coverage": _provider_coverage_payload(summaries),
         "efficiency": _rollup_efficiency_payload(summaries),
@@ -853,7 +904,13 @@ def format_token_summary(
             f"input={summary.total_input_tokens} "
             f"output={summary.total_output_tokens} "
             f"cache_read={summary.total_cache_read_tokens} "
-            f"cache_write={summary.total_cache_write_tokens}"
+            f"cache_write={summary.total_cache_write_tokens} "
+            + format_cost_totals(
+                summary.total_provider_cost_usd if summary.has_provider_cost else None,
+                summary.total_estimated_cost_usd
+                if summary.has_estimated_cost
+                else None,
+            )
         )
         lines.extend(_format_insights(summary))
         lines.extend(_format_turn_cost(cost))
@@ -896,6 +953,7 @@ def format_token_summary(
         lines.append(
             "coverage: "
             f"llm_calls={llm_calls} "
+            f"failed={coverage.failed_llm_call_events} "
             f"provider={coverage.provider_identified_llm_call_events}/{llm_calls} "
             f"model={coverage.model_identified_llm_call_events}/{llm_calls} "
             + " ".join(

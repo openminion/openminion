@@ -348,6 +348,52 @@ def test_session_stats_summary_uses_always_on_session_events(
     assert summary.top_tools[0].calls == 1
 
 
+def test_stats_include_failed_call_usage_when_reported(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    run_id = store.create_run_record(
+        session_id,
+        run_type="llm",
+        run_id="run-failed-usage",
+        meta={"request_id": "trace-failed-usage"},
+    )
+    store.finish_run_record(run_id, status="failed")
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.failed",
+        trace_id="trace-failed-usage",
+        payload={
+            "run_id": run_id,
+            "usage": {
+                "input_tokens": 7,
+                "output_tokens": 1,
+                "cached_tokens": 3,
+            },
+        },
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.failed",
+        payload={"run_id": run_id, "error": {"code": "NO_USAGE"}},
+    )
+
+    run_summary = StatsService(store).get_run_stats(run_id)
+    session_summary = StatsService(store).get_session_stats(session_id)
+
+    assert run_summary is not None
+    assert run_summary.stats.input_tokens == 7
+    assert run_summary.stats.output_tokens == 1
+    assert run_summary.stats.cache_read_tokens == 3
+    assert run_summary.stats.llm_calls == 1
+    assert session_summary.stats.input_tokens == 7
+    assert session_summary.stats.output_tokens == 1
+    assert session_summary.stats.cache_read_tokens == 3
+    assert session_summary.stats.llm_calls == 1
+
+
 def test_session_token_usage_includes_context_pack_and_bucket_records(
     store: SQLiteSessionStore,
 ) -> None:

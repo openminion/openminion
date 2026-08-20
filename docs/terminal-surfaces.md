@@ -124,7 +124,9 @@ canonical CLI, bounded resource commands, and typed APIs:
 
 Interactive sessions show a compact live token line when the active runtime has
 usage facts. Inside the interactive CLI, `/cost` shows the current session,
-last turn, context-window, and available cost estimate.
+last turn, context-window, and available cost estimate. It says cost is
+unavailable when the provider did not report one. `/tokens` renders the durable
+token report for the active session in either interactive terminal.
 
 For persisted session inspection, use the status surface:
 
@@ -142,7 +144,8 @@ openminion status tokens --session-id <session-id> --json
 Without `--session-id`, `status tokens` inspects the newest session in the
 configured data root. With `--run-id` and no session id, it resolves the owning
 session from the run record. Text output is the human insight view: provider
-and derived totals, cache dimensions, context estimates, context buckets,
+and derived totals, provider-reported and explicitly estimated cost, cache
+dimensions, context estimates, context buckets, completed/failed call coverage,
 coverage/correlation warnings, outcome signals for run-scoped reports, advisory
 recommendations, and next-step hints. Use `--recent <count>` for a read-only
 rollup across the newest sessions before drilling into one session or run.
@@ -156,8 +159,9 @@ Recent rollups also show a provider/model coverage matrix so operators can see
 which providers report native totals and which paths still rely on derived
 totals.
 They also include compact efficiency and session-trend rows: visible tokens,
-provider-vs-derived share, context share, cache read/write ratio, and the
-highest-signal warning codes per recent session.
+change from the prior session, provider-vs-derived share, context share, cache
+read/write ratio, separated cost totals, and the highest-signal warning codes
+per recent session.
 `--json` emits the raw `openminion.token_usage.v1` envelope for one session or
 run, and a rollup envelope containing those raw session envelopes when
 `--recent` is used.
@@ -166,9 +170,9 @@ Example recent rollup:
 
 ```text
 status tokens: recent_sessions=10 with_usage=8 complete=yes
-totals: provider=12,840 derived=920 context_estimated=6,400 cache_read=1,200 cache_write=2,100
+totals: provider=12,840 derived=920 context_estimated=6,400 cache_read=1,200 cache_write=2,100 provider_cost=$0.084 estimated_cost=$0.012
 efficiency: visible=20,160 provider_total=93% derived_total=7% context_share=32% cache_read/write=57%
-session trends: session-a=provider:6,300 derived:0 context:0; session-b=provider:0 derived:920 context:3,300 warnings:derived_total_tokens,context_dominates
+session trends: session-a=provider:6,300 derived:0 context:0 delta:+2,080 cost:$0.042/-; session-b=provider:0 derived:920 context:3,300 delta:-410 cost:-/$0.012 warnings:derived_total_tokens,context_dominates
 top sessions: session-a=6,300, session-b=4,220
 provider coverage: openai/gpt-4.1=records:8 provider:9,200 derived:0 cache_read:1,200; local/echo=records:2 provider:0 derived:920 cache_read:0
 coverage health: llm_calls=18 provider=18/18 model=18/18 usage_events=22 run_id=21/22 trace_id=22/22 llm_call_id=19/22
@@ -191,6 +195,10 @@ session envelopes:
     "context_estimated_tokens": 6400,
     "cache_read_tokens": 0,
     "cache_write_tokens": 2100
+  },
+  "costs": {
+    "provider_cost_usd": null,
+    "estimated_cost_usd": 0.012
   },
   "provider_coverage": [
     {
@@ -226,6 +234,10 @@ session envelopes:
       "cache_read_tokens": 0,
       "cache_write_tokens": 2100,
       "total_visible_tokens": 7320,
+      "provider_cost_usd": null,
+      "estimated_cost_usd": 0.012,
+      "provider_token_delta": -200,
+      "visible_token_delta": 410,
       "advisory_codes": ["derived_total_tokens", "context_dominates"]
     }
   ],

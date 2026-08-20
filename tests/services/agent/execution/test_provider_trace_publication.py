@@ -56,6 +56,7 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
             text="ok",
             model="model-1",
             usage={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
+            cost_usd=0.001,
         )
 
     await generate_with_provider_call_telemetry(
@@ -88,6 +89,8 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
         "llm/structured.json",
     ]
     assert completed["trace_artifacts_complete"] is True
+    assert completed["cost_usd"] == 0.001
+    assert completed["cost_source"] == "provider"
 
 
 @pytest.mark.asyncio
