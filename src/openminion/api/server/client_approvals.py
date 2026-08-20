@@ -67,7 +67,8 @@ class ClientApprovalCoordinator:
         self._tombstones: OrderedDict[tuple[str, str, str, str], _ApprovalRecord] = (
             OrderedDict()
         )
-        self._closing_sessions: set[str] = set()
+        self._closing_sessions: dict[str, int] = {}
+        self._admitting_clients: dict[str, int] = {}
         self._revoked_clients: set[str] = set()
         self._lock = RLock()
         self._closed = False
@@ -88,38 +89,37 @@ class ClientApprovalCoordinator:
         ):
             return False
         with self._lock:
-            if self._request_blocked_locked(identity.client_id, request.session_id):
+            if (
+                self._closed
+                or self._session_blocked_locked(request.session_id)
+                or not self._client_auth.is_active(identity)
+            ):
                 return False
+            self._admitting_clients[identity.client_id] = (
+                self._admitting_clients.get(identity.client_id, 0) + 1
+            )
         now = datetime.now(UTC)
         deadline = now + timedelta(seconds=_APPROVAL_TTL_SECONDS)
-        record = _ApprovalRecord(
-            client_id=identity.client_id,
-            session_id=request.session_id,
-            trace_id=request.trace_id,
-            approval_id=secrets.token_urlsafe(24),
-            call_id=request.call_id,
-            tool_name=request.tool_name,
-            argument_keys=request.argument_keys,
-            requested_at=_timestamp(now),
-            expires_at=_timestamp(deadline),
-        )
+        record = self._new_record(identity, request, now, deadline)
         if not self._append_requested(record):
+            with self._lock:
+                self._release_admission_locked(identity.client_id)
             return False
         with self._lock:
             self._purge_tombstones_locked()
             self._active[record.key] = record
             closed = self._closed
-            request_blocked = self._request_blocked_locked(
-                identity.client_id, record.session_id
-            )
+            revoked = identity.client_id in self._revoked_clients
+            session_blocked = self._session_blocked_locked(record.session_id)
             lease_active = self._client_auth.is_active(identity)
-        if closed or request_blocked or not lease_active:
+            self._release_admission_locked(identity.client_id)
+        if closed or revoked or session_blocked or not lease_active:
             self._resolve_automatic(
                 record.key,
                 "interrupted"
                 if closed
                 else "cancelled"
-                if request_blocked
+                if revoked or session_blocked
                 else "expired",
             )
             return False
@@ -169,6 +169,25 @@ class ClientApprovalCoordinator:
                 pass
         return record.state == "applied"
 
+    @staticmethod
+    def _new_record(
+        identity: ClientIdentity,
+        request: DesktopApprovalRequest,
+        now: datetime,
+        deadline: datetime,
+    ) -> _ApprovalRecord:
+        return _ApprovalRecord(
+            client_id=identity.client_id,
+            session_id=request.session_id,
+            trace_id=request.trace_id,
+            approval_id=secrets.token_urlsafe(24),
+            call_id=request.call_id,
+            tool_name=request.tool_name,
+            argument_keys=request.argument_keys,
+            requested_at=_timestamp(now),
+            expires_at=_timestamp(deadline),
+        )
+
     def decide(
         self,
         identity: ClientIdentity,
@@ -197,20 +216,24 @@ class ClientApprovalCoordinator:
 
     def cancel_client(self, client_id: str, _reason: str) -> None:
         with self._lock:
-            self._revoked_clients.add(client_id)
+            if self._admitting_clients.get(client_id, 0):
+                self._revoked_clients.add(client_id)
         self._cancel_matching(lambda record: record.client_id == client_id, "cancelled")
 
     def revoke_client(self, identity: ClientIdentity) -> None:
         with self._lock:
             self._client_auth.revoke(identity)
-            self._revoked_clients.add(identity.client_id)
+            if self._admitting_clients.get(identity.client_id, 0):
+                self._revoked_clients.add(identity.client_id)
         self._cancel_matching(
             lambda record: record.client_id == identity.client_id, "cancelled"
         )
 
     def cancel_session(self, session_id: str, _reason: str) -> Any:
         with self._lock:
-            self._closing_sessions.add(session_id)
+            self._closing_sessions[session_id] = (
+                self._closing_sessions.get(session_id, 0) + 1
+            )
         self._cancel_matching(
             lambda record: record.session_id == session_id, "cancelled"
         )
@@ -267,18 +290,33 @@ class ClientApprovalCoordinator:
 
     def _finish_session_close(self, session_id: str) -> None:
         with self._lock:
-            self._closing_sessions.discard(session_id)
+            remaining = self._closing_sessions.get(session_id, 0) - 1
+            if remaining > 0:
+                self._closing_sessions[session_id] = remaining
+            else:
+                self._closing_sessions.pop(session_id, None)
 
-    def _request_blocked_locked(self, client_id: str, session_id: str) -> bool:
-        if self._closed or client_id in self._revoked_clients:
-            return True
+    def _release_admission_locked(self, client_id: str) -> None:
+        remaining = self._admitting_clients.get(client_id, 0) - 1
+        if remaining > 0:
+            self._admitting_clients[client_id] = remaining
+        else:
+            self._admitting_clients.pop(client_id, None)
+            self._revoked_clients.discard(client_id)
+
+    def _session_blocked_locked(self, session_id: str) -> bool:
         if session_id in self._closing_sessions:
             return True
         try:
             session = self._runtime.sessions.get_session(session_id)
         except Exception:
             return True
-        return not isinstance(session, dict) or session.get("status") == "closed"
+        status = (
+            session.get("status")
+            if isinstance(session, dict)
+            else getattr(session, "status", None)
+        )
+        return status not in {"active", "idle", "paused", "stale"}
 
     def _resolve_automatic(
         self,

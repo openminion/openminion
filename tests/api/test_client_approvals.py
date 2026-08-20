@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Thread, Timer
 from time import monotonic, sleep
 from types import SimpleNamespace
 from typing import Any
@@ -15,8 +15,10 @@ from openminion.api.server.client_approvals import ClientApprovalCoordinator
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.dispatch import dispatch_request
 from openminion.base.version import OPENMINION_VERSION
+from openminion.modules.storage.runtime.session_store.models import SessionRecord
 from openminion.services.runtime.daemon import execute_turn
 from openminion.services.runtime.ingress import TurnTimeoutError
+from openminion.services.runtime.ingress.gateway_call import _run_coro_sync
 from openminion.services.runtime.manager import DesktopApprovalRequest
 
 
@@ -40,9 +42,24 @@ class _Sessions:
         self.events.append(event)
         return f"event-{len(self.events)}"
 
-    def get_session(self, session_id: str) -> dict[str, str] | None:
+    def get_session(self, session_id: str) -> SessionRecord | None:
         status = self.statuses.get(session_id)
-        return {"status": status} if status is not None else None
+        if status is None:
+            return None
+        return SessionRecord(
+            id=session_id,
+            session_key="room|agent:openminion",
+            channel="console",
+            target="api-user",
+            metadata={},
+            created_at="2026-08-20T00:00:00Z",
+            updated_at="2026-08-20T00:00:00Z",
+            status=status,
+            last_activity_at="2026-08-20T00:00:00Z",
+            closed_at=None,
+            expires_at=None,
+            active_agent_id="openminion",
+        )
 
 
 @pytest.fixture
@@ -373,6 +390,56 @@ def test_revoke_during_requested_event_append_is_cancelled(
     assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
 
 
+def test_overlapping_session_close_keeps_fence_until_every_close_finishes(
+    approval_owner: tuple[
+        ClientAuthService,
+        ClientApprovalCoordinator,
+        _Sessions,
+        ClientIdentity,
+    ],
+) -> None:
+    _service, coordinator, sessions, identity = approval_owner
+    failed_close = coordinator.cancel_session("session-1", "session_closed")
+    active_close = coordinator.cancel_session("session-1", "session_closed")
+    failed_close()
+    event_count = len(sessions.events)
+
+    assert (
+        coordinator.request(
+            identity,
+            DesktopApprovalRequest(
+                session_id="session-1",
+                trace_id="trace-between-closes",
+                tool_name="workspace.search",
+                call_id="call-between-closes",
+                argument_keys=("query",),
+                emit_chunk=lambda _chunk: pytest.fail("unexpected live frame"),
+                cancel_event=Event(),
+            ),
+        )
+        is False
+    )
+    assert len(sessions.events) == event_count
+
+    sessions.statuses["session-1"] = "closed"
+    active_close()
+    assert (
+        coordinator.request(
+            identity,
+            DesktopApprovalRequest(
+                session_id="session-1",
+                trace_id="trace-after-close",
+                tool_name="workspace.search",
+                call_id="call-after-close",
+                argument_keys=("query",),
+                emit_chunk=lambda _chunk: pytest.fail("unexpected live frame"),
+                cancel_event=Event(),
+            ),
+        )
+        is False
+    )
+
+
 def test_turn_timeout_releases_approval_and_rejects_late_allow(
     approval_owner: tuple[
         ClientAuthService,
@@ -384,8 +451,6 @@ def test_turn_timeout_releases_approval_and_rejects_late_allow(
     service, coordinator, sessions, identity = approval_owner
     cancel = Event()
     chunks: list[Any] = []
-    approval_results: list[bool] = []
-    approval_thread: list[Thread] = []
     request = SimpleNamespace(
         meta={},
         session_id="session-1",
@@ -394,21 +459,23 @@ def test_turn_timeout_releases_approval_and_rejects_late_allow(
     )
 
     def time_out(*, approval_callback: Any, **_kwargs: Any) -> None:
-        thread = Thread(
-            target=lambda: approval_results.append(
-                asyncio.run(
-                    approval_callback(
-                        "workspace.search", {"query": "secret"}, "call-timeout"
-                    )
-                )
-            ),
-            daemon=True,
-        )
-        approval_thread.append(thread)
-        thread.start()
-        _wait_for(lambda: bool(sessions.events))
-        raise TurnTimeoutError("turn timed out")
+        async def await_approval() -> bool:
+            return await asyncio.wait_for(
+                approval_callback(
+                    "workspace.search", {"query": "secret"}, "call-timeout"
+                ),
+                timeout=0.03,
+            )
 
+        try:
+            _run_coro_sync(await_approval, timeout=0.03)
+        except TimeoutError as exc:
+            raise TurnTimeoutError("turn timed out") from exc
+        raise AssertionError("approval unexpectedly completed before timeout")
+
+    guard = Timer(1, cancel.set)
+    guard.start()
+    started = monotonic()
     with mock.patch(
         "openminion.services.runtime.daemon._execute_runtime_turn_with_timer",
         side_effect=time_out,
@@ -419,11 +486,18 @@ def test_turn_timeout_releases_approval_and_rejects_late_allow(
             emit_chunk=chunks.append,
             cancel_event=cancel,
         )
+    elapsed = monotonic() - started
+    guard.cancel()
 
-    approval_thread[0].join(timeout=2)
+    _wait_for(
+        lambda: (
+            bool(sessions.events)
+            and sessions.events[-1]["event_type"] == "desktop.approval.resolved"
+        )
+    )
     assert cancel.is_set()
+    assert elapsed < 0.5
     assert response.errors[0].code == "turn_timeout"
-    assert approval_results == [False]
     assert sessions.events[-1]["payload"]["outcome"] == "cancelled"
     approval_id = sessions.events[0]["payload"]["approval_id"]
     status, payload = dispatch_request(

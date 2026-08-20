@@ -1,5 +1,6 @@
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
@@ -322,12 +323,7 @@ def execute_turn(
         )
     except TurnTimeoutError as exc:
         cancel_event.set()
-        return _turn_error_response(
-            code="turn_timeout",
-            message=str(exc),
-            retryable=True,
-            duration_ms=_duration_since_ms(started),
-        )
+        return _turn_error_response(code="turn_timeout", message=str(exc), retryable=True, duration_ms=_duration_since_ms(started))  # fmt: skip
     except Exception as exc:
         return _turn_error_response(
             code="turn_failed",
@@ -381,7 +377,8 @@ def _desktop_approval_callback(request: Any, emit_chunk: Any, cancel_event: Any)
         if not isinstance(args, dict) or any(not isinstance(key, str) for key in args):
             return False
         approval = DesktopApprovalRequest(request.session_id, request.trace_id, str(tool_name or ""), str(call_id or ""), tuple(sorted(args)), emit_chunk, cancel_event)  # fmt: skip
-        return bool(await asyncio.to_thread(requester, approval))
+        future = ThreadPoolExecutor(max_workers=1).submit(requester, approval)
+        return bool(await asyncio.wrap_future(future))
 
     return approve
 
