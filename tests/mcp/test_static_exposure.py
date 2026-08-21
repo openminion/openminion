@@ -66,6 +66,20 @@ def test_build_runtime_bootstrap_registers_mcp_tools() -> None:
         assert "mcp.fixture.prompt.greet_user" in schema_names
         assert "mcp.fixture.resource.readme_md" in schema_names
         assert "mcp.fixture.resource_template.fixture_doc" in schema_names
+        echo_schema = next(
+            item for item in schemas if item["name"] == "mcp.fixture.echo_text"
+        )
+        assert echo_schema["parameters"] == {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Text to echo.",
+                }
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        }
 
         mcp_records = [
             record
