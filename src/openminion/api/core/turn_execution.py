@@ -35,6 +35,7 @@ def open_turn_submission(
     runtime: APIRuntime | None,
     body: dict[str, Any],
     desktop_approval_requester: "DesktopApprovalRequester | None" = None,
+    resolved_attachment_refs: tuple[str, ...] = (),
 ) -> TurnSubmission:
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,
@@ -44,6 +45,7 @@ def open_turn_submission(
         runtime_handle = active_runtime.submit_turn(
             payload=body,
             desktop_approval_requester=desktop_approval_requester,
+            resolved_attachment_refs=resolved_attachment_refs,
         )
         return TurnSubmission(
             active_runtime=active_runtime,

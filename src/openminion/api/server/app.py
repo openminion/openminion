@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthHTTPMixin, ClientAuthService
-from openminion.api.server.client_approvals import close_approvals, install_approvals
+from openminion.api.server.client_media import close_client_state, install_client_state
 from openminion.api.server.dispatch import dispatch_request
 from openminion.api.server.observability import (
     finalize_api_response as _finalize_api_response,
@@ -120,7 +120,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             log_request_done=_log_request_done,
             perf_counter=perf_counter,
             desktop_client=self.client_identity is not None,
-            desktop_approval_requester=self._approval_requester(),
+            **self._client_stream_context(),
         )
 
     def _write_invalid_json(
@@ -169,6 +169,9 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             self.send_header("Retry-After", str(max(1, int(retry_after_ms) // 1000)))
         if meta.get("path") == "/metrics":
             self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(encoded)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         response_headers = meta.get("response_headers")
         if isinstance(response_headers, dict):
             for key, value in response_headers.items():
@@ -196,11 +199,11 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(server_address, handler_cls)
         self._runtime = runtime
-        self._client_approvals = install_approvals(handler_cls, runtime)
+        self._client_state = install_client_state(handler_cls, runtime)
 
     def server_close(self) -> None:
         try:
-            close_approvals(self._client_approvals)
+            close_client_state(self._client_state)
             if self._runtime is not None:
                 self._runtime.close()
         finally:

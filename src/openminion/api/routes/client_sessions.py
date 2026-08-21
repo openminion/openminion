@@ -14,6 +14,7 @@ from openminion.api.queries.sessions import (
 )  # fmt: skip
 
 from . import client_approvals as approvals
+from openminion.api.server.client_media import session_cancel_callback
 from .contracts import (
     APIRouteContext,
     RouteResult,
@@ -58,11 +59,7 @@ def handle_request(
             body=body,
             query=query,
         )
-        resolved_session_id = (
-            str(payload["session"]["session_id"])
-            if operation == "create"
-            else session_id or None
-        )
+        resolved_session_id = str(payload["session"]["session_id"]) if operation == "create" else session_id or None  # fmt: skip
         return RouteResult(
             status=HTTPStatus.OK,
             payload=payload,
@@ -129,7 +126,7 @@ def _execute(
             session_id=session_id,
             body=body,
             query=query,
-            cancel_pending=approvals.session_cancel_callback(ctx),
+            cancel_pending=session_cancel_callback(ctx),
         )
     return list_client_event_page(
         **shared,

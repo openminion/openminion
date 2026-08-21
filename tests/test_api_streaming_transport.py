@@ -891,6 +891,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
             client_auth=None,
             client_identity=None,
             client_approvals=None,
+            client_media=None,
         )
         handler._write_json.assert_called_once_with(HTTPStatus.OK, {"ok": True})  # type: ignore[attr-defined]
 

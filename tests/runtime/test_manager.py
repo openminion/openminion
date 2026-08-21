@@ -10,6 +10,7 @@ from openminion.modules.tool.sidecars import (
     maybe_allow_denied_call_with_operator_approval,
 )
 from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
+from openminion.services.runtime.manager import TurnHandle
 from openminion.services.runtime.daemon import _desktop_approval_callback, execute_turn
 from openminion.services.runtime.ingress import TurnTimeoutError
 
@@ -67,6 +68,17 @@ def test_daemon_timeout_sets_the_turn_cancel_event() -> None:
 
     assert cancel.is_set()
     assert response.errors[0].code == "turn_timeout"
+
+
+def test_turn_handle_done_callbacks_run_once_outside_result_transition() -> None:
+    handle = TurnHandle(trace_id="trace-1", on_cancel=lambda _trace_id: True)
+    calls: list[str] = []
+    handle.add_done_callback(lambda: calls.append("first"))
+    handle._set_result(TurnResponse(final_text="ok"))
+    handle.add_done_callback(lambda: calls.append("late"))
+    handle._set_result(TurnResponse(final_text="ignored"))
+    assert calls == ["first", "late"]
+    assert handle.result().final_text == "ok"
 
 
 def test_per_agent_fifo_serialization() -> None:

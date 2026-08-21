@@ -194,6 +194,8 @@ class TurnHandle:
         self._cancel_event = Event()
         self._result_ready = Event()
         self._result: TurnResponse | None = None
+        self._result_lock = RLock()
+        self._done_callbacks: list[Callable[[], None]] = []
         self._chunks: Queue[TurnChunk | None] = Queue()
         self._closed_stream = False
 
@@ -230,10 +232,27 @@ class TurnHandle:
     def _push_chunk(self, chunk: TurnChunk) -> None:
         self._chunks.put(chunk)
 
+    def add_done_callback(self, callback: Callable[[], None]) -> None:
+        with self._result_lock:
+            invoke_now = self._result_ready.is_set()
+            if not invoke_now:
+                self._done_callbacks.append(callback)
+        if invoke_now:
+            callback()
+
     def _set_result(self, response: TurnResponse) -> None:
-        self._result = response
-        self._result_ready.set()
+        with self._result_lock:
+            if self._result_ready.is_set():
+                return
+            self._result = response
+            callbacks, self._done_callbacks = self._done_callbacks, []
+            self._result_ready.set()
         self._chunks.put(None)
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                continue
 
 
 class AgentRuntimeManager:

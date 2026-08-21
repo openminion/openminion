@@ -47,6 +47,9 @@ _CLIENT_CAPABILITIES = (
     "turns.cancel",
     "turns.tool_progress",
     "approvals.decide",
+    "media.upload",
+    "media.read",
+    "media.release",
 )
 _CLIENT_BODY_LIMITS = {
     "/v1/client/leases": 16 * 1024,
@@ -57,6 +60,8 @@ _SESSION_PATH = re.compile(r"/v1/client/sessions/[^/]+")
 _SESSION_EVENTS_PATH = re.compile(r"/v1/client/sessions/[^/]+/events")
 _TURN_CANCEL_PATH = re.compile(r"/v1/turn/[^/]+/cancel")
 _APPROVAL_PATH = re.compile(r"/v1/client/sessions/[^/]+/turns/[^/]+/approvals/[^/]+")
+_MEDIA_COLLECTION_PATH = re.compile(r"/v1/client/sessions/[^/]+/media")
+_MEDIA_ITEM_PATH = re.compile(r"/v1/client/sessions/[^/]+/media/[^/]+")
 _DEFAULT_CLIENT_RESPONSE_LIMIT = 64 * 1024
 _ADMITTED_HEADERS = frozenset(
     {
@@ -70,6 +75,8 @@ _ADMITTED_HEADERS = frozenset(
         "connection",
         "accept-encoding",
         "user-agent",
+        "transfer-encoding",
+        "x-openminion-media-name",
     }
 )
 
@@ -244,6 +251,17 @@ class ClientAuthService:
                 return False
             return lease.identity == identity
 
+    def is_client_active(self, client_id: str) -> bool:
+        with self._lock:
+            now = datetime.now(UTC)
+            return any(
+                lease.identity.client_id == client_id
+                and not lease.revoked
+                and lease.expires_at > now
+                and lease.identity.config_id == self.config_id
+                for lease in self._leases.values()
+            )
+
     def capabilities(self, identity: ClientIdentity) -> dict[str, object]:
         return {
             "protocol_min": PROTOCOL_VERSION,
@@ -318,6 +336,36 @@ class ClientAuthService:
         return ClientAuthError("forbidden", "Request is not authorized.")
 
 
+def _validate_media_header_scope(
+    headers: Any,
+    clients: tuple[str, ...],
+    method: str,
+    path: str,
+) -> None:
+    if headers.get("X-OpenMinion-Media-Name") is not None and not (
+        clients and method.upper() == "POST" and _MEDIA_COLLECTION_PATH.fullmatch(path)
+    ):
+        raise ClientAuthError("forbidden", "Request is not authorized.")
+
+
+def _handle_authenticated_media(
+    handler: Any,
+    method: str,
+    path: str,
+    query: str | None,
+    request_id: str | None,
+) -> bool:
+    from openminion.api.server.client_media import handle_media_http
+
+    return handle_media_http(
+        handler,
+        method=method.upper(),
+        path=path,
+        query=query or "",
+        request_id=request_id,
+    )
+
+
 class ClientAuthHTTPMixin:
     """Small HTTP adapter that keeps client policy out of the base API transport."""
 
@@ -340,13 +388,21 @@ class ClientAuthHTTPMixin:
             "client_auth": self.client_auth,
             "client_identity": self.client_identity,
             "client_approvals": getattr(self, "client_approvals", None),
+            "client_media": getattr(self, "client_media", None),
         }
 
-    def _approval_requester(self) -> Any:
+    def _client_stream_context(self) -> dict[str, Any]:
         coordinator = getattr(self, "client_approvals", None)
-        if coordinator is None or self.client_identity is None:
-            return None
-        return coordinator.bind(self.client_identity)
+        requester = (
+            coordinator.bind(self.client_identity)
+            if coordinator is not None and self.client_identity is not None
+            else None
+        )
+        return {
+            "desktop_approval_requester": requester,
+            "client_media": getattr(self, "client_media", None),
+            "client_identity": self.client_identity,
+        }
 
     def _authenticate_request(
         self,
@@ -363,8 +419,7 @@ class ClientAuthHTTPMixin:
             return True
         masters = _header_values(self.headers, MASTER_TOKEN_HEADER)
         clients = _header_values(self.headers, CLIENT_TOKEN_HEADER)
-        self.client_request_path = path
-        self.client_request_method = method.upper()
+        self.client_request_path, self.client_request_method = path, method.upper()
         self.client_response_limited = bool(clients) or path == "/v1/client/leases"
         self.client_body_limited = bool(clients) or path == "/v1/client/leases"
         try:
@@ -372,6 +427,7 @@ class ClientAuthHTTPMixin:
                 name.lower() not in _ADMITTED_HEADERS for name in self.headers.keys()
             ):
                 raise ClientAuthError("forbidden", "Request is not authorized.")
+            _validate_media_header_scope(self.headers, clients, method, path)
             self.client_identity = self.client_auth.authorize(
                 method=method,
                 path=path,
@@ -414,6 +470,8 @@ class ClientAuthHTTPMixin:
                     raise ClientAuthError(
                         "invalid_request", "GET does not accept a body."
                     )
+            if _handle_authenticated_media(self, method, path, query, request_id):
+                return False
             return True
         except ClientAuthError as exc:
             status = (
@@ -534,6 +592,10 @@ def _client_route_capability(method: str, path: str) -> str | None:
         return "turns.cancel"
     if _APPROVAL_PATH.fullmatch(path) and method_name == "POST":
         return "approvals.decide"
+    if _MEDIA_COLLECTION_PATH.fullmatch(path) and method_name == "POST":
+        return "media.upload"
+    if _MEDIA_ITEM_PATH.fullmatch(path):
+        return {"GET": "media.read", "DELETE": "media.release"}.get(method_name)
     return None
 
 

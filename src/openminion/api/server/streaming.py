@@ -2,6 +2,7 @@
 
 import logging
 import json
+import re
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import UUID
@@ -20,10 +21,12 @@ from openminion.api.responses.serialization import (
 from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response_to_dict
 
 if TYPE_CHECKING:
+    from openminion.api.server.client_auth import ClientIdentity
+    from openminion.api.server.client_media import ClientMediaCoordinator
     from openminion.services.runtime.manager import DesktopApprovalRequester
 
 
-_DESKTOP_TURN_KEYS = {
+_DESKTOP_TURN_REQUIRED_KEYS = {
     "trace_id",
     "session_id",
     "agent_id",
@@ -34,6 +37,8 @@ _DESKTOP_TURN_KEYS = {
     "user",
     "idempotency_key",
 }
+_DESKTOP_TURN_KEYS = _DESKTOP_TURN_REQUIRED_KEYS | {"attachments"}
+_MEDIA_ID = re.compile(r"[0-9a-f]{48}")
 _DESKTOP_SSE_EVENT_LIMIT = 256 * 1024
 
 
@@ -108,6 +113,7 @@ def _open_stream_submission(
     config_path: str | None,
     runtime: APIRuntime | None,
     desktop_approval_requester: "DesktopApprovalRequester | None" = None,
+    resolved_attachment_refs: tuple[str, ...] = (),
 ) -> tuple[TurnSubmission | None, HTTPStatus | None, dict[str, Any] | None]:
     try:
         submission = open_turn_submission(
@@ -115,6 +121,7 @@ def _open_stream_submission(
             runtime=runtime,
             body=body,
             desktop_approval_requester=desktop_approval_requester,
+            resolved_attachment_refs=resolved_attachment_refs,
         )
     except ValueError as exc:
         status, payload = _stream_error_payload(
@@ -498,6 +505,124 @@ def _serve_stream_submission(
     return status, payload, session_id, run_id
 
 
+def _resolve_desktop_attachment_refs(
+    body: dict[str, Any],
+    *,
+    desktop_client: bool,
+    client_media: "ClientMediaCoordinator | None",
+    client_identity: "ClientIdentity | None",
+) -> tuple[tuple[str, ...], tuple[HTTPStatus, dict[str, Any]] | None]:
+    attachment_ids = tuple(body.get("attachments", ()))
+    if not desktop_client or not attachment_ids:
+        return (), None
+    if client_media is None or client_identity is None:
+        return (), _stream_error_payload(
+            HTTPStatus.FORBIDDEN,
+            code="forbidden",
+            message="Request is not authorized.",
+            retryable=False,
+        )
+    from openminion.api.server.client_media import ClientMediaError
+
+    try:
+        return (
+            client_media.resolve_for_turn(
+                client_identity,
+                str(body["session_id"]),
+                str(body["trace_id"]),
+                attachment_ids,
+            ),
+            None,
+        )
+    except ClientMediaError as exc:
+        return (), _stream_error_payload(
+            exc.status,
+            code=exc.code,
+            message=str(exc),
+            retryable=exc.retryable,
+            retry_after_ms=exc.retry_after_ms,
+        )
+
+
+def _prepare_stream_submission(
+    *,
+    body: dict[str, Any],
+    config_path: str | None,
+    runtime: APIRuntime | None,
+    desktop_client: bool,
+    desktop_approval_requester: "DesktopApprovalRequester | None",
+    client_media: "ClientMediaCoordinator | None",
+    client_identity: "ClientIdentity | None",
+    resolved_request_id: str,
+    started_at: float,
+    logger: logging.Logger,
+    observe_request_metrics: Callable[..., int],
+    log_request_done: Callable[..., None],
+    write_json: Callable[..., None],
+) -> TurnSubmission | None:
+    error: tuple[HTTPStatus, dict[str, Any]] | None = None
+    if desktop_client and (message := _validate_desktop_turn_body(body)):
+        error = _stream_error_payload(
+            HTTPStatus.BAD_REQUEST,
+            code="invalid_request",
+            message=message,
+            retryable=False,
+        )
+    submission_body = dict(body)
+    submission_body.pop("attachments", None)
+    resolved_refs: tuple[str, ...] = ()
+    if error is None:
+        resolved_refs, error = _resolve_desktop_attachment_refs(
+            body,
+            desktop_client=desktop_client,
+            client_media=client_media,
+            client_identity=client_identity,
+        )
+    submission: TurnSubmission | None = None
+    if error is None:
+        submission, error_status, error_payload = _open_stream_submission(
+            body=submission_body,
+            config_path=config_path,
+            runtime=runtime,
+            desktop_approval_requester=desktop_approval_requester,
+            resolved_attachment_refs=resolved_refs,
+        )
+        if submission is None:
+            assert error_status is not None and error_payload is not None
+            error = error_status, error_payload
+            if (
+                resolved_refs
+                and client_media is not None
+                and client_identity is not None
+            ):
+                client_media.unbind_before_start(
+                    client_identity,
+                    str(body["session_id"]),
+                    str(body["trace_id"]),
+                )
+    if error is not None:
+        _record_stream_response(
+            status=error[0],
+            payload=error[1],
+            resolved_request_id=resolved_request_id,
+            session_id_for_meta=None,
+            run_id_for_meta=None,
+            started_at=started_at,
+            logger=logger,
+            observe_request_metrics=observe_request_metrics,
+            log_request_done=log_request_done,
+            write_json=write_json,
+        )
+        return None
+    assert submission is not None
+    if resolved_refs and client_media is not None and client_identity is not None:
+        session_id, trace_id = str(body["session_id"]), str(body["trace_id"])
+        submission.handle.add_done_callback(
+            lambda: client_media.complete_trace(client_identity, session_id, trace_id)
+        )
+    return submission
+
+
 def handle_turn_stream_request(
     *,
     body: dict[str, Any],
@@ -512,54 +637,28 @@ def handle_turn_stream_request(
     perf_counter: Callable[[], float],
     desktop_client: bool = False,
     desktop_approval_requester: "DesktopApprovalRequester | None" = None,
+    client_media: "ClientMediaCoordinator | None" = None,
+    client_identity: "ClientIdentity | None" = None,
 ) -> None:
     resolved_request_id = normalize_request_id(request_id)
     started_at = perf_counter()
-    session_id_for_meta: str | None = None
-    run_id_for_meta: str | None = None
     logger = logging.getLogger("openminion.api")
-
-    if desktop_client and (message := _validate_desktop_turn_body(body)):
-        validation_status, validation_payload = _stream_error_payload(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message=message,
-            retryable=False,
-        )
-        _record_stream_response(
-            status=validation_status,
-            payload=validation_payload,
-            resolved_request_id=resolved_request_id,
-            session_id_for_meta=None,
-            run_id_for_meta=None,
-            started_at=started_at,
-            logger=logger,
-            observe_request_metrics=observe_request_metrics,
-            log_request_done=log_request_done,
-            write_json=write_json,
-        )
-        return
-
-    submission, error_status, error_payload = _open_stream_submission(
+    submission = _prepare_stream_submission(
         body=body,
         config_path=config_path,
         runtime=runtime,
+        desktop_client=desktop_client,
         desktop_approval_requester=desktop_approval_requester,
+        client_media=client_media,
+        client_identity=client_identity,
+        resolved_request_id=resolved_request_id,
+        started_at=started_at,
+        logger=logger,
+        observe_request_metrics=observe_request_metrics,
+        log_request_done=log_request_done,
+        write_json=write_json,
     )
     if submission is None:
-        assert error_status is not None and error_payload is not None
-        _record_stream_response(
-            status=error_status,
-            payload=error_payload,
-            resolved_request_id=resolved_request_id,
-            session_id_for_meta=session_id_for_meta,
-            run_id_for_meta=run_id_for_meta,
-            started_at=started_at,
-            logger=logger,
-            observe_request_metrics=observe_request_metrics,
-            log_request_done=log_request_done,
-            write_json=write_json,
-        )
         return
 
     (
@@ -589,7 +688,7 @@ def handle_turn_stream_request(
 
 
 def _validate_desktop_turn_body(body: dict[str, Any]) -> str | None:
-    if set(body) != _DESKTOP_TURN_KEYS:
+    if not _DESKTOP_TURN_REQUIRED_KEYS <= set(body) or set(body) - _DESKTOP_TURN_KEYS:
         return "Desktop turn fields do not match the protocol 1 schema."
     for key in ("trace_id", "session_id", "agent_id", "input_text", "idempotency_key"):
         value = body.get(key)
@@ -599,6 +698,14 @@ def _validate_desktop_turn_body(body: dict[str, Any]) -> str | None:
         return "Desktop turns require oneshot streaming mode."
     if body.get("channel") != "console" or body.get("user") != "api-user":
         return "Desktop turn channel identity is invalid."
+    attachments = body.get("attachments", [])
+    if not isinstance(attachments, list) or len(attachments) > 4:
+        return "attachments must contain at most four distinct media IDs."
+    if any(
+        not isinstance(media_id, str) or _MEDIA_ID.fullmatch(media_id) is None
+        for media_id in attachments
+    ) or len(set(attachments)) != len(attachments):
+        return "attachments must contain at most four distinct media IDs."
     for key in ("trace_id", "idempotency_key"):
         try:
             UUID(str(body[key]))

@@ -139,10 +139,10 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             approval_callback=approval_callback,
         )
 
-    def submit_turn(self, *, payload: dict[str, object], desktop_approval_requester: "DesktopApprovalRequester | None" = None) -> "RuntimeTurnHandle":  # fmt: skip
+    def submit_turn(self, *, payload: dict[str, object], desktop_approval_requester: "DesktopApprovalRequester | None" = None, resolved_attachment_refs: tuple[str, ...] = ()) -> "RuntimeTurnHandle":  # fmt: skip
         from openminion.services.runtime.ingress import submit_turn_payload
 
-        return submit_turn_payload(runtime=self, payload=dict(payload), desktop_approval_requester=desktop_approval_requester)  # fmt: skip
+        return submit_turn_payload(runtime=self, payload=dict(payload), desktop_approval_requester=desktop_approval_requester, resolved_attachment_refs=resolved_attachment_refs)  # fmt: skip
 
     def evict_agent(self, agent_id: str, *, reason: str = "manual") -> bool:
         if not (normalized := agent_id.strip()):

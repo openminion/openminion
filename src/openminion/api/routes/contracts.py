@@ -9,6 +9,7 @@ from openminion.api.runtime import APIRuntime
 if TYPE_CHECKING:
     from openminion.api.server.client_approvals import ClientApprovalCoordinator
     from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
+    from openminion.api.server.client_media import ClientMediaCoordinator
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class APIRouteContext:
     client_auth: "ClientAuthService | None" = None
     client_identity: "ClientIdentity | None" = None
     client_approvals: "ClientApprovalCoordinator | None" = None
+    client_media: "ClientMediaCoordinator | None" = None
 
 
 @dataclass(frozen=True)

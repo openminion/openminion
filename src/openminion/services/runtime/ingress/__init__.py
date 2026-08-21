@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from openminion.base.config import combine_run_profile_overrides
 from openminion.base.config.core import resolve_default_agent_id
-
 from .execution import (
     _build_turn_context,
     execute_gateway_turn_impl,
@@ -101,6 +100,7 @@ def submit_turn_payload(
     runtime: "RuntimeFacade",
     payload: dict[str, Any],
     desktop_approval_requester: "DesktopApprovalRequester | None" = None,
+    resolved_attachment_refs: tuple[str, ...] = (),
 ) -> RuntimeTurnHandle:
     manager = getattr(runtime, "runtime_manager", None)
     if manager is None:
@@ -109,6 +109,7 @@ def submit_turn_payload(
         payload,
         default_agent_id=resolve_default_agent_id(runtime.config),
         desktop_approval_requester=desktop_approval_requester,
+        resolved_attachment_refs=resolved_attachment_refs,
     )
     timeout_s = resolve_timeout_seconds(
         payload=payload,

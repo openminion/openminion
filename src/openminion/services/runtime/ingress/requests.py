@@ -80,6 +80,7 @@ def build_manager_turn_request(
     *,
     default_agent_id: str,
     desktop_approval_requester: DesktopApprovalRequester | None = None,
+    resolved_attachment_refs: tuple[str, ...] = (),
 ) -> TurnRequest:
     trace_id = _optional_text(payload.get("trace_id")) or ""
     agent_id = _optional_text(payload.get("agent_id")) or default_agent_id
@@ -93,20 +94,13 @@ def build_manager_turn_request(
     if not input_text and not _is_pae_idle_tick(payload):
         raise ValueError("`input_text` is required.")
 
-    attachments_raw = payload.get("attachments", [])
-    attachments: list[str] = []
-    if isinstance(attachments_raw, list):
-        attachments = [
-            str(item).strip() for item in attachments_raw if str(item).strip()
-        ]
-    mode = _optional_text(payload.get("mode")) or "oneshot"
     return TurnRequest(
         trace_id=trace_id,
         agent_id=agent_id,
         session_id=session_id,
         input_text=input_text,
-        attachments=attachments,
-        mode=mode,
+        attachments=list(resolved_attachment_refs),
+        mode=_optional_text(payload.get("mode")) or "oneshot",
         stream=bool(payload.get("stream")),
         meta=_manager_meta_from_payload(payload),
         desktop_approval_requester=desktop_approval_requester,

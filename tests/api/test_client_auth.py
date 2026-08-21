@@ -146,6 +146,9 @@ def test_client_wrong_route_and_expired_lease_fail_closed(tmp_path: Path) -> Non
             "POST",
             "/v1/client/sessions/session-1/turns/trace-1/approvals/approval-1",
         ),
+        ("POST", "/v1/client/sessions/session-1/media"),
+        ("GET", "/v1/client/sessions/session-1/media/" + "a" * 48),
+        ("DELETE", "/v1/client/sessions/session-1/media/" + "a" * 48),
     ],
 )
 def test_client_session_and_turn_routes_are_capability_admitted(
@@ -173,6 +176,9 @@ def test_client_session_and_turn_routes_are_capability_admitted(
         "turns.cancel",
         "turns.tool_progress",
         "approvals.decide",
+        "media.upload",
+        "media.read",
+        "media.release",
     }.issubset(identity.capabilities)
 
 
