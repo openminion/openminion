@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import io
 from collections.abc import Callable
 from typing import Any
@@ -15,8 +13,6 @@ def write_console_render_via_prompt_output(
     prompt_output: Any,
     render: Callable[[], None],
 ) -> None:
-    """Route a Rich render through prompt-toolkit's output adapter."""
-
     buffer = io.StringIO()
     original_file = console.file
     original_force_terminal = getattr(console, "_force_terminal", None)
@@ -36,8 +32,6 @@ def write_console_render_via_prompt_output(
 def write_terminal_control_via_prompt_output(
     *, prompt_output: Any, payload: str
 ) -> None:
-    """Write raw terminal control bytes through prompt-toolkit's output."""
-
     writer = getattr(prompt_output, "write_raw", None)
     if not callable(writer):
         return
