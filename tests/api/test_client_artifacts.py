@@ -36,6 +36,12 @@ class _Artifacts:
         return None
 
 
+class _CredentialArtifacts(_Artifacts):
+    def open(self, artifact_ref):
+        assert artifact_ref == _REF
+        return BytesIO(b"api_key=secret-value")
+
+
 class _Facade:
     def __init__(self) -> None:
         self.detached = False
@@ -213,6 +219,33 @@ def test_content_pages_use_one_bound_opaque_cursor(monkeypatch) -> None:
         pieces.append(page["text"])
     assert "".join(pieces) == "[PATH REDACTED]"
     assert page["next_cursor"] is None
+
+
+def test_content_applies_existing_credential_redaction(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_CredentialArtifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    content = coordinator.read_artifact(
+        identity,
+        "session-1",
+        catalog["artifacts"][0]["artifact_id"],
+        cursor=None,
+        limit_bytes=64 * 1024,
+    )
+
+    assert content["text"] == "api_key=[REDACTED]"
+    assert "secret-value" not in repr(content)
 
 
 def test_path_projection_redacts_posix_drive_unc_and_diff_lines() -> None:

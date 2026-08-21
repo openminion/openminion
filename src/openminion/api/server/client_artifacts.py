@@ -14,6 +14,7 @@ from openminion.api.queries.client_artifacts import (
     resolve_session_artifact_facade,
 )
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
+from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.artifact.config import from_base_config
 from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.artifact.errors import ArtifactCtlError
@@ -232,7 +233,7 @@ class ClientArtifactCoordinator:
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise _error("artifact_unsupported") from exc
-        projected = _redact_paths(text)
+        projected = _redact_paths(redact_sensitive_text(text)[0])
         if len(projected.encode("utf-8")) > 256 * 1024:
             raise _error("content_too_large")
         content_kind = "json" if mime == "application/json" else "text"
