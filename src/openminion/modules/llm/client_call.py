@@ -334,12 +334,6 @@ def latest_prompt_and_history(
         latest_content_parts = []
     else:
         history_entries = []
-    while (
-        history_entries
-        and history_entries[-1][0] == "user"
-        and history_entries[-1][1].strip() == latest_msg.strip()
-    ):
-        history_entries.pop()
     history = []
     for role, content, meta, content_parts in history_entries:
         meta_value = dict(meta or {})
