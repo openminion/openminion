@@ -15,6 +15,7 @@ VERSION_LITERAL_ALLOWLIST = {
     Path("docs/memory-namespace-queries.md"),
     Path("pyproject.toml"),
     Path("src/openminion/base/version.py"),
+    Path("uv.lock"),
 }
 
 VERSION_LITERAL_OWNERS = {
