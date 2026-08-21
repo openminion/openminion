@@ -6,6 +6,7 @@ from http import HTTPStatus
 import json
 import re
 import secrets
+from sqlite3 import Error as SQLiteError
 from threading import RLock
 from typing import Any
 
@@ -162,6 +163,8 @@ class ClientArtifactCoordinator:
             raise _error("runtime_unavailable") from exc
         except SessionArtifactUnavailable as exc:
             raise _error("runtime_unavailable") from exc
+        except (OSError, RuntimeError, SQLiteError, ValueError) as exc:
+            raise _error("runtime_unavailable") from exc
         with self._lock:
             self._recheck_session_locked(identity, session_id, generation)
             ordered = sorted(
@@ -211,6 +214,8 @@ class ClientArtifactCoordinator:
                 raise _error(exc.code) from exc
             raise _error("runtime_unavailable") from exc
         except SessionArtifactUnavailable as exc:
+            raise _error("runtime_unavailable") from exc
+        except (OSError, RuntimeError, SQLiteError, ValueError) as exc:
             raise _error("runtime_unavailable") from exc
         with self._lock:
             self._recheck_session_locked(identity, session_id, generation)
@@ -355,6 +360,8 @@ class ClientArtifactCoordinator:
                     raise _error("session_turn_active") from exc
                 raise _error("runtime_unavailable") from exc
             except SessionArtifactUnavailable as exc:
+                raise _error("runtime_unavailable") from exc
+            except (OSError, RuntimeError, SQLiteError, ValueError) as exc:
                 raise _error("runtime_unavailable") from exc
         return {
             "artifact_id": artifact_id,

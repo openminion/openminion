@@ -45,6 +45,11 @@ class _Auth:
         return self.expires_at
 
 
+class _MultiAuth(_Auth):
+    def is_active(self, identity) -> bool:
+        return self.active and identity.client_id.startswith("client-")
+
+
 class _Artifacts:
     payload = b"open /Users/person/secret"
 
@@ -537,6 +542,126 @@ def test_catalog_and_opaque_record_caps_fail_before_unbounded_state(
     assert len(record_owner._records) == 256
 
 
+def test_global_cursor_and_record_caps_fail_before_unbounded_state(
+    monkeypatch,
+) -> None:
+    auth = _MultiAuth()
+    incomplete = _IncompleteFacade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: incomplete,
+    )
+    cursor_owner = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identities = [
+        ClientIdentity(f"client-{index}", "config-1", 1, ()) for index in range(5)
+    ]
+    for client_index, identity in enumerate(identities[:4]):
+        for session_index in range(64):
+            page = cursor_owner.list_artifacts(
+                identity,
+                f"session-{client_index}-{session_index}",
+                cursor=None,
+                limit=25,
+            )
+            assert page["complete"] is False
+    with pytest.raises(ClientArtifactError) as cursors_full:
+        cursor_owner.list_artifacts(
+            identities[4], "session-overflow", cursor=None, limit=25
+        )
+    assert cursors_full.value.code == "artifact_backpressure"
+    assert len(cursor_owner._cursors) == 256
+
+    at_capacity = _ManyRefsFacade(256)
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: at_capacity,
+    )
+    record_owner = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_ManyArtifacts(),
+    )
+    for identity in identities[:4]:
+        page = record_owner.list_artifacts(
+            identity, "session-1", cursor=None, limit=100
+        )
+        while not page["complete"]:
+            page = record_owner.list_artifacts(
+                identity,
+                "session-1",
+                cursor=page["next_cursor"],
+                limit=100,
+            )
+    assert len(record_owner._records) == 1024
+    with pytest.raises(ClientArtifactError) as records_full:
+        record_owner.list_artifacts(identities[4], "session-2", cursor=None, limit=100)
+    assert records_full.value.code == "artifact_backpressure"
+    assert len(record_owner._records) == 1024
+
+
+def test_coordinator_restart_invalidates_opaque_records_and_cursors(
+    monkeypatch,
+) -> None:
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    auth = _Auth()
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    original = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    catalog = original.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    restarted = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    with pytest.raises(ClientArtifactError) as stale_record:
+        restarted.read_artifact(
+            identity,
+            "session-1",
+            artifact_id,
+            cursor=None,
+            limit_bytes=64 * 1024,
+        )
+    assert stale_record.value.code == "artifact_not_found"
+
+    incomplete = _IncompleteFacade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: incomplete,
+    )
+    cursor_owner = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    cursor = cursor_owner.list_artifacts(identity, "session-1", cursor=None, limit=25)[
+        "next_cursor"
+    ]
+    restarted = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    with pytest.raises(ClientArtifactError) as stale_cursor:
+        restarted.list_artifacts(identity, "session-1", cursor=cursor, limit=25)
+    assert stale_cursor.value.code == "invalid_request"
+
+
 @pytest.mark.parametrize(
     ("error", "expected_code"),
     [
@@ -547,6 +672,7 @@ def test_catalog_and_opaque_record_caps_fail_before_unbounded_state(
             "artifact_state_too_large",
         ),
         (SessionArtifactUnavailable("internal runtime detail"), "runtime_unavailable"),
+        (RuntimeError("internal storage detail"), "runtime_unavailable"),
     ],
 )
 def test_catalog_normalizes_projection_failures(
@@ -570,6 +696,46 @@ def test_catalog_normalizes_projection_failures(
 
     assert raised.value.code == expected_code
     assert "internal" not in raised.value.message
+
+
+def test_catalog_and_decision_normalize_unexpected_owner_failures(
+    monkeypatch,
+) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("internal storage detail")
+
+    facade.apply_artifact_decision = fail
+    with pytest.raises(ClientArtifactError) as decision:
+        coordinator.decide(
+            identity,
+            "session-1",
+            artifact_id,
+            detached=True,
+            request_id="request-failure",
+        )
+    assert decision.value.code == "runtime_unavailable"
+    assert "internal" not in decision.value.message
+
+    facade.get_artifact_catalog_event_page = fail
+    with pytest.raises(ClientArtifactError) as page:
+        coordinator.list_artifacts(identity, "session-2", cursor=None, limit=25)
+    assert page.value.code == "runtime_unavailable"
+    assert "internal" not in page.value.message
 
 
 def test_content_applies_existing_credential_redaction(monkeypatch) -> None:
