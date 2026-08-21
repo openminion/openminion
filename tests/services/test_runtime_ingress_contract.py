@@ -20,6 +20,7 @@ from openminion.services.runtime.ingress import (
     runtime_turn_request_from_payload,
     submit_turn_payload,
 )
+from openminion.services.runtime.manager import TurnRequest
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -205,6 +206,44 @@ def test_submit_turn_payload_uses_runtime_manager_and_preserves_meta() -> None:
     assert request.meta["idempotency_key"] == "idem-submit"
     assert request.meta["forced_tools"] == ["web.search"]
     assert request.meta["capability_category"] == "search"
+
+
+def test_managed_session_identity_is_authoritative_after_metadata_merge() -> None:
+    runtime = _RuntimeStub()
+    payload = {
+        "message": "hello",
+        "session_id": "session-managed",
+        "agent_id": "main",
+        "inbound_metadata": {
+            "brain_session_id": "spoofed-session",
+            "origin": "fixture",
+        },
+    }
+    direct = runtime_turn_request_from_payload(runtime=runtime, payload=payload)
+    handle = submit_turn_payload(runtime=runtime, payload=payload)
+    managed = runtime_turn_request_from_manager_request(
+        runtime=runtime,
+        request=handle.request,
+    )
+
+    assert dict(direct.inbound_metadata or {})["brain_session_id"] == "spoofed-session"
+    assert dict(managed.inbound_metadata or {}) == {
+        "brain_session_id": "session-managed",
+        "origin": "fixture",
+        "workspace_root": "/tmp/runtime-workspace",
+    }
+
+    blank = runtime_turn_request_from_manager_request(
+        runtime=runtime,
+        request=TurnRequest(
+            trace_id="trace-blank",
+            agent_id="main",
+            session_id="",
+            input_text="hello",
+            meta={"inbound_metadata": {"origin": "fixture"}},
+        ),
+    )
+    assert "brain_session_id" not in dict(blank.inbound_metadata or {})
 
 
 def test_trusted_attachments_cross_manager_and_gateway_without_metadata() -> None:

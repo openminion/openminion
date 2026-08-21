@@ -125,6 +125,10 @@ def runtime_turn_request_from_manager_request(
     if "timeout_seconds" in meta:
         timeout_payload["timeout_seconds"] = meta.get("timeout_seconds")
     inbound_metadata = _managed_inbound_metadata(runtime=runtime, meta=meta)
+    managed_session_id = str(request.session_id or "").strip()
+    if managed_session_id:
+        inbound_metadata = dict(inbound_metadata or {})
+        inbound_metadata["brain_session_id"] = managed_session_id
     return RuntimeTurnRequest(
         agent_id=agent_resolution.public_agent_id,
         profile_agent_id=agent_profile.name,
