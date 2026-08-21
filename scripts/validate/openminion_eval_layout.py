@@ -49,6 +49,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "policy",
     "reporting",
     "routing",
+    "runtime_reliability",
     "skills",
     "tools",
 }
