@@ -388,6 +388,67 @@ def test_build_request_aligns_images_to_compacted_budgeted_turns(monkeypatch) ->
     assert inspected == [current_ref]
 
 
+def test_text_only_current_turn_keeps_prior_images_historical(monkeypatch) -> None:
+    _patch_tool_bundle(monkeypatch)
+    refs = [f"artifact://sha256/{value * 64}" for value in "abcde"]
+    inspected: list[str] = []
+
+    def _inspect(ref: str):
+        inspected.append(ref)
+        return "image/png", 1
+
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        _inspect,
+    )
+    request = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "prior attached turn",
+                    "meta": {"segment_ids": ["turn:prior"]},
+                },
+                {
+                    "role": "user",
+                    "content": "current text only",
+                    "meta": {"segment_ids": ["turn:current"]},
+                },
+            ],
+            "turns": [
+                {
+                    "turn_id": "prior",
+                    "role": "user",
+                    "content": "prior attached turn",
+                    "attachments": refs,
+                },
+                {
+                    "turn_id": "current",
+                    "role": "user",
+                    "content": "current text only",
+                    "attachments": [],
+                },
+            ],
+        },
+        schema=type("Decision", (), {}),
+        temperature=0.0,
+    )
+
+    prior = next(
+        message
+        for message in request.messages
+        if message.content == "prior attached turn"
+    )
+    assert [
+        part.artifact_ref
+        for part in prior.content_parts
+        if getattr(part, "source", "") == "artifact"
+    ] == refs[:4]
+    assert inspected == refs[:4]
+
+
 def test_initial_brain_user_turn_persists_attachments_once(monkeypatch) -> None:
     from openminion.modules.brain.runner.tick.context import build_tick_run_context
     from openminion.modules.brain.runner.tick import input_processing

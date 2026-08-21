@@ -49,9 +49,7 @@ def _selected_pack_turn_ids(payload: dict[str, Any]) -> set[str]:
     return selected
 
 
-def _selected_attachment_turns(
-    *, payload: dict[str, Any], turns: list[Any]
-) -> list[Any]:
+def _selected_pack_turns(*, payload: dict[str, Any], turns: list[Any]) -> list[Any]:
     selected_ids = _selected_pack_turn_ids(payload)
     if not selected_ids:
         return []
@@ -60,8 +58,6 @@ def _selected_attachment_turns(
         for turn in turns
         if isinstance(turn, dict)
         and str(turn.get("turn_id") or "").strip() in selected_ids
-        and isinstance(turn.get("attachments"), list)
-        and bool(turn["attachments"])
     ]
 
 
@@ -166,7 +162,7 @@ class ContextCtlAdapter(ContextAPI):
         pack = self.service.build_pack(req)
         result = cast(dict[str, Any], pack.model_dump())
         if self._session_store is not None:
-            result["turns"] = _selected_attachment_turns(
+            result["turns"] = _selected_pack_turns(
                 payload=result,
                 turns=list(self._session_store.list_turns(session_id)),
             )
