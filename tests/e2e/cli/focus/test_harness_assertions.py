@@ -17,12 +17,14 @@ from tests.e2e.cli.focus.harness.probe import (
     active_turn_busy,
     approval_prompt_needs_reply,
     composer_echo_probe,
+    continuation_cue_present,
     focus_session_id,
     inline_approval_fingerprint,
     inline_approval_key,
     inline_approval_menu,
     latest_approval_prompt,
     latest_done_event,
+    latest_terminal_failure,
     latest_turn_event,
     screen_after_submission,
     sidecar_consent_prompt_visible,
@@ -51,6 +53,12 @@ def test_expected_markers_ignore_echoed_prompt() -> None:
 
     with pytest.raises(AssertionError, match="next steps"):
         assert_expected_markers(transcript, prompt, ("next steps",))
+
+
+def test_continuation_cue_allows_terminal_line_wrapping() -> None:
+    assert continuation_cue_present(
+        "[act:coding] budget exhausted. Continue in a new turn to\nresume."
+    )
 
 
 def test_scenario_contract_requires_expected_files_and_transcript_rules(
@@ -180,6 +188,27 @@ def test_expected_markers_reject_failed_research_fallback() -> None:
 
     with pytest.raises(AssertionError, match="usable synthesized answer"):
         assert_expected_markers(transcript, prompt, ("next steps",))
+
+
+def test_expected_markers_reject_provider_error_final_answer() -> None:
+    prompt = "Build and validate a project, then report result."
+    transcript = (
+        f"❯ {prompt}\n"
+        "⏺ [act:coding] LLM error: PROVIDER_ERROR: invalid tool transcript\n"
+        "Done in 2m10s\n"
+    )
+
+    with pytest.raises(AssertionError, match="llm error"):
+        assert_expected_markers(transcript, prompt, ("result",))
+
+
+def test_latest_terminal_failure_finds_typed_provider_failure() -> None:
+    transcript = "❯ prompt\nEMPTY_PROVIDER_RESPONSE: empty after retries\n"
+
+    match = latest_terminal_failure(transcript, offset=0)
+
+    assert match is not None
+    assert match.group(0).startswith("EMPTY_PROVIDER_RESPONSE")
 
 
 def test_expected_markers_ignore_tool_output_before_final_answer() -> None:
