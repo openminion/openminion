@@ -536,7 +536,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             if outcome is not None:
                 return outcome
 
-            self._append_response_messages(prepared.response)
+            self._append_response_messages(prepared.response, tool_calls=tool_calls)
             persist_requested_tool_calls(
                 self.loop_ctx,
                 loop_state=self.loop_state,

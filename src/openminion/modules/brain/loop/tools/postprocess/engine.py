@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from openminion.modules.llm import ProviderError
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import Message, ToolCall
 from ..budget import (
     _debit_llm_usage,
     _profile_budget_exhausted,
@@ -110,14 +110,36 @@ class AdaptiveLoopRunnerPostprocessMixin(
     AdaptiveLoopRunnerClosureMixin,
     AdaptiveLoopRunnerNoToolMixin,
 ):
-    def _append_response_messages(self, response: Any) -> None:
-        response_tool_calls = list(getattr(response, "tool_calls", []) or [])
+    def _append_response_messages(
+        self, response: Any, *, tool_calls: list[Any] | None = None
+    ) -> None:
+        response_tool_calls = (
+            list(getattr(response, "tool_calls", []) or [])
+            if tool_calls is None
+            else [
+                ToolCall(
+                    id=str(getattr(call, "id", "") or ""),
+                    name=str(getattr(call, "name", "") or ""),
+                    arguments=dict(getattr(call, "arguments", {}) or {}),
+                    batch_index=int(getattr(call, "batch_index", 0) or 0),
+                    depends_on=list(getattr(call, "depends_on", []) or []),
+                )
+                for call in tool_calls
+            ]
+        )
         fallback_text = str(getattr(response, "output_text", "") or "").strip()
         assistant_messages = [
             message
             for message in list(getattr(response, "assistant_messages", []) or [])
             if not _looks_like_unexecutable_tool_payload_text(message.content)
         ]
+        if tool_calls is not None:
+            assistant_messages = [
+                message.model_copy(update={"tool_calls": []})
+                if message.tool_calls
+                else message
+                for message in assistant_messages
+            ]
         if response_tool_calls and not any(
             message.tool_calls for message in assistant_messages
         ):

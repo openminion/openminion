@@ -123,6 +123,37 @@ def execute_iteration_results(
     dispatch_correction_plan: Any,
 ) -> LoopExecutionResult:
     batch_had_progress = initial_batch_had_progress
+    action_results = []
+    for tool_call, command_outcome in ordered_tool_results:
+        tool_name = tool_call.name.strip()
+        action_result = command_outcome.action_result or build_missing_action_result(
+            tool_name
+        )
+        persist_terminal_tool_result(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
+            tool_call=tool_call,
+            action_result=action_result,
+        )
+        append_tool_result_payload(
+            loop_state,
+            call_id=tool_call.id,
+            tool_name=tool_name,
+            action_result=action_result,
+        )
+        _record_plan_family_call(
+            loop_state, tool_name=tool_name, action_result=action_result
+        )
+        loop_state.messages.append(
+            action_result_to_tool_message(
+                tool_call.id,
+                tool_name,
+                action_result,
+            )
+        )
+        action_results.append(action_result)
+
     iter_tc_idx = 0
     for result_index, (tool_call, command_outcome) in enumerate(ordered_tool_results):
         tool_name = tool_call.name.strip()
@@ -149,25 +180,7 @@ def execute_iteration_results(
         if iter_tc_cache_hit or not command_outcome.tool_budget_debited:
             debit_tool_budget(loop_ctx)
 
-        action_result = command_outcome.action_result or build_missing_action_result(
-            tool_name
-        )
-        persist_terminal_tool_result(
-            loop_ctx,
-            loop_state=loop_state,
-            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
-            tool_call=tool_call,
-            action_result=action_result,
-        )
-        append_tool_result_payload(
-            loop_state,
-            call_id=tool_call.id,
-            tool_name=tool_name,
-            action_result=action_result,
-        )
-        _record_plan_family_call(
-            loop_state, tool_name=tool_name, action_result=action_result
-        )
+        action_result = action_results[result_index]
 
         tc_args_for_cache = dict(tool_call.arguments)
         loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)
@@ -259,13 +272,6 @@ def execute_iteration_results(
             )
 
         if is_budget_exhausted_action_result(action_result):
-            loop_state.messages.append(
-                action_result_to_tool_message(
-                    tool_call.id,
-                    tool_name,
-                    action_result,
-                )
-            )
             budget_finalization_outcome = force_budget_answer_only_finalization(
                 loop_ctx=loop_ctx,
                 profile=profile,
@@ -305,13 +311,6 @@ def execute_iteration_results(
                 ),
             )
 
-        loop_state.messages.append(
-            action_result_to_tool_message(
-                tool_call.id,
-                tool_name,
-                action_result,
-            )
-        )
         recovery_message = build_tool_failure_recovery_message(
             tool_name=tool_name,
             action_result=action_result,
