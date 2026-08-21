@@ -428,6 +428,47 @@ def test_build_turn_response_metadata_includes_turn_progress_summary() -> None:
     assert metadata["tool_calls_count"] == "2"
 
 
+def test_build_turn_response_metadata_captures_provider_error_facts() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=_DummyRunner({}),
+        step_out=SimpleNamespace(
+            status="error",
+            action_result=SimpleNamespace(
+                outputs={},
+                error=SimpleNamespace(
+                    code="PROVIDER_ERROR",
+                    message="unsupported tool",
+                    details={
+                        "tool_name": "get_weather",
+                        "request_id": "portal-request-1",
+                    },
+                ),
+            ),
+        ),
+        session_id="sess-error",
+        request_id="trace-error",
+        elapsed_ms=100.0,
+        llm_steps=1,
+        termination_reason="model_final",
+    )
+
+    assert metadata["error_code"] == "PROVIDER_ERROR"
+    assert metadata["error_message"] == "unsupported tool"
+    assert json.loads(metadata["error_details"]) == {
+        "tool_name": "get_weather",
+        "request_id": "portal-request-1",
+    }
+    assert metadata["provider_request_id"] == "portal-request-1"
+
+
 def test_build_turn_response_metadata_falls_back_to_llm_event_usage() -> None:
     bridge = DummyBridge()
     bridge._config = SimpleNamespace(

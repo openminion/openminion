@@ -166,6 +166,7 @@ class LLMCTLBridgeProvider(LLMProvider):
             behavior_profile.retry_override_policy.disabled_reason
             == CORTENSOR_PORTAL_RETRY_DISABLED_REASON
         )
+        self._preserve_provider_tool_arguments = is_cortensor_portal
         max_retries = 0 if self.name == "cortensor" or is_cortensor_portal else 2
 
         llmctl_config = {
@@ -353,9 +354,13 @@ class LLMCTLBridgeProvider(LLMProvider):
             name = str(call.name or "").strip()
             if not name:
                 continue
-            arguments = _normalize_bridge_submit_output_arguments(
-                name,
-                dict(call.arguments or {}),
+            arguments = (
+                dict(call.arguments or {})
+                if self._preserve_provider_tool_arguments
+                else _normalize_bridge_submit_output_arguments(
+                    name,
+                    dict(call.arguments or {}),
+                )
             )
             tool_calls.append(
                 ProviderToolCall(
@@ -369,6 +374,7 @@ class LLMCTLBridgeProvider(LLMProvider):
         finish_reason = str(getattr(response, "finish_reason", "") or "")
 
         raw_thinking = getattr(response, "thinking", None) or []
+        response_telemetry = dict(getattr(response, "telemetry", {}) or {})
         raw_bridge_response = ProviderResponse(
             text=_extract_bridge_text(response),
             model=str(response.model or self._model),
@@ -382,6 +388,11 @@ class LLMCTLBridgeProvider(LLMProvider):
                     getattr(response, "contract_version", "v1")
                 ),
                 "provider_retry_override": retry_override_id,
+                **(
+                    {"request_id": response_telemetry["request_id"]}
+                    if response_telemetry.get("request_id")
+                    else {}
+                ),
             },
             thinking=list(raw_thinking),
         )

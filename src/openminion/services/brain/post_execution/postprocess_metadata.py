@@ -67,7 +67,7 @@ def _build_turn_response_metadata(
         total_tokens_used = event_total_tokens
     tool_calls_count = int(action_outputs.get("tool_calls_count", 0) or 0)
     _default_agent_id = resolve_default_agent_id(self._config)
-    return {
+    metadata = {
         "agent": self._config.agents[_default_agent_id].name or _default_agent_id,
         "provider": str(getattr(self._provider, "name", "brain-orchestrator")),
         "model": "brain-orchestrator",
@@ -87,6 +87,19 @@ def _build_turn_response_metadata(
         "max_single_call_output_tokens": str(max_single_call_output_tokens),
         "max_single_call_total_tokens": str(max_single_call_total_tokens),
     }
+    action_error = getattr(getattr(step_out, "action_result", None), "error", None)
+    if action_error is not None:
+        metadata["error_code"] = str(getattr(action_error, "code", "") or "")
+        metadata["error_message"] = str(
+            getattr(action_error, "message", "") or ""
+        )
+        error_details = getattr(action_error, "details", None)
+        if isinstance(error_details, dict) and error_details:
+            metadata["error_details"] = json.dumps(error_details, sort_keys=True)
+            provider_request_id = str(error_details.get("request_id") or "").strip()
+            if provider_request_id:
+                metadata["provider_request_id"] = provider_request_id
+    return metadata
 
 
 def _security_events_from_tool_results(

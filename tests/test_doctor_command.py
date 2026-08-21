@@ -12,7 +12,10 @@ from unittest import mock
 from tests._csc_fixtures import _csc_install_default_agent
 
 
-from openminion.cli.commands.doctor import run_doctor
+from openminion.cli.commands.doctor import (
+    _run_provider_connection_check,
+    run_doctor,
+)
 from openminion.cli.commands.setup import run_setup
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.modules.telemetry.lifecycle import (
@@ -706,6 +709,33 @@ class DoctorCommandTests(unittest.TestCase):
             check_ids = {check["id"] for check in payload["checks"]}
             self.assertIn("provider.connection_smoke", check_ids)
             self.assertNotIn("agent.turn_smoke", check_ids)
+
+    def test_portal_provider_check_allows_visible_text_after_reasoning(self) -> None:
+        config = OpenMinionConfig()
+        config.providers.openai.provider_identity = {
+            "transport_adapter": "openai_chat",
+            "wire_protocol_family": "openai_chat_completions",
+            "service_vendor": "cortensor",
+            "model_family": "oss",
+        }
+        complete = mock.Mock(
+            return_value=Namespace(
+                ok=True,
+                output_text="portal text ok",
+                provider="openai",
+                model="oss-20b",
+            )
+        )
+        app = Namespace(
+            config=config, llm=Namespace(client=Namespace(complete=complete))
+        )
+
+        result = _run_provider_connection_check(
+            app, "Reply with exactly: portal text ok"
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(complete.call_args.kwargs["max_output_tokens"], 128)
 
     def test_doctor_openrouter_without_key_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

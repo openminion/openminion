@@ -99,6 +99,15 @@ def with_default_user_agent(headers: Dict[str, str]) -> Dict[str, str]:
     return normalized
 
 
+def response_request_id(headers: Mapping[str, Any] | None) -> str:
+    if headers is None:
+        return ""
+    for key, value in headers.items():
+        if str(key).strip().lower() == "x-request-id":
+            return str(value or "").strip()
+    return ""
+
+
 def _emit_transport_timeout_counter(
     telemetryctl: Any | None,
     *,
@@ -212,12 +221,13 @@ def _read_http_response(
     *,
     timeout_seconds: int,
     http_client: ProviderHTTPClient | None,
-) -> tuple[int, str]:
+) -> tuple[int, str, str]:
     open_url = http_client.urlopen if http_client else urllib_request.urlopen
     with open_url(request, timeout=float(timeout_seconds)) as response:
         status_code = int(getattr(response, "status", 200) or 200)
+        request_id = response_request_id(getattr(response, "headers", None))
         raw = response.read().decode("utf-8")
-    return status_code, raw
+    return status_code, raw, request_id
 
 
 def http_json_get(
@@ -230,12 +240,15 @@ def http_json_get(
     env: EnvironmentConfig | Mapping[str, object] | None = None,
     telemetryctl: Any | None = None,
     http_client: ProviderHTTPClient | None = None,
+    response_metadata: Dict[str, str] | None = None,
 ) -> Dict[str, Any]:
     """GET a JSON payload from a provider URL."""
     total_started = time.perf_counter()
     env_owner = resolve_environment_config(env=env)
     request_build_started = time.perf_counter()
     request_headers = with_default_user_agent(headers)
+    if response_metadata is not None:
+        response_metadata.clear()
     transport_name = http_client.transport_name if http_client else "urllib"
     emit_performance = partial(_emit_transport_performance, transport=transport_name)
 
@@ -278,11 +291,13 @@ def http_json_get(
     response_bytes: int | None = None
     try:
         round_trip_started = time.perf_counter()
-        status_code, raw = _read_http_response(
+        status_code, raw, request_id = _read_http_response(
             request_obj,
             timeout_seconds=timeout_seconds,
             http_client=http_client,
         )
+        if response_metadata is not None and request_id:
+            response_metadata["request_id"] = request_id
         round_trip_ms = _elapsed_ms(round_trip_started)
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
@@ -560,11 +575,15 @@ def http_json_post(
     env: EnvironmentConfig | Mapping[str, object] | None = None,
     telemetryctl: Any | None = None,
     http_client: ProviderHTTPClient | None = None,
+    response_metadata: Dict[str, str] | None = None,
+    allow_curl_fallback: bool = True,
 ) -> Dict[str, Any]:
     total_started = time.perf_counter()
     env_owner = resolve_environment_config(env=env)
     request_build_started = time.perf_counter()
     request_headers = with_default_user_agent(headers)
+    if response_metadata is not None:
+        response_metadata.clear()
     transport_name = http_client.transport_name if http_client else "urllib"
     emit_performance = partial(_emit_transport_performance, transport=transport_name)
 
@@ -610,11 +629,13 @@ def http_json_post(
 
     try:
         round_trip_started = time.perf_counter()
-        status_code, raw = _read_http_response(
+        status_code, raw, request_id = _read_http_response(
             request_obj,
             timeout_seconds=timeout_seconds,
             http_client=http_client,
         )
+        if response_metadata is not None and request_id:
+            response_metadata["request_id"] = request_id
         round_trip_ms = _elapsed_ms(round_trip_started)
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
@@ -771,7 +792,7 @@ def http_json_post(
                 f"{provider_name} request timed out: {reason}",
                 details={"provider": provider_name, "url": url},
             ) from exc
-        if _should_use_curl_fallback(reason):
+        if allow_curl_fallback and _should_use_curl_fallback(reason):
             emit_performance(
                 telemetryctl,
                 provider_name=provider_name,

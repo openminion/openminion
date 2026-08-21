@@ -53,6 +53,31 @@ def test_provider_http_client_reuses_one_client_for_json_requests(monkeypatch) -
     assert httpx_client is not None and httpx_client.is_closed
 
 
+def test_provider_http_client_captures_success_request_id() -> None:
+    client, _ = _client_with_transport(
+        lambda _request: httpx.Response(
+            200,
+            json={"ok": True},
+            headers={"X-Request-ID": "request-json-1"},
+        )
+    )
+    response_metadata: dict[str, str] = {"stale": "value"}
+    try:
+        payload = http_json_get(
+            url="https://provider.example/models",
+            headers={},
+            timeout_seconds=1,
+            provider_name="provider",
+            http_client=client,
+            response_metadata=response_metadata,
+        )
+    finally:
+        client.close()
+
+    assert payload == {"ok": True}
+    assert response_metadata == {"request_id": "request-json-1"}
+
+
 def test_provider_http_client_preserves_http_error_mapping() -> None:
     client, _ = _client_with_transport(
         lambda _request: httpx.Response(401, json={"error": "bad key"})
@@ -115,6 +140,34 @@ def test_provider_http_client_streams_sse_lines() -> None:
         client.close()
 
     assert lines == ["data: first", "", "data: [DONE]", ""]
+
+
+def test_provider_http_client_captures_stream_request_id() -> None:
+    client, _ = _client_with_transport(
+        lambda _request: httpx.Response(
+            200,
+            content=b"data: [DONE]\n\n",
+            headers={"X-Request-ID": "request-stream-1"},
+        )
+    )
+    response_metadata: dict[str, str] = {"stale": "value"}
+    try:
+        lines = list(
+            iter_sse_post_lines(
+                url="https://provider.example/stream",
+                payload={"stream": True},
+                headers={},
+                timeout_seconds=1,
+                provider_name="provider",
+                http_client=client,
+                response_metadata=response_metadata,
+            )
+        )
+    finally:
+        client.close()
+
+    assert lines == ["data: [DONE]", ""]
+    assert response_metadata == {"request_id": "request-stream-1"}
 
 
 def test_provider_connection_reuse_config_defaults_on_with_rollback() -> None:

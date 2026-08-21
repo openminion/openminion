@@ -26,11 +26,15 @@ class OpenAIRequestCompatProfile:
     collapse_system_messages: bool = False
     disable_fallback_instruction: bool = False
     include_native_tool_contract: bool = True
+    include_stream_tool_contract: bool = False
+    disable_adapter_retries: bool = False
+    preserve_tool_arguments: bool = False
     native_tool_only_instruction: str = ""
     enable_structured_tool_envelope_parse: bool = False
     retry_empty_payload_once: bool = False
     retry_tool_transcript_error_once: bool = False
     empty_payload_retry_instruction: str = ""
+    force_single_required_tool: bool = False
 
 
 def resolve_openai_request_compat(
@@ -43,7 +47,10 @@ def resolve_openai_request_compat(
         return OpenAIRequestCompatProfile(
             profile_id="cortensor_portal",
             disable_fallback_instruction=True,
-            include_native_tool_contract=False,
+            include_stream_tool_contract=True,
+            disable_adapter_retries=True,
+            preserve_tool_arguments=True,
+            force_single_required_tool=True,
         )
     if (
         normalized_request_dialect == MINIMAX_OPENAI_COMPAT_REQUEST_DIALECT

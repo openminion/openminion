@@ -774,7 +774,7 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertIn("https://api.moonshot.ai/v1", output)
         self.assertIn("qwen-dashscope: Qwen via DashScope", output)
         self.assertIn("cortensor-portal: Cortensor Portal", output)
-        self.assertIn("hosted text and text streaming", output)
+        self.assertIn("hosted text, streaming, and native tool calls", output)
         self.assertIn("cortensor-router: Cortensor Router (direct)", output)
         self.assertIn("advanced direct Router connection", output)
         self.assertIn("custom-openai-compatible", output)
