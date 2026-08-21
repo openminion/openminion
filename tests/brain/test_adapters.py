@@ -1322,16 +1322,16 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                     "attachments": ["artifact-ref"],
                 },
                 {
-                    "turn_id": "t-current",
-                    "role": "user",
-                    "content": "current text only",
-                    "attachments": [],
-                },
-                {
                     "turn_id": "t-trimmed",
                     "role": "user",
                     "content": "trimmed",
                     "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current text only",
+                    "attachments": [],
                 },
             ]
         )
@@ -1372,7 +1372,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         mock_svc.build_pack.assert_called_once()
         session_store.list_turns.assert_called_once_with("s1")
 
-    def test_context_adapter_keeps_current_attachment_without_turn_segment(self) -> None:
+    def test_context_adapter_keeps_latest_attachment_without_text_inference(self) -> None:
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 
         mock_svc = fake_context_service(
@@ -1382,7 +1382,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                     "messages": [
                         {
                             "role": "user",
-                            "content": "current image",
+                            "content": "mission objective",
                             "meta": {"segment_ids": ["turn_input"]},
                         }
                     ],
@@ -1394,13 +1394,19 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                 {
                     "turn_id": "t-old",
                     "role": "user",
-                    "content": "older image",
+                    "content": "mission objective",
                     "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "t-repeated",
+                    "role": "user",
+                    "content": "original request",
+                    "attachments": ["must-not-cross-either"],
                 },
                 {
                     "turn_id": "t-current",
                     "role": "user",
-                    "content": "current image",
+                    "content": "original request",
                     "attachments": ["artifact-ref"],
                 },
             ]
@@ -1417,7 +1423,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                 {
                     "turn_id": "t-current",
                     "role": "user",
-                    "content": "current image",
+                    "content": "original request",
                     "attachments": ["artifact-ref"],
                 }
             ],

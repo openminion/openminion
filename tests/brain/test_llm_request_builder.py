@@ -388,6 +388,69 @@ def test_build_request_aligns_images_to_compacted_budgeted_turns(monkeypatch) ->
     assert inspected == [current_ref]
 
 
+def test_build_request_keeps_current_image_with_selected_history(monkeypatch) -> None:
+    _patch_tool_bundle(monkeypatch)
+    prior_ref = "artifact://sha256/" + "a" * 64
+    current_ref = "artifact://sha256/" + "b" * 64
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda _ref: ("image/png", 1),
+    )
+    request = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "selected history",
+                    "meta": {"segment_ids": ["turn:prior"]},
+                },
+                {
+                    "role": "assistant",
+                    "content": "history response",
+                    "meta": {"segment_ids": ["turn:reply"]},
+                },
+                {
+                    "role": "user",
+                    "content": "mission objective",
+                    "meta": {"segment_ids": ["turn_input"]},
+                },
+            ],
+            "turns": [
+                {
+                    "turn_id": "prior",
+                    "role": "user",
+                    "content": "selected history",
+                    "attachments": [prior_ref],
+                },
+                {
+                    "turn_id": "current",
+                    "role": "user",
+                    "content": "original user input",
+                    "attachments": [current_ref],
+                },
+            ],
+        },
+        schema=type("Decision", (), {}),
+        temperature=0.0,
+    )
+
+    images = {
+        message.content: [
+            part.artifact_ref
+            for part in message.content_parts
+            if getattr(part, "source", "") == "artifact"
+        ]
+        for message in request.messages
+        if message.role == "user"
+    }
+    assert images == {
+        "selected history": [prior_ref],
+        "mission objective": [current_ref],
+    }
+
+
 def test_text_only_current_turn_keeps_prior_images_historical(monkeypatch) -> None:
     _patch_tool_bundle(monkeypatch)
     refs = [f"artifact://sha256/{value * 64}" for value in "abcde"]

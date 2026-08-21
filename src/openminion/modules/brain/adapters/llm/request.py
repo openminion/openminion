@@ -41,23 +41,36 @@ def _turn_key(turns: list[Any], index: int) -> str:
     return _turn_fields(turns[index])[0] or f"index:{index}"
 
 
+def _latest_user_turn_id(turns: list[Any]) -> str:
+    for turn in reversed(turns):
+        turn_id, role, _content, _attachments = _turn_fields(turn)
+        if role == "user":
+            return turn_id
+    return ""
+
+
 def _artifact_image_parts_by_turn(
     turns: list[Any], *, selected_turn_ids: set[str] | None = None
 ) -> dict[str, list[Any]]:
     from openminion.modules.llm.schemas import ImageContentPart
 
-    user_indexes = [
+    all_user_indexes = [
         index
         for index, turn in enumerate(turns)
         if _turn_fields(turn)[1] == "user"
-        and (
+    ]
+    if not all_user_indexes:
+        return {}
+    current_index = all_user_indexes[-1]
+    user_indexes = [
+        index
+        for index in all_user_indexes
+        if index == current_index
+        or (
             not selected_turn_ids
-            or _turn_fields(turn)[0] in selected_turn_ids
+            or _turn_fields(turns[index])[0] in selected_turn_ids
         )
     ]
-    if not user_indexes:
-        return {}
-    current_index = user_indexes[-1]
     selected: dict[str, list[Any]] = {}
     count = 0
     total_bytes = 0
@@ -150,7 +163,10 @@ def _message_turn_ids(messages: list[Any]) -> set[str]:
 
 
 def _merge_selected_turn_images(
-    messages: list[Any], images_by_turn: dict[str, list[Any]]
+    messages: list[Any],
+    images_by_turn: dict[str, list[Any]],
+    *,
+    current_turn_id: str,
 ) -> list[Any]:
     matched: set[str] = set()
     for message in messages:
@@ -160,6 +176,13 @@ def _merge_selected_turn_images(
             if images:
                 message.content_parts.extend(images)
                 matched.add(turn_id)
+    if current_turn_id and current_turn_id not in matched:
+        current_images = images_by_turn.get(current_turn_id, [])
+        for message in reversed(messages):
+            if message.role == "user" and current_images:
+                message.content_parts.extend(current_images)
+                matched.add(current_turn_id)
+                break
     if set(images_by_turn) - matched:
         raise LLMCtlError(
             "INVALID_ARGUMENT", "Artifact image context could not be aligned"
@@ -207,9 +230,13 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
 
     messages = [Message.model_validate(m) for m in normalized_pack_messages]
     selected_turn_ids = _message_turn_ids(messages)
+    current_turn_id = _latest_user_turn_id(turns)
+    selected_artifact_turn_ids = set(selected_turn_ids)
+    if messages and current_turn_id:
+        selected_artifact_turn_ids.add(current_turn_id)
     artifact_parts = _artifact_image_parts_by_turn(
         turns,
-        selected_turn_ids=selected_turn_ids or None,
+        selected_turn_ids=selected_artifact_turn_ids or None,
     )
     turn_messages: list[Any] = []
     images_by_turn: dict[str, list[Any]] = {}
@@ -258,8 +285,12 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
             )
 
     if messages:
-        if selected_turn_ids:
-            return _merge_selected_turn_images(messages, images_by_turn)
+        if images_by_turn:
+            return _merge_selected_turn_images(
+                messages,
+                images_by_turn,
+                current_turn_id=current_turn_id,
+            )
         system_messages = [
             message
             for message in messages
