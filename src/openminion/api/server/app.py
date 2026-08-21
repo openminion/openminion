@@ -10,16 +10,10 @@ from urllib.parse import urlparse
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthHTTPMixin, ClientAuthService
-from openminion.api.server.client_media import close_client_state, install_client_state
+from openminion.api.server import client_approvals, client_media
 from openminion.api.server.dispatch import dispatch_request
-from openminion.api.server.observability import (
-    finalize_api_response as _finalize_api_response,
-    get_api_metrics_consistency_stamp,
-    get_api_metrics_snapshot,
-    log_request_done as _log_request_done,
-    observe_request_metrics as _observe_request_metrics,
-    reset_api_metrics,
-)
+from openminion.api.server import observability as _observability
+from openminion.api.server.observability import get_api_metrics_consistency_stamp, get_api_metrics_snapshot, reset_api_metrics  # fmt: skip
 
 
 class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
@@ -31,12 +25,13 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
-        if not self._authenticate_request("GET", parsed.path, request_id):
+        if not self._authenticate_request("GET", path, request_id, query=parsed.query):
             return
         status, payload = dispatch_request(
             "GET",
-            parsed.path,
+            path,
             self.config_path,
             query=parsed.query,
             runtime=self.runtime,
@@ -80,18 +75,21 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
+        path = parsed.path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
-        if not self._authenticate_request("DELETE", parsed.path, request_id):
+        if not self._authenticate_request(
+            "DELETE", path, request_id, query=parsed.query
+        ):
             return
         try:
-            payload = self._read_optional_json_body(path=parsed.path)
+            payload = self._read_optional_json_body(path=path)
         except ValueError as exc:
-            self._write_invalid_json("DELETE", parsed.path, request_id, started_at, exc)
+            self._write_invalid_json("DELETE", path, request_id, started_at, exc)
             return
         status, response_payload = dispatch_request(
             "DELETE",
-            parsed.path,
+            path,
             self.config_path,
             body=payload,
             query=parsed.query,
@@ -116,8 +114,8 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             start_sse_response=lambda: _start_sse_stream_response(self, request_id),
             write_sse_event=self._write_sse_event,
             write_json=self._write_json,
-            observe_request_metrics=_observe_request_metrics,
-            log_request_done=_log_request_done,
+            observe_request_metrics=_observability.observe_request_metrics,
+            log_request_done=_observability.log_request_done,
             perf_counter=perf_counter,
             desktop_client=self.client_identity is not None,
             **self._client_stream_context(),
@@ -139,7 +137,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
             details={"path": path},
             retryable=False,
         )
-        response = _finalize_api_response(
+        response = _observability.finalize_api_response(
             payload=payload,
             status=status,
             method=method,
@@ -199,11 +197,18 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(server_address, handler_cls)
         self._runtime = runtime
-        self._client_state = install_client_state(handler_cls, runtime)
+        approvals = client_approvals.install_approvals(handler_cls, runtime)
+        try:
+            media = client_media.install_media(handler_cls, runtime)
+            self._client_state = approvals, media
+        except Exception:
+            client_approvals.close_approvals(approvals)
+            raise
 
     def server_close(self) -> None:
         try:
-            close_client_state(self._client_state)
+            client_media.close_media(self._client_state[1])
+            client_approvals.close_approvals(self._client_state[0])
             if self._runtime is not None:
                 self._runtime.close()
         finally:

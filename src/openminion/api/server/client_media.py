@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from time import monotonic
 from typing import Any, BinaryIO, Callable
+from unicodedata import category
 from urllib.parse import unquote, unquote_to_bytes
 
 from openminion.api.responses.serialization import error_response, normalize_request_id
@@ -19,7 +20,6 @@ from openminion.modules.artifact.config import from_base_config
 from openminion.modules.artifact.control import ArtifactCtl
 
 from .client_auth import ClientAuthService, ClientIdentity, _header_values
-from .client_approvals import close_approvals, install_approvals
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -127,6 +127,7 @@ class ClientMediaCoordinator:
         self._lock = RLock()
         self._records: dict[str, _MediaRecord] = {}
         self._reservations: dict[str, _UploadReservation] = {}
+        self._cancelled_reservations: dict[str, str] = {}
         self._closing_sessions: dict[str, int] = {}
         self._closed = False
 
@@ -200,9 +201,12 @@ class ClientMediaCoordinator:
         with self._lock:
             current = self._reservations.get(reservation.client_id)
             if current != reservation:
-                if self._closed:
+                outcome = self._cancelled_reservations.pop(reservation.token, None)
+                if self._closed or outcome == "forbidden":
                     raise _media_error(HTTPStatus.FORBIDDEN, "forbidden")
-                if self._closing_sessions.get(reservation.session_id, 0):
+                if outcome == "session_closed" or self._closing_sessions.get(
+                    reservation.session_id, 0
+                ):
                     raise _media_error(HTTPStatus.CONFLICT, "session_closed")
                 raise _media_error(HTTPStatus.BAD_REQUEST, "invalid_request")
             if not self._client_auth.is_client_active(reservation.client_id):
@@ -231,6 +235,7 @@ class ClientMediaCoordinator:
         with self._lock:
             if self._reservations.get(reservation.client_id) == reservation:
                 self._reservations.pop(reservation.client_id, None)
+            self._cancelled_reservations.pop(reservation.token, None)
 
     def open_media(
         self,
@@ -349,7 +354,8 @@ class ClientMediaCoordinator:
     def revoke_client(self, identity: ClientIdentity) -> None:
         with self._lock:
             self._client_auth.revoke(identity)
-            self._reservations.pop(identity.client_id, None)
+            if reservation := self._reservations.pop(identity.client_id, None):
+                self._cancelled_reservations[reservation.token] = "forbidden"
             self._records = {
                 key: value
                 for key, value in self._records.items()
@@ -361,6 +367,9 @@ class ClientMediaCoordinator:
             self._closing_sessions[session_id] = (
                 self._closing_sessions.get(session_id, 0) + 1
             )
+            for reservation in self._reservations.values():
+                if reservation.session_id == session_id:
+                    self._cancelled_reservations[reservation.token] = "session_closed"
             self._reservations = {
                 key: value
                 for key, value in self._reservations.items()
@@ -380,6 +389,7 @@ class ClientMediaCoordinator:
             self._closed = True
             self._records.clear()
             self._reservations.clear()
+            self._cancelled_reservations.clear()
         self._artifactctl.close()
 
     def _finish_session_close(self, session_id: str) -> None:
@@ -397,6 +407,9 @@ class ClientMediaCoordinator:
         media_id: str,
     ) -> _MediaRecord:
         self._require_open_identity_locked(identity)
+        self._require_active_session_locked(session_id)
+        if self._closing_sessions.get(session_id, 0):
+            raise _media_error(HTTPStatus.CONFLICT, "session_closed")
         record = self._records.get(media_id)
         if (
             record is None
@@ -404,9 +417,17 @@ class ClientMediaCoordinator:
             or record.session_id != session_id
         ):
             raise _media_error(HTTPStatus.NOT_FOUND, "media_not_found")
-        if record.state == "unbound" and record.expires_at <= self._now():
+        now = self._now()
+        expired = record.state == "unbound" and record.expires_at <= now
+        expired = expired or (
+            record.state == "bound_terminal"
+            and record.terminal_at is not None
+            and record.terminal_at + _TERMINAL_TTL <= now
+        )
+        if expired:
             self._records.pop(media_id, None)
             raise _media_error(HTTPStatus.GONE, "media_expired")
+        self._purge_locked()
         return record
 
     def _require_open_identity_locked(self, identity: ClientIdentity) -> None:
@@ -420,7 +441,7 @@ class ClientMediaCoordinator:
             status = record.get("status")
         if record is None:
             raise _media_error(HTTPStatus.NOT_FOUND, "media_not_found")
-        if status == "closed":
+        if status != "active":
             raise _media_error(HTTPStatus.CONFLICT, "session_closed")
 
     def _pending_locked(self, client_id: str, session_id: str) -> list[_MediaRecord]:
@@ -489,42 +510,6 @@ def install_media(
 def close_media(coordinator: ClientMediaCoordinator | None) -> None:
     if coordinator is not None:
         coordinator.close()
-
-
-def install_client_state(handler_cls: type[Any], runtime: Any) -> tuple[Any, Any]:
-    approvals = install_approvals(handler_cls, runtime)
-    try:
-        return approvals, install_media(handler_cls, runtime)
-    except Exception:
-        close_approvals(approvals)
-        raise
-
-
-def close_client_state(state: tuple[Any, Any]) -> None:
-    approvals, media = state
-    close_media(media)
-    close_approvals(approvals)
-
-
-def session_cancel_callback(ctx: Any) -> Callable[[str], Callable[[], None]] | None:
-    if ctx.client_approvals is None and ctx.client_media is None:
-        return None
-
-    def cancel(session_id: str) -> Callable[[], None]:
-        cleanups = []
-        for owner in (ctx.client_approvals, ctx.client_media):
-            if owner is not None:
-                cleanup = owner.cancel_session(session_id, "session_closed")
-                if cleanup is not None:
-                    cleanups.append(cleanup)
-
-        def finish() -> None:
-            for cleanup in reversed(cleanups):
-                cleanup()
-
-        return finish
-
-    return cancel
 
 
 def handle_media_http(
@@ -708,11 +693,13 @@ def _validate_request_headers(handler: Any, operation: str) -> None:
         "X-OpenMinion-Media-Name",
     ):
         if len(_header_values(handler.headers, name)) > 1:
+            handler.close_connection = True
             raise _media_error(HTTPStatus.BAD_REQUEST, "invalid_request")
     if operation != "upload" and (
         handler.headers.get("Content-Type") is not None
         or handler.headers.get("X-OpenMinion-Media-Name") is not None
     ):
+        handler.close_connection = True
         raise _media_error(HTTPStatus.BAD_REQUEST, "invalid_request")
 
 
@@ -809,7 +796,7 @@ def _decode_name(value: str) -> str:
         or len(name.encode("utf-8")) > 128
         or name in {".", ".."}
         or any(char in name for char in ("/", "\\", "\0"))
-        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+        or any(category(char) == "Cc" for char in name)
     ):
         raise _media_error(HTTPStatus.BAD_REQUEST, "invalid_request")
     return name
@@ -889,10 +876,7 @@ def _media_error(status: HTTPStatus, code: str) -> ClientMediaError:
 __all__ = [
     "ClientMediaCoordinator",
     "ClientMediaError",
-    "close_client_state",
     "close_media",
     "handle_media_http",
-    "install_client_state",
     "install_media",
-    "session_cancel_callback",
 ]

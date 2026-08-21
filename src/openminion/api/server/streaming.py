@@ -580,26 +580,38 @@ def _prepare_stream_submission(
         )
     submission: TurnSubmission | None = None
     if error is None:
-        submission, error_status, error_payload = _open_stream_submission(
-            body=submission_body,
-            config_path=config_path,
-            runtime=runtime,
-            desktop_approval_requester=desktop_approval_requester,
-            resolved_attachment_refs=resolved_refs,
-        )
+        try:
+            submission, error_status, error_payload = _open_stream_submission(
+                body=submission_body,
+                config_path=config_path,
+                runtime=runtime,
+                desktop_approval_requester=desktop_approval_requester,
+                resolved_attachment_refs=resolved_refs,
+            )
+            _bind_desktop_media_completion(
+                submission,
+                body=body,
+                resolved_refs=resolved_refs,
+                client_media=client_media,
+                client_identity=client_identity,
+            )
+        except Exception:
+            _unbind_desktop_media(
+                body,
+                resolved_refs=resolved_refs,
+                client_media=client_media,
+                client_identity=client_identity,
+            )
+            raise
         if submission is None:
             assert error_status is not None and error_payload is not None
             error = error_status, error_payload
-            if (
-                resolved_refs
-                and client_media is not None
-                and client_identity is not None
-            ):
-                client_media.unbind_before_start(
-                    client_identity,
-                    str(body["session_id"]),
-                    str(body["trace_id"]),
-                )
+            _unbind_desktop_media(
+                body,
+                resolved_refs=resolved_refs,
+                client_media=client_media,
+                client_identity=client_identity,
+            )
     if error is not None:
         _record_stream_response(
             status=error[0],
@@ -615,12 +627,41 @@ def _prepare_stream_submission(
         )
         return None
     assert submission is not None
-    if resolved_refs and client_media is not None and client_identity is not None:
-        session_id, trace_id = str(body["session_id"]), str(body["trace_id"])
-        submission.handle.add_done_callback(
-            lambda: client_media.complete_trace(client_identity, session_id, trace_id)
-        )
     return submission
+
+
+def _bind_desktop_media_completion(
+    submission: TurnSubmission | None,
+    *,
+    body: dict[str, Any],
+    resolved_refs: tuple[str, ...],
+    client_media: "ClientMediaCoordinator | None",
+    client_identity: "ClientIdentity | None",
+) -> None:
+    if submission is None or not resolved_refs or client_media is None:
+        return
+    if client_identity is None:
+        return
+    session_id, trace_id = str(body["session_id"]), str(body["trace_id"])
+    submission.handle.add_done_callback(
+        lambda: client_media.complete_trace(client_identity, session_id, trace_id)
+    )
+
+
+def _unbind_desktop_media(
+    body: dict[str, Any],
+    *,
+    resolved_refs: tuple[str, ...],
+    client_media: "ClientMediaCoordinator | None",
+    client_identity: "ClientIdentity | None",
+) -> None:
+    if not resolved_refs or client_media is None or client_identity is None:
+        return
+    client_media.unbind_before_start(
+        client_identity,
+        str(body["session_id"]),
+        str(body["trace_id"]),
+    )
 
 
 def handle_turn_stream_request(

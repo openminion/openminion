@@ -456,12 +456,7 @@ class ClientAuthHTTPMixin:
                     "Desktop turn streams require Accept: text/event-stream.",
                 )
             if clients and method.upper() == "GET":
-                try:
-                    content_length = int(self.headers.get("Content-Length", "0"))
-                except ValueError as exc:
-                    raise ClientAuthError(
-                        "invalid_request", "Invalid request body."
-                    ) from exc
+                content_length = _client_get_content_length(self)
                 transfer_encoding = self.headers.get("Transfer-Encoding")
                 if transfer_encoding or content_length != 0:
                     if not transfer_encoding and 0 < content_length <= 4 * 1024:
@@ -559,6 +554,14 @@ class ClientAuthHTTPMixin:
             content_length_raw=content_length_raw,
             raw_body=raw_body,
         )
+
+
+def _client_get_content_length(handler: Any) -> int:
+    try:
+        return int(handler.headers.get("Content-Length", "0"))
+    except ValueError as exc:
+        handler.close_connection = True
+        raise ClientAuthError("invalid_request", "Invalid request body.") from exc
 
 
 def _header_values(headers: object, name: str) -> tuple[str, ...]:

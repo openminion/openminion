@@ -14,12 +14,12 @@ from openminion.api.queries.sessions import (
 )  # fmt: skip
 
 from . import client_approvals as approvals
-from openminion.api.server.client_media import session_cancel_callback
 from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,
     runtime_unavailable_route_result,
+    session_cancel_callback,
 )
 
 
