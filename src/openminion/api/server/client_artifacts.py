@@ -34,6 +34,18 @@ _PATH_TOKEN = re.compile(
     r"(?:(?<=^)|(?<=[\s\"'=\(\[\{]))(?:/|[A-Za-z]:[\\/]|\\\\)[^\s\"',\)\]\}]+"
 )
 _TEXT_MIMES = frozenset({"text/plain", "application/json"})
+_BINARY_SIGNATURES = (
+    b"%PDF-",
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF87a",
+    b"GIF89a",
+    b"PK\x03\x04",
+    b"PK\x05\x06",
+    b"\x1f\x8b",
+    b"\x7fELF",
+    b"SQLite format 3\x00",
+)
 
 
 class ClientArtifactError(RuntimeError):
@@ -276,7 +288,7 @@ class ClientArtifactCoordinator:
             raise _error("artifact_missing") from exc
         if len(data) > 256 * 1024:
             raise _error("content_too_large")
-        if len(data) != int(meta.size_bytes):
+        if len(data) != int(meta.size_bytes) or data.startswith(_BINARY_SIGNATURES):
             raise _error("artifact_unsupported")
         try:
             text = data.decode("utf-8")
@@ -563,7 +575,7 @@ class ClientArtifactCoordinator:
             "artifact_id": record.artifact_id,
             "session_id": session_id,
             "kind": "artifact",
-            "display_name": _redact_paths(display_name),
+            "display_name": _project_text(display_name),
             "mime_type": mime,
             "size_bytes": size,
             "created_at": created_at,
@@ -770,7 +782,13 @@ def _project_json_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_project_json_value(item) for item in value]
     if isinstance(value, dict):
-        return {key: _project_json_value(item) for key, item in value.items()}
+        projected: dict[str, Any] = {}
+        for key, item in value.items():
+            safe_key = _project_text(key)
+            if safe_key in projected:
+                raise _error("artifact_unsupported")
+            projected[safe_key] = _project_json_value(item)
+        return projected
     return value
 
 

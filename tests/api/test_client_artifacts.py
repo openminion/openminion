@@ -73,7 +73,8 @@ class _CredentialArtifacts(_Artifacts):
 
 class _JsonArtifacts(_Artifacts):
     payload = (
-        b'{"count":2,"enabled":true,"nested":{"path":"/Users/person/x",'
+        b'{"count":2,"enabled":true,"/Users/person/key":"path-key",'
+        b'"api_key=secret-value":"secret-key","nested":{"path":"/Users/person/x",'
         b'"secret":"api_key=secret-value"},"items":[null,"safe"]}'
     )
 
@@ -85,6 +86,17 @@ class _JsonArtifacts(_Artifacts):
 
 class _ControlByteArtifacts(_Artifacts):
     payload = b"plain\x00binary"
+
+
+class _BinarySignatureArtifacts(_Artifacts):
+    payload = b"%PDF-1.7\nsynthetic"
+
+
+class _SecretNameArtifacts(_Artifacts):
+    def get(self, artifact_ref):
+        result = super().get(artifact_ref)
+        result.label = "api_key=secret-value"
+        return result
 
 
 class _UnavailableArtifacts(_Artifacts):
@@ -614,6 +626,8 @@ def test_json_content_preserves_shape_and_redacts_nested_scalars(monkeypatch) ->
     assert projected == {
         "count": 2,
         "enabled": True,
+        "[PATH REDACTED]": "path-key",
+        "api_key=[REDACTED]": "secret-key",
         "nested": {
             "path": "[PATH REDACTED]",
             "secret": "api_key=[REDACTED]",
@@ -647,6 +661,53 @@ def test_text_content_rejects_binary_control_bytes(monkeypatch) -> None:
         )
 
     assert raised.value.code == "artifact_unsupported"
+
+
+def test_text_content_rejects_binary_file_signatures(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_BinarySignatureArtifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    with pytest.raises(ClientArtifactError) as raised:
+        coordinator.read_artifact(
+            identity,
+            "session-1",
+            catalog["artifacts"][0]["artifact_id"],
+            cursor=None,
+            limit_bytes=64 * 1024,
+        )
+
+    assert raised.value.code == "artifact_unsupported"
+
+
+def test_catalog_display_name_uses_secret_redaction(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_SecretNameArtifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    assert catalog["artifacts"][0]["display_name"] == "api_key=[REDACTED]"
+    assert "secret-value" not in repr(catalog)
 
 
 @pytest.mark.parametrize(
