@@ -546,6 +546,9 @@ def test_profile_overrides_and_metadata_paths() -> None:
                         "turn_kind": "check",
                         "allowed_tools": ["file.read", "", "time"],
                         "max_iterations": 9,
+                        "profile_id": "ops_minimal",
+                        "target_id": "host:local",
+                        "cron_job_id": "job-1",
                     }
                 }
             )
@@ -556,6 +559,9 @@ def test_profile_overrides_and_metadata_paths() -> None:
         "allowed_tools": frozenset({"file.read", "time"}),
         "max_iterations": 3,
         "write_authorized": False,
+        "profile_id": "ops_minimal",
+        "target_id": "host:local",
+        "task_id": "job-1",
     }
     watch_action = _watch_profile_overrides(
         _ctx(

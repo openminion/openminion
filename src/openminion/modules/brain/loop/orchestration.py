@@ -25,6 +25,7 @@ from openminion.modules.brain.loop.tools.runtime import (
     DefaultAdaptiveToolLoopLLMRuntime,
     build_runtime_tool_specs,
 )
+from openminion.modules.llm.client_call import response_cost_payload
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
@@ -667,7 +668,6 @@ def decide(
 
     reconsider_clarification = False
     clarification_reconsidered = False
-    empty_payload_retry_used = False
     for attempt in range(max_retries + 1):
         logger.emit(
             "llm.identity_audit",
@@ -759,11 +759,10 @@ def decide(
         if not _is_empty_entry_response(response):
             break
         if getattr(response, "empty_payload_recovered", False) is True:
-            if not empty_payload_retry_used and attempt < max_retries:
-                empty_payload_retry_used = True
+            if attempt < max_retries:
                 continue
             raise ProviderError(
-                "Provider returned no usable entry response after one recovery retry",
+                "Provider returned no usable entry response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
         if (
@@ -885,6 +884,7 @@ def decide(
             "model": model,
             "prompt_context_id": context.get("prompt_context_id"),
             "usage": usage_payload,
+            **response_cost_payload(response),
             "entry_tool_spec_count": len(tool_specs),
             **request_metrics,
             "response_bytes": _entry_response_bytes(response),

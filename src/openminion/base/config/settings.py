@@ -1,7 +1,5 @@
 """User/project/local settings resolution."""
 
-from __future__ import annotations
-
 import copy
 import json
 import logging
@@ -74,7 +72,7 @@ class SettingsResolver:
         hooks = self.load().get("hooks", {})
         if not isinstance(hooks, Mapping):
             return []
-        entries = hooks.get(str(event_type or "").strip(), [])
+        entries = hooks.get(event_type.strip(), [])
         if not isinstance(entries, list):
             return []
         normalized: list[dict[str, str]] = []

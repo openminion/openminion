@@ -1,7 +1,5 @@
 """HTTP routes for skill catalog, proposal, and suggestion actions."""
 
-from __future__ import annotations
-
 import re
 from typing import Any
 from urllib.parse import unquote

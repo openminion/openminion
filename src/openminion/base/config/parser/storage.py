@@ -1,6 +1,5 @@
 """Storage, vector, and self-improvement config parsing helpers."""
 
-from __future__ import annotations
 from typing import Any
 from openminion.base.config.base import DEFAULT_STORAGE_PATH
 from openminion.base.config.core import OpenMinionConfig, StorageConfig, VectorConfig
@@ -101,7 +100,7 @@ def _storage_context_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
             "postgres_pool_max": config.storage.postgres_pool_max,
         },
         "self_improvement": {
-            "enabled": bool(config.self_improvement.enabled),
+            "enabled": config.self_improvement.enabled,
             "notes_path": config.self_improvement.notes_path,
             "application_mode": _normalize_self_improvement_mode(
                 config.self_improvement.application_mode
@@ -109,9 +108,7 @@ def _storage_context_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
             "activation_threshold": config.self_improvement.activation_threshold,
             "max_applied_notes": config.self_improvement.max_applied_notes,
             "min_token_overlap": config.self_improvement.min_token_overlap,
-            "auto_capture_tool_failures": bool(
-                config.self_improvement.auto_capture_tool_failures
-            ),
+            "auto_capture_tool_failures": config.self_improvement.auto_capture_tool_failures,
         },
         **_identity_context_to_payload(config),
     }

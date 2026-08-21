@@ -121,8 +121,6 @@ def _provider_files(name: str) -> dict[str, str]:
     class_base = _class_base(name)
     return {
         f"src/openminion/providers/{module}.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from openminion.modules.llm.providers.base import (\n"
             "    LLMProvider,\n"
             "    ProviderRequest,\n"
@@ -150,8 +148,6 @@ def _channel_files(name: str) -> dict[str, str]:
     class_base = _class_base(name)
     return {
         f"src/openminion/channels/{module}.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from datetime import timezone\n"
             "\n"
             "from openminion.base.channel.interface import Channel\n"
@@ -175,8 +171,6 @@ def _plugin_files(name: str) -> dict[str, str]:
     class_base = _class_base(name)
     return {
         f"src/openminion/extensions/custom/{module}.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from openminion.base.types import AgentResponse, Message\n"
             "from openminion.services.runtime.plugins import Plugin, PluginContext\n"
             "\n"
@@ -249,8 +243,6 @@ def _tool_files(name: str) -> dict[str, str]:
     class_base = _class_base(name)
     return {
         f"src/openminion/tools/{module}.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from typing import Any, Mapping\n"
             "\n"
             "from openminion.modules.tool import (\n"
@@ -395,8 +387,6 @@ def _pack_memory_files(name: str) -> dict[str, str]:
             "3. Pack manifest with extension-api tier expectation.\n"
         ),
         f"{base}/plugin.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from typing import Any, Mapping\n"
             "\n"
             "from openminion.modules.tool import (\n"
@@ -488,8 +478,6 @@ def _pack_automation_files(name: str) -> dict[str, str]:
             "3. Pack manifest with a minimal runtime entrypoint.\n"
         ),
         f"{base}/plugin.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from dataclasses import dataclass, field\n"
             "from typing import Any\n"
             "\n"
@@ -580,8 +568,6 @@ def _pack_channels_chat_files(name: str) -> dict[str, str]:
             '__all__ = ["SlackChannel", "DiscordChannel", "TelegramChannel", "WhatsAppChannel"]\n'
         ),
         f"{base}/factory.py": (
-            "from __future__ import annotations\n"
-            "\n"
             "from openminion.base.channel.interface import Channel\n"
             "\n"
             "from .adapters.discord import DiscordChannel\n"
@@ -625,8 +611,6 @@ def _chat_channel_adapter_source(
     *, class_name: str, channel_name: str, default_target: str
 ) -> str:
     return (
-        "from __future__ import annotations\n"
-        "\n"
         "from datetime import timezone\n"
         "from typing import Any, Mapping\n"
         "\n"

@@ -11,9 +11,15 @@ from openminion.base.config.runtime import RuntimeConfig
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
+from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.schema_service import ToolSchemaService
 from openminion.tools.mcp.interfaces import MCPCapabilityChangeListener
 from openminion.tools.mcp.manager import MCPFleetManager
+from openminion.tools.mcp.schemas import (
+    MCPListedResource,
+    MCPListedResourceTemplate,
+    MCPListedTool,
+)
 
 
 FIXTURE_SERVER_PATH = (
@@ -208,3 +214,96 @@ def test_list_changed_hot_reload_updates_live_registry_and_hides_removed_tool() 
         manager = getattr(bootstrap, "mcp_manager", None)
         if manager is not None:
             manager.close()
+
+
+def test_resource_and_template_catalogs_are_independent() -> None:
+    manager = MCPFleetManager(servers=[])
+    manager._update_catalog(  # noqa: SLF001
+        primitive="resources",
+        server_name="fixture",
+        items=[
+            MCPListedResource(
+                server_name="fixture",
+                resource_uri="file://fixture/readme.md",
+                resource_name="README",
+                description="",
+                mime_type="text/markdown",
+            )
+        ],
+    )
+    manager._update_catalog(  # noqa: SLF001
+        primitive="resource_templates",
+        server_name="fixture",
+        items=[
+            MCPListedResourceTemplate(
+                server_name="fixture",
+                uri_template="file://fixture/{name}",
+                template_name="document",
+                description="",
+                mime_type="text/plain",
+                arguments_schema={},
+            )
+        ],
+    )
+
+    assert manager._catalog_for("resources", "fixture") == (  # noqa: SLF001
+        "file://fixture/readme.md",
+    )
+    assert manager._catalog_for("resource_templates", "fixture") == (  # noqa: SLF001
+        "file://fixture/{name}",
+    )
+
+
+def test_duplicate_capability_refreshes_are_coalesced(monkeypatch) -> None:
+    manager = MCPFleetManager(servers=_runtime_config().mcp_servers)
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[tuple[str, str]] = []
+
+    def _refresh(*, server_name: str, primitive: str) -> None:
+        calls.append((server_name, primitive))
+        started.set()
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(manager, "_refresh_capability_change", _refresh)
+    try:
+        manager._on_capability_change(  # noqa: SLF001
+            server_name="fixture", primitive="tools"
+        )
+        assert started.wait(timeout=5)
+        manager._on_capability_change(  # noqa: SLF001
+            server_name="fixture", primitive="tools"
+        )
+        release.set()
+        _wait_for(lambda: not manager._refresh_pending)  # noqa: SLF001
+
+        assert calls == [("fixture", "tools")]
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_live_registration_failure_is_returned_for_event_reporting() -> None:
+    class _RejectingRegistry(ToolRegistry):
+        def register(self, tool) -> None:
+            raise RuntimeError(f"rejected {tool.name}")
+
+    manager = MCPFleetManager(servers=[])
+    manager.attach_registry(_RejectingRegistry())
+    errors = manager._apply_live_registry_delta(  # noqa: SLF001
+        primitive="tools",
+        server_name="fixture",
+        items=[
+            MCPListedTool(
+                server_name="fixture",
+                remote_name="new-tool",
+                description="",
+                input_schema={"type": "object"},
+            )
+        ],
+        added=("new-tool",),
+        removed=(),
+    )
+
+    assert len(errors) == 1
+    assert "mcp.fixture.new_tool:RuntimeError:rejected" in errors[0]

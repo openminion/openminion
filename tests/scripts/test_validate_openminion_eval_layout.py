@@ -30,6 +30,7 @@ def test_live_eval_layout_is_admitted() -> None:
     assert "reports.py" in MODULE.ALLOWED_ROOT_FILES
     assert "subject_adapters.py" in MODULE.ALLOWED_ROOT_FILES
     assert "suite_selection.py" in MODULE.ALLOWED_ROOT_FILES
+    assert "runtime_reliability" in MODULE.REQUIRED_TOP_LEVEL_DIRS
 
 
 def test_eval_layout_rejects_unexpected_root_file(tmp_path: Path) -> None:

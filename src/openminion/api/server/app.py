@@ -1,7 +1,5 @@
 """Stdlib HTTP and SSE transport for the OpenMinion API."""
 
-from __future__ import annotations
-
 import logging
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,7 +51,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             self._write_invalid_json("POST", path, request_id, started_at, exc)
             return
 
-        accept_header = str(self.headers.get("Accept", "") or "").lower()
+        accept_header = (self.headers.get("Accept") or "").lower()
         if path == "/v1/turn/stream" and "text/event-stream" in accept_header:
             self._handle_turn_stream(body=payload, request_id=request_id)
             return
@@ -177,7 +175,6 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         self.wfile.write(_json_dumps(payload).encode("utf-8"))
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A003
-        # Keep API tests and CLI output deterministic.
         return
 
 

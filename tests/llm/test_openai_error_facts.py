@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 import pytest
@@ -130,6 +130,29 @@ def test_openai_error_facts_redact_nested_credentials() -> None:
     assert facts["upstream_message"] == "failed for Bearer [REDACTED]"
 
 
+def test_http_post_can_disable_dns_curl_resubmission() -> None:
+    with (
+        patch(
+            "openminion.modules.llm.providers.transport.http._read_http_response",
+            side_effect=URLError("temporary failure in name resolution"),
+        ),
+        patch(
+            "openminion.modules.llm.providers.transport.http.curl_json_post"
+        ) as curl_post,
+        pytest.raises(LLMCtlError),
+    ):
+        http_json_post(
+            url="https://api.cortensor.app/v1/chat/completions",
+            payload={"model": "oss-20b"},
+            headers={},
+            timeout_seconds=480,
+            provider_name="openai",
+            allow_curl_fallback=False,
+        )
+
+    curl_post.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "raw_body",
     [
@@ -143,7 +166,7 @@ def test_urllib_malformed_responses_do_not_leak(raw_body: str) -> None:
     with (
         patch(
             "openminion.modules.llm.providers.transport.http._read_http_response",
-            return_value=(200, raw_body),
+            return_value=(200, raw_body, ""),
         ),
         patch(
             "openminion.modules.llm.providers.transport.http.write_llm_debug_event",

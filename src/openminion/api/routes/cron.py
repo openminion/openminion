@@ -1,7 +1,5 @@
 """Cron route handlers for the developer API."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from urllib.parse import unquote
@@ -32,7 +30,7 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, object] | None,
     query: str | None,
 ) -> RouteResult | None:
     if method_name == "GET" and _JOBS_RE.fullmatch(path):
@@ -67,7 +65,7 @@ def _list_jobs(ctx: APIRouteContext) -> RouteResult:
         )
 
 
-def _create_job(ctx: APIRouteContext, *, body: dict | None) -> RouteResult:
+def _create_job(ctx: APIRouteContext, *, body: dict[str, object] | None) -> RouteResult:
     if ctx.runtime is None:
         return _runtime_unavailable("/v1/cron/jobs")
     if body is None:

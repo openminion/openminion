@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import importlib.util
 import shutil
 from dataclasses import dataclass, field

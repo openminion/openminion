@@ -49,6 +49,7 @@ OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     "runtime.ops.process.inspect",
     "runtime.ops.network.port_owner",
     "runtime.ops.command.observe",
+    "runtime.ops.file.read",
     "runtime.ops.command.plan",
     "runtime.ops.command.run",
     "runtime.ops.job.inspect",

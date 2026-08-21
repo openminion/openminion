@@ -1,7 +1,5 @@
 """Turn route handlers for submit, stream, and cancel."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from typing import Any, cast
@@ -54,7 +52,7 @@ def _handle_cancel_turn(
                 details={"trace_id": trace_id},
                 retryable=False,
             )
-        if isinstance(body, dict):
+        if body is not None:
             session_id = str(body.get("session_id", "")).strip()
             if session_id:
                 event_payload = {
@@ -196,10 +194,7 @@ def _handle_v1_turn(
             include_chunks=include_chunks,
             chunk_timeout_s=0.1,
         )
-        payload = {
-            "ok": True,
-            **result_payload,
-        }
+        payload = {"ok": True, **result_payload}
         return RouteResult(
             status=HTTPStatus.OK,
             payload=payload,

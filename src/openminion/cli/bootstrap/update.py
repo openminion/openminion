@@ -32,11 +32,9 @@ class UpdateCheckResult:
 
 
 def default_update_cache_path(*, data_root: Path | None = None) -> Path:
-    root = (
-        Path(data_root).expanduser()
-        if data_root is not None
-        else Path.home() / ".openminion"
-    )
+    root = Path.home() / ".openminion"
+    if data_root is not None:
+        root = Path(data_root).expanduser()
     return root / "update-check.json"
 
 
@@ -54,7 +52,7 @@ def check_update_available(
     """Return update-check result, or None when disabled/unavailable."""
     if _update_check_disabled(env or {}):
         return None
-    current_time = float(time.time() if now is None else now)
+    current_time = time.time() if now is None else now
     cached = _read_cached_result(
         cache_path=cache_path,
         current_version=current_version,
@@ -76,16 +74,16 @@ def check_update_available(
 
 
 def _update_check_disabled(env: Mapping[str, str]) -> bool:
-    no_update = str(env.get(OPENMINION_NO_UPDATE_CHECK_ENV, "") or "").strip().lower()
+    no_update = (env.get(OPENMINION_NO_UPDATE_CHECK_ENV, "") or "").strip().lower()
     if no_update in {"1", "true", "yes", "on"}:
         return True
-    enabled = str(env.get(OPENMINION_UPDATE_CHECK_ENV, "") or "").strip().lower()
+    enabled = (env.get(OPENMINION_UPDATE_CHECK_ENV, "") or "").strip().lower()
     return enabled in {"0", "false", "no", "off"}
 
 
 def _fetch_latest_version(package_name: str, timeout_seconds: float) -> str:
     url = f"https://pypi.org/pypi/{package_name}/json"
-    with urlopen(url, timeout=float(timeout_seconds)) as response:  # noqa: S310
+    with urlopen(url, timeout=timeout_seconds) as response:  # noqa: S310
         payload = json.loads(response.read().decode("utf-8"))
     info = payload.get("info", {}) if isinstance(payload, dict) else {}
     return str(info.get("version", "") or "").strip()
@@ -105,7 +103,7 @@ def _build_result(*, current_version: str, latest_version: str) -> UpdateCheckRe
 
 
 def _version_parts(value: str) -> tuple[int, ...]:
-    match = re.match(r"^\s*(\d+(?:\.\d+)*)", str(value or ""))
+    match = re.match(r"^\s*(\d+(?:\.\d+)*)", value or "")
     if match is None:
         return ()
     return tuple(int(part) for part in match.group(1).split("."))

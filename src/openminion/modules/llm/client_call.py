@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
@@ -116,6 +117,23 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
         )
         usage["total_source"] = "derived"
     return usage
+
+
+def response_cost_payload(response: Any) -> dict[str, Any]:
+    raw_cost = (
+        response.get("cost_usd")
+        if isinstance(response, dict)
+        else getattr(response, "cost_usd", None)
+    )
+    if isinstance(raw_cost, bool):
+        return {}
+    try:
+        cost = float(raw_cost)
+    except (TypeError, ValueError):
+        return {}
+    if cost < 0 or not math.isfinite(cost):
+        return {}
+    return {"cost_usd": cost, "cost_source": "provider"}
 
 
 def optional_int(value: Any) -> int | None:
@@ -524,6 +542,7 @@ __all__ = [
     "request_metadata",
     "request_mode_name",
     "request_purpose",
+    "response_cost_payload",
     "split_system_and_conversation",
     "token_usage_values",
     "trim_submit_output_history",

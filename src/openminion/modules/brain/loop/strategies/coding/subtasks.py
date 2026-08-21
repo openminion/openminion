@@ -2,7 +2,10 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.brain.constants import BRAIN_INTERNAL_MODE_ACT_CODING
+from openminion.modules.brain.constants import (
+    BRAIN_ACT_PROFILE_GENERAL,
+    BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+)
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
@@ -163,7 +166,8 @@ def _invoke_coding_subtask(
     child_state.last_result = None
     child_state.pending_jobs = []
     decision = SimpleNamespace(
-        route=BRAIN_INTERNAL_MODE_ACT_CODING,
+        route=BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+        act_profile=BRAIN_ACT_PROFILE_GENERAL,
         reason_code="coding_subtask",
         confidence=1.0,
         objective=subtask.goal,

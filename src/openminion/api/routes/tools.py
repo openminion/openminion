@@ -1,9 +1,8 @@
 """Tool route handlers for schema lookup and execution."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
+from typing import Any, Callable
 from urllib.parse import unquote
 
 from openminion.api.core.deps import (
@@ -16,6 +15,7 @@ from openminion.api.operations.tools import (
     execute_tool_run,
     normalize_tool_run_request,
 )
+from openminion.api.runtime import APIRuntime
 
 from .contracts import (
     APIRouteContext,
@@ -31,7 +31,9 @@ _TOOL_SCHEMA_RE = re.compile(r"/v1/tools/([^/]+)/schema")
 _TOOL_RUN_RE = re.compile(r"/v1/tools/([^/]+)/run")
 
 
-def _with_runtime(ctx: APIRouteContext, fn) -> RouteResult:
+def _with_runtime(
+    ctx: APIRouteContext, fn: Callable[[APIRuntime], RouteResult]
+) -> RouteResult:
     _, active_runtime, own_runtime = resolve_runtime_manager(
         config_path=ctx.config_path,
         runtime=ctx.runtime,
@@ -46,7 +48,7 @@ def _with_runtime(ctx: APIRouteContext, fn) -> RouteResult:
 def _handle_list_tools(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
     readiness = parse_bool_query_value(query_value(query, "readiness"))
 
-    def _build(active_runtime) -> RouteResult:
+    def _build(active_runtime: APIRuntime) -> RouteResult:
         return RouteResult(
             status=HTTPStatus.OK,
             payload={
@@ -58,16 +60,15 @@ def _handle_list_tools(ctx: APIRouteContext, *, query: str | None) -> RouteResul
     return _with_runtime(ctx, _build)
 
 
-def _exposure_scope(body: dict[str, object] | None) -> dict[str, str]:
-    values = body or {}
+def _exposure_scope(body: dict[str, Any]) -> dict[str, str]:
     return {
-        "session_id": str(values.get("session_id", "") or "").strip(),
-        "task_id": str(values.get("task_id", "") or "").strip(),
-        "target_id": str(values.get("target_id", "") or "").strip(),
+        "session_id": str(body.get("session_id", "") or "").strip(),
+        "task_id": str(body.get("task_id", "") or "").strip(),
+        "target_id": str(body.get("target_id", "") or "").strip(),
     }
 
 
-def _string_tuple(body: dict, name: str) -> tuple[str, ...]:
+def _string_tuple(body: dict[str, Any], name: str) -> tuple[str, ...]:
     raw = body.get(name, ())
     values = (raw,) if isinstance(raw, str) else tuple(raw or ())
     return tuple(value for item in values if (value := str(item or "").strip()))
@@ -78,7 +79,7 @@ def _handle_exposure_status(
     *,
     query: str | None,
 ) -> RouteResult:
-    def _build(active_runtime) -> RouteResult:
+    def _build(active_runtime: APIRuntime) -> RouteResult:
         return RouteResult(
             status=HTTPStatus.OK,
             payload={
@@ -98,9 +99,9 @@ def _handle_exposure_activate(
     ctx: APIRouteContext,
     *,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
 ) -> RouteResult:
-    def _build(active_runtime) -> RouteResult:
+    def _build(active_runtime: APIRuntime) -> RouteResult:
         if body is None:
             return json_body_required_route_result(path=path)
         profile_id = str(body.get("profile_id", "") or "").strip()
@@ -139,8 +140,7 @@ def _handle_exposure_activate(
                 retryable=False,
             )
         return RouteResult(
-            status=HTTPStatus.OK,
-            payload={"ok": True, "activation": activation},
+            status=HTTPStatus.OK, payload={"ok": True, "activation": activation}
         )
 
     return _with_runtime(ctx, _build)
@@ -150,9 +150,9 @@ def _handle_exposure_deactivate(
     ctx: APIRouteContext,
     *,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
 ) -> RouteResult:
-    def _build(active_runtime) -> RouteResult:
+    def _build(active_runtime: APIRuntime) -> RouteResult:
         if body is None:
             return json_body_required_route_result(path=path)
         profile_id = str(body.get("profile_id", "") or "").strip()
@@ -167,15 +167,14 @@ def _handle_exposure_deactivate(
             )
         deactivated = active_runtime.deactivate_tool_profile(profile_id, **scope)
         return RouteResult(
-            status=HTTPStatus.OK,
-            payload={"ok": True, "deactivated": deactivated},
+            status=HTTPStatus.OK, payload={"ok": True, "deactivated": deactivated}
         )
 
     return _with_runtime(ctx, _build)
 
 
 def _handle_tool_schema(ctx: APIRouteContext, *, tool_name: str) -> RouteResult:
-    def _build(active_runtime) -> RouteResult:
+    def _build(active_runtime: APIRuntime) -> RouteResult:
         schema = v1_tool_schema(active_runtime, tool_name=tool_name)
         if schema is None:
             return error_route_result(
@@ -195,9 +194,9 @@ def _handle_tool_run(
     *,
     path: str,
     tool_name: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
 ) -> RouteResult:
-    def _build(active_runtime) -> RouteResult:
+    def _build(active_runtime: APIRuntime) -> RouteResult:
         if body is None:
             return json_body_required_route_result(path=path)
         schema = v1_tool_schema(active_runtime, tool_name=tool_name)
@@ -242,7 +241,7 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
     if method_name == "GET" and path == "/v1/tools":

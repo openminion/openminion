@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from openminion.modules.brain.loop.adaptive import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     ActLoopMode,
@@ -341,11 +343,14 @@ def test_general_adaptive_does_not_infer_tool_scope_from_user_prose() -> None:
     assert "web.search" in tool_names
 
 
-def test_research_child_general_adaptive_does_not_expose_decompose() -> None:
+@pytest.mark.parametrize(
+    "reason_code", ["coding_subtask", "research_iteration_fallback"]
+)
+def test_child_general_adaptive_does_not_expose_decompose(reason_code: str) -> None:
     llm_client = _FakeLLMClient()
     executor = _FakeCommandExecutor()
     ctx, _services = _ctx(llm_client, executor)
-    ctx.decision.reason_code = "research_iteration_fallback"
+    ctx.decision.reason_code = reason_code
     captured: dict[str, Any] = {}
 
     def _fake_run_adaptive_tool_loop(*args, **kwargs):
@@ -375,7 +380,8 @@ def test_research_child_general_adaptive_does_not_expose_decompose() -> None:
     assert result.status == "done"
     profile = captured["profile"]
     assert getattr(profile, "profile_name", "") == "general_adaptive_v1"
-    assert bool(getattr(profile, "allow_plan_tool", True)) is False
+    if reason_code == "research_iteration_fallback":
+        assert bool(getattr(profile, "allow_plan_tool", True)) is False
     assert "decompose" not in set(getattr(profile, "allowed_tools", frozenset()))
     tool_names = {
         str(getattr(spec, "name", "") or "").strip()

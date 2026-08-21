@@ -1,9 +1,7 @@
 """Core OpenMinion config dataclasses and profile resolution."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field, replace
-from typing import Any, cast
+from typing import Any
 
 from openminion.base.config.base import DEFAULT_STORAGE_PATH, UnknownProfileError
 from openminion.base.config.parse import _normalize_brain_integration_mode
@@ -177,7 +175,7 @@ class AgentProfileConfig:
             "provider": self.provider,
             "system_prompt": self.system_prompt,
         }
-        if default_act_profile := str(self.default_act_profile or "").strip():
+        if default_act_profile := self.default_act_profile.strip():
             payload["default_act_profile"] = default_act_profile
         if self.skill_explicit:
             payload["skill"] = skill_value_to_payload(self.skill)
@@ -191,9 +189,9 @@ class AgentProfileConfig:
             )
         if self.action_policy is not None:
             payload["action_policy"] = {
-                "mode": str(self.action_policy.mode).strip().lower() or "auto",
+                "mode": self.action_policy.mode.strip().lower() or "auto",
                 "default_action": (
-                    str(self.action_policy.default_action).strip().lower()
+                    self.action_policy.default_action.strip().lower()
                     or "require_confirm"
                 ),
                 "allow_read_only_without_prompt": bool(
@@ -206,7 +204,7 @@ class AgentProfileConfig:
                             "tool_name": rule.match.tool_name,
                             "min_risk_class": rule.match.min_risk_class,
                         },
-                        "mode": str(rule.mode).strip().lower() or "ask",
+                        "mode": rule.mode.strip().lower() or "ask",
                     }
                     for rule in self.action_policy.rules
                 ],
@@ -316,12 +314,13 @@ class OpenMinionConfig:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "OpenMinionConfig":
-        from .parser import openminion_config_from_dict
+        from .parser.payload import openminion_config_from_dict
 
-        return cast(OpenMinionConfig, openminion_config_from_dict(payload))
+        config: OpenMinionConfig = openminion_config_from_dict(payload)
+        return config
 
     def to_dict(self) -> dict[str, Any]:
-        from .parser import openminion_config_to_dict
+        from .parser.payload import openminion_config_to_dict
 
         return openminion_config_to_dict(self)
 
@@ -337,7 +336,7 @@ def resolve_default_agent_id(config: OpenMinionConfig) -> str:
         )
     if len(config.agents) == 1:
         return next(iter(config.agents))
-    normalized = str(config.default_agent or "").strip()
+    normalized = config.default_agent.strip()
     if not normalized:
         valid = ", ".join(repr(k) for k in sorted(config.agents))
         raise UnknownProfileError(
@@ -381,7 +380,7 @@ def resolve_agent_config(
 ) -> AgentProfileConfig:
     """Resolve the effective :class:`AgentProfileConfig` for *agent_id*."""
 
-    requested_agent_id = str(agent_id or "").strip()
+    requested_agent_id = (agent_id or "").strip()
     if not config.agents:
         raise UnknownProfileError(
             "No agent profiles are configured; post-CSC configs must populate "
@@ -431,18 +430,14 @@ def resolve_agent_config(
         has_allow_background_write_authorization=bwa_has,
         trailer_guidance_variant=(dict(variant_value or {}) if variant_has else None),
         has_trailer_guidance_variant=variant_has,
-        thinking_policy=profile.thinking_policy,
-        provider_policy=profile.provider_policy,
-        plugins=profile.plugins,
-        modes=dict(profile.modes or {}),
-        tools=profile.tools,
+        modes=dict(profile.modes),
     )
 
 
 def resolve_agent_identity(
     config: OpenMinionConfig, agent_id: str | None = None
 ) -> AgentIdentityResolution:
-    requested_agent_id = str(agent_id or "").strip()
+    requested_agent_id = (agent_id or "").strip()
     profile = resolve_agent_config(config, requested_agent_id or None)
     return AgentIdentityResolution(
         public_agent_id=requested_agent_id or profile.name,

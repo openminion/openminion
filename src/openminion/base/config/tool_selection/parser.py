@@ -1,7 +1,5 @@
 """Tool-selection payload parsing."""
 
-from __future__ import annotations
-
 from openminion.base.config.base import ConfigError
 from openminion.base.config.parse import _as_bool, _as_int, split_comma_tokens
 

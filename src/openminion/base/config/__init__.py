@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from .exports import LAZY_EXPORTS, PUBLIC_EXPORTS, resolve_lazy_export
@@ -14,4 +12,4 @@ def __getattr__(name: str) -> Any:  # pragma: no cover
 
 
 def __dir__() -> list[str]:  # pragma: no cover
-    return sorted(set(list(globals().keys()) + list(LAZY_EXPORTS.keys())))
+    return sorted(globals().keys() | LAZY_EXPORTS.keys())

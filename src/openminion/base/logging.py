@@ -96,7 +96,7 @@ def _apply_logger_level_overrides(overrides: Mapping[str, int]) -> None:
 
 
 def _normalize_logger_name(name: str | None) -> str:
-    normalized = str(name or "").strip()
+    normalized = (name or "").strip()
     if not normalized:
         return _LOG_NAMESPACE
     normalized = normalized.replace("/", ".").replace("..", ".").strip(".")
@@ -112,10 +112,10 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 
 def format_structured_event(event: str, /, **fields: object) -> str:
-    event_name = str(event or "").strip() or "unknown"
+    event_name = event.strip() or "unknown"
     tokens = [f"event={event_name}"]
     for key, value in fields.items():
-        token = str(key or "").strip()
+        token = key.strip()
         if not token or value is None:
             continue
         rendered = str(value).strip()
@@ -127,7 +127,7 @@ def format_structured_event(event: str, /, **fields: object) -> str:
 
 
 def apply_logging_mode(mode: str) -> None:
-    normalized_mode = str(mode or "").strip().lower()
+    normalized_mode = mode.strip().lower()
     if normalized_mode == "interactive":
         _apply_logger_level_overrides(_INTERACTIVE_LEVEL_OVERRIDES)
 
@@ -135,7 +135,7 @@ def apply_logging_mode(mode: str) -> None:
 def _resolve_level(value: str | int | None, *, fallback: int) -> int:
     if isinstance(value, int):
         return value
-    normalized = str(value or "").strip()
+    normalized = (value or "").strip()
     if not normalized:
         return fallback
     return int(getattr(logging, normalized.upper(), fallback))
@@ -182,8 +182,8 @@ def configure_logging(
     file_path: str | Path | None = None,
     file_level: str | int = "DEBUG",
 ) -> logging.Logger:
-    override = str(os.environ.get(OPENMINION_LOG_LEVEL_ENV, "")).strip()
-    effective = override or str(level or "INFO")
+    override = os.environ.get(OPENMINION_LOG_LEVEL_ENV, "").strip()
+    effective = override or level or "INFO"
     numeric_level = _resolve_level(effective, fallback=logging.INFO)
     numeric_file_level = _resolve_level(file_level, fallback=logging.DEBUG)
     root_logger = logging.getLogger()
@@ -224,9 +224,7 @@ def _build_formatter(*, stream: TextIO) -> logging.Formatter:
 
 
 def _should_colorize_logs(*, stream: TextIO) -> bool:
-    log_color_override = (
-        str(os.environ.get(OPENMINION_LOG_COLOR_ENV, "")).strip().lower()
-    )
+    log_color_override = os.environ.get(OPENMINION_LOG_COLOR_ENV, "").strip().lower()
     if log_color_override in BASE_COLOR_FORCE_FALSE_VALUES:
         return False
     if log_color_override in BASE_COLOR_FORCE_TRUE_VALUES:
@@ -235,15 +233,13 @@ def _should_colorize_logs(*, stream: TextIO) -> bool:
     if str(os.environ.get(NO_COLOR_ENV, "")).strip():
         return False
 
-    global_color_override = (
-        str(os.environ.get(OPENMINION_COLOR_ENV, "")).strip().lower()
-    )
+    global_color_override = os.environ.get(OPENMINION_COLOR_ENV, "").strip().lower()
     if global_color_override in BASE_COLOR_FORCE_FALSE_VALUES:
         return False
     if global_color_override in BASE_COLOR_FORCE_TRUE_VALUES:
         return True
 
-    return bool(getattr(stream, "isatty", lambda: False)())
+    return stream.isatty()
 
 
 class _ColorLogFormatter(logging.Formatter):

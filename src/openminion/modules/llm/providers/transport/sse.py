@@ -8,7 +8,7 @@ from openminion.base.config.env import EnvironmentConfig
 from ...errors import LLMCtlError
 from .client import ProviderHTTPClient
 from .error_facts import openai_error_facts, openai_error_message
-from .http import _safe_http_error_body, with_default_user_agent
+from .http import _safe_http_error_body, response_request_id, with_default_user_agent
 from .payload import serialize_json_payload
 from .trace import trace_http_json_request
 
@@ -24,6 +24,7 @@ def iter_sse_post_lines(
     transport: str = "urllib_stream",
     env: EnvironmentConfig | Mapping[str, object] | None = None,
     http_client: ProviderHTTPClient | None = None,
+    response_metadata: dict[str, str] | None = None,
 ) -> Iterator[str]:
     """POST JSON, then iterate decoded SSE response lines.
 
@@ -31,6 +32,8 @@ def iter_sse_post_lines(
     """
     serialized_payload = serialize_json_payload(payload)
     request_headers = with_default_user_agent(headers)
+    if response_metadata is not None:
+        response_metadata.clear()
 
     trace_http_json_request(
         trace_metadata=trace_metadata,
@@ -54,6 +57,9 @@ def iter_sse_post_lines(
     try:
         open_url = http_client.urlopen if http_client else urllib_request.urlopen
         with open_url(req_obj, timeout=float(timeout_seconds)) as response:
+            request_id = response_request_id(getattr(response, "headers", None))
+            if response_metadata is not None and request_id:
+                response_metadata["request_id"] = request_id
             for raw_line in response:
                 yield raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
     except urllib_error.HTTPError as exc:

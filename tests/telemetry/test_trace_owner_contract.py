@@ -150,7 +150,7 @@ def test_debug_trace_links_are_direct_bounded_facts_without_root_scan(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
         paths.append(str(path.relative_to(trace_root)))
-    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    service = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         service.record_event_sync(
             TelemetryEvent(

@@ -56,6 +56,7 @@ class MCPOAuthTokenState:
     refresh_token: str = ""
     expires_at: float = 0.0
     scope: str = ""
+    issuer: str = ""
 
     @property
     def expired(self) -> bool:
@@ -139,8 +140,13 @@ def exchange_authorization_code(
     metadata: MCPOAuthMetadata,
     code: str,
     challenge: MCPOAuthPKCEChallenge,
+    authorization_issuer: str = "",
     timeout_seconds: float = 10.0,
 ) -> MCPOAuthTokenState:
+    _validate_authorization_issuer(
+        expected=metadata.issuer,
+        received=authorization_issuer,
+    )
     return _request_token(
         metadata.token_endpoint,
         {
@@ -150,6 +156,7 @@ def exchange_authorization_code(
             "redirect_uri": config.redirect_uri,
             "code_verifier": challenge.code_verifier,
         },
+        issuer=metadata.issuer,
         timeout_seconds=timeout_seconds,
     )
 
@@ -168,6 +175,7 @@ def refresh_oauth_access_token(
             "client_id": config.client_id,
             "refresh_token": refresh_token,
         },
+        issuer=metadata.issuer,
         timeout_seconds=timeout_seconds,
     )
 
@@ -186,6 +194,7 @@ def register_oauth_client(
     payload = json.dumps(
         {
             "client_name": client_name.strip() or "openminion",
+            "application_type": "native",
             "redirect_uris": [item.strip() for item in redirect_uris if item.strip()],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
@@ -227,6 +236,7 @@ def _request_token(
     endpoint: str,
     fields: dict[str, str],
     *,
+    issuer: str,
     timeout_seconds: float,
 ) -> MCPOAuthTokenState:
     body = urllib_parse.urlencode(fields).encode("utf-8")
@@ -254,7 +264,17 @@ def _request_token(
         ).strip(),
         expires_at=(time.time() + expires_in if expires_in > 0 else 0.0),
         scope=str(payload.get("scope", "") or "").strip(),
+        issuer=issuer.strip(),
     )
+
+
+def _validate_authorization_issuer(*, expected: str, received: str) -> None:
+    received = received.strip()
+    if not received:
+        return
+    expected = expected.strip()
+    if not expected or received != expected:
+        raise ValueError("OAuth authorization response issuer does not match metadata")
 
 
 __all__ = [

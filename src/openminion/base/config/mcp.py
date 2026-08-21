@@ -1,7 +1,5 @@
 """MCP config normalization and policy dataclasses."""
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -107,8 +105,7 @@ def _normalize_string_list(value: object) -> list[str]:
 
 
 def _contains_env_interpolation(value: str) -> bool:
-    token = str(value or "")
-    return "${" in token or "$(" in token or "%{" in token
+    return "${" in value or "$(" in value or "%{" in value
 
 
 def _normalize_pattern_list(value: object, *, field_path: str) -> list[str]:
@@ -562,7 +559,7 @@ def coerce_mcp_publish_config(value: object) -> MCPPublishConfig:
 def mcp_publish_config_to_dict(config: MCPPublishConfig | None) -> dict[str, Any]:
     publish = coerce_mcp_publish_config(config)
     return {
-        "enabled": bool(publish.enabled),
+        "enabled": publish.enabled,
         "transport": publish.transport,
         "include_tools": list(publish.include_tools),
         "exclude_tools": list(publish.exclude_tools),

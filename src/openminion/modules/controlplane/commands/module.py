@@ -46,6 +46,7 @@ class CommandSpec:
     tags: list[str] | None = None
     deprecated: bool = False
     deprecation_reason: str | None = None
+    required_scopes: tuple[str, ...] | None = None
 
 
 @dataclass

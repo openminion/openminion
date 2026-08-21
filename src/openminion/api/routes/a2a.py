@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any
 
@@ -11,6 +9,7 @@ from openminion.api.operations.a2a import (
     handle_jsonrpc,
     record_auth_denial,
 )
+from openminion.api.responses import response_error_code
 from openminion.api.routes.contracts import (
     APIRouteContext,
     RouteResult,
@@ -35,13 +34,15 @@ def handle_request(
     if method_name == "POST" and path == _A2A_JSONRPC_PATH:
         auth_result = authorize_a2a_request(ctx.request_headers)
         if auth_result is not None:
-            record_auth_denial(ctx, path=path, reason=_route_error_code(auth_result))
+            reason = response_error_code(auth_result.payload) or "auth_denied"
+            record_auth_denial(ctx, path=path, reason=reason)
             return auth_result
         return handle_jsonrpc(ctx, body or {})
     if method_name == "GET" and _is_task_events_path(path):
         auth_result = authorize_a2a_request(ctx.request_headers)
         if auth_result is not None:
-            record_auth_denial(ctx, path=path, reason=_route_error_code(auth_result))
+            reason = response_error_code(auth_result.payload) or "auth_denied"
+            record_auth_denial(ctx, path=path, reason=reason)
             return auth_result
         return _streaming_not_supported(path)
     return None
@@ -59,15 +60,6 @@ def _streaming_not_supported(path: str) -> RouteResult:
 
 def _is_task_events_path(path: str) -> bool:
     return path.startswith(_A2A_TASK_EVENTS_PREFIX) and path.endswith("/events")
-
-
-def _route_error_code(result: RouteResult) -> str:
-    payload = result.payload
-    if isinstance(payload, dict):
-        error = payload.get("error")
-        if isinstance(error, dict):
-            return str(error.get("code") or "auth_denied")
-    return "auth_denied"
 
 
 __all__ = ["A2A_NETWORK_TOKEN_ENV", "handle_request"]

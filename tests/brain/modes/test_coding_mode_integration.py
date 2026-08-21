@@ -32,6 +32,10 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
+from openminion.modules.brain.constants import (
+    BRAIN_ACT_PROFILE_GENERAL,
+    BRAIN_INTERNAL_MODE_ACT_ADAPTIVE,
+)
 from openminion.modules.brain.schemas import (
     ActionError,
     ActionResult,
@@ -1974,6 +1978,7 @@ def test_coding_verify_failure_blocks_on_repeated_identical_error() -> None:
 
 def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -> None:
     call_windows: list[tuple[str, float, float]] = []
+    child_routes: list[tuple[str, str]] = []
     lock = threading.Lock()
 
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
@@ -1983,6 +1988,7 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
         finished = time.monotonic()
         with lock:
             call_windows.append((str(decision.objective), started, finished))
+            child_routes.append((str(decision.route), str(decision.act_profile)))
         return ExecutionResult(
             status="done",
             working_state=state,
@@ -2044,6 +2050,10 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
 
     assert result.status == "done"
     assert len(call_windows) == 2
+    assert child_routes == [
+        (BRAIN_INTERNAL_MODE_ACT_ADAPTIVE, BRAIN_ACT_PROFILE_GENERAL),
+        (BRAIN_INTERNAL_MODE_ACT_ADAPTIVE, BRAIN_ACT_PROFILE_GENERAL),
+    ]
     assert (
         call_windows[0][2] > call_windows[1][1]
         or call_windows[1][2] > call_windows[0][1]

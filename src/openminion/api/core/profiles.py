@@ -1,14 +1,12 @@
 """Resolve and cache agent-specific runtime services behind APIRuntime."""
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from sqlite3 import Connection, Error as SQLiteError
 from threading import RLock
 from types import SimpleNamespace
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from openminion.base.channel import ChannelRegistry
 from openminion.base.config import (
@@ -249,7 +247,7 @@ class RuntimeProfilesMixin:
 
     def resolve_agent_profile(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> AgentProfileConfig:
         return resolve_runtime_profile(
@@ -260,7 +258,7 @@ class RuntimeProfilesMixin:
 
     def capability_runtime_diagnostics(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, Any]:
         return build_capability_runtime_diagnostics(
@@ -271,7 +269,7 @@ class RuntimeProfilesMixin:
 
     def resolve_agent_service(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> AgentService:
         effective_overrides = self._combined_run_profile_overrides(overrides)
@@ -326,7 +324,7 @@ class RuntimeProfilesMixin:
 
     def get_agent_runtime_info(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, object]:
         effective_overrides = self._combined_run_profile_overrides(overrides)
@@ -344,7 +342,7 @@ class RuntimeProfilesMixin:
 
     def resolve_gateway(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> GatewayService:
         effective_overrides = self._combined_run_profile_overrides(overrides)

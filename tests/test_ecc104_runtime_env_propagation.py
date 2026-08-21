@@ -216,8 +216,10 @@ def test_api_tools_run_route_injects_runtime_env(monkeypatch):
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
     config.runtime.env = {"ECC_104_API": "enabled"}
+    config.runtime.tool_workspace_root = "/configured/tool-workspace"
     fake_runtime = SimpleNamespace(
         config=config,
+        tool_workspace_root=config.runtime.tool_workspace_root,
         tools=_FakeTools(),
         sessions=_FakeSessions(),
         close=lambda: None,
@@ -267,6 +269,9 @@ def test_api_tools_run_route_injects_runtime_env(monkeypatch):
     assert result is not None
     assert int(result.status) == 200
     assert captured["context"].metadata["runtime_env"] == {"ECC_104_API": "enabled"}
+    assert captured["context"].metadata["workspace_root"] == (
+        "/configured/tool-workspace"
+    )
     assert captured["context"].confirm is True
 
 

@@ -51,7 +51,7 @@ class InboxWorker:
                 return result
 
             parsed = self.dispatcher.parser.parse(inbound.text)
-            result = self._handle_command_denial(row, inbound, auth, parsed, inbox_id)
+            result = self._handle_scope_denial(row, inbound, auth, parsed, inbox_id)
             if result is not None:
                 return result
             result = self._handle_rate_limit(row, inbound, inbox_id)
@@ -88,7 +88,7 @@ class InboxWorker:
         self.store.ack_inbox(inbox_id)
         return {"status": "unpaired", "inbox_id": inbox_id}
 
-    def _handle_command_denial(
+    def _handle_scope_denial(
         self,
         row: dict[str, Any],
         inbound: InboundMessage,
@@ -96,11 +96,15 @@ class InboxWorker:
         parsed: Any,
         inbox_id: str,
     ) -> dict[str, Any] | None:
-        if self.authorizer is None or parsed is None or auth is None:
+        if self.authorizer is None or auth is None:
             return None
         if is_pair_command(inbound.text):
             return None
-        allowed, reason = self.authorizer.command_allowed(parsed, auth)
+        allowed, reason = (
+            self.authorizer.message_allowed(auth)
+            if parsed is None
+            else self.authorizer.command_allowed(parsed, auth)
+        )
         if allowed:
             return None
         self._queue_text_reply(

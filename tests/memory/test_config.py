@@ -314,6 +314,18 @@ class ConfigLoaderTests(unittest.TestCase):
         )
         self.assertTrue(any("auto-normalizing" in str(item.message) for item in caught))
 
+    def test_candidate_learning_section_keeps_enabled_default(self) -> None:
+        data = deepcopy(BASE_CONFIG)
+        data["memctl"]["candidate_learning"] = {  # type: ignore[index]
+            "auto_extract_notify": False,
+        }
+        path = _write_config(self.tmp_path, data)
+
+        config = load_config(path, env={"HOME": str(self.tmp_path)})
+
+        self.assertTrue(config.candidate_learning.auto_extract_enabled)
+        self.assertFalse(config.candidate_learning.auto_extract_notify)
+
     def test_merge_candidate_learning_config_translates_legacy_promotion_fields(
         self,
     ) -> None:

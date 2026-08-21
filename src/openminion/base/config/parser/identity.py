@@ -1,7 +1,5 @@
 """Context and identity config parsing helpers."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.base.config.core import OpenMinionConfig
@@ -51,7 +49,7 @@ def _identity_context_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
                         budget.truncate_strategy
                     ),
                     "compaction": {
-                        "enabled": bool(budget.compaction.enabled),
+                        "enabled": budget.compaction.enabled,
                         "provider": budget.compaction.provider,
                         "model": budget.compaction.model,
                         "temperature": budget.compaction.temperature,

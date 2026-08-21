@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
 
@@ -23,6 +23,7 @@ TOOL_OPS_NETWORK_PORT_OWNER = "ops.network.port_owner"
 TOOL_OPS_COMMAND_OBSERVE = "ops.command.observe"
 TOOL_OPS_COMMAND_PLAN = "ops.command.plan"
 TOOL_OPS_COMMAND_RUN = "ops.command.run"
+TOOL_OPS_FILE_READ = "ops.file.read"
 TOOL_OPS_JOB_INSPECT = "ops.job.inspect"
 TOOL_OPS_JOB_CANCEL = "ops.job.cancel"
 
@@ -36,6 +37,7 @@ ALL_OPS_TOOLS = (
     TOOL_OPS_PROCESS_INSPECT,
     TOOL_OPS_NETWORK_PORT_OWNER,
     TOOL_OPS_COMMAND_OBSERVE,
+    TOOL_OPS_FILE_READ,
     TOOL_OPS_COMMAND_PLAN,
     TOOL_OPS_COMMAND_RUN,
     TOOL_OPS_JOB_INSPECT,
@@ -45,6 +47,7 @@ ALL_OPS_TOOLS = (
 OutputSink = Callable[[str, str], None]
 
 
+@runtime_checkable
 class TargetTransport(Protocol):
     def connect(self, target: OperationTarget) -> TransportFacts: ...
 
@@ -61,6 +64,13 @@ class TargetTransport(Protocol):
         cwd: str = "",
     ) -> TransportResult: ...
 
+    def cancel(self, operation_id: str) -> bool: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class FileReadTransport(Protocol):
     def read(
         self,
         target: OperationTarget,
@@ -69,7 +79,3 @@ class TargetTransport(Protocol):
         max_bytes: int,
         timeout_seconds: float,
     ) -> TransportReadResult: ...
-
-    def cancel(self, operation_id: str) -> bool: ...
-
-    def close(self) -> None: ...

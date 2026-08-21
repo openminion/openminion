@@ -6,7 +6,7 @@ from openminion.modules.telemetry.service import TelemetryService
 
 
 def test_debug_query_indexes_are_installed(tmp_path: Path) -> None:
-    service = TelemetryService(db_path=str(tmp_path / "telemetry.db"))
+    service = TelemetryService(db_path=str(tmp_path / ".openminion" / "telemetry.db"))
     try:
         rows = service._store._record_store.query_dicts("PRAGMA index_list(events)")
     finally:

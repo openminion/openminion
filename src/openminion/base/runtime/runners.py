@@ -1,7 +1,5 @@
 """Local and bubblewrap sandbox runners."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 import os
 import platform
@@ -66,11 +64,9 @@ def _check_net(url: str, sandbox: ExecutionSandboxSpec) -> None:
 
 
 def _filter_env(spec: ExecSpec, sandbox: ExecutionSandboxSpec) -> dict[str, str] | None:
-    if not spec.env and not sandbox.env_allowlist:
-        return None
-    if sandbox.env_allowlist:
-        return {k: v for k, v in spec.env.items() if k in sandbox.env_allowlist}
-    return dict(spec.env)
+    if not sandbox.env_allowlist:
+        return dict(spec.env) or None
+    return {k: v for k, v in spec.env.items() if k in sandbox.env_allowlist}
 
 
 def _check_cwd(cwd: str, workspace_root: str) -> str:
@@ -130,8 +126,7 @@ class LocalRunner:
         real_path = os.path.realpath(spec.path)
         try:
             parent = os.path.dirname(real_path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
+            os.makedirs(parent, exist_ok=True)
             mode = "wb" if isinstance(spec.content, bytes) else "w"
             with open(real_path, mode) as fh:
                 fh.write(spec.content)

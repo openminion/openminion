@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from textual.css.query import QueryError
 
 from .tokens import active_at_token, cursor_offset_for_text_area

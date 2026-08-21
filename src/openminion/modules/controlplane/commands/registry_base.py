@@ -16,6 +16,20 @@ from .module import AuthRequirement, CommandSpec
 
 _LOGGER = get_logger("modules.controlplane.commands.registry")
 
+_ALWAYS_UNAVAILABLE_COMMANDS = frozenset(
+    {
+        "artifact.ls",
+        "artifact.purge",
+        "config.set",
+        "config.show",
+        "export",
+        "logs",
+    }
+)
+_RUNTIME_COMMANDS = frozenset({"cancel", "job.ls", "run", "run.status"})
+_POLICY_COMMANDS = frozenset({"approve", "deny", "grants"})
+_MEMORY_COMMANDS = frozenset({"memory.ls", "memory.promote"})
+
 
 class CommandRegistryBaseMixin:
     def _register_builtin_commands(self) -> None:
@@ -62,6 +76,10 @@ class CommandRegistryBaseMixin:
     def get_command_auth_requirement(self, command_name: str) -> AuthRequirement | None:
         spec = self._command_specs.get(command_name)
         return spec.auth_requirement if spec else None
+
+    def get_command_required_scopes(self, command_name: str) -> tuple[str, ...] | None:
+        spec = self._command_specs.get(command_name)
+        return spec.required_scopes if spec else None
 
     def get_loaded_modules(self) -> dict[str, str]:
         return self.loaded_modules.copy()
@@ -132,9 +150,32 @@ class CommandRegistryBaseMixin:
         for name, desc in sorted(COMMAND_HELP.items()):
             if "[admin]" in desc and not is_admin:
                 continue
+            if not self._command_is_available(name):
+                continue
             lines.append(f"  /{name} — {desc}")
         return CommandResult(
             ok=True, text="\n".join(lines), data={"is_admin": is_admin}
+        )
+
+    def _command_is_available(self, command_name: str) -> bool:
+        if command_name in _ALWAYS_UNAVAILABLE_COMMANDS:
+            return False
+        if command_name in _RUNTIME_COMMANDS:
+            return self.runtime_client is not None
+        if command_name in _POLICY_COMMANDS:
+            return self.policy_client is not None
+        if command_name in _MEMORY_COMMANDS:
+            return self.memory_client is not None
+        return True
+
+    def _feature_unavailable(
+        self, feature: str, *, data: dict[str, Any] | None = None
+    ) -> CommandResult:
+        return CommandResult(
+            ok=False,
+            text=f"{feature} is not available in this controlplane runtime.",
+            error={"code": "FEATURE_UNAVAILABLE", "feature": feature},
+            data=data or {},
         )
 
     def _list_turns(self, session_id: str) -> list[object]:

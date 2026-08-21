@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import hmac
 import json
 from http import HTTPStatus
@@ -100,9 +98,7 @@ def handle_jsonrpc(ctx: APIRouteContext, body: dict[str, Any]) -> RouteResult:
         _validate_jsonrpc_body(body)
         request_id = body.get("id")
         raw_params = body.get("params")
-        params: dict[str, Any] = (
-            dict(raw_params) if isinstance(raw_params, dict) else {}
-        )
+        params = raw_params if isinstance(raw_params, dict) else {}
         result = dispatch_jsonrpc_method(
             _resolve_a2a_runtime(ctx),
             method=str(body.get("method", "")),

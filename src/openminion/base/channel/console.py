@@ -23,9 +23,9 @@ class ConsoleChannel(Channel):
         timestamp = _chat_timestamp(message.timestamp)
         sender, content = _split_sender_and_content(message.body)
         plain_prefix = f"{timestamp} {sender}:"
-        wrapped_lines = _wrap_content(content, prefix_width=len(plain_prefix) + 1)
-        if not wrapped_lines:
-            wrapped_lines = [""]
+        wrapped_lines = _wrap_content(content, prefix_width=len(plain_prefix) + 1) or [
+            ""
+        ]
 
         if _terminal_supports_color():
             styled_prefix = (
@@ -43,7 +43,7 @@ class ConsoleChannel(Channel):
 
 
 def _split_sender_and_content(raw_body: str) -> tuple[str, str]:
-    body = str(raw_body or "").strip()
+    body = raw_body.strip()
     if ":" not in body:
         return "assistant", body
 
@@ -55,7 +55,7 @@ def _split_sender_and_content(raw_body: str) -> tuple[str, str]:
 
 
 def _wrap_content(content: str, *, prefix_width: int = 0) -> list[str]:
-    text = str(content or "").strip()
+    text = content.strip()
     if not text:
         return []
     width = max(
@@ -73,14 +73,14 @@ def _wrap_content(content: str, *, prefix_width: int = 0) -> list[str]:
 
 
 def _terminal_supports_color() -> bool:
-    if str(os.environ.get(NO_COLOR_ENV, "")).strip():
+    if os.environ.get(NO_COLOR_ENV, "").strip():
         return False
-    forced = str(os.environ.get(OPENMINION_COLOR_ENV, "")).strip().lower()
+    forced = os.environ.get(OPENMINION_COLOR_ENV, "").strip().lower()
     if forced in BASE_COLOR_FORCE_FALSE_VALUES:
         return False
     if forced in BASE_COLOR_FORCE_TRUE_VALUES:
         return True
-    return bool(getattr(sys.stdout, "isatty", lambda: False)())
+    return sys.stdout.isatty()
 
 
 def _ansi(value: str, code: str) -> str:
@@ -92,5 +92,4 @@ def _chat_timestamp(timestamp: datetime) -> str:
 
 
 def _sender_style(sender: str) -> str:
-    normalized = str(sender or "").strip().lower()
-    return "1;34" if normalized == "you" else "1;32"
+    return "1;34" if sender.strip().lower() == "you" else "1;32"

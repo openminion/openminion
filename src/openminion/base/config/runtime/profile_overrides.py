@@ -1,7 +1,5 @@
 """Invocation-level runtime profile override contracts and parsing."""
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -131,7 +129,7 @@ def _normalized_permission_overrides(value: Any) -> tuple[tuple[str, str], ...]:
 
 
 def _provider_config_field_name(provider_name: str) -> str:
-    normalized = str(provider_name or "").strip().lower()
+    normalized = provider_name.strip().lower()
     if normalized not in _PROVIDER_CONFIG_FIELDS:
         valid = ", ".join(repr(name) for name in sorted(_PROVIDER_CONFIG_FIELDS))
         raise ConfigError(

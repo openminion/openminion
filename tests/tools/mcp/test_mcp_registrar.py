@@ -93,7 +93,7 @@ def test_mcp_registrar_returns_manifest_from_shared_snapshot() -> None:
             "runtime.mcp.fixture.resource_template.fixture_doc",
             "runtime.mcp.fixture.unsupported_anyof",
         }
-        assert "passthrough_mcp_tools=" in state.error_summary
+        assert state.error_summary == ""
     finally:
         _close_ctx(ctx)
 

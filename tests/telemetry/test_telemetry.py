@@ -1,6 +1,4 @@
 import asyncio
-import os
-import tempfile
 import threading
 from pathlib import Path
 
@@ -39,11 +37,11 @@ def test_environment_snapshot_keeps_telemetry_under_runtime_data_root(tmp_path):
 
 
 @pytest.fixture
-def temp_db():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    yield path
-    os.unlink(path)
+def temp_db(tmp_path: Path) -> str:
+    path = tmp_path / ".openminion" / "telemetry.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    yield str(path)
+    path.unlink(missing_ok=True)
 
 
 def test_record_event(temp_db):
@@ -506,15 +504,14 @@ def test_calculate_cost_with_cached():
     assert cost == 0.054
 
 
-def test_create_telemetry_adapter():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = os.path.join(tmpdir, "test.db")
-        ctl = create_telemetry_adapter(
-            db_path,
-            otel_exporter_config=OTELExporterConfig(
-                enabled=True,
-                endpoint="",
-                service_name="test-openminion",
-            ),
-        )
-        assert isinstance(ctl, TelemetryCtl)
+def test_create_telemetry_adapter(tmp_path: Path) -> None:
+    db_path = tmp_path / ".openminion" / "test.db"
+    ctl = create_telemetry_adapter(
+        db_path,
+        otel_exporter_config=OTELExporterConfig(
+            enabled=True,
+            endpoint="",
+            service_name="test-openminion",
+        ),
+    )
+    assert isinstance(ctl, TelemetryCtl)

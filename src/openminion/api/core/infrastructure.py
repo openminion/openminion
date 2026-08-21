@@ -1,7 +1,5 @@
 """Build the service and module infrastructure used by the API runtime."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace

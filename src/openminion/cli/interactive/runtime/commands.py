@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.cli.commands.agent.delegation import (
     render_agent_delegate_result,
     request_from_slash_args,
@@ -92,8 +90,14 @@ class RuntimeCommandMixin:
             try:
                 lines.append(f"  estimated cost   ${float(cost_usd):.4f}")
             except (TypeError, ValueError):
-                pass
+                lines.append("  cost             unavailable")
+        else:
+            lines.append("  cost             unavailable")
         self._push_runtime_message("\n".join(lines))
+
+    def _slash_tokens(self, _args: str) -> None:
+        report = self._runtime.token_usage_report().strip()
+        self._push_runtime_message(report or "No durable token usage data available.")
 
     def _slash_agent(self, args: str) -> None:
         chat = self.query_one(FocusTranscript)

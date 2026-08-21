@@ -1,9 +1,7 @@
-from __future__ import annotations
-
 from http import HTTPStatus
 from os import PathLike
 from time import perf_counter as _perf_counter
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 import openminion.api.server.app as _server_app
 import openminion.api.routes.turns as _routes_turns
@@ -58,17 +56,19 @@ def dispatch_request(
     request_headers: Mapping[str, str] | None = None,
     request_id: str | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
-    had_run_turn = hasattr(_server_app, "run_turn")
-    orig_run_turn = getattr(_server_app, "run_turn", None)
-    orig_perf_counter = _server_app.perf_counter
-    orig_api_runtime = _server_app.APIRuntime
-    orig_routes_run_turn = _routes_turns.run_turn
+    server_app = cast(Any, _server_app)
+    routes_turns = cast(Any, _routes_turns)
+    had_run_turn = hasattr(server_app, "run_turn")
+    orig_run_turn = getattr(server_app, "run_turn", None)
+    orig_perf_counter = server_app.perf_counter
+    orig_api_runtime = server_app.APIRuntime
+    orig_routes_run_turn = routes_turns.run_turn
     try:
-        _server_app.run_turn = run_turn
-        _server_app.perf_counter = perf_counter
-        _server_app.APIRuntime = APIRuntime
-        _routes_turns.run_turn = run_turn
-        return _server_app.dispatch_request(
+        server_app.run_turn = run_turn
+        server_app.perf_counter = perf_counter
+        server_app.APIRuntime = APIRuntime
+        routes_turns.run_turn = run_turn
+        result = server_app.dispatch_request(
             method,
             path,
             config_path,
@@ -79,17 +79,15 @@ def dispatch_request(
             request_headers=request_headers,
             request_id=request_id,
         )
+        return cast(tuple[HTTPStatus, dict[str, Any]], result)
     finally:
         if had_run_turn:
-            _server_app.run_turn = orig_run_turn
+            server_app.run_turn = orig_run_turn
         else:
-            try:
-                delattr(_server_app, "run_turn")
-            except AttributeError:
-                pass
-        _server_app.perf_counter = orig_perf_counter
-        _server_app.APIRuntime = orig_api_runtime
-        _routes_turns.run_turn = orig_routes_run_turn
+            delattr(server_app, "run_turn")
+        server_app.perf_counter = orig_perf_counter
+        server_app.APIRuntime = orig_api_runtime
+        routes_turns.run_turn = orig_routes_run_turn
 
 
 __all__ = [

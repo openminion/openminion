@@ -31,6 +31,7 @@ from ...preflight import ValidationResult
 from openminion.modules.prompting.continuation import (
     build_plan_checkpoint_continuation_message,
 )
+from openminion.base.errors import error_info_from_exception
 from openminion.modules.llm import ProviderError
 
 
@@ -703,6 +704,13 @@ def _dispatch_runtime_error(
     user_input: str | None,
     exc: Exception,
 ):
+    error_info = error_info_from_exception(
+        exc,
+        default_code="RUNTIME_ERROR",
+        default_message="State machine error",
+        namespace="brain",
+    )
+    error_text = f"{error_info.code}: {error_info.message}"
     if str(getattr(state, "status", "") or "") not in BRAIN_TERMINAL_STATES:
         transition(state, "fatal_error", logger=logger)
     if user_input:
@@ -711,31 +719,43 @@ def _dispatch_runtime_error(
             {
                 "strategy": "llm",
                 "phase": state.phase,
-                "error": str(exc),
+                "error": error_text,
             },
             trace_id=state.trace_id,
             status=BRAIN_STATE_ERROR,
-            error={"code": "CLARIFY_LLM_ROUTING_FAILED", "message": str(exc)},
+            error={
+                "code": "CLARIFY_LLM_ROUTING_FAILED",
+                "message": error_text,
+                "details": error_info.details,
+            },
         )
     logger.emit(
         "brain.done",
         {"reason": "error"},
         trace_id=state.trace_id,
         status=BRAIN_STATE_ERROR,
-        error={"code": "RUNTIME_ERROR", "message": str(exc)},
+        error={
+            "code": "RUNTIME_ERROR",
+            "message": error_text,
+            "details": error_info.details,
+        },
     )
     return _runner_delegate(
         "_respond_with_meta",
         runner,
         state=state,
         logger=logger,
-        message=f"State machine error: {exc}",
+        message=f"State machine error: {error_text}",
         status=BRAIN_STATE_ERROR,
         action_result=ActionResult(
             command_id=state.last_command_id or "n/a",
             status=BRAIN_ACTION_STATUS_FAILED,
             summary="runtime_error",
-            error=ActionError(code="RUNTIME_ERROR", message=str(exc)),
+            error=ActionError(
+                code=error_info.code,
+                message=error_info.message,
+                details=error_info.details,
+            ),
         ),
     )
 

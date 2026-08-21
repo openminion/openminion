@@ -1,7 +1,5 @@
 """Debug payloads and provider registry."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable
@@ -74,7 +72,7 @@ def create_path_debug_payload(
         status=status,
         mode=path_mode,
         wiring_source=WiringSource.REAL,
-        resolved_path=str(resolved_path) if resolved_path else None,
+        resolved_path=resolved_path,
         path_mode=path_mode,
         path_source=path_source,
         details=details,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -28,7 +29,9 @@ from openminion.tools.mcp.auth import (
     register_oauth_client,
     revoke_oauth_token,
 )
+from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from openminion.tools.mcp.transport import (
+    MCPProtocolError,
     MCPRemoteTransportError,
     StreamableHTTPMCPTransport,
     parse_www_authenticate,
@@ -411,6 +414,69 @@ def test_streamable_http_transport_reuses_session_id_and_closes() -> None:
             transport.close()
 
 
+def test_streamable_http_transport_assigns_unique_concurrent_request_ids() -> None:
+    with _remote_mcp_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        transport.request(method="initialize", params={}, timeout_seconds=5.0)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(
+                executor.map(
+                    lambda index: transport.request(
+                        method="tools/call",
+                        params={
+                            "name": "remote-echo",
+                            "arguments": {"text": str(index)},
+                        },
+                        timeout_seconds=5.0,
+                    ),
+                    range(24),
+                )
+            )
+
+        assert {item["structuredContent"]["echo"] for item in results} == {
+            str(index) for index in range(24)
+        }
+        request_ids = [
+            item["payload"]["id"]
+            for item in server.last_requests
+            if item["method"] == "tools/call"
+        ]
+        assert len(request_ids) == len(set(request_ids)) == 24
+
+
+def test_modern_http_request_drops_legacy_session_id() -> None:
+    with _remote_mcp_server(session_id="legacy-session") as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        transport.request(method="initialize", params={}, timeout_seconds=5.0)
+        assert transport.session_state.session_id == "legacy-session"
+
+        with pytest.raises(MCPProtocolError, match="Unknown method"):
+            transport.request(
+                method="server/discover",
+                params={
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": (
+                            MCP_MODERN_PROTOCOL_VERSION
+                        )
+                    }
+                },
+                timeout_seconds=5.0,
+            )
+
+        request_headers = server.last_requests[-1]["headers"]
+        assert "Mcp-Session-Id" not in request_headers
+        assert transport.session_state.session_id == ""
+
+
 def test_streamable_http_transport_invalid_session_fails_deterministically() -> None:
     with _remote_mcp_server(session_id="expired", reject_session=True) as server:
         transport = StreamableHTTPMCPTransport(
@@ -542,6 +608,7 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
         assert server.registration_requests[0]["redirect_uris"] == [
             "http://127.0.0.1/callback"
         ]
+        assert server.registration_requests[0]["application_type"] == "native"
 
         challenge = build_pkce_challenge()
         authorization_url = build_authorization_url(
@@ -558,9 +625,11 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             metadata=metadata,
             code="callback-code",
             challenge=challenge,
+            authorization_issuer=base_url,
             timeout_seconds=5.0,
         )
         assert token_state.access_token == "fresh-token"
+        assert token_state.issuer == base_url
         assert server.token_requests[-1]["grant_type"] == "authorization_code"
         assert server.token_requests[-1]["code"] == "callback-code"
 
@@ -570,6 +639,16 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             timeout_seconds=5.0,
         )
         assert "token=fresh-token" in server.revocation_requests[-1]
+
+        with pytest.raises(ValueError, match="issuer does not match"):
+            exchange_authorization_code(
+                config=config,
+                metadata=metadata,
+                code="callback-code",
+                challenge=challenge,
+                authorization_issuer="https://wrong.example",
+                timeout_seconds=5.0,
+            )
 
 
 def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Callable, Mapping, MutableMapping
 from typing import Any
@@ -9,6 +10,7 @@ from .args import (
     EmptyArgs,
     CommandPlanArgs,
     CommandRunArgs,
+    FileReadArgs,
     JobArgs,
     LogsArgs,
     ObservationArgs,
@@ -30,6 +32,7 @@ from .service import (
     OpsService,
     local_ops_service,
 )
+from .telemetry import emit_transport_event
 
 
 def _service(ctx: Any) -> OpsService:
@@ -67,8 +70,40 @@ def _request(
     )
 
 
-def _observed(service: OpsService, request: OperationRequest) -> dict[str, Any]:
-    evidence = service.observe(request)
+def _observed(
+    service: OpsService, request: OperationRequest, ctx: Any
+) -> dict[str, Any]:
+    target = service.inspect_target(request.target_id)
+    started = time.monotonic()
+    emit_transport_event(
+        ctx,
+        phase="dispatch",
+        target=target,
+        capability="command",
+        status="started",
+    )
+    try:
+        evidence = service.observe(request)
+    except (OSError, RuntimeError, ValueError) as exc:
+        emit_transport_event(
+            ctx,
+            phase="result",
+            target=target,
+            capability="command",
+            status="failed",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            error_code=type(exc).__name__,
+        )
+        raise
+    emit_transport_event(
+        ctx,
+        phase="result",
+        target=target,
+        capability="command",
+        status=evidence.claim_status,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        evidence=evidence,
+    )
     return {
         "ok": evidence.claim_status == "observed",
         "content": evidence.stdout_preview or evidence.reason,
@@ -104,6 +139,7 @@ def _profile(
                 timeout_seconds=parsed.timeout_seconds,
                 session_id=_session_id(ctx),
             ),
+            ctx,
         )
 
     return handler
@@ -121,6 +157,7 @@ def _service_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             parameters={"service": parsed.service},
             session_id=_session_id(ctx),
         ),
+        ctx,
     )
 
 
@@ -136,6 +173,7 @@ def _logs_query(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             parameters={"service": parsed.service, "limit": parsed.limit},
             session_id=_session_id(ctx),
         ),
+        ctx,
     )
 
 
@@ -151,6 +189,7 @@ def _process_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             parameters={"pid": parsed.pid},
             session_id=_session_id(ctx),
         ),
+        ctx,
     )
 
 
@@ -166,6 +205,7 @@ def _network_port_owner(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             parameters={"port": parsed.port, "protocol": parsed.protocol},
             session_id=_session_id(ctx),
         ),
+        ctx,
     )
 
 
@@ -180,6 +220,7 @@ def _command_observe(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             timeout_seconds=parsed.timeout_seconds,
             session_id=_session_id(ctx),
         ),
+        ctx,
     )
 
 
@@ -205,16 +246,74 @@ def _command_run(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     parsed = CommandRunArgs.model_validate(args)
     if not bool(getattr(ctx, "confirm", False)):
         raise PermissionError("command plan requires operator approval")
-    job = _service(ctx).run_plan(
+    service = _service(ctx)
+    plan = service.plans.get(parsed.plan_id)
+    target = service.inspect_target(plan.target_id)
+    started = time.monotonic()
+    emit_transport_event(
+        ctx,
+        phase="dispatch",
+        target=target,
+        capability="command",
+        status="started",
+    )
+    job = service.run_plan(
         plan_id=parsed.plan_id,
         plan_hash=parsed.plan_hash,
         approval_id=_approval_id(ctx, parsed.plan_hash),
+    )
+    evidence = service.inspect_evidence(job.evidence_id) if job.evidence_id else None
+    emit_transport_event(
+        ctx,
+        phase="result",
+        target=target,
+        capability="command",
+        status=job.status,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        evidence=evidence,
+        error_code="transport_failed" if job.status == "failed" else "",
     )
     return {
         "ok": job.status == "succeeded",
         "content": f"Command job {job.job_id} finished with status {job.status}.",
         "data": job.model_dump(mode="json"),
         "verified": job.status == "succeeded",
+    }
+
+
+def _file_read(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    parsed = FileReadArgs.model_validate(args)
+    service = _service(ctx)
+    target = service.inspect_target(parsed.target_id)
+    started = time.monotonic()
+    emit_transport_event(
+        ctx,
+        phase="dispatch",
+        target=target,
+        capability="file_read",
+        status="started",
+    )
+    evidence = service.read_file(
+        target_id=parsed.target_id,
+        path=parsed.path,
+        max_bytes=parsed.max_bytes,
+        timeout_seconds=parsed.timeout_seconds,
+        session_id=_session_id(ctx),
+    )
+    emit_transport_event(
+        ctx,
+        phase="result",
+        target=target,
+        capability="file_read",
+        status=evidence.claim_status,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        evidence=evidence,
+    )
+    return {
+        "ok": evidence.claim_status == "observed",
+        "content": evidence.stdout_preview,
+        "data": evidence.model_dump(mode="json"),
+        "verified": evidence.claim_status == "observed",
     }
 
 
@@ -250,9 +349,23 @@ def _job_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 def _job_cancel(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     parsed = JobArgs.model_validate(args)
-    job = _service(ctx).cancel_job(
+    service = _service(ctx)
+    existing = service.inspect_job(
         parsed.job_id,
         target_id=parsed.target_id,
         session_id=parsed.session_id,
+    )
+    target = service.inspect_target(existing.request.target_id)
+    job = service.cancel_job(
+        parsed.job_id,
+        target_id=parsed.target_id,
+        session_id=parsed.session_id,
+    )
+    emit_transport_event(
+        ctx,
+        phase="cancel",
+        target=target,
+        capability="command",
+        status=job.status,
     )
     return {"ok": True, "data": job.model_dump(mode="json")}

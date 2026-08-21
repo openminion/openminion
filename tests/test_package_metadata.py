@@ -99,6 +99,22 @@ def test_dev_extra_keeps_browser_viewer_smoke_dependencies() -> None:
     assert "playwright>=1.45,<2" in dev_extra
 
 
+def test_remote_transport_dependencies_are_protocol_scoped() -> None:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )
+    extras = pyproject["project"]["optional-dependencies"]
+
+    assert extras["remote"] == ["asyncssh>=2.14,<3"]
+    assert extras["remote-winrm"] == ["pywinrm>=0.5,<0.6"]
+    assert extras["remote-kubernetes"] == ["kubernetes>=36,<37"]
+    assert extras["remote-aws"] == ["boto3>=1.43,<2"]
+    assert not any(
+        dependency.startswith(("pywinrm", "kubernetes", "boto3"))
+        for dependency in pyproject["project"]["dependencies"]
+    )
+
+
 def test_default_terminal_renderer_dependencies_are_core() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()

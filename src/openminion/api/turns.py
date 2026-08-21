@@ -1,9 +1,6 @@
-from __future__ import annotations
-
 from typing import Any, Callable
 
 from openminion.api.runtime import APIRuntime
-from openminion.modules.brain.diagnostics.status import PhaseStatus
 import openminion.services.runtime.ingress.orchestrator as _request_orchestrator
 
 TurnRequestError = _request_orchestrator.TurnRequestError
@@ -16,7 +13,7 @@ def run_turn(
     payload: dict[str, Any],
     runtime: APIRuntime | None = None,
     request_id: str | None = None,
-    progress_callback: Callable[[PhaseStatus], None] | None = None,
+    progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
 ) -> dict[str, Any]:
     """Run one turn through the canonical request orchestrator."""

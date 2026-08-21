@@ -1,7 +1,5 @@
 """Typed reasoning-profile config normalization and layer precedence."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -107,8 +105,8 @@ def resolve_runtime_reasoning_config(
         source_layer=source,
         system_profile=system,
         agent_profile=agent,
-        provider_name=str(provider_name or "").strip(),
-        model_name=str(model_name or "").strip(),
+        provider_name=(provider_name or "").strip(),
+        model_name=(model_name or "").strip(),
         unknown_request_profile=reasoning_profile_was_unknown(
             invocation_requested_profile
         ),

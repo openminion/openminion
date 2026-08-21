@@ -110,14 +110,13 @@ def _list_pairings(args: argparse.Namespace, *, admin: ControlPlanePairingAdmin)
         status=status,
         limit=max(1, int(getattr(args, "limit", 100))),
     )
-    payload = {"pairings": pairings}
     if getattr(args, "json", False):
-        _print_json(payload)
+        _print_json({"pairings": pairings})
         return 0
     if not pairings:
         print("No channel pairings found.")
         return 0
-    for row in payload["pairings"]:
+    for row in pairings:
         scopes = ", ".join(row["scopes"]) if row["scopes"] else "(none)"
         print(
             f"{row['channel']} {row['subject_id']} "
@@ -130,11 +129,10 @@ def _show_pairing(args: argparse.Namespace, *, admin: ControlPlanePairingAdmin) 
     result = admin.show_pairing(channel=args.channel, subject_id=args.subject_id)
     if not result.found:
         return _not_found(args)
-    payload = {"pairing": result.pairing}
+    pairing = cast(dict[str, Any], result.pairing)
     if getattr(args, "json", False):
-        _print_json(payload)
+        _print_json({"pairing": pairing})
     else:
-        pairing = cast(dict[str, Any], payload["pairing"])
         print(f"channel: {pairing['channel']}")
         print(f"subject_id: {pairing['subject_id']}")
         print(f"principal_id: {pairing['principal_id']}")

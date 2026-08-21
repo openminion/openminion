@@ -718,7 +718,12 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
             retry_count=0,
             request_bytes=120,
             response_bytes=80,
-            usage={"input_tokens": 30, "output_tokens": 20, "cached_tokens": 5},
+            usage={
+                "input_tokens": 30,
+                "output_tokens": 20,
+                "cached_tokens": 5,
+                "cache_creation_tokens": 7,
+            },
             context_bytes=90,
             context_tokens=22,
             context_segment_count=3,
@@ -753,6 +758,32 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
         assert "model" not in metric.attributes
         if metric.name != "gen_ai.client.token.usage":
             assert metric.attributes["transport"] == "http"
+    token_metrics = [
+        metric for metric in metrics if metric.name == "gen_ai.client.token.usage"
+    ]
+    assert {
+        metric.attributes["gen_ai.token.type"]: metric.metric_value
+        for metric in token_metrics
+    } == {"input": 30.0, "output": 20.0, "cache_read": 5.0, "cache_write": 7.0}
+
+
+def test_failed_model_event_emits_usage_when_provider_reports_it() -> None:
+    exporter, sink = _make_exporter()
+
+    exported = exporter.export(
+        _event(
+            "llm.call.failed",
+            outcome="error",
+            usage={"input_tokens": 12, "cached_tokens": 4},
+        )
+    )
+
+    assert exported is True
+    assert {
+        metric.attributes["gen_ai.token.type"]: metric.metric_value
+        for metric in sink.records
+        if metric.name == "gen_ai.client.token.usage"
+    } == {"input": 12.0, "cache_read": 4.0}
 
 
 def test_tool_event_emits_call_duplicate_and_duration_metrics() -> None:

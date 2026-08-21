@@ -119,8 +119,9 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
     FocusScenario(
         scenario_id="coding_deep_scratch_feature",
         prompt=(
-            "In the current directory, create a tiny Python function and one "
-            "minimal check. "
+            "In the current directory, create `tiny_math.py` with an `add_one` "
+            "function and `test_tiny_math.py` with pytest test functions for zero "
+            "and a negative input. Run `python -m pytest -q` to verify them. "
             f"{SCRATCH_RELATIVE_PATH_RULE}"
             "Use file tools for files and direct exec.run commands for checks. "
             "Keep it small and finish with the exact label `result:`."
@@ -132,13 +133,16 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
-        min_generated_files=1,
-        expected_file_patterns=("*.py",),
+        min_generated_files=2,
+        expected_file_patterns=("tiny_math.py", "test_tiny_math.py"),
+        validation_commands=(("{python}", "-m", "pytest", "-q"),),
     ),
     FocusScenario(
         scenario_id="coding_complex_debug_loop",
         prompt=(
-            "In the current directory, create a tiny Python module and test. "
+            "In the current directory, create `math_utils.py` with a `divide(a, b)` "
+            "function and `test_math_utils.py` covering a normal division and a "
+            "zero-divisor `ValueError`. "
             f"{SCRATCH_RELATIVE_PATH_RULE}"
             "Use file.write for files and direct exec.run commands for checks; "
             "do not only show code snippets. Include one edge case, fix any "
@@ -153,13 +157,16 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         use_scratch_workspace=True,
         include_project_context=False,
         min_generated_files=2,
-        expected_file_patterns=("test*.py",),
+        expected_file_patterns=("math_utils.py", "test_math_utils.py"),
+        validation_commands=(("{python}", "-m", "pytest", "-q"),),
     ),
     FocusScenario(
         scenario_id="coding_long_project_slice",
         prompt=(
-            "In the current directory, build a tiny Python CLI project with a "
-            "module, CLI entry, tests, and README. "
+            "In the current directory, build a tiny Python greeting CLI project "
+            "with exactly `greet.py`, `cli.py`, `test_greet.py`, and `README.md`. "
+            "`greet.py` must expose `greet(name)` and `python cli.py Codex` must "
+            "print exactly `Hello, Codex!`. "
             f"{SCRATCH_RELATIVE_PATH_RULE}"
             "Use file.write for files and direct exec.run commands for checks; "
             "do not only show code snippets. Keep it under five files, run "
@@ -174,7 +181,21 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         use_scratch_workspace=True,
         include_project_context=False,
         min_generated_files=4,
-        expected_file_patterns=("README*", "test*.py"),
+        expected_file_patterns=("greet.py", "cli.py", "test_greet.py", "README.md"),
+        validation_commands=(
+            ("{python}", "-m", "pytest", "-q"),
+            (
+                "{python}",
+                "-c",
+                (
+                    "import subprocess, sys; "
+                    "result = subprocess.run([sys.executable, 'cli.py', 'Codex'], "
+                    "capture_output=True, text=True); "
+                    "assert result.returncode == 0, result.stderr; "
+                    "assert result.stdout.strip() == 'Hello, Codex!', result.stdout"
+                ),
+            ),
+        ),
     ),
 )
 
@@ -189,10 +210,10 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "support `python loopcalc.py sum 5` and print `5`. "
             f"{SCRATCH_RELATIVE_PATH_RULE}"
             "Begin by using file.write for `loopcalc.py`; do not inspect the repo "
-            "first. Use file.write and file.read; "
-            "do not call exec.run in this soak scenario. Validate by reading back "
-            "one file, then finish with exact labels `files:`, `validation:`, and "
-            "`follow-ups:`."
+            "first. Use file.write and file.read, then use direct exec.run to run "
+            "`python loopcalc.py sum 5`. Fix the implementation until it exits "
+            "successfully and prints exactly `5`, then finish with exact labels "
+            "`files:`, `validation:`, and `follow-ups:`."
         ),
         expected_markers=("validation", "files"),
         timeout=2400,
@@ -203,8 +224,22 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         include_project_context=False,
         min_generated_files=1,
         expected_file_patterns=("loopcalc.py",),
-        forbidden_transcript_markers=("code.repo_index(", "Running exec.run("),
-        validation_commands=(("{python}", "loopcalc.py", "sum", "5"),),
+        forbidden_transcript_markers=("code.repo_index(",),
+        max_auto_continuations=4,
+        validation_commands=(
+            (
+                "{python}",
+                "-c",
+                (
+                    "import subprocess, sys; "
+                    "result = subprocess.run("
+                    "[sys.executable, 'loopcalc.py', 'sum', '5'], "
+                    "capture_output=True, text=True); "
+                    "assert result.returncode == 0, result.stderr; "
+                    "assert result.stdout.strip() == '5', result.stdout"
+                ),
+            ),
+        ),
     ),
     FocusScenario(
         scenario_id="goal_research_then_code_loop",
@@ -212,12 +247,13 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Treat this as a long-running self-directed project in the current "
             f"directory. {SCRATCH_RELATIVE_PATH_RULE}"
             "Pick a minimal design for a Python CLI that summarizes "
-            "text-file word counts, implement it with file.write/file.read, and "
-            "avoid installs and exec.run. Begin by using file.write for "
+            "text-file word counts and implement it with file.write/file.read. "
+            "Avoid installs. Begin by using file.write for "
             "`word_count_cli.py`; do not inspect the repo first. "
-            "Validate by reading back one created "
-            "file. Close with `design:`, `implementation:`, `validation:`, and "
-            "`next steps:`."
+            "Create `sample.txt` containing exactly two words, then use direct "
+            "exec.run to run `python word_count_cli.py sample.txt`. Fix the "
+            "implementation until it exits successfully and reports `2`. Close "
+            "with `design:`, `implementation:`, `validation:`, and `next steps:`."
         ),
         expected_markers=("validation", "next steps"),
         timeout=3000,
@@ -226,9 +262,10 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
-        min_generated_files=1,
-        expected_file_patterns=("word_count_cli.py",),
-        forbidden_transcript_markers=("code.repo_index(", "Running exec.run("),
+        min_generated_files=2,
+        expected_file_patterns=("word_count_cli.py", "sample.txt"),
+        forbidden_transcript_markers=("code.repo_index(",),
+        max_auto_continuations=4,
         validation_commands=(
             (
                 "{python}",
@@ -253,12 +290,15 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             f"goal in the current directory. {SCRATCH_RELATIVE_PATH_RULE}"
             "Compare two minimal designs for a "
             "Python CLI that summarizes Markdown sections, pick the simpler one, "
-            "and implement a tiny package with module code, CLI entry, tests, "
-            "and README using file.write/file.read. Avoid installs and exec.run. "
+            "and implement exactly `section_summary.py`, `section_summary_cli.py`, "
+            "`test_section_summary.py`, and `README.md` using file.write/file.read. "
+            "The module must expose `parse_sections(text)`, and the CLI must accept "
+            "one Markdown path and print its section headings. Avoid installs. "
             "Begin by using file.write for `section_summary.py`; do not inspect "
             "the repo first. "
-            "Validate by reading back one created file. Finish with `design:`, "
-            "`files:`, `validation:`, and `follow-ups:`."
+            "Use direct exec.run to run `python -m pytest -q`; inspect failures "
+            "and fix the implementation until every test passes. Finish with "
+            "`design:`, `files:`, `validation:`, and `follow-ups:`."
         ),
         expected_markers=("design", "validation", "files"),
         timeout=3000,
@@ -268,21 +308,36 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         use_scratch_workspace=True,
         include_project_context=False,
         min_generated_files=4,
-        expected_file_patterns=("section_summary.py", "README*", "test*.py"),
-        forbidden_transcript_markers=("code.repo_index(", "Running exec.run("),
+        expected_file_patterns=(
+            "section_summary.py",
+            "section_summary_cli.py",
+            "test_section_summary.py",
+            "README.md",
+        ),
+        forbidden_transcript_markers=("code.repo_index(",),
+        max_auto_continuations=4,
         validation_commands=(
             (
                 "{python}",
                 "-c",
                 (
                     "import section_summary; "
-                    "text = '# A\\ntext'; "
-                    "parser = getattr(section_summary, 'parse_sections', None) "
-                    "or getattr(section_summary, 'extract_sections', None); "
-                    "summarize = getattr(section_summary, 'summarize', None); "
-                    "assert callable(parser) or callable(summarize); "
-                    "result = parser(text) if callable(parser) else summarize(text); "
+                    "result = section_summary.parse_sections('# A\\ntext'); "
                     "assert result"
+                ),
+            ),
+            ("{python}", "-m", "pytest", "-q"),
+            (
+                "{python}",
+                "-c",
+                (
+                    "from pathlib import Path; import subprocess, sys; "
+                    "Path('sample.md').write_text('# A\\ntext', encoding='utf-8'); "
+                    "result = subprocess.run("
+                    "[sys.executable, 'section_summary_cli.py', 'sample.md'], "
+                    "capture_output=True, text=True); "
+                    "assert result.returncode == 0, result.stderr; "
+                    "assert 'A' in result.stdout, result.stdout"
                 ),
             ),
         ),

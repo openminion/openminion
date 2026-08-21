@@ -1,7 +1,7 @@
 """Per-agent MCP exposure helpers."""
 
 import fnmatch
-from typing import Any, Mapping
+from typing import Any
 
 from openminion.base.config.mcp import (
     MCPExposureConfig,
@@ -54,29 +54,27 @@ class MCPScopedToolRegistryView(ToolRegistry):
 
     @property
     def _tools(self) -> dict[str, Any]:
-        tools = getattr(self._base_registry, "_tools", {})
-        if not isinstance(tools, Mapping):
-            return {}
         return {
             str(name): tool
-            for name, tool in tools.items()
+            for name, tool in self._base_registry.list().items()
             if is_mcp_tool_exposed(str(name), self._mcp_exposure)
         }
 
     @property
     def _category_index(self) -> dict[str, set[str]]:
-        base_index = getattr(self._base_registry, "_category_index", {})
-        if not isinstance(base_index, Mapping):
-            return {}
         visible_names = set(self._tools.keys())
         return {
-            str(category): {str(name) for name in names if str(name) in visible_names}
-            for category, names in base_index.items()
+            category: {
+                name
+                for name in self._base_registry.tools_by_category(category)
+                if name in visible_names
+            }
+            for category in self._base_registry.all_categories()
         }
 
     @property
     def mcp_manager(self) -> Any:
-        return getattr(self._base_registry, "mcp_manager", None)
+        return self._base_registry.mcp_manager
 
     def register(self, tool: Any) -> None:
         raise RuntimeError("MCPScopedToolRegistryView is read-only")
@@ -100,16 +98,14 @@ def scoped_mcp_registry_view(
 
 def build_mcp_exposure_report(
     *,
-    registry: Any,
+    registry: ToolRegistry,
     server_configs: list[MCPServerConfig],
     exposure: MCPExposureConfig | None,
 ) -> dict[str, Any]:
     normalized = coerce_mcp_exposure_config(exposure)
     configured_servers = sorted({item.name for item in server_configs})
     all_runtime_tools = sorted(
-        str(name)
-        for name in getattr(registry, "_tools", {})
-        if is_mcp_runtime_tool(str(name))
+        str(name) for name in registry.list() if is_mcp_runtime_tool(str(name))
     )
     exposed_runtime_tools = [
         name for name in all_runtime_tools if is_mcp_tool_exposed(name, normalized)

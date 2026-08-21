@@ -39,11 +39,45 @@ def test_canonical_transcript_passes() -> None:
     assert validate_tool_transcript(request) == "canonical_events"
 
 
+def test_parallel_canonical_results_may_arrive_out_of_order() -> None:
+    call = _call("call-1").model_copy(
+        update={
+            "tool_calls": [
+                *_call("call-1").tool_calls,
+                *_call("call-2").tool_calls,
+            ]
+        }
+    )
+
+    assert (
+        validate_tool_transcript(
+            LLMRequest(messages=[call, _result("call-2"), _result("call-1")])
+        )
+        == "canonical_events"
+    )
+
+
 @pytest.mark.parametrize(
     ("messages", "reason_code"),
     [
         ([_result()], "orphan_result"),
         ([_call("same"), _call("same")], "duplicate_call_id"),
+        ([_call()], "missing_result"),
+        (
+            [
+                _call("call-1").model_copy(
+                    update={
+                        "tool_calls": [
+                            *_call("call-1").tool_calls,
+                            *_call("call-2").tool_calls,
+                        ]
+                    }
+                ),
+                _result("call-1"),
+                Message(role="user", content="continue"),
+            ],
+            "incomplete_result_batch",
+        ),
         ([_call(), _result(), _result()], "duplicate_result"),
         (
             [

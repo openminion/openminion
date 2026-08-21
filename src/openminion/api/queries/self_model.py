@@ -1,7 +1,5 @@
 """Compose runtime self-awareness snapshots from existing runtime reports."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.modules.runtime.self_model import (

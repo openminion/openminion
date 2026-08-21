@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
@@ -59,6 +57,8 @@ class RuntimeControlsMixin:
         def create_new_session(self) -> str: ...
 
         def token_usage_snapshot(self) -> Any: ...
+
+        def token_usage_report(self) -> str: ...
 
     def list_models(self) -> list[tuple[str, str, bool]]:
         result: list[tuple[str, str, bool]] = []

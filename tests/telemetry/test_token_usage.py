@@ -223,6 +223,86 @@ def test_usage_aliases_skip_present_but_invalid_values() -> None:
     assert summary.total_derived_tokens == 10
 
 
+def test_failed_call_usage_and_cost_provenance_are_preserved() -> None:
+    failed_records = records_from_session_event(
+        {
+            "event_type": "llm.call.failed",
+            "payload": {
+                "provider": "openrouter",
+                "model": "model-a",
+                "usage": {
+                    "input_tokens": 8,
+                    "output_tokens": 2,
+                    "total_tokens": 10,
+                },
+                "cost_usd": 0.004,
+                "cost_source": "provider",
+            },
+        },
+        session_id="session-1",
+    )
+    estimated_records = records_from_session_event(
+        {
+            "event_type": "llm.call.completed",
+            "payload": {
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+                "estimated_cost_usd": 0.002,
+            },
+        },
+        session_id="session-1",
+    )
+    summary = TokenUsageSummary(
+        session_id="session-1", records=failed_records + estimated_records
+    )
+    coverage = coverage_from_session_events(
+        [
+            {
+                "event_type": "llm.call.failed",
+                "payload": {"usage": {"total_tokens": 10}},
+            },
+            {"event_type": "llm.call.failed", "payload": {}},
+        ]
+    )
+
+    assert summary.total_provider_tokens == 10
+    assert summary.total_derived_tokens == 4
+    assert summary.total_provider_cost_usd == 0.004
+    assert summary.total_estimated_cost_usd == 0.002
+    assert coverage.llm_call_events == 1
+    assert coverage.failed_llm_call_events == 1
+
+
+def test_cost_without_known_provenance_is_not_reported() -> None:
+    record = TokenUsageRecord(
+        session_id="session-1",
+        surface="llm_total",
+        total_tokens=1,
+        cost_usd=1.5,
+    )
+
+    assert record.cost_usd == 0
+    assert record.cost_source == ""
+
+
+def test_provider_reported_zero_cost_stays_distinct_from_unavailable() -> None:
+    reported = TokenUsageSummary(
+        session_id="session-1",
+        records=(
+            TokenUsageRecord(
+                session_id="session-1",
+                surface="llm_total",
+                total_tokens=1,
+                cost_usd=0,
+                cost_source="provider",
+            ),
+        ),
+    )
+    unavailable = TokenUsageSummary(session_id="session-2")
+
+    assert reported.as_payload()["costs"]["provider_cost_usd"] == 0
+    assert unavailable.as_payload()["costs"]["provider_cost_usd"] is None
+
+
 def test_context_manifest_preserves_opaque_cache_correlation() -> None:
     records = records_from_session_event(
         {

@@ -9,7 +9,7 @@ from openminion.modules.telemetry.trace.turn_cost import (
     project_turn_cost,
 )
 
-from .constants import RUNTIME_EVENT_READ_LIMIT
+from .constants import LLM_USAGE_EVENT_TYPES, RUNTIME_EVENT_READ_LIMIT
 from .coverage import coverage_from_session_events
 from .token_usage import (
     TokenUsageRecord,
@@ -26,7 +26,7 @@ from .types import (
 )
 
 _TOKEN_USAGE_EVENT_TYPES = frozenset(
-    {"llm.call.completed", "context.manifest.created", "llm.cache.metrics"}
+    {*LLM_USAGE_EVENT_TYPES, "context.manifest.created", "llm.cache.metrics"}
 )
 
 
@@ -225,7 +225,7 @@ class StatsService:
         llm_call_ids = {
             _event_llm_call_id(event)
             for event in direct_events
-            if event.get("event_type") == "llm.call.completed"
+            if event.get("event_type") in LLM_USAGE_EVENT_TYPES
             and _event_llm_call_id(event)
         }
         usage_events = [
@@ -363,14 +363,16 @@ class StatsService:
             payload = event.get("payload")
             payload_map = dict(payload) if isinstance(payload, dict) else {}
             event_type = str(event.get("event_type", "") or "").strip()
-            if event_type == "llm.call.completed":
+            if event_type in LLM_USAGE_EVENT_TYPES and (
+                event_type == "llm.call.completed"
+                or isinstance(payload_map.get("usage"), dict)
+            ):
                 usage_delta = _usage_stats_from_payload(payload_map)
-                stats = stats.add(
-                    RunStats(
-                        cache_read_tokens=usage_delta.cache_read_tokens,
-                        llm_calls=1,
+                if event_type == "llm.call.completed":
+                    usage_delta = RunStats(
+                        cache_read_tokens=usage_delta.cache_read_tokens, llm_calls=1
                     )
-                )
+                stats = stats.add(usage_delta)
             elif _is_tool_request_event(event_type):
                 stats = stats.add(RunStats(tool_calls=1))
             elif _is_tool_result_event(event_type):
@@ -394,7 +396,10 @@ class StatsService:
             if event_type == "turn.assistant":
                 turn_count += 1
                 continue
-            if event_type == "llm.call.completed":
+            if event_type in LLM_USAGE_EVENT_TYPES and (
+                event_type == "llm.call.completed"
+                or isinstance(payload_map.get("usage"), dict)
+            ):
                 aggregate = aggregate.add(_usage_stats_from_payload(payload_map))
                 continue
             if _is_tool_request_event(event_type):

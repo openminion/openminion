@@ -1,7 +1,5 @@
 """Agent query helpers for the developer API."""
 
-from __future__ import annotations
-
 import io
 import json
 from contextlib import redirect_stdout
@@ -10,7 +8,7 @@ from http import HTTPStatus
 from typing import Any
 
 from openminion.api.config import close_api_runtime_if_owned
-from openminion.api.core.deps import configured_agent_ids, resolve_runtime_manager
+from openminion.api.core.deps import resolve_runtime_manager
 from openminion.base.config.core import resolve_default_agent_id
 
 from openminion.services.runtime.daemon import agent_status_to_dict
@@ -48,7 +46,7 @@ def list_agents(
             "agents": discovery,
             "manager_agents": manager_agents,
             "hot_agent_ids": sorted(item for item in hot_agent_ids if item),
-            "registry_agent_ids": configured_agent_ids(active_runtime),
+            "registry_agent_ids": active_runtime.list_registered_agents(),
             "default_agent_id": resolve_default_agent_id(active_runtime.config),
         }
     finally:

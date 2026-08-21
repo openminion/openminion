@@ -1,7 +1,5 @@
 """API support for queries runtime reports."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.api.queries.mcp_reports import build_mcp_section as _build_mcp_section
@@ -32,11 +30,7 @@ def build_tool_inventory_report(
     dependency_fields = _dependency_fields(runtime, registry, readiness=readiness)
     inventory: list[dict[str, Any]] = []
     for spec in provider_specs:
-        mapping = (
-            dict(dispatch_map.get(spec.name, {}) or {})
-            if isinstance(dispatch_map, dict)
-            else {}
-        )
+        mapping = dict(dispatch_map.get(spec.name, {}) or {})
         runtime_tool_name = str(mapping.get("runtime_tool_name", "") or "").strip()
         runtime_tool = runtime_tools.get(runtime_tool_name)
         runtime_tool = runtime_tool or runtime_tools.get(spec.name)

@@ -17,15 +17,17 @@ from openminion.modules.skill.runtime.skill import Skill
 
 
 def _config_path(tmp_path: Path) -> str:
-    db = tmp_path / "skill.db"
+    data_root = tmp_path / ".openminion"
+    skill_root = data_root / "skill"
+    db = skill_root / "skill.db"
     cfg = tmp_path / "skill.json"
     cfg.write_text(
         json.dumps(
             {
                 "skill": {
                     "sqlite_path": str(db),
-                    "blob_root": str(tmp_path / "blob"),
-                    "fallback_root": str(tmp_path / "fallback"),
+                    "blob_root": str(skill_root / "blob"),
+                    "fallback_root": str(skill_root / "fallback"),
                     "wal": False,
                 }
             }

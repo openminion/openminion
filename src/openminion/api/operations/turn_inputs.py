@@ -1,7 +1,5 @@
 """Turn-input queue API operations."""
 
-from __future__ import annotations
-
 from http import HTTPStatus
 from typing import Any, cast
 from urllib.parse import parse_qs
@@ -38,13 +36,8 @@ def _entry_payload(entry: TurnInputQueueEntry) -> dict[str, Any]:
     return entry.to_dict(include_text=True)
 
 
-def _turn_input_queue(runtime: object) -> TurnInputQueue:
-    queue = getattr(runtime, "turn_input_queue", None)
-    if isinstance(queue, TurnInputQueue):
-        return queue
-    queue = TurnInputQueue()
-    setattr(runtime, "turn_input_queue", queue)
-    return queue
+def _turn_input_queue(runtime: APIRuntime) -> TurnInputQueue:
+    return runtime.turn_input_queue
 
 
 def _queue_error_result(exc: TurnInputQueueError) -> RouteResult:
@@ -107,15 +100,14 @@ def _resolve_runtime_for_queue(
     ctx: APIRouteContext,
     *,
     path: str,
-) -> tuple[APIRuntime | None, bool, RouteResult | None]:
+) -> tuple[APIRuntime, bool] | RouteResult:
     try:
-        runtime, own_runtime = resolve_api_runtime(
+        return resolve_api_runtime(
             config_path=ctx.config_path,
             runtime=ctx.runtime,
         )
-        return runtime, own_runtime, None
     except Exception as exc:  # noqa: BLE001
-        return None, False, runtime_unavailable_route_result(path=path, exc=exc)
+        return runtime_unavailable_route_result(path=path, exc=exc)
 
 
 def enqueue_turn_input(
@@ -127,11 +119,10 @@ def enqueue_turn_input(
 ) -> RouteResult:
     if body is None:
         return json_body_required_route_result(path=path, session_id=session_id)
-    runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
-    if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(
-            path=path, exc="runtime unavailable"
-        )
+    resolved = _resolve_runtime_for_queue(ctx, path=path)
+    if isinstance(resolved, RouteResult):
+        return resolved
+    runtime, own_runtime = resolved
     try:
         requested_intent = str(body.get("intent", TurnInputIntent.QUEUE_NEXT.value))
         metadata = dict(body.get("metadata") or {})
@@ -185,11 +176,10 @@ def list_turn_inputs(
     session_id: str,
     query: str | None,
 ) -> RouteResult:
-    runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
-    if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(
-            path=path, exc="runtime unavailable"
-        )
+    resolved = _resolve_runtime_for_queue(ctx, path=path)
+    if isinstance(resolved, RouteResult):
+        return resolved
+    runtime, own_runtime = resolved
     try:
         params = parse_qs(query or "")
         agent_id = (params.get("agent_id") or [""])[0].strip() or None
@@ -227,11 +217,10 @@ def drop_turn_input(
     queue_id: str,
     body: dict[str, Any] | None,
 ) -> RouteResult:
-    runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
-    if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(
-            path=path, exc="runtime unavailable"
-        )
+    resolved = _resolve_runtime_for_queue(ctx, path=path)
+    if isinstance(resolved, RouteResult):
+        return resolved
+    runtime, own_runtime = resolved
     try:
         entry = _turn_input_queue(runtime).drop(
             session_id=session_id,
@@ -271,11 +260,10 @@ def move_turn_input(
 ) -> RouteResult:
     if body is None:
         return json_body_required_route_result(path=path, session_id=session_id)
-    runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
-    if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(
-            path=path, exc="runtime unavailable"
-        )
+    resolved = _resolve_runtime_for_queue(ctx, path=path)
+    if isinstance(resolved, RouteResult):
+        return resolved
+    runtime, own_runtime = resolved
     try:
         entry = _turn_input_queue(runtime).move(
             session_id=session_id,

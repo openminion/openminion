@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from argparse import Namespace
 import contextlib
 import io
@@ -284,15 +282,12 @@ class SlashCommandMixin:
         self.action_toggle_debug()
 
     def _slash_quiet(self, _args: str) -> None:
-        """Switch the transcript to quiet mode."""
         self._apply_session_verbosity("quiet")
 
     def _slash_normal(self, _args: str) -> None:
-        """Switch the transcript to normal mode."""
         self._apply_session_verbosity("normal")
 
     def _slash_verbose(self, _args: str) -> None:
-        """Switch the transcript to verbose mode."""
         self._apply_session_verbosity("verbose")
 
     def _slash_details(self, args: str) -> None:
@@ -301,7 +296,6 @@ class SlashCommandMixin:
         self._push_system_body(f"details → {message}")
 
     def _apply_session_verbosity(self, level: str) -> None:
-        """Apply a session verbosity override."""
         if level not in ("quiet", "normal", "verbose"):
             return
         self._verbosity = level
@@ -387,7 +381,6 @@ class SlashCommandMixin:
         self._load_history()
 
     def _slash_permissions(self, args: str) -> None:
-        """Show or set session or tool-scoped permission posture."""
         raw_arg = str(args or "").strip()
         arg = raw_arg.lower()
         if not arg:
@@ -467,8 +460,6 @@ class SlashCommandMixin:
             pass
 
     def _slash_diff(self, args: str) -> None:
-        """Show the current git diff in the interactive transcript."""
-
         from openminion.cli.presentation.git.diff import render_git_diff
 
         try:
@@ -480,8 +471,6 @@ class SlashCommandMixin:
         self._push_system_body(body)
 
     def _slash_review(self, args: str) -> None:
-        """Run the existing review.diff analyzer on current or supplied diff."""
-
         from openminion.cli.presentation.review import run_review_workflow
 
         self._push_system_body(run_review_workflow(self._working_dir, args).body)
@@ -515,7 +504,6 @@ class SlashCommandMixin:
             pass
 
     def _slash_compact(self, _args: str) -> None:
-        """Compact conversation history (if the runtime supports it)."""
         compact_fn = getattr(self._runtime, "compact_history", None)
         if not callable(compact_fn):
             self._push_system_body(
@@ -588,7 +576,6 @@ class SlashCommandMixin:
         self._push_system_body(queue_command_usage_notice())
 
     def _slash_resume(self, _args: str) -> None:
-        """Open the session picker pre-filtered to non-empty sessions."""
         lister = getattr(self._runtime, "list_directory_sessions", None)
         if not callable(lister):
             self.action_show_sessions()
@@ -609,7 +596,6 @@ class SlashCommandMixin:
         self._open_session_picker(non_empty)
 
     def _open_session_picker(self, sessions: list) -> None:
-        """Open the resume picker screen for the provided sessions."""
         try:
             from .widgets.resume_picker import (
                 ResumePickerScreen,
@@ -714,7 +700,6 @@ class SlashCommandMixin:
         )
 
     def _slash_copy(self, _args: str) -> None:
-        """Mirror the Ctrl+Y copy action for terminals that capture the key."""
         self.action_copy_last_agent()
 
     def _slash_export(self, _args: str) -> None:
@@ -740,7 +725,6 @@ class SlashCommandMixin:
         )
 
     def _slash_help(self, _args: str) -> None:
-        """Rich help — one row per registered command with description."""
         rows = []
         for aliases, description, _handler in self._slash_command_registry:
             primary = aliases[0]

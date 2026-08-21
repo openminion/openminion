@@ -4,11 +4,16 @@ import pytest
 
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.tools.mcp.manager import MCPProtocolError, MCPServerSession
+from openminion.tools.mcp.results import normalize_tool_result
 
 
 class _ToolListTransport:
     def __init__(self) -> None:
         self.notifications: list[tuple[str, dict]] = []
+
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
 
     def is_running(self) -> bool:
         return True
@@ -83,7 +88,8 @@ def test_mcp_tool_result_preserves_rich_content_and_validates_structured_content
         "additionalProperties": False,
     }
 
-    normalized = session._normalize_call_result(  # noqa: SLF001
+    normalized = normalize_tool_result(
+        server_name=session.server_name,
         remote_name="rich-tool",
         result={
             "content": [
@@ -95,6 +101,8 @@ def test_mcp_tool_result_preserves_rich_content_and_validates_structured_content
             "structuredContent": {"status": "ok"},
             "isError": False,
         },
+        output_schema=session._output_schemas_by_tool["rich-tool"],  # noqa: SLF001
+        stderr_tail="",
     )
 
     assert normalized["content"] == "done"
@@ -122,13 +130,16 @@ def test_mcp_tool_result_rejects_invalid_structured_content() -> None:
     }
 
     with pytest.raises(MCPProtocolError) as excinfo:
-        session._normalize_call_result(  # noqa: SLF001
+        normalize_tool_result(
+            server_name=session.server_name,
             remote_name="rich-tool",
             result={
                 "content": [{"type": "text", "text": "bad"}],
                 "structuredContent": {"status": 123},
                 "isError": False,
             },
+            output_schema=session._output_schemas_by_tool["rich-tool"],  # noqa: SLF001
+            stderr_tail="",
         )
 
     assert excinfo.value.reason_code == "mcp_output_schema_invalid"

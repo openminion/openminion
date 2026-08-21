@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 import shlex
@@ -23,18 +21,17 @@ class AgentDelegateRequest:
     timeout_seconds: int = 120
 
     def tool_args(self) -> dict[str, Any]:
-        mode = normalize_delegate_mode(self.mode)
         return {
-            "mode": mode,
-            "agent_id": str(self.target_agent_id or "").strip(),
-            "instruction": str(self.instruction or "").strip(),
-            "task_id": str(self.task_id or "").strip(),
-            "timeout_seconds": int(self.timeout_seconds or 120),
+            "mode": normalize_delegate_mode(self.mode),
+            "agent_id": self.target_agent_id.strip(),
+            "instruction": self.instruction.strip(),
+            "task_id": self.task_id.strip(),
+            "timeout_seconds": self.timeout_seconds or 120,
         }
 
 
 def normalize_delegate_mode(mode: str) -> str:
-    normalized = str(mode or "sync").strip().lower()
+    normalized = (mode or "sync").strip().lower()
     if normalized in _RESULT_MODE_ALIASES:
         return "resume"
     return normalized or "sync"
@@ -92,7 +89,7 @@ def run_agent_delegate_request(
                 request.tool_args(),
                 SimpleNamespace(
                     a2a_delegate_api=seam,
-                    workspace=Path(str(cwd or workspace_root or "").strip() or ".")
+                    workspace=Path((cwd or workspace_root or "").strip() or ".")
                     .expanduser()
                     .resolve(strict=False),
                 ),
@@ -157,7 +154,7 @@ def request_from_operator_args(args: Any) -> AgentDelegateRequest:
 
 def request_from_slash_args(args: str) -> AgentDelegateRequest:
     try:
-        parts = shlex.split(str(args or ""))
+        parts = shlex.split(args or "")
     except ValueError as exc:
         raise ValueError(f"/delegate: {exc}") from exc
     if not parts:
@@ -183,7 +180,7 @@ def request_from_slash_args(args: str) -> AgentDelegateRequest:
 
 
 def delegate_action_requires_task_id(action: str) -> bool:
-    normalized = str(action or "").strip().lower()
+    normalized = (action or "").strip().lower()
     return (
         normalized != "delegate"
         and normalized.removeprefix("delegate-") in _STATUS_MODES

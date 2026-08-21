@@ -9,6 +9,8 @@ from openminion.tools.ops import (
     LocalTransport,
     OperationTarget,
 )
+from openminion.tools.ops.contracts import TransportFacts, TransportResult
+from openminion.tools.ops.interfaces import FileReadTransport, TargetTransport
 
 
 def test_local_transport_executes_argv_without_shell() -> None:
@@ -19,6 +21,36 @@ def test_local_transport_executes_argv_without_shell() -> None:
     )
     assert result.return_code == 0
     assert result.stdout == "hello"
+
+
+def test_command_and_file_read_capabilities_are_independent() -> None:
+    class CommandOnlyTransport:
+        def connect(self, target):
+            return TransportFacts(
+                kind=target.kind,
+                platform=target.platform,
+                connected=True,
+            )
+
+        inspect = connect
+
+        def run(self, target, argv, **kwargs):
+            del target, kwargs
+            return TransportResult(argv=argv, return_code=0)
+
+        def cancel(self, operation_id):
+            del operation_id
+            return False
+
+        def close(self):
+            return None
+
+    command_only = CommandOnlyTransport()
+
+    assert isinstance(command_only, TargetTransport)
+    assert not isinstance(command_only, FileReadTransport)
+    assert isinstance(LocalTransport(), TargetTransport)
+    assert isinstance(LocalTransport(), FileReadTransport)
 
 
 def test_local_transport_reports_timeout() -> None:
@@ -90,7 +122,7 @@ def test_container_transport_builds_runtime_argv(monkeypatch) -> None:
         return object()
 
     monkeypatch.setattr(
-        "openminion.tools.ops.transports._run",
+        "openminion.tools.ops.transports.runtime.run_process",
         fake_run,
     )
     result = ContainerTransport("podman").run(
@@ -108,3 +140,52 @@ def test_container_transport_builds_runtime_argv(monkeypatch) -> None:
         "output_sink": None,
         "cwd": "",
     }
+
+
+def test_container_transport_passes_remote_selection_per_call(monkeypatch) -> None:
+    captured: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **kwargs):
+        del kwargs
+        captured.append(argv)
+        return object()
+
+    monkeypatch.setattr(
+        "openminion.tools.ops.transports.runtime.run_process",
+        fake_run,
+    )
+    transport = ContainerTransport()
+    transport.run(
+        OperationTarget(
+            target_id="docker",
+            kind="container",
+            container="app",
+            docker_context="staging",
+        ),
+        ("uname", "-a"),
+        timeout_seconds=3,
+    )
+    transport.run(
+        OperationTarget(
+            target_id="podman",
+            kind="container",
+            container="app",
+            container_runtime="podman",
+            podman_connection="staging",
+        ),
+        ("uname", "-a"),
+        timeout_seconds=3,
+    )
+
+    assert captured == [
+        ("docker", "--context", "staging", "exec", "app", "uname", "-a"),
+        (
+            "podman",
+            "--connection",
+            "staging",
+            "exec",
+            "app",
+            "uname",
+            "-a",
+        ),
+    ]

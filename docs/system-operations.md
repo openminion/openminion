@@ -1,10 +1,11 @@
 # Ops Tools
 
-The `tools/ops` family provides bounded local, container, and optional SSH
-observations. `ops` is the broad system-operations domain; SSH is only one
-transport backend.
+The `tools/ops` family provides bounded local, container, and optional remote
+observations. `ops` is the broad system-operations domain; SSH, WinRM,
+Kubernetes pod exec, and AWS SSM are transport backends rather than separate
+command systems.
 
-The tool family exposes eleven tools:
+The tool family exposes fourteen tools:
 
 - `ops.target.list`
 - `ops.target.inspect`
@@ -15,6 +16,7 @@ The tool family exposes eleven tools:
 - `ops.process.inspect`
 - `ops.network.port_owner`
 - `ops.command.observe`
+- `ops.file.read`
 - `ops.command.plan`
 - `ops.command.run`
 - `ops.job.inspect`
@@ -28,10 +30,20 @@ Results carry typed evidence and claim status. Operator
 surfaces receive redacted target views: credential references and host-key
 material never appear in model-visible or public payloads.
 
-Local and container transports are available by default. Install the `remote`
-extra to enable the AsyncSSH transport. SSH targets must configure pinned host
-key material or an explicit known-hosts file; ambient SSH config and host-key
-trust are not assumed.
+Local and container transports are available by default. Optional transports
+use protocol-scoped extras:
+
+- `remote` for AsyncSSH
+- `remote-winrm` for WinRM over validated HTTPS
+- `remote-kubernetes` for one explicit pod/container exec
+- `remote-aws` for one explicit SSM managed node
+
+SSH targets must configure pinned host-key material or an explicit known-hosts
+file; ambient SSH config and host-key trust are not assumed. WinRM requires
+HTTPS on port 5986 and a CA trust path. Kubernetes targets bind one context,
+namespace, pod, and optional container. SSM targets bind one account, region,
+managed node, and platform-appropriate allowlisted Run Command document.
+Ordinary installations do not install these SDKs.
 
 Configure targets under `runtime.ops.targets`. This example uses a private key
 stored in an environment-backed credential reference; use `password` for a
@@ -79,6 +91,8 @@ opsctl command-run opplan-... PLAN_HASH --confirm \
 opsctl job-inspect opjob-... --config /path/to/openminion.yaml
 opsctl evidence-list --target-id staging-web \
   --config /path/to/openminion.yaml
+opsctl file-read staging-web /srv/openminion/status.txt --max-bytes 4096 \
+  --config /path/to/openminion.yaml
 ```
 
 Plans, jobs, and redacted evidence are stored below
@@ -86,8 +100,11 @@ Plans, jobs, and redacted evidence are stored below
 does not claim that a server was semantically configured.
 
 The managed command path is intentionally bounded: one target, structured
-argv, no caller-provided shell, no environment/stdin forwarding, no PTY or
-file transfer, no bastion/fan-out, and no production or privileged mutation.
+argv, no environment/stdin forwarding, no PTY or file transfer, no
+bastion/fan-out, and no production or privileged mutation. Kubernetes never
+adds a shell wrapper. SSM uses only its target's allowlisted document and never
+fans out. `ops.file.read` is limited to configured absolute workspace/log
+scopes and a bounded byte count; it does not add write or transfer behavior.
 Background worker pools and post-dispatch retry remain deferred until a real
 long-running command workflow requires them.
 

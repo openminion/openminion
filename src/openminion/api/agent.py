@@ -213,13 +213,7 @@ class Agent(Generic[InputT, OutputT]):
         *,
         on_delta: Callable[[dict[str, Any]], None] | None = None,
     ) -> AgentRunResult[Any]:
-        """Synchronous streaming variant.
-
-        ``on_delta`` is invoked for each progress event as it arrives. The
-        final return value is the same :class:`AgentRunResult` shape that
-        :meth:`run` returns. When ``on_delta`` is ``None`` this method is
-        functionally equivalent to :meth:`run`.
-        """
+        """Run one turn while forwarding progress events to ``on_delta``."""
         return self._run_once(message, on_delta=on_delta)
 
     def close(self) -> None:

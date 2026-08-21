@@ -1,7 +1,5 @@
 """API response metadata, metrics, and request logging."""
 
-from __future__ import annotations
-
 import logging
 import re
 from http import HTTPStatus

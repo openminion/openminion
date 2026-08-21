@@ -86,7 +86,7 @@ def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]
     event_type = str(event.event_type or "").strip()
     if event_type == "chat.phase_timing":
         return _chat_phase_metrics(payload)
-    if event_type in {"llm.call.completed", "llm_call"}:
+    if event_type in {"llm.call.completed", "llm.call.failed", "llm_call"}:
         return _model_provider_metrics(payload)
     if event_type.startswith("agent.invocation."):
         return _lifecycle_metrics(payload, family="invocation", terminal=event_type)
@@ -192,6 +192,22 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return metrics
 
 
+def _append_model_cost_metric(
+    metrics: list[dict[str, Any]], payload: dict[str, Any]
+) -> None:
+    cost_source = str(payload.get("cost_source") or "").strip()
+    if not cost_source:
+        return
+    _append_metric(
+        metrics,
+        "openminion_model_cost",
+        _KIND_COUNTER,
+        payload.get("cost_usd"),
+        {"cost_source": _bounded_label(cost_source, default="unknown")},
+        unit="USD",
+    )
+
+
 def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
     common = {
@@ -234,6 +250,8 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for token_type, keys in (
         ("input", ("input_tokens", "prompt_tokens")),
         ("output", ("output_tokens", "completion_tokens")),
+        ("cache_read", ("cached_tokens", "cache_read_tokens")),
+        ("cache_write", ("cache_creation_tokens", "cache_write_tokens")),
     ):
         value = _first_present(usage_map, *keys)
         _append_metric(
@@ -280,17 +298,7 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if value is None:
             value = usage_map.get(payload_key)
         _append_metric(metrics, metric_name, _KIND_HISTOGRAM, value, common)
-    cost = payload.get("cost_usd")
-    cost_source = str(payload.get("cost_source") or "").strip()
-    if cost_source:
-        _append_metric(
-            metrics,
-            "openminion_model_cost",
-            _KIND_COUNTER,
-            cost,
-            {"cost_source": _bounded_label(cost_source, default="unknown")},
-            unit="USD",
-        )
+    _append_model_cost_metric(metrics, payload)
     return metrics
 
 

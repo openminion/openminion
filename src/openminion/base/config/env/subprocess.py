@@ -40,12 +40,11 @@ def build_subprocess_env(
 ) -> dict[str, str]:
     env: dict[str, str] = {}
     if inherit_parent:
+        parent = os.environ
         allowed = set(DEFAULT_SUBPROCESS_ENV_ALLOWLIST)
-        raw = os.environ.get(SUBPROCESS_ENV_ALLOWLIST_ENV, "")
+        raw = parent.get(SUBPROCESS_ENV_ALLOWLIST_ENV, "")
         allowed.update(split_comma_tokens(raw))
-        env.update(
-            {key: str(os.environ[key]) for key in sorted(allowed) if key in os.environ}
-        )
+        env.update({key: parent[key] for key in sorted(allowed) if key in parent})
     if overlay:
         env.update({str(key): str(value) for key, value in overlay.items()})
     return env

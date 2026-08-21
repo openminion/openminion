@@ -185,4 +185,9 @@ class LLMStreamEvent(BaseModel):
     type: Literal["delta", "done", "error"]
     delta_text: Optional[str] = None
     tool_call: Optional[ToolCall] = None
+    tool_call_deltas: list[dict[str, Any]] = Field(default_factory=list)
+    finish_reason: Optional[str] = None
+    usage: Optional[UsageInfo] = None
+    request_id: Optional[str] = None
+    provider_raw: Optional[dict[str, Any]] = None
     error: Optional[ResponseError] = None

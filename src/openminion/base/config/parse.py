@@ -1,7 +1,5 @@
 """Small config coercion and token parsing helpers."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.base.constants import BASE_BOOL_FALSE_VALUES, BASE_BOOL_TRUE_VALUES

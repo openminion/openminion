@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import OPENMINION_TRACE_REQUESTS_ENV
+from openminion.modules.llm.client_call import response_cost_payload
 from openminion.modules.llm.client_call import usage_payload_from_response_usage
 from openminion.modules.llm.providers.base import ProviderError
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
@@ -501,6 +502,7 @@ async def generate_with_provider_call_telemetry(
             "usage": usage_payload_from_response_usage(
                 getattr(response, "usage", None)
             ),
+            **response_cost_payload(response),
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
             **correlation,
             **publication.event_fields(final=True),

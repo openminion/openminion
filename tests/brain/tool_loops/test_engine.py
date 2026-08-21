@@ -1537,6 +1537,11 @@ def test_engine_preserves_confirm_required_sibling_batch_for_replay() -> None:
         {"path": "demo/task_summary/__init__.py", "body": '"""pkg"""'},
     ]
     assert "covers 3 queued commands" in loop_ctx.state.post_action_user_message
+    assert [
+        message.tool_call_id
+        for message in outcome.state.messages
+        if message.role == "tool"
+    ] == ["call-1", "call-2", "call-3", "call-4"]
 
 
 def test_engine_mid_loop_decompose_non_empty_returns_structured_handoff() -> None:
@@ -3676,6 +3681,18 @@ def test_engine_clamps_overexpanded_initial_direct_tool_batch_to_requested_call(
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert [command.tool_name for command in loop_ctx.commands] == ["file.list_dir"]
     assert runtime.calls[1]["tool_choice"] == "none"
+    assistant_calls = [
+        call
+        for message in outcome.state.messages
+        if message.role == "assistant"
+        for call in message.tool_calls
+    ]
+    assert [call.id for call in assistant_calls] == ["call-1"]
+    assert [
+        message.tool_call_id
+        for message in outcome.state.messages
+        if message.role == "tool"
+    ] == ["call-1"]
 
 
 def test_engine_clamps_single_direct_tool_call_to_explicit_requested_args() -> None:

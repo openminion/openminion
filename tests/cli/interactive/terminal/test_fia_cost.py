@@ -25,6 +25,9 @@ class _FakeRuntime:
             raise RuntimeError("snapshot failed")
         return self._snapshot
 
+    def token_usage_report(self) -> str:
+        return "status tokens: session=session-1\ntotals: provider=42"
+
 
 class _StubOverlay:
     pass
@@ -36,10 +39,10 @@ def _make_console() -> tuple[Console, io.StringIO]:
     return console, buf
 
 
-async def _dispatch(runtime: Any) -> str:
+async def _dispatch(runtime: Any, command: str = "/cost") -> str:
     console, buf = _make_console()
     await _handle_slash(
-        "/cost",
+        command,
         runtime=runtime,
         console=console,
         transcript=TerminalTranscript(console),
@@ -52,6 +55,7 @@ async def _dispatch(runtime: Any) -> str:
 
 def test_cost_in_catalog() -> None:
     assert "/cost" in _SLASH_COMMANDS
+    assert "/tokens" in _SLASH_COMMANDS
 
 
 def test_render_cost_snapshot_missing_method() -> None:
@@ -90,3 +94,11 @@ def test_slash_cost_dispatch_runs() -> None:
     out = asyncio.run(_dispatch(runtime))
     # Some content rendered (either hint or summary).
     assert len(out.strip()) > 0
+
+
+def test_slash_tokens_dispatches_durable_report() -> None:
+    runtime = _FakeRuntime(snapshot=None)
+    out = asyncio.run(_dispatch(runtime, "/tokens"))
+
+    assert "session=session-1" in out
+    assert "provider=42" in out

@@ -125,6 +125,7 @@ class TelegramWebhookRunner:
         outbox_worker: object | None = None,
         rate_limiter: object | None = None,
         brain_client: object | None = None,
+        authorizer: ScopeAuthorizer | None = None,
     ) -> None:
         self._config = config
         self._api = api
@@ -154,7 +155,7 @@ class TelegramWebhookRunner:
                 logger=self._log,
             )
         self._auth_store = _resolve_controlplane_auth_store(self._runtime)
-        self._authorizer = (
+        self._authorizer = authorizer or (
             ScopeAuthorizer(store=self._auth_store)
             if self._auth_store is not None
             else None
@@ -884,10 +885,14 @@ class TelegramWebhookRunner:
             )
             return None
 
-        if parsed is None or is_pair_command(inbound.text):
+        if is_pair_command(inbound.text):
             return inbound
 
-        allowed, reason = self._authorizer.command_allowed(parsed, auth)
+        allowed, reason = (
+            self._authorizer.message_allowed(auth)
+            if parsed is None
+            else self._authorizer.command_allowed(parsed, auth)
+        )
         if allowed:
             return inbound
 

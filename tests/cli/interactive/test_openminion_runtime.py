@@ -785,6 +785,27 @@ def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> No
     assert snapshot["compaction_reason"] == "token_pressure"
 
 
+def test_openminion_runtime_renders_durable_token_usage() -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+    rt.sessions.add_event(
+        tui_rt.session_id,
+        "llm.call.completed",
+        {
+            "provider": "openai",
+            "model": "gpt-test",
+            "usage": {"input_tokens": 8, "output_tokens": 2, "total_tokens": 10},
+            "cost_usd": 0.001,
+            "cost_source": "provider",
+        },
+    )
+
+    report = tui_rt.token_usage_report()
+
+    assert "provider=10" in report
+    assert "provider_cost=$0.001" in report
+
+
 @pytest.mark.asyncio
 async def test_openminion_runtime_resets_session_usage_on_new_session_and_bind() -> (
     None

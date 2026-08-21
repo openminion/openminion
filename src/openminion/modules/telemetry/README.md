@@ -70,6 +70,9 @@ Operator notes:
 5. See [Telemetry export quickstarts](../../../../docs/telemetry-export-quickstarts.md)
    for Collector, Jaeger, Tempo, Langfuse, Phoenix, Logfire, and generic OTLP
    setup with explicit proof and privacy boundaries.
+6. LLM token histograms use `gen_ai.client.token.usage` with input, output,
+   cache-read, and cache-write token types when those provider dimensions are
+   present.
 
 ## Operator inspection CLI
 

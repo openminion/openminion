@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.base.config.core import resolve_default_agent_id

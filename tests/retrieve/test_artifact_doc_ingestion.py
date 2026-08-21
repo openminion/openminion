@@ -8,7 +8,7 @@ from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
 
 
 def _artifact_config(tmp_path: Path) -> dict[str, object]:
-    store_root = tmp_path / "artifact-store"
+    store_root = tmp_path / ".openminion" / "artifact-store"
     return {
         "artifactctl": {
             "blob_store": {
@@ -28,7 +28,7 @@ def _artifact_config(tmp_path: Path) -> dict[str, object]:
 
 
 def _retrieve_config(tmp_path: Path) -> dict[str, object]:
-    retrieve_root = tmp_path / "retrieve-store"
+    retrieve_root = tmp_path / ".openminion" / "retrieve-store"
     return {
         "version": 1,
         "retrievectl": {

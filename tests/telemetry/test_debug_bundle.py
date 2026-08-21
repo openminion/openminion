@@ -55,13 +55,18 @@ def _seed(data_root: Path, invocation_id: str = "invocation-1") -> Path:
     return db_path
 
 
+def _set_data_root(monkeypatch: pytest.MonkeyPatch, data_root: Path) -> None:
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(data_root / "runtime"))
+
+
 def test_bundle_cli_writes_private_atomic_sanitized_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     data_root = tmp_path / "data"
-    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    _set_data_root(monkeypatch, data_root)
     db_path = _seed(data_root)
 
     assert (
@@ -129,7 +134,7 @@ def test_bundle_cli_returns_typed_errors_without_absolute_paths(
     error_code: str,
 ) -> None:
     data_root = tmp_path / "data"
-    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    _set_data_root(monkeypatch, data_root)
     db_path = _seed(data_root)
     argv = [
         "--data-root",
@@ -157,7 +162,7 @@ def test_bundle_refuses_existing_and_symlinked_destinations(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     data_root = tmp_path / "data"
-    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    _set_data_root(monkeypatch, data_root)
     db_path = _seed(data_root)
     existing = data_root / "existing"
     existing.mkdir()

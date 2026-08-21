@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import inspect
 import json
 import time
@@ -49,7 +47,6 @@ _LIVE_USAGE_THROTTLE_SECONDS = 0.5
 
 
 def _session_sort_key(session: Any) -> str:
-    """Sort sessions by most-recent-activity first for candidate selection."""
     return (
         str(getattr(session, "last_activity_at", "") or "")
         or str(getattr(session, "updated_at", "") or "")
@@ -262,6 +259,17 @@ class OpenMinionRuntime(
             turn_elapsed_seconds=turn_elapsed_seconds,
             updated_at_monotonic=self._usage_updated_at_monotonic,
         )
+
+    def token_usage_report(self) -> str:
+        if not self.is_bound:
+            return "No active session."
+        from openminion.cli.commands.status.token_report import format_token_summary
+        from openminion.modules.telemetry.usage import StatsService
+
+        summary = StatsService(self._rt.sessions).get_session_token_usage(
+            self.session_id
+        )
+        return format_token_summary(summary)
 
     def context_budget_snapshot(self) -> dict[str, Any]:
         if not self.is_bound:
@@ -976,6 +984,4 @@ class OpenMinionRuntime(
     @staticmethod
     def _normalize_working_dir(working_dir: str | None) -> str | None:
         raw = str(working_dir or "").strip()
-        if not raw:
-            return None
-        return str(Path(raw).expanduser().resolve(strict=False))
+        return str(Path(raw).expanduser().resolve(strict=False)) if raw else None

@@ -1,13 +1,10 @@
 import logging
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable
+
+from .scorer import clamp01
 
 if TYPE_CHECKING:
     from openminion.modules.retrieve.schemas import RetrievalFilters
-
-
-def clamp01(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
 
 
 def build_empty_meta(lane: str, limit_chars: int = 0) -> dict[str, str]:
@@ -30,7 +27,6 @@ class RetrievalPipeline:
         logger: logging.Logger,
         agent_id: str,
         retrieval_max_chars: int,
-        feedback_boost_on_reference: float = 0.1,
         trace_fn: Callable[[str, dict[str, Any]], None] | None,
     ) -> None:
         self._retrieve_ctl = retrieve_ctl
@@ -39,7 +35,6 @@ class RetrievalPipeline:
         self._logger = logger
         self._agent_id = str(agent_id or "").strip() or "openminion"
         self._retrieval_max_chars = max(256, int(retrieval_max_chars))
-        self._feedback_boost_on_reference = max(0.0, float(feedback_boost_on_reference))
         self._trace_fn = trace_fn
 
     def sync_runtime_state(
@@ -48,13 +43,11 @@ class RetrievalPipeline:
         config: Any,
         ranking_config: Any | None,
         retrieve_ctl: Any | None,
-        feedback_boost_on_reference: float = 0.1,
         trace_fn: Callable[[str, dict[str, Any]], None] | None,
     ) -> None:
         self._config = config
         self._ranking_config = ranking_config
         self._retrieve_ctl = retrieve_ctl
-        self._feedback_boost_on_reference = max(0.0, float(feedback_boost_on_reference))
         self._trace_fn = trace_fn
 
     def _trace(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -102,109 +95,6 @@ class RetrievalPipeline:
                 seen.add(dedupe_key)
                 merged.append(item)
         return merged
-
-    @staticmethod
-    def _item_score(item: Mapping[str, Any]) -> float:
-        try:
-            return clamp01(float(item.get("score", 0.0) or 0.0))
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _sorted_by_score(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(items, key=self._item_score, reverse=True)
-
-    @staticmethod
-    def _update_unified_score(item: dict[str, Any], score: float) -> None:
-        meta = item.get("meta", {})
-        if not isinstance(meta, Mapping):
-            return
-        score_breakdown = meta.get("score_breakdown", {})
-        if not isinstance(score_breakdown, Mapping):
-            return
-        updated_breakdown = dict(score_breakdown)
-        updated_breakdown["unified_score"] = float(score)
-        updated_meta = dict(meta)
-        updated_meta["score_breakdown"] = updated_breakdown
-        item["meta"] = updated_meta
-
-    def _apply_recency_boost(
-        self,
-        items: list[dict[str, Any]],
-        *,
-        decay_halflife_days: int,
-        recency_weight: float,
-    ) -> list[dict[str, Any]]:
-        halflife = max(1, int(decay_halflife_days))
-        weight = clamp01(recency_weight)
-        if weight <= 0.0:
-            return list(items)
-
-        now = datetime.now(timezone.utc)
-        boosted: list[dict[str, Any]] = []
-        for item in items:
-            current = dict(item)
-            base_score = self._item_score(current)
-            created_at = str(current.get("created_at", "") or "").strip()
-            recency_multiplier = 1.0
-            if created_at:
-                try:
-                    created_dt = datetime.fromisoformat(created_at)
-                    if created_dt.tzinfo is None:
-                        created_dt = created_dt.replace(tzinfo=timezone.utc)
-                    age_days = max(
-                        0.0,
-                        (now - created_dt.astimezone(timezone.utc)).total_seconds()
-                        / 86400.0,
-                    )
-                    recency_multiplier = 0.5 ** (age_days / float(halflife))
-                except ValueError:
-                    recency_multiplier = 1.0
-            updated_score = clamp01(
-                base_score * ((1.0 - weight) + (recency_multiplier * weight))
-            )
-            current["score"] = updated_score
-            self._update_unified_score(current, updated_score)
-            boosted.append(current)
-        return self._sorted_by_score(boosted)
-
-    def _apply_feedback_boost(
-        self,
-        items: list[dict[str, Any]],
-        *,
-        max_boost: float,
-    ) -> list[dict[str, Any]]:
-        cap = max(0.0, float(max_boost))
-        if cap <= 0.0:
-            return list(items)
-        try:
-            hit_divisor = max(
-                1.0,
-                float(
-                    getattr(self._ranking_config, "feedback_hit_divisor", 10.0)
-                    if self._ranking_config is not None
-                    else 10.0
-                ),
-            )
-        except (TypeError, ValueError):
-            hit_divisor = 10.0
-
-        boosted: list[dict[str, Any]] = []
-        for item in items:
-            current = dict(item)
-            base_score = self._item_score(current)
-            meta = current.get("meta", {})
-            hit_count = 0.0
-            if isinstance(meta, Mapping):
-                try:
-                    hit_count = max(0.0, float(meta.get("hit_count", 0.0) or 0.0))
-                except (TypeError, ValueError):
-                    hit_count = 0.0
-            reuse_signal = clamp01(hit_count / hit_divisor)
-            updated_score = clamp01(base_score + min(cap, cap * reuse_signal))
-            current["score"] = updated_score
-            self._update_unified_score(current, updated_score)
-            boosted.append(current)
-        return self._sorted_by_score(boosted)
 
     def _build_retrieve_scope_keys(
         self,
@@ -318,11 +208,28 @@ class RetrievalPipeline:
                 strategy=strategy,
                 filters=filters.model_dump(mode="python", exclude_none=True),
             )
-            return (
+            items = (
                 [item for item in raw if isinstance(item, dict)]
                 if isinstance(raw, list)
                 else []
             )
+            resolved_strategy = (
+                str(items[0].get("retrieval_strategy", "") or "").strip() or None
+                if items
+                else None
+            )
+            self._trace(
+                "memory.retrieval.lane",
+                {
+                    "session_id": session_id,
+                    "lane": lane,
+                    "requested_strategy": strategy,
+                    "resolved_strategy": resolved_strategy,
+                    "results": len(items),
+                    "no_result_reason": None if items else "no_candidates",
+                },
+            )
+            return items
         except Exception as exc:
             self._logger.warning(
                 "memory.retrieval.retrieve_split %s failed session_id=%s error=%s",
@@ -332,7 +239,13 @@ class RetrievalPipeline:
             )
             self._trace(
                 "memory.retrieval.retrieve_ctl_error",
-                {"session_id": session_id, "lane": lane, "error": str(exc)},
+                {
+                    "session_id": session_id,
+                    "lane": lane,
+                    "requested_strategy": strategy,
+                    "reason_code": "retrieve_error",
+                    "error": str(exc),
+                },
             )
             return []
 
@@ -419,16 +332,6 @@ class RetrievalPipeline:
             project_id=project_id,
         )
         merged_hits = self._merge_and_dedup(memory_hits, retrieve_hits)
-        if not merged_hits:
-            meta["memory_envelope_limit_chars"] = str(limit)
-            return "", meta, retrieve_hits, merged_hits
-
-        content = self._format_retrieval_context(merged_hits)
-        if len(content) > limit:
-            content = content[:limit]
-            meta["memory_envelope_truncated"] = "true"
-            meta["memory_envelope_truncation_reasons"] = "retrieval_limit"
-        meta["memory_envelope_limit_chars"] = str(limit)
         self._trace(
             "memory.retrieval.dual_query",
             {
@@ -439,8 +342,31 @@ class RetrievalPipeline:
                 "retrieve_ctl_available": str(self._retrieve_ctl is not None).lower(),
                 "conversational_hits": split_counts["conversational"],
                 "knowledge_hits": split_counts["knowledge"],
+                "retrieve_no_result_reason": (
+                    None if retrieve_hits else "no_candidates"
+                ),
             },
         )
+        if not merged_hits:
+            meta["memory_envelope_limit_chars"] = str(limit)
+            self._trace(
+                "memory.retrieval.result",
+                {
+                    "session_id": session_id,
+                    "query_len": len(user_message),
+                    "results": 0,
+                    "retrieval_chars": 0,
+                    "no_result_reason": "no_candidates",
+                },
+            )
+            return "", meta, retrieve_hits, merged_hits
+
+        content = self._format_retrieval_context(merged_hits)
+        if len(content) > limit:
+            content = content[:limit]
+            meta["memory_envelope_truncated"] = "true"
+            meta["memory_envelope_truncation_reasons"] = "retrieval_limit"
+        meta["memory_envelope_limit_chars"] = str(limit)
         self._trace(
             "memory.retrieval.result",
             {
@@ -448,6 +374,7 @@ class RetrievalPipeline:
                 "query_len": len(user_message),
                 "results": len(merged_hits),
                 "retrieval_chars": len(content),
+                "no_result_reason": None,
             },
         )
         return content, meta, retrieve_hits, merged_hits
@@ -472,7 +399,7 @@ class RetrievalPipeline:
                 k_conversational=int(self._config_default("k_conversational", 3)),
                 k_knowledge=int(self._config_default("k_knowledge", 3)),
             )
-            return self._rerank_retrieve_hits(retrieve_hits), split_counts
+            return self._select_retrieve_hits(retrieve_hits), split_counts
         except Exception as exc:
             self._logger.warning(
                 "memory.retrieval.retrieve_ctl failed agent_id=%s session_id=%s error=%s",
@@ -486,19 +413,10 @@ class RetrievalPipeline:
             )
             return [], split_counts
 
-    def _rerank_retrieve_hits(
+    def _select_retrieve_hits(
         self,
         retrieve_hits: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        boosted_hits = self._apply_recency_boost(
-            retrieve_hits,
-            decay_halflife_days=int(self._config_default("decay_halflife_days", 30)),
-            recency_weight=float(self._config_default("recency_weight", 0.3)),
-        )
-        boosted_hits = self._apply_feedback_boost(
-            boosted_hits,
-            max_boost=self._feedback_boost_on_reference,
-        )
         total_k = max(
             1,
             int(self._config_default("k_conversational", 3))
@@ -510,17 +428,20 @@ class RetrievalPipeline:
             else self._config_default("mmr_enabled", True)
         )
         if not mmr_enabled:
-            return boosted_hits[:total_k]
+            return sorted(
+                retrieve_hits,
+                key=lambda item: float(item.get("score", 0.0) or 0.0),
+                reverse=True,
+            )[:total_k]
         mmr_lambda = float(
             getattr(self._ranking_config, "mmr_lambda", 0.6)
             if self._ranking_config is not None
             else self._config_default("mmr_lambda", 0.6)
         )
-        return self.mmr_rerank(boosted_hits, k=total_k, lambda_=mmr_lambda)
+        return self.mmr_rerank(retrieve_hits, k=total_k, lambda_=mmr_lambda)
 
 
 __all__ = [
     "RetrievalPipeline",
     "build_empty_meta",
-    "clamp01",
 ]

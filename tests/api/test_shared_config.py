@@ -16,7 +16,6 @@ from openminion.api.constants import (
 from openminion.api.core.deps import (
     resolve_api_config_display_path,
     resolve_api_config_hint,
-    resolve_api_tool_provider_specs_and_dispatch_map,
 )
 from openminion.api.server.app import _OpenMinionAPIHandler
 
@@ -104,69 +103,3 @@ def test_resolve_api_config_display_path_and_hint() -> None:
 
     runtime_path = resolve_api_config_display_path(Path("config.json"))
     assert runtime_path.endswith("config.json")
-
-
-def test_resolve_api_tool_provider_specs_and_dispatch_map_handles_dispatch_failures() -> (
-    None
-):
-    class _Spec:
-        def __init__(self, name: str) -> None:
-            self.name = name
-            self.description = f"{name} desc"
-            self.parameters = {"type": "object"}
-
-    class _RuntimeTools:
-        def model_runtime_dispatch_map(self):
-            raise RuntimeError("boom")
-
-        def model_provider_specs(self):
-            return [_Spec("weather"), _Spec("time")]
-
-    provider_specs, dispatch_map = resolve_api_tool_provider_specs_and_dispatch_map(
-        _RuntimeTools()
-    )
-
-    assert [spec.name for spec in provider_specs] == ["time", "weather"]
-    assert dispatch_map == {}
-
-
-def test_resolve_api_tool_provider_specs_and_dispatch_map_merges_prompt_visible_runtime_tools() -> (
-    None
-):
-    class _Spec:
-        def __init__(self, name: str) -> None:
-            self.name = name
-            self.description = f"{name} desc"
-            self.parameters = {"type": "object"}
-
-    prompt_visible = mock.Mock()
-    prompt_visible.prompt_visible_runtime_name = True
-    prompt_visible.runtime_binding_id = "runtime.mcp.fixture.echo_text"
-
-    class _RuntimeTools:
-        _tools = {"mcp.fixture.echo_text": prompt_visible}
-
-        def model_runtime_dispatch_map(self):
-            return {"weather": {"runtime_binding_id": "runtime.weather.current"}}
-
-        def model_provider_specs(self):
-            return [_Spec("weather"), _Spec("time")]
-
-        def provider_spec_for_name(self, name: str):
-            if name == "mcp.fixture.echo_text":
-                return _Spec(name)
-            return None
-
-    provider_specs, dispatch_map = resolve_api_tool_provider_specs_and_dispatch_map(
-        _RuntimeTools()
-    )
-
-    assert [spec.name for spec in provider_specs] == [
-        "mcp.fixture.echo_text",
-        "time",
-        "weather",
-    ]
-    assert dispatch_map["mcp.fixture.echo_text"] == {
-        "runtime_binding_id": "runtime.mcp.fixture.echo_text",
-        "runtime_tool_name": "mcp.fixture.echo_text",
-    }

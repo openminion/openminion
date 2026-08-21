@@ -1,9 +1,7 @@
 """Handoff records and transfer tools for developer-facing agents."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
@@ -131,8 +129,7 @@ def build_delegate_tool(handoff: Handoff) -> ToolDecl:
     description = handoff.resolved_description()
 
     def _handler_fn(message: str) -> str:
-        result = handoff.target.run(message)
-        return getattr(result, "text", str(result))
+        return cast(str, handoff.target.run(message).text)
 
     args_model = _build_args_model(_handler_fn, f"{name.replace('.', '_')}Args")
 

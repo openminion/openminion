@@ -1,8 +1,7 @@
 """Canonical error types for the v2 tool-call envelope."""
 
-from __future__ import annotations
-
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 
 class EnvelopeError(Exception):

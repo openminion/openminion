@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.base.config.parse import _as_bool, _as_float, _as_int, _as_int_list
@@ -201,10 +199,6 @@ def _providers_config_to_payload(config: ProvidersConfig) -> dict[str, Any]:
             value = getattr(provider_config, field_name)
             if kind == _KIND_INT_LIST:
                 provider_payload[field_name] = list(value)
-            elif kind == _KIND_BOOL:
-                provider_payload[field_name] = bool(value)
-            elif kind == _KIND_FLOAT:
-                provider_payload[field_name] = float(value)
             elif kind == _KIND_DICT_STR:
                 provider_payload[field_name] = dict(value)
             else:

@@ -1,9 +1,7 @@
 """Shared turn-submission helpers for API sync and streaming flows."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
@@ -12,7 +10,6 @@ from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response
 
 @dataclass
 class TurnSubmission:
-    manager: Any
     active_runtime: APIRuntime
     own_runtime: bool
     request: Any
@@ -20,7 +17,7 @@ class TurnSubmission:
     timeout_s: float
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         return getattr(self.request, "session_id", None)
 
     @property
@@ -31,8 +28,8 @@ class TurnSubmission:
 
 def open_turn_submission(
     *,
-    config_path: Optional[str],
-    runtime: Optional[APIRuntime],
+    config_path: str | None,
+    runtime: APIRuntime | None,
     body: dict[str, Any],
 ) -> TurnSubmission:
     active_runtime, own_runtime = resolve_api_runtime(
@@ -42,7 +39,6 @@ def open_turn_submission(
     try:
         runtime_handle = active_runtime.submit_turn(payload=body)
         return TurnSubmission(
-            manager=getattr(active_runtime, "runtime_manager", None),
             active_runtime=active_runtime,
             own_runtime=own_runtime,
             request=runtime_handle.request,

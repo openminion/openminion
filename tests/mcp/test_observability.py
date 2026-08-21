@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -140,7 +142,29 @@ def test_mcp_server_metrics_and_runtime_report_surface_success_failure_and_resta
         _close_bootstrap(bootstrap)
 
 
+def test_mcp_metric_state_is_safe_under_concurrent_updates() -> None:
+    manager = MCPFleetManager(servers=[])
+    started = time.monotonic()
+
+    def record(_index: int) -> None:
+        manager._record_call_metric(  # noqa: SLF001
+            server_name="fixture",
+            started=started,
+            ok=True,
+            restart_total=0,
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(record, range(200)))
+
+    assert manager.mcp_server_metrics()["fixture"]["call_total"] == 200
+
+
 class _LoggingTransport:
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
+
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict]] = []
 

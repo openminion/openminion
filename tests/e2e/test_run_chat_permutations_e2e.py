@@ -234,7 +234,13 @@ def test_main_records_external_prerequisite_skip(monkeypatch, tmp_path: Path) ->
     assert "external_service_unavailable:PINCHTAB_URL/PINCHTAB_AUTOSTART" in skip_reason
 
 
-def test_default_work_root_uses_ignored_generated_runtime_tree() -> None:
+def test_default_work_root_uses_ignored_generated_runtime_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
+
     assert ".openminion" in _default_work_root().parts
     assert _default_work_root().name == "chat-workdirs"
 

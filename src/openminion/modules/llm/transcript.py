@@ -21,10 +21,12 @@ def _fail(reason_code: str, message: str) -> None:
 def validate_tool_transcript(request: LLMRequest) -> str:
     calls: dict[str, int] = {}
     results: set[str] = set()
+    pending_results: set[str] = set()
     saw_legacy = False
 
     for message_index, message in enumerate(request.messages):
         if message.role == "assistant":
+            message_call_ids: set[str] = set()
             for call in message.tool_calls:
                 call_id = str(call.id or "").strip()
                 if not call_id:
@@ -34,9 +36,23 @@ def validate_tool_transcript(request: LLMRequest) -> str:
                 if not str(call.name or "").strip():
                     _fail("missing_canonical_name", f"Tool call {call_id} has no name")
                 calls[call_id] = message_index
+                message_call_ids.add(call_id)
+            if pending_results:
+                _fail(
+                    "incomplete_result_batch",
+                    "Assistant turn follows unresolved tool calls: "
+                    + ", ".join(sorted(pending_results)),
+                )
+            pending_results = message_call_ids
             continue
 
         if message.role != "tool":
+            if pending_results:
+                _fail(
+                    "incomplete_result_batch",
+                    f"{message.role} turn follows unresolved tool calls: "
+                    + ", ".join(sorted(pending_results)),
+                )
             continue
         meta = dict(message.meta)
         lane = str(meta.get("transcript_lane", "") or "").strip()
@@ -66,9 +82,22 @@ def validate_tool_transcript(request: LLMRequest) -> str:
             _fail("orphan_result", f"Tool result has no preceding call: {call_id}")
         if call_id in results:
             _fail("duplicate_result", f"Duplicate tool result: {call_id}")
+        if call_id not in pending_results:
+            _fail(
+                "result_outside_active_batch",
+                f"Tool result is outside the active call batch: {call_id}",
+            )
         if message.tool_status is None:
             _fail("missing_result_status", f"Tool result has no status: {call_id}")
         results.add(call_id)
+        pending_results.remove(call_id)
+
+    if pending_results:
+        _fail(
+            "missing_result",
+            "Tool calls have no terminal results: "
+            + ", ".join(sorted(pending_results)),
+        )
 
     if calls:
         return "canonical_events"

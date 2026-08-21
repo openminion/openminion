@@ -204,9 +204,10 @@ def _make_llm_runtime(*, telemetryctl: Any | None) -> LLMCTL:
 
 
 def _skill_config(tmp_path: Path) -> dict[str, Any]:
+    skill_root = tmp_path / ".openminion" / "skill"
     return {
         "skill": {
-            "sqlite_path": str(tmp_path / "skill.db"),
+            "sqlite_path": str(skill_root / "skill.db"),
             "wal": False,
             "default_status_filter": ["draft", "verified", "blessed"],
             "high_risk_status_filter": ["blessed", "verified"],

@@ -1,7 +1,5 @@
 """Runtime capability policy config and resolution helpers."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Mapping, cast
 
@@ -113,7 +111,7 @@ def _optional_mode_int(
         raise ConfigError(f"{field_path} must be >= {minimum}.")
     if maximum is not None and parsed > maximum:
         raise ConfigError(f"{field_path} must be <= {maximum}.")
-    return int(parsed)
+    return parsed
 
 
 @dataclass
@@ -305,12 +303,12 @@ def mode_runtime_policy_to_dict(
         return {}
     payload: dict[str, Any] = {}
     for name, config in sorted(policy.items(), key=lambda item: item[0]):
-        entry: dict[str, Any] = {"enabled": bool(config.enabled)}
+        entry: dict[str, Any] = {"enabled": config.enabled}
         for field_name in (*_MODE_BOOL_FIELDS, *_MODE_INT_BOUNDS):
             value = getattr(config, field_name)
             if value is not None:
                 entry[field_name] = value
-        payload[str(name)] = entry
+        payload[name] = entry
     return payload
 
 

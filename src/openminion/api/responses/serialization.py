@@ -1,7 +1,5 @@
 """Response-shaping helpers for the developer API."""
 
-from __future__ import annotations
-
 import re
 from http import HTTPStatus
 from typing import Any, Mapping
@@ -40,7 +38,7 @@ def error_response(
                 "code": resolved.code,
                 "message": resolved.message,
                 "details": dict(resolved.details),
-                "retryable": bool(retryable),
+                "retryable": retryable,
                 "retry_after_ms": retry_after_ms,
             },
         },

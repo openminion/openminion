@@ -104,8 +104,17 @@ OpenAI-compatible endpoints: Portal owns routing, quota, capacity, and its
 internal request lifecycle. OpenMinion defaults its existing provider timeout
 to 480 seconds because responses can be slow; a larger configured
 `timeout_seconds` value is preserved by the runtime. Current Portal support is
-text and text streaming. Tool-backed tasks require the Portal gateway contract
-and are not emulated from prose.
+text, text streaming, native OpenAI tool calls, tool-result continuation, and
+streamed tool-call deltas. OpenMinion preserves Portal tool-call IDs,
+arguments, finish reasons, usage, and `X-Request-ID` correlation facts. Portal
+requests are not automatically retried because resubmission is not yet
+idempotent. Portal currently omits `X-Request-ID` from FastAPI `422` request
+validation responses; OpenMinion cannot capture a header that is not present.
+
+Run initial Portal acceptance serially. Two simultaneous requests assigned to
+the same Cortensor session can currently surface
+`router_v4_correlation_mismatch` as a `502 router_error`; OpenMinion reports
+that failure without retrying it.
 
 ```bash
 export CORTENSOR_API_KEY="..."

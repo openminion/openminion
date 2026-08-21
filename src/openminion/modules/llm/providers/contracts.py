@@ -89,6 +89,7 @@ class ProviderResponse:
     finish_reason: str = ""
     normalization: dict[str, Any] = field(default_factory=dict)
     thinking: list[ThinkingBlock] = field(default_factory=list)
+    cost_usd: float | None = None
 
     @property
     def empty_payload_recovered(self) -> bool:

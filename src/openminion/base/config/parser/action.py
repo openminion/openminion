@@ -1,7 +1,5 @@
 """Action-policy parsing helpers."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.base.config.core import (
@@ -84,9 +82,7 @@ def _action_policy_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
         "default_action": _normalize_action_policy_default_action(
             config.action_policy.default_action
         ),
-        "allow_read_only_without_prompt": bool(
-            config.action_policy.allow_read_only_without_prompt
-        ),
+        "allow_read_only_without_prompt": config.action_policy.allow_read_only_without_prompt,
         "rules": [
             {
                 "match": {

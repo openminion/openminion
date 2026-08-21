@@ -316,6 +316,7 @@ def test_search_rows_pushes_tag_and_time_filters_into_sql() -> None:
         limit=5,
     )
 
-    assert "LOWER(d.tags_json) LIKE ?" in service.store.sql
+    assert "json_each(d.tags_json)" in service.store.sql
+    assert "LOWER(tag.value) = ?" in service.store.sql
     assert "d.created_at >= ?" in service.store.sql
-    assert '%"keep"%' in service.store.params
+    assert "keep" in service.store.params

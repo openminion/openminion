@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 from http import HTTPStatus
+from typing import Any, cast
 
 from openminion.api.core.deps import resolve_runtime_manager
 
@@ -16,7 +15,7 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
     del body, query
@@ -29,10 +28,8 @@ def handle_request(
         except Exception as exc:  # noqa: BLE001
             return runtime_unavailable_route_result(path=path, exc=exc)
         try:
-            manager.kill_switch(grace_s=2)
-            return RouteResult(
-                status=HTTPStatus.OK, payload={"ok": True, "status": "stopped"}
-            )
+            cast(Any, manager).kill_switch(grace_s=2)
+            return RouteResult(HTTPStatus.OK, {"ok": True, "status": "stopped"})
         finally:
             if own_runtime:
                 active_runtime.close()

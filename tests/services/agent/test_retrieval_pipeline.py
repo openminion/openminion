@@ -30,8 +30,10 @@ def test_rank_and_format_keeps_unified_scores_without_lexical_diversity_fallback
                         "text": "cluster alpha",
                         "score": 0.9,
                         "unified_score": 0.9,
+                        "created_at": "2000-01-01T00:00:00+00:00",
                         "meta": {
                             "unit_id": "u1",
+                            "hit_count": 10,
                             "score_breakdown": {
                                 "relevance": 0.9,
                                 "recency": 0.5,
@@ -122,6 +124,27 @@ def test_mmr_rerank_stays_score_ordered_without_embeddings_when_lambda_zero() ->
     assert texts == ["cluster alpha", "cluster alpha"]
 
 
+def test_selection_keeps_global_unified_score_order_when_mmr_is_disabled() -> None:
+    pipeline = RetrievalPipeline(
+        retrieve_ctl=None,
+        config=None,
+        ranking_config=type("Ranking", (), {"mmr_enabled": False})(),
+        logger=logging.getLogger("openminion.tests"),
+        agent_id="pipeline-test-agent",
+        retrieval_max_chars=2000,
+        trace_fn=None,
+    )
+
+    selected = pipeline._select_retrieve_hits(  # noqa: SLF001
+        [
+            {"text": "conversational", "score": 0.4},
+            {"text": "knowledge", "score": 0.9},
+        ]
+    )
+
+    assert [item["text"] for item in selected] == ["knowledge", "conversational"]
+
+
 def test_default_conversational_retrieval_does_not_expand_query() -> None:
 
     class _RetrieveCtl:
@@ -181,3 +204,45 @@ def test_candidate_similarity_without_embeddings_returns_zero() -> None:
     )
 
     assert similarity == 0.0
+
+
+def test_empty_retrieval_traces_lane_and_result_reasons() -> None:
+    traces: list[tuple[str, dict[str, object]]] = []
+
+    class _RetrieveCtl:
+        def retrieve(self, **_kwargs):  # type: ignore[no-untyped-def]
+            return []
+
+    pipeline = RetrievalPipeline(
+        retrieve_ctl=_RetrieveCtl(),
+        config=None,
+        ranking_config=None,
+        logger=logging.getLogger("openminion.tests"),
+        agent_id="pipeline-test-agent",
+        retrieval_max_chars=2000,
+        trace_fn=lambda event, payload: traces.append((event, payload)),
+    )
+
+    content, _, retrieve_hits, merged_hits = pipeline.rank_and_format(
+        [],
+        session_id="session-empty",
+        user_message="missing material",
+    )
+
+    assert content == ""
+    assert retrieve_hits == []
+    assert merged_hits == []
+    lane_payloads = [
+        payload for event, payload in traces if event == "memory.retrieval.lane"
+    ]
+    assert [payload["lane"] for payload in lane_payloads] == [
+        "conversational",
+        "knowledge",
+    ]
+    assert all(
+        payload["no_result_reason"] == "no_candidates" for payload in lane_payloads
+    )
+    result_payload = next(
+        payload for event, payload in traces if event == "memory.retrieval.result"
+    )
+    assert result_payload["no_result_reason"] == "no_candidates"

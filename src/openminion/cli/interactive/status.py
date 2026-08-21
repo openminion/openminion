@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +18,6 @@ class FocusLabelsMixin:
         state: str | None = None,
         tool_name: str | None = None,
     ) -> None:
-        """Mirror runtime state onto the bottom status line."""
         try:
             status_line = self.query_one(FocusStatusLine)
         except QueryError:
@@ -84,7 +81,6 @@ class FocusLabelsMixin:
 
     @staticmethod
     def _tokens_severity(snapshot: Any) -> str:
-        """Classify token usage severity from the current snapshot."""
         from openminion.cli.interactive.widgets.status_line import (
             TOKENS_SEVERITY_NORMAL,
             classify_context_severity,
@@ -97,13 +93,11 @@ class FocusLabelsMixin:
         return classify_context_severity(used, limit)
 
     def _cwd_label(self) -> str:
-        """Return the shortened working dir label used by the status line."""
         from openminion.cli.presentation.header import shorten_working_dir
 
         return shorten_working_dir(self._working_dir) or ""
 
     def _branch_label(self) -> str:
-        """Cached git branch for the status line."""
         cached = getattr(self, "_cached_branch_label", None)
         cached_dir = getattr(self, "_cached_branch_dir", None)
         if cached_dir == self._working_dir and cached is not None:
@@ -154,7 +148,6 @@ class FocusLabelsMixin:
 
 class FocusRuntimeStateMixin:
     def _refresh_header(self, *, status_mode: str | None = None) -> None:
-        """Refresh the interactive status line header fields."""
         try:
             line = self.query_one(FocusStatusLine)
         except QueryError:

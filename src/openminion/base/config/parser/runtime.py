@@ -1,7 +1,5 @@
 """Runtime config parsing helpers."""
 
-from __future__ import annotations
-
 from dataclasses import fields, is_dataclass
 from typing import Any
 
@@ -273,7 +271,7 @@ def _build_runtime_config(effective_runtime_payload: dict[str, Any]) -> RuntimeC
 
 def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
     payload = {key: getattr(config, key) for key, _ in _STRING_DEFAULTS}
-    payload.update({key: bool(getattr(config, key)) for key, _ in _BOOL_DEFAULTS})
+    payload.update({key: getattr(config, key) for key, _ in _BOOL_DEFAULTS})
     payload.update({key: getattr(config, key) for key, _, _ in _INT_MIN_DEFAULTS})
     payload.update(
         {
@@ -287,7 +285,7 @@ def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
                 config.memory_capsule_strategy
             ),
             "telemetry_exporter": _config_value_to_payload(config.telemetry_exporter),
-            "clarify_llm_temperature": float(config.clarify_llm_temperature),
+            "clarify_llm_temperature": config.clarify_llm_temperature,
             "complex_request_plan_policy": _normalize_complex_request_plan_policy(
                 config.complex_request_plan_policy
             ),
@@ -300,12 +298,8 @@ def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
             ],
             "mcp_publish": mcp_publish_config_to_dict(config.mcp_publish),
             "mcp_sampling_mode": normalize_mcp_sampling_mode(config.mcp_sampling_mode),
-            "mcp_discovery_cache_ttl_seconds": float(
-                config.mcp_discovery_cache_ttl_seconds
-            ),
-            "mcp_deferred_discovery_enabled": bool(
-                config.mcp_deferred_discovery_enabled
-            ),
+            "mcp_discovery_cache_ttl_seconds": config.mcp_discovery_cache_ttl_seconds,
+            "mcp_deferred_discovery_enabled": config.mcp_deferred_discovery_enabled,
         }
     )
     if config.has_tool_schema_shortlisting_enabled:

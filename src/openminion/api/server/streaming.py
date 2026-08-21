@@ -1,12 +1,14 @@
 """Server-sent-event handling for streaming turn responses."""
 
-from __future__ import annotations
-
 import logging
 from http import HTTPStatus
-from typing import Callable
+from typing import Any, Callable
 
-from openminion.api.core.turn_execution import close_submission, open_turn_submission
+from openminion.api.core.turn_execution import (
+    TurnSubmission,
+    close_submission,
+    open_turn_submission,
+)
 from openminion.api.runtime import APIRuntime
 from openminion.api.responses.serialization import (
     attach_response_meta,
@@ -19,7 +21,7 @@ from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response
 def _record_stream_response(
     *,
     status: HTTPStatus,
-    payload: dict,
+    payload: dict[str, Any],
     resolved_request_id: str,
     session_id_for_meta: str | None,
     run_id_for_meta: str | None,
@@ -28,7 +30,7 @@ def _record_stream_response(
     observe_request_metrics: Callable[..., int],
     log_request_done: Callable[..., None],
     write_json: Callable[..., None] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     response = attach_response_meta(
         payload,
         request_id=resolved_request_id,
@@ -66,7 +68,7 @@ def _stream_error_payload(
     message: str,
     retryable: bool,
     retry_after_ms: int | None = None,
-) -> tuple[HTTPStatus, dict]:
+) -> tuple[HTTPStatus, dict[str, Any]]:
     return error_response(
         status,
         code=code,
@@ -79,10 +81,10 @@ def _stream_error_payload(
 
 def _open_stream_submission(
     *,
-    body: dict,
+    body: dict[str, Any],
     config_path: str | None,
     runtime: APIRuntime | None,
-) -> tuple[object | None, HTTPStatus | None, dict | None]:
+) -> tuple[TurnSubmission | None, HTTPStatus | None, dict[str, Any] | None]:
     try:
         submission = open_turn_submission(
             config_path=config_path,
@@ -137,14 +139,12 @@ def _safe_stream_event(
 
 def _emit_stream_chunks(
     *,
-    submission,
+    submission: TurnSubmission,
     run_id_for_meta: str | None,
     write_sse_event: Callable[..., None],
 ) -> bool:
     for chunk in submission.handle.stream(timeout_s=0.25):
         chunk_payload = turn_chunk_to_dict(chunk)
-        if not isinstance(chunk_payload, dict):
-            chunk_payload = {}
         chunk_payload.setdefault("trace_id", run_id_for_meta or "")
         chunk_payload.setdefault("kind", "progress")
         chunk_payload.setdefault("data", {})
@@ -159,11 +159,11 @@ def _emit_stream_chunks(
 
 def _collect_stream_result(
     *,
-    submission,
+    submission: TurnSubmission,
     run_id_for_meta: str | None,
     client_disconnected: bool,
     write_sse_event: Callable[..., None],
-) -> tuple[HTTPStatus, dict]:
+) -> tuple[HTTPStatus, dict[str, Any]]:
     try:
         turn_response = submission.handle.result(
             timeout_s=max(0.0, float(submission.timeout_s))
@@ -234,8 +234,6 @@ def _collect_stream_result(
 
     if not client_disconnected:
         response_payload = turn_response_to_dict(turn_response)
-        if not isinstance(response_payload, dict):
-            response_payload = {}
         response_payload.setdefault("final_text", "")
         _safe_stream_event(
             event="response",
@@ -250,7 +248,7 @@ def _collect_stream_result(
 
 def handle_turn_stream_request(
     *,
-    body: dict,
+    body: dict[str, Any],
     request_id: str | None,
     config_path: str | None,
     runtime: APIRuntime | None,

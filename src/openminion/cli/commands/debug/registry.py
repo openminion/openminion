@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.services.diagnostics.debug import DebugRegistry
 
 from .providers.core import (

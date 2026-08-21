@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -30,6 +28,10 @@ _VALID_QUEUE_STATES = frozenset(
 
 class ProposalQueueError(ValueError):
     """Raised when a proposal-queue invariant is violated."""
+
+
+class ProposalNotFoundError(ProposalQueueError):
+    """Raised when a proposal id has no stored record."""
 
 
 def create_proposal(
@@ -104,7 +106,7 @@ def record_proposal_review(
 
     record = get_proposal(store, proposal_id=proposal_id)
     if record is None:
-        raise ProposalQueueError(f"proposal not found: {proposal_id!r}")
+        raise ProposalNotFoundError(f"proposal not found: {proposal_id!r}")
 
     proposal = SkillProposal.model_validate(record["proposal"])
     review = decide_skill_proposal(
@@ -138,7 +140,7 @@ def apply_proposal(
 
     record = get_proposal(store, proposal_id=proposal_id)
     if record is None:
-        raise ProposalQueueError(f"proposal not found: {proposal_id!r}")
+        raise ProposalNotFoundError(f"proposal not found: {proposal_id!r}")
     queue_state = str(record.get("queue_state") or "")
     if queue_state == PROPOSAL_QUEUE_STATE_APPLIED:
         existing = record.get("applied_addition")
@@ -181,6 +183,7 @@ __all__ = (
     "PROPOSAL_QUEUE_STATE_APPLIED",
     "PROPOSAL_QUEUE_STATE_PENDING",
     "PROPOSAL_QUEUE_STATE_REVIEWED",
+    "ProposalNotFoundError",
     "ProposalQueueError",
     "apply_proposal",
     "create_proposal",

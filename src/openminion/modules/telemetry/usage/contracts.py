@@ -14,6 +14,7 @@ TOTAL_SOURCE_DERIVED: Literal["derived"] = "derived"
 TOKEN_TOTAL_SOURCES = frozenset({TOTAL_SOURCE_PROVIDER, TOTAL_SOURCE_DERIVED})
 
 TokenTotalSource = Literal["", "provider", "derived"]
+TokenCostSource = Literal["", "provider", "estimated"]
 
 
 class TokenUsageEventRefPayload(TypedDict, total=False):
@@ -57,6 +58,8 @@ class TokenUsageRecordPayload(TypedDict):
     prompt_cache_key: str
     static_prefix_hash: str
     cache_hit: bool | None
+    cost_usd: float
+    cost_source: TokenCostSource
 
 
 class TokenUsageDimensionCoveragePayload(TypedDict):
@@ -67,6 +70,7 @@ class TokenUsageDimensionCoveragePayload(TypedDict):
 
 class TokenUsageCoveragePayload(TypedDict):
     llm_call_events: int
+    failed_llm_call_events: int
     context_manifest_events: int
     cache_metric_events: int
     provider_identified_llm_call_events: int
@@ -92,6 +96,11 @@ class TokenUsageTotalsPayload(TypedDict):
     saved_tokens: int
 
 
+class TokenUsageCostTotalsPayload(TypedDict):
+    provider_cost_usd: float | None
+    estimated_cost_usd: float | None
+
+
 class TokenUsageExportPayload(TypedDict):
     schema_version: TokenUsageSchemaVersion
     session_id: str
@@ -105,6 +114,7 @@ class TokenUsageExportPayload(TypedDict):
     coverage: TokenUsageCoveragePayload
     records: list[TokenUsageRecordPayload]
     totals: TokenUsageTotalsPayload
+    costs: TokenUsageCostTotalsPayload
     totals_by_surface: dict[str, int]
     totals_by_context_bucket: dict[str, int]
 
@@ -125,6 +135,7 @@ class TokenUsageRollupTotalsPayload(TypedDict):
 class TokenUsageRollupCoveragePayload(TypedDict):
     source_event_count: int
     llm_call_events: int
+    failed_llm_call_events: int
     provider_identified_llm_call_events: int
     model_identified_llm_call_events: int
     run_id_present_events: int
@@ -165,6 +176,10 @@ class TokenUsageSessionTrendPayload(TypedDict):
     cache_read_tokens: int
     cache_write_tokens: int
     total_visible_tokens: int
+    provider_cost_usd: float | None
+    estimated_cost_usd: float | None
+    provider_token_delta: int | None
+    visible_token_delta: int | None
     advisory_codes: list[str]
 
 
@@ -175,6 +190,7 @@ class TokenUsageRollupPayload(TypedDict):
     only_warnings: bool
     complete: bool
     totals: TokenUsageRollupTotalsPayload
+    costs: TokenUsageCostTotalsPayload
     coverage: TokenUsageRollupCoveragePayload
     provider_coverage: list[TokenUsageProviderCoveragePayload]
     efficiency: TokenUsageRollupEfficiencyPayload
@@ -188,8 +204,10 @@ __all__ = [
     "TOKEN_USAGE_ROLLUP_SCHEMA_VERSION",
     "TOKEN_USAGE_SCHEMA_VERSION",
     "TokenTotalSource",
+    "TokenCostSource",
     "TokenUsageAdvisoryPayload",
     "TokenUsageCoveragePayload",
+    "TokenUsageCostTotalsPayload",
     "TokenUsageDimensionCoveragePayload",
     "TokenUsageEventRefPayload",
     "TokenUsageExportPayload",

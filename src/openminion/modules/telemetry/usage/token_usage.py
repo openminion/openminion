@@ -3,6 +3,7 @@
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+import math
 from typing import Any
 
 from .contracts import (
@@ -11,6 +12,7 @@ from .contracts import (
     TOTAL_SOURCE_DERIVED,
     TOTAL_SOURCE_PROVIDER,
     TokenTotalSource,
+    TokenCostSource,
     TokenUsageEventRefPayload,
     TokenUsageExportPayload,
     TokenUsageRecordPayload,
@@ -25,6 +27,7 @@ from .coverage import (
     explicit_total_source,
     observed_token_value,
 )
+from .constants import LLM_USAGE_EVENT_TYPES
 from .types import coerce_non_negative_int
 
 SURFACE_LLM_TOTAL = "llm_total"
@@ -78,6 +81,7 @@ _RECORD_TEXT_FIELD_NAMES = (
     "policy",
     "prompt_cache_key",
     "static_prefix_hash",
+    "cost_source",
 )
 
 
@@ -97,6 +101,16 @@ def _optional_non_negative_int(value: Any) -> int | None:
 def _optional_positive_int(value: Any) -> int | None:
     normalized = _optional_non_negative_int(value)
     return normalized if normalized is not None and normalized > 0 else None
+
+
+def _optional_non_negative_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized >= 0 and math.isfinite(normalized) else None
 
 
 def _text(payload: Mapping[str, Any], key: str) -> str:
@@ -224,6 +238,8 @@ class TokenUsageRecord:
     prompt_cache_key: str = ""
     static_prefix_hash: str = ""
     cache_hit: bool | None = None
+    cost_usd: float = 0.0
+    cost_source: TokenCostSource = ""
 
     def __post_init__(self) -> None:
         for field_name in _RECORD_TEXT_FIELD_NAMES:
@@ -259,6 +275,11 @@ class TokenUsageRecord:
             "cache_hit",
             self.cache_hit if isinstance(self.cache_hit, bool) else None,
         )
+        normalized_cost = _optional_non_negative_float(self.cost_usd)
+        object.__setattr__(self, "cost_usd", normalized_cost or 0.0)
+        if normalized_cost is None or self.cost_source not in {"provider", "estimated"}:
+            object.__setattr__(self, "cost_source", "")
+            object.__setattr__(self, "cost_usd", 0.0)
 
     @property
     def has_tokens(self) -> bool:
@@ -271,6 +292,7 @@ class TokenUsageRecord:
                 self.cache_write_tokens,
                 self.estimated_tokens,
                 self.saved_tokens,
+                self.cost_usd,
             )
         )
 
@@ -304,6 +326,8 @@ class TokenUsageRecord:
             "prompt_cache_key": self.prompt_cache_key,
             "static_prefix_hash": self.static_prefix_hash,
             "cache_hit": self.cache_hit,
+            "cost_usd": self.cost_usd,
+            "cost_source": self.cost_source,
         }
 
 
@@ -396,6 +420,36 @@ class TokenUsageSummary:
         return sum(record.saved_tokens for record in self.records)
 
     @property
+    def total_provider_cost_usd(self) -> float:
+        return round(
+            sum(
+                record.cost_usd
+                for record in self.records
+                if record.cost_source == "provider"
+            ),
+            12,
+        )
+
+    @property
+    def has_provider_cost(self) -> bool:
+        return any(record.cost_source == "provider" for record in self.records)
+
+    @property
+    def total_estimated_cost_usd(self) -> float:
+        return round(
+            sum(
+                record.cost_usd
+                for record in self.records
+                if record.cost_source == "estimated"
+            ),
+            12,
+        )
+
+    @property
+    def has_estimated_cost(self) -> bool:
+        return any(record.cost_source == "estimated" for record in self.records)
+
+    @property
     def totals_by_surface(self) -> dict[str, int]:
         totals: dict[str, int] = defaultdict(int)
         for record in self.records:
@@ -440,6 +494,14 @@ class TokenUsageSummary:
                 "estimated_tokens": self.total_estimated_tokens,
                 "saved_tokens": self.total_saved_tokens,
             },
+            "costs": {
+                "provider_cost_usd": (
+                    self.total_provider_cost_usd if self.has_provider_cost else None
+                ),
+                "estimated_cost_usd": (
+                    self.total_estimated_cost_usd if self.has_estimated_cost else None
+                ),
+            },
             "totals_by_surface": self.totals_by_surface,
             "totals_by_context_bucket": self.totals_by_context_bucket,
         }
@@ -451,8 +513,8 @@ def records_from_session_event(
     session_id: str,
 ) -> tuple[TokenUsageRecord, ...]:
     event_type = _event_text(event, "event_type")
-    if event_type == "llm.call.completed":
-        return _records_from_llm_completed(event, session_id=session_id)
+    if event_type in LLM_USAGE_EVENT_TYPES:
+        return _records_from_llm_event(event, session_id=session_id)
     if event_type == "context.manifest.created":
         return _records_from_context_manifest(event, session_id=session_id)
     if event_type == "llm.cache.metrics":
@@ -464,7 +526,7 @@ def summary_to_json_payload(summary: TokenUsageSummary) -> TokenUsageExportPaylo
     return summary.as_payload()
 
 
-def _records_from_llm_completed(
+def _records_from_llm_event(
     event: Mapping[str, Any],
     *,
     session_id: str,
@@ -484,12 +546,15 @@ def _records_from_llm_completed(
     else:
         total_tokens = input_tokens + output_tokens
         total_source = TOTAL_SOURCE_DERIVED if total_tokens > 0 else ""
+    cost_usd, cost_source = _cost_from_payload(payload)
     records = (
         _record_with_tokens(
             base,
             surface=SURFACE_LLM_TOTAL,
             total_tokens=total_tokens,
             total_source=total_source,
+            cost_usd=cost_usd,
+            cost_source=cost_source,
         ),
         _record_with_tokens(
             base,
@@ -513,6 +578,17 @@ def _records_from_llm_completed(
         ),
     )
     return tuple(record for record in records if record.has_tokens)
+
+
+def _cost_from_payload(payload: Mapping[str, Any]) -> tuple[float, TokenCostSource]:
+    source = str(payload.get("cost_source") or "").strip()
+    if source in {"provider", "estimated"}:
+        cost = _optional_non_negative_float(payload.get("cost_usd"))
+        return (cost, source) if cost is not None else (0.0, "")
+    if payload.get("estimated_cost_usd") is not None:
+        cost = _optional_non_negative_float(payload.get("estimated_cost_usd"))
+        return (cost, "estimated") if cost is not None else (0.0, "")
+    return 0.0, ""
 
 
 def _records_from_context_manifest(
@@ -611,6 +687,8 @@ def _record_with_tokens(
     saved_tokens: int = 0,
     policy: str = "",
     estimated: bool = False,
+    cost_usd: float = 0.0,
+    cost_source: TokenCostSource = "",
 ) -> TokenUsageRecord:
     return replace(
         base,
@@ -627,6 +705,8 @@ def _record_with_tokens(
         saved_tokens=saved_tokens,
         policy=policy,
         estimated=estimated,
+        cost_usd=cost_usd,
+        cost_source=cost_source,
     )
 
 

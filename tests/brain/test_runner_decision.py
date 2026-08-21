@@ -279,9 +279,11 @@ class RunnerDecisionTests(unittest.TestCase):
         self.assertEqual(decision.answer, "valid answer")
         self.assertEqual(llm_api.call_count, 2)
 
-    def test_decide_repeated_marked_entry_response_raises_typed_error(self) -> None:
+    def test_decide_repeated_marked_entry_response_uses_configured_retry_budget(
+        self,
+    ) -> None:
         marked = _marked_entry_response()
-        llm_api = _SequenceEntryLLM([marked, marked])
+        llm_api = _SequenceEntryLLM([marked, marked, marked])
         runner = BrainRunner(
             profile=_profile(),
             session_api=fake_session_api(),
@@ -309,7 +311,7 @@ class RunnerDecisionTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
-        self.assertEqual(llm_api.call_count, 2)
+        self.assertEqual(llm_api.call_count, 3)
 
     def test_decide_confirmation_replay_uses_continuation_guidance_not_goal(
         self,

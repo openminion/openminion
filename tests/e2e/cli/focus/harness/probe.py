@@ -41,6 +41,14 @@ _APPROVAL_PATTERN = rf"{_APPROVAL_PROMPT_PATTERN}|Waiting for your reply"
 _APPROVAL_PROMPT_RE = re.compile(_APPROVAL_PROMPT_PATTERN)
 _APPROVAL_RE = re.compile(_APPROVAL_PATTERN)
 _TURN_EVENT_RE = re.compile(rf"{_APPROVAL_PATTERN}|\bDone in \d+(?:m\d{{2}}s|s)\b")
+_TERMINAL_FAILURE_RE = re.compile(
+    r"EMPTY_PROVIDER_RESPONSE:|\bLLM error:\s*(?:PROVIDER_ERROR|EMPTY_PROVIDER_RESPONSE)",
+    re.IGNORECASE,
+)
+_CONTINUATION_CUE_RE = re.compile(
+    r"Continue\s+in\s+a\s+new\s+turn\s+to\s+resume\.",
+    re.IGNORECASE,
+)
 _APPROVAL_RESOLVED_RE = re.compile(
     r"(?:^|\n)\s*(?:[❯>]\s*)?(?:yes|session|a|always|no)\s*(?:\n|$)|"
     r"(?:Approved\.|Approval denied\.)"
@@ -89,6 +97,17 @@ def latest_done_event(transcript: str, *, offset: int) -> re.Match[str] | None:
     for match in _DONE_RE.finditer(transcript, visible_offset):
         pass
     return match
+
+
+def latest_terminal_failure(
+    transcript: str, *, offset: int
+) -> re.Match[str] | None:
+    visible_offset = _visible_offset(transcript, offset=offset)
+    return _TERMINAL_FAILURE_RE.search(visible_text(transcript), visible_offset)
+
+
+def continuation_cue_present(transcript: str) -> bool:
+    return _CONTINUATION_CUE_RE.search(visible_text(transcript)) is not None
 
 
 def latest_approval_prompt(transcript: str, *, offset: int) -> re.Match[str] | None:
@@ -619,6 +638,7 @@ class FocusProbe:
             transcript = session.visible_transcript
             screen_text = session.screen_text
             done_match = latest_done_event(transcript, offset=event_offset)
+            failure_match = latest_terminal_failure(transcript, offset=event_offset)
             approval_needs_reply = approval_prompt_needs_reply(
                 transcript,
                 offset=event_offset,
@@ -647,10 +667,16 @@ class FocusProbe:
                 self._submit_composer_line(session, scenario.approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
+            if failure_match is not None:
+                failure_slice = visible_text(transcript)[failure_match.start() :]
+                raise AssertionError(
+                    "Focus turn ended with a terminal provider failure\n"
+                    f"{failure_slice[-2000:]}"
+                )
             if done_match is not None and not approval_visible:
                 completed_segment = transcript[event_offset:]
                 if (
-                    "Continue in a new turn to resume." in completed_segment
+                    continuation_cue_present(completed_segment)
                     and continuations < scenario.max_auto_continuations
                 ):
                     continuations += 1

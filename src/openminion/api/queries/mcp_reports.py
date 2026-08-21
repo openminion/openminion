@@ -1,12 +1,10 @@
 """MCP runtime observability report assembly."""
 
-from __future__ import annotations
-
 from typing import Any
 
 
 def build_mcp_section(runtime: Any) -> dict[str, Any]:
-    manager = getattr(getattr(runtime, "tools", None), "mcp_manager", None)
+    manager = runtime.tools.mcp_manager
     if manager is None:
         return {
             "enabled": False,
@@ -21,61 +19,48 @@ def build_mcp_section(runtime: Any) -> dict[str, Any]:
         }
     failed_servers = {
         str(name): {
-            "reason_code": str(getattr(error, "reason_code", "") or "").strip(),
-            "message": str(getattr(error, "message", "") or "").strip(),
+            "reason_code": error.reason_code,
+            "message": error.message,
         }
-        for name, error in dict(getattr(manager, "failed_servers", {}) or {}).items()
+        for name, error in manager.failed_servers.items()
     }
-    raw_logs = _call(manager, "mcp_server_logs", limit=5, default={})
+    raw_logs = manager.mcp_server_logs(limit=5)
     logs = {
         str(server_name): [
             {
-                "level": str(getattr(item, "level", "") or "").strip(),
-                "message": str(getattr(item, "message", "") or "").strip(),
-                "logger": str(getattr(item, "logger", "") or "").strip(),
-                "data": dict(getattr(item, "data", {}) or {}),
-                "timestamp": float(getattr(item, "timestamp", 0.0) or 0.0),
+                "level": item.level,
+                "message": item.message,
+                "logger": item.logger,
+                "data": dict(item.data),
+                "timestamp": item.timestamp,
             }
             for item in list(items or [])
         ]
-        for server_name, items in dict(raw_logs or {}).items()
+        for server_name, items in raw_logs.items()
     }
-    raw_updates = _call(manager, "mcp_resource_updates", limit=10, default={})
+    raw_updates = manager.mcp_resource_updates(limit=10)
     updates = {
         str(server_name): [
             {
-                "uri": str(getattr(item, "uri", "") or "").strip(),
-                "title": str(getattr(item, "title", "") or "").strip(),
-                "timestamp": float(getattr(item, "timestamp", 0.0) or 0.0),
+                "uri": item.uri,
+                "title": item.title,
+                "timestamp": item.timestamp,
             }
             for item in list(items or [])
         ]
-        for server_name, items in dict(raw_updates or {}).items()
+        for server_name, items in raw_updates.items()
     }
     return {
         "enabled": True,
         "failed_servers": failed_servers,
-        "server_metrics": dict(_call(manager, "mcp_server_metrics", default={}) or {}),
+        "server_metrics": manager.mcp_server_metrics(),
         "server_logs": logs,
         "resource_updates": updates,
-        "sampling_events": list(
-            _call(manager, "mcp_sampling_events", default=[]) or []
-        ),
-        "elicitation_events": list(
-            _call(manager, "mcp_elicitation_events", default=[]) or []
-        ),
-        "discovery_cache": dict(
-            _call(manager, "discovery_cache_snapshot", default={}) or {}
-        ),
-        "capability_change_events": list(
-            _call(manager, "capability_change_events", default=[]) or []
-        ),
+        "sampling_events": manager.mcp_sampling_events(),
+        "elicitation_events": manager.mcp_elicitation_events(),
+        "discovery_cache": manager.discovery_cache_snapshot(),
+        "capability_change_events": manager.capability_change_events(),
     }
-
-
-def _call(manager: Any, name: str, *, default: Any, **kwargs: Any) -> Any:
-    callback = getattr(manager, name, None)
-    return callback(**kwargs) if callable(callback) else default
 
 
 __all__ = ["build_mcp_section"]
