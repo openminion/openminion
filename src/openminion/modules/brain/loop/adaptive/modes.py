@@ -69,6 +69,7 @@ from ..services import runner_from_context
 
 from .allowed_tools import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
+    _allows_general_decompose,
     _memory_consolidation_profile_overrides,
     _watch_profile_overrides,
     _with_exposed_runtime_tools,
@@ -501,9 +502,9 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 shortlisting_scratchpad["turn_progress_total_tokens_used"] = (
                     shortlisting_tokens
                 )
-        if (
-            str(profile.profile_name or "").strip() == "general_adaptive_v1"
-            and decision_reason_code != "research_iteration_fallback"
+        if _allows_general_decompose(
+            profile_name=profile.profile_name,
+            decision_reason_code=decision_reason_code,
         ):
             tool_specs = _with_decompose_tool_spec(list(tool_specs))
         if direct_tool_turn is not None and requestable_tool_specs is not None:

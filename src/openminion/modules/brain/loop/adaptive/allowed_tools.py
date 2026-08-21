@@ -69,12 +69,22 @@ def _with_decompose_tool_spec(tool_specs: list[Any]) -> list[Any]:
     return [*tool_specs, decompose_tool_spec()]
 
 
+def _allows_general_decompose(*, profile_name: str, decision_reason_code: str) -> bool:
+    return str(profile_name or "").strip() == "general_adaptive_v1" and str(
+        decision_reason_code or ""
+    ).strip() not in {
+        "coding_subtask",
+        "research_iteration_fallback",
+    }
+
+
 def _with_general_decompose_allowed_tools(
     allowed_tools: frozenset[str], *, profile_name: str, decision_reason_code: str = ""
 ) -> frozenset[str]:
-    if str(profile_name or "").strip() != "general_adaptive_v1":
-        return frozenset(allowed_tools)
-    if str(decision_reason_code or "").strip() == "research_iteration_fallback":
+    if not _allows_general_decompose(
+        profile_name=profile_name,
+        decision_reason_code=decision_reason_code,
+    ):
         return frozenset(allowed_tools)
     return frozenset({*allowed_tools, "decompose"})
 
