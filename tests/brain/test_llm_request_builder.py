@@ -587,6 +587,203 @@ def test_build_request_uses_internal_context_alias_without_exposing_it(
     assert "context_segment_id" not in provider_visible
     assert "gateway-old" not in provider_visible
     assert "gateway-new" not in provider_visible
+    assert "gateway-current" not in provider_visible
+
+
+@pytest.mark.parametrize(
+    "turns,messages",
+    [
+        (
+            [
+                {
+                    "turn_id": "brain-old",
+                    "context_segment_id": "duplicate",
+                    "role": "user",
+                    "content": "old",
+                    "attachments": ["artifact://sha256/" + "a" * 64],
+                },
+                {
+                    "turn_id": "brain-new",
+                    "context_segment_id": "duplicate",
+                    "role": "user",
+                    "content": "new",
+                    "attachments": ["artifact://sha256/" + "b" * 64],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                },
+            ],
+            [
+                {
+                    "role": "user",
+                    "content": "old",
+                    "meta": {"segment_ids": ["turn:duplicate"]},
+                },
+                {
+                    "role": "user",
+                    "content": "new",
+                    "meta": {"segment_ids": ["turn:duplicate"]},
+                },
+                {"role": "user", "content": "current"},
+            ],
+        ),
+        (
+            [
+                {
+                    "turn_id": "brain-history",
+                    "context_segment_id": "shared",
+                    "role": "user",
+                    "content": "history",
+                    "attachments": ["artifact://sha256/" + "c" * 64],
+                },
+                {
+                    "turn_id": "shared",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": ["artifact://sha256/" + "d" * 64],
+                },
+            ],
+            [
+                {
+                    "role": "user",
+                    "content": "history",
+                    "meta": {"segment_ids": ["turn:shared"]},
+                },
+                {"role": "user", "content": "current"},
+            ],
+        ),
+    ],
+    ids=["duplicate-alias", "alias-canonical-collision"],
+)
+def test_build_request_rejects_colliding_attachment_keys_before_inspection(
+    monkeypatch, turns, messages
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: (inspected.append(ref) or "image/png", 1),
+    )
+
+    with pytest.raises(LLMCtlError, match="could not be aligned") as exc_info:
+        _build_request(
+            model="fake-model",
+            purpose="decide",
+            context={"messages": messages, "turns": turns},
+            schema=type("Decision", (), {}),
+            temperature=0.0,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert inspected == []
+
+
+def test_build_request_rejects_retained_attachment_role_mismatch(
+    monkeypatch,
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: (inspected.append(ref) or "image/png", 1),
+    )
+
+    with pytest.raises(LLMCtlError, match="could not be aligned") as exc_info:
+        _build_request(
+            model="fake-model",
+            purpose="decide",
+            context={
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": "wrong role",
+                        "meta": {"segment_ids": ["turn:prior"]},
+                    },
+                    {
+                        "role": "user",
+                        "content": "current",
+                        "meta": {"segment_ids": ["turn:current"]},
+                    },
+                ],
+                "turns": [
+                    {
+                        "turn_id": "prior",
+                        "role": "user",
+                        "content": "prior",
+                        "attachments": ["artifact://sha256/" + "e" * 64],
+                    },
+                    {
+                        "turn_id": "current",
+                        "role": "user",
+                        "content": "current",
+                        "attachments": [],
+                    },
+                ],
+            },
+            schema=type("Decision", (), {}),
+            temperature=0.0,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert inspected == []
+
+
+def test_build_request_rejects_reordered_attachment_alignment(monkeypatch) -> None:
+    _patch_tool_bundle(monkeypatch)
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: (inspected.append(ref) or "image/png", 1),
+    )
+
+    with pytest.raises(LLMCtlError, match="could not be aligned") as exc_info:
+        _build_request(
+            model="fake-model",
+            purpose="decide",
+            context={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "new",
+                        "meta": {"segment_ids": ["turn:new"]},
+                    },
+                    {
+                        "role": "user",
+                        "content": "old",
+                        "meta": {"segment_ids": ["turn:old"]},
+                    },
+                    {"role": "user", "content": "current"},
+                ],
+                "turns": [
+                    {
+                        "turn_id": "old",
+                        "role": "user",
+                        "content": "old",
+                        "attachments": ["artifact://sha256/" + "f" * 64],
+                    },
+                    {
+                        "turn_id": "new",
+                        "role": "user",
+                        "content": "new",
+                        "attachments": ["artifact://sha256/" + "1" * 64],
+                    },
+                    {
+                        "turn_id": "current",
+                        "role": "user",
+                        "content": "current",
+                        "attachments": [],
+                    },
+                ],
+            },
+            schema=type("Decision", (), {}),
+            temperature=0.0,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert inspected == []
 
 
 def test_build_request_rejects_raw_prefixed_context_alias(monkeypatch) -> None:

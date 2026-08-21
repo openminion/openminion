@@ -59,28 +59,35 @@ def _latest_user_turn_id(turns: list[Any]) -> str:
     return ""
 
 
+def _selected_user_indexes(
+    turns: list[Any], selected_turn_ids: set[str] | None
+) -> list[int]:
+    indexes = [
+        index
+        for index, turn in enumerate(turns)
+        if _turn_fields(turn)[1] == "user"
+    ]
+    if not indexes:
+        return []
+    current_index = indexes[-1]
+    return [
+        index
+        for index in indexes
+        if index == current_index
+        or not selected_turn_ids
+        or _turn_key(turns, index) in selected_turn_ids
+    ]
+
+
 def _artifact_image_parts_by_turn(
     turns: list[Any], *, selected_turn_ids: set[str] | None = None
 ) -> dict[str, list[Any]]:
     from openminion.modules.llm.schemas import ImageContentPart
 
-    all_user_indexes = [
-        index
-        for index, turn in enumerate(turns)
-        if _turn_fields(turn)[1] == "user"
-    ]
-    if not all_user_indexes:
+    user_indexes = _selected_user_indexes(turns, selected_turn_ids)
+    if not user_indexes:
         return {}
-    current_index = all_user_indexes[-1]
-    user_indexes = [
-        index
-        for index in all_user_indexes
-        if index == current_index
-        or (
-            not selected_turn_ids
-            or _turn_key(turns, index) in selected_turn_ids
-        )
-    ]
+    current_index = user_indexes[-1]
     selected: dict[str, list[Any]] = {}
     count = 0
     total_bytes = 0
@@ -195,6 +202,66 @@ def _remove_internal_turn_segments(messages: list[Any]) -> list[Any]:
     return messages
 
 
+def _validate_artifact_alignment(
+    turns: list[Any], messages: list[Any], selected_turn_ids: set[str]
+) -> None:
+    def _invalid() -> LLMCtlError:
+        return LLMCtlError(
+            "INVALID_ARGUMENT", "Artifact image context could not be aligned"
+        )
+
+    selected_indexes = _selected_user_indexes(turns, selected_turn_ids or None)
+    retained: list[tuple[int, str]] = []
+    for index in selected_indexes:
+        key = _turn_key(turns, index)
+        turn_id = _turn_fields(turns[index])[0]
+        if key.startswith("index:") or not turn_id:
+            continue
+        if any(
+            is_canonical_artifact_ref(ref)
+            for ref in _turn_fields(turns[index])[3]
+        ):
+            retained.append((index, key))
+    keys = [key for _index, key in retained]
+    if not keys:
+        return
+    if len(keys) != len(set(keys)):
+        raise _invalid()
+
+    positions: dict[str, list[int]] = {key: [] for key in keys}
+    for position, message in enumerate(messages):
+        for key in _message_turn_ids([message]):
+            if key in positions:
+                positions[key].append(position)
+    latest_user_position = next(
+        (
+            position
+            for position in range(len(messages) - 1, -1, -1)
+            if messages[position].role == "user"
+        ),
+        None,
+    )
+    current_index = selected_indexes[-1]
+    resolved_positions: list[int] = []
+    for index, key in retained:
+        candidates = positions[key]
+        if len(candidates) > 1:
+            raise _invalid()
+        if candidates:
+            position = candidates[0]
+            if messages[position].role != "user":
+                raise _invalid()
+        elif index == current_index and latest_user_position is not None:
+            position = latest_user_position
+        else:
+            raise _invalid()
+        resolved_positions.append(position)
+    reused = len(resolved_positions) != len(set(resolved_positions))
+    reordered = resolved_positions != sorted(resolved_positions)
+    if reused or reordered:
+        raise _invalid()
+
+
 def _merge_selected_turn_images(
     messages: list[Any],
     images_by_turn: dict[str, list[Any]],
@@ -267,6 +334,7 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
     selected_artifact_turn_ids = set(selected_turn_ids)
     if messages and current_turn_id:
         selected_artifact_turn_ids.add(current_turn_id)
+    _validate_artifact_alignment(turns, messages, selected_turn_ids)
     artifact_parts = _artifact_image_parts_by_turn(
         turns,
         selected_turn_ids=selected_artifact_turn_ids or None,
