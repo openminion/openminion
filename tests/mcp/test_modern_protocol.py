@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+import pytest
+
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.tools.mcp.constants import (
     MCP_INITIALIZE_METHOD,
@@ -15,6 +17,7 @@ from openminion.tools.mcp.constants import (
 )
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from openminion.tools.mcp.interfaces import MCPClientCapabilityState
+from openminion.tools.mcp.modern import MCPModernResponseCache
 from openminion.tools.mcp.schemas import MCPRoot
 from openminion.tools.mcp.session import MCPServerSession
 from openminion.tools.mcp.transport import MCPProtocolError
@@ -26,6 +29,10 @@ class _ModernTransport:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
         self.running = False
+
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
 
     def start(self) -> None:
         self.running = True
@@ -195,3 +202,31 @@ def test_modern_task_cancel_and_subscription_listen_are_explicit_methods() -> No
     methods = [method for method, _params in transport.requests]
     assert MCP_TASKS_CANCEL_METHOD in methods
     assert MCP_SUBSCRIPTIONS_LISTEN_METHOD in methods
+
+
+def test_modern_response_cache_has_a_fixed_entry_bound() -> None:
+    cache = MCPModernResponseCache()
+    for index in range(129):
+        cache.store(
+            method="tools/list",
+            params={"cursor": str(index)},
+            result={"ttlMs": 60_000, "cacheScope": "private", "index": index},
+        )
+
+    assert cache.get(method="tools/list", params={"cursor": "0"}) is None
+    assert cache.get(method="tools/list", params={"cursor": "128"}) == {
+        "ttlMs": 60_000,
+        "cacheScope": "private",
+        "index": 128,
+    }
+
+
+def test_modern_input_required_rejects_missing_requests() -> None:
+    session, _transport = _session(
+        {MCP_TOOLS_CALL_METHOD: [{"resultType": "input_required"}]}
+    )
+
+    with pytest.raises(MCPProtocolError) as excinfo:
+        session.call_tool(remote_name="needs-input", arguments={})
+
+    assert excinfo.value.reason_code == "mcp_input_requests_invalid"

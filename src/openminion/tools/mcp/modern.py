@@ -1,6 +1,7 @@
 """MCP 2026 request metadata and interactive-result handling."""
 
 import json
+import threading
 import time
 from typing import Any, Callable
 
@@ -8,6 +9,7 @@ from .constants import (
     MCP_CLIENT_NAME,
     MCP_CLIENT_VERSION,
     MCP_MAX_INPUT_ROUNDS,
+    MCP_MODERN_RESPONSE_CACHE_MAX_ENTRIES,
     MCP_TASKS_GET_METHOD,
     MCP_TASKS_UPDATE_METHOD,
 )
@@ -23,17 +25,19 @@ class MCPModernFlowError(RuntimeError):
 class MCPModernResponseCache:
     def __init__(self) -> None:
         self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._lock = threading.Lock()
 
     def get(self, *, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
         key = _response_cache_key(method=method, params=params)
-        cached = self._entries.get(key)
-        if cached is None:
-            return None
-        expires_at, result = cached
-        if time.monotonic() >= expires_at:
-            self._entries.pop(key, None)
-            return None
-        return dict(result)
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is None:
+                return None
+            expires_at, result = cached
+            if time.monotonic() >= expires_at:
+                self._entries.pop(key, None)
+                return None
+            return dict(result)
 
     def store(
         self,
@@ -45,13 +49,21 @@ class MCPModernResponseCache:
         ttl_ms = max(0, int(result.get("ttlMs", 0) or 0))
         if ttl_ms <= 0 or result.get("cacheScope") not in {"private", "public"}:
             return
-        self._entries[_response_cache_key(method=method, params=params)] = (
-            time.monotonic() + (ttl_ms / 1000.0),
-            dict(result),
-        )
+        key = _response_cache_key(method=method, params=params)
+        with self._lock:
+            if (
+                key not in self._entries
+                and len(self._entries) >= MCP_MODERN_RESPONSE_CACHE_MAX_ENTRIES
+            ):
+                self._entries.pop(next(iter(self._entries)))
+            self._entries[key] = (
+                time.monotonic() + (ttl_ms / 1000.0),
+                dict(result),
+            )
 
     def clear(self) -> None:
-        self._entries.clear()
+        with self._lock:
+            self._entries.clear()
 
 
 def build_modern_client_meta(capabilities: dict[str, Any]) -> dict[str, Any]:
@@ -192,20 +204,27 @@ def _input_responses(
     answered: set[str],
 ) -> dict[str, Any]:
     if not isinstance(raw_requests, dict):
-        return {}
+        raise MCPModernFlowError(
+            "MCP input-required result omitted inputRequests.",
+            reason_code="mcp_input_requests_invalid",
+        )
     responses: dict[str, Any] = {}
     for key, raw_request in raw_requests.items():
         request_key = str(key or "").strip()
-        if (
-            not request_key
-            or request_key in answered
-            or not isinstance(raw_request, dict)
-        ):
+        if request_key in answered:
             continue
+        if not request_key or not isinstance(raw_request, dict):
+            raise MCPModernFlowError(
+                "MCP input-required result contains an invalid request.",
+                reason_code="mcp_input_request_invalid",
+            )
         method = str(raw_request.get("method", "") or "").strip()
         params = raw_request.get("params", {}) or {}
         if not method or not isinstance(params, dict):
-            continue
+            raise MCPModernFlowError(
+                f"MCP input request {request_key!r} is malformed.",
+                reason_code="mcp_input_request_invalid",
+            )
         response = fulfill(method, dict(params))
         responses[request_key] = dict(response or {})
         answered.add(request_key)

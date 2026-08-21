@@ -161,6 +161,10 @@ def test_mcp_metric_state_is_safe_under_concurrent_updates() -> None:
 
 
 class _LoggingTransport:
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
+
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict]] = []
 

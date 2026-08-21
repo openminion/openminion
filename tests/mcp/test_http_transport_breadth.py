@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -411,6 +412,41 @@ def test_streamable_http_transport_reuses_session_id_and_closes() -> None:
             assert transport.session_state.session_id == ""
         finally:
             transport.close()
+
+
+def test_streamable_http_transport_assigns_unique_concurrent_request_ids() -> None:
+    with _remote_mcp_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        transport.request(method="initialize", params={}, timeout_seconds=5.0)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(
+                executor.map(
+                    lambda index: transport.request(
+                        method="tools/call",
+                        params={
+                            "name": "remote-echo",
+                            "arguments": {"text": str(index)},
+                        },
+                        timeout_seconds=5.0,
+                    ),
+                    range(24),
+                )
+            )
+
+        assert {item["structuredContent"]["echo"] for item in results} == {
+            str(index) for index in range(24)
+        }
+        request_ids = [
+            item["payload"]["id"]
+            for item in server.last_requests
+            if item["method"] == "tools/call"
+        ]
+        assert len(request_ids) == len(set(request_ids)) == 24
 
 
 def test_modern_http_request_drops_legacy_session_id() -> None:

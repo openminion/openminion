@@ -287,10 +287,7 @@ class StdioMCPTransport:
             process.kill()
             process.wait(timeout=5)
         finally:
-            try:
-                self._selector.close()
-            except Exception:
-                pass
+            self._selector.close()
             self._stderr_stop.set()
             if self._stderr_thread is not None:
                 self._stderr_thread.join(timeout=1)
@@ -509,6 +506,7 @@ class StreamableHTTPMCPTransport:
         self._session = StreamableHTTPSessionState()
         self._token_store = token_store
         self._oauth_access_token = str(server.authorization.access_token or "").strip()
+        self._state_lock = threading.RLock()
 
     @property
     def server_name(self) -> str:
@@ -516,6 +514,10 @@ class StreamableHTTPMCPTransport:
 
     def is_running(self) -> bool:
         return True
+
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
 
     @property
     def session_state(self) -> StreamableHTTPSessionState:
@@ -552,8 +554,9 @@ class StreamableHTTPMCPTransport:
         server_request_handler: Any | None = None,
     ) -> dict[str, Any]:
         self.start()
-        request_id = self._next_request_id
-        self._next_request_id += 1
+        with self._state_lock:
+            request_id = self._next_request_id
+            self._next_request_id += 1
         payload: dict[str, Any] = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -573,13 +576,14 @@ class StreamableHTTPMCPTransport:
         return extract_result_message(message=response, method=method)
 
     def close(self) -> None:
-        if not self._session.session_id or not self._server.url:
-            return
-        headers = self._base_headers(protocol_version=MCP_PROTOCOL_VERSION)
-        headers.update(self._session.request_headers())
-        auth_header = self._authorization_header()
-        if auth_header:
-            headers["Authorization"] = auth_header
+        with self._state_lock:
+            if not self._session.session_id or not self._server.url:
+                return
+            headers = self._base_headers(protocol_version=MCP_PROTOCOL_VERSION)
+            headers.update(self._session.request_headers())
+            auth_header = self._authorization_header()
+            if auth_header:
+                headers["Authorization"] = auth_header
         request = urllib_request.Request(
             url=self._server.url,
             method="DELETE",
@@ -590,10 +594,11 @@ class StreamableHTTPMCPTransport:
                 request,
                 timeout=float(self._server.request_timeout_seconds),
             ).close()
-        except Exception:
+        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError):
             return
         finally:
-            self._session.clear()
+            with self._state_lock:
+                self._session.clear()
 
     def resume_event_stream(
         self,
@@ -603,14 +608,15 @@ class StreamableHTTPMCPTransport:
         server_request_handler: Any | None = None,
     ) -> list[dict[str, Any]]:
         self.start()
-        headers = self._base_headers(protocol_version=MCP_PROTOCOL_VERSION)
-        headers["Accept"] = "text/event-stream"
-        headers.update(self._session.request_headers())
-        if last_event_id:
-            headers["Last-Event-ID"] = str(last_event_id)
-        auth_header = self._authorization_header()
-        if auth_header:
-            headers["Authorization"] = auth_header
+        with self._state_lock:
+            headers = self._base_headers(protocol_version=MCP_PROTOCOL_VERSION)
+            headers["Accept"] = "text/event-stream"
+            headers.update(self._session.request_headers())
+            if last_event_id:
+                headers["Last-Event-ID"] = str(last_event_id)
+            auth_header = self._authorization_header()
+            if auth_header:
+                headers["Authorization"] = auth_header
         request = urllib_request.Request(
             url=self._server.url,
             method="GET",
@@ -621,7 +627,8 @@ class StreamableHTTPMCPTransport:
                 request,
                 timeout=float(timeout_seconds or self._server.request_timeout_seconds),
             ) as response:
-                self._session.capture(response.headers)
+                with self._state_lock:
+                    self._session.capture(response.headers)
                 content_type = str(
                     response.headers.get("Content-Type", "") or ""
                 ).strip()
@@ -665,14 +672,41 @@ class StreamableHTTPMCPTransport:
         server_request_handler: Any | None,
         expected_request_id: Any | None = None,
     ) -> dict[str, Any]:
-        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode(
-            "utf-8"
+        exchange = self._send_http_payload(
+            payload=payload,
+            method_name=method_name,
+            params=params,
+            timeout_seconds=timeout_seconds,
+            expect_notification_ack=expect_notification_ack,
         )
+        if exchange is None:
+            return {}
+        raw, content_type = exchange
+        return self._decode_http_payload(
+            raw=raw,
+            content_type=content_type,
+            method_name=method_name,
+            timeout_seconds=timeout_seconds,
+            server_request_handler=server_request_handler,
+            expected_request_id=expected_request_id,
+        )
+
+    def _send_http_payload(
+        self,
+        *,
+        payload: dict[str, Any],
+        method_name: str,
+        params: dict[str, Any],
+        timeout_seconds: float | None,
+        expect_notification_ack: bool,
+    ) -> tuple[bytes, str] | None:
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode()
         protocol_version = protocol_version_from_payload(payload)
         headers = self._base_headers(protocol_version=protocol_version)
         use_session = protocol_version != MCP_MODERN_PROTOCOL_VERSION
-        if not use_session:
-            self._session.clear()
+        with self._state_lock:
+            if not use_session:
+                self._session.clear()
         if method_name:
             headers["Mcp-Method"] = method_name
         mcp_name = mcp_name_header(method_name=method_name, params=params)
@@ -682,13 +716,14 @@ class StreamableHTTPMCPTransport:
         content_type = ""
         refreshed = False
         while True:
-            auth_header = self._authorization_header()
-            if auth_header:
-                headers["Authorization"] = auth_header
-            elif "Authorization" in headers:
-                del headers["Authorization"]
-            if use_session:
-                headers.update(self._session.request_headers())
+            with self._state_lock:
+                auth_header = self._authorization_header()
+                if auth_header:
+                    headers["Authorization"] = auth_header
+                else:
+                    headers.pop("Authorization", None)
+                if use_session:
+                    headers.update(self._session.request_headers())
             request = urllib_request.Request(
                 url=self._server.url,
                 method="POST",
@@ -711,14 +746,15 @@ class StreamableHTTPMCPTransport:
                                 f"MCP server '{self.server_name}' returned HTTP {status_code} for notification {method_name!r}.",
                                 reason_code="mcp_notification_http_error",
                             )
-                        return {}
+                        return None
                     content_type = str(
                         response.headers.get("Content-Type", "") or ""
                     ).strip()
                     if use_session:
-                        self._session.capture(response.headers)
+                        with self._state_lock:
+                            self._session.capture(response.headers)
                     raw = response.read()
-                    break
+                    return raw, content_type
             except urllib_error.HTTPError as exc:
                 if (
                     not refreshed
@@ -738,6 +774,17 @@ class StreamableHTTPMCPTransport:
                     f"MCP server '{self.server_name}' did not reply before timeout.",
                     reason_code="mcp_timeout",
                 ) from exc
+
+    def _decode_http_payload(
+        self,
+        *,
+        raw: bytes,
+        content_type: str,
+        method_name: str,
+        timeout_seconds: float | None,
+        server_request_handler: Any | None,
+        expected_request_id: Any | None,
+    ) -> dict[str, Any]:
         return self._decode_post_response(
             raw=raw,
             content_type=content_type,
@@ -871,31 +918,34 @@ class StreamableHTTPMCPTransport:
         return ""
 
     def _refresh_oauth_access_token(self) -> bool:
-        config = self._server.authorization
-        if config.mode != "oauth_pkce":
-            return False
-        refresh_token = _read_token_ref(self._token_store, config.refresh_token_ref)
-        if not refresh_token:
-            return False
-        metadata = discover_oauth_metadata(
-            config, timeout_seconds=float(self._server.request_timeout_seconds)
-        )
-        token_state = refresh_oauth_access_token(
-            config=config,
-            metadata=metadata,
-            refresh_token=refresh_token,
-            timeout_seconds=float(self._server.request_timeout_seconds),
-        )
-        self._oauth_access_token = token_state.access_token
-        if self._token_store is not None and config.access_token_ref:
-            self._token_store.set(config.access_token_ref, token_state.access_token)
-        if (
-            self._token_store is not None
-            and config.refresh_token_ref
-            and token_state.refresh_token
-        ):
-            self._token_store.set(config.refresh_token_ref, token_state.refresh_token)
-        return True
+        with self._state_lock:
+            config = self._server.authorization
+            if config.mode != "oauth_pkce":
+                return False
+            refresh_token = _read_token_ref(self._token_store, config.refresh_token_ref)
+            if not refresh_token:
+                return False
+            metadata = discover_oauth_metadata(
+                config, timeout_seconds=float(self._server.request_timeout_seconds)
+            )
+            token_state = refresh_oauth_access_token(
+                config=config,
+                metadata=metadata,
+                refresh_token=refresh_token,
+                timeout_seconds=float(self._server.request_timeout_seconds),
+            )
+            self._oauth_access_token = token_state.access_token
+            if self._token_store is not None and config.access_token_ref:
+                self._token_store.set(config.access_token_ref, token_state.access_token)
+            if (
+                self._token_store is not None
+                and config.refresh_token_ref
+                and token_state.refresh_token
+            ):
+                self._token_store.set(
+                    config.refresh_token_ref, token_state.refresh_token
+                )
+            return True
 
 
 def _read_token_ref(token_store: MCPTokenStore | None, ref: str) -> str:

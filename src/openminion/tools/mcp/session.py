@@ -1,6 +1,5 @@
 """Per-server MCP session lifecycle and normalization."""
 
-import json
 import time
 from collections import deque
 from typing import Any
@@ -46,7 +45,12 @@ from .modern import (
     select_modern_version,
 )
 from .risk import resolve_mcp_tool_posture
-from .interfaces import MCPClientCapabilityState, MCPProgressListener
+from .results import (
+    normalize_prompt_result,
+    normalize_resource_result,
+    normalize_tool_result,
+)
+from .interfaces import MCPClientCapabilityState, MCPProgressListener, MCPTransport
 from .schemas import (
     MCPElicitationRequest,
     MCPCompletionResult,
@@ -59,7 +63,6 @@ from .schemas import (
     MCPSamplingMessage,
     MCPSamplingRequest,
     build_mcp_resource_template_arguments_schema,
-    validate_mcp_arguments,
 )
 from .transport import (
     MCPProtocolError,
@@ -67,25 +70,6 @@ from .transport import (
     StreamableHTTPMCPTransport,
     StdioMCPTransport,
 )
-
-
-class MCPManagerError(RuntimeError):
-    """Base MCP manager error."""
-
-
-class MCPCallError(MCPManagerError):
-    """Raised when an MCP tool call returns an error envelope."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        reason_code: str = "mcp_upstream_error",
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.reason_code = reason_code.strip()
-        self.details = dict(details or {})
 
 
 class _SessionRequestRouter:
@@ -131,6 +115,14 @@ class MCPServerSession:
     @property
     def server_name(self) -> str:
         return self._server.name
+
+    @property
+    def server_config(self) -> MCPServerConfig:
+        return self._server
+
+    @property
+    def restart_total(self) -> int:
+        return self._restart_total
 
     @property
     def negotiated_protocol_version(self) -> str:
@@ -372,7 +364,13 @@ class MCPServerSession:
             method=MCP_TOOLS_CALL_METHOD,
             params=self._with_client_meta(params),
         )
-        return self._normalize_call_result(remote_name=remote_name, result=result)
+        return normalize_tool_result(
+            server_name=self.server_name,
+            remote_name=remote_name,
+            result=result,
+            output_schema=dict(self._output_schemas_by_tool.get(remote_name, {})),
+            stderr_tail=self._transport.stderr_tail().strip(),
+        )
 
     def get_prompt(
         self,
@@ -392,7 +390,11 @@ class MCPServerSession:
                 }
             ),
         )
-        return self._normalize_prompt_result(remote_name=remote_name, result=result)
+        return normalize_prompt_result(
+            server_name=self.server_name,
+            remote_name=remote_name,
+            result=result,
+        )
 
     def read_resource(self, *, resource_uri: str) -> dict[str, Any]:
         if not self._initialized:
@@ -402,7 +404,11 @@ class MCPServerSession:
             method=MCP_RESOURCES_READ_METHOD,
             params=self._with_client_meta({"uri": resource_uri}),
         )
-        return self._normalize_resource_result(resource_uri=resource_uri, result=result)
+        return normalize_resource_result(
+            server_name=self.server_name,
+            resource_uri=resource_uri,
+            result=result,
+        )
 
     def subscribe_resource(self, *, resource_uri: str) -> None:
         if not self._initialized:
@@ -779,148 +785,6 @@ class MCPServerSession:
                 )
             return
 
-    def _normalize_call_result(
-        self, *, remote_name: str, result: dict[str, Any]
-    ) -> dict[str, Any]:
-        content_items = result.get("content", [])
-        if not isinstance(content_items, list):
-            content_items = []
-        text_parts: list[str] = []
-        normalized_content: list[dict[str, Any]] = []
-        for item in content_items:
-            if not isinstance(item, dict):
-                continue
-            normalized = dict(item)
-            normalized_content.append(normalized)
-            if str(normalized.get("type", "") or "").strip().lower() == "text":
-                text = str(normalized.get("text", "") or "").strip()
-                if text:
-                    text_parts.append(text)
-        structured_content = result.get("structuredContent")
-        output_schema = dict(self._output_schemas_by_tool.get(remote_name, {}) or {})
-        if output_schema and structured_content is not None:
-            if not isinstance(structured_content, dict):
-                raise MCPProtocolError(
-                    f"MCP tool '{self.server_name}.{remote_name}' returned non-object structuredContent.",
-                    reason_code="mcp_output_schema_invalid",
-                )
-            try:
-                structured_content = validate_mcp_arguments(
-                    schema=output_schema,
-                    arguments=structured_content,
-                )
-            except Exception as exc:
-                raise MCPProtocolError(
-                    f"MCP tool '{self.server_name}.{remote_name}' returned invalid structuredContent.",
-                    reason_code="mcp_output_schema_invalid",
-                ) from exc
-        content_text = "\n".join(text_parts).strip()
-        if not content_text and structured_content is not None:
-            try:
-                content_text = json.dumps(
-                    structured_content,
-                    sort_keys=True,
-                    default=str,
-                )
-            except Exception:
-                content_text = str(structured_content)
-
-        if bool(result.get("isError", False)):
-            error_details: dict[str, Any] = {}
-            stderr_tail = ""
-            stderr_tail_fn = getattr(self._transport, "stderr_tail", None)
-            if callable(stderr_tail_fn):
-                stderr_tail = str(stderr_tail_fn() or "").strip()
-            if stderr_tail:
-                error_details["mcp_stderr_tail"] = stderr_tail
-            structured_is_cancelled = False
-            if isinstance(structured_content, dict):
-                structured_is_cancelled = bool(structured_content.get("cancelled"))
-            reason_code = (
-                "mcp_client_cancelled"
-                if structured_is_cancelled
-                else "mcp_upstream_error"
-            )
-            raise MCPCallError(
-                content_text
-                or f"MCP tool '{self.server_name}.{remote_name}' returned an error.",
-                reason_code=reason_code,
-                details=error_details,
-            )
-
-        return {
-            "ok": True,
-            "verified": True,
-            "content": content_text,
-            "source": "mcp",
-            "data": {
-                "mcp_server": self.server_name,
-                "mcp_remote_tool_name": remote_name,
-                "content_items": normalized_content,
-                "structured_content": structured_content,
-                "output_schema": output_schema,
-            },
-        }
-
-    def _normalize_prompt_result(
-        self, *, remote_name: str, result: dict[str, Any]
-    ) -> dict[str, Any]:
-        raw_messages = result.get("messages", [])
-        if not isinstance(raw_messages, list):
-            raw_messages = []
-        normalized_messages: list[dict[str, Any]] = []
-        text_parts: list[str] = []
-        for item in raw_messages:
-            if not isinstance(item, dict):
-                continue
-            normalized = dict(item)
-            normalized_messages.append(normalized)
-            text_parts.extend(_collect_text_fragments(normalized.get("content")))
-        description = str(result.get("description", "") or "").strip()
-        content_text = "\n".join(part for part in text_parts if part).strip()
-        if not content_text and description:
-            content_text = description
-        return {
-            "ok": True,
-            "verified": True,
-            "content": content_text,
-            "source": "mcp",
-            "data": {
-                "mcp_server": self.server_name,
-                "mcp_remote_prompt_name": remote_name,
-                "messages": normalized_messages,
-                "description": description,
-            },
-        }
-
-    def _normalize_resource_result(
-        self, *, resource_uri: str, result: dict[str, Any]
-    ) -> dict[str, Any]:
-        raw_contents = result.get("contents", [])
-        if not isinstance(raw_contents, list):
-            raw_contents = []
-        normalized_contents: list[dict[str, Any]] = []
-        text_parts: list[str] = []
-        for item in raw_contents:
-            if not isinstance(item, dict):
-                continue
-            normalized = dict(item)
-            normalized_contents.append(normalized)
-            text = str(normalized.get("text", "") or "").strip()
-            if text:
-                text_parts.append(text)
-        return {
-            "ok": True,
-            "verified": True,
-            "content": "\n".join(text_parts).strip(),
-            "source": "mcp",
-            "data": {
-                "mcp_server": self.server_name,
-                "mcp_resource_uri": resource_uri,
-                "contents": normalized_contents,
-            },
-        }
-
 
 def _build_prompt_arguments_schema(raw_arguments: Any) -> dict[str, Any]:
     if not isinstance(raw_arguments, list):
@@ -949,26 +813,6 @@ def _build_prompt_arguments_schema(raw_arguments: Any) -> dict[str, Any]:
     return schema
 
 
-def _collect_text_fragments(content: Any) -> list[str]:
-    if isinstance(content, str):
-        text = content.strip()
-        return [text] if text else []
-    if isinstance(content, dict):
-        text = str(content.get("text", "") or "").strip()
-        if text:
-            return [text]
-        nested_parts: list[str] = []
-        for value in content.values():
-            nested_parts.extend(_collect_text_fragments(value))
-        return nested_parts
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            parts.extend(_collect_text_fragments(item))
-        return parts
-    return []
-
-
 def _coerce_optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -989,7 +833,7 @@ def _normalize_completion_result(result: dict[str, Any]) -> MCPCompletionResult:
     return MCPCompletionResult(values=values, total=total, has_more=has_more)
 
 
-def _build_transport(server: MCPServerConfig) -> Any:
+def _build_transport(server: MCPServerConfig) -> MCPTransport:
     if server.transport == "streamable_http":
         return StreamableHTTPMCPTransport(server)
     return StdioMCPTransport(server)

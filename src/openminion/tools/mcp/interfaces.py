@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from openminion.base.config.mcp import MCPServerConfig
+
 from .schemas import (
     MCPElicitationRequest,
     MCPElicitationResult,
@@ -25,12 +27,22 @@ from .schemas import (
 )
 
 
+@dataclass(frozen=True)
+class MCPServerFailure:
+    server_name: str
+    reason_code: str
+    message: str
+
+
 @runtime_checkable
 class MCPFleetHandle(Protocol):
     """Runtime-facing MCP fleet interface consumed by tool registration code."""
 
     def has_servers(self) -> bool: ...
-    def server_config(self, server_name: str) -> Any | None: ...
+    @property
+    def failed_servers(self) -> dict[str, MCPServerFailure]: ...
+
+    def server_config(self, server_name: str) -> MCPServerConfig | None: ...
 
     def discover_tools(self, *, parallel: bool = False) -> list[MCPListedTool]: ...
     def discover_prompts(self, *, parallel: bool = False) -> list[MCPListedPrompt]: ...
@@ -95,7 +107,39 @@ class MCPFleetHandle(Protocol):
         self, *, limit: int = 10
     ) -> dict[str, list[MCPResourceUpdate]]: ...
 
+    def mcp_server_metrics(self) -> dict[str, dict[str, Any]]: ...
+
+    def mcp_sampling_events(self) -> list[dict[str, Any]]: ...
+
+    def mcp_elicitation_events(self) -> list[dict[str, Any]]: ...
+
+    def discovery_cache_snapshot(self) -> dict[str, dict[str, Any]]: ...
+
+    def capability_change_events(self) -> list[dict[str, Any]]: ...
+
     def close_server(self, server_name: str) -> None: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class MCPTransport(Protocol):
+    def start(self) -> None: ...
+
+    def is_running(self) -> bool: ...
+
+    def request(
+        self,
+        *,
+        method: str,
+        params: dict[str, Any] | None = None,
+        timeout_seconds: float,
+        server_request_handler: Any | None = None,
+    ) -> dict[str, Any]: ...
+
+    def notify(self, method: str, params: dict[str, Any] | None = None) -> None: ...
+
+    def stderr_tail(self, *, limit: int = 4096) -> str: ...
 
     def close(self) -> None: ...
 
@@ -201,24 +245,11 @@ class MCPToolRegistrationState:
     discovered_resources: tuple[MCPListedResource, ...] = ()
     discovered_resource_templates: tuple[MCPListedResourceTemplate, ...] = ()
     client_capability_state: MCPClientCapabilityState | None = None
-    _supported_tools: tuple[MCPListedTool, ...] | None = field(
-        default=None, init=False, repr=False
-    )
-    _passthrough_tools: tuple[str, ...] | None = field(
-        default=None, init=False, repr=False
-    )
-    _unsupported_tools: tuple[str, ...] | None = field(
-        default=None, init=False, repr=False
-    )
+    _supported_tools: tuple[MCPListedTool, ...] = field(init=False, repr=False)
+    _passthrough_tools: tuple[str, ...] = field(init=False, repr=False)
+    _unsupported_tools: tuple[str, ...] = field(init=False, repr=False)
 
-    def _ensure_materialized(self) -> None:
-        if (
-            self._supported_tools is not None
-            and self._passthrough_tools is not None
-            and self._unsupported_tools is not None
-        ):
-            return
-
+    def __post_init__(self) -> None:
         supported_tools: list[MCPListedTool] = []
         passthrough_tools: list[str] = []
         unsupported_tools: list[str] = []
@@ -244,18 +275,15 @@ class MCPToolRegistrationState:
 
     @property
     def supported_tools(self) -> tuple[MCPListedTool, ...]:
-        self._ensure_materialized()
-        return self._supported_tools or ()
+        return self._supported_tools
 
     @property
     def unsupported_tools(self) -> tuple[str, ...]:
-        self._ensure_materialized()
-        return self._unsupported_tools or ()
+        return self._unsupported_tools
 
     @property
     def passthrough_tools(self) -> tuple[str, ...]:
-        self._ensure_materialized()
-        return self._passthrough_tools or ()
+        return self._passthrough_tools
 
     @property
     def supported_prompts(self) -> tuple[MCPListedPrompt, ...]:
@@ -312,12 +340,12 @@ class MCPToolRegistrationState:
             parts.append("passthrough_mcp_tools=" + ",".join(passthrough_tools))
         if unsupported_tools:
             parts.append("unsupported_mcp_tools=" + ",".join(unsupported_tools))
-        failed_servers = getattr(self.manager, "failed_servers", {}) or {}
+        failed_servers = self.manager.failed_servers
         if failed_servers:
             formatted: list[str] = []
-            for server_name, error in dict(failed_servers).items():
-                reason_code = str(getattr(error, "reason_code", "") or "").strip()
-                message = str(getattr(error, "message", "") or "").strip()
+            for server_name, error in failed_servers.items():
+                reason_code = error.reason_code.strip()
+                message = error.message.strip()
                 token = f"{server_name}:{reason_code}"
                 if message:
                     token += f":{message}"
@@ -344,6 +372,8 @@ __all__ = [
     "MCPElicitationHandler",
     "MCPFleetHandle",
     "MCPProgressListener",
+    "MCPServerFailure",
+    "MCPTransport",
     "MCPSamplingHandler",
     "MCPToolRegistrationState",
     "require_mcp_tool_registration_state",

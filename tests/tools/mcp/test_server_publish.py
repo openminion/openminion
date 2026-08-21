@@ -10,8 +10,6 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.tools.mcp.server import (
     MCPServerError,
     PublishedTool,
-    build_contract_fixture_published_tools,
-    build_default_published_tools,
     build_runtime_published_tools,
     handle_published_mcp_request,
     invoke_published_tool,
@@ -20,8 +18,61 @@ from openminion.tools.mcp.server import (
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 
 
-def test_default_catalog_has_expected_minimum_four_families() -> None:
-    tools = build_contract_fixture_published_tools()
+def _contract_tools() -> list[PublishedTool]:
+    def _stub(args: dict) -> dict:
+        return {"status": "stub", "request": dict(args)}
+
+    return [
+        PublishedTool(
+            name="openminion.memory.export",
+            description="Export memory.",
+            input_schema={"type": "object", "additionalProperties": False},
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.plan.show",
+            description="Show plan.",
+            input_schema={
+                "type": "object",
+                "properties": {"session_id": {"type": "string"}},
+                "required": ["session_id"],
+                "additionalProperties": False,
+            },
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.todo.list",
+            description="List todos.",
+            input_schema={"type": "object", "additionalProperties": False},
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.search.web",
+            description="Search web.",
+            input_schema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            handler=_stub,
+        ),
+        PublishedTool(
+            name="openminion.fetch.url",
+            description="Fetch URL.",
+            input_schema={
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+            handler=_stub,
+        ),
+    ]
+
+
+def test_contract_catalog_has_expected_minimum_four_families() -> None:
+    tools = _contract_tools()
     names = {t.name for t in tools}
     assert "openminion.memory.export" in names
     assert "openminion.plan.show" in names
@@ -32,7 +83,7 @@ def test_default_catalog_has_expected_minimum_four_families() -> None:
 
 
 def test_render_tools_list_payload_matches_mcp_shape() -> None:
-    tools = build_contract_fixture_published_tools()
+    tools = _contract_tools()
     payload = render_tools_list_payload(tools)
     assert set(payload.keys()) == {"tools"}
     entry0 = payload["tools"][0]
@@ -66,7 +117,7 @@ def test_invoke_dispatches_to_matching_tool() -> None:
 
 
 def test_invoke_unknown_tool_raises_mcp_server_error() -> None:
-    tools = build_contract_fixture_published_tools()
+    tools = _contract_tools()
     with pytest.raises(MCPServerError, match="unknown MCP tool"):
         invoke_published_tool(tools, name="nope", arguments={})
 
@@ -98,7 +149,7 @@ def test_invoke_returns_plain_text_for_string_result() -> None:
 
 def test_default_tools_have_valid_json_schema_for_args() -> None:
 
-    for tool in build_contract_fixture_published_tools():
+    for tool in _contract_tools():
         assert tool.input_schema.get("type") == "object"
         # Tools that require an argument must declare it in `required`.
         if tool.name in (
@@ -108,15 +159,6 @@ def test_default_tools_have_valid_json_schema_for_args() -> None:
         ):
             assert "required" in tool.input_schema
             assert len(tool.input_schema["required"]) >= 1
-
-
-def test_default_catalog_is_deprecated_fixture_alias() -> None:
-    with pytest.warns(DeprecationWarning, match="contract-fixture"):
-        tools = build_default_published_tools()
-
-    assert [tool.name for tool in tools] == [
-        tool.name for tool in build_contract_fixture_published_tools()
-    ]
 
 
 class _EchoArgs(BaseModel):
@@ -220,6 +262,8 @@ def test_runtime_publish_honors_include_exclude_scope() -> None:
             )
         ),
         tools=registry,
+        authored_tools=None,
+        sandbox_runner=None,
     )
 
     assert [

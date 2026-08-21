@@ -11,6 +11,10 @@ class _ResourceSubscriptionTransport:
     def __init__(self) -> None:
         self.requests: list[tuple[str, dict]] = []
 
+    def stderr_tail(self, *, limit: int = 4096) -> str:
+        del limit
+        return ""
+
     def start(self) -> None:
         return None
 

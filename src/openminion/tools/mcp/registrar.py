@@ -52,9 +52,7 @@ class MCPRegistrar:
     is_provider_only = False
 
     def get_manifest(self, ctx: ToolRegisterContext) -> ToolBindingManifest:
-        state = require_mcp_tool_registration_state(
-            getattr(ctx, "prepared_state", None)
-        )
+        state = require_mcp_tool_registration_state(ctx.prepared_state)
         model_tools: list[ModelToolDef] = []
         runtime_bindings: list[RuntimeBindingDef] = []
         for tool in state.supported_tools:

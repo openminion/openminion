@@ -413,7 +413,6 @@ src/openminion/tools/location/plugin.py	6	0	current broad-handler baseline; ratc
 src/openminion/tools/mcp/manager.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/mcp/server/published.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/mcp/session.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/mcp/transport.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/mcp/transport_protocol.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/ops/change.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/reaction/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
