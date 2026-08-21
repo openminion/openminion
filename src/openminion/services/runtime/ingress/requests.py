@@ -61,11 +61,7 @@ def runtime_turn_request_from_payload(
         session_id=_optional_text(payload.get("session_id")),
         request_id=request_id,
         idempotency_key=_optional_text(payload.get("idempotency_key")),
-        inbound_metadata=(
-            MappingProxyType(dict(inbound_metadata))
-            if inbound_metadata is not None
-            else None
-        ),
+        inbound_metadata=_immutable_metadata(inbound_metadata),
         deliver=resolve_deliver(payload.get("deliver")),
         forced_tools=tuple(parse_forced_tools(payload.get("forced_tools")) or ()),
         attachments=(),
@@ -145,11 +141,7 @@ def runtime_turn_request_from_manager_request(
         session_id=str(request.session_id or "").strip() or None,
         request_id=str(request.trace_id or "").strip() or None,
         idempotency_key=str(meta.get("idempotency_key", "")).strip() or None,
-        inbound_metadata=(
-            MappingProxyType(dict(inbound_metadata))
-            if inbound_metadata is not None
-            else None
-        ),
+        inbound_metadata=_immutable_metadata(inbound_metadata),
         deliver=resolve_deliver(meta.get("deliver")),
         forced_tools=tuple(parse_forced_tools(meta.get("forced_tools")) or ()),
         attachments=tuple(str(item) for item in request.attachments),
@@ -172,6 +164,10 @@ def apply_workspace_root(
         updated["workspace_root"] = str(runtime_workspace_root)
         return updated
     return inbound_metadata
+
+
+def _immutable_metadata(value: dict[str, str] | None) -> MappingProxyType | None:
+    return MappingProxyType(dict(value)) if value is not None else None
 
 
 def _direct_inbound_metadata(
