@@ -665,12 +665,16 @@ def _abort_pre_sse_submission(
             client_identity=client_identity,
         )
         return
+    terminal = False
     try:
-        try:
-            submission.handle.cancel()
-        finally:
-            close_submission(submission)
+        submission.handle.cancel()
+        submission.handle.result(timeout_s=submission.timeout_s)
+        terminal = True
+    except (RuntimeError, TimeoutError):
+        pass
     finally:
+        close_submission(submission)
+    if terminal:
         _complete_desktop_media(
             body,
             client_media=client_media,

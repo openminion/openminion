@@ -555,7 +555,7 @@ def test_stream_unbinds_media_when_submission_fails_before_sse() -> None:
     assert calls == ["unbind", "json"]
 
 
-@pytest.mark.parametrize("failure", ["submit", "callback"])
+@pytest.mark.parametrize("failure", ["submit", "callback", "callback_timeout"])
 def test_stream_unbinds_media_for_unexpected_pre_sse_failures(failure: str) -> None:
     calls: list[str] = []
 
@@ -580,6 +580,14 @@ def test_stream_unbinds_media_for_unexpected_pre_sse_failures(failure: str) -> N
             calls.append("cancel")
             return True
 
+        def result(self, timeout_s: float | None = None) -> TurnResponse:
+            assert timeout_s == self.timeout_s
+            calls.append("result")
+            if failure == "callback_timeout":
+                raise TimeoutError("terminal result unavailable")
+            calls.append("terminal")
+            return TurnResponse(final_text="cancelled")
+
     class _Runtime:
         def submit_turn(self, **_kwargs: Any) -> Any:
             if failure == "submit":
@@ -603,7 +611,12 @@ def test_stream_unbinds_media_for_unexpected_pre_sse_failures(failure: str) -> N
             client_media=_Media(),  # type: ignore[arg-type]
             client_identity=SimpleNamespace(client_id="client-1"),
         )
-    assert calls == (["unbind"] if failure == "submit" else ["cancel", "complete"])
+    expected = {
+        "submit": ["unbind"],
+        "callback": ["cancel", "result", "terminal", "complete"],
+        "callback_timeout": ["cancel", "result"],
+    }
+    assert calls == expected[failure]
 
 
 def _desktop_turn_body(attachments: list[str]) -> dict[str, Any]:
