@@ -154,6 +154,9 @@ def inline_approval_menu(screen_text: str) -> str | None:
         if _compact_approval_inline_status_follows(
             screen_text,
             match=latest_compact,
+        ) or _compact_approval_active_tool_follows(
+            screen_text,
+            match=latest_compact,
         ) or not _interactive_surface_follows(screen_text, offset=latest_compact.end()):
             return "compact"
     legacy_matches = list(_LEGACY_INLINE_APPROVAL_RE.finditer(screen_text))
@@ -197,6 +200,21 @@ def _compact_approval_inline_status_follows(
 ) -> bool:
     trailing = screen_text[match.end() :]
     return re.match(r"[ \t]+(?:●|•)\s+Running\b", trailing) is not None
+
+
+def _compact_approval_active_tool_follows(
+    screen_text: str,
+    *,
+    match: re.Match[str],
+) -> bool:
+    trailing = screen_text[match.end() :]
+    tool_statuses = list(
+        re.finditer(
+            r"(?:^|\n)\s*(?:❯\s*)?(?:●|•)\s+(?P<running>Running\b)?",
+            trailing,
+        )
+    )
+    return bool(tool_statuses and tool_statuses[-1].group("running"))
 
 
 def inline_approval_fingerprint(screen_text: str) -> str | None:

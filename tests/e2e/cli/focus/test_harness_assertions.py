@@ -478,6 +478,20 @@ def test_inline_approval_menu_accepts_prompt_with_same_line_status() -> None:
     assert active_approval_visible(screen)
 
 
+def test_inline_approval_menu_accepts_prompt_with_interleaved_tool_output() -> None:
+    screen = (
+        "[y]es / [N]o / [a]lways: ● file.write(tiny_math.py)\n"
+        '  └ {"ok": true}\n'
+        "● Running file.write(test_tiny_math.py)\n"
+        "● file.write(test_tiny_math.py)\n"
+        '  └ {"ok": true}\n'
+        "● Running exec.run(python -m pytest -q)"
+    )
+
+    assert inline_approval_menu(screen) == "compact"
+    assert active_approval_visible(screen)
+
+
 def test_inline_approval_menu_uses_latest_overlapping_prompt() -> None:
     screen = (
         "[y]es / [N]o / [a]lways: Approval required: file.write(wc.py)\n"
