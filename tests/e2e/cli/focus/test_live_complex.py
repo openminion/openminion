@@ -12,12 +12,17 @@ from tests.e2e.cli.focus.harness.scenarios import (
     assert_scenario_contract,
 )
 
-pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1200)]
+pytestmark = [pytest.mark.e2e]
+
+
+def _scenario_param(scenario):
+    timeout = scenario.timeout * (scenario.max_auto_continuations + 1) + 60
+    return pytest.param(scenario, marks=pytest.mark.timeout(timeout))
 
 
 @pytest.mark.parametrize(
     "scenario",
-    COMPLEX_LIVE_SCENARIOS,
+    [_scenario_param(scenario) for scenario in COMPLEX_LIVE_SCENARIOS],
     ids=[scenario.scenario_id for scenario in COMPLEX_LIVE_SCENARIOS],
 )
 def test_live_focus_complex_scenarios(

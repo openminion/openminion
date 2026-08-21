@@ -1619,6 +1619,8 @@ def test_brain_bridge_profile_uses_config_defaults_and_env_overrides():
             "os.environ",
             {
                 "OPENMINION_BRAIN_DECIDE_MODEL": "env-decide-model",
+                "OPENMINION_BRAIN_MAX_TICKS": "",
+                "OPENMINION_BRAIN_MAX_TOTAL_LLM_TOKENS": "",
                 "OPENMINION_BRAIN_MAX_TOOL_CALLS": "11",
                 "OPENMINION_BRAIN_REFLECTION_ENABLED": "1",
                 "OPENMINION_PLAN_AUTO_SCALE_MAX_LLM_CALLS": "33",

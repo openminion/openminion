@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
+from openminion.modules.brain.tools.schema import collect_runtime_tool_names
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 
 
@@ -51,6 +53,10 @@ def test_normalize_dynamic_mcp_model_tool_id_after_bootstrap() -> None:
         assert normalize_tool_name_for_brain("mcp.fixture.echo_text") == (
             "mcp.fixture.echo_text"
         )
+        runner = SimpleNamespace(
+            tool_api=SimpleNamespace(registry=bootstrap.registry)
+        )
+        assert "mcp.fixture.echo_text" in collect_runtime_tool_names(runner)
     finally:
         manager = getattr(bootstrap, "mcp_manager", None)
         if manager is not None:

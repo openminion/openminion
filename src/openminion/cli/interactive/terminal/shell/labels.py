@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.cli.presentation.header import format_runtime_label

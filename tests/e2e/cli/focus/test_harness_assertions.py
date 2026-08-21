@@ -434,6 +434,14 @@ def test_inline_approval_menu_supports_both_focus_surfaces(
         "[y]es / [N]o / [a]lways: a\n❯ ● file.write(example.py)",
         "[y]es / [N]o / [a]lways: a\nFIRST:a",
         ("[y]es / [N]o / [a]lways: ● Running file.write(cli.py)\na\nStatus: Working"),
+        (
+            "[y]es / [N]o / [a]lways: ● Running file.read(module.py)\n"
+            "● file.read(module.py)\n"
+            "  └ def example():\n"
+            "        return 1\n"
+            "a\n"
+            "Status: Working"
+        ),
         "[A] Allow once [S] Session allow [D] Deny\nDone in 2s",
     ],
 )
@@ -464,6 +472,20 @@ def test_inline_approval_menu_accepts_prompt_with_same_line_status() -> None:
     screen = (
         "Approval required: file.write(test_hello.py)\n"
         "[y]es / [N]o / [a]lways: ● Running file.write(README.md)"
+    )
+
+    assert inline_approval_menu(screen) == "compact"
+    assert active_approval_visible(screen)
+
+
+def test_inline_approval_menu_accepts_prompt_with_interleaved_tool_output() -> None:
+    screen = (
+        "[y]es / [N]o / [a]lways: ● file.write(tiny_math.py)\n"
+        '  └ {"ok": true}\n'
+        "● Running file.write(test_tiny_math.py)\n"
+        "● file.write(test_tiny_math.py)\n"
+        '  └ {"ok": true}\n'
+        "● Running exec.run(python -m pytest -q)"
     )
 
     assert inline_approval_menu(screen) == "compact"

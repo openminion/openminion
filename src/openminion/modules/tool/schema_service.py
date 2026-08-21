@@ -520,6 +520,10 @@ class ToolSchemaService:
         if isinstance(parameters, dict):
             return dict(parameters)
 
+        parameters_schema = getattr(tool, "parameters_schema", None)
+        if isinstance(parameters_schema, dict):
+            return dict(parameters_schema)
+
         input_schema = getattr(tool, "input_schema", None)
         if isinstance(input_schema, dict):
             return dict(input_schema)

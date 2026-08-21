@@ -200,6 +200,27 @@ def test_forced_dynamic_runtime_tool_specs_are_added_before_entry_filter(
     ) == ["mcp.fixture.echo_text"]
 
 
+def test_general_entry_makes_dynamic_runtime_tools_requestable(monkeypatch) -> None:
+    dynamic_name = "mcp.fixture.echo_text"
+    registered = [{"name": dynamic_name, "description": "Echo text."}]
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.entry.collect_runtime_tool_names",
+        lambda _runner: frozenset({dynamic_name}),
+    )
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.tools.runtime.collect_runtime_tool_schemas",
+        lambda _runner: registered,
+    )
+
+    requestable = build_entry_requestable_tool_specs(
+        object(),
+        act_profile="general",
+        execution_target_kind="local",
+    )
+
+    assert dynamic_name in {tool.name for tool in requestable}
+
+
 def test_decompose_prose_without_tool_call_does_not_auto_invoke() -> None:
     response = type(
         "Response",

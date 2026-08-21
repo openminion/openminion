@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable, Mapping
 import logging
 import time
@@ -393,7 +391,6 @@ class TerminalComposer:
         )
 
     async def read_line(self) -> str:
-        """Read one line from the user."""
         if self._disabled:
             raise RuntimeError("composer disabled — refuse to read input")
         # Historical guard: patch_stdout(raw=True)

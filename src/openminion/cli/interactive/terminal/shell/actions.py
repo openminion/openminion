@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import shlex
 import subprocess
@@ -89,8 +87,6 @@ def _render_openminion_figlet() -> Text:
 def _handle_slash_expand(
     text: str, *, transcript: TerminalTranscript, console: Console
 ) -> None:
-    """FTR-05: re-render a truncated tool block in full."""
-
     parts = text.split(maxsplit=1)
     index = 1
     if len(parts) > 1:
@@ -108,8 +104,6 @@ def _handle_slash_expand(
 
 
 def _handle_slash_theme(text: str, *, console: Console) -> None:
-    """FVP-09: theme + variant switching dispatch."""
-
     parts = text.split(maxsplit=2)
     if len(parts) == 1:
         _render_theme_status(console=console)
@@ -121,8 +115,6 @@ def _handle_slash_theme(text: str, *, console: Console) -> None:
 
 
 def _handle_slash_model(text: str, *, runtime: Any, console: Console) -> None:
-    """FPC-04: show or switch the active provider/model. Session-scoped."""
-
     arg = _slash_arg(text).strip()
     if not arg:
         _render_model_status(runtime=runtime, console=console)
@@ -190,8 +182,6 @@ def _handle_slash_permissions(
     console: Console,
     status_line: TerminalStatusLine | None,
 ) -> None:
-    """Show or set the session-scoped permission mode."""
-
     arg = _slash_arg(text).strip().lower()
     if not arg:
         mode = _runtime_permission_mode(runtime)
@@ -265,8 +255,6 @@ def _permission_mode_message(mode: str) -> str:
 
 
 def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:
-    """List configured agents or show one agent id."""
-
     arg = _slash_arg(text).strip()
     lister = getattr(runtime, "list_agents", None)
     if not callable(lister):
@@ -303,8 +291,6 @@ def _handle_slash_diff(
     console: Console,
     working_dir: str,
 ) -> None:
-    """Render workspace git diff through the terminal tool-block path."""
-
     from openminion.cli.presentation.git.diff import render_git_diff
 
     args = _slash_arg(text).strip()
@@ -342,8 +328,6 @@ def _handle_slash_review(
     console: Console,
     working_dir: str,
 ) -> None:
-    """Run the existing review.diff analyzer from the terminal renderer."""
-
     from openminion.cli.presentation.review import run_review_workflow
 
     args = _slash_arg(text).strip()
@@ -359,8 +343,6 @@ def _handle_slash_readonly(
     console: Console,
     status_line: TerminalStatusLine | None = None,
 ) -> None:
-    """Toggle session-scoped read-only mode."""
-
     arg = _slash_arg(text).strip().lower()
     setter = getattr(runtime, "set_read_only_mode", None)
     if not callable(setter):
@@ -400,8 +382,6 @@ def _handle_slash_readonly(
 
 
 def _handle_slash_compact(*, runtime: Any, console: Console) -> None:
-    """Compact conversation via ``OpenMinionRuntime.compact_history``."""
-
     compacter = getattr(runtime, "compact_history", None)
     if not callable(compacter):
         console.print(
@@ -452,8 +432,6 @@ def _handle_slash_compact(*, runtime: Any, console: Console) -> None:
 def _handle_slash_verbosity(
     cmd: str, *, transcript: TerminalTranscript, console: Console
 ) -> None:
-    """Apply a live verbosity override."""
-
     new_level = cmd[1:]  # strip the leading slash
     transcript.set_verbosity(new_level)
     if new_level == "quiet":
@@ -506,8 +484,6 @@ def _print_slash_help(console: Console) -> None:
 
 
 def _print_unknown_slash_notice(cmd: str, console: Console) -> None:
-    """Unknown / unimplemented slashes get a one-line note instead of a crash."""
-
     console.print(
         Text(
             f"(slash {cmd} is not yet implemented in the terminal renderer; "
@@ -665,8 +641,6 @@ async def _handle_slash(
     working_dir: str,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
-    """Dispatch a slash command and return whether the shell should exit."""
-
     cmd = text.split(maxsplit=1)[0]
 
     if cmd in ("/exit", "/quit"):
@@ -791,7 +765,6 @@ async def _run_shell_escape(
     transcript: TerminalTranscript,
     working_dir: str,
 ) -> None:
-    """FNS-09 parity: `!cmd` runs via subprocess, output as tool block."""
     if not command:
         return
     transcript.push_message(
@@ -861,7 +834,6 @@ async def _run_shell_escape(
 
 
 def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
-    """Print the terminal CLI greeter panel."""
     from openminion import __version__
     from openminion.cli.presentation.header import (
         format_runtime_adapter,

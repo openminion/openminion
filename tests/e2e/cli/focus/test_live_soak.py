@@ -15,7 +15,12 @@ from tests.e2e.cli.focus.harness.scenarios import (
     assert_scenario_contract,
 )
 
-pytestmark = [pytest.mark.e2e, pytest.mark.timeout(3600)]
+pytestmark = [pytest.mark.e2e]
+
+
+def _scenario_param(scenario):
+    timeout = scenario.timeout * (scenario.max_auto_continuations + 1) + 60
+    return pytest.param(scenario, marks=pytest.mark.timeout(timeout))
 
 
 def _snapshot_writer(path: Path, *, min_interval: float = 5.0) -> Callable[[str], None]:
@@ -34,7 +39,7 @@ def _snapshot_writer(path: Path, *, min_interval: float = 5.0) -> Callable[[str]
 
 @pytest.mark.parametrize(
     "scenario",
-    SOAK_LIVE_SCENARIOS,
+    [_scenario_param(scenario) for scenario in SOAK_LIVE_SCENARIOS],
     ids=[scenario.scenario_id for scenario in SOAK_LIVE_SCENARIOS],
 )
 def test_live_focus_soak_scenarios(

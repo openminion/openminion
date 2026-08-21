@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from collections import deque
 from collections.abc import Callable
@@ -115,8 +113,6 @@ def _start_escape_interrupt_watcher(
     *,
     stdin: Any = None,
 ) -> _EscapeInterruptWatcher | None:
-    """Watch the terminal for Escape while a turn is running."""
-
     stream = stdin if stdin is not None else sys.stdin
     isatty = getattr(stream, "isatty", None)
     fileno = getattr(stream, "fileno", None)
@@ -202,8 +198,6 @@ def run_terminal_focus(
 def _build_ctrl_key_handlers(
     *, transcript: TerminalTranscript, console: Console
 ) -> tuple:
-    """Build the clear and copy keybinding handlers."""
-
     def _handle_ctrl_l() -> None:
         transcript.clear_messages()
 
@@ -761,7 +755,6 @@ async def _run_one_shot_stdin(
     transcript: TerminalTranscript,
     working_dir: str,
 ) -> int:
-    """FTF-08: read stdin to EOF, send as one user turn, exit."""
     text = sys.stdin.read().strip()
     if not text:
         console.print(
@@ -789,8 +782,6 @@ async def _run_one_shot_stdin(
 def _route_durable_activity_event(
     transcript: TerminalTranscript, payload: dict[str, Any]
 ) -> bool:
-    """Route durable activity events to scrollback when recognized."""
-
     try:
         from openminion.cli.status.activity_ledger import (
             KIND_APPROVAL,
@@ -878,8 +869,6 @@ async def _run_interruptible_agent_turn(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    """Run one agent turn and let Escape cancel it in the terminal CLI."""
-
     turn_task = asyncio.create_task(
         _run_agent_turn(
             text=text,
@@ -918,8 +907,6 @@ async def _run_agent_turn(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    """Stream tokens through the transcript turn handle."""
-
     if status_line is not None:
         status_line.set_state(state="responding", elapsed_seconds=0.0, turn_status="")
     status_tick_task: asyncio.Task[None] | None = None

@@ -38,7 +38,7 @@ def _require_live_portal() -> str:
         pytest.skip("OPENMINION_LIVE_CORTENSOR_PORTAL_E2E=1 is not set")
     api_key = os.getenv("CORTENSOR_API_KEY", "").strip()
     if not api_key:
-        pytest.skip("CORTENSOR_API_KEY is not available to the test process")
+        pytest.skip("CORTENSOR_API_KEY is not set in the test process")
     return api_key
 
 

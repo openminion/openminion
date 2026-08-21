@@ -334,6 +334,7 @@ def test_live_focus_delegate_uses_bounded_sophiagraph_context(
     )
 
 
+@pytest.mark.timeout(660)
 def test_live_focus_delegate_code_child_writes_in_scratch(
     focus_probe: FocusProbe,
     tmp_path,
@@ -417,6 +418,7 @@ def test_live_focus_delegate_async_lifecycle(
         assert "Delegation:" in transcript
 
 
+@pytest.mark.timeout(660)
 def test_live_focus_code_children_store_and_disposition_artifacts(
     focus_probe: FocusProbe,
     tmp_path: Path,

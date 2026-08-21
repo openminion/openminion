@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -79,8 +77,6 @@ async def tick_turn_status_line(
     status_line: TerminalStatusLine,
     invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
-    """Keep the active turn footer clock fresh while prompt input is available."""
-
     loop = asyncio.get_running_loop()
     started_at = loop.time()
     while True:

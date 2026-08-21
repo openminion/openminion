@@ -8182,8 +8182,9 @@ def test_duplicate_pattern_finalization_uses_compact_evidence_fallback() -> None
     assert len(runtime.calls) == 3
     final_messages = runtime.calls[-1]["messages"]
     assert len(final_messages) == 2
-    assert "read and summarize" in final_messages[0].content
-    assert len(final_messages[0].content) < 6000
+    assert [message.role for message in final_messages] == ["system", "user"]
+    assert "read and summarize" in final_messages[1].content
+    assert len(final_messages[1].content) < 6000
     assert runtime.calls[-1]["tool_choice"] == "none"
 
 
