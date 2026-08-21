@@ -15,6 +15,7 @@ import pytest
 from openminion.api.server import client_artifacts
 from openminion.api.routes.client_artifacts import handle_request
 from openminion.api.routes.contracts import APIRouteContext
+from openminion.api.queries.client_artifacts import redact_paths
 from openminion.api.server import build_api_server
 from openminion.api.server.client_artifacts import (
     ClientArtifactCoordinator,
@@ -30,6 +31,48 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 
 _REF = f"artifact://sha256/{'a' * 64}"
+
+
+def _tool_event(
+    *,
+    seq: int = 3,
+    event_id: str = "terminal-1",
+    output: object = None,
+    status: str = "success",
+    error: dict | None = None,
+) -> dict:
+    event_type = "tool.call.completed" if error is None else "tool.call.blocked"
+    payload = {
+        "schema_version": 1,
+        "turn_scope_id": "turn-1",
+        "call_id": f"call-{seq}",
+        "status": status,
+    }
+    payload["output" if error is None else "error"] = output if error is None else error
+    return {
+        "event_id": event_id,
+        "session_id": "session-1",
+        "seq": seq,
+        "timestamp": f"2026-08-20T00:00:{seq:02d}+00:00",
+        "event_type": event_type,
+        "parent_event_id": f"request-{seq}",
+        "payload": payload,
+        "refs": {},
+        "tool_parent": {
+            "event_id": f"request-{seq}",
+            "session_id": "session-1",
+            "event_type": "tool.call.requested",
+            "payload": {
+                "schema_version": 1,
+                "turn_scope_id": "turn-1",
+                "call_id": f"call-{seq}",
+                "canonical_name": "file.read",
+                "sanitized_normalized_arguments": {
+                    "path": "/Users/person/must-not-cross"
+                },
+            },
+        },
+    }
 
 
 class _Auth:
@@ -191,6 +234,38 @@ class _IncompleteFacade(_Facade):
         }
 
 
+class _ToolFacade(_Facade):
+    def __init__(self, events: list[dict]) -> None:
+        super().__init__()
+        self.events = events
+
+    def get_artifact_catalog_event_page(
+        self, session_id, *, after_seq, high_water, limit
+    ):
+        return {
+            "high_water": max(event["seq"] for event in self.events),
+            "events": self.events,
+            "next_after_seq": max(event["seq"] for event in self.events),
+            "complete": True,
+        }
+
+
+class _PagedToolFacade(_ToolFacade):
+    def get_artifact_catalog_event_page(
+        self, session_id, *, after_seq, high_water, limit
+    ):
+        high_water = high_water or max(event["seq"] for event in self.events)
+        remaining = [event for event in self.events if event["seq"] > after_seq]
+        page = remaining[:1]
+        next_after_seq = page[-1]["seq"] if page else after_seq
+        return {
+            "high_water": high_water,
+            "events": page,
+            "next_after_seq": next_after_seq,
+            "complete": next_after_seq >= high_water,
+        }
+
+
 class _ManyArtifacts(_Artifacts):
     def get(self, artifact_ref):
         return SimpleNamespace(
@@ -283,6 +358,308 @@ def test_catalog_content_and_decision_keep_internal_refs_opaque(monkeypatch) -> 
         "outcome": "applied",
     }
     assert facade.decisions == [(_REF, True, "desktop_user_action", "request-1")]
+
+
+def test_tool_diff_catalog_and_content_are_typed_redacted_and_read_only(
+    monkeypatch,
+) -> None:
+    event = _tool_event(
+        output={
+            "summary": "changed /Users/person/private",
+            "outputs": {
+                "diff": (
+                    "--- /Users/person/old.txt\n"
+                    "+++ C:\\private\\new.txt\n"
+                    "@@ -1 +1 @@\n"
+                    "-api_key=secret-value\n"
+                    "+safe\n"
+                )
+            },
+        }
+    )
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: _ToolFacade([event]),
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ("tool_outputs.read.v1",))
+
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    assert len(catalog["artifacts"]) == 1
+    item = catalog["artifacts"][0]
+    assert item["kind"] == "tool_output"
+    assert item["tool_name"] == "file.read"
+    assert item["tool_status"] == "success"
+    assert item["summary"] == "[PATH REDACTED]"
+    assert item["content_kind"] == "diff"
+    assert item["actions"] == ["read"]
+    assert item["occurrence_count"] == 1
+
+    content = coordinator.read_artifact(
+        identity,
+        "session-1",
+        item["artifact_id"],
+        cursor=None,
+        limit_bytes=64 * 1024,
+    )
+    assert content["content_kind"] == "diff"
+    assert content["text"].startswith(
+        "--- [PATH REDACTED]\n+++ [PATH REDACTED]\n@@ -1 +1 @@\n"
+    )
+    assert "secret-value" not in content["text"]
+    with pytest.raises(ClientArtifactError) as raised:
+        coordinator.decide(
+            identity,
+            "session-1",
+            item["artifact_id"],
+            detached=True,
+            request_id="request-1",
+        )
+    assert raised.value.code == "invalid_request"
+    visible = json.dumps((catalog, content))
+    for hidden in (
+        "terminal-1",
+        "request-3",
+        "call-3",
+        "/Users/person",
+        "C:\\private",
+        "must-not-cross",
+    ):
+        assert hidden not in visible
+
+
+def test_tool_json_and_blocked_outputs_drop_unknown_fields_and_redact_paths(
+    monkeypatch,
+) -> None:
+    completed = _tool_event(
+        output={
+            "summary": "safe summary",
+            "outputs": {
+                "nested": {"path": "/Users/person/private"},
+                "secret": "api_key=secret-value",
+            },
+            "unknown": "must-not-cross",
+        }
+    )
+    blocked = _tool_event(
+        seq=4,
+        event_id="terminal-2",
+        status="blocked",
+        error={
+            "code": "TOOL_BLOCKED",
+            "message": "blocked /Users/person/private",
+            "details": {"secret": "api_key=secret-value"},
+            "unknown": "must-not-cross",
+        },
+    )
+    facade = _ToolFacade([completed, blocked])
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(), runtime=object(), artifactctl=_Artifacts()
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ("tool_outputs.read.v1",))
+
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    assert [item["content_kind"] for item in catalog["artifacts"]] == [
+        "json",
+        "json",
+    ]
+    completed_content = coordinator.read_artifact(
+        identity,
+        "session-1",
+        catalog["artifacts"][0]["artifact_id"],
+        cursor=None,
+        limit_bytes=64 * 1024,
+    )
+    blocked_content = coordinator.read_artifact(
+        identity,
+        "session-1",
+        catalog["artifacts"][1]["artifact_id"],
+        cursor=None,
+        limit_bytes=64 * 1024,
+    )
+    assert json.loads(completed_content["text"]) == {
+        "nested": {"path": "[PATH REDACTED]"},
+        "secret": "api_key=[REDACTED]",
+    }
+    assert json.loads(blocked_content["text"]) == {
+        "code": "TOOL_BLOCKED",
+        "details": {"secret": "api_key=[REDACTED]"},
+        "message": "[PATH REDACTED]",
+    }
+    visible = json.dumps((catalog, completed_content, blocked_content))
+    assert "must-not-cross" not in visible
+
+
+@pytest.mark.parametrize(
+    "legacy_output",
+    ["legacy scalar", {"content": "legacy mapping"}],
+)
+def test_legacy_tool_outputs_are_typed_unavailable(monkeypatch, legacy_output) -> None:
+    event = _tool_event(output=legacy_output)
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: _ToolFacade([event]),
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(), runtime=object(), artifactctl=_Artifacts()
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ("tool_outputs.read.v1",))
+
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    item = catalog["artifacts"][0]
+    assert item["summary"] == "Output unavailable"
+    assert item["content_kind"] == "unavailable"
+    assert item["actions"] == []
+    assert coordinator.read_artifact(
+        identity,
+        "session-1",
+        item["artifact_id"],
+        cursor=None,
+        limit_bytes=64 * 1024,
+    ) == {
+        "schema_version": 1,
+        "artifact_id": item["artifact_id"],
+        "session_id": "session-1",
+        "content_kind": "unavailable",
+        "text": None,
+        "complete": True,
+        "next_cursor": None,
+    }
+
+
+def test_current_and_legacy_tool_outputs_scan_across_separate_pages(
+    monkeypatch,
+) -> None:
+    events = [
+        _tool_event(
+            seq=1,
+            event_id="current",
+            output={"summary": "current", "outputs": {"text": "safe"}},
+        ),
+        _tool_event(seq=2, event_id="legacy-scalar", output="legacy"),
+        _tool_event(
+            seq=3,
+            event_id="legacy-mapping",
+            output={"content": "legacy"},
+        ),
+    ]
+    facade = _PagedToolFacade(events)
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(), runtime=object(), artifactctl=_Artifacts()
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ("tool_outputs.read.v1",))
+
+    page = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    while not page["complete"]:
+        assert page["artifacts"] == []
+        page = coordinator.list_artifacts(
+            identity,
+            "session-1",
+            cursor=page["next_cursor"],
+            limit=25,
+        )
+
+    assert [item["content_kind"] for item in page["artifacts"]] == [
+        "text",
+        "unavailable",
+        "unavailable",
+    ]
+
+
+def test_tool_outputs_remain_absent_without_the_capability(monkeypatch) -> None:
+    event = _tool_event(output={"summary": "safe", "outputs": {"text": "safe"}})
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: _ToolFacade([event]),
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(), runtime=object(), artifactctl=_Artifacts()
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    assert catalog == {"artifacts": [], "next_cursor": None, "complete": True}
+
+
+def test_invalid_tool_parent_and_oversized_output_fail_closed(monkeypatch) -> None:
+    invalid = _tool_event(output={"summary": "safe", "outputs": {"text": "safe"}})
+    invalid["tool_parent"] = None
+    facade = _ToolFacade([invalid])
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(), runtime=object(), artifactctl=_Artifacts()
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ("tool_outputs.read.v1",))
+
+    with pytest.raises(ClientArtifactError) as invalid_error:
+        coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    assert invalid_error.value.code == "event_invalid"
+
+    facade.events = [
+        _tool_event(
+            output={
+                "summary": "safe",
+                "outputs": {"text": "x" * (256 * 1024 + 1)},
+            }
+        )
+    ]
+    with pytest.raises(ClientArtifactError) as oversized_error:
+        coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    assert oversized_error.value.code == "content_too_large"
+
+
+def test_malformed_diff_is_plain_text_and_control_output_is_unavailable(
+    monkeypatch,
+) -> None:
+    malformed = _tool_event(
+        output={
+            "summary": "safe",
+            "outputs": {"diff": "--- old\n+++ new\n-no hunk\n+still text"},
+        }
+    )
+    control = _tool_event(
+        seq=4,
+        event_id="terminal-control",
+        output={"summary": "safe", "outputs": {"text": "unsafe\x1b[31m"}},
+    )
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: _ToolFacade([malformed, control]),
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(), runtime=object(), artifactctl=_Artifacts()
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ("tool_outputs.read.v1",))
+
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    assert [item["content_kind"] for item in catalog["artifacts"]] == [
+        "text",
+        "unavailable",
+    ]
 
 
 def test_session_close_clears_opaque_mappings(monkeypatch) -> None:
@@ -1002,19 +1379,13 @@ def test_shutdown_fences_an_admitted_content_read(monkeypatch) -> None:
 
 
 def test_path_projection_redacts_posix_drive_unc_and_diff_lines() -> None:
-    assert client_artifacts._redact_paths("open /Users/person/private") == (
-        "[PATH REDACTED]"
-    )
-    assert client_artifacts._redact_paths(r"open C:\private\file.txt") == (
-        "[PATH REDACTED]"
-    )
-    assert client_artifacts._redact_paths(r"open \\server\share\file.txt") == (
-        "[PATH REDACTED]"
-    )
+    assert redact_paths("open /Users/person/private") == "[PATH REDACTED]"
+    assert redact_paths(r"open C:\private\file.txt") == "[PATH REDACTED]"
+    assert redact_paths(r"open \\server\share\file.txt") == "[PATH REDACTED]"
     diff = (
         "--- /Users/person/old.txt\n+++ C:\\private\\new.txt\n@@ -1 +1 @@\n-old\n+new\n"
     )
-    projected = client_artifacts._redact_paths(diff)
+    projected = redact_paths(diff)
     assert projected.startswith("--- [PATH REDACTED]\n+++ [PATH REDACTED]\n")
     assert "/Users" not in projected
     assert "C:\\private" not in projected
@@ -1182,6 +1553,36 @@ def loopback_artifacts(
             "attached",
             attachments=[artifact.ref],
         )
+        requested_id = session_api.append_event(
+            session_id,
+            type="tool.call.requested",
+            payload={
+                "schema_version": 1,
+                "turn_scope_id": "turn-1",
+                "call_id": "call-1",
+                "canonical_name": "file.read",
+                "sanitized_normalized_arguments": {
+                    "path": "/Users/person/must-not-cross"
+                },
+                "batch_index": 0,
+                "depends_on": [],
+            },
+        )
+        session_api.append_event(
+            session_id,
+            type="tool.call.completed",
+            parent_event_id=requested_id,
+            payload={
+                "schema_version": 1,
+                "turn_scope_id": "turn-1",
+                "call_id": "call-1",
+                "status": "success",
+                "output": {
+                    "summary": "read complete",
+                    "outputs": {"text": "safe tool output"},
+                },
+            },
+        )
         yield SimpleNamespace(
             connection=connection,
             port=server.server_address[1],
@@ -1189,6 +1590,7 @@ def loopback_artifacts(
             session_id=session_id,
             token=token,
             artifact_ref=artifact.ref,
+            capabilities=tuple(minted["lease"]["capabilities"]),
             home_root=home_root,
             data_root=data_root,
         )
@@ -1212,8 +1614,15 @@ def test_loopback_artifact_routes_authenticate_and_keep_ids_opaque(
         None,
     )
     assert status == 200
-    assert len(catalog["artifacts"]) == 1
-    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    assert "tool_outputs.read.v1" in fixture.capabilities
+    assert len(catalog["artifacts"]) == 2
+    artifact_item = next(
+        item for item in catalog["artifacts"] if item["kind"] == "artifact"
+    )
+    tool_item = next(
+        item for item in catalog["artifacts"] if item["kind"] == "tool_output"
+    )
+    artifact_id = artifact_item["artifact_id"]
     assert len(artifact_id) == 48
 
     status, content = _http_json_request(
@@ -1225,6 +1634,17 @@ def test_loopback_artifact_routes_authenticate_and_keep_ids_opaque(
     )
     assert status == 200
     assert content["content"]["text"] == "[PATH REDACTED]"
+
+    status, tool_content = _http_json_request(
+        fixture.connection,
+        "GET",
+        f"/v1/client/sessions/{fixture.session_id}/artifacts/{tool_item['artifact_id']}",
+        headers,
+        None,
+    )
+    assert status == 200
+    assert tool_content["content"]["content_kind"] == "text"
+    assert tool_content["content"]["text"] == "safe tool output"
 
     status, invalid = _http_json_request(
         fixture.connection,
@@ -1294,7 +1714,16 @@ def test_loopback_artifact_routes_authenticate_and_keep_ids_opaque(
     assert (status, forbidden["error"]["code"]) == (403, "forbidden")
 
     visible = json.dumps(
-        (catalog, content, invalid, missing_session, isolated, revoked, forbidden)
+        (
+            catalog,
+            content,
+            tool_content,
+            invalid,
+            missing_session,
+            isolated,
+            revoked,
+            forbidden,
+        )
     )
     assert fixture.artifact_ref not in visible
     assert str(fixture.home_root) not in visible

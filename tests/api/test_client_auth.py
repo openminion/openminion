@@ -195,6 +195,7 @@ def test_client_session_and_turn_routes_are_capability_admitted(
         "artifacts.catalog.v1",
         "artifacts.content.v1",
         "artifacts.detach_restore.v1",
+        "tool_outputs.read.v1",
     }.issubset(identity.capabilities)
 
 

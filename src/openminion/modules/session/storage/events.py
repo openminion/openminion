@@ -210,17 +210,50 @@ class EventStore:
             resolved_high_water = int(rows[0]["high_water"]) if rows else 0
         rows = self._rs.query_dicts(
             """
-            SELECT event_id, session_id, seq, timestamp, event_type, actor_type,
-                   actor_id, trace_id, span_id, task_id, parent_event_id,
-                   payload_json, refs_json, importance, redaction
-            FROM session_events
-            WHERE session_id = ? AND seq > ? AND seq <= ?
-            ORDER BY seq ASC
+            SELECT current.event_id, current.session_id, current.seq,
+                   current.timestamp, current.event_type, current.actor_type,
+                   current.actor_id, current.trace_id, current.span_id,
+                   current.task_id, current.parent_event_id,
+                   current.payload_json, current.refs_json, current.importance,
+                   current.redaction,
+                   parent.event_id AS tool_parent_event_id,
+                   parent.session_id AS tool_parent_session_id,
+                   parent.event_type AS tool_parent_event_type,
+                   parent.payload_json AS tool_parent_payload_json
+            FROM session_events AS current
+            LEFT JOIN session_events AS parent
+              ON current.event_type IN ('tool.call.completed', 'tool.call.blocked')
+             AND parent.event_id = current.parent_event_id
+             AND parent.session_id = current.session_id
+            WHERE current.session_id = ?
+              AND current.seq > ?
+              AND current.seq <= ?
+            ORDER BY current.seq ASC
             LIMIT ?
             """,
             (session_id, max(0, int(after_seq)), resolved_high_water, safe_limit),
         )
-        events = [row_to_session_event(row) for row in rows]
+        events = []
+        for row in rows:
+            event = row_to_session_event(row)
+            payload = event.get("payload")
+            if (
+                event["event_type"] in {"tool.call.completed", "tool.call.blocked"}
+                and isinstance(payload, dict)
+                and payload.get("schema_version") == 1
+            ):
+                parent_event_id = row.get("tool_parent_event_id")
+                event["tool_parent"] = (
+                    {
+                        "event_id": str(parent_event_id),
+                        "session_id": str(row["tool_parent_session_id"]),
+                        "event_type": str(row["tool_parent_event_type"]),
+                        "payload": parse_json(row["tool_parent_payload_json"], {}),
+                    }
+                    if parent_event_id is not None
+                    else None
+                )
+            events.append(event)
         next_after_seq = int(events[-1]["seq"]) if events else max(0, int(after_seq))
         return {
             "high_water": resolved_high_water,

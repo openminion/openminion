@@ -53,6 +53,7 @@ _CLIENT_CAPABILITIES = (
     "artifacts.catalog.v1",
     "artifacts.content.v1",
     "artifacts.detach_restore.v1",
+    "tool_outputs.read.v1",
 )
 _CLIENT_BODY_LIMITS = {
     "/v1/client/leases": 16 * 1024,

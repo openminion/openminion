@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-import json
-import re
 import secrets
 from sqlite3 import Error as SQLiteError
 from threading import RLock
@@ -12,11 +10,16 @@ from typing import Any
 
 from openminion.api.queries.client_artifacts import (
     ArtifactQueryError,
+    ToolOutputProjection,
     artifact_event_refs,
+    project_content,
+    project_text,
+    project_tool_output,
     resolve_session_artifact_facade,
+    scan_state_size,
+    utf8_page_end,
 )
 from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
-from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.artifact.config import from_base_config
 from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.artifact.errors import ArtifactCtlError
@@ -31,9 +34,6 @@ _CURSOR_IDLE_TTL = timedelta(minutes=5)
 _CURSOR_ABSOLUTE_TTL = timedelta(minutes=10)
 _RECORD_IDLE_TTL = timedelta(minutes=30)
 _TOMBSTONE_TTL = timedelta(minutes=5)
-_PATH_TOKEN = re.compile(
-    r"(?:(?<=^)|(?<=[\s\"'=\(\[\{]))(?:/|[A-Za-z]:[\\/]|\\\\)[^\s\"',\)\]\}]+"
-)
 _TEXT_MIMES = frozenset({"text/plain", "application/json"})
 _BINARY_SIGNATURES = (
     b"%PDF-",
@@ -59,9 +59,11 @@ class ClientArtifactError(RuntimeError):
 
 @dataclass
 class _ScanEntry:
-    artifact_ref: str
+    source_kind: str
+    source_id: str
     first_seq: int
     occurrence_count: int = 1
+    tool_output: ToolOutputProjection | None = None
 
 
 @dataclass
@@ -87,10 +89,12 @@ class _OpaqueRecord:
     artifact_id: str
     client_id: str
     session_id: str
-    artifact_ref: str
+    source_kind: str
+    source_id: str
     created_at: datetime
     last_access: datetime
     lease_expires_at: datetime
+    tool_output: ToolOutputProjection | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +120,7 @@ class ClientArtifactCoordinator:
         self._cursors: dict[str, _Cursor] = {}
         self._cursor_tombstones: dict[str, _Tombstone] = {}
         self._records: dict[str, _OpaqueRecord] = {}
-        self._record_by_source: dict[tuple[str, str, str], str] = {}
+        self._record_by_source: dict[tuple[str, str, str, str], str] = {}
         self._record_tombstones: dict[str, _Tombstone] = {}
         self._session_generations: dict[str, int] = {}
         self._closing_sessions: dict[str, int] = {}
@@ -169,7 +173,7 @@ class ClientArtifactCoordinator:
             self._recheck_session_locked(identity, session_id, generation)
             ordered = sorted(
                 state.entries.values(),
-                key=lambda entry: (entry.first_seq, entry.artifact_ref),
+                key=lambda entry: (entry.first_seq, entry.source_id),
             )
             page_entries = ordered[state.emit_position : state.emit_position + limit]
             state.emit_position += len(page_entries)
@@ -232,17 +236,52 @@ class ClientArtifactCoordinator:
                 for artifact_ref in artifact_event_refs(event):
                     if not is_canonical_artifact_ref(artifact_ref):
                         continue
-                    entry = current.entries.get(artifact_ref)
+                    key = f"artifact:{artifact_ref}"
+                    entry = current.entries.get(key)
                     if entry is None:
                         if len(current.entries) >= 256:
                             self._expire_cursor_locked(current, datetime.now(UTC))
                             raise _error("catalog_too_large")
-                        current.entries[artifact_ref] = _ScanEntry(
-                            artifact_ref=artifact_ref,
+                        current.entries[key] = _ScanEntry(
+                            source_kind="artifact",
+                            source_id=artifact_ref,
                             first_seq=seq,
                         )
                     else:
                         entry.occurrence_count += 1
+                if "tool_outputs.read.v1" in identity.capabilities:
+                    try:
+                        tool_output = project_tool_output(event, session_id=session_id)
+                    except ArtifactQueryError as exc:
+                        self._expire_cursor_locked(current, datetime.now(UTC))
+                        raise _error(exc.code) from exc
+                    if tool_output is not None:
+                        event_id = str(event["event_id"])
+                        key = f"tool:{event_id}"
+                        if key in current.entries or len(current.entries) >= 256:
+                            self._expire_cursor_locked(current, datetime.now(UTC))
+                            raise _error("catalog_too_large")
+                        current.entries[key] = _ScanEntry(
+                            source_kind="tool",
+                            source_id=event_id,
+                            first_seq=seq,
+                            tool_output=tool_output,
+                        )
+                if (
+                    scan_state_size(
+                        (
+                            entry.source_kind,
+                            entry.source_id,
+                            entry.first_seq,
+                            entry.occurrence_count,
+                            entry.tool_output,
+                        )
+                        for entry in current.entries.values()
+                    )
+                    > 256 * 1024
+                ):
+                    self._expire_cursor_locked(current, datetime.now(UTC))
+                    raise _error("catalog_too_large")
             current.after_seq = int(page["next_after_seq"])
             if bool(page["complete"]):
                 current.phase = "emit"
@@ -278,14 +317,20 @@ class ClientArtifactCoordinator:
                     artifact_id=artifact_id,
                     limit_bytes=limit_bytes,
                 )
+            if record.source_kind == "tool":
+                return self._start_tool_content_locked(
+                    identity,
+                    record,
+                    limit_bytes=limit_bytes,
+                )
         try:
-            meta = self._artifactctl.get(record.artifact_ref)
+            meta = self._artifactctl.get(record.source_id)
             mime = str(meta.mime or "").lower()
             if meta.deleted_at:
                 raise _error("artifact_missing")
             if mime not in _TEXT_MIMES or int(meta.size_bytes) > 256 * 1024:
                 raise _error("artifact_unsupported")
-            with self._artifactctl.open(record.artifact_ref) as stream:
+            with self._artifactctl.open(record.source_id) as stream:
                 data = stream.read(256 * 1024 + 1)
         except ClientArtifactError:
             raise
@@ -299,7 +344,10 @@ class ClientArtifactCoordinator:
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise _error("artifact_unsupported") from exc
-        projected = _project_content(text, mime=mime)
+        try:
+            projected = project_content(text, mime=mime)
+        except ArtifactQueryError as exc:
+            raise _error(exc.code) from exc
         if len(projected.encode("utf-8")) > 256 * 1024:
             raise _error("content_too_large")
         content_kind = "json" if mime == "application/json" else "text"
@@ -341,10 +389,12 @@ class ClientArtifactCoordinator:
         with self._lock:
             self._recheck_session_locked(identity, session_id, generation)
             record = self._record_locked(identity, session_id, artifact_id)
+            if record.source_kind != "artifact":
+                raise _error("invalid_request")
             try:
                 outcome = facade.apply_artifact_decision(
                     session_id,
-                    artifact_ref=record.artifact_ref,
+                    artifact_ref=record.source_id,
                     detached=detached,
                     reason_code="desktop_user_action",
                     request_id=request_id,
@@ -483,6 +533,48 @@ class ClientArtifactCoordinator:
         if client_count >= 64 or len(self._cursors) >= 256:
             raise _error("artifact_backpressure")
 
+    def _start_tool_content_locked(
+        self,
+        identity: ClientIdentity,
+        record: _OpaqueRecord,
+        *,
+        limit_bytes: int,
+    ) -> dict[str, Any]:
+        tool_output = record.tool_output
+        if tool_output is None:
+            raise _error("runtime_unavailable")
+        if tool_output.content_kind == "unavailable":
+            return {
+                "schema_version": 1,
+                "artifact_id": record.artifact_id,
+                "session_id": record.session_id,
+                "content_kind": "unavailable",
+                "text": None,
+                "complete": True,
+                "next_cursor": None,
+            }
+        now = datetime.now(UTC)
+        state = _Cursor(
+            cursor_id=secrets.token_urlsafe(36),
+            client_id=identity.client_id,
+            session_id=record.session_id,
+            created_at=now,
+            last_access=now,
+            lease_expires_at=record.lease_expires_at,
+            phase="content",
+            artifact_id=record.artifact_id,
+            content_kind=tool_output.content_kind,
+            content_text=tool_output.content_text,
+        )
+        self._admit_cursor_locked(identity.client_id)
+        self._cursors[state.cursor_id] = state
+        return self._content_page_locked(
+            state,
+            session_id=record.session_id,
+            artifact_id=record.artifact_id,
+            limit_bytes=limit_bytes,
+        )
+
     def _content_page_locked(
         self,
         state: _Cursor,
@@ -493,7 +585,10 @@ class ClientArtifactCoordinator:
     ) -> dict[str, Any]:
         text = state.content_text or ""
         start = state.emit_position
-        end = _utf8_page_end(text, start, limit_bytes)
+        try:
+            end = utf8_page_end(text, start, limit_bytes)
+        except ArtifactQueryError as exc:
+            raise _error(exc.code) from exc
         page_text = text[start:end]
         state.emit_position = end
         complete = end >= len(text)
@@ -547,8 +642,19 @@ class ClientArtifactCoordinator:
         *,
         detached_refs: set[str],
     ) -> dict[str, Any]:
+        if entry.source_kind == "tool":
+            return self._tool_catalog_item_locked(
+                identity,
+                session_id,
+                entry,
+                now,
+            )
         record = self._opaque_record_locked(
-            identity, session_id, entry.artifact_ref, now
+            identity,
+            session_id,
+            source_kind="artifact",
+            source_id=entry.source_id,
+            now=now,
         )
         state = "active"
         mime: str | None = None
@@ -557,7 +663,7 @@ class ClientArtifactCoordinator:
         display_name = "Artifact"
         content_kind = "unavailable"
         try:
-            meta = self._artifactctl.get(entry.artifact_ref)
+            meta = self._artifactctl.get(entry.source_id)
             mime = str(meta.mime or "").lower() or None
             size = int(meta.size_bytes)
             created_at = str(meta.created_at)
@@ -570,7 +676,7 @@ class ClientArtifactCoordinator:
                 state = "unsupported"
         except ArtifactCtlError:
             state = "missing"
-        if entry.artifact_ref in detached_refs:
+        if entry.source_id in detached_refs:
             state = "detached"
         actions = ["detach"] if state == "active" else []
         if state == "detached":
@@ -582,7 +688,7 @@ class ClientArtifactCoordinator:
             "artifact_id": record.artifact_id,
             "session_id": session_id,
             "kind": "artifact",
-            "display_name": _project_text(display_name),
+            "display_name": project_text(display_name),
             "mime_type": mime,
             "size_bytes": size,
             "created_at": created_at,
@@ -596,14 +702,65 @@ class ClientArtifactCoordinator:
             "actions": sorted(actions),
         }
 
+    def _tool_catalog_item_locked(
+        self,
+        identity: ClientIdentity,
+        session_id: str,
+        entry: _ScanEntry,
+        now: datetime,
+    ) -> dict[str, Any]:
+        tool_output = entry.tool_output
+        if tool_output is None:
+            raise _error("event_invalid")
+        record = self._opaque_record_locked(
+            identity,
+            session_id,
+            source_kind="tool",
+            source_id=entry.source_id,
+            now=now,
+            tool_output=tool_output,
+        )
+        actions = ["read"] if tool_output.content_kind != "unavailable" else []
+        mime_type = {
+            "json": "application/json",
+            "text": "text/plain",
+            "diff": "text/plain",
+        }.get(tool_output.content_kind)
+        size_bytes = (
+            len(tool_output.content_text.encode("utf-8"))
+            if tool_output.content_text is not None
+            else None
+        )
+        return {
+            "schema_version": 1,
+            "artifact_id": record.artifact_id,
+            "session_id": session_id,
+            "kind": "tool_output",
+            "display_name": tool_output.tool_name,
+            "mime_type": mime_type,
+            "size_bytes": size_bytes,
+            "created_at": tool_output.created_at,
+            "source": "tool",
+            "state": "active",
+            "content_kind": tool_output.content_kind,
+            "occurrence_count": 1,
+            "tool_name": tool_output.tool_name,
+            "tool_status": tool_output.tool_status,
+            "summary": tool_output.summary,
+            "actions": actions,
+        }
+
     def _opaque_record_locked(
         self,
         identity: ClientIdentity,
         session_id: str,
-        artifact_ref: str,
+        *,
+        source_kind: str,
+        source_id: str,
         now: datetime,
+        tool_output: ToolOutputProjection | None = None,
     ) -> _OpaqueRecord:
-        key = (identity.client_id, session_id, artifact_ref)
+        key = (identity.client_id, session_id, source_kind, source_id)
         existing_id = self._record_by_source.get(key)
         if existing_id and existing_id in self._records:
             record = self._records[existing_id]
@@ -618,10 +775,12 @@ class ClientArtifactCoordinator:
             secrets.token_urlsafe(36),
             identity.client_id,
             session_id,
-            artifact_ref,
+            source_kind,
+            source_id,
             now,
             now,
             self._client_auth.lease_expires_at(identity),
+            tool_output,
         )
         self._records[record.artifact_id] = record
         self._record_by_source[key] = record.artifact_id
@@ -684,7 +843,13 @@ class ClientArtifactCoordinator:
     def _expire_record_locked(self, record: _OpaqueRecord, now: datetime) -> None:
         self._records.pop(record.artifact_id, None)
         self._record_by_source.pop(
-            (record.client_id, record.session_id, record.artifact_ref), None
+            (
+                record.client_id,
+                record.session_id,
+                record.source_kind,
+                record.source_id,
+            ),
+            None,
         )
         self._record_tombstones[record.artifact_id] = _Tombstone(
             record.client_id, record.session_id, "artifact", now
@@ -699,7 +864,13 @@ class ClientArtifactCoordinator:
             if value.client_id == client_id:
                 self._records.pop(key, None)
                 self._record_by_source.pop(
-                    (value.client_id, value.session_id, value.artifact_ref), None
+                    (
+                        value.client_id,
+                        value.session_id,
+                        value.source_kind,
+                        value.source_id,
+                    ),
+                    None,
                 )
 
     def _clear_session_locked(self, session_id: str) -> None:
@@ -710,7 +881,13 @@ class ClientArtifactCoordinator:
             if value.session_id == session_id:
                 self._records.pop(key, None)
                 self._record_by_source.pop(
-                    (value.client_id, value.session_id, value.artifact_ref), None
+                    (
+                        value.client_id,
+                        value.session_id,
+                        value.source_kind,
+                        value.source_id,
+                    ),
+                    None,
                 )
 
 
@@ -731,90 +908,6 @@ def _trim_tombstones(
     ordered = sorted(tombstones.items(), key=lambda item: item[1].created_at)
     for key, _ in ordered[:-global_cap]:
         tombstones.pop(key, None)
-
-
-def _redact_paths(value: str) -> str:
-    lines = value.splitlines(keepends=True)
-    is_diff = (
-        any(line.startswith("--- ") for line in lines)
-        and any(line.startswith("+++ ") for line in lines)
-        and any(line.startswith("@@ ") for line in lines)
-    )
-    if not is_diff:
-        return "[PATH REDACTED]" if _PATH_TOKEN.search(value) else value
-    projected: list[str] = []
-    for line in lines:
-        ending = "\n" if line.endswith("\n") else ""
-        content = line[:-1] if ending else line
-        marker = next(
-            (
-                candidate
-                for candidate in ("--- ", "+++ ", "@@ ", "+", "-", " ")
-                if content.startswith(candidate)
-            ),
-            "",
-        )
-        if marker and _PATH_TOKEN.search(content[len(marker) :]):
-            projected.append(f"{marker}[PATH REDACTED]{ending}")
-        else:
-            projected.append(line)
-    return "".join(projected)
-
-
-def _project_content(value: str, *, mime: str) -> str:
-    if mime == "application/json":
-        try:
-            parsed = json.loads(value)
-            projected = _project_json_value(parsed)
-            return json.dumps(
-                projected,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        except (json.JSONDecodeError, RecursionError) as exc:
-            raise _error("artifact_unsupported") from exc
-    if any(
-        ord(character) < 32
-        and character not in {"\t", "\n", "\r"}
-        or ord(character) == 127
-        for character in value
-    ):
-        raise _error("artifact_unsupported")
-    return _project_text(value)
-
-
-def _project_json_value(value: Any) -> Any:
-    if isinstance(value, str):
-        return _project_text(value)
-    if isinstance(value, list):
-        return [_project_json_value(item) for item in value]
-    if isinstance(value, dict):
-        projected: dict[str, Any] = {}
-        for key, item in value.items():
-            safe_key = _project_text(key)
-            if safe_key in projected:
-                raise _error("artifact_unsupported")
-            projected[safe_key] = _project_json_value(item)
-        return projected
-    return value
-
-
-def _project_text(value: str) -> str:
-    return _redact_paths(redact_sensitive_text(value)[0])
-
-
-def _utf8_page_end(text: str, start: int, limit_bytes: int) -> int:
-    used = 0
-    end = start
-    while end < len(text):
-        width = len(text[end].encode("utf-8"))
-        if used + width > limit_bytes:
-            break
-        used += width
-        end += 1
-    if end == start and start < len(text):
-        raise _error("content_too_large")
-    return end
 
 
 def _error(code: str) -> ClientArtifactError:
