@@ -67,8 +67,11 @@ def test_master_mints_scoped_client_and_revoke_fails_closed(tmp_path: Path) -> N
     assert identity is not None
     assert identity.config_id == service.config_id
     assert service.is_active(identity) is True
+    assert service.lease_expires_at(identity) > datetime.now(UTC)
     service.revoke(identity)
     assert service.is_active(identity) is False
+    with pytest.raises(ClientAuthError):
+        service.lease_expires_at(identity)
     with pytest.raises(ClientAuthError, match="not authorized"):
         service.authorize(
             method="GET",

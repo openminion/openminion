@@ -35,24 +35,55 @@ class SessionArtifactFacade:
             high_water=high_water,
             limit=limit,
         )
+        events = page.get("events") if isinstance(page, dict) else None
         if (
             not isinstance(page, dict)
             or set(page) != {"high_water", "events", "next_after_seq", "complete"}
             or type(page.get("high_water")) is not int
-            or not isinstance(page.get("events"), list)
-            or len(page["events"]) > limit
+            or not isinstance(events, list)
+            or len(events) > limit
             or type(page.get("next_after_seq")) is not int
             or type(page.get("complete")) is not bool
         ):
             raise SessionArtifactUnavailable(
                 "Session artifact page does not match the bounded contract."
             )
+        resolved_high_water = int(page["high_water"])
+        next_after_seq = int(page["next_after_seq"])
+        sequences = [
+            event.get("seq") if isinstance(event, dict) else None for event in events
+        ]
+        if (
+            resolved_high_water < 0
+            or (high_water > 0 and resolved_high_water != high_water)
+            or any(type(seq) is not int for seq in sequences)
+            or any(
+                not isinstance(event.get("event_type"), str)
+                for event in events
+                if isinstance(event, dict)
+            )
+            or any(
+                current <= (after_seq if index == 0 else sequences[index - 1])
+                for index, current in enumerate(sequences)
+            )
+            or any(seq > resolved_high_water for seq in sequences)
+            or next_after_seq != (sequences[-1] if sequences else after_seq)
+            or bool(page["complete"]) != (next_after_seq >= resolved_high_water)
+        ):
+            raise SessionArtifactOperationError(
+                "event_invalid", "Session artifact event page is invalid."
+            )
         return page
 
     def get_detached_artifact_refs(
         self, session_id: str, *, limit: int = 256
     ) -> list[str]:
-        refs = self._session_api.get_detached_artifact_refs(session_id, limit=limit)
+        try:
+            refs = self._session_api.get_detached_artifact_refs(session_id, limit=limit)
+        except ArtifactLifecycleError as exc:
+            raise SessionArtifactOperationError(
+                exc.code, "Artifact state could not be read."
+            ) from exc
         if (
             not isinstance(refs, list)
             or len(refs) > limit

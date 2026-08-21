@@ -1,27 +1,58 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
+from http.client import HTTPConnection
 from io import BytesIO
+import json
+from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
+from typing import Iterator
+
+import pytest
 
 from openminion.api.server import client_artifacts
-from openminion.api.server.client_artifacts import ClientArtifactCoordinator
+from openminion.api.routes.client_artifacts import handle_request
+from openminion.api.routes.contracts import APIRouteContext
+from openminion.api.server import build_api_server
+from openminion.api.server.client_artifacts import (
+    ClientArtifactCoordinator,
+    ClientArtifactError,
+)
 from openminion.api.server.client_auth import ClientIdentity
+from openminion.base.config import OpenMinionConfig, save_config
+from openminion.services.brain.session_artifacts import (
+    SessionArtifactOperationError,
+    SessionArtifactUnavailable,
+)
+from tests._csc_fixtures import _csc_install_default_agent
 
 
 _REF = f"artifact://sha256/{'a' * 64}"
 
 
 class _Auth:
+    def __init__(self) -> None:
+        self.active = True
+        self.expires_at = datetime.now(UTC) + timedelta(minutes=5)
+
     def is_active(self, identity) -> bool:
-        return identity.client_id == "client-1"
+        return self.active and identity.client_id == "client-1"
+
+    def lease_expires_at(self, identity):
+        assert self.is_active(identity)
+        return self.expires_at
 
 
 class _Artifacts:
+    payload = b"open /Users/person/secret"
+
     def get(self, artifact_ref):
         assert artifact_ref == _REF
         return SimpleNamespace(
             mime="text/plain",
-            size_bytes=24,
+            size_bytes=len(self.payload),
             created_at="2026-08-20T00:00:00+00:00",
             label="notes.txt",
             original_name="notes.txt",
@@ -30,16 +61,56 @@ class _Artifacts:
 
     def open(self, artifact_ref):
         assert artifact_ref == _REF
-        return BytesIO(b"open /Users/person/secret")
+        return BytesIO(self.payload)
 
     def close(self):
         return None
 
 
 class _CredentialArtifacts(_Artifacts):
+    payload = b"api_key=secret-value"
+
+
+class _JsonArtifacts(_Artifacts):
+    payload = (
+        b'{"count":2,"enabled":true,"nested":{"path":"/Users/person/x",'
+        b'"secret":"api_key=secret-value"},"items":[null,"safe"]}'
+    )
+
+    def get(self, artifact_ref):
+        result = super().get(artifact_ref)
+        result.mime = "application/json"
+        return result
+
+
+class _ControlByteArtifacts(_Artifacts):
+    payload = b"plain\x00binary"
+
+
+class _UnavailableArtifacts(_Artifacts):
+    def __init__(self, *, mime: str = "text/plain") -> None:
+        self.mime = mime
+        self.deleted = False
+
+    def get(self, artifact_ref):
+        result = super().get(artifact_ref)
+        result.mime = self.mime
+        result.deleted_at = "2026-08-20T00:01:00+00:00" if self.deleted else None
+        return result
+
+
+class _BlockingArtifacts(_Artifacts):
+    payload = b"safe content"
+
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+
     def open(self, artifact_ref):
         assert artifact_ref == _REF
-        return BytesIO(b"api_key=secret-value")
+        self.entered.set()
+        assert self.release.wait(timeout=5)
+        return BytesIO(self.payload)
 
 
 class _Facade:
@@ -83,6 +154,68 @@ class _Facade:
         self.detached = detached
         self.decisions.append((artifact_ref, detached, reason_code, request_id))
         return "applied"
+
+
+class _IncompleteFacade(_Facade):
+    def get_artifact_catalog_event_page(
+        self, session_id, *, after_seq, high_water, limit
+    ):
+        return {
+            "high_water": 2,
+            "events": [
+                {
+                    "seq": 1,
+                    "event_type": "turn.user",
+                    "refs": {"artifact_refs": []},
+                }
+            ],
+            "next_after_seq": 1,
+            "complete": False,
+        }
+
+
+class _ManyArtifacts(_Artifacts):
+    def get(self, artifact_ref):
+        return SimpleNamespace(
+            mime="text/plain",
+            size_bytes=len(self.payload),
+            created_at="2026-08-20T00:00:00+00:00",
+            label="notes.txt",
+            original_name="notes.txt",
+            deleted_at=None,
+        )
+
+
+class _ManyRefsFacade(_Facade):
+    def __init__(self, count: int) -> None:
+        super().__init__()
+        self.refs = [f"artifact://sha256/{index:064x}" for index in range(1, count + 1)]
+
+    def get_artifact_catalog_event_page(
+        self, session_id, *, after_seq, high_water, limit
+    ):
+        refs = self.refs if session_id == "session-1" else [self.refs[-1]]
+        return {
+            "high_water": 1,
+            "events": [
+                {
+                    "seq": 1,
+                    "event_type": "turn.user",
+                    "refs": {"artifact_refs": refs},
+                }
+            ],
+            "next_after_seq": 1,
+            "complete": True,
+        }
+
+
+class _DetachedFailureFacade(_Facade):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def get_detached_artifact_refs(self, session_id, *, limit=256):
+        raise self.error
 
 
 def test_catalog_content_and_decision_keep_internal_refs_opaque(monkeypatch) -> None:
@@ -221,6 +354,212 @@ def test_content_pages_use_one_bound_opaque_cursor(monkeypatch) -> None:
     assert page["next_cursor"] is None
 
 
+def test_catalog_first_page_never_reuses_a_content_cursor(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    content = coordinator.read_artifact(
+        identity,
+        "session-1",
+        artifact_id,
+        cursor=None,
+        limit_bytes=5,
+    )
+    assert content["complete"] is False
+
+    refreshed = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    assert len(refreshed["artifacts"]) == 1
+    assert refreshed["artifacts"][0]["artifact_id"] == artifact_id
+
+
+def test_opaque_record_expiry_is_bound_to_client_and_session(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    auth = _Auth()
+    coordinator = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    auth.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    for record in coordinator._records.values():
+        record.lease_expires_at = auth.expires_at
+
+    with pytest.raises(ClientArtifactError) as expired:
+        coordinator.read_artifact(
+            identity,
+            "session-1",
+            artifact_id,
+            cursor=None,
+            limit_bytes=64 * 1024,
+        )
+    with pytest.raises(ClientArtifactError) as wrong_session:
+        coordinator.read_artifact(
+            identity,
+            "session-2",
+            artifact_id,
+            cursor=None,
+            limit_bytes=64 * 1024,
+        )
+
+    assert expired.value.code == "artifact_expired"
+    assert wrong_session.value.code == "artifact_not_found"
+
+
+def test_cursor_caps_expiry_and_tombstone_binding(monkeypatch) -> None:
+    facade = _IncompleteFacade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    auth = _Auth()
+    coordinator = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    cursors = [
+        (
+            session_id,
+            coordinator.list_artifacts(identity, session_id, cursor=None, limit=25)[
+                "next_cursor"
+            ],
+        )
+        for session_id in (f"session-{index}" for index in range(64))
+    ]
+
+    with pytest.raises(ClientArtifactError) as full:
+        coordinator.list_artifacts(identity, "session-64", cursor=None, limit=25)
+    assert full.value.code == "artifact_backpressure"
+
+    expired_at = datetime.now(UTC) - timedelta(seconds=1)
+    for cursor in coordinator._cursors.values():
+        cursor.lease_expires_at = expired_at
+    coordinator.list_artifacts(identity, "session-fresh", cursor=None, limit=25)
+    assert len(coordinator._cursor_tombstones) == 64
+    expired_session, expired_cursor = cursors[0]
+    with pytest.raises(ClientArtifactError) as expired:
+        coordinator.list_artifacts(
+            identity,
+            expired_session,
+            cursor=expired_cursor,
+            limit=25,
+        )
+    with pytest.raises(ClientArtifactError) as wrong_session:
+        coordinator.list_artifacts(
+            identity,
+            "session-other",
+            cursor=expired_cursor,
+            limit=25,
+        )
+    assert expired.value.code == "cursor_expired"
+    assert wrong_session.value.code == "invalid_request"
+
+
+def test_catalog_and_opaque_record_caps_fail_before_unbounded_state(
+    monkeypatch,
+) -> None:
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    too_many = _ManyRefsFacade(257)
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: too_many,
+    )
+    catalog_owner = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_ManyArtifacts(),
+    )
+
+    with pytest.raises(ClientArtifactError) as catalog_full:
+        catalog_owner.list_artifacts(identity, "session-1", cursor=None, limit=100)
+    assert catalog_full.value.code == "catalog_too_large"
+    assert not catalog_owner._cursors
+    assert not catalog_owner._records
+
+    at_capacity = _ManyRefsFacade(256)
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: at_capacity,
+    )
+    record_owner = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_ManyArtifacts(),
+    )
+    page = record_owner.list_artifacts(identity, "session-1", cursor=None, limit=100)
+    while not page["complete"]:
+        page = record_owner.list_artifacts(
+            identity,
+            "session-1",
+            cursor=page["next_cursor"],
+            limit=100,
+        )
+    assert len(record_owner._records) == 256
+    with pytest.raises(ClientArtifactError) as record_full:
+        record_owner.list_artifacts(identity, "session-2", cursor=None, limit=100)
+    assert record_full.value.code == "artifact_backpressure"
+    assert len(record_owner._records) == 256
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (
+            SessionArtifactOperationError(
+                "artifact_state_too_large", "internal projection detail"
+            ),
+            "artifact_state_too_large",
+        ),
+        (SessionArtifactUnavailable("internal runtime detail"), "runtime_unavailable"),
+    ],
+)
+def test_catalog_normalizes_projection_failures(
+    monkeypatch, error, expected_code
+) -> None:
+    facade = _DetachedFailureFacade(error)
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_Artifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+
+    with pytest.raises(ClientArtifactError) as raised:
+        coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    assert raised.value.code == expected_code
+    assert "internal" not in raised.value.message
+
+
 def test_content_applies_existing_credential_redaction(monkeypatch) -> None:
     facade = _Facade()
     monkeypatch.setattr(
@@ -248,6 +587,193 @@ def test_content_applies_existing_credential_redaction(monkeypatch) -> None:
     assert "secret-value" not in repr(content)
 
 
+def test_json_content_preserves_shape_and_redacts_nested_scalars(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_JsonArtifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    content = coordinator.read_artifact(
+        identity,
+        "session-1",
+        catalog["artifacts"][0]["artifact_id"],
+        cursor=None,
+        limit_bytes=64 * 1024,
+    )
+
+    projected = json.loads(content["text"])
+    assert projected == {
+        "count": 2,
+        "enabled": True,
+        "nested": {
+            "path": "[PATH REDACTED]",
+            "secret": "api_key=[REDACTED]",
+        },
+        "items": [None, "safe"],
+    }
+
+
+def test_text_content_rejects_binary_control_bytes(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=_ControlByteArtifacts(),
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+
+    with pytest.raises(ClientArtifactError, match="unsupported") as raised:
+        coordinator.read_artifact(
+            identity,
+            "session-1",
+            catalog["artifacts"][0]["artifact_id"],
+            cursor=None,
+            limit_bytes=64 * 1024,
+        )
+
+    assert raised.value.code == "artifact_unsupported"
+
+
+@pytest.mark.parametrize(
+    ("mime", "delete_after_catalog", "expected_code"),
+    [
+        ("application/pdf", False, "artifact_unsupported"),
+        ("text/plain", True, "artifact_missing"),
+    ],
+)
+def test_content_fails_closed_when_unsupported_or_deleted_after_catalog(
+    monkeypatch, mime, delete_after_catalog, expected_code
+) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    artifacts = _UnavailableArtifacts(mime=mime)
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=artifacts,
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    artifacts.deleted = delete_after_catalog
+
+    with pytest.raises(ClientArtifactError) as raised:
+        coordinator.read_artifact(
+            identity,
+            "session-1",
+            artifact_id,
+            cursor=None,
+            limit_bytes=64 * 1024,
+        )
+
+    assert raised.value.code == expected_code
+
+
+def test_revoke_fences_an_admitted_content_read(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    auth = _Auth()
+    artifacts = _BlockingArtifacts()
+    coordinator = ClientArtifactCoordinator(
+        client_auth=auth,
+        runtime=object(),
+        artifactctl=artifacts,
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    observed = {}
+
+    def read() -> None:
+        try:
+            observed["result"] = coordinator.read_artifact(
+                identity,
+                "session-1",
+                artifact_id,
+                cursor=None,
+                limit_bytes=64 * 1024,
+            )
+        except ClientArtifactError as exc:
+            observed["error"] = exc.code
+
+    worker = Thread(target=read)
+    worker.start()
+    assert artifacts.entered.wait(timeout=5)
+    auth.active = False
+    coordinator.revoke_client(identity)
+    artifacts.release.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert observed == {"error": "forbidden"}
+    assert not coordinator._cursors
+
+
+def test_shutdown_fences_an_admitted_content_read(monkeypatch) -> None:
+    facade = _Facade()
+    monkeypatch.setattr(
+        client_artifacts,
+        "resolve_session_artifact_facade",
+        lambda runtime, session_id: facade,
+    )
+    artifacts = _BlockingArtifacts()
+    coordinator = ClientArtifactCoordinator(
+        client_auth=_Auth(),
+        runtime=object(),
+        artifactctl=artifacts,
+    )
+    identity = ClientIdentity("client-1", "config-1", 1, ())
+    catalog = coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    observed = {}
+
+    def read() -> None:
+        try:
+            observed["result"] = coordinator.read_artifact(
+                identity,
+                "session-1",
+                artifact_id,
+                cursor=None,
+                limit_bytes=64 * 1024,
+            )
+        except ClientArtifactError as exc:
+            observed["error"] = exc.code
+
+    worker = Thread(target=read)
+    worker.start()
+    assert artifacts.entered.wait(timeout=5)
+    coordinator.close()
+    artifacts.release.set()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert observed == {"error": "forbidden"}
+    assert not coordinator._cursors
+
+
 def test_path_projection_redacts_posix_drive_unc_and_diff_lines() -> None:
     assert client_artifacts._redact_paths("open /Users/person/private") == (
         "[PATH REDACTED]"
@@ -265,3 +791,284 @@ def test_path_projection_redacts_posix_drive_unc_and_diff_lines() -> None:
     assert projected.startswith("--- [PATH REDACTED]\n+++ [PATH REDACTED]\n")
     assert "/Users" not in projected
     assert "C:\\private" not in projected
+
+
+class _RouteArtifacts:
+    def list_artifacts(self, identity, session_id, *, cursor, limit):
+        return {"artifacts": [], "next_cursor": None, "complete": True}
+
+    def read_artifact(self, identity, session_id, artifact_id, *, cursor, limit_bytes):
+        return {
+            "schema_version": 1,
+            "artifact_id": artifact_id,
+            "session_id": session_id,
+            "content_kind": "text",
+            "text": "safe",
+            "complete": True,
+            "next_cursor": None,
+        }
+
+    def decide(self, identity, session_id, artifact_id, *, detached, request_id):
+        return {
+            "artifact_id": artifact_id,
+            "session_id": session_id,
+            "state": "detached" if detached else "active",
+            "outcome": "applied",
+        }
+
+
+def _route_context() -> APIRouteContext:
+    return APIRouteContext(
+        config_path=None,
+        runtime=None,
+        runtime_bootstrap_error=None,
+        request_headers=None,
+        request_id="request-1",
+        client_identity=ClientIdentity("client-1", "config-1", 1, ()),
+        client_artifacts=_RouteArtifacts(),
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["unknown=1", "limit=1&limit=2", "limit=", "cursor=   "],
+)
+def test_artifact_routes_reject_unknown_duplicate_or_blank_queries(query) -> None:
+    result = handle_request(
+        _route_context(),
+        method_name="GET",
+        path="/v1/client/sessions/session-1/artifacts",
+        body=None,
+        query=query,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.BAD_REQUEST
+    assert result.payload["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    ("body", "query"),
+    [({"schema_version": 1, "extra": True}, None), ({"schema_version": 1}, "x=1")],
+)
+def test_artifact_decision_route_requires_exact_body_and_no_query(body, query) -> None:
+    result = handle_request(
+        _route_context(),
+        method_name="POST",
+        path="/v1/client/sessions/session-1/artifacts/artifact-1/detach",
+        body=body,
+        query=query,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.BAD_REQUEST
+    assert result.payload["error"]["code"] == "invalid_request"
+
+
+def _http_json_request(
+    connection: HTTPConnection,
+    method: str,
+    path: str,
+    headers: dict[str, str],
+    payload: dict | None,
+) -> tuple[int, dict]:
+    body = json.dumps(payload).encode() if payload is not None else None
+    request_headers = dict(headers)
+    if body is not None:
+        request_headers.setdefault("Content-Length", str(len(body)))
+    connection.request(method, path, body=body, headers=request_headers)
+    response = connection.getresponse()
+    return response.status, json.loads(response.read())
+
+
+@pytest.fixture
+def loopback_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[SimpleNamespace]:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / "config.json"
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, provider="openai")  # type: ignore[attr-defined]
+    config.runtime.ipc_token = "master-token"
+    config.storage.path = str(data_root / "state" / "api.db")
+    config.providers.openai.api_key = "synthetic-test-key"
+    config.providers.openai.base_url = "https://fixture.invalid/v1"
+    home_root.mkdir(parents=True)
+    monkeypatch.setenv("OPENMINION_HOME", str(home_root))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("OPENMINION_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(data_root / "runtime"))
+    save_config(config, str(config_path))
+    server = build_api_server(
+        str(config_path),
+        "127.0.0.1",
+        0,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+    try:
+        status, minted = _http_json_request(
+            connection,
+            "POST",
+            "/v1/client/leases",
+            {"X-IPC-Token": "master-token", "Content-Type": "application/json"},
+            {
+                "schema_version": 1,
+                "client": {
+                    "kind": "desktop",
+                    "version": "test",
+                    "protocol_min": 1,
+                    "protocol_max": 1,
+                },
+                "requested_ttl_seconds": 300,
+            },
+        )
+        assert status == 200
+        token = str(minted["lease"]["client_token"])
+        status, created = _http_json_request(
+            connection,
+            "POST",
+            "/v1/client/sessions",
+            {
+                "X-OpenMinion-Client-Token": token,
+                "Content-Type": "application/json",
+            },
+            {"title": "Artifact test", "agent_id": "openminion"},
+        )
+        assert status == 200
+        session_id = str(created["session"]["session_id"])
+        artifact = server._client_state[2]._artifactctl.ingest_bytes(
+            b"open /Users/person/private",
+            mime="text/plain",
+            original_name="private.txt",
+            session_id=session_id,
+        )
+        session_api = server._runtime.gateway._agent._get_runner().session_api
+        session_api.append_turn(
+            session_id,
+            "user",
+            "attached",
+            attachments=[artifact.ref],
+        )
+        yield SimpleNamespace(
+            connection=connection,
+            port=server.server_address[1],
+            server=server,
+            session_id=session_id,
+            token=token,
+            artifact_ref=artifact.ref,
+            home_root=home_root,
+            data_root=data_root,
+        )
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_loopback_artifact_routes_authenticate_and_keep_ids_opaque(
+    loopback_artifacts: SimpleNamespace,
+) -> None:
+    fixture = loopback_artifacts
+    headers = {"X-OpenMinion-Client-Token": fixture.token}
+    status, catalog = _http_json_request(
+        fixture.connection,
+        "GET",
+        f"/v1/client/sessions/{fixture.session_id}/artifacts?limit=25",
+        headers,
+        None,
+    )
+    assert status == 200
+    assert len(catalog["artifacts"]) == 1
+    artifact_id = catalog["artifacts"][0]["artifact_id"]
+    assert len(artifact_id) == 48
+
+    status, content = _http_json_request(
+        fixture.connection,
+        "GET",
+        f"/v1/client/sessions/{fixture.session_id}/artifacts/{artifact_id}",
+        headers,
+        None,
+    )
+    assert status == 200
+    assert content["content"]["text"] == "[PATH REDACTED]"
+
+    status, invalid = _http_json_request(
+        fixture.connection,
+        "GET",
+        f"/v1/client/sessions/{fixture.session_id}/artifacts?unexpected=1",
+        headers,
+        None,
+    )
+    assert (status, invalid["error"]["code"]) == (400, "invalid_request")
+
+    status, missing_session = _http_json_request(
+        fixture.connection,
+        "GET",
+        "/v1/client/sessions/missing/artifacts",
+        headers,
+        None,
+    )
+    assert (status, missing_session["error"]["code"]) == (
+        404,
+        "session_not_found",
+    )
+
+    status, second_mint = _http_json_request(
+        fixture.connection,
+        "POST",
+        "/v1/client/leases",
+        {"X-IPC-Token": "master-token", "Content-Type": "application/json"},
+        {
+            "schema_version": 1,
+            "client": {
+                "kind": "desktop",
+                "version": "test",
+                "protocol_min": 1,
+                "protocol_max": 1,
+            },
+            "requested_ttl_seconds": 300,
+        },
+    )
+    assert status == 200
+    second_headers = {
+        "X-OpenMinion-Client-Token": str(second_mint["lease"]["client_token"])
+    }
+    status, isolated = _http_json_request(
+        fixture.connection,
+        "GET",
+        f"/v1/client/sessions/{fixture.session_id}/artifacts/{artifact_id}",
+        second_headers,
+        None,
+    )
+    assert (status, isolated["error"]["code"]) == (404, "artifact_not_found")
+
+    status, revoked = _http_json_request(
+        fixture.connection,
+        "DELETE",
+        "/v1/client/leases/current",
+        headers,
+        None,
+    )
+    assert (status, revoked["revoked"]) == (200, True)
+    status, forbidden = _http_json_request(
+        fixture.connection,
+        "GET",
+        f"/v1/client/sessions/{fixture.session_id}/artifacts",
+        headers,
+        None,
+    )
+    assert (status, forbidden["error"]["code"]) == (403, "forbidden")
+
+    visible = json.dumps(
+        (catalog, content, invalid, missing_session, isolated, revoked, forbidden)
+    )
+    assert fixture.artifact_ref not in visible
+    assert str(fixture.home_root) not in visible
+    assert str(fixture.data_root) not in visible

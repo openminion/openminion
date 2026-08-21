@@ -17,7 +17,7 @@ class _SessionArtifacts:
             "high_water": high_water,
             "events": [],
             "next_after_seq": after_seq,
-            "complete": True,
+            "complete": after_seq >= high_water,
         }
 
     def get_detached_artifact_refs(self, session_id, *, limit=256):
@@ -46,7 +46,7 @@ def test_session_artifact_facade_uses_narrow_runtime_protocol() -> None:
         "high_water": 7,
         "events": [],
         "next_after_seq": 2,
-        "complete": True,
+        "complete": False,
     }
     assert len(facade.get_detached_artifact_refs("session-1")) == 1
     assert (
@@ -76,6 +76,29 @@ def test_session_artifact_facade_rejects_invalid_owner_results() -> None:
         raise AssertionError("invalid owner page crossed the service boundary")
 
 
+def test_session_artifact_facade_rejects_invalid_event_order() -> None:
+    api = _SessionArtifacts()
+    api.get_artifact_catalog_event_page = lambda *args, **kwargs: {
+        "high_water": 2,
+        "events": [
+            {"seq": 2, "event_type": "turn.user"},
+            {"seq": 1, "event_type": "turn.user"},
+        ],
+        "next_after_seq": 1,
+        "complete": False,
+    }
+    facade = SessionArtifactFacade(api)
+
+    try:
+        facade.get_artifact_catalog_event_page(
+            "session-1", after_seq=0, high_water=0, limit=500
+        )
+    except SessionArtifactOperationError as exc:
+        assert exc.code == "event_invalid"
+    else:
+        raise AssertionError("invalid event order crossed the service boundary")
+
+
 def test_session_artifact_facade_normalizes_projection_errors() -> None:
     api = _SessionArtifacts()
 
@@ -100,3 +123,23 @@ def test_session_artifact_facade_normalizes_projection_errors() -> None:
         assert "internal projection detail" not in str(exc)
     else:
         raise AssertionError("projection error was not normalized")
+
+
+def test_session_artifact_facade_normalizes_detached_projection_errors() -> None:
+    api = _SessionArtifacts()
+
+    def fail(*args, **kwargs):
+        raise ArtifactLifecycleError(
+            "artifact_state_too_large", "internal projection detail"
+        )
+
+    api.get_detached_artifact_refs = fail
+    facade = SessionArtifactFacade(api)
+
+    try:
+        facade.get_detached_artifact_refs("session-1")
+    except SessionArtifactOperationError as exc:
+        assert exc.code == "artifact_state_too_large"
+        assert "internal projection detail" not in str(exc)
+    else:
+        raise AssertionError("detached projection error was not normalized")

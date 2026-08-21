@@ -1471,6 +1471,94 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         session_store.get_detached_artifact_refs.assert_called_once_with("s1")
         session_store.acquire_session_turn_lease.assert_not_called()
 
+    def test_context_adapter_uses_canonical_projection_under_real_gateway_lease(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+        from openminion.modules.brain.adapters.session.runtime import SessctlAdapter
+        from openminion.modules.session.artifact_lifecycle import (
+            ArtifactLifecycleError,
+        )
+        from openminion.modules.session.storage.sqlite_store import (
+            SQLiteSessionStore,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteSessionStore(Path(tmp) / "sessions.db")
+            session_id = store.create_session(initial_agent_id="agent-1")
+            detached = f"artifact://sha256/{'a' * 64}"
+            retained = f"artifact://sha256/{'b' * 64}"
+            turn_id = store.append_turn(
+                session_id,
+                "user",
+                "current",
+                attachments=[detached, retained],
+            )
+            store.apply_artifact_decision(
+                session_id,
+                artifact_ref=detached,
+                detached=True,
+                reason_code="desktop_user_action",
+                request_id="decision-before-turn",
+            )
+            lease = store.acquire_session_turn_lease(
+                session_id,
+                owner="gateway",
+                request_id="gateway-turn",
+            )
+            adapter = SessctlAdapter(store)
+            mock_svc = fake_context_service(
+                pack=fake_context_pack(
+                    {
+                        "pack_version": "123",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "current",
+                                "meta": {"segment_ids": [f"turn:{turn_id}"]},
+                            }
+                        ],
+                    }
+                )
+            )
+            try:
+                result = ContextCtlAdapter(
+                    mock_svc,
+                    session_store=adapter,
+                ).build(
+                    session_id=session_id,
+                    agent_id="agent-1",
+                    purpose="decide",
+                    budget={},
+                )
+                self.assertEqual(result["turns"][0]["attachments"], [retained])
+                with self.assertRaises(ArtifactLifecycleError) as raised:
+                    adapter.apply_artifact_decision(
+                        session_id,
+                        artifact_ref=retained,
+                        detached=True,
+                        reason_code="desktop_user_action",
+                        request_id="decision-during-turn",
+                    )
+                self.assertEqual(raised.exception.code, "session_turn_active")
+            finally:
+                store.release_session_turn_lease(
+                    session_id,
+                    owner="gateway",
+                    fence_token=int(lease.fence_token),
+                )
+
+            self.assertEqual(
+                adapter.apply_artifact_decision(
+                    session_id,
+                    artifact_ref=retained,
+                    detached=True,
+                    reason_code="desktop_user_action",
+                    request_id="decision-after-turn",
+                ),
+                "applied",
+            )
+
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,
     ) -> None:

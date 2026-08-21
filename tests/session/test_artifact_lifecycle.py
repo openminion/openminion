@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from openminion.modules.session.artifact_lifecycle import ArtifactLifecycleError
 from openminion.modules.session.storage.store import SQLiteSessionStore
 from openminion.modules.telemetry.events.catalog import (
     DESKTOP_ARTIFACT_DETACHED,
@@ -86,3 +89,50 @@ def test_artifact_catalog_page_freezes_high_water_and_is_bounded(tmp_path) -> No
     )
     assert second["complete"] is True
     assert all(event["seq"] <= frozen_high_water for event in second["events"])
+
+
+def test_artifact_projection_rejects_identity_257_and_corrupt_overflow(
+    tmp_path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "sessions.db")
+    session_id = store.create_session(initial_agent_id="agent.main")
+    for index in range(256):
+        assert (
+            store.apply_artifact_decision(
+                session_id,
+                artifact_ref=f"artifact://sha256/{index:064x}",
+                detached=True,
+                reason_code="desktop_user_action",
+                request_id=f"detach-{index}",
+            )
+            == "applied"
+        )
+
+    with pytest.raises(ArtifactLifecycleError) as full:
+        store.apply_artifact_decision(
+            session_id,
+            artifact_ref=f"artifact://sha256/{256:064x}",
+            detached=True,
+            reason_code="desktop_user_action",
+            request_id="detach-256",
+        )
+    assert full.value.code == "artifact_state_backpressure"
+    assert len(store.get_detached_artifact_refs(session_id)) == 256
+
+    store._record_store.execute_count(
+        """
+        INSERT INTO session_detached_artifacts(
+          session_id, artifact_ref, event_id, event_seq, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            session_id,
+            f"artifact://sha256/{256:064x}",
+            "corrupt-overflow",
+            1000,
+            "2026-08-20T00:00:00+00:00",
+        ),
+    )
+    with pytest.raises(ArtifactLifecycleError) as corrupt:
+        store.get_detached_artifact_refs(session_id)
+    assert corrupt.value.code == "artifact_state_too_large"

@@ -25,7 +25,7 @@ def resolve_session_artifact_facade(
 ) -> SessionArtifactFacade:
     record = runtime.sessions.get_session(session_id)
     if record is None:
-        raise ArtifactQueryError("artifact_not_found", "Artifact is unavailable.")
+        raise ArtifactQueryError("session_not_found", "Session is unavailable.")
     if getattr(record, "status", None) != "active":
         raise ArtifactQueryError("session_closed", "Session is not active.")
     try:

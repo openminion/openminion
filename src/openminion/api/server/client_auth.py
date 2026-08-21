@@ -270,6 +270,10 @@ class ClientAuthService:
                 for lease in self._leases.values()
             )
 
+    def lease_expires_at(self, identity: ClientIdentity) -> datetime:
+        with self._lock:
+            return self._lease_for_identity(identity).expires_at
+
     def capabilities(self, identity: ClientIdentity) -> dict[str, object]:
         return {
             "protocol_min": PROTOCOL_VERSION,

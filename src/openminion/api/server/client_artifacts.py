@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+import json
 import re
 import secrets
 from threading import RLock
@@ -57,6 +58,7 @@ class _Cursor:
     session_id: str
     created_at: datetime
     last_access: datetime
+    lease_expires_at: datetime
     phase: str = "scan"
     high_water: int = 0
     after_seq: int = 0
@@ -75,6 +77,15 @@ class _OpaqueRecord:
     artifact_ref: str
     created_at: datetime
     last_access: datetime
+    lease_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class _Tombstone:
+    client_id: str
+    session_id: str
+    route: str
+    created_at: datetime
 
 
 class ClientArtifactCoordinator:
@@ -90,10 +101,10 @@ class ClientArtifactCoordinator:
         self._artifactctl = artifactctl
         self._lock = RLock()
         self._cursors: dict[str, _Cursor] = {}
-        self._cursor_tombstones: dict[str, tuple[str, datetime]] = {}
+        self._cursor_tombstones: dict[str, _Tombstone] = {}
         self._records: dict[str, _OpaqueRecord] = {}
         self._record_by_source: dict[tuple[str, str, str], str] = {}
-        self._record_tombstones: dict[str, tuple[str, datetime]] = {}
+        self._record_tombstones: dict[str, _Tombstone] = {}
         self._session_generations: dict[str, int] = {}
         self._closing_sessions: dict[str, int] = {}
         self._closed = False
@@ -110,59 +121,37 @@ class ClientArtifactCoordinator:
         facade = self._facade(identity, session_id)
         now = datetime.now(UTC)
         with self._lock:
+            self._recheck_session_locked(identity, session_id, generation)
             self._purge_locked(now)
             state = (
-                self._cursor_locked(identity, session_id, cursor, now)
+                self._cursor_locked(identity, session_id, cursor, now, route="catalog")
                 if cursor
                 else self._new_cursor_locked(identity, session_id, now)
             )
         if state.phase == "scan":
-            try:
-                page = facade.get_artifact_catalog_event_page(
-                    session_id,
-                    after_seq=state.after_seq,
-                    high_water=state.high_water,
-                    limit=500,
-                )
-            except SessionArtifactUnavailable as exc:
-                raise _error("artifact_unavailable") from exc
-            with self._lock:
-                self._recheck_session_locked(session_id, generation)
-                current = self._cursor_locked(
-                    identity, session_id, state.cursor_id, datetime.now(UTC)
-                )
-                current.high_water = int(page["high_water"])
-                for event in page["events"]:
-                    seq = int(event["seq"])
-                    for artifact_ref in artifact_event_refs(event):
-                        if not is_canonical_artifact_ref(artifact_ref):
-                            continue
-                        entry = current.entries.get(artifact_ref)
-                        if entry is None:
-                            if len(current.entries) >= 256:
-                                self._expire_cursor_locked(current, datetime.now(UTC))
-                                raise _error("catalog_too_large")
-                            current.entries[artifact_ref] = _ScanEntry(
-                                artifact_ref=artifact_ref,
-                                first_seq=seq,
-                            )
-                        else:
-                            entry.occurrence_count += 1
-                current.after_seq = int(page["next_after_seq"])
-                if not bool(page["complete"]):
-                    return {
-                        "artifacts": [],
-                        "next_cursor": current.cursor_id,
-                        "complete": False,
-                    }
-                current.phase = "emit"
-                state = current
+            state = self._advance_catalog_scan(
+                identity,
+                session_id,
+                generation=generation,
+                facade=facade,
+                state=state,
+            )
+            if state.phase == "scan":
+                return {
+                    "artifacts": [],
+                    "next_cursor": state.cursor_id,
+                    "complete": False,
+                }
         try:
             detached_refs = set(facade.get_detached_artifact_refs(session_id))
+        except SessionArtifactOperationError as exc:
+            if exc.code == "artifact_state_too_large":
+                raise _error(exc.code) from exc
+            raise _error("runtime_unavailable") from exc
         except SessionArtifactUnavailable as exc:
-            raise _error("artifact_unavailable") from exc
+            raise _error("runtime_unavailable") from exc
         with self._lock:
-            self._recheck_session_locked(session_id, generation)
+            self._recheck_session_locked(identity, session_id, generation)
             ordered = sorted(
                 state.entries.values(),
                 key=lambda entry: (entry.first_seq, entry.artifact_ref),
@@ -189,6 +178,59 @@ class ClientArtifactCoordinator:
                 "complete": complete,
             }
 
+    def _advance_catalog_scan(
+        self,
+        identity: ClientIdentity,
+        session_id: str,
+        *,
+        generation: int,
+        facade: Any,
+        state: _Cursor,
+    ) -> _Cursor:
+        try:
+            page = facade.get_artifact_catalog_event_page(
+                session_id,
+                after_seq=state.after_seq,
+                high_water=state.high_water,
+                limit=500,
+            )
+        except SessionArtifactOperationError as exc:
+            if exc.code == "event_invalid":
+                raise _error(exc.code) from exc
+            raise _error("runtime_unavailable") from exc
+        except SessionArtifactUnavailable as exc:
+            raise _error("runtime_unavailable") from exc
+        with self._lock:
+            self._recheck_session_locked(identity, session_id, generation)
+            current = self._cursor_locked(
+                identity,
+                session_id,
+                state.cursor_id,
+                datetime.now(UTC),
+                route="catalog",
+            )
+            current.high_water = int(page["high_water"])
+            for event in page["events"]:
+                seq = int(event["seq"])
+                for artifact_ref in artifact_event_refs(event):
+                    if not is_canonical_artifact_ref(artifact_ref):
+                        continue
+                    entry = current.entries.get(artifact_ref)
+                    if entry is None:
+                        if len(current.entries) >= 256:
+                            self._expire_cursor_locked(current, datetime.now(UTC))
+                            raise _error("catalog_too_large")
+                        current.entries[artifact_ref] = _ScanEntry(
+                            artifact_ref=artifact_ref,
+                            first_seq=seq,
+                        )
+                    else:
+                        entry.occurrence_count += 1
+            current.after_seq = int(page["next_after_seq"])
+            if bool(page["complete"]):
+                current.phase = "emit"
+            return current
+
     def read_artifact(
         self,
         identity: ClientIdentity,
@@ -201,10 +243,15 @@ class ClientArtifactCoordinator:
         generation = self._admit(identity, session_id)
         self._facade(identity, session_id)
         with self._lock:
+            self._recheck_session_locked(identity, session_id, generation)
             record = self._record_locked(identity, session_id, artifact_id)
             if cursor:
                 state = self._cursor_locked(
-                    identity, session_id, cursor, datetime.now(UTC)
+                    identity,
+                    session_id,
+                    cursor,
+                    datetime.now(UTC),
+                    route="content",
                 )
                 if state.phase != "content" or state.artifact_id != artifact_id:
                     raise _error("invalid_request")
@@ -229,16 +276,18 @@ class ClientArtifactCoordinator:
             raise _error("artifact_missing") from exc
         if len(data) > 256 * 1024:
             raise _error("content_too_large")
+        if len(data) != int(meta.size_bytes):
+            raise _error("artifact_unsupported")
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise _error("artifact_unsupported") from exc
-        projected = _redact_paths(redact_sensitive_text(text)[0])
+        projected = _project_content(text, mime=mime)
         if len(projected.encode("utf-8")) > 256 * 1024:
             raise _error("content_too_large")
         content_kind = "json" if mime == "application/json" else "text"
         with self._lock:
-            self._recheck_session_locked(session_id, generation)
+            self._recheck_session_locked(identity, session_id, generation)
             now = datetime.now(UTC)
             state = _Cursor(
                 cursor_id=secrets.token_urlsafe(36),
@@ -246,6 +295,7 @@ class ClientArtifactCoordinator:
                 session_id=session_id,
                 created_at=now,
                 last_access=now,
+                lease_expires_at=record.lease_expires_at,
                 phase="content",
                 artifact_id=artifact_id,
                 content_kind=content_kind,
@@ -272,7 +322,7 @@ class ClientArtifactCoordinator:
         generation = self._admit(identity, session_id)
         facade = self._facade(identity, session_id)
         with self._lock:
-            self._recheck_session_locked(session_id, generation)
+            self._recheck_session_locked(identity, session_id, generation)
             record = self._record_locked(identity, session_id, artifact_id)
             try:
                 outcome = facade.apply_artifact_decision(
@@ -291,9 +341,9 @@ class ClientArtifactCoordinator:
                     raise _error(code) from exc
                 if code == "session_turn_active":
                     raise _error("session_turn_active") from exc
-                raise
+                raise _error("runtime_unavailable") from exc
             except SessionArtifactUnavailable as exc:
-                raise _error("artifact_unavailable") from exc
+                raise _error("runtime_unavailable") from exc
         return {
             "artifact_id": artifact_id,
             "session_id": session_id,
@@ -303,6 +353,15 @@ class ClientArtifactCoordinator:
 
     def revoke_client(self, identity: ClientIdentity) -> None:
         with self._lock:
+            sessions = {
+                item.session_id
+                for item in (*self._cursors.values(), *self._records.values())
+                if item.client_id == identity.client_id
+            }
+            for session_id in sessions:
+                self._session_generations[session_id] = (
+                    self._session_generations.get(session_id, 0) + 1
+                )
             self._clear_client_locked(identity.client_id)
 
     def cancel_session(self, session_id: str, reason: str) -> Any:
@@ -328,6 +387,13 @@ class ClientArtifactCoordinator:
 
     def close(self) -> None:
         with self._lock:
+            for session_id in {
+                item.session_id
+                for item in (*self._cursors.values(), *self._records.values())
+            }:
+                self._session_generations[session_id] = (
+                    self._session_generations.get(session_id, 0) + 1
+                )
             self._closed = True
             self._cursors.clear()
             self._cursor_tombstones.clear()
@@ -352,7 +418,14 @@ class ClientArtifactCoordinator:
                 raise _error("session_closed")
             return self._session_generations.get(session_id, 0)
 
-    def _recheck_session_locked(self, session_id: str, generation: int) -> None:
+    def _recheck_session_locked(
+        self,
+        identity: ClientIdentity,
+        session_id: str,
+        generation: int,
+    ) -> None:
+        if self._closed or not self._client_auth.is_active(identity):
+            raise _error("forbidden")
         if (
             self._closing_sessions.get(session_id, 0)
             or self._session_generations.get(session_id, 0) != generation
@@ -366,13 +439,21 @@ class ClientArtifactCoordinator:
             if (
                 state.client_id == identity.client_id
                 and state.session_id == session_id
+                and state.phase in {"scan", "emit"}
                 and (state.phase == "scan" or state.emit_position == 0)
             ):
                 state.last_access = now
                 return state
         self._admit_cursor_locked(identity.client_id)
         cursor_id = secrets.token_urlsafe(36)
-        state = _Cursor(cursor_id, identity.client_id, session_id, now, now)
+        state = _Cursor(
+            cursor_id,
+            identity.client_id,
+            session_id,
+            now,
+            now,
+            self._client_auth.lease_expires_at(identity),
+        )
         self._cursors[cursor_id] = state
         return state
 
@@ -416,14 +497,24 @@ class ClientArtifactCoordinator:
         session_id: str,
         cursor_id: str,
         now: datetime,
+        *,
+        route: str,
     ) -> _Cursor:
         state = self._cursors.get(cursor_id)
         if state is None:
             tombstone = self._cursor_tombstones.get(cursor_id)
-            if tombstone and tombstone[0] == identity.client_id:
+            if (
+                tombstone
+                and tombstone.client_id == identity.client_id
+                and tombstone.session_id == session_id
+                and tombstone.route == route
+            ):
                 raise _error("cursor_expired")
             raise _error("invalid_request")
         if state.client_id != identity.client_id or state.session_id != session_id:
+            raise _error("invalid_request")
+        state_route = "content" if state.phase == "content" else "catalog"
+        if state_route != route:
             raise _error("invalid_request")
         state.last_access = now
         return state
@@ -511,6 +602,7 @@ class ClientArtifactCoordinator:
             artifact_ref,
             now,
             now,
+            self._client_auth.lease_expires_at(identity),
         )
         self._records[record.artifact_id] = record
         self._record_by_source[key] = record.artifact_id
@@ -524,7 +616,12 @@ class ClientArtifactCoordinator:
         record = self._records.get(artifact_id)
         if record is None:
             tombstone = self._record_tombstones.get(artifact_id)
-            if tombstone and tombstone[0] == identity.client_id:
+            if (
+                tombstone
+                and tombstone.client_id == identity.client_id
+                and tombstone.session_id == session_id
+                and tombstone.route == "artifact"
+            ):
                 raise _error("artifact_expired")
             raise _error("artifact_not_found")
         if record.client_id != identity.client_id or record.session_id != session_id:
@@ -537,25 +634,32 @@ class ClientArtifactCoordinator:
             if (
                 state.last_access + _CURSOR_IDLE_TTL <= now
                 or state.created_at + _CURSOR_ABSOLUTE_TTL <= now
+                or state.lease_expires_at <= now
             ):
                 self._expire_cursor_locked(state, now)
         for record in tuple(self._records.values()):
-            if record.last_access + _RECORD_IDLE_TTL <= now:
+            if (
+                record.last_access + _RECORD_IDLE_TTL <= now
+                or record.lease_expires_at <= now
+            ):
                 self._expire_record_locked(record, now)
         self._cursor_tombstones = {
             key: value
             for key, value in self._cursor_tombstones.items()
-            if value[1] + _TOMBSTONE_TTL > now
+            if value.created_at + _TOMBSTONE_TTL > now
         }
         self._record_tombstones = {
             key: value
             for key, value in self._record_tombstones.items()
-            if value[1] + _TOMBSTONE_TTL > now
+            if value.created_at + _TOMBSTONE_TTL > now
         }
 
     def _expire_cursor_locked(self, state: _Cursor, now: datetime) -> None:
         self._cursors.pop(state.cursor_id, None)
-        self._cursor_tombstones[state.cursor_id] = (state.client_id, now)
+        route = "content" if state.phase == "content" else "catalog"
+        self._cursor_tombstones[state.cursor_id] = _Tombstone(
+            state.client_id, state.session_id, route, now
+        )
         _trim_tombstones(self._cursor_tombstones, client_cap=64, global_cap=256)
 
     def _expire_record_locked(self, record: _OpaqueRecord, now: datetime) -> None:
@@ -563,7 +667,9 @@ class ClientArtifactCoordinator:
         self._record_by_source.pop(
             (record.client_id, record.session_id, record.artifact_ref), None
         )
-        self._record_tombstones[record.artifact_id] = (record.client_id, now)
+        self._record_tombstones[record.artifact_id] = _Tombstone(
+            record.client_id, record.session_id, "artifact", now
+        )
         _trim_tombstones(self._record_tombstones, client_cap=256, global_cap=1024)
 
     def _clear_client_locked(self, client_id: str) -> None:
@@ -590,20 +696,20 @@ class ClientArtifactCoordinator:
 
 
 def _trim_tombstones(
-    tombstones: dict[str, tuple[str, datetime]], *, client_cap: int, global_cap: int
+    tombstones: dict[str, _Tombstone], *, client_cap: int, global_cap: int
 ) -> None:
-    for client_id in {value[0] for value in tombstones.values()}:
+    for client_id in {value.client_id for value in tombstones.values()}:
         owned = sorted(
             (
-                (key, value[1])
+                (key, value.created_at)
                 for key, value in tombstones.items()
-                if value[0] == client_id
+                if value.client_id == client_id
             ),
             key=lambda item: item[1],
         )
         for key, _ in owned[:-client_cap]:
             tombstones.pop(key, None)
-    ordered = sorted(tombstones.items(), key=lambda item: item[1][1])
+    ordered = sorted(tombstones.items(), key=lambda item: item[1].created_at)
     for key, _ in ordered[:-global_cap]:
         tombstones.pop(key, None)
 
@@ -636,6 +742,42 @@ def _redact_paths(value: str) -> str:
     return "".join(projected)
 
 
+def _project_content(value: str, *, mime: str) -> str:
+    if mime == "application/json":
+        try:
+            parsed = json.loads(value)
+            projected = _project_json_value(parsed)
+            return json.dumps(
+                projected,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        except (json.JSONDecodeError, RecursionError) as exc:
+            raise _error("artifact_unsupported") from exc
+    if any(
+        ord(character) < 32
+        and character not in {"\t", "\n", "\r"}
+        or ord(character) == 127
+        for character in value
+    ):
+        raise _error("artifact_unsupported")
+    return _project_text(value)
+
+
+def _project_json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _project_text(value)
+    if isinstance(value, list):
+        return [_project_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _project_json_value(item) for key, item in value.items()}
+    return value
+
+
+def _project_text(value: str) -> str:
+    return _redact_paths(redact_sensitive_text(value)[0])
+
+
 def _utf8_page_end(text: str, start: int, limit_bytes: int) -> int:
     used = 0
     end = start
@@ -653,8 +795,10 @@ def _utf8_page_end(text: str, start: int, limit_bytes: int) -> int:
 def _error(code: str) -> ClientArtifactError:
     facts = {
         "invalid_request": (HTTPStatus.BAD_REQUEST, "Request is invalid."),
+        "event_invalid": (HTTPStatus.BAD_REQUEST, "Artifact event is invalid."),
         "cursor_expired": (HTTPStatus.GONE, "Artifact cursor expired."),
         "forbidden": (HTTPStatus.FORBIDDEN, "Request is not authorized."),
+        "session_not_found": (HTTPStatus.NOT_FOUND, "Session is unavailable."),
         "artifact_not_found": (HTTPStatus.NOT_FOUND, "Artifact is unavailable."),
         "artifact_missing": (HTTPStatus.NOT_FOUND, "Artifact is unavailable."),
         "session_closed": (HTTPStatus.CONFLICT, "Session is not active."),
@@ -684,7 +828,7 @@ def _error(code: str) -> ClientArtifactError:
             HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
             "Artifact state is too large.",
         ),
-        "artifact_unavailable": (
+        "runtime_unavailable": (
             HTTPStatus.SERVICE_UNAVAILABLE,
             "Artifact service is unavailable.",
         ),
