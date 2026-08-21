@@ -1302,7 +1302,12 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                         "role": "user",
                         "content": "hello",
                         "meta": {"segment_ids": ["turn:t-user"]},
-                    }
+                    },
+                    {
+                        "role": "user",
+                        "content": "current text only",
+                        "meta": {"segment_ids": ["turn:t-current"]},
+                    },
                 ],
             }
         )
@@ -1315,6 +1320,12 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                     "role": "user",
                     "content": "hello",
                     "attachments": ["artifact-ref"],
+                },
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current text only",
+                    "attachments": [],
                 },
                 {
                     "turn_id": "t-trimmed",
@@ -1335,7 +1346,12 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                         "role": "user",
                         "content": "hello",
                         "meta": {"segment_ids": ["turn:t-user"]},
-                    }
+                    },
+                    {
+                        "role": "user",
+                        "content": "current text only",
+                        "meta": {"segment_ids": ["turn:t-current"]},
+                    },
                 ],
                 "turns": [
                     {
@@ -1343,7 +1359,13 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                         "role": "user",
                         "content": "hello",
                         "attachments": ["artifact-ref"],
-                    }
+                    },
+                    {
+                        "turn_id": "t-current",
+                        "role": "user",
+                        "content": "current text only",
+                        "attachments": [],
+                    },
                 ],
             },
         )
