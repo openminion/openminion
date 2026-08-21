@@ -68,6 +68,7 @@ def runtime_turn_request_from_payload(
         ),
         deliver=resolve_deliver(payload.get("deliver")),
         forced_tools=tuple(parse_forced_tools(payload.get("forced_tools")) or ()),
+        attachments=(),
         capability_category=resolve_capability_category(
             explicit_category=payload.get("capability_category"),
         ),
@@ -147,6 +148,7 @@ def runtime_turn_request_from_manager_request(
         ),
         deliver=resolve_deliver(meta.get("deliver")),
         forced_tools=tuple(parse_forced_tools(meta.get("forced_tools")) or ()),
+        attachments=tuple(str(item) for item in request.attachments),
         capability_category=resolve_capability_category(
             explicit_category=meta.get("capability_category"),
         ),

@@ -25,6 +25,7 @@ def _append_original_turn(*, runner, tick_ctx: TickRunContext) -> None:
         tick_ctx.session_id,
         "user",
         str(tick_ctx.original_user_input or ""),
+        attachments=tick_ctx.attachments,
         meta={"ts": iso_now()},
     )
 
@@ -174,7 +175,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             },
             trace_id=state.trace_id,
         )
-        _runner_delegate(
+        return _runner_delegate(
             "_respond_with_meta",
             runner,
             state=state,

@@ -47,7 +47,11 @@ def handle_pending_replay(
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
         runner.session_api.append_turn(
-            tick_ctx.session_id, "user", tick_ctx.user_input, meta={"ts": iso_now()}
+            tick_ctx.session_id,
+            "user",
+            tick_ctx.user_input,
+            attachments=tick_ctx.attachments,
+            meta={"ts": iso_now()},
         )
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
@@ -122,7 +126,11 @@ def handle_pending_replay(
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
         runner.session_api.append_turn(
-            tick_ctx.session_id, "user", tick_ctx.user_input, meta={"ts": iso_now()}
+            tick_ctx.session_id,
+            "user",
+            tick_ctx.user_input,
+            attachments=tick_ctx.attachments,
+            meta={"ts": iso_now()},
         )
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
@@ -190,7 +198,11 @@ def handle_pending_replay(
         if state.trace_id is None:
             state.trace_id = tick_ctx.trace_id or new_uuid()
         runner.session_api.append_turn(
-            tick_ctx.session_id, "user", tick_ctx.user_input, meta={"ts": iso_now()}
+            tick_ctx.session_id,
+            "user",
+            tick_ctx.user_input,
+            attachments=tick_ctx.attachments,
+            meta={"ts": iso_now()},
         )
         tick_ctx.skip_initial_append = True
         tick_ctx.skip_initial_interpret = True
@@ -258,6 +270,7 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 tick_ctx.session_id,
                 "user",
                 str(tick_ctx.original_user_input or user_input),
+                attachments=tick_ctx.attachments,
                 meta={"ts": iso_now()},
             )
             raw_user_message = str(tick_ctx.original_user_input or user_input)

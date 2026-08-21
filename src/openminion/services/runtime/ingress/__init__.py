@@ -180,34 +180,4 @@ def _execute_gateway_turn(
     )
 
 
-async def _run_gateway_once(
-    *,
-    gateway: Any,
-    channel: str,
-    target: str,
-    message: str,
-    session_id: str | None,
-    idempotency_key: str | None,
-    request_id: str | None,
-    inbound_metadata: dict[str, str] | None,
-    deliver: bool,
-    forced_tools: list[str] | None = None,
-    capability_category: str | None = None,
-    progress_callback: Callable[[object], None] | None = None,
-    approval_callback: Any | None = None,
-) -> Any:
-    return await run_gateway_once_impl(
-        gateway=gateway,
-        channel=channel,
-        target=target,
-        message=message,
-        session_id=session_id,
-        idempotency_key=idempotency_key,
-        request_id=request_id,
-        inbound_metadata=inbound_metadata,
-        deliver=deliver,
-        forced_tools=forced_tools,
-        capability_category=capability_category,
-        progress_callback=progress_callback,
-        approval_callback=approval_callback,
-    )
+_run_gateway_once = run_gateway_once_impl

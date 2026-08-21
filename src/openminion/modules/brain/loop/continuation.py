@@ -320,6 +320,7 @@ def run_with_autonomous_continuation(
     *,
     session_id: str,
     user_input: str | None = None,
+    attachments: list[str] | None = None,
     trace_id: str | None = None,
     forced_tools: list[str] | None = None,
     capability_category: str | None = None,
@@ -332,6 +333,7 @@ def run_with_autonomous_continuation(
     result = runner.run(
         session_id=session_id,
         user_input=user_input,
+        attachments=attachments,
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
@@ -396,6 +398,7 @@ def run_with_autonomous_continuation(
         result = runner.run(
             session_id=session_id,
             user_input=None,
+            attachments=None,
             trace_id=None,  # fresh trace per autonomous turn
             forced_tools=None,
             capability_category=None,

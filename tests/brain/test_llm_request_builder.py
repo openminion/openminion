@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from openminion.modules.artifact.errors import ArtifactCtlError
 from openminion.modules.brain.adapters.llm.request import _build_request
+from openminion.modules.llm.errors import LLMCtlError
 
 
 def _patch_tool_bundle(monkeypatch):
@@ -231,6 +236,133 @@ def test_build_request_turn_attachments_become_image_content_parts(
     assert user_message.content_parts[0].type == "text"
     assert user_message.content_parts[1].type == "image"
     assert user_message.content_parts[1].source == "path"
+
+
+def test_build_request_selects_current_then_newest_historical_artifacts(
+    monkeypatch,
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    refs = [f"artifact://sha256/{value * 64}" for value in "abcde"]
+    sizes = {
+        refs[0]: 8 * 1024 * 1024,
+        refs[1]: 6 * 1024 * 1024,
+        refs[2]: 6 * 1024 * 1024,
+        refs[3]: 6 * 1024 * 1024,
+        refs[4]: 1 * 1024 * 1024,
+    }
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: ("image/png", sizes[ref]),
+    )
+    turns = [
+        {"role": "user", "content": "oldest", "attachments": [refs[0]]},
+        {"role": "assistant", "content": "old reply"},
+        {"role": "user", "content": "newer", "attachments": [refs[1], refs[2]]},
+        {"role": "assistant", "content": "newer reply"},
+        {"role": "user", "content": "current", "attachments": [refs[4]]},
+    ]
+    request = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context={
+            "messages": [
+                {"role": "system", "content": "sys"},
+                *[
+                    {"role": turn["role"], "content": turn["content"]}
+                    for turn in turns
+                ],
+            ],
+            "turns": turns,
+            "hints": {"user_input": "current"},
+        },
+        schema=type("Decision", (), {}),
+        temperature=0.0,
+    )
+
+    selected = {
+        message.content: [
+            part.artifact_ref
+            for part in message.content_parts
+            if getattr(part, "source", "") == "artifact"
+        ]
+        for message in request.messages
+        if message.role == "user"
+    }
+    assert selected["current"] == [refs[4]]
+    assert selected["newer"] == [refs[1], refs[2]]
+    assert selected["oldest"] == []
+
+
+def test_build_request_rejects_unavailable_artifact_before_provider(
+    monkeypatch,
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    ref = f"artifact://sha256/{'f' * 64}"
+
+    def _missing(_ref: str):
+        raise ArtifactCtlError("NOT_FOUND", "Artifact image is unavailable")
+
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        _missing,
+    )
+    with pytest.raises(LLMCtlError, match="Artifact image is unavailable"):
+        _build_request(
+            model="fake-model",
+            purpose="decide",
+            context={
+                "turns": [
+                    {"role": "user", "content": "inspect", "attachments": [ref]}
+                ],
+                "hints": {"user_input": "inspect"},
+            },
+            schema=type("Decision", (), {}),
+            temperature=0.0,
+        )
+
+
+def test_initial_brain_user_turn_persists_attachments_once(monkeypatch) -> None:
+    from openminion.modules.brain.runner.tick.context import build_tick_run_context
+    from openminion.modules.brain.runner.tick import input_processing
+
+    appended: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    session_api = SimpleNamespace(
+        append_turn=lambda *args, **kwargs: appended.append((args, kwargs))
+    )
+    runner = SimpleNamespace(session_api=session_api)
+    state = SimpleNamespace(
+        trace_id=None,
+        status="waiting_user",
+        pending_llm_clarify_context=None,
+        unresolved_clarify_items=[],
+    )
+    refs = ["artifact://sha256/" + "a" * 64]
+    tick_ctx = build_tick_run_context(
+        session_id="session-1",
+        user_input="inspect",
+        attachments=refs,
+        trace_id="trace-1",
+        forced_tools=None,
+        capability_category=None,
+    )
+    monkeypatch.setattr(input_processing, "_interpret_user_input", lambda **_kw: None)
+    monkeypatch.setattr(input_processing, "set_status_unchecked", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        input_processing,
+        "_runner_delegate",
+        lambda name, *_a, **_k: False if name == "_clarify" else None,
+    )
+
+    input_processing.process_user_input(
+        runner=runner,
+        state=state,
+        logger=SimpleNamespace(),
+        tick_ctx=tick_ctx,
+    )
+
+    assert len(appended) == 1
+    assert appended[0][0][:3] == ("session-1", "user", "inspect")
+    assert appended[0][1]["attachments"] == refs
 
 
 def test_build_request_preserves_context_message_block_metadata(

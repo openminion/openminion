@@ -38,9 +38,14 @@ class ContextCtlAdapter(ContextAPI):
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(
-        self, service: Any, *, runtime_token_budget: int | None = None
+        self,
+        service: Any,
+        *,
+        session_store: Any | None = None,
+        runtime_token_budget: int | None = None,
     ) -> None:
         self.service = service
+        self._session_store = session_store
         self._runtime_token_budget = runtime_token_budget
 
     def build(
@@ -129,6 +134,8 @@ class ContextCtlAdapter(ContextAPI):
         )
         pack = self.service.build_pack(req)
         result = cast(dict[str, Any], pack.model_dump())
+        if self._session_store is not None:
+            result["turns"] = list(self._session_store.list_turns(session_id))
         if hints:
             result["hints"] = hints
         return result

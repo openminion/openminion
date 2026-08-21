@@ -22,6 +22,7 @@ def try_resume(
     runner: "BrainRunner",
     state,
     user_input: str | None,
+    attachments: list[str] | None = None,
     trace_id: str | None,
     logger,
     session_id: str,
@@ -35,7 +36,11 @@ def try_resume(
         if user_input is not None and user_input.strip():
             state.trace_id = trace_id or new_uuid()
             runner.session_api.append_turn(
-                session_id, "user", user_input, meta={"ts": iso_now()}
+                session_id,
+                "user",
+                user_input,
+                attachments=list(attachments or []),
+                meta={"ts": iso_now()},
             )
         return invoke_decision_direct(
             runner,

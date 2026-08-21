@@ -60,6 +60,7 @@ def create_context_adapter(
         )
         return ContextCtlAdapter(
             service=service,
+            session_store=session_store,
             runtime_token_budget=runtime_token_budget,
         )
     except ImportError:

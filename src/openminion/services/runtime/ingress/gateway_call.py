@@ -12,6 +12,7 @@ async def run_gateway_once_impl(
     channel: str,
     target: str,
     message: str,
+    attachments: list[str] | None = None,
     session_id: str | None,
     idempotency_key: str | None,
     request_id: str | None,
@@ -26,6 +27,7 @@ async def run_gateway_once_impl(
         "channel": channel,
         "target": target,
         "message": message,
+        "attachments": list(attachments or []),
         "session_id": session_id,
         "idempotency_key": idempotency_key,
         "deliver": bool(deliver),
@@ -40,7 +42,6 @@ async def run_gateway_once_impl(
         run_once_kwargs["inbound_metadata"] = inbound_metadata
     if request_id is not None:
         run_once_kwargs["request_id"] = request_id
-
     filtered_kwargs = _filter_run_once_kwargs(gateway.run_once, run_once_kwargs)
     return await gateway.run_once(**filtered_kwargs)
 

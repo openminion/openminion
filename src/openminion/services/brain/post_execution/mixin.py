@@ -364,6 +364,7 @@ class BrainBridgeTurnMixin:
                 runner,
                 session_id=session_id,
                 user_input=None,
+                attachments=None,
                 trace_id=request_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
@@ -398,6 +399,7 @@ class BrainBridgeTurnMixin:
                 runner,
                 session_id=session_id,
                 user_input=message.body,
+                attachments=list(message.attachments),
                 trace_id=request_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
@@ -423,6 +425,7 @@ class BrainBridgeTurnMixin:
         return runner.run(
             session_id=session_id,
             user_input=message.body,
+            attachments=list(message.attachments),
             trace_id=request_id,
             forced_tools=forced_tools,
             capability_category=capability_category,

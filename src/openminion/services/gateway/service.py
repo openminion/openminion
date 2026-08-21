@@ -194,6 +194,7 @@ class GatewayService:
         channel: str,
         target: str,
         body: str,
+        attachments: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         request_id: Optional[str] = None,
@@ -211,6 +212,7 @@ class GatewayService:
                 channel=channel,
                 target=target,
                 body=body,
+                attachments=attachments,
                 session_id=session_id,
                 idempotency_key=dedupe_key,
                 request_id=request_id,
@@ -226,6 +228,7 @@ class GatewayService:
             channel=channel,
             target=target,
             body=body,
+            attachments=attachments,
             session_id=session_id,
             request_id=request_id,
             inbound_metadata=inbound_metadata,
@@ -242,6 +245,7 @@ class GatewayService:
         channel: str,
         target: str,
         body: str,
+        attachments: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         request_id: Optional[str] = None,
@@ -313,6 +317,7 @@ class GatewayService:
             "channel": channel,
             "target": target,
             "body": body,
+            "attachments": list(attachments or []),
             "session_id": session_id,
             "idempotency_key": idempotency_key,
             "request_id": request_id,
@@ -360,6 +365,7 @@ class GatewayService:
         channel: str,
         target: str,
         body: str,
+        attachments: Optional[list[str]] = None,
         session_id: Optional[str],
         idempotency_key: str,
         request_id: Optional[str],
@@ -377,16 +383,15 @@ class GatewayService:
         )
         if existing is not None and existing.status == "completed":
             return _message_from_cache(existing.response)
-
         inflight_key = (self._METHOD_HANDLE_MESSAGE, idempotency_key)
         inflight = self._inflight.get(inflight_key)
         if inflight is not None:
             return await inflight
-
         request_hash = _request_hash(
             channel=channel,
             target=target,
             body=body,
+            attachments=attachments,
             session_id=session_id,
             inbound_metadata=inbound_metadata,
             typed_turn_intent=typed_turn_intent,
@@ -412,6 +417,7 @@ class GatewayService:
                 channel=channel,
                 target=target,
                 body=body,
+                attachments=attachments,
                 session_id=session_id,
                 request_id=request_id,
                 inbound_metadata=inbound_metadata,
@@ -452,6 +458,7 @@ class GatewayService:
         channel: str,
         target: str,
         body: str,
+        attachments: Optional[list[str]] = None,
         session_id: Optional[str],
         request_id: Optional[str],
         inbound_metadata: Optional[dict[str, str]],
@@ -511,6 +518,7 @@ class GatewayService:
                 channel=channel,
                 target=target,
                 body=body,
+                attachments=attachments,
                 session_id=session_value,
                 request_id=request_value,
                 inbound_metadata=inbound_metadata,
@@ -543,6 +551,7 @@ class GatewayService:
         channel: str,
         target: str,
         message: str,
+        attachments: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
         request_id: Optional[str] = None,
@@ -559,6 +568,7 @@ class GatewayService:
             channel=channel,
             target=target,
             body=message,
+            attachments=attachments,
             session_id=session_id,
             idempotency_key=idempotency_key,
             request_id=request_id,

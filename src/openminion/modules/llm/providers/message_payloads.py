@@ -8,6 +8,13 @@ import re
 from typing import Any, Dict, List, Mapping
 
 from openminion.base.config.paths import resolve_home_root
+from openminion.modules.artifact.errors import ArtifactCtlError
+from openminion.modules.artifact.refs import (
+    MAX_ARTIFACT_IMAGE_BYTES_PER_REQUEST,
+    MAX_ARTIFACT_IMAGES_PER_REQUEST,
+    inspect_artifact_image,
+    read_artifact_image_bytes,
+)
 from ..errors import LLMCtlError
 from ..schemas import ImageContentPart, LLMRequest, Message, ToolCall, UsageInfo
 from ..schemas import TextContentPart
@@ -262,10 +269,43 @@ def _image_part_bytes(part: ImageContentPart) -> tuple[str, str]:
             )
         data = base64.b64encode(path.read_bytes()).decode("ascii")
         return mime, data
+    if part.source == "artifact":
+        try:
+            mime, raw = read_artifact_image_bytes(str(part.artifact_ref or ""))
+        except ArtifactCtlError as exc:
+            raise LLMCtlError("INVALID_ARGUMENT", exc.message) from exc
+        return mime, base64.b64encode(raw).decode("ascii")
     raise LLMCtlError(
         "INVALID_ARGUMENT",
-        "OpenAI-compatible image parts require source=path or source=base64",
+        "Image parts require source=path, source=base64, or source=artifact",
     )
+
+
+def _validate_artifact_image_aggregate(request: LLMRequest) -> None:
+    count = 0
+    total_bytes = 0
+    for message in request.messages:
+        for part in message.content_parts:
+            if not isinstance(part, ImageContentPart) or part.source != "artifact":
+                continue
+            count += 1
+            if count > MAX_ARTIFACT_IMAGES_PER_REQUEST:
+                raise LLMCtlError(
+                    "INVALID_ARGUMENT",
+                    "Artifact image count exceeds the request limit",
+                )
+            try:
+                _mime, size_bytes = inspect_artifact_image(
+                    str(part.artifact_ref or "")
+                )
+            except ArtifactCtlError as exc:
+                raise LLMCtlError("INVALID_ARGUMENT", exc.message) from exc
+            total_bytes += size_bytes
+            if total_bytes > MAX_ARTIFACT_IMAGE_BYTES_PER_REQUEST:
+                raise LLMCtlError(
+                    "INVALID_ARGUMENT",
+                    "Artifact image bytes exceed the request limit",
+                )
 
 
 def _openai_like_content(
@@ -505,6 +545,7 @@ def _messages_openai_like(
     enable_vision_input: bool = False,
     supports_vision_input: bool = False,
 ) -> list[dict[str, Any]]:
+    _validate_artifact_image_aggregate(request)
     messages: list[dict[str, Any]] = []
     schema_only = bool(request.tools) and is_schema_only_submit_output_tools(
         request.tools

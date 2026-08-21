@@ -376,6 +376,36 @@ def test_mission_turn_routing_preserves_objective_until_explicit_revision() -> N
         assert "brain.mission.revised" in event_types
 
 
+def test_mission_pause_persists_attachments_once() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp))
+        _stub_successful_action_turn(runner)
+        session_id = "s-mission-pause-attachments"
+        runner.step(
+            session_id=session_id,
+            user_input='mission: tool echo {"msg":"alpha"}',
+            trace_id="trace-mission-pause-start",
+        )
+        ref = "artifact://sha256/" + "a" * 64
+
+        paused = runner.step(
+            session_id=session_id,
+            user_input="pause mission",
+            attachments=[ref],
+            trace_id="trace-mission-pause",
+        )
+
+        pause_turns = [
+            turn
+            for turn in session.list_turns(session_id)
+            if turn["role"] == "user" and turn["content"] == "pause mission"
+        ]
+        assert paused.status == "waiting_user"
+        assert "mission paused" in str(paused.message or "").lower()
+        assert len(pause_turns) == 1
+        assert pause_turns[0]["attachments"] == [ref]
+
+
 def test_active_mission_ordinary_input_fails_closed_and_fork_pauses() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runner, session = _build_runner(Path(tmp))

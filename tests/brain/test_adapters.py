@@ -49,6 +49,12 @@ def _find_retry_message(messages: list[object]) -> str:
     raise AssertionError("missing retry system message")
 
 
+def _context_session_store(turns: list[dict[str, object]] | None = None) -> MagicMock:
+    store = MagicMock()
+    store.list_turns.return_value = list(turns or [])
+    return store
+
+
 class LocalSessionStoreTests(unittest.TestCase):
     def test_working_state_serialization_and_versioning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1291,10 +1297,26 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
 
-        adapter = ContextCtlAdapter(mock_svc)
+        session_store = _context_session_store(
+            [{"role": "user", "content": "hello", "attachments": ["artifact-ref"]}]
+        )
+        adapter = ContextCtlAdapter(mock_svc, session_store=session_store)
         res = adapter.build(session_id="s1", agent_id="a1", purpose="decide", budget={})
-        self.assertEqual(res, {"pack_version": "123"})
+        self.assertEqual(
+            res,
+            {
+                "pack_version": "123",
+                "turns": [
+                    {
+                        "role": "user",
+                        "content": "hello",
+                        "attachments": ["artifact-ref"],
+                    }
+                ],
+            },
+        )
         mock_svc.build_pack.assert_called_once()
+        session_store.list_turns.assert_called_once_with("s1")
 
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,
@@ -1303,7 +1325,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc)
+        adapter = ContextCtlAdapter(mock_svc, session_store=_context_session_store())
 
         raw_runtime = [
             {
@@ -1358,7 +1380,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc)
+        adapter = ContextCtlAdapter(mock_svc, session_store=_context_session_store())
 
         adapter.build(
             session_id="s1",
@@ -1394,7 +1416,7 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc)
+        adapter = ContextCtlAdapter(mock_svc, session_store=_context_session_store())
 
         adapter.build(
             session_id="s1",
@@ -1428,7 +1450,11 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         mock_pack = fake_context_pack({"pack_version": "123"})
         mock_svc = fake_context_service(pack=mock_pack)
-        adapter = ContextCtlAdapter(mock_svc, runtime_token_budget=1200)
+        adapter = ContextCtlAdapter(
+            mock_svc,
+            session_store=_context_session_store(),
+            runtime_token_budget=1200,
+        )
 
         adapter.build(
             session_id="s1",
@@ -1659,6 +1685,16 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             self.skipTest("factory adapter not importable")
 
         class _SessionStore:
+            def list_turns(self, session_id: str):
+                return [
+                    {
+                        "turn_id": "t-user",
+                        "role": "user",
+                        "content": "hello",
+                        "attachments": ["artifact://sha256/" + "a" * 64],
+                    }
+                ]
+
             def get_slice(
                 self, *, session_id: str, purpose: str, limits: dict[str, int]
             ):
@@ -1689,6 +1725,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
         self.assertEqual(payload.get("session_id"), "s-ctx")
         self.assertIn("messages", payload)
+        self.assertEqual(
+            payload["turns"][0]["attachments"],
+            ["artifact://sha256/" + "a" * 64],
+        )
         rendered = "\n".join(
             str(item.get("content", ""))
             for item in payload.get("messages", [])
@@ -1707,6 +1747,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             self.skipTest("factory adapter not importable")
 
         class _SessionStore:
+            def list_turns(self, session_id: str):
+                del session_id
+                return []
+
             def get_slice(
                 self, *, session_id: str, purpose: str, limits: dict[str, int]
             ):
@@ -1769,6 +1813,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
             class _SessionStore:
                 sqlite_path = str(session_db)
+
+                def list_turns(self, session_id: str):
+                    del session_id
+                    return []
 
                 def get_slice(
                     self, *, session_id: str, purpose: str, limits: dict[str, int]
@@ -1901,6 +1949,10 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             self.skipTest("factory adapter not importable")
 
         class _SessionStore:
+            def list_turns(self, session_id: str):
+                del session_id
+                return []
+
             def get_slice(
                 self, *, session_id: str, purpose: str, limits: dict[str, int]
             ):

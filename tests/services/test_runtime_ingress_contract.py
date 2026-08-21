@@ -16,6 +16,7 @@ from openminion.services.stats import RunStats
 from openminion.services.runtime.ingress import (
     TurnRequestError,
     execute_runtime_turn,
+    runtime_turn_request_from_manager_request,
     runtime_turn_request_from_payload,
     submit_turn_payload,
 )
@@ -204,3 +205,43 @@ def test_submit_turn_payload_uses_runtime_manager_and_preserves_meta() -> None:
     assert request.meta["idempotency_key"] == "idem-submit"
     assert request.meta["forced_tools"] == ["web.search"]
     assert request.meta["capability_category"] == "search"
+
+
+def test_trusted_attachments_cross_manager_and_gateway_without_metadata() -> None:
+    runtime = _RuntimeStub()
+    refs = (
+        "artifact://sha256/" + "a" * 64,
+        "artifact://sha256/" + "b" * 64,
+    )
+    public_request = runtime_turn_request_from_payload(
+        runtime=runtime,
+        payload={
+            "message": "untrusted attachment field",
+            "attachments": list(refs),
+        },
+    )
+    assert public_request.attachments == ()
+
+    handle = submit_turn_payload(
+        runtime=runtime,
+        payload={
+            "trace_id": "trace-attachments",
+            "message": "inspect these",
+            "session_id": "session-attachments",
+            "agent_id": "main",
+        },
+        resolved_attachment_refs=refs,
+    )
+    manager_request = handle.request
+    runtime_request = runtime_turn_request_from_manager_request(
+        runtime=runtime,
+        request=manager_request,
+    )
+
+    assert manager_request.attachments == list(refs)
+    assert runtime_request.attachments == refs
+    assert "attachments" not in manager_request.meta
+
+    execute_runtime_turn(runtime=runtime, request=runtime_request)
+    assert runtime.gateway.calls[0]["attachments"] == list(refs)
+    assert "attachments" not in runtime.gateway.calls[0]["inbound_metadata"]

@@ -33,6 +33,7 @@ class RuntimeTurnRequest:
     inbound_metadata: Mapping[str, str] | None = None
     deliver: bool = True
     forced_tools: tuple[str, ...] = ()
+    attachments: tuple[str, ...] = ()
     capability_category: str | None = None
     run_profile_overrides: RunProfileOverrides = field(
         default_factory=RunProfileOverrides
@@ -99,6 +100,7 @@ class RuntimeTurnHandle:
 class TurnContext:
     message: str
     forced_tools: tuple[str, ...]
+    attachments: tuple[str, ...]
     inbound_metadata: Mapping[str, str] | None
 
 

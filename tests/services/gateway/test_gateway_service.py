@@ -12,6 +12,7 @@ from openminion.modules.telemetry.trace.phase_timing import (
     use_chat_phase_timer,
 )
 from openminion.services.context.session import SessionContextService
+from openminion.services.gateway.turn.runtime import _request_hash
 
 from tests.services.gateway._gateway_service_support import (
     GatewayServiceTestCase,
@@ -761,6 +762,30 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         run_ids = {str(event.payload.get("run_id", "")) for event in run_events}
         self.assertEqual(len(run_ids), 1)
 
+    def test_gateway_idempotency_hash_includes_ordered_attachments(self) -> None:
+        common = {
+            "channel": "console",
+            "target": "local-user",
+            "body": "inspect",
+            "session_id": "session-attachments",
+            "inbound_metadata": None,
+        }
+        first = _request_hash(
+            **common,
+            attachments=["artifact-a", "artifact-b"],
+        )
+        same = _request_hash(
+            **common,
+            attachments=["artifact-a", "artifact-b"],
+        )
+        reordered = _request_hash(
+            **common,
+            attachments=["artifact-b", "artifact-a"],
+        )
+
+        self.assertEqual(first, same)
+        self.assertNotEqual(first, reordered)
+
     def test_gateway_idempotency_inflight_dedupe(self) -> None:
         provider = _SlowCaptureProvider()
         gateway, sink = self._build_gateway(
@@ -1116,6 +1141,63 @@ class GatewayTurnRunnerCharacterizationTests(GatewayServiceTestCase):
         self.assertEqual(len(transcript), 1)
         self.assertEqual(transcript[0].role, "inbound")
         self.assertEqual(transcript[0].body, "hello runner execute")
+
+    def test_gateway_turn_runner_carries_attachments_only_on_inbound_message(
+        self,
+    ) -> None:
+        gateway, _sink = self._build_gateway(
+            provider=self.provider,
+            logger_name="openminion.tests.gateway.runner.attachments",
+            agent_logger_name="openminion.tests.gateway.agent.runner.attachments",
+            auto_resume=False,
+        )
+        captured: list[Message] = []
+
+        class _AttachmentAgent:
+            async def run_turn(self, message, **_kwargs):
+                captured.append(message)
+                return AgentResponse(
+                    text="done",
+                    channel="console",
+                    target="local-user",
+                    metadata={},
+                )
+
+        gateway._turn_runner._agent = _AttachmentAgent()
+        ref = "artifact://sha256/" + "a" * 64
+
+        async def _run():
+            routing = gateway._turn_runner._resolve_routing(
+                channel="console",
+                target="local-user",
+                session_id="runner-attachments",
+                request_id="req-runner-attachments",
+                inbound_metadata=None,
+                deliver=False,
+            )
+            run_id, lifecycle_payload = gateway._turn_runner._setup_turn(
+                routing,
+                channel="console",
+                target="local-user",
+            )
+            return await gateway._turn_runner._execute_agent(
+                routing,
+                channel="console",
+                target="local-user",
+                body="inspect",
+                attachments=[ref],
+                run_id=run_id,
+                lifecycle_payload=lifecycle_payload,
+                history=[],
+                forced_tools=None,
+                capability_category=None,
+                prior_transcript_available=False,
+            )
+
+        asyncio.run(_run())
+
+        self.assertEqual(captured[0].attachments, [ref])
+        self.assertNotIn("attachments", captured[0].metadata)
 
     def test_gateway_turn_runner_preserves_typed_progress_usage_in_final_metadata(
         self,

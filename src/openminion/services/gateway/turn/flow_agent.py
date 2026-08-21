@@ -117,6 +117,7 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        attachments: list[str] | None = None,
         run_id: str,
         authenticity_decision: Any,
         participant_id: str,
@@ -125,6 +126,7 @@ class GatewayTurnAgentExecutionMixin:
             channel=channel,
             target=target,
             body=body,
+            attachments=list(attachments or []),
             metadata={
                 **_extract_ephemeral_prompt_metadata(
                     routing.normalized_inbound_metadata
@@ -280,6 +282,7 @@ class GatewayTurnAgentExecutionMixin:
         channel: str,
         target: str,
         body: str,
+        attachments: list[str] | None = None,
         run_id: str,
         lifecycle_payload: dict[str, Any],
         history: list[Message],
@@ -303,7 +306,6 @@ class GatewayTurnAgentExecutionMixin:
                 latest_progress_usage_estimated = is_estimated
             if progress_callback is not None:
                 progress_callback(payload)
-
         participant_id = _human_participant_id(
             session=routing.session,
             channel=channel,
@@ -323,6 +325,7 @@ class GatewayTurnAgentExecutionMixin:
             channel=channel,
             target=target,
             body=body,
+            attachments=attachments,
             run_id=run_id,
             authenticity_decision=authenticity_decision,
             participant_id=participant_id,

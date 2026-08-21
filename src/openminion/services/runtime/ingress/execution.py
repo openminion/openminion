@@ -32,6 +32,7 @@ def execute_runtime_turn(
     context = _build_turn_context(
         message=request.message,
         forced_tools=list(request.forced_tools),
+        attachments=list(request.attachments),
         inbound_metadata=dict(request.inbound_metadata)
         if request.inbound_metadata
         else None,
@@ -138,6 +139,7 @@ def _execute_routed_turns(
                     context=_build_turn_context(
                         message=request.message,
                         forced_tools=list(context.forced_tools),
+                        attachments=list(context.attachments),
                         inbound_metadata=inbound_metadata or None,
                     ),
                     session_id=request.session_id,
@@ -231,11 +233,13 @@ def _build_turn_context(
     *,
     message: str,
     forced_tools: list[str] | None,
+    attachments: list[str] | None = None,
     inbound_metadata: dict[str, str] | None,
 ) -> TurnContext:
     return TurnContext(
         message=message,
         forced_tools=tuple(forced_tools or ()),
+        attachments=tuple(attachments or ()),
         inbound_metadata=freeze_metadata(inbound_metadata),
     )
 
@@ -269,6 +273,7 @@ def execute_gateway_turn_impl(
                     channel=channel,
                     target=target,
                     message=context.message,
+                    attachments=list(context.attachments),
                     session_id=session_id,
                     idempotency_key=idempotency_key,
                     request_id=request_id,
