@@ -7,7 +7,7 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
 )
-from openminion.modules.tool.exposure import get_allowed_model_tool_names
+from openminion.modules.brain.tools.schema import collect_runtime_tool_names
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_BROWSER,
     MODEL_EXEC_KILL,
@@ -142,9 +142,8 @@ ACT_ADAPTIVE_ALLOWED_TOOLS = frozenset(
 def _with_exposed_runtime_tools(
     tool_names: frozenset[str], *, runner: Any, session_id: str
 ) -> frozenset[str]:
-    registry = getattr(getattr(runner, "tool_api", None), "registry", None)
-    exposed = get_allowed_model_tool_names(
-        registry,
+    exposed = collect_runtime_tool_names(
+        runner,
         metadata={"session_id": session_id},
     )
     return frozenset({*tool_names, *exposed})

@@ -33,6 +33,16 @@ def collect_runtime_tool_schemas(
     )
 
 
+def collect_runtime_tool_names(
+    runner: "BrainRunner", *, metadata: dict[str, Any] | None = None
+) -> frozenset[str]:
+    return frozenset(
+        name
+        for item in collect_runtime_tool_schemas(runner, metadata=metadata)
+        if (name := str(item.get("name", "") or "").strip())
+    )
+
+
 def build_prompt_tool_schemas(
     runner: "BrainRunner", *, user_input: str | None
 ) -> list[dict[str, Any]]:
