@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
 import socket
@@ -535,6 +536,7 @@ def handle_media_http(
         )
         return True
     if query:
+        handler.close_connection = True
         _write_error(
             handler,
             method,
@@ -683,6 +685,11 @@ def _handle_read(
                 handler.wfile.write(chunk)
         except OSError:
             handler.close_connection = True
+            logging.getLogger("openminion.api").warning(
+                "client media read interrupted request_id=%s media_id=%s",
+                normalize_request_id(request_id),
+                media_id,
+            )
 
 
 def _validate_request_headers(handler: Any, operation: str) -> None:
@@ -751,8 +758,6 @@ def _write_payload(
     request_id: str | None,
     session_id: str | None,
 ) -> None:
-    import logging
-
     response = finalize_api_response(
         payload=payload,
         status=status,

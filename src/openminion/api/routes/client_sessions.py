@@ -19,12 +19,18 @@ from .contracts import (
     RouteResult,
     error_route_result,
     runtime_unavailable_route_result,
-    session_cancel_callback,
 )
 
 
 _SESSION_PATH = re.compile(r"/v1/client/sessions/([^/]+)")
 _EVENTS_PATH = re.compile(r"/v1/client/sessions/([^/]+)/events")
+_CANCEL_ERRORS = {
+    "invalid_request": (HTTPStatus.BAD_REQUEST, "Cancellation requires exactly one non-empty session_id."),
+    "trace_session_mismatch": (HTTPStatus.CONFLICT, "Active trace belongs to another session."),
+    "stale_trace": (HTTPStatus.CONFLICT, "Trace is durable but no longer active."),
+    "trace_not_found": (HTTPStatus.NOT_FOUND, "Trace was not found in the supplied session."),
+    "cancellation_event_failed": (HTTPStatus.INTERNAL_SERVER_ERROR, "Cancellation could not be recorded."),
+}  # fmt: skip
 
 
 def handle_request(
@@ -126,7 +132,7 @@ def _execute(
             session_id=session_id,
             body=body,
             query=query,
-            cancel_pending=session_cancel_callback(ctx),
+            cancel_pending=_session_cancel_callback(ctx),
         )
     return list_client_event_page(
         **shared,
@@ -137,6 +143,28 @@ def _execute(
         path=path,
         approval_recovery=approvals.recovery_callback(ctx, session_id),
     )
+
+
+def _session_cancel_callback(ctx: APIRouteContext) -> Any:
+    owners = tuple(
+        owner for owner in (ctx.client_approvals, ctx.client_media) if owner is not None
+    )
+    if not owners:
+        return None
+
+    def cancel(session_id: str) -> Any:
+        cleanups = [
+            owner.cancel_session(session_id, "session_closed") for owner in owners
+        ]
+
+        def finish() -> None:
+            for cleanup in reversed(cleanups):
+                if cleanup is not None:
+                    cleanup()
+
+        return finish
+
+    return cancel
 
 
 def _query_error(
@@ -171,18 +199,12 @@ def handle_cancel_request(
     query: str | None,
 ) -> RouteResult:
     if query or not isinstance(body, dict) or set(body) != {"session_id"}:
-        return _cancel_error(
-            "invalid_request",
-            session_id=None,
-            trace_id=trace_id,
-        )
+        return _cancel_error("invalid_request", session_id=None, trace_id=trace_id)
     session_value = body.get("session_id")
     session_id = session_value.strip() if isinstance(session_value, str) else ""
     if not session_id or not trace_id.strip():
         return _cancel_error(
-            "invalid_request",
-            session_id=session_id or None,
-            trace_id=trace_id,
+            "invalid_request", session_id=session_id or None, trace_id=trace_id
         )
     try:
         manager, runtime, own_runtime = resolve_runtime_manager(
@@ -236,28 +258,7 @@ def _cancel_error(
     run_id: Any = None,
     retryable: bool = False,
 ) -> RouteResult:
-    status, message = {
-        "invalid_request": (
-            HTTPStatus.BAD_REQUEST,
-            "Cancellation requires exactly one non-empty session_id.",
-        ),
-        "trace_session_mismatch": (
-            HTTPStatus.CONFLICT,
-            "Active trace belongs to another session.",
-        ),
-        "stale_trace": (
-            HTTPStatus.CONFLICT,
-            "Trace is durable but no longer active.",
-        ),
-        "trace_not_found": (
-            HTTPStatus.NOT_FOUND,
-            "Trace was not found in the supplied session.",
-        ),
-        "cancellation_event_failed": (
-            HTTPStatus.INTERNAL_SERVER_ERROR,
-            "Cancellation could not be recorded.",
-        ),
-    }[code]
+    status, message = _CANCEL_ERRORS[code]
     resolved_run_id = str(run_id or "").strip() or None
     return error_route_result(
         status,

@@ -21,6 +21,7 @@ from openminion.api.server.client_media import (
     ClientMediaError,
     MAX_ACTIVE_GLOBAL,
     MAX_PENDING_COUNT,
+    handle_media_http,
 )
 from openminion.api.server.streaming import handle_turn_stream_request
 from openminion.base.config import OpenMinionConfig, save_config
@@ -230,6 +231,47 @@ def test_media_terminal_expiry_and_session_lifecycle_gate_read_and_release(
     with pytest.raises(ClientMediaError) as release_closed:
         owner.release(identity, "session-1", retained.media_id)
     assert release_closed.value.code == "session_closed"
+
+
+def test_interrupted_media_read_logs_only_request_and_opaque_media_id(
+    coordinator: tuple[
+        ClientMediaCoordinator,
+        ClientAuthService,
+        ClientIdentity,
+        _Sessions,
+    ],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    owner, _service, identity, _sessions = coordinator
+    record = _upload(owner, identity)
+
+    class _BrokenWriter:
+        def write(self, _data: bytes) -> None:
+            raise OSError("synthetic disconnect")
+
+    handler = SimpleNamespace(
+        client_identity=identity,
+        client_media=owner,
+        headers={},
+        close_connection=False,
+        send_response=lambda _status: None,
+        send_header=lambda _name, _value: None,
+        end_headers=lambda: None,
+        wfile=_BrokenWriter(),
+    )
+    with caplog.at_level("WARNING", logger="openminion.api"):
+        handled = handle_media_http(
+            handler,
+            method="GET",
+            path=f"/v1/client/sessions/session-1/media/{record.media_id}",
+            query="",
+            request_id="read-request",
+        )
+    assert handled is True
+    assert handler.close_connection is True
+    message = caplog.records[-1].getMessage()
+    assert "read-request" in message and record.media_id in message
+    assert record.name not in message and record.artifact_ref not in message
 
 
 def test_media_global_active_cap_releases_on_terminal_transition(
@@ -487,6 +529,9 @@ def test_stream_unbinds_media_when_submission_fails_before_sse() -> None:
         def unbind_before_start(self, *_args: Any) -> None:
             calls.append("unbind")
 
+        def complete_trace(self, *_args: Any) -> None:
+            calls.append("complete")
+
     class _Runtime:
         def submit_turn(self, **_kwargs: Any) -> Any:
             raise ValueError("submission rejected")
@@ -521,12 +566,19 @@ def test_stream_unbinds_media_for_unexpected_pre_sse_failures(failure: str) -> N
         def unbind_before_start(self, *_args: Any) -> None:
             calls.append("unbind")
 
+        def complete_trace(self, *_args: Any) -> None:
+            calls.append("complete")
+
     class _Handle:
         request = SimpleNamespace(session_id="session-1")
         timeout_s = 1.0
 
         def add_done_callback(self, _callback: Any) -> None:
             raise OSError("callback registration failed")
+
+        def cancel(self) -> bool:
+            calls.append("cancel")
+            return True
 
     class _Runtime:
         def submit_turn(self, **_kwargs: Any) -> Any:
@@ -551,7 +603,7 @@ def test_stream_unbinds_media_for_unexpected_pre_sse_failures(failure: str) -> N
             client_media=_Media(),  # type: ignore[arg-type]
             client_identity=SimpleNamespace(client_id="client-1"),
         )
-    assert calls == ["unbind"]
+    assert calls == (["unbind"] if failure == "submit" else ["cancel", "complete"])
 
 
 def _desktop_turn_body(attachments: list[str]) -> dict[str, Any]:
@@ -852,6 +904,20 @@ def test_loopback_media_rejects_queries_headers_and_raw_framing(
             suffix=f"/{media_id}?unexpected=1",
         )
         assert (status, payload["error"]["code"]) == (400, "invalid_request")
+
+    combined_framing = (
+        ("GET", ("Content-Length: 0", "Content-Length: 0")),
+        ("DELETE", ("Transfer-Encoding: chunked",)),
+    )
+    for method, headers in combined_framing:
+        status, response_headers, payload = _raw_media_request(
+            loopback_media,
+            method=method,
+            suffix=f"/{media_id}?unexpected=1",
+            headers=headers,
+        )
+        assert (status, payload["error"]["code"]) == (400, "invalid_request")
+        assert response_headers["connection"] == "close"
 
     for malformed_headers in (
         ("Content-Length: nope",),

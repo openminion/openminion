@@ -596,8 +596,9 @@ def _prepare_stream_submission(
                 client_identity=client_identity,
             )
         except Exception:
-            _unbind_desktop_media(
-                body,
+            _abort_pre_sse_submission(
+                submission,
+                body=body,
                 resolved_refs=resolved_refs,
                 client_media=client_media,
                 client_identity=client_identity,
@@ -645,6 +646,50 @@ def _bind_desktop_media_completion(
     session_id, trace_id = str(body["session_id"]), str(body["trace_id"])
     submission.handle.add_done_callback(
         lambda: client_media.complete_trace(client_identity, session_id, trace_id)
+    )
+
+
+def _abort_pre_sse_submission(
+    submission: TurnSubmission | None,
+    *,
+    body: dict[str, Any],
+    resolved_refs: tuple[str, ...],
+    client_media: "ClientMediaCoordinator | None",
+    client_identity: "ClientIdentity | None",
+) -> None:
+    if submission is None:
+        _unbind_desktop_media(
+            body,
+            resolved_refs=resolved_refs,
+            client_media=client_media,
+            client_identity=client_identity,
+        )
+        return
+    try:
+        try:
+            submission.handle.cancel()
+        finally:
+            close_submission(submission)
+    finally:
+        _complete_desktop_media(
+            body,
+            client_media=client_media,
+            client_identity=client_identity,
+        )
+
+
+def _complete_desktop_media(
+    body: dict[str, Any],
+    *,
+    client_media: "ClientMediaCoordinator | None",
+    client_identity: "ClientIdentity | None",
+) -> None:
+    if client_media is None or client_identity is None:
+        return
+    client_media.complete_trace(
+        client_identity,
+        str(body["session_id"]),
+        str(body["trace_id"]),
     )
 
 

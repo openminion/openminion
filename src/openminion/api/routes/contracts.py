@@ -25,28 +25,6 @@ class APIRouteContext:
     client_media: "ClientMediaCoordinator | None" = None
 
 
-def session_cancel_callback(ctx: APIRouteContext) -> Any:
-    owners = tuple(
-        owner for owner in (ctx.client_approvals, ctx.client_media) if owner is not None
-    )
-    if not owners:
-        return None
-
-    def cancel(session_id: str) -> Any:
-        cleanups = [
-            owner.cancel_session(session_id, "session_closed") for owner in owners
-        ]
-
-        def finish() -> None:
-            for cleanup in reversed(cleanups):
-                if cleanup is not None:
-                    cleanup()
-
-        return finish
-
-    return cancel
-
-
 @dataclass(frozen=True)
 class RouteResult:
     status: HTTPStatus

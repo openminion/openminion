@@ -69,6 +69,7 @@ def _request(
     query: str | None = None,
     request_id: str = "desktop-request",
     client_approvals: Any = None,
+    client_media: Any = None,
 ) -> tuple[int, dict[str, Any]]:
     config_path, runtime, service, identity = client_runtime
     status, payload = dispatch_request(
@@ -81,6 +82,7 @@ def _request(
         client_auth=service,
         client_identity=identity,
         client_approvals=client_approvals,
+        client_media=client_media,
         request_id=request_id,
     )
     return int(status), payload
@@ -283,6 +285,62 @@ def test_client_session_lifecycle_uses_exact_redacted_shapes(
     assert status == 200
     assert closed["session"]["status"] == "closed"
     assert cancelled_sessions == [(session_id, "session_closed")]
+
+
+def test_session_close_unwinds_approval_and_media_fences(
+    client_runtime: tuple[Path, APIRuntime, ClientAuthService, ClientIdentity],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class _Owner:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def cancel_session(self, session_id: str, reason: str) -> Any:
+            assert session_id and reason == "session_closed"
+            events.append(f"{self.name}:start")
+            return lambda: events.append(f"{self.name}:finish")
+
+    approvals, media = _Owner("approvals"), _Owner("media")
+    successful = _create(client_runtime, title="Successful close")
+    status, _payload = _request(
+        client_runtime,
+        "DELETE",
+        f"/v1/client/sessions/{successful['session_id']}",
+        client_approvals=approvals,
+        client_media=media,
+    )
+    assert status == 200
+    assert events == [
+        "approvals:start",
+        "media:start",
+        "media:finish",
+        "approvals:finish",
+    ]
+
+    failed = _create(client_runtime, title="Failed close")
+    _, runtime, _, _ = client_runtime
+
+    def fail_close(**_kwargs: Any) -> Any:
+        raise RuntimeError("synthetic close failure")
+
+    monkeypatch.setattr(runtime.sessions, "close_session", fail_close)
+    events.clear()
+    with pytest.raises(RuntimeError, match="synthetic close failure"):
+        _request(
+            client_runtime,
+            "DELETE",
+            f"/v1/client/sessions/{failed['session_id']}",
+            client_approvals=approvals,
+            client_media=media,
+        )
+    assert events == [
+        "approvals:start",
+        "media:start",
+        "media:finish",
+        "approvals:finish",
+    ]
 
 
 def test_session_and_message_pagination_use_bound_opaque_cursors(
