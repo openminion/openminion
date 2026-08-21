@@ -34,13 +34,13 @@ class ConfigManager:
     @classmethod
     def load(
         cls,
-        config_path: str | None = None,
+        config_path: str | Path | None = None,
         *,
         home_root: Path | None = None,
         data_root: Path | None = None,
     ) -> "ConfigManager":
         env_config = EnvironmentConfig.from_sources()
-        raw_config_path = (config_path or "").strip()
+        raw_config_path = str(config_path or "").strip()
         normalized_config_path: str | None = None
         if raw_config_path:
             candidate = Path(raw_config_path).expanduser()

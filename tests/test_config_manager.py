@@ -78,6 +78,17 @@ def test_config_manager_explicit_missing_config_path_raises(tmp_path: Path) -> N
         raise AssertionError("expected ConfigManagerError")
 
 
+def test_config_manager_load_accepts_path(tmp_path: Path) -> None:
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, name="path-config")
+    config_path = tmp_path / "config.json"
+    save_config(config, str(config_path))
+
+    manager = ConfigManager.load(config_path)
+
+    assert manager.config_path == config_path.resolve()
+
+
 def test_config_manager_default_missing_config_path_raises(
     monkeypatch, tmp_path: Path
 ) -> None:
