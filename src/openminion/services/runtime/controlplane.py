@@ -115,7 +115,7 @@ def build_controlplane_runtime_components(
         audit_logger=audit_logger,
         identity_api=identity_api,
     )
-    rate_limiter = _build_rate_limiter(store=store, config=cp_cfg)
+    rate_limiter = _rate_limiter(store=store, config=cp_cfg)
     delivery_registry = ChannelRegistry()
     authorizer = ScopeAuthorizer(
         store=store,
@@ -164,9 +164,7 @@ def build_controlplane_runtime_components(
     )
 
 
-def _build_rate_limiter(
-    *, store: Any, config: ControlPlaneConfig
-) -> ControlPlaneRateLimiter:
+def _rate_limiter(*, store: Any, config: ControlPlaneConfig) -> ControlPlaneRateLimiter:
     return ControlPlaneRateLimiter(
         store=store,
         policy=RateLimitPolicy(
