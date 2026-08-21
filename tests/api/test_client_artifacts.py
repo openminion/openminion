@@ -617,6 +617,13 @@ def test_invalid_tool_parent_and_oversized_output_fail_closed(monkeypatch) -> No
         coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
     assert invalid_error.value.code == "event_invalid"
 
+    mismatch = _tool_event(output={"summary": "safe", "outputs": {"text": "safe"}})
+    mismatch["tool_parent"]["payload"]["turn_scope_id"] = "turn-other"
+    facade.events = [mismatch]
+    with pytest.raises(ClientArtifactError) as mismatch_error:
+        coordinator.list_artifacts(identity, "session-1", cursor=None, limit=25)
+    assert mismatch_error.value.code == "event_invalid"
+
     facade.events = [
         _tool_event(
             output={

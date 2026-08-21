@@ -85,6 +85,7 @@ def project_tool_output(
     parent = event.get("tool_parent")
     parent_payload = parent.get("payload") if isinstance(parent, dict) else None
     call_id = payload.get("call_id")
+    turn_scope_id = payload.get("turn_scope_id")
     status = payload.get("status")
     status_valid = (
         status == "success"
@@ -104,6 +105,8 @@ def project_tool_output(
         and bool(event["timestamp"].strip())
         and isinstance(call_id, str)
         and bool(call_id.strip())
+        and isinstance(turn_scope_id, str)
+        and bool(turn_scope_id.strip())
         and status_valid
         and isinstance(parent, dict)
         and set(parent) == {"event_id", "session_id", "event_type", "payload"}
@@ -113,6 +116,7 @@ def project_tool_output(
         and isinstance(parent_payload, dict)
         and parent_payload.get("schema_version") == 1
         and parent_payload.get("call_id") == call_id
+        and parent_payload.get("turn_scope_id") == turn_scope_id
         and isinstance(parent_payload.get("canonical_name"), str)
         and bool(parent_payload["canonical_name"].strip())
     )
