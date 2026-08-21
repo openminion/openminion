@@ -781,6 +781,58 @@ def test_build_request_rejects_reordered_attachment_alignment(monkeypatch) -> No
     assert inspected == []
 
 
+def test_build_request_rejects_two_attachment_keys_on_one_message(
+    monkeypatch,
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: (inspected.append(ref) or "image/png", 1),
+    )
+
+    with pytest.raises(LLMCtlError, match="could not be aligned") as exc_info:
+        _build_request(
+            model="fake-model",
+            purpose="decide",
+            context={
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "combined history",
+                        "meta": {"segment_ids": ["turn:old-a", "turn:old-b"]},
+                    },
+                    {"role": "user", "content": "current"},
+                ],
+                "turns": [
+                    {
+                        "turn_id": "old-a",
+                        "role": "user",
+                        "content": "first history",
+                        "attachments": ["artifact://sha256/" + "4" * 64],
+                    },
+                    {
+                        "turn_id": "old-b",
+                        "role": "user",
+                        "content": "second history",
+                        "attachments": ["artifact://sha256/" + "5" * 64],
+                    },
+                    {
+                        "turn_id": "current",
+                        "role": "user",
+                        "content": "current",
+                        "attachments": [],
+                    },
+                ],
+            },
+            schema=type("Decision", (), {}),
+            temperature=0.0,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert inspected == []
+
+
 @pytest.mark.parametrize("current_has_image", [True, False])
 def test_build_request_keeps_current_identity_at_latest_user_before_inspection(
     monkeypatch, current_has_image

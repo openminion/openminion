@@ -260,8 +260,9 @@ def _validate_artifact_alignment(
         if messages[position].role != "user" or position >= latest_user_position:
             raise _invalid()
         resolved_positions.append(position)
+    reused = len(resolved_positions) != len(set(resolved_positions))
     reordered = resolved_positions != sorted(resolved_positions)
-    if reordered:
+    if reused or reordered:
         raise _invalid()
 
 
