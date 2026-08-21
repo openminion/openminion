@@ -46,6 +46,7 @@ from ..behavior import resolve_behavior_profile
 from .request_compatibility import (
     requires_auto_tool_choice_compat,
     resolve_openai_request_compat,
+    should_retry_tool_transcript_error,
 )
 
 
@@ -59,6 +60,24 @@ def _append_retry_system_instruction(
     result = [dict(item) for item in messages]
     result.append({"role": "system", "content": note})
     return result
+
+
+def _retry_2013(
+    request_compat: Any,
+    retry_used: bool,
+    payload: dict[str, Any],
+    error: LLMCtlError,
+) -> bool:
+    return bool(
+        request_compat.retry_tool_transcript_error_once
+        and not retry_used
+        and any(
+            item.get("role") == "tool"
+            for item in payload.get("messages", [])
+            if isinstance(item, dict)
+        )
+        and should_retry_tool_transcript_error(error)
+    )
 
 
 def _openai_stream_payload(
@@ -202,6 +221,7 @@ class OpenAIProvider:
             payload.get("tool_choice")
         )
         empty_payload_retry_used = False
+        transcript_retry = False
         http_kwargs = {
             "url": f"{base_url}/chat/completions",
             "payload": payload,
@@ -226,6 +246,9 @@ class OpenAIProvider:
                 ):
                     retry_override_id = "tool_choice_retry_to_auto"
                     payload["tool_choice"] = LLM_TOOL_CHOICE_AUTO
+                    continue
+                if _retry_2013(request_compat, transcript_retry, payload, exc):
+                    transcript_retry = True
                     continue
                 raise
 

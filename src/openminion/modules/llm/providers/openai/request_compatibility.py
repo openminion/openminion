@@ -29,6 +29,7 @@ class OpenAIRequestCompatProfile:
     native_tool_only_instruction: str = ""
     enable_structured_tool_envelope_parse: bool = False
     retry_empty_payload_once: bool = False
+    retry_tool_transcript_error_once: bool = False
     empty_payload_retry_instruction: str = ""
 
 
@@ -54,6 +55,7 @@ def resolve_openai_request_compat(
             disable_fallback_instruction=True,
             enable_structured_tool_envelope_parse=True,
             retry_empty_payload_once=True,
+            retry_tool_transcript_error_once=True,
             native_tool_only_instruction=(
                 "Native tool-calling contract:\n"
                 "1. When tools are needed, emit native API tool calls only.\n"
@@ -71,6 +73,22 @@ def resolve_openai_request_compat(
             ),
         )
     return OpenAIRequestCompatProfile()
+
+
+def should_retry_tool_transcript_error(error: Any) -> bool:
+    details = dict(getattr(error, "details", {}) or {})
+    if int(details.get("status_code", 0) or 0) != 400:
+        return False
+    message = str(
+        details.get("upstream_message") or getattr(error, "message", "") or ""
+    ).lower()
+    return "2013" in message and any(
+        marker in message
+        for marker in (
+            "tool call result does not follow tool call",
+            "tool result's tool id",
+        )
+    )
 
 
 def requires_auto_tool_choice_compat(tool_choice: Any) -> bool:
