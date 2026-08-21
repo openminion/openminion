@@ -1431,6 +1431,150 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
             ],
         )
 
+    def test_context_adapter_aligns_independent_recent_turn_ids_by_occurrence(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "same request",
+                            "meta": {"segment_ids": ["turn:gateway-old"]},
+                        },
+                        {
+                            "role": "user",
+                            "content": "same request",
+                            "meta": {"segment_ids": ["turn:gateway-new"]},
+                        },
+                        {
+                            "role": "user",
+                            "content": "current text",
+                            "meta": {"segment_ids": ["turn:gateway-current"]},
+                        },
+                    ],
+                }
+            )
+        )
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "brain-old",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": ["artifact-old"],
+                },
+                {
+                    "turn_id": "brain-new",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": ["artifact-new"],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current text",
+                    "attachments": [],
+                },
+            ]
+        )
+        session_store.get_detached_artifact_refs.return_value = ["artifact-old"]
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(
+            result["turns"],
+            [
+                {
+                    "turn_id": "brain-old",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": [],
+                    "context_segment_id": "gateway-old",
+                },
+                {
+                    "turn_id": "brain-new",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": ["artifact-new"],
+                    "context_segment_id": "gateway-new",
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current text",
+                    "attachments": [],
+                    "context_segment_id": "gateway-current",
+                },
+            ],
+        )
+
+    def test_context_adapter_does_not_alias_multiple_turn_segments(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "historical",
+                            "meta": {
+                                "segment_ids": ["turn:gateway-a", "turn:gateway-b"]
+                            },
+                        },
+                        {
+                            "role": "user",
+                            "content": "current",
+                            "meta": {"segment_ids": ["turn:gateway-current"]},
+                        },
+                    ],
+                }
+            )
+        )
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "brain-historical",
+                    "role": "user",
+                    "content": "historical",
+                    "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                },
+            ]
+        )
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(
+            result["turns"],
+            [
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                    "context_segment_id": "gateway-current",
+                }
+            ],
+        )
+
     def test_context_adapter_filters_detached_refs_under_gateway_lease(self) -> None:
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 

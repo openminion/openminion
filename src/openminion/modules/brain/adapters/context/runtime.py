@@ -35,42 +35,79 @@ def _dict_hint(hints: dict[str, Any], key: str) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _selected_pack_turn_ids(payload: dict[str, Any]) -> set[str]:
-    selected: set[str] = set()
-    for message in payload.get("messages", []):
-        if not isinstance(message, dict):
-            continue
-        meta = message.get("meta")
-        if not isinstance(meta, dict):
-            continue
-        for segment_id in meta.get("segment_ids", []):
-            normalized = str(segment_id or "").strip()
-            if normalized.startswith("turn:") and len(normalized) > 5:
-                selected.add(normalized[5:])
-    return selected
+def _turn_segment_ids(message: dict[str, Any]) -> list[str]:
+    meta = message.get("meta")
+    if not isinstance(meta, dict):
+        return []
+    return [
+        normalized[5:]
+        for item in meta.get("segment_ids", [])
+        if (normalized := str(item or "").strip()).startswith("turn:")
+        and len(normalized) > 5
+    ]
+
+
+def _normalized_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    if role in {"agent", "outbound"}:
+        return "assistant"
+    if role == "inbound":
+        return "user"
+    return role
 
 
 def _selected_pack_turns(*, payload: dict[str, Any], turns: list[Any]) -> list[Any]:
-    selected_ids = _selected_pack_turn_ids(payload)
-    current_turn_id = ""
-    for turn in reversed(turns):
+    messages = [
+        message for message in payload.get("messages", []) if isinstance(message, dict)
+    ]
+    selected: dict[int, dict[str, Any]] = {}
+    unused = {index for index, turn in enumerate(turns) if isinstance(turn, dict)}
+    upper_bound = len(turns)
+    for message in reversed(messages):
+        segment_ids = _turn_segment_ids(message)
+        exact_index = next(
+            (
+                index
+                for index in range(upper_bound - 1, -1, -1)
+                if index in unused
+                and str(turns[index].get("turn_id") or "").strip() in segment_ids
+            ),
+            None,
+        )
+        matched_index = exact_index
+        alias = None
+        if matched_index is None and len(segment_ids) == 1:
+            message_role = _normalized_role(message.get("role"))
+            message_content = str(message.get("content") or "").strip()
+            matched_index = next(
+                (
+                    index
+                    for index in range(upper_bound - 1, -1, -1)
+                    if index in unused
+                    and _normalized_role(turns[index].get("role")) == message_role
+                    and str(turns[index].get("content") or "").strip()
+                    == message_content
+                ),
+                None,
+            )
+            alias = segment_ids[0] if matched_index is not None else None
+        if matched_index is None:
+            continue
+        copied = dict(turns[matched_index])
+        if alias is not None:
+            copied["context_segment_id"] = alias
+        selected[matched_index] = copied
+        unused.remove(matched_index)
+        upper_bound = matched_index
+
+    for index in range(len(turns) - 1, -1, -1):
+        turn = turns[index]
         if not isinstance(turn, dict):
             continue
-        if str(turn.get("role") or "").strip().lower() == "user":
-            current_turn_id = str(turn.get("turn_id") or "").strip()
+        if _normalized_role(turn.get("role")) == "user":
+            selected.setdefault(index, dict(turn))
             break
-    return [
-        turn
-        for turn in turns
-        if isinstance(turn, dict)
-        and (
-            str(turn.get("turn_id") or "").strip() in selected_ids
-            or (
-                bool(current_turn_id)
-                and str(turn.get("turn_id") or "").strip() == current_turn_id
-            )
-        )
-    ]
+    return [selected[index] for index in sorted(selected)]
 
 
 def _without_detached_artifacts(turns: list[Any], detached_refs: set[str]) -> list[Any]:

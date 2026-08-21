@@ -38,13 +38,23 @@ def _turn_fields(turn: Any) -> tuple[str, str, str, list[str]]:
 
 
 def _turn_key(turns: list[Any], index: int) -> str:
+    turn = turns[index]
+    if isinstance(turn, dict):
+        alias = str(turn.get("context_segment_id", "")).strip()
+        if alias and not alias.startswith("turn:"):
+            return alias
     return _turn_fields(turns[index])[0] or f"index:{index}"
 
 
 def _latest_user_turn_id(turns: list[Any]) -> str:
-    for turn in reversed(turns):
+    for index in range(len(turns) - 1, -1, -1):
+        turn = turns[index]
         turn_id, role, _content, _attachments = _turn_fields(turn)
         if role == "user":
+            if isinstance(turn, dict):
+                alias = str(turn.get("context_segment_id", "")).strip()
+                if alias and not alias.startswith("turn:"):
+                    return alias
             return turn_id
     return ""
 
@@ -68,7 +78,7 @@ def _artifact_image_parts_by_turn(
         if index == current_index
         or (
             not selected_turn_ids
-            or _turn_fields(turns[index])[0] in selected_turn_ids
+            or _turn_key(turns, index) in selected_turn_ids
         )
     ]
     selected: dict[str, list[Any]] = {}
@@ -160,6 +170,29 @@ def _message_turn_ids(messages: list[Any]) -> set[str]:
                 if normalized.startswith("turn:") and len(normalized) > 5:
                     selected.add(normalized[5:])
     return selected
+
+
+def _public_segment_ids(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [
+        str(value).strip()
+        for value in values
+        if str(value).strip() and not str(value).strip().startswith("turn:")
+    ]
+
+
+def _remove_internal_turn_segments(messages: list[Any]) -> list[Any]:
+    for message in messages:
+        if isinstance(message.meta, dict) and "segment_ids" in message.meta:
+            message.meta["segment_ids"] = _public_segment_ids(
+                message.meta["segment_ids"]
+            )
+        for part in message.content_parts:
+            segment_ids = getattr(part, "segment_ids", None)
+            if isinstance(segment_ids, list):
+                part.segment_ids = _public_segment_ids(segment_ids)
+    return messages
 
 
 def _merge_selected_turn_images(
@@ -274,7 +307,7 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
             part for part in content_parts if getattr(part, "type", "") == "image"
         ]
         if turn_id and images:
-            images_by_turn[turn_id] = images
+            images_by_turn[_turn_key(turns, turn_index)] = images
         if content_parts:
             turn_messages.append(
                 Message(
@@ -286,10 +319,12 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
 
     if messages:
         if images_by_turn:
-            return _merge_selected_turn_images(
-                messages,
-                images_by_turn,
-                current_turn_id=current_turn_id,
+            return _remove_internal_turn_segments(
+                _merge_selected_turn_images(
+                    messages,
+                    images_by_turn,
+                    current_turn_id=current_turn_id,
+                )
             )
         system_messages = [
             message
@@ -302,8 +337,12 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
             if str(getattr(message, "role", "")).strip().lower() != "system"
         ]
         if turn_messages and len(conversational_messages) <= 1:
-            return [*system_messages, *turn_messages]
-        return _merge_turn_images(messages, turn_messages)
+            return _remove_internal_turn_segments(
+                [*system_messages, *turn_messages]
+            )
+        return _remove_internal_turn_segments(
+            _merge_turn_images(messages, turn_messages)
+        )
 
     if turn_messages:
         return turn_messages

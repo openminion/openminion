@@ -512,6 +512,135 @@ def test_text_only_current_turn_keeps_prior_images_historical(monkeypatch) -> No
     assert inspected == refs[:4]
 
 
+def test_build_request_uses_internal_context_alias_without_exposing_it(
+    monkeypatch,
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    refs = [f"artifact://sha256/{value * 64}" for value in "ab"]
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda _ref: ("image/png", 1),
+    )
+    request = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "same request",
+                    "meta": {"segment_ids": ["turn:gateway-old"]},
+                },
+                {
+                    "role": "user",
+                    "content": "same request",
+                    "meta": {"segment_ids": ["turn:gateway-new"]},
+                },
+                {
+                    "role": "user",
+                    "content": "current",
+                    "meta": {"segment_ids": ["turn:gateway-current"]},
+                },
+            ],
+            "turns": [
+                {
+                    "turn_id": "brain-old",
+                    "context_segment_id": "gateway-old",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": [refs[0]],
+                },
+                {
+                    "turn_id": "brain-new",
+                    "context_segment_id": "gateway-new",
+                    "role": "user",
+                    "content": "same request",
+                    "attachments": [refs[1]],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "context_segment_id": "gateway-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                },
+            ],
+        },
+        schema=type("Decision", (), {}),
+        temperature=0.0,
+    )
+
+    same_messages = [
+        message for message in request.messages if message.content == "same request"
+    ]
+    assert [
+        [
+            part.artifact_ref
+            for part in message.content_parts
+            if getattr(part, "source", "") == "artifact"
+        ]
+        for message in same_messages
+    ] == [[refs[0]], [refs[1]]]
+    provider_visible = str(
+        [message.model_dump(mode="json") for message in request.messages]
+    )
+    assert "context_segment_id" not in provider_visible
+    assert "gateway-old" not in provider_visible
+    assert "gateway-new" not in provider_visible
+
+
+def test_build_request_rejects_raw_prefixed_context_alias(monkeypatch) -> None:
+    _patch_tool_bundle(monkeypatch)
+    ref = "artifact://sha256/" + "a" * 64
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda value: (inspected.append(value) or "image/png", 1),
+    )
+    request = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context={
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "historical",
+                    "meta": {"segment_ids": ["turn:gateway-historical"]},
+                },
+                {
+                    "role": "user",
+                    "content": "current",
+                    "meta": {"segment_ids": ["turn:gateway-current"]},
+                },
+            ],
+            "turns": [
+                {
+                    "turn_id": "brain-historical",
+                    "context_segment_id": "turn:gateway-historical",
+                    "role": "user",
+                    "content": "historical",
+                    "attachments": [ref],
+                },
+                {
+                    "turn_id": "brain-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [],
+                },
+            ],
+        },
+        schema=type("Decision", (), {}),
+        temperature=0.0,
+    )
+
+    assert inspected == []
+    assert all(
+        getattr(part, "source", "") != "artifact"
+        for message in request.messages
+        for part in message.content_parts
+    )
+
+
 def test_initial_brain_user_turn_persists_attachments_once(monkeypatch) -> None:
     from openminion.modules.brain.runner.tick.context import build_tick_run_context
     from openminion.modules.brain.runner.tick import input_processing
