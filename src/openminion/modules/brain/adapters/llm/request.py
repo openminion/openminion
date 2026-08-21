@@ -63,9 +63,7 @@ def _selected_user_indexes(
     turns: list[Any], selected_turn_ids: set[str] | None
 ) -> list[int]:
     indexes = [
-        index
-        for index, turn in enumerate(turns)
-        if _turn_fields(turn)[1] == "user"
+        index for index, turn in enumerate(turns) if _turn_fields(turn)[1] == "user"
     ]
     if not indexes:
         return []
@@ -134,8 +132,7 @@ def _artifact_image_parts_by_turn(
             part, size_bytes = _inspect(ref)
             if (
                 count + 1 > MAX_ARTIFACT_IMAGES_PER_REQUEST
-                or total_bytes + size_bytes
-                > MAX_ARTIFACT_IMAGE_BYTES_PER_REQUEST
+                or total_bytes + size_bytes > MAX_ARTIFACT_IMAGE_BYTES_PER_REQUEST
             ):
                 return selected
             selected.setdefault(_turn_key(turns, index), []).append(part)
@@ -158,9 +155,10 @@ def _merge_turn_images(messages: list[Any], turn_messages: list[Any]) -> list[An
             candidate = messages[index]
             if candidate.role != turn_message.role:
                 continue
-            if str(candidate.content or "").strip() != str(
-                turn_message.content or ""
-            ).strip():
+            if (
+                str(candidate.content or "").strip()
+                != str(turn_message.content or "").strip()
+            ):
                 continue
             candidate.content_parts.extend(images)
             upper_bound = index
@@ -211,24 +209,28 @@ def _validate_artifact_alignment(
         )
 
     selected_indexes = _selected_user_indexes(turns, selected_turn_ids or None)
+    if not selected_indexes:
+        return
+    current_index = selected_indexes[-1]
+    current_key = _turn_key(turns, current_index)
+    if current_key.startswith("index:") or not _turn_fields(turns[current_index])[0]:
+        current_key = ""
     retained: list[tuple[int, str]] = []
-    for index in selected_indexes:
+    for index in selected_indexes[:-1]:
         key = _turn_key(turns, index)
         turn_id = _turn_fields(turns[index])[0]
         if key.startswith("index:") or not turn_id:
             continue
-        if any(
-            is_canonical_artifact_ref(ref)
-            for ref in _turn_fields(turns[index])[3]
-        ):
+        if any(is_canonical_artifact_ref(ref) for ref in _turn_fields(turns[index])[3]):
             retained.append((index, key))
-    keys = [key for _index, key in retained]
-    if not keys:
+    historical_keys = [key for _index, key in retained]
+    alignment_keys = [*historical_keys, *([current_key] if current_key else [])]
+    if not alignment_keys:
         return
-    if len(keys) != len(set(keys)):
+    if len(alignment_keys) != len(set(alignment_keys)):
         raise _invalid()
 
-    positions: dict[str, list[int]] = {key: [] for key in keys}
+    positions: dict[str, list[int]] = {key: [] for key in alignment_keys}
     for position, message in enumerate(messages):
         for key in _message_turn_ids([message]):
             if key in positions:
@@ -241,24 +243,25 @@ def _validate_artifact_alignment(
         ),
         None,
     )
-    current_index = selected_indexes[-1]
-    resolved_positions: list[int] = []
-    for index, key in retained:
-        candidates = positions[key]
-        if len(candidates) > 1:
+    if latest_user_position is None:
+        raise _invalid()
+    if current_key:
+        current_candidates = positions[current_key]
+        if len(current_candidates) > 1:
             raise _invalid()
-        if candidates:
-            position = candidates[0]
-            if messages[position].role != "user":
-                raise _invalid()
-        elif index == current_index and latest_user_position is not None:
-            position = latest_user_position
-        else:
+        if current_candidates and current_candidates[0] != latest_user_position:
+            raise _invalid()
+    resolved_positions: list[int] = []
+    for _index, key in retained:
+        candidates = positions[key]
+        if len(candidates) != 1:
+            raise _invalid()
+        position = candidates[0]
+        if messages[position].role != "user" or position >= latest_user_position:
             raise _invalid()
         resolved_positions.append(position)
-    reused = len(resolved_positions) != len(set(resolved_positions))
     reordered = resolved_positions != sorted(resolved_positions)
-    if reused or reordered:
+    if reordered:
         raise _invalid()
 
 
@@ -405,9 +408,7 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
             if str(getattr(message, "role", "")).strip().lower() != "system"
         ]
         if turn_messages and len(conversational_messages) <= 1:
-            return _remove_internal_turn_segments(
-                [*system_messages, *turn_messages]
-            )
+            return _remove_internal_turn_segments([*system_messages, *turn_messages])
         return _remove_internal_turn_segments(
             _merge_turn_images(messages, turn_messages)
         )

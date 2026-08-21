@@ -267,10 +267,7 @@ def test_build_request_selects_current_then_newest_historical_artifacts(
         context={
             "messages": [
                 {"role": "system", "content": "sys"},
-                *[
-                    {"role": turn["role"], "content": turn["content"]}
-                    for turn in turns
-                ],
+                *[{"role": turn["role"], "content": turn["content"]} for turn in turns],
             ],
             "turns": turns,
             "hints": {"user_input": "current"},
@@ -311,9 +308,7 @@ def test_build_request_rejects_unavailable_artifact_before_provider(
             model="fake-model",
             purpose="decide",
             context={
-                "turns": [
-                    {"role": "user", "content": "inspect", "attachments": [ref]}
-                ],
+                "turns": [{"role": "user", "content": "inspect", "attachments": [ref]}],
                 "hints": {"user_input": "inspect"},
             },
             schema=type("Decision", (), {}),
@@ -786,6 +781,76 @@ def test_build_request_rejects_reordered_attachment_alignment(monkeypatch) -> No
     assert inspected == []
 
 
+@pytest.mark.parametrize("current_has_image", [True, False])
+def test_build_request_keeps_current_identity_at_latest_user_before_inspection(
+    monkeypatch, current_has_image
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: (inspected.append(ref) or "image/png", 1),
+    )
+    current_ref = "artifact://sha256/" + "2" * 64
+    history_ref = "artifact://sha256/" + "3" * 64
+    if current_has_image:
+        messages = [
+            {
+                "role": "user",
+                "content": "earlier claimant",
+                "meta": {"segment_ids": ["turn:current"]},
+            },
+            {"role": "user", "content": "actual current"},
+        ]
+        turns = [
+            {
+                "turn_id": "current",
+                "role": "user",
+                "content": "actual current",
+                "attachments": [current_ref],
+            }
+        ]
+    else:
+        messages = [
+            {
+                "role": "user",
+                "content": "current",
+                "meta": {"segment_ids": ["turn:current"]},
+            },
+            {
+                "role": "user",
+                "content": "misordered history",
+                "meta": {"segment_ids": ["turn:history"]},
+            },
+        ]
+        turns = [
+            {
+                "turn_id": "history",
+                "role": "user",
+                "content": "misordered history",
+                "attachments": [history_ref],
+            },
+            {
+                "turn_id": "current",
+                "role": "user",
+                "content": "current",
+                "attachments": [],
+            },
+        ]
+
+    with pytest.raises(LLMCtlError, match="could not be aligned") as exc_info:
+        _build_request(
+            model="fake-model",
+            purpose="decide",
+            context={"messages": messages, "turns": turns},
+            schema=type("Decision", (), {}),
+            temperature=0.0,
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENT"
+    assert inspected == []
+
+
 def test_build_request_rejects_raw_prefixed_context_alias(monkeypatch) -> None:
     _patch_tool_bundle(monkeypatch)
     ref = "artifact://sha256/" + "a" * 64
@@ -863,7 +928,9 @@ def test_initial_brain_user_turn_persists_attachments_once(monkeypatch) -> None:
         capability_category=None,
     )
     monkeypatch.setattr(input_processing, "_interpret_user_input", lambda **_kw: None)
-    monkeypatch.setattr(input_processing, "set_status_unchecked", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        input_processing, "set_status_unchecked", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         input_processing,
         "_runner_delegate",
