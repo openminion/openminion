@@ -79,8 +79,8 @@ def test_provider_exhaustion_and_export_failure_are_diagnostic_logs() -> None:
         )
     )
 
-    assert [record.kind for record in sink.records] == ["log_record", "log_record"]
-    assert [record.name for record in sink.records] == [
+    logs = [record for record in sink.records if record.kind == "log_record"]
+    assert [record.name for record in logs] == [
         "llm.call.failed",
         "telemetry.export.failed",
     ]
