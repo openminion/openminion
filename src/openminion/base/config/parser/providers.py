@@ -30,6 +30,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
             "provider_identity": (_KIND_DICT_STR, {}),
             "timeout_seconds": (_KIND_INT, 60),
             "http_connection_reuse_enabled": (_KIND_BOOL, True),
+            "enable_vision_input": (_KIND_BOOL, False),
             "temperature": (_KIND_FLOAT, 0.2),
             "tool_call_strategy": (_KIND_STR, "hybrid"),
         },
