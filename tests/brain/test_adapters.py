@@ -1372,6 +1372,57 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         mock_svc.build_pack.assert_called_once()
         session_store.list_turns.assert_called_once_with("s1")
 
+    def test_context_adapter_keeps_current_attachment_without_turn_segment(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "current image",
+                            "meta": {"segment_ids": ["turn_input"]},
+                        }
+                    ],
+                }
+            )
+        )
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "t-old",
+                    "role": "user",
+                    "content": "older image",
+                    "attachments": ["must-not-cross"],
+                },
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current image",
+                    "attachments": ["artifact-ref"],
+                },
+            ]
+        )
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(
+            result["turns"],
+            [
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current image",
+                    "attachments": ["artifact-ref"],
+                }
+            ],
+        )
+
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,
     ) -> None:

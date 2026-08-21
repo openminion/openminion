@@ -4,7 +4,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.modules.llm.schemas import LLMResponse, UsageInfo
+from openminion.modules.llm.schemas import (
+    ImageContentPart,
+    LLMResponse,
+    Message,
+    TextContentPart,
+    UsageInfo,
+)
 from openminion.modules.llm.providers.transport.trace import (
     trace_http_json_request,
     trace_http_json_response,
@@ -255,6 +261,45 @@ def test_llm_wrapper_non_schema_history_is_preserved() -> None:
         "assistant",
     ]
     assert [item.content for item in provider.last_request.history] == ["hi", "hello"]
+
+
+def test_llm_wrapper_preserves_current_and_history_content_parts() -> None:
+    provider = FakeProvider()
+    wrapper = OpenMinionLLMClient(provider)
+    prior_parts = [
+        TextContentPart(text="prior"),
+        ImageContentPart(
+            source="url",
+            url="https://fixture.invalid/prior.png",
+            mime_type="image/png",
+        ),
+    ]
+    current_parts = [
+        TextContentPart(text="current"),
+        ImageContentPart(
+            source="url",
+            url="https://fixture.invalid/current.png",
+            mime_type="image/png",
+        ),
+    ]
+    request = SimpleNamespace(
+        messages=[
+            Message(role="system", content="sys"),
+            Message(role="user", content="prior", content_parts=prior_parts),
+            Message(role="assistant", content="ack"),
+            Message(role="user", content="current", content_parts=current_parts),
+        ],
+        tools=[],
+        metadata={"purpose": "decide"},
+        tool_choice="auto",
+        model="fake-model",
+    )
+
+    wrapper.call(request)
+
+    assert provider.last_request is not None
+    assert provider.last_request.user_content_parts == current_parts
+    assert provider.last_request.history[0].content_parts == prior_parts
 
 
 def test_llm_wrapper_traces_requests_and_responses_under_home_root(

@@ -49,15 +49,40 @@ def _selected_pack_turn_ids(payload: dict[str, Any]) -> set[str]:
     return selected
 
 
+def _current_pack_user_text(payload: dict[str, Any]) -> str:
+    for message in reversed(payload.get("messages", [])):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role") or "").strip().lower() != "user":
+            continue
+        return str(message.get("content") or "").strip()
+    return ""
+
+
 def _selected_pack_turns(*, payload: dict[str, Any], turns: list[Any]) -> list[Any]:
     selected_ids = _selected_pack_turn_ids(payload)
-    if not selected_ids:
-        return []
+    current_user_text = _current_pack_user_text(payload)
+    current_turn_id = ""
+    if current_user_text:
+        for turn in reversed(turns):
+            if not isinstance(turn, dict):
+                continue
+            role = str(turn.get("role") or "").strip().lower()
+            content = str(turn.get("content", turn.get("text", "")) or "").strip()
+            if role == "user" and content == current_user_text:
+                current_turn_id = str(turn.get("turn_id") or "").strip()
+                break
     return [
         turn
         for turn in turns
         if isinstance(turn, dict)
-        and str(turn.get("turn_id") or "").strip() in selected_ids
+        and (
+            str(turn.get("turn_id") or "").strip() in selected_ids
+            or (
+                bool(current_turn_id)
+                and str(turn.get("turn_id") or "").strip() == current_turn_id
+            )
+        )
     ]
 
 

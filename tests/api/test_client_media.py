@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import socket
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,7 @@ from openminion.api.server.client_auth import ClientAuthService, ClientIdentity
 from openminion.api.server.client_media import (
     ClientMediaCoordinator,
     ClientMediaError,
+    MAX_ACTIVE_PER_CLIENT,
     MAX_ACTIVE_GLOBAL,
     MAX_PENDING_COUNT,
     handle_media_http,
@@ -619,10 +621,14 @@ def test_stream_unbinds_media_for_unexpected_pre_sse_failures(failure: str) -> N
     assert calls == expected[failure]
 
 
-def _desktop_turn_body(attachments: list[str]) -> dict[str, Any]:
+def _desktop_turn_body(
+    attachments: list[str],
+    *,
+    session_id: str = "session-1",
+) -> dict[str, Any]:
     return {
         "trace_id": "11111111-1111-4111-8111-111111111111",
-        "session_id": "session-1",
+        "session_id": session_id,
         "agent_id": "openminion",
         "input_text": "hello",
         "mode": "oneshot",
@@ -643,12 +649,16 @@ def loopback_media(
     data_root = tmp_path / "data"
     config_path = home_root / "config.json"
     config = OpenMinionConfig()
-    _csc_install_default_agent(config, provider="echo")  # type: ignore[attr-defined]
+    _csc_install_default_agent(config, provider="openai")  # type: ignore[attr-defined]
     config.runtime.ipc_token = "master-token"
     config.storage.path = str(data_root / "state" / "api.db")
+    config.providers.openai.api_key = "synthetic-test-key"
+    config.providers.openai.base_url = "https://fixture.invalid/v1"
     home_root.mkdir(parents=True)
     monkeypatch.setenv("OPENMINION_HOME", str(home_root))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("OPENMINION_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(data_root / "runtime"))
     save_config(config, str(config_path))
     server = build_api_server(
         str(config_path),
@@ -657,6 +667,9 @@ def loopback_media(
         home_root=home_root,
         data_root=data_root,
     )
+    server._runtime.llm_runtime.client.llmctl.config.providers[
+        "openai"
+    ].enable_vision_input = True
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
@@ -699,6 +712,9 @@ def loopback_media(
             server=server,
             session_id=session_id,
             token=token,
+            home_root=home_root,
+            data_root=data_root,
+            config_path=config_path,
         )
     finally:
         connection.close()
@@ -959,11 +975,421 @@ def test_loopback_media_rejects_queries_headers_and_raw_framing(
     assert media_owner._records == {}
 
 
-@pytest.mark.skip(reason="ODM-04 owns the complete provider payload fixture")
-def test_desktop_image_media_reaches_provider_payload() -> None:
-    pass
+def test_desktop_image_media_reaches_provider_payload(
+    loopback_media: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, Any]] = []
+
+    def fake_http_post(**kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs["payload"])
+        return {
+            "model": "gpt-4.1-mini",
+            "choices": [{"finish_reason": "stop", "message": {"content": "seen"}}],
+            "usage": {
+                "prompt_tokens": 3,
+                "completion_tokens": 1,
+                "total_tokens": 4,
+            },
+        }
+
+    monkeypatch.setattr(
+        "openminion.modules.llm.providers.openai.adapter._http_json_post",
+        fake_http_post,
+    )
+    connection = HTTPConnection("127.0.0.1", loopback_media.port, timeout=75)
+    try:
+        connection.request(
+            "POST",
+            f"/v1/client/sessions/{loopback_media.session_id}/media",
+            body=_PNG,
+            headers={
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "X-Request-ID": "upload-provider-fixture",
+                "X-OpenMinion-Media-Name": quote("pixel.png"),
+                "Content-Type": "image/png",
+                "Content-Length": str(len(_PNG)),
+            },
+        )
+        response = connection.getresponse()
+        uploaded = json.loads(response.read())
+        assert response.status == 201
+        media_id = str(uploaded["media"]["media_id"])
+        assert "artifact://" not in json.dumps(uploaded)
+
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", loopback_media.port, timeout=75)
+        connection.request(
+            "GET",
+            f"/v1/client/sessions/{loopback_media.session_id}/media/{media_id}",
+            headers={"X-OpenMinion-Client-Token": loopback_media.token},
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert response.getheader("Content-Type") == "image/png"
+        assert response.read() == _PNG
+
+        body = _desktop_turn_body(
+            [media_id],
+            session_id=loopback_media.session_id,
+        )
+        encoded = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        connection.close()
+        connection = HTTPConnection("127.0.0.1", loopback_media.port, timeout=75)
+        connection.request(
+            "POST",
+            "/v1/turn/stream",
+            body=encoded,
+            headers={
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "X-Request-ID": body["trace_id"],
+                "Content-Type": "application/json",
+                "Content-Length": str(len(encoded)),
+                "Accept": "text/event-stream",
+            },
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        stream_lines: list[str] = []
+        event_name = ""
+        while True:
+            raw = response.readline()
+            assert raw, "stream ended before the done event"
+            line = raw.decode("utf-8").rstrip("\n")
+            stream_lines.append(line)
+            if line.startswith("event: "):
+                event_name = line[7:]
+            elif line.startswith("data: ") and event_name == "done":
+                break
+        response.close()
+
+        assert captured
+        image_urls = [
+            part["image_url"]["url"]
+            for payload in captured
+            for message in payload.get("messages", [])
+            for part in (
+                message.get("content", [])
+                if isinstance(message.get("content"), list)
+                else []
+            )
+            if part.get("type") == "image_url"
+        ]
+        assert len(image_urls) == 1
+        prefix, encoded_image = image_urls[0].split(",", 1)
+        assert prefix == "data:image/png;base64"
+        assert base64.b64decode(encoded_image) == _PNG
+
+        artifact_ref = loopback_media.server._client_state[1]._records[
+            media_id
+        ].artifact_ref
+        session_api = loopback_media.server._runtime.gateway._agent._runner.session_api
+        brain_session_ids = [
+            str(item["session_id"])
+            for item in session_api.store.list_sessions(limit=100)
+            if str(item["session_id"]).startswith(
+                f"{loopback_media.session_id}::conv:"
+            )
+        ]
+        assert len(brain_session_ids) == 1
+        turns = session_api.list_turns(brain_session_ids[0])
+        user_turns = [turn for turn in turns if turn.get("role") == "user"]
+        assert len(user_turns) == 1
+        assert user_turns[0]["attachments"] == [artifact_ref]
+        safe_output = json.dumps(uploaded) + "\n" + "\n".join(stream_lines)
+        assert artifact_ref not in safe_output
+        assert str(loopback_media.home_root) not in safe_output
+        assert str(loopback_media.data_root) not in safe_output
+        assert str(loopback_media.config_path) not in safe_output
+    finally:
+        connection.close()
 
 
-@pytest.mark.skip(reason="ODM-04 owns the complete fail-closed integration matrix")
-def test_desktop_media_fail_closed_matrix() -> None:
-    pass
+def test_desktop_media_fail_closed_matrix(
+    loopback_media: SimpleNamespace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_payloads: list[dict[str, Any]] = []
+
+    def fail_if_provider_called(**kwargs: Any) -> dict[str, Any]:
+        provider_payloads.append(kwargs["payload"])
+        raise AssertionError("fail-closed media cases must not reach the provider")
+
+    monkeypatch.setattr(
+        "openminion.modules.llm.providers.openai.adapter._http_json_post",
+        fail_if_provider_called,
+    )
+
+    upload_headers = (
+        "X-Request-ID: matrix-upload",
+        "X-OpenMinion-Media-Name: image.png",
+        "Content-Type: image/png",
+    )
+    raw_cases = (
+        ((*upload_headers,), b"", False, 411, "length_required"),
+        (
+            (*upload_headers, "Transfer-Encoding: chunked"),
+            b"0\r\n\r\n",
+            False,
+            400,
+            "invalid_request",
+        ),
+        (
+            (
+                "X-Request-ID: matrix-spoof",
+                "X-OpenMinion-Media-Name: image.jpg",
+                "Content-Type: image/jpeg",
+                f"Content-Length: {len(_PNG)}",
+            ),
+            _PNG,
+            False,
+            415,
+            "unsupported_media_type",
+        ),
+        (
+            (*upload_headers, f"Content-Length: {10 * 1024 * 1024 + 1}"),
+            b"",
+            False,
+            413,
+            "media_too_large",
+        ),
+        (
+            (*upload_headers, f"Content-Length: {len(_PNG) + 1}"),
+            _PNG,
+            True,
+            400,
+            "invalid_request",
+        ),
+    )
+    for headers, body, shutdown_write, expected_status, expected_code in raw_cases:
+        status, response_headers, payload = _raw_media_request(
+            loopback_media,
+            headers=headers,
+            body=body,
+            shutdown_write=shutdown_write,
+        )
+        assert (status, payload["error"]["code"]) == (
+            expected_status,
+            expected_code,
+        )
+        assert response_headers["connection"] == "close"
+
+    connection = HTTPConnection("127.0.0.1", loopback_media.port, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            f"/v1/client/sessions/{loopback_media.session_id}/media",
+            body=b"not an image",
+            headers={
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "X-Request-ID": "matrix-text",
+                "X-OpenMinion-Media-Name": quote("notes.txt"),
+                "Content-Type": "text/plain",
+                "Content-Length": str(len(b"not an image")),
+            },
+        )
+        response = connection.getresponse()
+        text_upload = json.loads(response.read())
+        assert response.status == 201
+        assert text_upload["media"]["turn_compatible"] is False
+        text_media_id = str(text_upload["media"]["media_id"])
+
+        body = _desktop_turn_body(
+            [text_media_id],
+            session_id=loopback_media.session_id,
+        )
+        status, rejected = _json_request(
+            connection,
+            "POST",
+            "/v1/turn/stream",
+            {
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "X-Request-ID": body["trace_id"],
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            body,
+        )
+        assert (status, rejected["error"]["code"]) == (
+            415,
+            "unsupported_media_type",
+        )
+
+        connection.request(
+            "POST",
+            f"/v1/client/sessions/{loopback_media.session_id}/media",
+            body=_PNG,
+            headers={
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "X-Request-ID": "matrix-release",
+                "X-OpenMinion-Media-Name": quote("release.png"),
+                "Content-Type": "image/png",
+                "Content-Length": str(len(_PNG)),
+            },
+        )
+        response = connection.getresponse()
+        release_upload = json.loads(response.read())
+        assert response.status == 201
+        release_media_id = str(release_upload["media"]["media_id"])
+        status, _released = _json_request(
+            connection,
+            "DELETE",
+            f"/v1/client/sessions/{loopback_media.session_id}/media/{release_media_id}",
+            {"X-OpenMinion-Client-Token": loopback_media.token},
+            None,
+        )
+        assert status == 200
+        body = _desktop_turn_body(
+            [release_media_id],
+            session_id=loopback_media.session_id,
+        )
+        status, released_rejected = _json_request(
+            connection,
+            "POST",
+            "/v1/turn/stream",
+            {
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "X-Request-ID": body["trace_id"],
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            body,
+        )
+        assert (status, released_rejected["error"]["code"]) == (
+            404,
+            "media_not_found",
+        )
+    finally:
+        connection.close()
+
+    now = datetime(2026, 8, 20, tzinfo=UTC)
+    clock = [now]
+    service = _service(tmp_path / "matrix-owner")
+    identity = _identity(service)
+    other_identity = _identity(service)
+    sessions = _Sessions()
+    artifacts = _ArtifactCtl()
+    owner = ClientMediaCoordinator(
+        client_auth=service,
+        runtime=SimpleNamespace(sessions=sessions),
+        artifactctl=artifacts,
+        now=lambda: clock[0],
+    )
+
+    pending = [_upload(owner, identity) for _ in range(MAX_PENDING_COUNT)]
+    with pytest.raises(ClientMediaError) as pending_full:
+        owner.begin_upload(identity, "session-1", len(_PNG))
+    assert pending_full.value.code == "media_backpressure"
+    for record in pending:
+        owner.release(identity, "session-1", record.media_id)
+
+    wrong_owner = _upload(owner, identity)
+    with pytest.raises(ClientMediaError) as wrong_client:
+        owner.open_media(other_identity, "session-1", wrong_owner.media_id)
+    assert wrong_client.value.code == "media_not_found"
+    with pytest.raises(ClientMediaError) as wrong_session:
+        owner.open_media(identity, "session-2", wrong_owner.media_id)
+    assert wrong_session.value.code == "media_not_found"
+
+    expiring = _upload(owner, identity)
+    clock[0] += timedelta(minutes=16)
+    with pytest.raises(ClientMediaError) as expired:
+        owner.open_media(identity, "session-1", expiring.media_id)
+    assert expired.value.code == "media_expired"
+    clock[0] = now
+
+    retryable = _upload(owner, identity)
+    owner.resolve_for_turn(identity, "session-1", "trace-failed", (retryable.media_id,))
+    owner.unbind_before_start(identity, "session-1", "trace-failed")
+    owner.resolve_for_turn(identity, "session-1", "trace-retry", (retryable.media_id,))
+    owner.complete_trace(identity, "session-1", "trace-retry")
+    owner.release(identity, "session-1", retryable.media_id)
+
+    active: list[str] = []
+    for index in range(MAX_ACTIVE_PER_CLIENT):
+        record = _upload(owner, identity)
+        trace_id = f"active-{index}"
+        owner.resolve_for_turn(identity, "session-1", trace_id, (record.media_id,))
+        active.append(trace_id)
+    overflow = _upload(owner, identity)
+    with pytest.raises(ClientMediaError) as active_full:
+        owner.resolve_for_turn(
+            identity,
+            "session-1",
+            "active-overflow",
+            (overflow.media_id,),
+        )
+    assert active_full.value.code == "media_backpressure"
+    for trace_id in active:
+        owner.complete_trace(identity, "session-1", trace_id)
+    owner.release(identity, "session-1", overflow.media_id)
+
+    restart_record = _upload(owner, identity)
+    restarted = ClientMediaCoordinator(
+        client_auth=service,
+        runtime=SimpleNamespace(sessions=sessions),
+        artifactctl=artifacts,
+    )
+    with pytest.raises(ClientMediaError) as restart_lost:
+        restarted.open_media(identity, "session-1", restart_record.media_id)
+    assert restart_lost.value.code == "media_not_found"
+
+    revoked = _upload(owner, identity)
+    owner.revoke_client(identity)
+    with pytest.raises(ClientMediaError) as revoke_hidden:
+        owner.open_media(identity, "session-1", revoked.media_id)
+    assert revoke_hidden.value.code == "forbidden"
+
+    close_service = _service(tmp_path / "matrix-close")
+    close_identity = _identity(close_service)
+    close_sessions = _Sessions()
+    close_owner = ClientMediaCoordinator(
+        client_auth=close_service,
+        runtime=SimpleNamespace(sessions=close_sessions),
+        artifactctl=_ArtifactCtl(),
+    )
+    closing = _upload(close_owner, close_identity)
+    finish_close = close_owner.cancel_session("session-1", "session_closed")
+    with pytest.raises(ClientMediaError) as close_hidden:
+        close_owner.open_media(close_identity, "session-1", closing.media_id)
+    assert close_hidden.value.code == "session_closed"
+    finish_close()
+    close_owner.close()
+    owner.close()
+    restarted.close()
+
+    monkeypatch.setattr(
+        "openminion.api.server.client_media.UPLOAD_DEADLINE_SECONDS", 0.05
+    )
+    status, response_headers, stalled = _raw_media_request(
+        loopback_media,
+        headers=(*upload_headers, f"Content-Length: {len(_PNG)}"),
+    )
+    assert (status, stalled["error"]["code"]) == (408, "media_upload_timeout")
+    assert response_headers["connection"] == "close"
+    assert loopback_media.server._client_state[1]._reservations == {}
+
+    close_connection = HTTPConnection("127.0.0.1", loopback_media.port, timeout=5)
+    try:
+        status, closed = _json_request(
+            close_connection,
+            "DELETE",
+            f"/v1/client/sessions/{loopback_media.session_id}",
+            {
+                "X-OpenMinion-Client-Token": loopback_media.token,
+                "Content-Type": "application/json",
+            },
+            {"reason": "matrix complete"},
+        )
+    finally:
+        close_connection.close()
+    assert status == 200 and closed["session"]["status"] == "closed"
+    assert provider_payloads == []
+    assert all(
+        path.is_relative_to(loopback_media.data_root)
+        for path in loopback_media.data_root.rglob("*")
+    )
+    assert "artifact://" not in json.dumps(
+        [rejected, released_rejected, stalled, closed]
+    )
