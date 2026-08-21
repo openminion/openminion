@@ -867,7 +867,8 @@ class ResearchMode(SimpleCheckpointMixin):
             "usable synthesized answer from the collected tool evidence.\n\n"
             "Next steps:\n- Retry with a narrower research scope.\n"
             "- Lower the number of requested comparison dimensions.\n"
-            "- Ask for one source family or one decision at a time."
+            "- Ask for one source family or one decision at a time.\n\n"
+            "Continue in a new turn to resume."
         )
 
     def _build_pause_response_message(

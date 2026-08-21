@@ -15,9 +15,6 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
-from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
-    mutating_file_evidence_fallback_text,
-)
 from openminion.modules.brain.schemas.base import new_uuid
 from openminion.modules.brain.schemas.state.action import ActionResult
 
@@ -171,16 +168,6 @@ def _exit_final_text(
     return ExecutionResult.from_step_output(step_output, judgment=judgment)
 
 
-def _mutating_file_evidence_final_text(runner: Any) -> str:
-    if bool(
-        runner._loop_state.scratchpad.get("coding.final_answer_reserve_used", False)
-    ):
-        return ""
-    if not runner._has_successful_mutating_file_result():
-        return ""
-    return mutating_file_evidence_fallback_text(runner._loop_state)
-
-
 def _exit_budget_exhausted(
     runner: Any,
     ctx: ExecutionContext,
@@ -189,20 +176,10 @@ def _exit_budget_exhausted(
     *,
     build_blocked_result: BuildBlockedResult,
 ) -> ExecutionResult:
-    fallback_text = _mutating_file_evidence_final_text(runner)
-    if fallback_text:
-        return _exit_final_text(
-            runner,
-            ctx,
-            loop,
-            fallback_text,
-            allowed_tools,
-            build_blocked_result=build_blocked_result,
-        )
     telemetry_payload = loop.telemetry_payload(allowed_tools)
     msg = (
         "[act:coding] budget exhausted before a final answer. "
-        "Consider narrowing the scope or continuing in a follow-up turn."
+        "Continue in a new turn to resume."
     )
     return _exit_blocked_with_closure(
         runner,
@@ -227,16 +204,6 @@ def _exit_blocked_with_closure(
     allowed_tools: frozenset[str],
     build_blocked_result: BuildBlockedResult,
 ) -> ExecutionResult:
-    fallback_text = _mutating_file_evidence_final_text(runner)
-    if fallback_text:
-        return _exit_final_text(
-            runner,
-            ctx,
-            loop,
-            fallback_text,
-            allowed_tools,
-            build_blocked_result=build_blocked_result,
-        )
     blocked_action = build_blocked_result(message, code).model_copy(
         update={"outputs": telemetry_payload},
         deep=True,

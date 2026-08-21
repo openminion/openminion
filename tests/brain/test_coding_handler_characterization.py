@@ -698,6 +698,50 @@ class TestCodingVerificationReserve:
         assert result.status == "waiting_user"
         assert "budget exhausted" in str(result.message or "")
 
+    def test_budget_exhausted_after_file_write_remains_resumable(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "pkg/main.py"},
+                }
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert "Continue in a new turn to resume." in str(result.message or "")
+        assert "successful file writes were closed" not in str(result.message or "")
+
     def test_final_answer_reserve_budget_exhausted_does_not_salvage_missing_validation(
         self,
     ) -> None:
@@ -1535,7 +1579,7 @@ class TestCodingVerificationReserve:
         assert runner._loop_state.direct_tool_turn is None
         assert not emitted
 
-    def test_budget_exhausted_after_file_write_returns_labeled_evidence_closeout(
+    def test_budget_exhausted_after_file_write_stays_resumable(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -1584,11 +1628,11 @@ class TestCodingVerificationReserve:
             allowed_tools=outcome.allowed_tools,
         )
 
-        assert result.status == "done"
+        assert result.status == "waiting_user"
         message = str(result.message or "").lower()
-        assert message.startswith("result:")
-        assert "validation:" not in message
-        assert "wc_cli.py" in result.message
+        assert "budget exhausted" in message
+        assert "continue in a new turn to resume" in message
+        assert "result:" not in message
 
     def test_final_text_allows_read_only_plan_without_write(
         self,

@@ -668,7 +668,6 @@ def decide(
 
     reconsider_clarification = False
     clarification_reconsidered = False
-    empty_payload_retry_used = False
     for attempt in range(max_retries + 1):
         logger.emit(
             "llm.identity_audit",
@@ -760,11 +759,10 @@ def decide(
         if not _is_empty_entry_response(response):
             break
         if getattr(response, "empty_payload_recovered", False) is True:
-            if not empty_payload_retry_used and attempt < max_retries:
-                empty_payload_retry_used = True
+            if attempt < max_retries:
                 continue
             raise ProviderError(
-                "Provider returned no usable entry response after one recovery retry",
+                "Provider returned no usable entry response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
         if (
