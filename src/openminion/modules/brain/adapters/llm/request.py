@@ -16,12 +16,16 @@ from openminion.modules.tool.schema_service import ToolSchemaService
 
 _TOOL_SCHEMA_SERVICE = ToolSchemaService()
 _MessageRole = Literal["system", "user", "assistant", "tool"]
-def _turn_fields(turn: Any) -> tuple[str, str, list[str]]:
+
+
+def _turn_fields(turn: Any) -> tuple[str, str, str, list[str]]:
     if isinstance(turn, dict):
+        turn_id = str(turn.get("turn_id", "")).strip()
         role = str(turn.get("role", "")).strip().lower()
         content = str(turn.get("content", turn.get("text", ""))).strip()
         raw_attachments = turn.get("attachments", [])
     else:
+        turn_id = str(getattr(turn, "turn_id", "")).strip()
         role = str(getattr(turn, "role", "")).strip().lower()
         content = str(getattr(turn, "content", "")).strip()
         raw_attachments = getattr(turn, "attachments", [])
@@ -30,19 +34,31 @@ def _turn_fields(turn: Any) -> tuple[str, str, list[str]]:
         if isinstance(raw_attachments, list)
         else []
     )
-    return role, content, attachments
+    return turn_id, role, content, attachments
 
 
-def _artifact_image_parts_by_turn(turns: list[Any]) -> dict[int, list[Any]]:
+def _turn_key(turns: list[Any], index: int) -> str:
+    return _turn_fields(turns[index])[0] or f"index:{index}"
+
+
+def _artifact_image_parts_by_turn(
+    turns: list[Any], *, selected_turn_ids: set[str] | None = None
+) -> dict[str, list[Any]]:
     from openminion.modules.llm.schemas import ImageContentPart
 
     user_indexes = [
-        index for index, turn in enumerate(turns) if _turn_fields(turn)[0] == "user"
+        index
+        for index, turn in enumerate(turns)
+        if _turn_fields(turn)[1] == "user"
+        and (
+            not selected_turn_ids
+            or _turn_fields(turn)[0] in selected_turn_ids
+        )
     ]
     if not user_indexes:
         return {}
     current_index = user_indexes[-1]
-    selected: dict[int, list[Any]] = {}
+    selected: dict[str, list[Any]] = {}
     count = 0
     total_bytes = 0
 
@@ -64,19 +80,19 @@ def _artifact_image_parts_by_turn(turns: list[Any]) -> dict[int, list[Any]]:
 
     current_refs = [
         ref
-        for ref in _turn_fields(turns[current_index])[2]
+        for ref in _turn_fields(turns[current_index])[3]
         if is_canonical_artifact_ref(ref)
     ]
     for ref in current_refs:
         part, size_bytes = _inspect(ref)
-        selected.setdefault(current_index, []).append(part)
+        selected.setdefault(_turn_key(turns, current_index), []).append(part)
         count += 1
         total_bytes += size_bytes
 
     for index in reversed(user_indexes[:-1]):
         refs = [
             ref
-            for ref in _turn_fields(turns[index])[2]
+            for ref in _turn_fields(turns[index])[3]
             if is_canonical_artifact_ref(ref)
         ]
         for ref in refs:
@@ -92,7 +108,7 @@ def _artifact_image_parts_by_turn(turns: list[Any]) -> dict[int, list[Any]]:
                 > MAX_ARTIFACT_IMAGE_BYTES_PER_REQUEST
             ):
                 return selected
-            selected.setdefault(index, []).append(part)
+            selected.setdefault(_turn_key(turns, index), []).append(part)
             count += 1
             total_bytes += size_bytes
     return selected
@@ -122,52 +138,40 @@ def _merge_turn_images(messages: list[Any], turn_messages: list[Any]) -> list[An
     return messages
 
 
+def _message_turn_ids(messages: list[Any]) -> set[str]:
+    selected: set[str] = set()
+    for message in messages:
+        for part in message.content_parts:
+            for segment_id in getattr(part, "segment_ids", []):
+                normalized = str(segment_id or "").strip()
+                if normalized.startswith("turn:") and len(normalized) > 5:
+                    selected.add(normalized[5:])
+    return selected
+
+
+def _merge_selected_turn_images(
+    messages: list[Any], images_by_turn: dict[str, list[Any]]
+) -> list[Any]:
+    matched: set[str] = set()
+    for message in messages:
+        turn_ids = _message_turn_ids([message])
+        for turn_id in turn_ids:
+            images = images_by_turn.get(turn_id, [])
+            if images:
+                message.content_parts.extend(images)
+                matched.add(turn_id)
+    if set(images_by_turn) - matched:
+        raise LLMCtlError(
+            "INVALID_ARGUMENT", "Artifact image context could not be aligned"
+        )
+    return messages
+
+
 def _messages_from_context(context: dict[str, Any]) -> list[Any]:
     from openminion.modules.llm.schemas import Message
     from openminion.modules.llm.schemas import ImageContentPart, TextContentPart
 
     turns = context.get("turns", []) if isinstance(context.get("turns"), list) else []
-    artifact_parts = _artifact_image_parts_by_turn(turns)
-    turn_messages: list[Any] = []
-    for turn_index, turn in enumerate(turns):
-        role, content, attachments = _turn_fields(turn)
-        if role == "agent":
-            role = "assistant"
-        if role not in {"system", "user", "assistant", "tool"}:
-            role = "user"
-        content_parts: list[Any] = []
-        if content:
-            content_parts.append(
-                TextContentPart(
-                    text=content,
-                    block_kind="turn_input",
-                    segment_ids=[],
-                )
-            )
-        for attachment in attachments:
-            if is_canonical_artifact_ref(attachment):
-                continue
-            mime = str(mimetypes.guess_type(attachment)[0] or "").strip().lower()
-            if not mime.startswith("image/"):
-                continue
-            content_parts.append(
-                ImageContentPart(
-                    source="path",
-                    path=attachment,
-                    mime_type=mime,
-                    block_kind="turn_input",
-                )
-            )
-        content_parts.extend(artifact_parts.get(turn_index, []))
-        if content_parts:
-            turn_messages.append(
-                Message(
-                    role=cast(_MessageRole, role),
-                    content=content,
-                    content_parts=content_parts,
-                )
-            )
-
     pack_messages = context.get("messages", [])
     normalized_pack_messages: list[Any] = []
     for message in pack_messages:
@@ -202,7 +206,60 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
         normalized_pack_messages.append(raw_message)
 
     messages = [Message.model_validate(m) for m in normalized_pack_messages]
+    selected_turn_ids = _message_turn_ids(messages)
+    artifact_parts = _artifact_image_parts_by_turn(
+        turns,
+        selected_turn_ids=selected_turn_ids or None,
+    )
+    turn_messages: list[Any] = []
+    images_by_turn: dict[str, list[Any]] = {}
+    for turn_index, turn in enumerate(turns):
+        turn_id, role, content, attachments = _turn_fields(turn)
+        if role == "agent":
+            role = "assistant"
+        if role not in {"system", "user", "assistant", "tool"}:
+            role = "user"
+        content_parts: list[Any] = []
+        if content:
+            content_parts.append(
+                TextContentPart(
+                    text=content,
+                    block_kind="turn_input",
+                    segment_ids=[],
+                )
+            )
+        for attachment in attachments:
+            if is_canonical_artifact_ref(attachment):
+                continue
+            mime = str(mimetypes.guess_type(attachment)[0] or "").strip().lower()
+            if not mime.startswith("image/"):
+                continue
+            content_parts.append(
+                ImageContentPart(
+                    source="path",
+                    path=attachment,
+                    mime_type=mime,
+                    block_kind="turn_input",
+                )
+            )
+        content_parts.extend(artifact_parts.get(_turn_key(turns, turn_index), []))
+        images = [
+            part for part in content_parts if getattr(part, "type", "") == "image"
+        ]
+        if turn_id and images:
+            images_by_turn[turn_id] = images
+        if content_parts:
+            turn_messages.append(
+                Message(
+                    role=cast(_MessageRole, role),
+                    content=content,
+                    content_parts=content_parts,
+                )
+            )
+
     if messages:
+        if selected_turn_ids:
+            return _merge_selected_turn_images(messages, images_by_turn)
         system_messages = [
             message
             for message in messages

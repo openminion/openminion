@@ -34,6 +34,37 @@ def _dict_hint(hints: dict[str, Any], key: str) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _selected_pack_turn_ids(payload: dict[str, Any]) -> set[str]:
+    selected: set[str] = set()
+    for message in payload.get("messages", []):
+        if not isinstance(message, dict):
+            continue
+        meta = message.get("meta")
+        if not isinstance(meta, dict):
+            continue
+        for segment_id in meta.get("segment_ids", []):
+            normalized = str(segment_id or "").strip()
+            if normalized.startswith("turn:") and len(normalized) > 5:
+                selected.add(normalized[5:])
+    return selected
+
+
+def _selected_attachment_turns(
+    *, payload: dict[str, Any], turns: list[Any]
+) -> list[Any]:
+    selected_ids = _selected_pack_turn_ids(payload)
+    if not selected_ids:
+        return []
+    return [
+        turn
+        for turn in turns
+        if isinstance(turn, dict)
+        and str(turn.get("turn_id") or "").strip() in selected_ids
+        and isinstance(turn.get("attachments"), list)
+        and bool(turn["attachments"])
+    ]
+
+
 class ContextCtlAdapter(ContextAPI):
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
@@ -135,7 +166,10 @@ class ContextCtlAdapter(ContextAPI):
         pack = self.service.build_pack(req)
         result = cast(dict[str, Any], pack.model_dump())
         if self._session_store is not None:
-            result["turns"] = list(self._session_store.list_turns(session_id))
+            result["turns"] = _selected_attachment_turns(
+                payload=result,
+                turns=list(self._session_store.list_turns(session_id)),
+            )
         if hints:
             result["hints"] = hints
         return result

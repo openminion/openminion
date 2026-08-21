@@ -1294,11 +1294,35 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 
-        mock_pack = fake_context_pack({"pack_version": "123"})
+        mock_pack = fake_context_pack(
+            {
+                "pack_version": "123",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hello",
+                        "meta": {"segment_ids": ["turn:t-user"]},
+                    }
+                ],
+            }
+        )
         mock_svc = fake_context_service(pack=mock_pack)
 
         session_store = _context_session_store(
-            [{"role": "user", "content": "hello", "attachments": ["artifact-ref"]}]
+            [
+                {
+                    "turn_id": "t-user",
+                    "role": "user",
+                    "content": "hello",
+                    "attachments": ["artifact-ref"],
+                },
+                {
+                    "turn_id": "t-trimmed",
+                    "role": "user",
+                    "content": "trimmed",
+                    "attachments": ["must-not-cross"],
+                },
+            ]
         )
         adapter = ContextCtlAdapter(mock_svc, session_store=session_store)
         res = adapter.build(session_id="s1", agent_id="a1", purpose="decide", budget={})
@@ -1306,8 +1330,16 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
             res,
             {
                 "pack_version": "123",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "hello",
+                        "meta": {"segment_ids": ["turn:t-user"]},
+                    }
+                ],
                 "turns": [
                     {
+                        "turn_id": "t-user",
                         "role": "user",
                         "content": "hello",
                         "attachments": ["artifact-ref"],

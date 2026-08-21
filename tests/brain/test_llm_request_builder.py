@@ -321,6 +321,73 @@ def test_build_request_rejects_unavailable_artifact_before_provider(
         )
 
 
+def test_build_request_aligns_images_to_compacted_budgeted_turns(monkeypatch) -> None:
+    _patch_tool_bundle(monkeypatch)
+    current_ref = "artifact://sha256/" + "c" * 64
+    trimmed_ref = "artifact://sha256/" + "d" * 64
+    inspected: list[str] = []
+
+    def _inspect(ref: str):
+        inspected.append(ref)
+        return "image/png", 1
+
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        _inspect,
+    )
+    request = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context={
+            "messages": [
+                {"role": "system", "content": "budgeted system context"},
+                {
+                    "role": "user",
+                    "content": "current input … compacted",
+                    "meta": {
+                        "block_kind": "recent_window",
+                        "segment_ids": ["turn:current"],
+                    },
+                },
+            ],
+            "turns": [
+                {
+                    "turn_id": "trimmed",
+                    "role": "user",
+                    "content": "trimmed from the canonical pack",
+                    "attachments": [trimmed_ref],
+                },
+                {
+                    "turn_id": "current",
+                    "role": "user",
+                    "content": "current input with a much longer durable body",
+                    "attachments": [current_ref],
+                },
+            ],
+        },
+        schema=type("Decision", (), {}),
+        temperature=0.0,
+    )
+
+    assert [
+        message.content for message in request.messages if message.role == "user"
+    ] == ["current input … compacted"]
+    assert all(
+        "trimmed from the canonical pack" not in str(message.content or "")
+        for message in request.messages
+    )
+    current_message = next(
+        message for message in request.messages if message.role == "user"
+    )
+    current_images = [
+        part
+        for part in current_message.content_parts
+        if getattr(part, "source", "") == "artifact"
+    ]
+    assert [part.artifact_ref for part in current_images] == [current_ref]
+    assert inspected == [current_ref]
+
+
 def test_initial_brain_user_turn_persists_attachments_once(monkeypatch) -> None:
     from openminion.modules.brain.runner.tick.context import build_tick_run_context
     from openminion.modules.brain.runner.tick import input_processing
