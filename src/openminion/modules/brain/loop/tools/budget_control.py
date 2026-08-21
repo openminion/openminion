@@ -871,22 +871,22 @@ def _answer_only_finalization_messages(
     )
     return [
         Message(
+            role="system",
+            content=(
+                f"{reason} Use only the successful tool evidence below and write "
+                "the best user-facing final answer now. Do not narrate future "
+                "steps, do not say you will continue, and preserve any explicit "
+                "output format or headings the user requested. If evidence is "
+                "partial, say that briefly and still answer."
+            ),
+        ),
+        Message(
             role="user",
             content=(
                 "Original user request for this turn:\n"
                 f"{original_request or '<unknown>'}\n\n"
                 "Successful tool evidence already gathered:\n"
                 f"{evidence_json}"
-            ),
-        ),
-        Message(
-            role="system",
-            content=(
-                f"{reason} Use only the successful tool evidence above and write "
-                "the best user-facing final answer now. Do not narrate future "
-                "steps, do not say you will continue, and preserve any explicit "
-                "output format or headings the user requested. If evidence is "
-                "partial, say that briefly and still answer."
             ),
         ),
     ]

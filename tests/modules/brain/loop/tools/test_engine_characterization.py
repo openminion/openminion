@@ -3840,6 +3840,10 @@ def test_tool_choice_none_second_retry_salvages_from_compact_tool_evidence() -> 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
     assert len(runtime.calls) == 3
+    assert [message.role for message in runtime.calls[2]["messages"]] == [
+        "system",
+        "user",
+    ]
     assert any(
         "Successful tool evidence already gathered" in str(message.content)
         for message in runtime.calls[2]["messages"]
