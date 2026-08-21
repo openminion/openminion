@@ -18,6 +18,10 @@ from openminion.modules.config import (
     resolve_module_data_root,
     resolve_module_home_root,
 )
+from ..artifact_lifecycle import (
+    apply_artifact_decision as _apply_artifact_decision,
+    get_detached_artifact_refs as _get_detached_artifact_refs,
+)
 from ..interfaces import SESSION_INTERFACE_VERSION
 from openminion.modules.storage.migrations.module_ids import module_id_from_package
 from openminion.modules.storage.runtime.module_integrity import (
@@ -774,6 +778,47 @@ class SQLiteSessionStore(SessionStore):
 
     def latest_event_seq(self, session_id: str) -> int:
         return self._latest_event_seq(session_id)
+
+    def get_artifact_catalog_event_page(
+        self,
+        session_id: str,
+        *,
+        after_seq: int,
+        high_water: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        return self._event_store.get_artifact_catalog_event_page(
+            session_id,
+            after_seq=after_seq,
+            high_water=high_water,
+            limit=limit,
+        )
+
+    def get_detached_artifact_refs(
+        self,
+        session_id: str,
+        *,
+        limit: int = 256,
+    ) -> list[str]:
+        return _get_detached_artifact_refs(self, session_id, limit=limit)
+
+    def apply_artifact_decision(
+        self,
+        session_id: str,
+        *,
+        artifact_ref: str,
+        detached: bool,
+        reason_code: str,
+        request_id: str,
+    ) -> str:
+        return _apply_artifact_decision(
+            self,
+            session_id,
+            artifact_ref=artifact_ref,
+            detached=detached,
+            reason_code=reason_code,
+            request_id=request_id,
+        )
 
     def get_recent_tool_events(
         self, session_id: str, limit: int

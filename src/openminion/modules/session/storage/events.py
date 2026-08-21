@@ -191,6 +191,44 @@ class EventStore:
         )
         return row_to_session_event(rows[0]) if rows else None
 
+    def get_artifact_catalog_event_page(
+        self,
+        session_id: str,
+        *,
+        after_seq: int,
+        high_water: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 500))
+        resolved_high_water = max(0, int(high_water))
+        if resolved_high_water == 0:
+            rows = self._rs.query_dicts(
+                "SELECT COALESCE(MAX(seq), 0) AS high_water "
+                "FROM session_events WHERE session_id = ?",
+                (session_id,),
+            )
+            resolved_high_water = int(rows[0]["high_water"]) if rows else 0
+        rows = self._rs.query_dicts(
+            """
+            SELECT event_id, session_id, seq, timestamp, event_type, actor_type,
+                   actor_id, trace_id, span_id, task_id, parent_event_id,
+                   payload_json, refs_json, importance, redaction
+            FROM session_events
+            WHERE session_id = ? AND seq > ? AND seq <= ?
+            ORDER BY seq ASC
+            LIMIT ?
+            """,
+            (session_id, max(0, int(after_seq)), resolved_high_water, safe_limit),
+        )
+        events = [row_to_session_event(row) for row in rows]
+        next_after_seq = int(events[-1]["seq"]) if events else max(0, int(after_seq))
+        return {
+            "high_water": resolved_high_water,
+            "events": events,
+            "next_after_seq": next_after_seq,
+            "complete": next_after_seq >= resolved_high_water,
+        }
+
     def get_events_by_parent_and_type(
         self,
         parent_event_id: str,

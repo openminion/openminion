@@ -144,6 +144,23 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
 
         return submit_turn_payload(runtime=self, payload=dict(payload), desktop_approval_requester=desktop_approval_requester, resolved_attachment_refs=resolved_attachment_refs)  # fmt: skip
 
+    def session_artifact_facade(self, session_id: str) -> Any:
+        from openminion.services.brain.service import BrainBridgeService
+        from openminion.services.brain.session_artifacts import (
+            SessionArtifactUnavailable,
+        )
+
+        record = self.sessions.get_session(session_id)
+        if record is None:
+            raise SessionArtifactUnavailable("Session is unavailable.")
+        agent_id = str(getattr(record, "active_agent_id", "") or "").strip() or None
+        service = self.resolve_agent_service(agent_id)
+        if not isinstance(service, BrainBridgeService):
+            raise SessionArtifactUnavailable(
+                "Session artifact operations are not supported by this runtime."
+            )
+        return service.session_artifact_facade()
+
     def evict_agent(self, agent_id: str, *, reason: str = "manual") -> bool:
         if not (normalized := agent_id.strip()):
             return False

@@ -1372,7 +1372,9 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         mock_svc.build_pack.assert_called_once()
         session_store.list_turns.assert_called_once_with("s1")
 
-    def test_context_adapter_keeps_latest_attachment_without_text_inference(self) -> None:
+    def test_context_adapter_keeps_latest_attachment_without_text_inference(
+        self,
+    ) -> None:
         from openminion.modules.brain.adapters.context import ContextCtlAdapter
 
         mock_svc = fake_context_service(
@@ -1428,6 +1430,46 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_context_adapter_filters_detached_refs_under_gateway_lease(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(
+            pack=fake_context_pack(
+                {
+                    "pack_version": "123",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "current",
+                            "meta": {"segment_ids": ["turn:t-current"]},
+                        }
+                    ],
+                }
+            )
+        )
+        detached = f"artifact://sha256/{'a' * 64}"
+        retained = f"artifact://sha256/{'b' * 64}"
+        session_store = _context_session_store(
+            [
+                {
+                    "turn_id": "t-current",
+                    "role": "user",
+                    "content": "current",
+                    "attachments": [detached, retained],
+                }
+            ]
+        )
+        session_store.get_detached_artifact_refs.return_value = [detached]
+
+        result = ContextCtlAdapter(
+            mock_svc,
+            session_store=session_store,
+        ).build(session_id="s1", agent_id="a1", purpose="decide", budget={})
+
+        self.assertEqual(result["turns"][0]["attachments"], [retained])
+        session_store.get_detached_artifact_refs.assert_called_once_with("s1")
+        session_store.acquire_session_turn_lease.assert_not_called()
 
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,

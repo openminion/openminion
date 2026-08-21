@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote
 
 from .contracts import APIRouteContext, RouteResult, error_route_result
+from .client_artifacts import handle_request as handle_client_artifact_request
 from .client_approvals import handle_request as handle_client_approval_request
 from .client_sessions import (
     handle_cancel_request,
@@ -29,6 +30,15 @@ def handle_request(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
+    artifact_result = handle_client_artifact_request(
+        ctx,
+        method_name=method_name,
+        path=path,
+        body=body,
+        query=query,
+    )
+    if artifact_result is not None:
+        return artifact_result
     approval_result = handle_client_approval_request(
         ctx,
         method_name=method_name,
@@ -164,6 +174,8 @@ def _revoke(
     if ctx.client_auth is None or ctx.client_identity is None:
         return _forbidden()
     try:
+        if ctx.client_artifacts is not None:
+            ctx.client_artifacts.revoke_client(ctx.client_identity)
         if ctx.client_media is not None:
             ctx.client_media.revoke_client(ctx.client_identity)
             if ctx.client_approvals is not None:

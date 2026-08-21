@@ -1,8 +1,9 @@
 from typing import Any, cast
 
 from openminion.modules.brain.interfaces import (
-    ContextAPI,
     BRAIN_ADAPTER_INTERFACE_VERSION,
+    ContextAPI,
+    SessionArtifactAPI,
 )
 from openminion.modules.context.pack.semantics import (
     resolve_context_total_token_budget,
@@ -70,6 +71,21 @@ def _selected_pack_turns(*, payload: dict[str, Any], turns: list[Any]) -> list[A
             )
         )
     ]
+
+
+def _without_detached_artifacts(turns: list[Any], detached_refs: set[str]) -> list[Any]:
+    filtered: list[Any] = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        copied = dict(turn)
+        attachments = copied.get("attachments")
+        if isinstance(attachments, list):
+            copied["attachments"] = [
+                ref for ref in attachments if str(ref) not in detached_refs
+            ]
+        filtered.append(copied)
+    return filtered
 
 
 class ContextCtlAdapter(ContextAPI):
@@ -173,10 +189,16 @@ class ContextCtlAdapter(ContextAPI):
         pack = self.service.build_pack(req)
         result = cast(dict[str, Any], pack.model_dump())
         if self._session_store is not None:
-            result["turns"] = _selected_pack_turns(
+            selected_turns = _selected_pack_turns(
                 payload=result,
                 turns=list(self._session_store.list_turns(session_id)),
             )
+            if isinstance(self._session_store, SessionArtifactAPI):
+                selected_turns = _without_detached_artifacts(
+                    selected_turns,
+                    set(self._session_store.get_detached_artifact_refs(session_id)),
+                )
+            result["turns"] = selected_turns
         if hints:
             result["hints"] = hints
         return result

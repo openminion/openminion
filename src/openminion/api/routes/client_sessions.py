@@ -147,7 +147,9 @@ def _execute(
 
 def _session_cancel_callback(ctx: APIRouteContext) -> Any:
     owners = tuple(
-        owner for owner in (ctx.client_approvals, ctx.client_media) if owner is not None
+        owner
+        for owner in (ctx.client_approvals, ctx.client_media, ctx.client_artifacts)
+        if owner is not None
     )
     if not owners:
         return None

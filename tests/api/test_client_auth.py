@@ -149,6 +149,16 @@ def test_client_wrong_route_and_expired_lease_fail_closed(tmp_path: Path) -> Non
         ("POST", "/v1/client/sessions/session-1/media"),
         ("GET", "/v1/client/sessions/session-1/media/" + "a" * 48),
         ("DELETE", "/v1/client/sessions/session-1/media/" + "a" * 48),
+        ("GET", "/v1/client/sessions/session-1/artifacts"),
+        ("GET", "/v1/client/sessions/session-1/artifacts/" + "a" * 48),
+        (
+            "POST",
+            "/v1/client/sessions/session-1/artifacts/" + "a" * 48 + "/detach",
+        ),
+        (
+            "POST",
+            "/v1/client/sessions/session-1/artifacts/" + "a" * 48 + "/restore",
+        ),
     ],
 )
 def test_client_session_and_turn_routes_are_capability_admitted(
@@ -179,6 +189,9 @@ def test_client_session_and_turn_routes_are_capability_admitted(
         "media.upload",
         "media.read",
         "media.release",
+        "artifacts.catalog.v1",
+        "artifacts.content.v1",
+        "artifacts.detach_restore.v1",
     }.issubset(identity.capabilities)
 
 
@@ -262,6 +275,7 @@ def test_authenticated_response_is_replaced_when_it_exceeds_bound() -> None:
         ("/v1/client/sessions/session-1", 8 * 1024),
         ("/v1/turn/stream", 256 * 1024),
         ("/v1/turn/trace-1/cancel", 16 * 1024),
+        ("/v1/client/sessions/session-1/artifacts/opaque/detach", 8 * 1024),
     ],
 )
 def test_authenticated_route_body_limits_fail_before_read(

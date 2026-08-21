@@ -23,6 +23,8 @@ def test_event_types_is_non_empty_frozenset() -> None:
     assert "llm.call.started" in EVENT_TYPES
     assert "task_plan.declared" in EVENT_TYPES
     assert "component.started" in EVENT_TYPES
+    assert "desktop.artifact.detached" in EVENT_TYPES
+    assert "desktop.artifact.restored" in EVENT_TYPES
 
 
 def test_register_event_type_returns_input_when_registered() -> None:

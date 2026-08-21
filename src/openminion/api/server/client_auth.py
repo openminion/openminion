@@ -50,6 +50,9 @@ _CLIENT_CAPABILITIES = (
     "media.upload",
     "media.read",
     "media.release",
+    "artifacts.catalog.v1",
+    "artifacts.content.v1",
+    "artifacts.detach_restore.v1",
 )
 _CLIENT_BODY_LIMITS = {
     "/v1/client/leases": 16 * 1024,
@@ -62,6 +65,11 @@ _TURN_CANCEL_PATH = re.compile(r"/v1/turn/[^/]+/cancel")
 _APPROVAL_PATH = re.compile(r"/v1/client/sessions/[^/]+/turns/[^/]+/approvals/[^/]+")
 _MEDIA_COLLECTION_PATH = re.compile(r"/v1/client/sessions/[^/]+/media")
 _MEDIA_ITEM_PATH = re.compile(r"/v1/client/sessions/[^/]+/media/[^/]+")
+_ARTIFACT_CATALOG_PATH = re.compile(r"/v1/client/sessions/[^/]+/artifacts")
+_ARTIFACT_ITEM_PATH = re.compile(r"/v1/client/sessions/[^/]+/artifacts/[^/]+")
+_ARTIFACT_DECISION_PATH = re.compile(
+    r"/v1/client/sessions/[^/]+/artifacts/[^/]+/(detach|restore)"
+)
 _DEFAULT_CLIENT_RESPONSE_LIMIT = 64 * 1024
 _ADMITTED_HEADERS = frozenset(
     {
@@ -387,6 +395,7 @@ class ClientAuthHTTPMixin:
         return {
             "client_auth": self.client_auth,
             "client_identity": self.client_identity,
+            "client_artifacts": getattr(self, "client_artifacts", None),
             "client_approvals": getattr(self, "client_approvals", None),
             "client_media": getattr(self, "client_media", None),
         }
@@ -599,6 +608,12 @@ def _client_route_capability(method: str, path: str) -> str | None:
         return "media.upload"
     if _MEDIA_ITEM_PATH.fullmatch(path):
         return {"GET": "media.read", "DELETE": "media.release"}.get(method_name)
+    if _ARTIFACT_CATALOG_PATH.fullmatch(path) and method_name == "GET":
+        return "artifacts.catalog.v1"
+    if _ARTIFACT_ITEM_PATH.fullmatch(path) and method_name == "GET":
+        return "artifacts.content.v1"
+    if _ARTIFACT_DECISION_PATH.fullmatch(path) and method_name == "POST":
+        return "artifacts.detach_restore.v1"
     return None
 
 
@@ -615,6 +630,8 @@ def _client_body_limit(path: str) -> int | None:
         return 16 * 1024
     if _APPROVAL_PATH.fullmatch(path):
         return 8 * 1024
+    if _ARTIFACT_DECISION_PATH.fullmatch(path):
+        return 8 * 1024
     return None
 
 
@@ -625,6 +642,10 @@ def _client_response_limit(method: str, path: str) -> int:
         return 512 * 1024
     if method == "GET" and _SESSION_EVENTS_PATH.fullmatch(path):
         return 1024 * 1024
+    if method == "GET" and _ARTIFACT_CATALOG_PATH.fullmatch(path):
+        return 256 * 1024
+    if method == "GET" and _ARTIFACT_ITEM_PATH.fullmatch(path):
+        return 128 * 1024
     return _DEFAULT_CLIENT_RESPONSE_LIMIT
 
 

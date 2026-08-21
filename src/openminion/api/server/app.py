@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
 from openminion.api.server.client_auth import ClientAuthHTTPMixin, ClientAuthService
-from openminion.api.server import client_approvals, client_media
+from openminion.api.server import client_approvals, client_artifacts, client_media
 from openminion.api.server.dispatch import dispatch_request
 from openminion.api.server import observability as _observability
 from openminion.api.server.observability import get_api_metrics_consistency_stamp, get_api_metrics_snapshot, reset_api_metrics  # fmt: skip
@@ -21,6 +21,7 @@ class _OpenMinionAPIHandler(ClientAuthHTTPMixin, BaseHTTPRequestHandler):
     runtime: APIRuntime | None = None
     runtime_bootstrap_error: str | None = None
     client_auth: ClientAuthService | None = None
+    client_artifacts: Any = None
     client_approvals: Any = None
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
@@ -200,13 +201,16 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
         approvals = client_approvals.install_approvals(handler_cls, runtime)
         try:
             media = client_media.install_media(handler_cls, runtime)
-            self._client_state = approvals, media
+            artifacts = client_artifacts.install_artifacts(handler_cls, runtime)
+            self._client_state = approvals, media, artifacts
         except Exception:
+            client_media.close_media(locals().get("media"))
             client_approvals.close_approvals(approvals)
             raise
 
     def server_close(self) -> None:
         try:
+            client_artifacts.close_artifacts(self._client_state[2])
             client_media.close_media(self._client_state[1])
             client_approvals.close_approvals(self._client_state[0])
             if self._runtime is not None:
