@@ -738,6 +738,23 @@ class StreamableHTTPMCPTransport:
                     f"MCP server '{self.server_name}' did not reply before timeout.",
                     reason_code="mcp_timeout",
                 ) from exc
+        return self._decode_post_response(
+            raw=raw,
+            content_type=content_type,
+            timeout_seconds=timeout_seconds,
+            server_request_handler=server_request_handler,
+            expected_request_id=expected_request_id,
+        )
+
+    def _decode_post_response(
+        self,
+        *,
+        raw: bytes,
+        content_type: str,
+        timeout_seconds: float | None,
+        server_request_handler: Any | None,
+        expected_request_id: Any | None,
+    ) -> dict[str, Any]:
         if not raw and not content_type.startswith("text/event-stream"):
             raise MCPProtocolError(
                 f"MCP server '{self.server_name}' returned an empty response body.",

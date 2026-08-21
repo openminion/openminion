@@ -115,17 +115,7 @@ def build_controlplane_runtime_components(
         audit_logger=audit_logger,
         identity_api=identity_api,
     )
-    rate_limiter = ControlPlaneRateLimiter(
-        store=store,
-        policy=RateLimitPolicy(
-            chat_window_s=cp_cfg.rate_limit_chat_window_s,
-            chat_limit=cp_cfg.rate_limit_chat_limit,
-            user_window_s=cp_cfg.rate_limit_user_window_s,
-            user_limit=cp_cfg.rate_limit_user_limit,
-            session_window_s=cp_cfg.rate_limit_session_window_s,
-            session_limit=cp_cfg.rate_limit_session_limit,
-        ),
-    )
+    rate_limiter = _build_rate_limiter(store=store, config=cp_cfg)
     delivery_registry = ChannelRegistry()
     authorizer = ScopeAuthorizer(
         store=store,
@@ -170,6 +160,22 @@ def build_controlplane_runtime_components(
             wizard_store=wizard_store,
             audit_logger=audit_logger,
             metrics=metrics,
+        ),
+    )
+
+
+def _build_rate_limiter(
+    *, store: Any, config: ControlPlaneConfig
+) -> ControlPlaneRateLimiter:
+    return ControlPlaneRateLimiter(
+        store=store,
+        policy=RateLimitPolicy(
+            chat_window_s=config.rate_limit_chat_window_s,
+            chat_limit=config.rate_limit_chat_limit,
+            user_window_s=config.rate_limit_user_window_s,
+            user_limit=config.rate_limit_user_limit,
+            session_window_s=config.rate_limit_session_window_s,
+            session_limit=config.rate_limit_session_limit,
         ),
     )
 

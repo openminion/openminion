@@ -192,6 +192,22 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return metrics
 
 
+def _append_model_cost_metric(
+    metrics: list[dict[str, Any]], payload: dict[str, Any]
+) -> None:
+    cost_source = str(payload.get("cost_source") or "").strip()
+    if not cost_source:
+        return
+    _append_metric(
+        metrics,
+        "openminion_model_cost",
+        _KIND_COUNTER,
+        payload.get("cost_usd"),
+        {"cost_source": _bounded_label(cost_source, default="unknown")},
+        unit="USD",
+    )
+
+
 def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
     common = {
@@ -282,17 +298,7 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if value is None:
             value = usage_map.get(payload_key)
         _append_metric(metrics, metric_name, _KIND_HISTOGRAM, value, common)
-    cost = payload.get("cost_usd")
-    cost_source = str(payload.get("cost_source") or "").strip()
-    if cost_source:
-        _append_metric(
-            metrics,
-            "openminion_model_cost",
-            _KIND_COUNTER,
-            cost,
-            {"cost_source": _bounded_label(cost_source, default="unknown")},
-            unit="USD",
-        )
+    _append_model_cost_metric(metrics, payload)
     return metrics
 
 

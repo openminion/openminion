@@ -882,6 +882,29 @@ def token_rollup_json_payload(
     }
 
 
+def _format_usage_breakdown(summary: TokenUsageSummary) -> list[str]:
+    grouped: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
+    for record in summary.records:
+        key = (
+            record.provider or "-",
+            record.model or "-",
+            record.surface or "unknown",
+            record.bucket,
+            record.total_source,
+        )
+        grouped[key] += _record_tokens(record)
+    lines = ["breakdown:"] if grouped else []
+    for key, tokens in sorted(grouped.items(), key=lambda item: item[1], reverse=True):
+        provider, model, surface, bucket, total_source = key
+        details = f"provider={provider} model={model} surface={surface} tokens={tokens}"
+        if bucket:
+            details += f" bucket={bucket}"
+        if total_source:
+            details += f" total_source={total_source}"
+        lines.append(f"- {details}")
+    return lines
+
+
 def format_token_summary(
     summary: TokenUsageSummary,
     *,
@@ -915,31 +938,7 @@ def format_token_summary(
         lines.extend(_format_insights(summary))
         lines.extend(_format_turn_cost(cost))
         lines.extend(_format_recommendations(summary, cost=cost))
-    grouped: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
-    for record in summary.records:
-        key = (
-            record.provider or "-",
-            record.model or "-",
-            record.surface or "unknown",
-            record.bucket,
-            record.total_source,
-        )
-        grouped[key] += _record_tokens(record)
-    if grouped:
-        lines.append("breakdown:")
-    for (
-        provider,
-        model,
-        surface,
-        bucket,
-        total_source,
-    ), tokens in sorted(grouped.items(), key=lambda item: item[1], reverse=True):
-        details = f"provider={provider} model={model} surface={surface} tokens={tokens}"
-        if bucket:
-            details += f" bucket={bucket}"
-        if total_source:
-            details += f" total_source={total_source}"
-        lines.append(f"- {details}")
+    lines.extend(_format_usage_breakdown(summary))
     coverage = summary.coverage
     if coverage.llm_call_events:
         llm_calls = coverage.llm_call_events
