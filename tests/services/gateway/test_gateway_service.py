@@ -1199,6 +1199,80 @@ class GatewayTurnRunnerCharacterizationTests(GatewayServiceTestCase):
         self.assertEqual(captured[0].attachments, [ref])
         self.assertNotIn("attachments", captured[0].metadata)
 
+    def test_gateway_turn_runner_carries_only_authoritative_brain_session_id(
+        self,
+    ) -> None:
+        gateway, _sink = self._build_gateway(
+            provider=self.provider,
+            logger_name="openminion.tests.gateway.runner.brain_session",
+            agent_logger_name="openminion.tests.gateway.agent.runner.brain_session",
+            auto_resume=False,
+        )
+        captured: list[Message] = []
+
+        class _IdentityAgent:
+            async def run_turn(self, message, **_kwargs):
+                captured.append(message)
+                return AgentResponse(
+                    text="done",
+                    channel="console",
+                    target="local-user",
+                    metadata={},
+                )
+
+        gateway._turn_runner._agent = _IdentityAgent()
+
+        async def _run(
+            *, session_id: str, brain_session_id: str
+        ) -> None:
+            routing = gateway._turn_runner._resolve_routing(
+                channel="console",
+                target="local-user",
+                session_id=session_id,
+                request_id=f"req-{session_id}",
+                inbound_metadata={
+                    "brain_session_id": brain_session_id,
+                    "unrelated_internal_key": "must-not-cross",
+                },
+                deliver=False,
+            )
+            run_id, lifecycle_payload = gateway._turn_runner._setup_turn(
+                routing,
+                channel="console",
+                target="local-user",
+            )
+            await gateway._turn_runner._execute_agent(
+                routing,
+                channel="console",
+                target="local-user",
+                body="inspect identity",
+                run_id=run_id,
+                lifecycle_payload=lifecycle_payload,
+                history=[],
+                forced_tools=None,
+                capability_category=None,
+                prior_transcript_available=False,
+            )
+
+        asyncio.run(
+            _run(
+                session_id="managed-session",
+                brain_session_id="managed-session",
+            )
+        )
+        asyncio.run(
+            _run(
+                session_id="direct-session",
+                brain_session_id="spoofed-session",
+            )
+        )
+
+        self.assertEqual(captured[0].metadata["brain_session_id"], "managed-session")
+        self.assertNotIn("brain_session_id", captured[1].metadata)
+        self.assertTrue(
+            all("unrelated_internal_key" not in message.metadata for message in captured)
+        )
+
     def test_gateway_turn_runner_preserves_typed_progress_usage_in_final_metadata(
         self,
     ) -> None:

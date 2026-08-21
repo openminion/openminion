@@ -122,6 +122,14 @@ class GatewayTurnAgentExecutionMixin:
         authenticity_decision: Any,
         participant_id: str,
     ) -> Message:
+        brain_session_id = routing.normalized_inbound_metadata.get(
+            "brain_session_id", ""
+        ).strip()
+        brain_session_metadata = (
+            {"brain_session_id": brain_session_id}
+            if brain_session_id == routing.session.id
+            else {}
+        )
         return Message(
             channel=channel,
             target=target,
@@ -132,6 +140,7 @@ class GatewayTurnAgentExecutionMixin:
                     routing.normalized_inbound_metadata
                 ),
                 "session_id": routing.session.id,
+                **brain_session_metadata,
                 "run_id": run_id,
                 "invocation_id": routing.normalized_inbound_metadata.get(
                     "invocation_id", ""
