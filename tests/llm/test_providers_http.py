@@ -1036,6 +1036,69 @@ class ProviderHTTPTests(unittest.TestCase):
                 path="shot.png",
             )
 
+    def test_artifact_lookup_and_blob_failures_redact_internal_identity(self) -> None:
+        png_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII="
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            artifact_config = ArtifactCtlConfig(
+                blob_store=BlobStoreConfig(root_dir=str(root / "blobs")),
+                index=IndexConfig(sqlite_path=str(root / "artifact.db")),
+                views=ViewsConfig(auto_generate=[]),
+            )
+            artifactctl = ArtifactCtl(artifact_config)
+            try:
+                missing_index_ref = "artifact://sha256/" + "d" * 64
+                missing_blob_ref = artifactctl.ingest_bytes(
+                    png_bytes, mime="image/png"
+                ).ref
+                missing_blob_sha = artifactctl.get(missing_blob_ref).sha256
+                Path(artifactctl.blob_store.path_for(missing_blob_sha)).unlink()
+            finally:
+                artifactctl.close()
+
+            with (
+                patch(
+                    "openminion.modules.artifact.refs.create_default_artifactctl",
+                    side_effect=lambda: ArtifactCtl(artifact_config),
+                ),
+                patch(
+                    "openminion.modules.llm.providers.adapters.urllib_request.urlopen"
+                ) as provider_call,
+            ):
+                for ref in (missing_index_ref, missing_blob_ref):
+                    request = LLMRequest(
+                        model="vision-model",
+                        messages=[
+                            Message(
+                                role="user",
+                                content_parts=[
+                                    ImageContentPart(
+                                        source="artifact",
+                                        artifact_ref=ref,
+                                        mime_type="image/png",
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                    with self.assertRaisesRegex(
+                        LLMCtlError, "unavailable or unreadable"
+                    ) as caught:
+                        OpenAIProvider().complete(
+                            request,
+                            {
+                                "api_key": "test-key",
+                                "base_url": "https://api.openai.com/v1",
+                                "enable_vision_input": True,
+                            },
+                        )
+                    rendered = str(caught.exception)
+                    self.assertNotIn(ref, rendered)
+                    self.assertNotIn(ref.rsplit("/", 1)[-1], rendered)
+                provider_call.assert_not_called()
+
     def test_common_artifact_aggregate_rejects_more_than_four_images(self) -> None:
         parts = [
             ImageContentPart(

@@ -14,6 +14,7 @@ ARTIFACT_IMAGE_MIME_TYPES = frozenset(
 MAX_ARTIFACT_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_ARTIFACT_IMAGES_PER_REQUEST = 4
 MAX_ARTIFACT_IMAGE_BYTES_PER_REQUEST = 20 * 1024 * 1024
+_ARTIFACT_IMAGE_UNAVAILABLE = "Artifact image is unavailable or unreadable"
 
 
 def normalize_artifact_ref_target(value: Any) -> str | None:
@@ -79,14 +80,19 @@ def inspect_artifact_image(ref: str) -> tuple[str, int]:
     artifactctl = create_default_artifactctl()
     try:
         meta = _validated_artifact_image_meta(artifactctl, ref)
-        with artifactctl.open(ref):
-            pass
+        try:
+            with artifactctl.open(ref):
+                pass
+        except ArtifactCtlError as exc:
+            raise ArtifactCtlError(
+                "INVALID_ARGUMENT", _ARTIFACT_IMAGE_UNAVAILABLE
+            ) from exc
         return str(meta.mime).strip().lower(), int(meta.size_bytes)
     except ArtifactCtlError:
         raise
     except Exception as exc:
         raise ArtifactCtlError(
-            "INVALID_ARGUMENT", "Artifact image is unavailable or unreadable"
+            "INVALID_ARGUMENT", _ARTIFACT_IMAGE_UNAVAILABLE
         ) from exc
     finally:
         artifactctl.close()
@@ -96,8 +102,13 @@ def read_artifact_image_bytes(ref: str) -> tuple[str, bytes]:
     artifactctl = create_default_artifactctl()
     try:
         meta = _validated_artifact_image_meta(artifactctl, ref)
-        with artifactctl.open(ref) as stream:
-            data = stream.read(MAX_ARTIFACT_IMAGE_BYTES + 1)
+        try:
+            with artifactctl.open(ref) as stream:
+                data = stream.read(MAX_ARTIFACT_IMAGE_BYTES + 1)
+        except ArtifactCtlError as exc:
+            raise ArtifactCtlError(
+                "INVALID_ARGUMENT", _ARTIFACT_IMAGE_UNAVAILABLE
+            ) from exc
         if len(data) > MAX_ARTIFACT_IMAGE_BYTES or len(data) != meta.size_bytes:
             raise ArtifactCtlError(
                 "INVALID_ARGUMENT", "Artifact image size is invalid"
@@ -107,7 +118,7 @@ def read_artifact_image_bytes(ref: str) -> tuple[str, bytes]:
         raise
     except Exception as exc:
         raise ArtifactCtlError(
-            "INVALID_ARGUMENT", "Artifact image is unavailable or unreadable"
+            "INVALID_ARGUMENT", _ARTIFACT_IMAGE_UNAVAILABLE
         ) from exc
     finally:
         artifactctl.close()
@@ -118,7 +129,12 @@ def _validated_artifact_image_meta(artifactctl: Any, ref: str) -> Any:
         raise ArtifactCtlError(
             "INVALID_ARGUMENT", "Artifact image reference is not canonical"
         )
-    meta = artifactctl.get(ref)
+    try:
+        meta = artifactctl.get(ref)
+    except ArtifactCtlError as exc:
+        raise ArtifactCtlError(
+            "INVALID_ARGUMENT", _ARTIFACT_IMAGE_UNAVAILABLE
+        ) from exc
     if meta.deleted_at:
         raise ArtifactCtlError("INVALID_ARGUMENT", "Artifact image was deleted")
     mime = str(meta.mime or "").strip().lower()
