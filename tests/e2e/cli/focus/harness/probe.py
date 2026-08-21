@@ -170,15 +170,11 @@ def _compact_approval_answered(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return (
-        re.match(
-            r"[ \t]*(?:(?:●|•)\s+Running[^\r\n]*\r?\n[ \t]*)?"
-            r"(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
-            trailing,
-            re.IGNORECASE,
-        )
-        is not None
-    )
+    return re.search(
+        r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
+        trailing,
+        re.IGNORECASE,
+    ) is not None
 
 
 def _compact_approval_submitted(
@@ -187,15 +183,11 @@ def _compact_approval_submitted(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return (
-        re.match(
-            r"[ \t]*(?:(?:●|•)\s+Running[^\r\n]*\r?\n[ \t]*)?"
-            r"(?:y|yes|a|always|n|no)[ \t]*\r?\n",
-            trailing,
-            re.IGNORECASE,
-        )
-        is not None
-    )
+    return re.search(
+        r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)[ \t]*\r?\n",
+        trailing,
+        re.IGNORECASE,
+    ) is not None
 
 
 def _compact_approval_inline_status_follows(
