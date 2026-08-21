@@ -18,7 +18,7 @@ scope	max_python_files	max_loc
 # composition that invokes the same worker for one fenced cycle per wake.
 # ODG-01 (2026-08-20) adds the bounded session-artifact facade used by the
 # authenticated desktop catalog, content, detach, and restore routes.
-services	207	40164
+services	207	40159
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

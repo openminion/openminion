@@ -8,6 +8,7 @@ from openminion.modules.telemetry.events.catalog import (
     DESKTOP_ARTIFACT_DETACHED,
     DESKTOP_ARTIFACT_RESTORED,
 )
+from openminion.modules.session.storage.turn_leases import SessionTurnBusyError
 
 
 class ArtifactLifecycleError(RuntimeError):
@@ -50,12 +51,17 @@ def apply_artifact_decision(
     reason_code: str,
     request_id: str,
 ) -> str:
-    lease = store.acquire_session_turn_lease(
-        session_id,
-        owner="desktop-artifact-decision",
-        request_id=request_id,
-        ttl_s=60,
-    )
+    try:
+        lease = store.acquire_session_turn_lease(
+            session_id,
+            owner="desktop-artifact-decision",
+            request_id=request_id,
+            ttl_s=60,
+        )
+    except SessionTurnBusyError as exc:
+        raise ArtifactLifecycleError(
+            "session_turn_active", "Session turn is active."
+        ) from exc
     try:
         fence_token = int(lease.fence_token)
         store.assert_session_turn_fence(session_id, fence_token=fence_token)

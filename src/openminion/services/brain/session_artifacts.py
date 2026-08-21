@@ -5,7 +5,6 @@ from typing import Any
 from openminion.modules.artifact.refs import is_canonical_artifact_ref
 from openminion.modules.brain.interfaces import SessionArtifactAPI
 from openminion.modules.session.artifact_lifecycle import ArtifactLifecycleError
-from openminion.modules.session.storage.turn_leases import SessionTurnBusyError
 
 
 class SessionArtifactUnavailable(RuntimeError):
@@ -84,10 +83,6 @@ class SessionArtifactFacade:
         except ArtifactLifecycleError as exc:
             raise SessionArtifactOperationError(
                 exc.code, "Artifact state could not be updated."
-            ) from exc
-        except SessionTurnBusyError as exc:
-            raise SessionArtifactOperationError(
-                "session_turn_active", "Session turn is active."
             ) from exc
         if outcome not in {"applied", "already_applied"}:
             raise SessionArtifactUnavailable(
