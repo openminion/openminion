@@ -33,6 +33,7 @@ from .postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
     tool_evidence_closeout_text,
 )
+from ..providers.retry import build_provider_retry_policy
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
@@ -312,9 +313,11 @@ class AdaptiveLoopRunnerNoToolMixin:
         confident_complete = payloads["confident_complete"]
         normalized_final_text = str(final_text or "").strip()
         if getattr(prepared.response, "empty_payload_recovered", False) is True:
-            retry_key = "empty_payload_recovery_retry_used"
-            if not bool(self.loop_state.scratchpad.get(retry_key, False)):
-                self.loop_state.scratchpad[retry_key] = True
+            retry_key = "empty_payload_recovery_retry_count"
+            retry_count = int(self.loop_state.scratchpad.get(retry_key, 0) or 0)
+            max_retries = build_provider_retry_policy(self.loop_ctx).max_retries
+            if retry_count < max_retries:
+                self.loop_state.scratchpad[retry_key] = retry_count + 1
                 return self._retry_with_system_message(
                     "The previous provider response contained no usable answer or "
                     "tool call. Continue from the structured context already "
@@ -322,7 +325,7 @@ class AdaptiveLoopRunnerNoToolMixin:
                     discard_assistant_text=normalized_final_text,
                 )
             raise ProviderError(
-                "Provider returned no usable response after one recovery retry",
+                "Provider returned no usable response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
         raw_payload_repair = self._repair_raw_tool_payload_final_text(

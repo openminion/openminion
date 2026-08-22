@@ -168,6 +168,7 @@ class _LoopContext:
     commands: list[Any] = field(default_factory=list)
     statuses: list[dict[str, Any]] = field(default_factory=list)
     session_api: Any | None = None
+    provider_retry_max_attempts: int = 3
     _index: int = 0
 
     def execute_command(self, *, command, include_reflect: bool = False):
@@ -2663,7 +2664,7 @@ def test_loop_retries_marked_no_tool_response_once() -> None:
     assert len(runtime.calls) == 2
 
 
-def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
+def test_loop_repeated_marked_no_tool_response_honors_provider_retry_limit() -> None:
     marked = LLMResponse(
         ok=True,
         provider="fake",
@@ -2671,7 +2672,7 @@ def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
         output_text="display fallback",
         empty_payload_recovered=True,
     )
-    runtime = _FakeRuntime(responses=[marked, marked])
+    runtime = _FakeRuntime(responses=[marked, marked, marked])
 
     with pytest.raises(ProviderError, match="EMPTY_PROVIDER_RESPONSE"):
         run_adaptive_tool_loop(
@@ -2683,7 +2684,30 @@ def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
             tool_specs=[],
         )
 
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 3
+
+
+def test_loop_marked_no_tool_response_honors_single_provider_attempt() -> None:
+    marked = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="display fallback",
+        empty_payload_recovered=True,
+    )
+    runtime = _FakeRuntime(responses=[marked])
+
+    with pytest.raises(ProviderError, match="EMPTY_PROVIDER_RESPONSE"):
+        run_adaptive_tool_loop(
+            _LoopContext(state=_state(), provider_retry_max_attempts=1),
+            profile=_profile(allowed_tools=frozenset()),
+            runtime=runtime,
+            model="m",
+            initial_messages=[Message(role="user", content="answer")],
+            tool_specs=[],
+        )
+
+    assert len(runtime.calls) == 1
 
 
 def test_loop_general_adaptive_profile_finalization_incomplete() -> None:

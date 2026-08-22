@@ -10,6 +10,7 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
     _finalize_tool_result_from_context,
 )
 from openminion.modules.brain.loop.services import runner_from_context
+from openminion.modules.brain.loop.providers.retry import build_provider_retry_policy
 from openminion.modules.brain.runner.tick.context import (
     _store_pending_confirmation_metadata,
 )
@@ -26,7 +27,11 @@ class _CodingLoopContextAdapter:
     ) -> None:
         self.state = ctx.state
         self._ctx = ctx
-        self.session_api = getattr(runner_from_context(ctx), "session_api", None)
+        runner = runner_from_context(ctx)
+        self.session_api = getattr(runner, "session_api", None)
+        self.provider_retry_max_attempts = build_provider_retry_policy(
+            getattr(runner, "options", None)
+        ).max_attempts
         self.prepared_parallel_dispatch_supported = all(
             callable(getattr(ctx.command_executor, name, None))
             for name in (
