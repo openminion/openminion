@@ -485,7 +485,7 @@ def llm_response_kwargs(
     )
     tool_calls = [
         ToolCall(
-            id=tc.id or "call_1",
+            id=tc.id or f"call_{index + 1}",
             name=tc.name,
             arguments=tc.arguments,
             batch_index=index,
