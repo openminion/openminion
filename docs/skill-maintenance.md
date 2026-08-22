@@ -29,13 +29,13 @@ closed in the workspace tracker board:
 
 ## Current Board Signals
 
-The completed SSRR and CSPR trackers are in `docs/trackers/qa/`. ESAE remains a
-separate postponed evaluation owner and is not part of either implementation
-lane.
+The SSRR and CSPR implementation lanes are complete and awaiting independent
+validation. ESAE remains a separate postponed evaluation owner and is not part
+of either implementation lane.
 
 ## Recommended Next Order
 
-1. Run independent QA before moving SSRR and CSPR from `qa/` to `done/`.
+1. Run independent QA before marking SSRR and CSPR complete.
 2. Keep ESAE postponed unless its operator trigger changes.
 3. Open later skill work only when a recorded trigger fires or a concrete user
    request names a behavior gap.

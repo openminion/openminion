@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from openminion.modules.skill.storage import migrations
+from openminion.modules.skill.storage.store import SQLiteSkillStore
 
 
 def _run_alembic(db_path: Path, action: str, target: str) -> None:
@@ -131,3 +132,64 @@ def test_admission_migration_backfills_legacy_active_version_and_downgrades(
     assert "active_version_hash" not in skill_columns
     assert "content_fingerprint" not in version_columns
     assert admission_table is None
+
+
+def test_store_initialization_upgrades_legacy_catalog_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "skill.db"
+    baseline = importlib.import_module(
+        "openminion.modules.skill.storage.migrations.versions.0001_baseline"
+    )
+    with sqlite3.connect(db_path) as conn:
+        for statement in baseline.DDL:
+            conn.execute(statement)
+        conn.execute(
+            """
+            INSERT INTO skills(
+                skill_id, name, status, scope, agent_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "skill.deploy",
+                "Deploy",
+                "verified",
+                "global",
+                None,
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO skill_versions(
+                skill_id, version_hash, source_artifact_ref,
+                package_json, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                "skill.deploy",
+                "v1",
+                "artifact://v1",
+                '{"version_hash":"v1"}',
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+
+    store = SQLiteSkillStore(db_path)
+    store.close()
+
+    with sqlite3.connect(db_path) as conn:
+        active = conn.execute(
+            "SELECT active_version_hash FROM skills WHERE skill_id = ?",
+            ("skill.deploy",),
+        ).fetchone()
+        admission = conn.execute(
+            """
+            SELECT state, authority_class, content_fingerprint
+            FROM skill_version_admissions
+            WHERE skill_id = ? AND version_hash = ?
+            """,
+            ("skill.deploy", "v1"),
+        ).fetchone()
+
+    assert active == ("v1",)
+    assert admission == ("legacy_grandfathered", "legacy_grandfathered", "legacy:v1")

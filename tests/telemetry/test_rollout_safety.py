@@ -48,6 +48,7 @@ from openminion.modules.brain.adapters.session import SessctlAdapter
 from openminion.modules.session.diagnostics.events import (
     emit_session_operation,
 )
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.diagnostics.events import emit_skill_operation
 from openminion.modules.tool.runtime.policy import Policy
@@ -372,14 +373,34 @@ def test_module_flows_continue_without_telemetry_crashes(
 
     skill = Skill(_skill_config(tmp_path), telemetryctl=telemetryctl)
     skill.set_telemetry_context(session_id="sess-safety", turn_id="turn-1")
+    skill_authority = SkillIngestAuthority.local_operator(
+        surface="test.telemetry.rollout_safety",
+        principal_id="local:test",
+    )
     skill_id, version_hash, warnings = skill.ingest_text(
         name="Restart Docker Services Safely",
         markdown=(
+            "---\n"
+            "name: Restart Docker Services Safely\n"
+            "verification:\n"
+            "  - Confirm the service is healthy after restart.\n"
+            "---\n\n"
             "# Restart Docker Services Safely\n\n"
-            "Use `docker ps`, check logs, then restart the service.\n"
+            "## Summary\nRestart Docker services with evidence.\n\n"
+            "## Procedure\n- Use `docker ps`, check logs, then restart the service.\n\n"
+            "## Verification\n- Confirm the service is healthy after restart.\n"
         ),
+        authority=skill_authority,
     )
-    assert warnings == []
+    assert "admission.pending" in warnings
+    skill.admit_skill_version(
+        skill_id=skill_id,
+        version_hash=version_hash,
+        expected_active_version_hash=None,
+        target_status="verified",
+        reason="telemetry rollout safety fixture",
+        authority=skill_authority,
+    )
     assert skill.match(
         intent_text="restart docker and inspect daemon logs",
         step_hint={"tool_id": "tool.shell", "risk": "medium"},

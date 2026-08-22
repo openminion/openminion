@@ -1,9 +1,102 @@
 from openminion.modules.storage.record_store import RecordStore
 
 
+def _table_columns(record_store: RecordStore, table_name: str) -> set[str]:
+    if bool(record_store.capabilities().get("raw_sql")):
+        rows = record_store.query_dicts(f"PRAGMA table_info({table_name})")
+    else:
+        rows = record_store.query_dicts(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = ?
+            """,
+            (table_name,),
+        )
+    return {str(row["name"]) for row in rows}
+
+
+def _ensure_column(
+    record_store: RecordStore,
+    *,
+    table_name: str,
+    column_name: str,
+    ddl_tail: str,
+) -> None:
+    columns = _table_columns(record_store, table_name)
+    if not columns or column_name in columns:
+        return
+    record_store.execute_count(
+        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_tail}"
+    )
+
+
 def create_skill_schema(record_store: RecordStore) -> None:
     _create_catalog_schema(record_store)
     _create_proposal_schema(record_store)
+
+
+def _upgrade_legacy_catalog_columns(record_store: RecordStore) -> None:
+    _ensure_column(
+        record_store,
+        table_name="skills",
+        column_name="active_version_hash",
+        ddl_tail="TEXT",
+    )
+    _ensure_column(
+        record_store,
+        table_name="skill_versions",
+        column_name="content_fingerprint",
+        ddl_tail="TEXT NOT NULL DEFAULT ''",
+    )
+    record_store.execute_count(
+        "UPDATE skill_versions "
+        "SET content_fingerprint = 'legacy:' || version_hash "
+        "WHERE content_fingerprint = ''"
+    )
+
+
+def _backfill_legacy_catalog_admission(record_store: RecordStore) -> None:
+    record_store.execute_count(
+        """
+        UPDATE skills SET active_version_hash = (
+            SELECT version_hash FROM skill_versions
+            WHERE skill_versions.skill_id = skills.skill_id
+            ORDER BY created_at DESC, version_hash DESC LIMIT 1
+        ) WHERE active_version_hash IS NULL
+        """
+    )
+    record_store.execute_count(
+        """
+        INSERT INTO skill_version_admissions(
+            skill_id, version_hash, state, target_status, content_fingerprint,
+            authority_class, reviewer_id, reason, created_at, decided_at
+        )
+        SELECT s.skill_id, s.active_version_hash, 'legacy_grandfathered', s.status,
+               sv.content_fingerprint, 'legacy_grandfathered', NULL,
+               'pre-admission catalog version', s.updated_at, s.updated_at
+        FROM skills s JOIN skill_versions sv
+          ON sv.skill_id = s.skill_id AND sv.version_hash = s.active_version_hash
+        ON CONFLICT(skill_id, version_hash) DO NOTHING
+        """
+    )
+
+
+def _create_catalog_indexes(record_store: RecordStore) -> None:
+    statements = (
+        "CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status)",
+        "CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, agent_id)",
+        "CREATE INDEX IF NOT EXISTS idx_skills_updated ON skills(updated_at)",
+        "CREATE INDEX IF NOT EXISTS idx_skill_versions_skill "
+        "ON skill_versions(skill_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_skill_runs_skill "
+        "ON skill_runs(skill_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_skill_runs_session "
+        "ON skill_runs(session_id, created_at)",
+    )
+    for statement in statements:
+        record_store.execute_count(statement)
 
 
 def _create_catalog_schema(record_store: RecordStore) -> None:
@@ -35,6 +128,7 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
         )
     """
     )
+    _upgrade_legacy_catalog_columns(record_store)
     record_store.execute_count(
         "CREATE INDEX IF NOT EXISTS idx_skill_versions_fingerprint "
         "ON skill_versions(skill_id, content_fingerprint)"
@@ -57,6 +151,7 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
         )
         """
     )
+    _backfill_legacy_catalog_admission(record_store)
     record_store.execute_count(
         """
         CREATE TABLE IF NOT EXISTS skill_index (
@@ -87,24 +182,7 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
         )
         """
     )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, agent_id)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skills_updated ON skills(updated_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id, created_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_runs_skill ON skill_runs(skill_id, created_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_runs_session ON skill_runs(session_id, created_at)"
-    )
+    _create_catalog_indexes(record_store)
 
 
 def _create_proposal_schema(record_store: RecordStore) -> None:
