@@ -18,7 +18,7 @@ from ..transcript import TerminalTranscript
 PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     """
     / /agents /browser /compact /context /cost /delegate /details /editor /effort
-    /export /goal /help /mcp /memory /model /normal /permissions /queue /quiet
+    /export /goal /graph /help /mcp /memory /model /normal /permissions /queue /quiet
     /readonly /new /resume /review /sessions /skills /status /statusline /tasks
     /telemetry /theme /tokens /tools /trace /undo /verbose
     """.split()

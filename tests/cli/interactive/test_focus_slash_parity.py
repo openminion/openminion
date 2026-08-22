@@ -203,6 +203,20 @@ async def test_mcp_command_renders_status_report() -> None:
 
 
 @pytest.mark.asyncio
+async def test_graph_command_surfaces_viewer_commands() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DemoFocusRuntime(working_dir=tmp, session="graph-test")
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.screen._handle_command("/graph current --node-kind fact")
+            await pilot.pause()
+            body = _last_system_body(app.screen.query_one(FocusTranscript))
+
+    assert "openminion graph view --current --node-kind fact" in body
+
+
+@pytest.mark.asyncio
 async def test_compact_command_surfaces_not_supported_when_hook_missing() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runtime = _DemoFocusRuntime(working_dir=tmp, session="compact-test")

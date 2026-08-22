@@ -34,6 +34,21 @@ It reports:
 openminion graph view --current
 ```
 
+Inside Focus or the terminal chat UI, use `/graph` to see the same viewer
+entrypoints without leaving the session:
+
+```text
+/graph
+/graph current
+/graph dry-run
+/graph html viewer.html
+/graph third repo_graph
+```
+
+The slash command prints copyable `openminion graph ...` commands. It does not
+start a browser, write memory, or launch a second viewer process from inside the
+chat loop.
+
 If you are not sure whether there is memory yet, run:
 
 ```bash

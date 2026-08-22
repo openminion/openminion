@@ -37,6 +37,7 @@ from openminion.cli.presentation.visible_parity import (
     statusline_label,
 )
 from openminion.cli.presentation.browser import render_browser_command
+from openminion.cli.presentation.graph import render_graph_command
 
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
@@ -509,6 +510,8 @@ def _handle_visible_parity_slash(
         console.print(Text(render_context_report(runtime), style=_SYSTEM_STYLE))
     elif cmd == "/memory":
         console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/graph":
+        console.print(Text(render_graph_command(arg), style=_SYSTEM_STYLE))
     elif cmd == "/skills":
         console.print(Text(render_skills_report(runtime), style=_SYSTEM_STYLE))
     elif cmd == "/browser":
@@ -661,6 +664,7 @@ async def _handle_slash(
     if cmd in (
         "/context",
         "/memory",
+        "/graph",
         "/skills",
         "/browser",
         "/tasks",
