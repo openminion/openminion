@@ -7,7 +7,6 @@ from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
 from openminion.base.config.parse import split_comma_tokens
-from openminion.modules.skill.constants import SKILL_STATUS_DEPRECATED
 from openminion.modules.skill.errors import SkillError
 from openminion.modules.skill.proposal.queue import (
     ProposalNotFoundError,
@@ -29,6 +28,15 @@ def _error(
         retryable=False,
     )
     return RouteResult(status=resolved_status, payload=payload)
+
+
+def _operator_required() -> RouteResult:
+    return _error(
+        HTTPStatus.FORBIDDEN,
+        code="SKILL_OPERATOR_AUTH_REQUIRED",
+        message="Skill mutation requires an authenticated operator principal.",
+        details={},
+    )
 
 
 def _with_skill(
@@ -118,54 +126,7 @@ def get_skill(ctx: APIRouteContext, *, skill_id: str) -> RouteResult:
 def disable_skill(
     ctx: APIRouteContext, *, skill_id: str, body: dict[str, Any] | None, path: str
 ) -> RouteResult:
-    if body is None:
-        return _error(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message="JSON request body is required.",
-            details={"path": path},
-        )
-    reason = str(body.get("reason", "") or "").strip()
-    if not reason:
-        return _error(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message="`reason` is required to disable a skill.",
-            details={"path": path},
-        )
-
-    def _build(ctl: Skill) -> RouteResult:
-        try:
-            package = ctl.get_skill(skill_id, None)
-        except SkillError as exc:
-            return _error(
-                HTTPStatus.NOT_FOUND
-                if exc.code == "NOT_FOUND"
-                else HTTPStatus.BAD_REQUEST,
-                code=exc.code,
-                message=str(exc),
-                details=exc.to_dict().get("details", {}),
-            )
-        updated = ctl.set_skill_status(
-            skill_id=package.skill_id,
-            new_status=SKILL_STATUS_DEPRECATED,
-            promotion_path="api",
-        )
-        return RouteResult(
-            status=HTTPStatus.OK,
-            payload={
-                "ok": True,
-                "disabled": {
-                    "skill_id": package.skill_id,
-                    "previous_status": package.status,
-                    "new_status": SKILL_STATUS_DEPRECATED,
-                    "reason": reason,
-                    "disabled_at": updated.updated_at,
-                },
-            },
-        )
-
-    return _with_skill(ctx, _build)
+    return _operator_required()
 
 
 def list_proposals(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
@@ -245,86 +206,11 @@ def review_proposal(
     body: dict[str, Any] | None,
     path: str,
 ) -> RouteResult:
-    if body is None:
-        return _error(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message="JSON request body is required.",
-            details={"path": path},
-        )
-    reviewer_id = str(body.get("reviewer_id", "") or "").strip()
-    if not reviewer_id:
-        return _error(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message="`reviewer_id` is required to review a proposal.",
-            details={"path": path},
-        )
-    review_policy_id = str(body.get("review_policy_id", "") or "").strip()
-    criteria_raw = body.get("criterion_decisions") or []
-    if not isinstance(criteria_raw, list) or not criteria_raw:
-        return _error(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message="`criterion_decisions` must be a non-empty list.",
-            details={"path": path},
-        )
-
-    def _build(ctl: Skill) -> RouteResult:
-        from openminion.modules.skill.proposal.queue import record_proposal_review
-
-        try:
-            review = record_proposal_review(
-                ctl.store,
-                proposal_id=proposal_id,
-                reviewer_id=reviewer_id,
-                review_policy_id=review_policy_id,
-                criterion_decisions=criteria_raw,
-            )
-        except ProposalQueueError as exc:
-            return _proposal_queue_error(exc, proposal_id=proposal_id)
-        except ValueError as exc:
-            return _error(
-                HTTPStatus.BAD_REQUEST,
-                code="invalid_request",
-                message=str(exc),
-                details={"proposal_id": proposal_id},
-            )
-        return RouteResult(
-            status=HTTPStatus.OK,
-            payload={
-                "ok": True,
-                "proposal_id": proposal_id,
-                "review": review.model_dump(mode="json"),
-            },
-        )
-
-    return _with_skill(ctx, _build)
+    return _operator_required()
 
 
 def apply_proposal(ctx: APIRouteContext, *, proposal_id: str) -> RouteResult:
-    def _build(ctl: Skill) -> RouteResult:
-        from openminion.modules.skill.proposal.queue import apply_proposal
-
-        catalog_rows = ctl.list_skills({}) or []
-        try:
-            addition = apply_proposal(
-                ctl.store,
-                proposal_id=proposal_id,
-                current_catalog=catalog_rows,
-            )
-        except ProposalQueueError as exc:
-            return _proposal_queue_error(exc, proposal_id=proposal_id)
-        return RouteResult(
-            status=HTTPStatus.OK,
-            payload={
-                "ok": True,
-                "proposal_id": proposal_id,
-                "addition": addition.model_dump(mode="json"),
-            },
-        )
-
-    return _with_skill(ctx, _build)
+    return _operator_required()
 
 
 def suggestion_inbox(ctx: APIRouteContext, *, query: str | None) -> RouteResult:

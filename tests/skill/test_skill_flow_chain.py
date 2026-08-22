@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 def _cfg(tmp_path: Path) -> dict:
@@ -56,7 +57,8 @@ Recover the docker service with validation and logging.
 def test_skill_flow_chain_end_to_end(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_text(
+        skill_id, version_hash, warnings = ingest_text_and_admit(
+            ctl,
             name="Docker Recovery Flow",
             markdown=FLOW_SKILL,
         )

@@ -18,6 +18,10 @@ from openminion.cli.constants import (
 )
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
+from openminion.cli.identity.operator import local_operator_id
+from openminion.cli.commands.skill_admission import (
+    register_skill_admission_subcommands,
+)
 
 _CLI_DEFAULT_SKILL_CONFIG_PATH = "skill.yaml"
 
@@ -38,6 +42,7 @@ def _skill_force_disabled() -> bool:
 try:
     from openminion.modules.skill import Skill
     from openminion.modules.skill.errors import SkillError
+    from openminion.modules.skill.interfaces import SkillIngestAuthority
 except ModuleNotFoundError:
     _SKILL_IMPORT_FAILED = True
     _SKILL_ERROR_MSG = (
@@ -61,6 +66,7 @@ except ModuleNotFoundError:
                 try:
                     from openminion.modules.skill import Skill
                     from openminion.modules.skill.errors import SkillError
+                    from openminion.modules.skill.interfaces import SkillIngestAuthority
 
                     _SKILL_IMPORT_FAILED = False
                     _SKILL_ERROR_MSG = None
@@ -187,7 +193,10 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
                 scope=args.scope,
                 agent_id=args.agent_id,
                 trust=getattr(args, "trust", None),
-                promotion_path="operator",
+                authority=SkillIngestAuthority.local_operator(
+                    surface="cli.skill.ingest",
+                    principal_id=local_operator_id(),
+                ),
             )
             result = {
                 "ok": True,
@@ -218,6 +227,58 @@ def _run_skill_ingest(args, app: Any | None = None) -> int:
             sort_keys=False,
         )
         return 1
+
+
+def _run_skill_admission(args, app: Any | None = None) -> int:
+    _attach_app(args, app)
+    if not _check_skill_available():
+        print_json_payload(
+            {
+                "ok": False,
+                "error": _error_payload(
+                    code="SKILL_NOT_AVAILABLE", message=_get_skill_error()
+                ),
+            },
+            sort_keys=False,
+        )
+        return 1
+    ctl = Skill(args.config)
+    try:
+        authority = SkillIngestAuthority.local_operator(
+            surface=f"cli.skill.{args.skill_action}",
+            principal_id=local_operator_id(),
+        )
+        expected = str(args.expected_active_version_hash).strip()
+        if args.skill_action == "admit":
+            result = ctl.admit_skill_version(
+                skill_id=args.skill_id,
+                version_hash=args.version_hash,
+                expected_active_version_hash=None if expected == "none" else expected,
+                target_status=args.target_status,
+                reason=args.reason,
+                authority=authority,
+            )
+        else:
+            result = ctl.rollback_skill_version(
+                skill_id=args.skill_id,
+                to_version_hash=args.to_version_hash,
+                expected_active_version_hash=expected,
+                reason=args.reason,
+                authority=authority,
+            )
+        print_json_payload(result, sort_keys=False)
+        return 0
+    except SkillError as exc:
+        print_json_payload(
+            {
+                "ok": False,
+                "error": _error_payload_from_exception(exc, include_empty_details=True),
+            },
+            sort_keys=False,
+        )
+        return 1
+    finally:
+        ctl.close()
 
 
 def _run_skill_list(args, app: Any | None = None) -> int:
@@ -915,6 +976,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     skill_subcommands = skill.add_subparsers(dest="skill_command", required=True)
 
     _register_skill_ingest_subcommand(skill_subcommands)
+    register_skill_admission_subcommands(
+        skill_subcommands,
+        handler=_run_skill_admission,
+        add_config_arg=_add_skill_config_arg,
+    )
     _register_skill_list_subcommand(skill_subcommands)
     _register_skill_refresh_subcommand(skill_subcommands)
     _register_skill_reingest_all_subcommand(skill_subcommands)

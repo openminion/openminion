@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit, ingest_text_and_admit
 
 SAMPLES_ROOT = Path(__file__).resolve().parents[2] / "examples" / "skills"
 
@@ -112,7 +113,8 @@ def skill_ctl(tmp_path: Path):
 
 
 def test_ingest_succeeds_and_render_contains_body(skill_ctl: Skill) -> None:
-    skill_id, version_hash, warnings = skill_ctl.ingest_text(
+    skill_id, version_hash, warnings = ingest_text_and_admit(
+        skill_ctl,
         name="gh-address-comments",
         markdown=PURE_EXTERNAL_SKILL,
         scope="global",
@@ -154,7 +156,8 @@ def test_ingest_succeeds_and_render_contains_body(skill_ctl: Skill) -> None:
 
 
 def test_summary_catalog_uses_short_description(skill_ctl: Skill) -> None:
-    skill_id, version_hash, _ = skill_ctl.ingest_text(
+    skill_id, version_hash, _ = ingest_text_and_admit(
+        skill_ctl,
         name="gh-address-comments",
         markdown=PURE_EXTERNAL_SKILL,
     )
@@ -167,7 +170,8 @@ def test_summary_catalog_uses_short_description(skill_ctl: Skill) -> None:
 
 
 def test_summary_render_and_plan_contains_description(skill_ctl: Skill) -> None:
-    skill_id, version_hash, _ = skill_ctl.ingest_text(
+    skill_id, version_hash, _ = ingest_text_and_admit(
+        skill_ctl,
         name="gh-address-comments",
         markdown=PURE_EXTERNAL_SKILL,
     )
@@ -184,7 +188,8 @@ def test_summary_render_and_plan_contains_description(skill_ctl: Skill) -> None:
 
 
 def test_lint_procedure_missing_warning(skill_ctl: Skill) -> None:
-    skill_id, version_hash, warnings = skill_ctl.ingest_text(
+    skill_id, version_hash, warnings = ingest_text_and_admit(
+        skill_ctl,
         name="empty-skill",
         markdown=EMPTY_BODY_SKILL,
     )
@@ -203,7 +208,9 @@ def test_lint_procedure_missing_warning(skill_ctl: Skill) -> None:
 
 def test_native_regression_semantic_equivalence(skill_ctl: Skill) -> None:
     path = SAMPLES_ROOT / "cli-chat-smoke" / "debug" / "SKILL.md"
-    skill_id, version_hash, warnings = skill_ctl.ingest_file(path, name="debug")
+    skill_id, version_hash, warnings = ingest_file_and_admit(
+        skill_ctl, path, name="debug"
+    )
 
     assert not any(item.startswith("lint.error:") for item in warnings)
 
@@ -222,7 +229,8 @@ def test_native_regression_semantic_equivalence(skill_ctl: Skill) -> None:
 def test_hybrid_summary_preserved_without_canonical_duplication(
     skill_ctl: Skill,
 ) -> None:
-    skill_id, version_hash, warnings = skill_ctl.ingest_text(
+    skill_id, version_hash, warnings = ingest_text_and_admit(
+        skill_ctl,
         name="hybrid-deploy",
         markdown=HYBRID_SKILL,
     )
@@ -248,7 +256,8 @@ def test_hybrid_summary_preserved_without_canonical_duplication(
 
 
 def test_frontmatterless_ingest_succeeds(skill_ctl: Skill) -> None:
-    skill_id, version_hash, warnings = skill_ctl.ingest_text(
+    skill_id, version_hash, warnings = ingest_text_and_admit(
+        skill_ctl,
         name="frontmatter-free-deploy",
         markdown=FRONTMATTERLESS_SKILL,
     )
@@ -267,11 +276,13 @@ def test_frontmatterless_ingest_succeeds(skill_ctl: Skill) -> None:
 
 
 def test_match_score_gap_within_threshold(skill_ctl: Skill) -> None:
-    external_id, _, _ = skill_ctl.ingest_text(
+    external_id, _, _ = ingest_text_and_admit(
+        skill_ctl,
         name="gh-address-comments",
         markdown=PURE_EXTERNAL_SKILL,
     )
-    native_id, _, _ = skill_ctl.ingest_text(
+    native_id, _, _ = ingest_text_and_admit(
+        skill_ctl,
         name="gh-address-comments",
         markdown=NATIVE_EQUIVALENT_SKILL,
     )
@@ -311,7 +322,8 @@ Run the command.
 def test_unknown_front_matter_keys_produce_warnings_through_ingest(
     skill_ctl: Skill,
 ) -> None:
-    _skill_id, _version_hash, warnings = skill_ctl.ingest_text(
+    _skill_id, _version_hash, warnings = ingest_text_and_admit(
+        skill_ctl,
         name="external-with-extras",
         markdown=UNKNOWN_FRONT_MATTER_SKILL,
         scope="global",
@@ -321,11 +333,10 @@ def test_unknown_front_matter_keys_produce_warnings_through_ingest(
         for warning in warnings
         if warning.startswith("parse.warning:unknown_front_matter_key:")
     )
-    # authors, license, and examples are top-level unknown keys.
+    # Agent Skills license is recognized; authors and examples remain unknown.
     assert unknown_warnings == sorted(
         [
             "parse.warning:unknown_front_matter_key:authors",
-            "parse.warning:unknown_front_matter_key:license",
             "parse.warning:unknown_front_matter_key:examples",
         ]
     )
@@ -345,7 +356,8 @@ Run the command.
 def test_ingest_text_does_not_emit_companion_unavailable_warning(
     skill_ctl: Skill,
 ) -> None:
-    _skill_id, _version_hash, warnings = skill_ctl.ingest_text(
+    _skill_id, _version_hash, warnings = ingest_text_and_admit(
+        skill_ctl,
         name="bare-external",
         markdown=_BARE_EXTERNAL_SKILL_MD,
         scope="global",
@@ -362,7 +374,7 @@ def test_ingest_file_emits_companion_unavailable_warning_when_no_yaml(
 ) -> None:
     skill_path = tmp_path / "bare-external.md"
     skill_path.write_text(_BARE_EXTERNAL_SKILL_MD, encoding="utf-8")
-    _skill_id, _version_hash, warnings = skill_ctl.ingest_file(skill_path)
+    _skill_id, _version_hash, warnings = ingest_file_and_admit(skill_ctl, skill_path)
     assert "parse.warning:companion_metadata_unavailable" in warnings, (
         f"ingest_file with no companion yaml should emit the SIPS-02 "
         f"warning. got warnings: {warnings}"
@@ -381,7 +393,7 @@ def test_ingest_file_silent_when_companion_yaml_present(
         "interface:\n  display_name: 'Bare External'\n",
         encoding="utf-8",
     )
-    _skill_id, _version_hash, warnings = skill_ctl.ingest_file(skill_path)
+    _skill_id, _version_hash, warnings = ingest_file_and_admit(skill_ctl, skill_path)
     assert "parse.warning:companion_metadata_unavailable" not in warnings, (
         f"ingest_file with a present companion yaml must NOT emit the "
         f"SIPS-02 warning. got warnings: {warnings}"

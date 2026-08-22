@@ -5,6 +5,11 @@ from pathlib import Path
 
 from openminion.modules.skill.runtime.parser import normalize_render_purpose
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import (
+    ingest_file_and_admit,
+    ingest_text_and_admit,
+    operator_authority,
+)
 
 
 def _cfg(tmp_path: Path) -> dict:
@@ -98,8 +103,8 @@ Format a disk.
 def test_ingest_and_get_skill(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_text(
-            name="Restart Docker Services Safely", markdown=DOCKER_SKILL
+        skill_id, version_hash, warnings = ingest_text_and_admit(
+            ctl, name="Restart Docker Services Safely", markdown=DOCKER_SKILL
         )
 
         assert skill_id == "docker_restart_safe"
@@ -119,10 +124,12 @@ def test_ingest_and_get_skill(tmp_path: Path) -> None:
 def test_match_prefers_intent_and_tool_alignment(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        docker_id, docker_ver, _ = ctl.ingest_text(
-            name="Restart Docker Services Safely", markdown=DOCKER_SKILL
+        docker_id, docker_ver, _ = ingest_text_and_admit(
+            ctl, name="Restart Docker Services Safely", markdown=DOCKER_SKILL
         )
-        git_id, git_ver, _ = ctl.ingest_text(name="Sync Git Branch", markdown=GIT_SKILL)
+        git_id, git_ver, _ = ingest_text_and_admit(
+            ctl, name="Sync Git Branch", markdown=GIT_SKILL
+        )
         assert docker_id and docker_ver and git_id and git_ver
 
         matches = ctl.match(
@@ -142,11 +149,13 @@ def test_match_prefers_intent_and_tool_alignment(tmp_path: Path) -> None:
 def test_match_does_not_use_generic_procedure_token_overlap(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        docker_id, docker_ver, _ = ctl.ingest_text(
+        docker_id, docker_ver, _ = ingest_text_and_admit(
+            ctl,
             name="Restart Docker Services Safely",
             markdown=DOCKER_SKILL,
         )
-        git_id, git_ver, _ = ctl.ingest_text(
+        git_id, git_ver, _ = ingest_text_and_admit(
+            ctl,
             name="Sync Git Branch",
             markdown=GIT_SKILL,
         )
@@ -169,8 +178,8 @@ def test_match_does_not_use_generic_procedure_token_overlap(tmp_path: Path) -> N
 def test_render_snippet_is_budgeted(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
-            name="Restart Docker Services Safely", markdown=DOCKER_SKILL
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl, name="Restart Docker Services Safely", markdown=DOCKER_SKILL
         )
         snippet, snippet_hash = ctl.render_snippet(
             skill_id=skill_id,
@@ -190,8 +199,8 @@ def test_render_snippet_is_budgeted(tmp_path: Path) -> None:
 def test_render_snippet_accepts_mode_names(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
-            name="Restart Docker Services Safely", markdown=DOCKER_SKILL
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl, name="Restart Docker Services Safely", markdown=DOCKER_SKILL
         )
 
         respond_snippet, _ = ctl.render_snippet(
@@ -217,8 +226,8 @@ def test_render_snippet_accepts_mode_names(tmp_path: Path) -> None:
 def test_render_snippet_accepts_decide_purpose_as_plan_alias(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
-            name="Restart Docker Services Safely", markdown=DOCKER_SKILL
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl, name="Restart Docker Services Safely", markdown=DOCKER_SKILL
         )
 
         assert normalize_render_purpose("decide") == "plan"
@@ -239,7 +248,8 @@ def test_render_snippet_accepts_decide_purpose_as_plan_alias(tmp_path: Path) -> 
 def test_render_snippet_mode_name_can_override_generic_purpose(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl,
             name="Restart Docker Services Safely",
             markdown=DOCKER_SKILL,
         )
@@ -267,7 +277,8 @@ def test_render_snippet_mode_name_can_override_generic_purpose(tmp_path: Path) -
 def test_workflow_catalog_and_lookup_are_structural(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, _, _ = ctl.ingest_text(
+        skill_id, _, _ = ingest_text_and_admit(
+            ctl,
             name="Restart Docker Services Safely",
             markdown=DOCKER_SKILL,
         )
@@ -288,10 +299,11 @@ def test_lint_forces_draft_when_high_risk_missing_verification(tmp_path: Path) -
         skill_id, version_hash, warnings = ctl.ingest_text(
             name="Dangerous Disk Format",
             markdown=HIGH_RISK_NO_VERIFY,
+            authority=operator_authority(),
         )
 
         assert skill_id == "dangerous_disk_format"
-        assert any("lint.forced_status_draft" in item for item in warnings)
+        assert "frontmatter.status_non_authoritative" in warnings
 
         package = ctl.get_skill(skill_id, version_hash)
         assert package.status == "draft"
@@ -308,8 +320,8 @@ def test_lint_forces_draft_when_high_risk_missing_verification(tmp_path: Path) -
 def test_log_run_records_outcome(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
-            name="Restart Docker Services Safely", markdown=DOCKER_SKILL
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl, name="Restart Docker Services Safely", markdown=DOCKER_SKILL
         )
         run_id = ctl.log_run(
             session_id="session-1",
@@ -370,7 +382,7 @@ def test_ingest_missing_name_raises(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         with pytest.raises(SkillError) as exc_info:
-            ctl.ingest_text(name="   ", markdown="## Summary\nHello.")
+            ingest_text_and_admit(ctl, name="   ", markdown="## Summary\nHello.")
         assert exc_info.value.code == "INVALID_ARGUMENT"
     finally:
         ctl.close()
@@ -379,7 +391,8 @@ def test_ingest_missing_name_raises(tmp_path: Path) -> None:
 def test_ingest_dangerous_command_warns(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        _, _, warnings = ctl.ingest_text(
+        _, _, warnings = ingest_text_and_admit(
+            ctl,
             name="Dangerous Wipe Skill",
             markdown=DANGEROUS_SKILL,
         )
@@ -395,8 +408,8 @@ def test_render_snippet_invalid_purpose_raises(tmp_path: Path) -> None:
 
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
-            name="Safe Recipe Skill", markdown=SAFE_RECIPE_SKILL
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl, name="Safe Recipe Skill", markdown=SAFE_RECIPE_SKILL
         )
         with pytest.raises(SkillError) as exc_info:
             ctl.render_snippet(
@@ -416,8 +429,8 @@ def test_log_run_invalid_outcome_raises(tmp_path: Path) -> None:
 
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = ctl.ingest_text(
-            name="Safe Recipe Skill", markdown=SAFE_RECIPE_SKILL
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl, name="Safe Recipe Skill", markdown=SAFE_RECIPE_SKILL
         )
         with pytest.raises(SkillError) as exc_info:
             ctl.log_run(
@@ -443,7 +456,7 @@ def test_path_validation_rejects_traversal(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         with pytest.raises(SkillError) as exc_info:
-            ctl.ingest_file(path="../etc/passwd")
+            ingest_file_and_admit(ctl, path="../etc/passwd")
         assert exc_info.value.code == "PATH_TRAVERSAL"
     finally:
         ctl.close()
@@ -456,7 +469,7 @@ def test_path_validation_rejects_nonexistent_file(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         with pytest.raises(SkillError) as exc_info:
-            ctl.ingest_file(path="/nonexistent/path/SKILL.md")
+            ingest_file_and_admit(ctl, path="/nonexistent/path/SKILL.md")
         assert exc_info.value.code == "PATH_NOT_FOUND"
     finally:
         ctl.close()
@@ -472,7 +485,7 @@ def test_path_validation_rejects_non_md_file(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
         with pytest.raises(SkillError) as exc_info:
-            ctl.ingest_file(path=str(test_file))
+            ingest_file_and_admit(ctl, path=str(test_file))
         assert exc_info.value.code == "INVALID_FILE_TYPE"
     finally:
         ctl.close()
@@ -495,7 +508,7 @@ def test_path_validation_respects_allowed_roots(tmp_path: Path) -> None:
     ctl = Skill(cfg)
     try:
         with pytest.raises(SkillError) as exc_info:
-            ctl.ingest_file(path=str(disallowed_dir / "SKILL.md"))
+            ingest_file_and_admit(ctl, path=str(disallowed_dir / "SKILL.md"))
         assert exc_info.value.code == "PATH_NOT_ALLOWED"
     finally:
         ctl.close()
@@ -516,7 +529,9 @@ A test skill.
 
     ctl = Skill(_cfg(tmp_path))
     try:
-        skill_id, version_hash, warnings = ctl.ingest_file(path=str(skill_file))
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl, path=str(skill_file)
+        )
         assert skill_id == "test_skill"
         assert len(version_hash) == 64
     finally:
@@ -547,7 +562,7 @@ A test skill.
     cfg = _cfg(tmp_path)
     ctl = Skill(cfg, event_callback=event_callback)
     try:
-        skill_id, version_hash, _ = ctl.ingest_file(path=str(skill_file))
+        skill_id, version_hash, _ = ingest_file_and_admit(ctl, path=str(skill_file))
         assert len(events_received) >= 1
         assert events_received[0][0] == "skill.ingested"
         assert events_received[0][1]["skill_id"] == skill_id
@@ -569,7 +584,7 @@ def test_event_callback_receives_failed_events(tmp_path: Path) -> None:
     ctl = Skill(cfg, event_callback=event_callback)
     try:
         with pytest.raises(Exception):
-            ctl.ingest_file(path="/some/path/SKILL.md")
+            ingest_file_and_admit(ctl, path="/some/path/SKILL.md")
         assert len(events_received) >= 1
         assert events_received[0][0] == "skill.ingest_failed"
     finally:

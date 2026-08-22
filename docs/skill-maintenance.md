@@ -1,7 +1,7 @@
 # Skill Maintenance Status
 
 Status: active maintainer note
-Last updated: 2026-08-08
+Last updated: 2026-08-22
 
 Purpose: give package maintainers a compact skill-side pickup point without
 requiring a full reread of the historical tracker set.
@@ -11,9 +11,9 @@ posture for the skill subsystem as seen from the package checkout.
 
 ## Current Reading
 
-The core skill mechanics are not the next bottleneck. Recent skill work closed
-the major runtime, ingest, parser, selection, proposal queue, suggestion, trust,
-identity, and final-answer presentation lanes.
+The core selection and authoring mechanics remain healthy. The 2026-08-22 work
+closed two concrete integration gaps: structural admission of new skill
+versions and bounded progressive resources/version pinning for complex skills.
 
 The lifecycle and evidence polish identified on 2026-08-08 has now been
 closed in the workspace tracker board:
@@ -23,24 +23,23 @@ closed in the workspace tracker board:
    complete,
 3. the older `qa/` skill trackers were moved to `done` after fresh validation
    evidence,
-4. no new skill behavior lane was opened by this maintenance pass.
+4. SSRR now owns admission authority, version re-admission, lifecycle security,
+   and Agent Skills conformance;
+5. CSPR owns bounded resources and task-plan workflow-version pinning.
 
 ## Current Board Signals
 
-The package-local check originally found one skill tracker in `wip/` with 100%
-completion and seven historical skill trackers in `qa/`. Those have been
-closed with current verification evidence in the workspace documentation
-lifecycle. Treat future skill work as trigger-based product work, not as
-unresolved lifecycle cleanup.
+The completed SSRR and CSPR trackers are in `docs/trackers/qa/`. ESAE remains a
+separate postponed evaluation owner and is not part of either implementation
+lane.
 
 ## Recommended Next Order
 
-1. Keep the skill tracker board clean: new skill lanes should enter `wip/`,
-   completed lanes should move through `qa/`, and verified lanes should land in
-   `done/`.
-2. Open new skill work only when a recorded trigger fires or a concrete user
+1. Run independent QA before moving SSRR and CSPR from `qa/` to `done/`.
+2. Keep ESAE postponed unless its operator trigger changes.
+3. Open later skill work only when a recorded trigger fires or a concrete user
    request names a behavior gap.
-3. Preserve the anti-LLM boundaries below for every future skill lane.
+4. Preserve the anti-LLM boundaries below for every future skill lane.
 
 ## Boundaries
 

@@ -89,6 +89,45 @@ def test_skill_store_round_trip(skill_store_case) -> None:
     assert store.get_skill_package("skill.frontend", "v1") is None
 
 
+def test_skill_admission_backend_parity(skill_store_case) -> None:
+    _backend, store = skill_store_case
+    store.upsert_skill(
+        skill_id="skill.deploy",
+        name="Deploy",
+        status="draft",
+        scope="global",
+        agent_id=None,
+        ts="2026-04-01T00:00:00+00:00",
+    )
+    store.insert_skill_version(
+        skill_id="skill.deploy",
+        version_hash="v1",
+        source_artifact_ref="artifact://deploy",
+        package_json='{"skill_id":"skill.deploy","version_hash":"v1","status":"draft"}',
+        content_fingerprint="content-v1",
+        created_at="2026-04-01T00:00:00+00:00",
+    )
+    store.stage_skill_version(
+        skill_id="skill.deploy",
+        version_hash="v1",
+        content_fingerprint="content-v1",
+        authority_class="runtime_untrusted",
+        created_at="2026-04-01T00:00:00+00:00",
+    )
+    assert store.get_skill_package("skill.deploy") is None
+    assert store.activate_skill_version(
+        skill_id="skill.deploy",
+        version_hash="v1",
+        expected_active_version_hash=None,
+        target_status="verified",
+        authority_class="local_operator",
+        reviewer_id="local:test",
+        reason="reviewed",
+        decided_at="2026-04-01T00:01:00+00:00",
+    )
+    assert store.get_skill_package("skill.deploy")["status"] == "verified"
+
+
 def test_build_skill_store_returns_sqlite_store(tmp_path: Path) -> None:
     store = build_skill_store(
         config=StorageEngineConfig(

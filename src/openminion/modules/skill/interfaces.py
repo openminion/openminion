@@ -1,6 +1,7 @@
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from .models import (
     SkillPackage,
@@ -27,6 +28,61 @@ ArtifactLoader = Callable[[str], str | bytes]
 SkillEventCallback = Callable[[str, dict[str, Any]], None]
 StatusFilter = list[str] | str | None
 
+SkillAuthorityClass = Literal[
+    "runtime_untrusted",
+    "local_operator",
+    "authenticated_api_operator",
+    "internal_service",
+]
+SkillSourceKind = Literal["local", "remote"]
+
+
+@dataclass(frozen=True)
+class SkillIngestAuthority:
+    authority_class: SkillAuthorityClass
+    surface: str
+    source_kind: SkillSourceKind
+    principal_id: str | None = None
+
+    def __post_init__(self) -> None:
+        surface = self.surface.strip()
+        principal_id = str(self.principal_id or "").strip() or None
+        if not surface:
+            raise ValueError("surface must be non-empty")
+        if self.authority_class != "runtime_untrusted" and principal_id is None:
+            raise ValueError("privileged skill authority requires principal_id")
+        object.__setattr__(self, "surface", surface)
+        object.__setattr__(self, "principal_id", principal_id)
+
+    @classmethod
+    def runtime(
+        cls, *, surface: str, source_kind: SkillSourceKind
+    ) -> "SkillIngestAuthority":
+        return cls(
+            authority_class="runtime_untrusted",
+            surface=surface,
+            source_kind=source_kind,
+        )
+
+    @classmethod
+    def local_operator(
+        cls, *, surface: str, principal_id: str, source_kind: SkillSourceKind = "local"
+    ) -> "SkillIngestAuthority":
+        return cls(
+            authority_class="local_operator",
+            surface=surface,
+            source_kind=source_kind,
+            principal_id=principal_id,
+        )
+
+    @property
+    def can_admit(self) -> bool:
+        return self.authority_class in {
+            "local_operator",
+            "authenticated_api_operator",
+            "internal_service",
+        }
+
 
 class SkillContract(Protocol):
     def __init__(
@@ -48,6 +104,7 @@ class SkillContract(Protocol):
         markdown: str,
         scope: str = ...,
         agent_id: str | None = ...,
+        authority: SkillIngestAuthority | None = ...,
     ) -> tuple[str, str, list[str]]: ...
 
     def ingest_file(
@@ -57,6 +114,7 @@ class SkillContract(Protocol):
         name: str | None = ...,
         scope: str = ...,
         agent_id: str | None = ...,
+        authority: SkillIngestAuthority | None = ...,
     ) -> tuple[str, str, list[str]]: ...
 
     def ingest_artifact(
@@ -66,7 +124,39 @@ class SkillContract(Protocol):
         name: str,
         scope: str = ...,
         agent_id: str | None = ...,
+        authority: SkillIngestAuthority | None = ...,
     ) -> tuple[str, str, list[str]]: ...
+
+    def ingest_url(
+        self,
+        url: str,
+        *,
+        name: str | None = ...,
+        scope: str = ...,
+        agent_id: str | None = ...,
+        authority: SkillIngestAuthority | None = ...,
+    ) -> tuple[str, str, list[str]]: ...
+
+    def admit_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        expected_active_version_hash: str | None,
+        target_status: str,
+        reason: str,
+        authority: SkillIngestAuthority,
+    ) -> dict[str, Any]: ...
+
+    def rollback_skill_version(
+        self,
+        *,
+        skill_id: str,
+        to_version_hash: str,
+        expected_active_version_hash: str,
+        reason: str,
+        authority: SkillIngestAuthority,
+    ) -> dict[str, Any]: ...
 
     def match(
         self,

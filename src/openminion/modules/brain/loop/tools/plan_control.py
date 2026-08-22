@@ -22,6 +22,7 @@ from .plan import (
     _active_plan_continues_after_step,
     _active_plan_id,
     _active_plan_workflow_id,
+    _active_plan_workflow_version_hash,
     _append_invalid_task_plan_event,
     _append_task_plan_event,
     _clear_active_plan_override,
@@ -164,6 +165,12 @@ def build_plan_tool_spec() -> ToolSpec:
                         "workflow catalog."
                     ),
                 },
+                "workflow_version_hash": {
+                    "type": "string",
+                    "description": (
+                        "Optional active skill version hash that pins workflow_id."
+                    ),
+                },
                 "root_goal_id": {
                     "type": "string",
                     "description": (
@@ -295,6 +302,7 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             "plan_id": arguments.get("plan_id"),
             "objective": arguments.get("objective") or arguments.get("plan_id"),
             "workflow_id": arguments.get("workflow_id"),
+            "workflow_version_hash": arguments.get("workflow_version_hash"),
             "root_goal_id": arguments.get("root_goal_id"),
             "status": "active",
             "steps": list(arguments.get("steps") or []),
@@ -303,7 +311,11 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             ),
         }
     )
-    workflow_failure = _validate_workflow_id(loop_ctx, workflow_id=plan.workflow_id)
+    workflow_failure = _validate_workflow_id(
+        loop_ctx,
+        workflow_id=plan.workflow_id,
+        workflow_version_hash=plan.workflow_version_hash,
+    )
     if workflow_failure is not None:
         return workflow_failure
     active_plan = _current_active_plan(loop_ctx)
@@ -461,10 +473,12 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
     full_plan = revision.to_task_plan(
         fallback_objective=str((active_plan or {}).get("objective") or ""),
         fallback_workflow_id=_active_plan_workflow_id(active_plan),
+        fallback_workflow_version_hash=_active_plan_workflow_version_hash(active_plan),
     )
     workflow_failure = _validate_workflow_id(
         loop_ctx,
         workflow_id=full_plan.workflow_id,
+        workflow_version_hash=full_plan.workflow_version_hash,
     )
     if workflow_failure is not None:
         return workflow_failure

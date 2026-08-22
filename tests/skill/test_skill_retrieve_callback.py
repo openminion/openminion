@@ -12,6 +12,7 @@ from unittest.mock import Mock
 from openminion.cli.commands import skill as skill_cli
 from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit, ingest_text_and_admit
 
 
 class _FakeSkill:
@@ -27,8 +28,9 @@ class _FakeSkill:
         agent_id: str | None,
         trust: str | None = None,
         promotion_path: str = "operator",
+        authority=None,
     ) -> tuple[str, str, list[str]]:
-        del path, name, agent_id, trust, promotion_path
+        del path, name, agent_id, trust, promotion_path, authority
         if callable(self._event_callback):
             self._event_callback(
                 "skill.ingested",
@@ -239,8 +241,8 @@ def test_skill_ingest_and_retrieve(tmp_path: Path) -> None:
     )
 
     try:
-        skill_id, version_hash, _warnings = skill_ctl.ingest_file(
-            path=skill_path, scope="agent", agent_id="agent.demo"
+        skill_id, version_hash, _warnings = ingest_file_and_admit(
+            skill_ctl, path=skill_path, scope="agent", agent_id="agent.demo"
         )
         assert skill_id == "web_search_skill"
         assert version_hash
@@ -359,12 +361,12 @@ def test_skill_retrieve_matches_hyphenated_skill_ids(tmp_path: Path) -> None:
     )
 
     try:
-        skill_id, _version_hash, _warnings = skill_ctl.ingest_file(
-            path=skill_path, scope="agent", agent_id="agent.demo"
+        skill_id, _version_hash, _warnings = ingest_file_and_admit(
+            skill_ctl, path=skill_path, scope="agent", agent_id="agent.demo"
         )
         assert skill_id == "claude-api"
-        other_skill_id, _other_version_hash, _other_warnings = skill_ctl.ingest_file(
-            path=distractor_path, scope="agent", agent_id="agent.demo"
+        other_skill_id, _other_version_hash, _other_warnings = ingest_file_and_admit(
+            skill_ctl, path=distractor_path, scope="agent", agent_id="agent.demo"
         )
         assert other_skill_id == "api-helper"
 
@@ -436,7 +438,8 @@ def test_skill_reingest_all_backfills_retrieve(tmp_path: Path) -> None:
     try:
         skill_ctl = Skill(skill_cfg)
         try:
-            skill_ctl.ingest_text(
+            ingest_text_and_admit(
+                skill_ctl,
                 name="Web Search One",
                 markdown=(
                     "---\nname: Web Search One\nid: web_search_one\nstatus: verified\n"
@@ -445,7 +448,8 @@ def test_skill_reingest_all_backfills_retrieve(tmp_path: Path) -> None:
                 scope="global",
                 agent_id=None,
             )
-            skill_ctl.ingest_text(
+            ingest_text_and_admit(
+                skill_ctl,
                 name="Web Fetch Two",
                 markdown=(
                     "---\nname: Web Fetch Two\nid: web_fetch_two\nstatus: verified\n"
