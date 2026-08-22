@@ -41,7 +41,9 @@ entrypoints without leaving the session:
 /graph
 /graph current
 /graph dry-run
+/graph json
 /graph html viewer.html
+/graph html --node-kind fact
 /graph third repo_graph
 ```
 

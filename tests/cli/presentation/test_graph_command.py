@@ -32,3 +32,19 @@ def test_graph_command_builds_static_html_command() -> None:
         "Graph viewer command:\n"
         "  openminion graph view --current --html-out memory.html --node-kind decision"
     )
+
+
+def test_graph_command_keeps_html_default_when_args_are_flags() -> None:
+    body = render_graph_command("html --node-kind fact")
+
+    assert body == (
+        "Graph viewer command:\n"
+        "  openminion graph view --current --html-out viewer.html --node-kind fact"
+    )
+
+
+def test_graph_command_accepts_help_and_json_aliases() -> None:
+    assert "openminion graph status" in render_graph_command("help")
+    assert render_graph_command("json") == (
+        "Graph viewer command:\n  openminion graph view --current --dry-run --json"
+    )

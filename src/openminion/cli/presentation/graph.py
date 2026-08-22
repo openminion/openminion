@@ -9,23 +9,16 @@ def render_graph_command(args: str) -> str:
     except ValueError as exc:
         return f"Graph viewer: {exc}"
     if not tokens:
-        return "\n".join(
-            (
-                "Graph viewer:",
-                "  status   openminion graph status",
-                "  current  openminion graph view --current",
-                "  dry-run  openminion graph view --current --dry-run --json",
-                "  html     openminion graph view --current --html-out viewer.html",
-                "  third    openminion graph view --brain third --provider <name>",
-            )
-        )
+        return _usage()
     action = tokens[0].lower()
     rest = tokens[1:]
+    if action in {"help", "?"}:
+        return _usage()
     if action == "status":
         return _command("openminion", "graph", "status", *rest)
     if action == "current":
         return _command("openminion", "graph", "view", "--current", *rest)
-    if action == "dry-run":
+    if action in {"dry-run", "json"}:
         return _command(
             "openminion",
             "graph",
@@ -36,7 +29,10 @@ def render_graph_command(args: str) -> str:
             *rest,
         )
     if action == "html":
-        target = rest[0] if rest else "viewer.html"
+        target = "viewer.html"
+        if rest and not rest[0].startswith("-"):
+            target = rest[0]
+            rest = rest[1:]
         return _command(
             "openminion",
             "graph",
@@ -44,7 +40,7 @@ def render_graph_command(args: str) -> str:
             "--current",
             "--html-out",
             target,
-            *rest[1:],
+            *rest,
         )
     if action == "third" and rest:
         return _command(
@@ -65,6 +61,20 @@ def render_graph_command(args: str) -> str:
 
 def _command(*parts: str) -> str:
     return f"Graph viewer command:\n  {shlex.join(parts)}"
+
+
+def _usage() -> str:
+    return "\n".join(
+        (
+            "Graph viewer:",
+            "  status   openminion graph status",
+            "  current  openminion graph view --current",
+            "  dry-run  openminion graph view --current --dry-run --json",
+            "  json     openminion graph view --current --dry-run --json",
+            "  html     openminion graph view --current --html-out viewer.html",
+            "  third    openminion graph view --brain third --provider <name>",
+        )
+    )
 
 
 __all__ = ["render_graph_command"]
