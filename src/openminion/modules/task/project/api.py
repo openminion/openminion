@@ -69,6 +69,16 @@ from .verification import (
     run_project_verification_commands,
     validate_project_verifier,
 )
+from .turn import (
+    ProjectTurnRequest,
+    ProjectTurnResult,
+    project_condition_from_metadata,
+    project_metadata_refs,
+    project_runtime_payload,
+    project_turn_from_payload,
+    project_turn_inbound_metadata,
+    project_workspace,
+)
 
 __all__ = [
     "AutonomyLoopConditionKind",
@@ -100,6 +110,8 @@ __all__ = [
     "ProjectVerificationClosure",
     "ProjectVerificationDomain",
     "ProjectVerificationState",
+    "ProjectTurnRequest",
+    "ProjectTurnResult",
     "apply_project_control",
     "build_project_control_result",
     "build_project_operator_inbox_item",
@@ -123,6 +135,12 @@ __all__ = [
     "render_project_control_result",
     "render_project_operator_inbox_item",
     "render_project_run_summary",
+    "project_condition_from_metadata",
+    "project_metadata_refs",
+    "project_runtime_payload",
+    "project_turn_from_payload",
+    "project_turn_inbound_metadata",
+    "project_workspace",
     "replay_project_cycles",
     "resume_project_run_from_latest_checkpoint",
     "save_project_policy_state",

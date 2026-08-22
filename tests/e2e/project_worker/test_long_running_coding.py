@@ -75,7 +75,7 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
             },
         }
 
-    monkeypatch.setattr("openminion.cli.commands.autonomy.run_turn", run_turn)
+    monkeypatch.setattr("openminion.cli.commands.autonomy_project.run_turn", run_turn)
     verify = f"{shlex.quote(sys.executable)} -m pytest -q {tests.name}"
     first = _run_cli(
         [

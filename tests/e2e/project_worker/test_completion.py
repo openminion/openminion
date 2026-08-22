@@ -111,7 +111,7 @@ def test_project_recovers_verifies_and_proposes_delivery(tmp_path, monkeypatch) 
             },
         }
 
-    monkeypatch.setattr("openminion.cli.commands.autonomy.run_turn", run_turn)
+    monkeypatch.setattr("openminion.cli.commands.autonomy_project.run_turn", run_turn)
     root_args = [
         "--home-root",
         str(tmp_path / "home"),

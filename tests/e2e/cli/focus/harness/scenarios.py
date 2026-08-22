@@ -182,6 +182,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         include_project_context=False,
         min_generated_files=4,
         expected_file_patterns=("greet.py", "cli.py", "test_greet.py", "README.md"),
+        max_auto_continuations=2,
         validation_commands=(
             ("{python}", "-m", "pytest", "-q"),
             (

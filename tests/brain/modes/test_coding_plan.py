@@ -91,6 +91,28 @@ def test_coding_fallback_can_require_file_change() -> None:
     plan = CodingPlan.fallback("Build a CLI", requires_file_change=True)
 
     assert plan.requires_file_change is True
+    assert [phase.name for phase in plan.phases] == ["implement", "verify"]
+
+
+def test_file_changing_plan_adds_terminal_verify_phase() -> None:
+    plan = CodingPlan(
+        goal="Build a CLI",
+        phases=[CodingPhase(name="implement", status="active")],
+        current_phase="implement",
+        requires_file_change=True,
+    )
+
+    assert [phase.name for phase in plan.phases] == ["implement", "verify"]
+
+
+def test_file_changing_plan_requires_implementation_phase() -> None:
+    with pytest.raises(ValueError, match="must include implement"):
+        CodingPlan(
+            goal="Build a CLI",
+            phases=[CodingPhase(name="verify", status="active")],
+            current_phase="verify",
+            requires_file_change=True,
+        )
 
 
 def test_coding_plan_rejects_invalid_phase_order() -> None:

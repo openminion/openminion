@@ -61,7 +61,7 @@ class InvocationStartLifecycleTests(GatewayServiceTestCase):
             fact.timestamp == datetime.fromisoformat(queued[0].created_at).timestamp()
         )
 
-    def test_active_resume_reuses_original_start_source(self) -> None:
+    def test_active_resume_does_not_reemit_original_start(self) -> None:
         facts = self._capture(self.gateway)
         first_routing = self._routing(self.gateway, session_id="active-resume")
         _, first_payload = self.gateway._turn_runner._setup_turn(
@@ -83,12 +83,7 @@ class InvocationStartLifecycleTests(GatewayServiceTestCase):
         )
 
         assert second_payload["invocation_id"] == first_payload["invocation_id"]
-        assert facts[-1].event_id == first_fact.event_id
-        assert (
-            facts[-1].payload["source_event_id"]
-            == first_fact.payload["source_event_id"]
-        )
-        assert facts[-1].timestamp == first_fact.timestamp
+        assert facts == [first_fact]
 
     def test_terminal_resume_starts_child_invocation(self) -> None:
         facts = self._capture(self.gateway)

@@ -50,7 +50,7 @@ from .contracts import (
 from .context_adapter import _CodingLoopContextAdapter
 from .llm import DefaultCodingLLMRuntime
 from .loop_state import CodingLoopState
-from .plan import CodingPlan, coding_plan_from_payload
+from .plan import CodingPhase, CodingPlan, coding_plan_from_payload
 from .planning_flow import CodingPlanningMixin
 from .reserves import CodingReserveMixin
 from .resume import CodingResumeMixin
@@ -459,17 +459,7 @@ class CodingProfileRunner(
         allowed_tools: frozenset[str],
     ) -> ExecutionResult | None:
         self._sync_loop_state(outcome.state)
-        if self._has_successful_mutating_file_result():
-            self._loop_state.scratchpad.pop("coding.required_write_direct_tool", None)
-            if bool(
-                getattr(
-                    self._loop_state,
-                    "direct_tool_requested_batch_satisfied",
-                    False,
-                )
-            ):
-                self._loop_state.direct_tool_turn = None
-                self._loop_state.direct_tool_requested_batch_satisfied = False
+        self._reconcile_successful_mutation()
         if self._last_verifier_candidate_payload is not None:
             self._loop_state.scratchpad["coding.last_verifier_candidate"] = dict(
                 self._last_verifier_candidate_payload
@@ -551,6 +541,26 @@ class CodingProfileRunner(
         self._append_phase_instruction()
         self._sync_coding_module_state(ctx)
         return None
+
+    def _reconcile_successful_mutation(self) -> None:
+        if self._has_successful_mutating_file_result():
+            self._loop_state.scratchpad.pop("coding.required_write_direct_tool", None)
+            if (
+                self._coding_plan is not None
+                and self._coding_plan.current_phase == "implement"
+                and self._coding_plan.next_phase_name() is None
+            ):
+                self._coding_plan.requires_file_change = True
+                self._coding_plan.phases.append(CodingPhase(name="verify"))
+            if bool(
+                getattr(
+                    self._loop_state,
+                    "direct_tool_requested_batch_satisfied",
+                    False,
+                )
+            ):
+                self._loop_state.direct_tool_turn = None
+                self._loop_state.direct_tool_requested_batch_satisfied = False
 
     def _result_from_outcome_or_continue_same_turn(
         self,

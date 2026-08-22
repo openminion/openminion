@@ -145,6 +145,62 @@ def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:
     assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
 
 
+def test_project_worker_continues_while_typed_progress_is_new(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=5)
+    turns = 0
+
+    def turn(request: ProjectTurnRequest) -> ProjectTurnResult:
+        nonlocal turns
+        turns += 1
+        return ProjectTurnResult(
+            summary=f"completed milestone {turns}",
+            evidence_refs=(f"artifact:{request.cycle_id}",),
+        )
+
+    verification = iter(
+        (
+            (_evidence(_TestEvidenceStatus.FAILED),),
+            (_evidence(_TestEvidenceStatus.FAILED),),
+            (_evidence(_TestEvidenceStatus.FAILED),),
+            (_evidence(_TestEvidenceStatus.PASSED),),
+        )
+    )
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: next(verification),
+        owner_id="worker-1",
+    )
+
+    result = worker.run(run.run_id, max_cycles=5)
+
+    assert result.decision == ProjectCycleDecision.STOP
+    assert result.project_run.committed_cycle_count == 4
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert turns == 4
+
+
+def test_project_worker_blocks_when_progress_ref_repeats(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=5)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(
+            summary="same claimed progress",
+            evidence_refs=("artifact:unchanged",),
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+        owner_id="worker-1",
+    )
+
+    result = worker.run(run.run_id, max_cycles=5)
+
+    assert result.decision == ProjectCycleDecision.BLOCKED
+    assert result.project_run.committed_cycle_count == 3
+    assert result.project_run.progress_refs == ("artifact:unchanged",)
+
+
 def test_project_worker_reconciles_duplicate_cron_delivery_without_turn(
     tmp_path,
 ) -> None:
@@ -249,7 +305,12 @@ def test_retryable_failure_gets_one_bounded_retry_before_verified_completion(
             summary="retry",
             condition=next(conditions),
         ),
-        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        verify=iter(
+            (
+                (_evidence(_TestEvidenceStatus.FAILED),),
+                (_evidence(_TestEvidenceStatus.PASSED),),
+            )
+        ).__next__,
         owner_id="worker-1",
     )
 
@@ -257,6 +318,29 @@ def test_retryable_failure_gets_one_bounded_retry_before_verified_completion(
 
     assert result.decision == ProjectCycleDecision.STOP
     assert result.project_run.committed_cycle_count == 2
+
+
+def test_verified_workspace_closes_even_if_turn_is_waiting_for_an_extra_action(
+    tmp_path,
+) -> None:
+    store, manager, run = _project(tmp_path)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(
+            summary="requested an unnecessary extra command",
+            condition=AutonomyLoopConditionKind.WAITING,
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-1",
+    )
+
+    result = worker.run(run.run_id, max_cycles=3)
+
+    assert result.decision == ProjectCycleDecision.STOP
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert result.run.operator_summary == "Configured project verification passed."
+    assert manager.get_task("task-1").state == TaskLifecycleState.DONE
 
 
 def test_duplicate_effect_replans_once_without_duplicating_effect_refs(

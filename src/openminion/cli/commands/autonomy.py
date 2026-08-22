@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from openminion.api.turns import run_turn
 from openminion.base.types import Message
 from openminion.cli.commands.autonomy_project import (
     apply_resume_overrides,
@@ -14,9 +14,11 @@ from openminion.cli.commands.autonomy_project import (
     initialize_project,
     persisted_verification_waiver,
     project_task_manager,
+    run_project_turn,
     resume_project_task,
     schedule_unattended_project,
     verifier_preflight_error,
+    workspace_path_from_ref,
 )
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
@@ -31,6 +33,7 @@ from openminion.modules.task.autonomy import (
     DelegatedRoleEvidence,
     EvidenceStatus,
     TestEvidence,
+    TestEvidenceStatus,
     VerificationWaiver,
     build_autonomy_run,
     build_local_workspace_ref,
@@ -38,7 +41,6 @@ from openminion.modules.task.autonomy import (
     now_ms,
 )
 from openminion.modules.task.project import (
-    AutonomyLoopConditionKind,
     ProjectControlAction,
     ProjectCycleDecision,
     ProjectOperatorInboxItem,
@@ -54,12 +56,15 @@ from openminion.modules.task.project.reports import (
     render_project_report,
 )
 from openminion.modules.task import TaskLifecycleState, TaskManager
+from openminion.modules.task.constants import (
+    DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
+    DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+)
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
     ProjectWorker,
     ProjectWorkerResult,
-    project_metadata_refs,
 )
 from openminion.modules.context.budget import (
     ContextBudgetConfig,
@@ -89,6 +94,14 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     goal = _resolve_goal(args)
     workspace = _resolve_workspace(args)
     verification_commands = tuple(getattr(args, "verify_command", ()) or ())
+    turn_timeout_seconds = int(
+        getattr(args, "turn_timeout_seconds", None)
+        or DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS
+    )
+    verification_timeout_seconds = int(
+        getattr(args, "verification_timeout_seconds", None)
+        or DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS
+    )
     waiver = _verification_waiver(args)
     run = build_autonomy_run(
         goal_text=goal,
@@ -104,6 +117,8 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             getattr(args, "verification_domain", "cross_application")
         ),
         verification_commands=verification_commands,
+        turn_timeout_seconds=turn_timeout_seconds,
+        verification_timeout_seconds=verification_timeout_seconds,
         verification_waiver_reason=waiver.reason if waiver is not None else None,
         required_evidence_kinds=("waiver",)
         if waiver is not None
@@ -178,7 +193,7 @@ def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     run = store.require(str(args.run_id))
     if run.status in {AutonomyRunStatus.COMPLETED, AutonomyRunStatus.CANCELLED}:
         raise RuntimeError(f"autonomy run cannot be resumed from {run.status}")
-    workspace = _workspace_path_from_ref(run.workspace_ref) or Path.cwd()
+    workspace = workspace_path_from_ref(run.workspace_ref) or Path.cwd()
     waiver = _verification_waiver(args)
     run = apply_resume_overrides(args, store, run, waiver=waiver)
     verifier_error = verifier_preflight_error(
@@ -323,6 +338,7 @@ def _execute_project(
         verify=lambda: run_project_verification_commands(
             run.execution_selectors.verification_commands,
             workspace=workspace,
+            timeout_seconds=run.execution_selectors.verification_timeout_seconds,
         ),
     )
     checkpoint = load_latest_project_checkpoint(manager, task_id=str(run.task_id))
@@ -368,54 +384,17 @@ def _project_turn(
     run: AutonomyRun,
     request: ProjectTurnRequest,
 ) -> ProjectTurnResult:
-    replay_response = _clean(getattr(args, "replay_response", None))
-    metadata: dict[str, object] = {}
-    if replay_response:
-        summary = replay_response
-    else:
-        response = run_turn(
-            config_path=run.execution_selectors.config_ref,
-            payload={
-                "message": request.prompt,
-                "agent_id": run.execution_selectors.agent_id,
-                "session_id": request.session_id,
-                "channel": "console",
-                "target": "autonomy",
-                "deliver": False,
-                "inbound_metadata": {
-                    "source": "openminion.autonomy.project",
-                    "autonomy_run_id": request.run_id,
-                    "project_run_id": request.project_run_id,
-                    "task_id": request.task_id,
-                    "goal_id": request.goal_id,
-                    "cycle_id": request.cycle_id,
-                },
-            },
-        )
-        summary = (
-            str(response.get("final_text", "") or response.get("body", "")).strip()
-            or "Project cycle completed without visible final text."
-        )
-        raw_metadata = response.get("metadata")
-        if isinstance(raw_metadata, dict):
-            metadata = raw_metadata
-
-    summary = _synthesize_parent_summary(
-        summary,
-        delegation_results=_delegated_role_evidence(args),
+    result = run_project_turn(
+        run,
+        request,
+        replay_response=_clean(getattr(args, "replay_response", None)),
     )
-    evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
-    evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
-    tool_call_count = metadata.get("tool_call_count", 0)
-    return ProjectTurnResult(
-        summary=summary,
-        condition=AutonomyLoopConditionKind(
-            str(metadata.get("project_condition") or "productive")
+    return replace(
+        result,
+        summary=_synthesize_parent_summary(
+            result.summary,
+            delegation_results=_delegated_role_evidence(args),
         ),
-        evidence_refs=tuple(dict.fromkeys(evidence_refs)),
-        evidence_kinds=tuple(dict.fromkeys(evidence_kinds)),
-        effect_refs=project_metadata_refs(metadata, "effect_refs"),
-        tool_call_count=int(tool_call_count) if isinstance(tool_call_count, int) else 0,
     )
 
 
@@ -446,7 +425,7 @@ def _finalize_project_result(
     if result.decision != ProjectCycleDecision.CONTINUE:
         waiver = _verification_waiver(args) or persisted_verification_waiver(run)
         delegation_results = _delegated_role_evidence(args)
-        workspace = _workspace_path_from_ref(run.workspace_ref) or Path.cwd()
+        workspace = workspace_path_from_ref(run.workspace_ref) or Path.cwd()
         command = _command_evidence(args, workspace=workspace, started_at_ms=now_ms())
         command = command.model_copy(
             update={
@@ -660,7 +639,9 @@ def _validation_summary(
         )
     if not verification:
         return "Replay/runtime execution completed; no verification command configured."
-    return "Replay/runtime execution completed; verification commands passed."
+    if all(item.status == TestEvidenceStatus.PASSED for item in verification):
+        return "Replay/runtime execution completed; verification commands passed."
+    return "Replay/runtime execution completed; verification commands did not pass."
 
 
 def _print_run(args: argparse.Namespace, run: AutonomyRun) -> int:
@@ -807,13 +788,6 @@ def _resolve_workspace(args: argparse.Namespace) -> Path:
     return Path(raw).expanduser().resolve(strict=False) if raw else Path.cwd()
 
 
-def _workspace_path_from_ref(workspace_ref: str | None) -> Path | None:
-    if not workspace_ref or not workspace_ref.startswith("local:"):
-        return None
-    path_part = workspace_ref.removeprefix("local:").split("#", 1)[0]
-    return Path(path_part).expanduser().resolve(strict=False)
-
-
 def _status_arg(value: object) -> AutonomyRunStatus | None:
     raw = _clean(value)
     return AutonomyRunStatus(raw) if raw else None
@@ -834,6 +808,24 @@ def _add_execution_proof_args(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         help="Run this command after execution; failing commands block closeout",
+    )
+    parser.add_argument(
+        "--turn-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum runtime for each project agent turn "
+            f"(default: {DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS})"
+        ),
+    )
+    parser.add_argument(
+        "--verification-timeout-seconds",
+        type=int,
+        default=None,
+        help=(
+            "Maximum runtime for each verification command "
+            f"(default: {DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS})"
+        ),
     )
     parser.add_argument(
         "--require-verification",

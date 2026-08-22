@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from openminion.base.logging import format_structured_event, get_logger
+from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
     AutonomyRun,
     AutonomyRunPhase,
@@ -17,6 +20,7 @@ from openminion.modules.task import (
     ProjectRun,
     ProjectVerificationState,
     TaskLifecycleRecord,
+    TaskLifecycleRepository,
     TaskLifecycleState,
     TaskManager,
     TestEvidence,
@@ -25,54 +29,30 @@ from openminion.modules.task import (
     load_latest_project_checkpoint,
 )
 from openminion.modules.task.autonomy import VerificationWaiver, now_ms
+from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     AutonomyLoopJudgment,
     ProjectDomainVerificationContract,
     ProjectDomainVerificationEvidence,
     ProjectDomainVerificationStatus,
+    ProjectTurnRequest,
+    ProjectTurnResult,
     ProjectVerificationDomain,
     ProjectVerificationClosure,
     classify_autonomy_loop_condition,
     commit_project_run_checkpoint,
     evaluate_project_verification_closure,
+    project_condition_from_metadata,
+    project_metadata_refs,
+    project_runtime_payload,
+    project_turn_from_payload,
+    project_turn_inbound_metadata,
+    project_workspace,
+    run_project_verification_commands,
 )
 
 _LOGGER = get_logger("project_worker")
-
-
-def project_metadata_refs(
-    metadata: Mapping[str, object],
-    *keys: str,
-) -> tuple[str, ...]:
-    refs: list[str] = []
-    for key in keys:
-        values = metadata.get(key)
-        if isinstance(values, (list, tuple)):
-            refs.extend(str(value).strip() for value in values if str(value).strip())
-    return tuple(dict.fromkeys(refs))
-
-
-@dataclass(frozen=True)
-class ProjectTurnRequest:
-    run_id: str
-    project_run_id: str
-    task_id: str
-    goal_id: str
-    session_id: str
-    cycle_id: str
-    milestone: str
-    prompt: str
-
-
-@dataclass(frozen=True)
-class ProjectTurnResult:
-    summary: str
-    condition: AutonomyLoopConditionKind = AutonomyLoopConditionKind.PRODUCTIVE
-    evidence_refs: tuple[str, ...] = ()
-    evidence_kinds: tuple[str, ...] = ()
-    effect_refs: tuple[str, ...] = ()
-    tool_call_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,47 +64,55 @@ class ProjectWorkerResult:
     reconciled_only: bool = False
 
 
-def project_turn_from_payload(
-    request: ProjectTurnRequest,
+def build_cron_project_worker(
     *,
+    runtime: Any,
+    cron_store: Any,
+    run_id: str,
     payload: Mapping[str, object],
     execute: Callable[[dict[str, object]], Mapping[str, object]],
-) -> ProjectTurnResult:
-    turn_payload = dict(payload)
-    turn_payload.update(
-        {
-            "kind": "agentTurn",
-            "message": request.prompt,
-            "session_id": request.session_id,
-            "goal_id": request.goal_id,
-            "project_run_id": request.project_run_id,
-            "task_id": request.task_id,
-            "cycle_id": request.cycle_id,
-        }
+    owner_id: str,
+) -> tuple[ProjectWorker, TaskManager]:
+    autonomy_store = AutonomyRunStore()
+    autonomy_run = autonomy_store.require(run_id)
+    runtime_env = getattr(runtime.config.runtime, "env", None)
+    raw_home_root = str(getattr(runtime, "home_root", "") or "").strip()
+    home_root = resolve_module_home_root(
+        Path(raw_home_root) if raw_home_root else None,
+        runtime_env,
+        fallback_to_cwd=True,
     )
-    turn_result = execute(turn_payload)
-    if bool(turn_result.get("error")):
-        raise RuntimeError(str(turn_result.get("summary") or "project turn failed"))
-    raw_metadata = turn_result.get("metadata")
-    metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
-    return ProjectTurnResult(
-        summary=str(turn_result.get("summary") or "Project cycle completed."),
-        condition=AutonomyLoopConditionKind(
-            str(metadata.get("project_condition") or "productive")
-        ),
-        evidence_refs=project_metadata_refs(
-            metadata,
-            "evidence_refs",
-            "artifact_refs",
-        ),
-        evidence_kinds=project_metadata_refs(metadata, "evidence_kinds"),
-        effect_refs=project_metadata_refs(metadata, "effect_refs"),
-        tool_call_count=(
-            int(metadata["tool_call_count"])
-            if isinstance(metadata.get("tool_call_count"), int)
-            else 0
+    data_root = resolve_module_data_root(home_root=home_root, env=runtime_env)
+    assert data_root is not None
+    task_manager = TaskManager(
+        cron_repository=cron_store,
+        lifecycle_repository=TaskLifecycleRepository(
+            db_path=(data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
         ),
     )
+    workspace = project_workspace(autonomy_run.workspace_ref)
+    project_payload = project_runtime_payload(
+        payload,
+        permission_profile_id=autonomy_run.permission_profile_id,
+        workspace=workspace,
+        turn_timeout_seconds=autonomy_run.execution_selectors.turn_timeout_seconds,
+    )
+    worker = ProjectWorker(
+        task_manager=task_manager,
+        autonomy_store=autonomy_store,
+        turn=lambda request: project_turn_from_payload(
+            request,
+            payload=project_payload,
+            execute=execute,
+        ),
+        verify=lambda: run_project_verification_commands(
+            autonomy_run.execution_selectors.verification_commands,
+            workspace=workspace,
+            timeout_seconds=autonomy_run.execution_selectors.verification_timeout_seconds,
+        ),
+        owner_id=owner_id,
+    )
+    return worker, task_manager
 
 
 @dataclass(frozen=True)
@@ -351,6 +339,14 @@ class ProjectWorker:
         )
         raw_replan_count = checkpoint.payload.get("replan_count", 0)
         previous_replans = raw_replan_count if isinstance(raw_replan_count, int) else 0
+        existing_progress_refs = {
+            *project_run.progress_refs,
+            *project_run.effect_refs,
+        }
+        has_new_progress = any(
+            ref not in existing_progress_refs
+            for ref in (*turn_result.evidence_refs, *turn_result.effect_refs)
+        )
         disposition = self._cycle_disposition(
             run,
             cycle_number=cycle_number,
@@ -358,6 +354,7 @@ class ProjectWorker:
             condition_evidence_refs=turn_result.evidence_refs,
             closure_status=closure.status,
             previous_replans=previous_replans,
+            has_new_progress=has_new_progress,
             verification_waived=bool(
                 run.execution_selectors.verification_waiver_reason
             ),
@@ -439,12 +436,18 @@ class ProjectWorker:
         *,
         committed: ProjectCheckpoint,
     ) -> ProjectWorkerResult:
+        operator_summary = evaluation.turn.summary
+        if (
+            evaluation.status == AutonomyRunStatus.COMPLETED
+            and evaluation.turn.condition != AutonomyLoopConditionKind.PRODUCTIVE
+        ):
+            operator_summary = "Configured project verification passed."
         updated_run = run.model_copy(
             update={
                 "checkpoint_id": committed.checkpoint_id,
                 "status": evaluation.status,
                 "phase": evaluation.phase,
-                "operator_summary": evaluation.turn.summary,
+                "operator_summary": operator_summary,
                 "next_action_hint": (
                     "Resume the project after resolving the verifier blocker."
                     if evaluation.decision == ProjectCycleDecision.BLOCKED
@@ -617,6 +620,7 @@ class ProjectWorker:
         condition_evidence_refs: tuple[str, ...],
         closure_status: ProjectDomainVerificationStatus,
         previous_replans: int,
+        has_new_progress: bool,
         verification_waived: bool,
     ) -> tuple[
         ProjectCycleDecision,
@@ -626,6 +630,15 @@ class ProjectWorker:
         int,
         str,
     ]:
+        if closure_status == ProjectDomainVerificationStatus.VERIFIED:
+            return ProjectWorker._productive_disposition(
+                run,
+                cycle_number=cycle_number,
+                closure_status=closure_status,
+                previous_replans=previous_replans,
+                has_new_progress=has_new_progress,
+                verification_waived=verification_waived,
+            )
         judgment = classify_autonomy_loop_condition(
             condition=condition,
             evidence_refs=condition_evidence_refs,
@@ -642,6 +655,7 @@ class ProjectWorker:
             cycle_number=cycle_number,
             closure_status=closure_status,
             previous_replans=previous_replans,
+            has_new_progress=has_new_progress,
             verification_waived=verification_waived,
         )
 
@@ -711,6 +725,7 @@ class ProjectWorker:
         cycle_number: int,
         closure_status: ProjectDomainVerificationStatus,
         previous_replans: int,
+        has_new_progress: bool,
         verification_waived: bool,
     ) -> tuple[
         ProjectCycleDecision,
@@ -741,6 +756,15 @@ class ProjectWorker:
                 ProjectVerificationState.BLOCKED,
                 previous_replans,
                 "needs_user",
+            )
+        if has_new_progress and cycle_number < run.continuation_policy.max_iterations:
+            return (
+                ProjectCycleDecision.CONTINUE,
+                AutonomyRunStatus.RUNNING,
+                AutonomyRunPhase.RECOVER,
+                ProjectVerificationState.IN_PROGRESS,
+                0,
+                "verification_progress",
             )
         if (
             previous_replans < 1
@@ -796,7 +820,7 @@ class ProjectWorker:
             )
         if project_run.progress_refs:
             lines.append(
-                "Verified progress refs: " + ", ".join(project_run.progress_refs[-5:])
+                "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
             )
         return "\n".join(lines)
 
@@ -847,6 +871,9 @@ __all__ = [
     "ProjectTurnResult",
     "ProjectWorker",
     "ProjectWorkerResult",
+    "build_cron_project_worker",
+    "project_condition_from_metadata",
     "project_metadata_refs",
+    "project_turn_inbound_metadata",
     "project_turn_from_payload",
 ]

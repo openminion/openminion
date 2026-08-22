@@ -1453,14 +1453,14 @@ def test_coding_self_correction_continues_then_finishes_without_user_input() -> 
     assert follow_up.action_result.outputs["coding.self_corrections"] == 1
 
 
-def test_coding_final_text_continue_preserves_state_and_resumes_without_user_input() -> (
+def test_coding_read_only_continue_preserves_state_and_resumes_without_user_input() -> (
     None
 ):
     services = _FakeServices(
         closure_judgment=ClosureJudgment(
             satisfied=False,
             next_action="continue",
-            reason="Only pyproject.toml was created.",
+            reason="Only pyproject.toml was inspected.",
         ),
         closure_disposition="continue",
     )
@@ -1476,10 +1476,9 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         tool_calls=[
                             ToolCall(
                                 id="tc-pyproject",
-                                name="file.write",
+                                name="file.read",
                                 arguments={
                                     "path": "/workspace/pyproject.toml",
-                                    "content": "[project]\\nname='scratch'\\n",
                                 },
                             )
                         ],
@@ -1489,14 +1488,14 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         ok=True,
                         provider="fake",
                         model="fake-model",
-                        output_text="Created pyproject.toml.",
+                        output_text="Inspected pyproject.toml.",
                         finish_reason="stop",
                     ),
                 ]
             ),
             _FakeCommandExecutor(),
             services=services,
-            user_input="build a scratch project",
+            user_input="inspect a scratch project",
         )
     )
 
@@ -1520,10 +1519,9 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         tool_calls=[
                             ToolCall(
                                 id="tc-readme",
-                                name="file.write",
+                                name="file.read",
                                 arguments={
                                     "path": "/workspace/README.md",
-                                    "content": "# Scratch project\\n",
                                 },
                             )
                         ],
@@ -1533,7 +1531,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         ok=True,
                         provider="fake",
                         model="fake-model",
-                        output_text="Scratch project scaffold completed.",
+                        output_text="Scratch project inspection completed.",
                         finish_reason="stop",
                     ),
                 ]
@@ -1545,7 +1543,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
     )
 
     assert follow_up.status == "done"
-    assert follow_up.message == "Scratch project scaffold completed."
+    assert follow_up.message == "Scratch project inspection completed."
 
 
 def test_coding_verify_failure_blocks_when_self_correction_cap_is_exceeded() -> None:
@@ -1802,9 +1800,6 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
     result = CodingMode().execute(_ctx(llm_client, executor, services=services))
 
     assert result.status == "waiting_user"
-    assert result.action_result is not None
-    assert result.action_result.error is not None
-    assert result.action_result.error.code == "verification_unbound"
     assert result.action_result.outputs["coding.verifier_verdict"] == (
         "verification_unbound"
     )
@@ -2368,7 +2363,10 @@ def test_coding_loop_serializes_write_then_read_same_path() -> None:
 
     result = handler.execute(ctx)
 
-    assert result.status == "done"
+    assert result.status == "waiting_user"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "verification_unbound"
     write_call = next(
         item for item in executor.call_windows if item[0] == "/src/alpha.py"
     )

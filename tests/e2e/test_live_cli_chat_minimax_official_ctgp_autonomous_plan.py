@@ -124,13 +124,5 @@ def test_live_minimax_official_ctgp_three_step_autonomous_plan(agent_id: str) ->
     assert not plan_abandoned, "plan should not be abandoned\n" + failure_diag
 
     completed_all_steps = bool(plan_completed) and len(completed_step_ids) >= 3
-    # Deterministic CTGP tests own the exact scheduler turn count. The live
-    # MiniMax smoke accepts a compressed-but-durable outcome when the plan
-    # completes all three steps and at least one autonomous follow-up fired.
-    assert len(autonomous_fires) >= 2 or (
-        len(autonomous_fires) >= 1 and completed_all_steps
-    ), (
-        "expected either 2 autonomous_turn.fired events or a completed 3-step "
-        "plan with at least 1 autonomous follow-up\n"
-        f"observed={len(autonomous_fires)}\n" + failure_diag
-    )
+    assert completed_all_steps, "plan did not complete all three steps\n" + failure_diag
+    assert autonomous_fires, "plan did not run an autonomous follow-up\n" + failure_diag

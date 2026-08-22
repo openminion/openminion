@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 import sys
 from types import SimpleNamespace
@@ -176,6 +177,40 @@ def test_project_cycle_schedules_one_deterministic_wake_and_reconciles_retry(
     assert replay["metadata"]["reconciled_only"] is True
     assert replay["metadata"]["next_wake_job_id"] == next_job_id
     assert len(runtime_manager.submitted) == 1
+    assert runtime_manager.submitted[0].payload["meta"]["inbound_metadata"][
+        "workspace_root"
+    ] == str(tmp_path)
+    assert (
+        runtime_manager.submitted[0].payload["meta"]["inbound_metadata"][
+            "caller_handles_delivery"
+        ]
+        == "true"
+    )
+    assert (
+        runtime_manager.submitted[0]
+        .payload["meta"]["inbound_metadata"]["conversation_id"]
+        .startswith("prun_")
+    )
+    assert (
+        runtime_manager.submitted[0].payload["meta"]["inbound_metadata"]["resume"]
+        == "true"
+    )
+    assert runtime_manager.submitted[0].payload["timeout_seconds"] == 300
+    assert (
+        runtime_manager.submitted[0].payload["meta"]["inbound_metadata"][
+            "turn_timeout_seconds"
+        ]
+        == "300"
+    )
+    assert json.loads(
+        runtime_manager.submitted[0].payload["meta"]["inbound_metadata"][
+            "permission_overrides"
+        ]
+    ) == {
+        "file.copy": "bypass",
+        "file.move": "bypass",
+        "file.write": "bypass",
+    }
 
 
 def test_verified_project_cycle_finishes_without_another_wake(

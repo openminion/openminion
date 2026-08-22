@@ -18,9 +18,13 @@ from openminion.modules.brain.loop.strategies.coding.handler import (
 )
 from openminion.modules.brain.loop.strategies.coding.plan import CodingPlan
 from openminion.modules.brain.loop.tools import (
-    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
+    ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopState,
@@ -198,6 +202,119 @@ class TestCodingHandlerPureHelperBehavior:
         assert "do not modify files or apply patches" in prompt
         assert "`file.read` or `file.read_range` first" in prompt
 
+    @pytest.mark.parametrize(
+        "termination_reason",
+        (ADAPTIVE_TERM_FINALIZATION_BLOCKED, ADAPTIVE_TERM_FINALIZATION_INCOMPLETE),
+    )
+    def test_incomplete_finalization_remains_resumable(
+        self,
+        termination_reason: str,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._finalize_checkpoint = lambda *args, **kwargs: None
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=termination_reason,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+            final_text="Implementation needs another turn.",
+            finalization_status={"status": "incomplete"},
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert result.message == "Implementation needs another turn."
+
+    @pytest.mark.parametrize(
+        "termination_reason, expected_code",
+        (
+            (
+                ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+                "coding_finalization_contract_missing",
+            ),
+            (
+                ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
+                "coding_direct_tool_closure_failed",
+            ),
+        ),
+    )
+    def test_finalization_integrity_failures_are_explicit_errors(
+        self,
+        termination_reason: str,
+        expected_code: str,
+    ) -> None:
+        runner = CodingProfileRunner()
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(
+                budgets_remaining=SimpleNamespace(tool_calls=1, tokens=1),
+                llm_calls_used=0,
+                llm_calls_max=1,
+            )
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=termination_reason,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "error"
+        assert result.action_result.error is not None
+        assert result.action_result.error.code == expected_code
+
+    def test_missing_finalization_contract_at_budget_boundary_is_resumable(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.tool_calls_made = ["file.write"]
+        runner._finalize_checkpoint = lambda *args, **kwargs: None
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(
+                budgets_remaining=SimpleNamespace(tool_calls=0, tokens=1),
+                llm_calls_used=0,
+                llm_calls_max=1,
+            )
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "waiting_user"
+        assert "Continue in a new turn to resume" in result.message
+        assert result.action_result.error is not None
+        assert result.action_result.error.code == "coding_budget_exhausted"
+
 
 class TestCodingVerificationReserve:
     def test_file_read_counts_as_verification_candidate(self) -> None:
@@ -218,6 +335,68 @@ class TestCodingVerificationReserve:
         payload = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
         assert payload["command"]["tool_name"] == "file.read"
         assert runner._has_verifier_candidate() is True
+
+    def test_running_exec_requires_terminal_poll_before_verification(self) -> None:
+        runner = CodingProfileRunner()
+        command = ToolCommand(
+            title="run tests",
+            tool_name="exec.run",
+            args={"argv": ["python", "-m", "pytest", "-q"]},
+        )
+        action_result = ActionResult(
+            command_id="cmd-running",
+            status=BRAIN_ACTION_STATUS_SUCCESS,
+            summary="Command still running",
+            outputs={"status": "running", "session_id": "execproc-1"},
+        )
+
+        runner._record_verifier_candidate(command, action_result)
+
+        assert "coding.last_verifier_candidate" not in runner._loop_state.scratchpad
+        assert runner._has_verifier_candidate() is False
+        assert (
+            runner._loop_state.scratchpad["coding.pending_verifier_session_id"]
+            == "execproc-1"
+        )
+
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="read tests",
+                tool_name="file.read",
+                args={"path": "test_tiny_math.py"},
+            ),
+            ActionResult(
+                command_id="cmd-read",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="read tests",
+                outputs={"content": "def test_add_one(): ..."},
+            ),
+        )
+
+        assert "coding.last_verifier_candidate" not in runner._loop_state.scratchpad
+
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="poll tests",
+                tool_name="exec.poll",
+                args={"session_id": "execproc-1"},
+            ),
+            ActionResult(
+                command_id="cmd-poll",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="tests passed",
+                outputs={
+                    "status": "completed",
+                    "session_id": "execproc-1",
+                    "exit_code": 0,
+                },
+            ),
+        )
+
+        assert "coding.pending_verifier_session_id" not in runner._loop_state.scratchpad
+        assert runner._has_verifier_candidate() is True
+        candidate = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
+        assert candidate["command"]["tool_name"] == "exec.poll"
 
     @pytest.mark.parametrize(
         "termination_reason",
@@ -1139,6 +1318,41 @@ class TestCodingVerificationReserve:
         assert runner._loop_state.direct_tool_turn is not None
         assert "file.write" in runner._loop_state.messages[-1].content
 
+    def test_successful_mutation_adds_verify_to_read_only_plan(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.read"}),
+            final_text="Implemented the change.",
+        )
+
+        result = runner._handle_iteration_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result is None
+        assert runner._coding_plan.requires_file_change is True
+        assert runner._coding_plan.current_phase == "verify"
+        assert [phase.name for phase in runner._coding_plan.phases] == [
+            "implement",
+            "verify",
+        ]
+
     def test_initial_implement_phase_stages_file_writer_for_explicit_file_task(
         self,
     ) -> None:
@@ -1387,6 +1601,25 @@ class TestCodingVerificationReserve:
         ]
 
         assert runner._has_successful_mutating_file_result() is False
+
+    def test_successful_mutations_become_verifier_artifact_refs(self, tmp_path) -> None:
+        first = tmp_path / "tiny_math.py"
+        second = tmp_path / "test_tiny_math.py"
+        first.write_text("def add_one(value): return value + 1\n", encoding="utf-8")
+        second.write_text("def test_add_one(): assert True\n", encoding="utf-8")
+        runner = CodingProfileRunner()
+        runner._loop_state.scratchpad = {
+            "coding.cwd": str(tmp_path),
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True, "path": first.name},
+                {"tool_name": "file.write", "ok": True, "path": second.name},
+                {"tool_name": "file.read", "ok": True, "path": first.name},
+            ],
+        }
+
+        refs = runner._successful_mutating_artifact_refs()
+
+        assert [ref.ref for ref in refs] == [first.name, second.name]
 
     def test_mutating_file_result_accepts_runtime_final_path(
         self,

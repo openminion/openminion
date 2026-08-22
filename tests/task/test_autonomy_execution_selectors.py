@@ -20,6 +20,8 @@ def test_autonomy_selectors_survive_restart_without_secret_values(tmp_path) -> N
         verification_domain="coding",
         verifier_ref="command",
         verification_commands=("pytest -q",),
+        turn_timeout_seconds=600,
+        verification_timeout_seconds=900,
         required_evidence_kinds=("tests", "diff"),
     )
 
@@ -32,6 +34,8 @@ def test_autonomy_selectors_survive_restart_without_secret_values(tmp_path) -> N
     assert loaded.execution_selectors == run.execution_selectors
     assert loaded.execution_selectors.agent_id == "coding-agent"
     assert loaded.execution_selectors.verification_domain == "coding"
+    assert loaded.execution_selectors.turn_timeout_seconds == 600
+    assert loaded.execution_selectors.verification_timeout_seconds == 900
     assert "api_key" not in json.dumps(persisted).lower()
     assert not list((tmp_path / "autonomy" / "runs").glob(".*.json.*"))
 
@@ -54,3 +58,5 @@ def test_legacy_autonomy_record_uses_compatible_selector_defaults(tmp_path) -> N
 
     assert loaded.execution_selectors.agent_id == "default"
     assert loaded.execution_selectors.verification_domain == "cross_application"
+    assert loaded.execution_selectors.turn_timeout_seconds == 300
+    assert loaded.execution_selectors.verification_timeout_seconds == 120

@@ -1,5 +1,4 @@
 import json
-import sys
 from typing import Any, Optional
 
 from openminion.base.types import AgentResponse, Message
@@ -437,6 +436,6 @@ class AgentTurnFlowMixin:
                 finalize_response=_finalize_response,
             )
             return await telemetry.finish(response)
-        finally:
-            if exc := sys.exception():
-                await telemetry.fail(exc)
+        except BaseException as exc:  # noqa: BLE001 - preserve cancellation lifecycle
+            await telemetry.fail(exc)
+            raise

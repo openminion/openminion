@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from openminion.cli.main import main
+from openminion.cli.commands.autonomy_project import run_project_turn
 from openminion.cli.parser.base import build_parser
 from openminion.modules.task import (
     TaskManager,
@@ -18,6 +19,8 @@ from openminion.modules.task import (
     record_project_cycle,
     ProjectCycleDecision,
 )
+from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.services.runtime.project_worker import ProjectTurnRequest
 
 
 def _run_cli(args: list[str]) -> tuple[int, str]:
@@ -87,6 +90,103 @@ def test_autonomy_parser_registers_list_show_start_resume_cancel() -> None:
     assert project_args.autonomy_command == "project"
     assert project_args.project_command == "reprioritize"
     assert callable(list_args.handler)
+
+
+def test_project_turn_uses_canonical_successful_tool_results_as_progress(
+    monkeypatch,
+) -> None:
+    run = build_autonomy_run(
+        goal_text="finish the project",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace#commit=abc;dirty=clean",
+        max_iterations=3,
+    )
+    captured_payloads: list[dict[str, object]] = []
+
+    def run_turn(**kwargs):  # noqa: ANN003
+        captured_payloads.append(kwargs["payload"])
+        return {
+            "body": "worked",
+            "metadata": {
+                "tool_calls_cumulative": json.dumps(
+                    [
+                        {"tool_name": "file.write", "ok": True, "call_id": "write-1"},
+                        {"tool_name": "exec.run", "ok": False, "call_id": "test-1"},
+                    ]
+                )
+            },
+        }
+
+    monkeypatch.setattr("openminion.cli.commands.autonomy_project.run_turn", run_turn)
+
+    result = run_project_turn(
+        run,
+        ProjectTurnRequest(
+            run_id=run.run_id,
+            project_run_id="project-1",
+            task_id="task-1",
+            goal_id="goal-1",
+            session_id="session-1",
+            cycle_id="cycle-1",
+            milestone="finish the project",
+            prompt="work",
+        ),
+    )
+
+    assert result.evidence_refs == ("tool-call:write-1",)
+    assert result.evidence_kinds == ("tool_result",)
+    assert result.tool_call_count == 2
+    assert captured_payloads[0]["inbound_metadata"]["workspace_root"] == "/workspace"
+    assert captured_payloads[0]["inbound_metadata"]["caller_handles_delivery"] == (
+        "true"
+    )
+    assert captured_payloads[0]["inbound_metadata"]["conversation_id"] == "project-1"
+    assert captured_payloads[0]["inbound_metadata"]["resume"] == "true"
+    assert captured_payloads[0]["timeout_seconds"] == 300
+    assert captured_payloads[0]["inbound_metadata"]["turn_timeout_seconds"] == "300"
+    assert json.loads(
+        captured_payloads[0]["inbound_metadata"]["permission_overrides"]
+    ) == {
+        "file.copy": "bypass",
+        "file.move": "bypass",
+        "file.write": "bypass",
+    }
+
+
+def test_project_turn_maps_waiting_brain_status_to_project_condition(
+    monkeypatch,
+) -> None:
+    run = build_autonomy_run(
+        goal_text="finish the project",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace#commit=abc;dirty=clean",
+        max_iterations=3,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.run_turn",
+        lambda **_kwargs: {
+            "body": "Approval is required before writing files.",
+            "metadata": {"brain_status": "waiting_user"},
+        },
+    )
+
+    result = run_project_turn(
+        run,
+        ProjectTurnRequest(
+            run_id=run.run_id,
+            project_run_id="project-1",
+            task_id="task-1",
+            goal_id="goal-1",
+            session_id="session-1",
+            cycle_id="cycle-1",
+            milestone="finish the project",
+            prompt="work",
+        ),
+    )
+
+    assert result.condition == AutonomyLoopConditionKind.WAITING
 
 
 def _seed_project_task(db_path: Path) -> None:
@@ -203,6 +303,10 @@ def test_autonomy_start_replay_writes_terminal_proof(tmp_path: Path) -> None:
             "completed from replay",
             "--verification-waiver",
             "replay fixture has no external verifier",
+            "--turn-timeout-seconds",
+            "600",
+            "--verification-timeout-seconds",
+            "900",
             "--json",
         ]
     )
@@ -219,6 +323,8 @@ def test_autonomy_start_replay_writes_terminal_proof(tmp_path: Path) -> None:
     assert proof["final_operator_summary"] == "completed from replay"
     assert proof["commands_run"][0]["status"] == "succeeded"
     assert proof["workspace_ref"].startswith("local:")
+    assert run["execution_selectors"]["turn_timeout_seconds"] == 600
+    assert run["execution_selectors"]["verification_timeout_seconds"] == 900
 
 
 def test_autonomy_start_with_verify_command_records_test_evidence(
@@ -278,6 +384,7 @@ def test_autonomy_start_blocks_when_verify_command_fails(tmp_path: Path) -> None
     assert proof["failure_or_blocker"]["code"] == "VERIFICATION_FAILED"
     assert proof["tests_run"][0]["status"] == "failed"
     assert proof["tests_run"][0]["exit_code"] == 7
+    assert proof["validation_summary"].endswith("verification commands did not pass.")
 
 
 def test_autonomy_start_require_verification_blocks_without_check(

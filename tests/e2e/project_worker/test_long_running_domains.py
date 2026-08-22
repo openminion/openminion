@@ -25,7 +25,7 @@ def _run_project(
     turn,
     verify_command: str,
 ) -> dict[str, object]:
-    monkeypatch.setattr("openminion.cli.commands.autonomy.run_turn", turn)
+    monkeypatch.setattr("openminion.cli.commands.autonomy_project.run_turn", turn)
     output = io.StringIO()
     with redirect_stdout(output):
         code = main(

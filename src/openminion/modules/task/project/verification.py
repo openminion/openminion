@@ -13,6 +13,9 @@ from openminion.modules.task.autonomy import (
     TestEvidenceStatus,
     now_ms,
 )
+from openminion.modules.task.constants import (
+    DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+)
 
 
 class ProjectVerificationDomain(StrEnum):
@@ -161,13 +164,24 @@ def run_project_verification_commands(
     commands: tuple[str, ...],
     *,
     workspace: Path,
+    timeout_seconds: int = DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
 ) -> tuple[TestEvidence, ...]:
     return tuple(
-        _run_project_verification(command, workspace=workspace) for command in commands
+        _run_project_verification(
+            command,
+            workspace=workspace,
+            timeout_seconds=timeout_seconds,
+        )
+        for command in commands
     )
 
 
-def _run_project_verification(command: str, *, workspace: Path) -> TestEvidence:
+def _run_project_verification(
+    command: str,
+    *,
+    workspace: Path,
+    timeout_seconds: int,
+) -> TestEvidence:
     started = now_ms()
     argv = tuple(shlex.split(command))
     try:
@@ -178,7 +192,7 @@ def _run_project_verification(command: str, *, workspace: Path) -> TestEvidence:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=120,
+            timeout=timeout_seconds,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return TestEvidence(

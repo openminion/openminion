@@ -45,6 +45,14 @@ class CodingPlan(BaseModel):
     def _validate_plan(self) -> "CodingPlan":
         if not self.phases:
             self.phases = [CodingPhase(name="implement", status="active")]
+        if self.requires_file_change:
+            phase_names = [phase.name for phase in self.phases]
+            if "implement" not in phase_names:
+                raise ValueError("file-changing plans must include implement")
+            if phase_names[-1] == "implement":
+                self.phases.append(CodingPhase(name="verify"))
+            elif phase_names[-1] != "verify":
+                raise ValueError("file-changing plans must end with verify")
         ordered_names = [phase.name for phase in self.phases]
         ordered_indices = [CODING_PHASE_ORDER.index(name) for name in ordered_names]
         expected_indices = list(
@@ -82,7 +90,7 @@ class CodingPlan(BaseModel):
         requires_file_change: bool = False,
     ) -> "CodingPlan":
         phases = [CodingPhase(name="implement", status="active")]
-        if include_verify:
+        if include_verify or requires_file_change:
             phases.append(CodingPhase(name="verify"))
         return cls(
             goal=goal.strip() or "Complete the coding task.",

@@ -13,10 +13,34 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.base.generated_paths import resolve_generated_state_path
+from openminion.modules.task.constants import (
+    DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
+    DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+)
+
+_LOCAL_SAFE_PERMISSION_OVERRIDES = {
+    "file.copy": "bypass",
+    "file.move": "bypass",
+    "file.write": "bypass",
+}
 
 
 class _StrictAutonomyModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def autonomy_permission_metadata(permission_profile_id: str) -> dict[str, str]:
+    profile_id = str(permission_profile_id or "").strip().lower()
+    if profile_id == "local-safe":
+        return {
+            "permission_overrides": json.dumps(
+                _LOCAL_SAFE_PERMISSION_OVERRIDES,
+                sort_keys=True,
+            )
+        }
+    if profile_id in {"readonly", "bypass"}:
+        return {"permission_mode": profile_id}
+    return {}
 
 
 class AutonomyRunStatus(StrEnum):
@@ -78,6 +102,14 @@ class AutonomyExecutionSelectors(_StrictAutonomyModel):
     verification_domain: VerificationDomain = "cross_application"
     verifier_ref: str = "command"
     verification_commands: tuple[str, ...] = ()
+    turn_timeout_seconds: int = Field(
+        default=DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
+        ge=1,
+    )
+    verification_timeout_seconds: int = Field(
+        default=DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+        ge=1,
+    )
     verification_waiver_reason: str | None = None
     required_evidence_kinds: tuple[str, ...] = ("verification",)
     budget_policy_id: str = "continuation"
@@ -260,6 +292,8 @@ def build_autonomy_run(
     verification_domain: VerificationDomain = "cross_application",
     verifier_ref: str = "command",
     verification_commands: tuple[str, ...] = (),
+    turn_timeout_seconds: int = DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
+    verification_timeout_seconds: int = DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
     verification_waiver_reason: str | None = None,
     required_evidence_kinds: tuple[str, ...] = ("verification",),
 ) -> AutonomyRun:
@@ -282,6 +316,8 @@ def build_autonomy_run(
             verification_domain=verification_domain,
             verifier_ref=verifier_ref,
             verification_commands=verification_commands,
+            turn_timeout_seconds=turn_timeout_seconds,
+            verification_timeout_seconds=verification_timeout_seconds,
             verification_waiver_reason=verification_waiver_reason,
             required_evidence_kinds=required_evidence_kinds,
         ),
@@ -492,6 +528,7 @@ __all__ = (
     "TestEvidence",
     "TestEvidenceStatus",
     "VerificationWaiver",
+    "autonomy_permission_metadata",
     "build_autonomy_run",
     "build_local_workspace_ref",
     "build_terminal_proof_packet",
