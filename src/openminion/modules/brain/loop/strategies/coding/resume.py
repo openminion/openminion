@@ -33,7 +33,7 @@ from openminion.modules.brain.runner.tick.context import (
     _parse_confirmation_response,
 )
 from openminion.modules.brain.schemas import refresh_command_identity, new_uuid
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import Message, ToolCall
 from .runtime import _build_blocked_result, _runner_and_profile_from_context
 
 
@@ -193,14 +193,27 @@ class CodingResumeMixin:
     ) -> None:
         self._record_verifier_candidate(replay_command, action_result)
         tool_name = str(getattr(replay_command, "tool_name", "") or "").strip()
+        call_id = str(getattr(replay_command, "command_id", "") or "")
+        self._loop_state.messages.append(
+            Message(
+                role="assistant",
+                tool_calls=[
+                    ToolCall(
+                        id=call_id,
+                        name=tool_name,
+                        arguments=dict(getattr(replay_command, "args", {}) or {}),
+                    )
+                ],
+            )
+        )
         self._loop_state.append_tool_result(
-            call_id=str(getattr(replay_command, "command_id", "") or ""),
+            call_id=call_id,
             tool_name=tool_name,
             action_result=action_result,
         )
         self._loop_state.messages.append(
             action_result_to_tool_message(
-                str(getattr(replay_command, "command_id", "") or ""),
+                call_id,
                 tool_name,
                 action_result,
             )

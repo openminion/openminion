@@ -51,7 +51,8 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.schemas.closure import ClosureJudgment
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
-from openminion.modules.llm.schemas import LLMResponse, ToolCall, UsageInfo
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse, ToolCall, UsageInfo
+from openminion.modules.llm.transcript import validate_tool_transcript
 
 _PLANNER_CONTEXT_TOOLS = frozenset(
     {"code.repo_index", "code.repo_map", "code.symbol_find"}
@@ -2731,6 +2732,9 @@ def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> N
     first_llm_messages = llm_client.calls[0]["messages"]
     assert all(message.content != "yes" for message in first_llm_messages)
     assert sum(1 for message in first_llm_messages if message.role == "tool") >= 2
+    assert validate_tool_transcript(LLMRequest(messages=first_llm_messages)) == (
+        "canonical_events"
+    )
     assert any(
         "do not repeat the same confirmed tool calls" in message.content
         for message in first_llm_messages
