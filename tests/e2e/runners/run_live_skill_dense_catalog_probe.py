@@ -556,3 +556,7 @@ def main() -> int:
         f"pass_count={summary['pass_count']} failure_count={summary['failure_count']}"
     )
     return 0 if not failures else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
