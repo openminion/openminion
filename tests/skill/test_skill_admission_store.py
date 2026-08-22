@@ -91,6 +91,33 @@ def test_activation_compare_and_swap_rejects_stale_writer(tmp_path: Path) -> Non
         store.close()
 
 
+def test_reopening_store_does_not_activate_pending_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "skill.db"
+    store = SQLiteSkillStore(db_path, wal=False)
+    try:
+        _insert(store, "v1")
+        store.stage_skill_version(
+            skill_id="deploy",
+            version_hash="v1",
+            content_fingerprint="content-v1",
+            authority_class="local_operator",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    finally:
+        store.close()
+
+    reopened = SQLiteSkillStore(db_path, wal=False)
+    try:
+        assert reopened.get_active_skill_version_hash(skill_id="deploy") is None
+        admission = reopened.get_skill_admission(
+            skill_id="deploy", version_hash="v1"
+        )
+        assert admission is not None
+        assert admission["state"] == "pending"
+    finally:
+        reopened.close()
+
+
 def test_activation_compare_and_swap_has_one_winner_across_connections(
     tmp_path: Path,
 ) -> None:
@@ -99,6 +126,14 @@ def test_activation_compare_and_swap_has_one_winner_across_connections(
     try:
         _insert(seed, "v1")
         _insert(seed, "v2")
+        for version_hash in ("v1", "v2"):
+            seed.stage_skill_version(
+                skill_id="deploy",
+                version_hash=version_hash,
+                content_fingerprint=f"content-{version_hash}",
+                authority_class="local_operator",
+                created_at="2026-01-01T00:00:00Z",
+            )
     finally:
         seed.close()
 

@@ -9,6 +9,7 @@ import pytest
 from openminion.cli.config import load_cli_config
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.skill.config import from_base_config as skill_from_base_config
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from tests.helpers.live_cli_chat_alibaba import (
@@ -54,13 +55,26 @@ def _ingest_linear_skill(*, config_path: Path, agent_id: str, data_root: Path) -
     skill_cfg.wal = False
     skill_cfg.known_tools = ["http_request"]
     ctl = Skill(config=skill_cfg, home_root=runtime_home_root())
+    authority = SkillIngestAuthority.local_operator(
+        surface="tests.e2e.skill_model_matrix",
+        principal_id="live-skill-e2e",
+    )
     try:
-        skill_id, _version_hash, warnings = ctl.ingest_file(
+        skill_id, version_hash, warnings = ctl.ingest_file(
             _LINEAR_FIXTURE,
             scope="agent",
             agent_id=agent_id,
+            authority=authority,
         )
         assert not any(item.startswith("lint.error:") for item in warnings)
+        ctl.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="live skill matrix fixture admission",
+            authority=authority,
+        )
         return skill_id
     finally:
         ctl.close()

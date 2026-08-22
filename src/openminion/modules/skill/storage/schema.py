@@ -65,6 +65,10 @@ def _backfill_legacy_catalog_admission(record_store: RecordStore) -> None:
             WHERE skill_versions.skill_id = skills.skill_id
             ORDER BY created_at DESC, version_hash DESC LIMIT 1
         ) WHERE active_version_hash IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM skill_version_admissions
+              WHERE skill_version_admissions.skill_id = skills.skill_id
+          )
         """
     )
     record_store.execute_count(
