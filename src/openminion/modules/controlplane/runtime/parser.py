@@ -1,6 +1,20 @@
 from ..interfaces import CONTROLPLANE_INTERFACE_VERSION
 from ..contracts.models import CommandParser, ParsedCommand
 
+_SUBCOMMAND_ROOTS = frozenset(
+    {
+        "agent",
+        "artifact",
+        "config",
+        "memory",
+        "pair",
+        "profile",
+        "run",
+        "session",
+        "skill",
+    }
+)
+
 
 class SlashCommandParser(CommandParser):
     """Minimal parser for CLI demo supporting `/command arg1 arg2` syntax."""
@@ -16,7 +30,7 @@ class SlashCommandParser(CommandParser):
             return None
         head, *args = body.split()
         canonical = head.lower()
-        if "." not in head and args:
+        if canonical in _SUBCOMMAND_ROOTS and args:
             canonical = f"{canonical}.{args.pop(0).lower()}"
 
         return ParsedCommand(canonical=canonical, original_text=stripped, args=args)

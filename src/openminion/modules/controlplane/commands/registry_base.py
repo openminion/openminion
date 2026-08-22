@@ -11,7 +11,12 @@ from openminion.modules.controlplane.contracts.models import (
 )
 from openminion.modules.controlplane.runtime.audit import emit_audit_event
 
-from .builtin_specs import COMMAND_HELP, SCOPE_DESCRIPTIONS, builtin_command_specs
+from .builtin_specs import (
+    COMMAND_HELP,
+    HELP_HIDDEN_COMMANDS,
+    SCOPE_DESCRIPTIONS,
+    builtin_command_specs,
+)
 from .module import AuthRequirement, CommandSpec
 
 _LOGGER = get_logger("modules.controlplane.commands.registry")
@@ -148,6 +153,8 @@ class CommandRegistryBaseMixin:
             "Use /profile use <profile_id> to switch runtime profile; use /session new for fresh context.",
         ]
         for name, desc in sorted(COMMAND_HELP.items()):
+            if name in HELP_HIDDEN_COMMANDS:
+                continue
             if "[admin]" in desc and not is_admin:
                 continue
             if not self._command_is_available(name):

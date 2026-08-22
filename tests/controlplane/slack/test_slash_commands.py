@@ -16,6 +16,20 @@ def test_slash_payload_normalizes_to_shared_command() -> None:
     assert inbound.chat_key == "slack:T1:channel:C1"
 
 
+def test_generic_slash_payload_keeps_command_prefix_and_arguments() -> None:
+    envelope = parse_slash_payload(
+        {
+            "team_id": "T1",
+            "channel_id": "C1",
+            "user_id": "U1",
+            "command": "/openminion",
+            "text": "cancel run-1",
+        }
+    )
+
+    assert inbound_from_slash(envelope).text == "/cancel run-1"
+
+
 def test_pair_token_is_candidate_not_consumed() -> None:
     envelope = parse_slash_payload(
         {

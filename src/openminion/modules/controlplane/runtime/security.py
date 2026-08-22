@@ -23,7 +23,10 @@ class CommandScopeRegistry(Protocol):
 
 
 def is_pair_command(text: str) -> bool:
-    return (text or "").strip().lower().startswith("/pair")
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return stripped.split(maxsplit=1)[0].casefold() == "/pair"
 
 
 @dataclass
@@ -127,7 +130,8 @@ class ScopeAuthorizer:
     def _scopes_allowed(
         required: tuple[str, ...], auth: AuthContext
     ) -> tuple[bool, str]:
-        missing = [scope for scope in required if scope not in set(auth.scopes)]
+        granted = set(auth.scopes)
+        missing = [scope for scope in required if scope not in granted]
         if missing:
             return False, f"missing scopes: {', '.join(missing)}"
         return True, "ok"

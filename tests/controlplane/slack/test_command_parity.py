@@ -12,6 +12,9 @@ def test_slack_aliases_use_profile_and_session_vocabulary() -> None:
     )
     assert normalize_command_text("new") == "/session new"
     assert normalize_slash_command_text("/openminion", "status") == "/status"
+    assert normalize_slash_command_text("/openminion", "cancel run-1") == (
+        "/cancel run-1"
+    )
 
 
 def test_slack_does_not_define_parallel_command_registry() -> None:
