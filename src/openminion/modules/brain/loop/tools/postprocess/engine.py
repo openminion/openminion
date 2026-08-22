@@ -169,13 +169,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
             for message in list(getattr(response, "assistant_messages", []) or [])
             if not _looks_like_unexecutable_tool_payload_text(message.content)
         ]
-        if tool_calls is not None:
-            assistant_messages = [
-                message.model_copy(update={"tool_calls": []})
-                if message.tool_calls
-                else message
-                for message in assistant_messages
-            ]
+        assistant_messages = [
+            message.model_copy(update={"tool_calls": []})
+            if message.tool_calls
+            else message
+            for message in assistant_messages
+        ]
         if response_tool_calls and not any(
             message.tool_calls for message in assistant_messages
         ):

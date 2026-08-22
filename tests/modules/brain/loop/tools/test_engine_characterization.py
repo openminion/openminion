@@ -88,6 +88,9 @@ from openminion.modules.brain.loop.tools.postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
     _looks_like_unexecutable_tool_payload_text,
 )
+from openminion.modules.brain.loop.tools.postprocess.engine import (
+    AdaptiveLoopRunnerPostprocessMixin,
+)
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
 from openminion.modules.brain.loop.tools.no_tool import AdaptiveLoopRunnerNoToolMixin
 from openminion.modules.brain.loop.tools.iteration.termination import (
@@ -112,16 +115,54 @@ from openminion.modules.brain.loop.tools import (
 from openminion.modules.brain.loop.entry import decompose_tool_spec
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
 from openminion.modules.llm.schemas import (
+    LLMRequest,
     LLMResponse,
     Message,
     ToolCall,
     ToolSpec,
     UsageInfo,
 )
+from openminion.modules.llm.transcript import validate_tool_transcript
 
 
 class _NoToolRepairHarness(AdaptiveLoopRunnerNoToolMixin):
     pass
+
+
+class _ResponseAppendHarness(AdaptiveLoopRunnerPostprocessMixin):
+    pass
+
+
+def test_append_response_messages_discards_noncanonical_embedded_tool_calls() -> None:
+    harness = _ResponseAppendHarness()
+    harness.loop_state = AdaptiveToolLoopState()
+    response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="Continue with verification.",
+        assistant_messages=[
+            Message(
+                role="assistant",
+                content="Continue with verification.",
+                tool_calls=[
+                    ToolCall(
+                        id="stale-call",
+                        name="exec.run",
+                        arguments={"command": "[malformed"},
+                    )
+                ],
+            )
+        ],
+        tool_calls=[],
+    )
+
+    harness._append_response_messages(response)
+
+    assert harness.loop_state.messages[0].tool_calls == []
+    assert validate_tool_transcript(
+        LLMRequest(messages=harness.loop_state.messages)
+    ) == "canonical_events"
 
 
 # Shared fixtures — mirror tests/brain/tool_loops/test_engine.py style
