@@ -202,6 +202,10 @@ def attach_cron_scheduler(
                 if lifecycle_bridge is not None
                 else None
             ),
+            can_start_background_work=lambda: (
+                runtime.runtime_manager is None
+                or not runtime.runtime_manager.has_foreground_work()
+            ),
         )
         scheduler.start()
         _seed_cron_cleanup_job(cron_store)

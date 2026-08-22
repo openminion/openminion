@@ -204,6 +204,52 @@ def test_cron_turn_executor_success_injects_metadata() -> None:
     }
 
 
+def test_cron_turn_executor_builds_typed_consolidation_watermark() -> None:
+    runtime, _runtime_manager = _runtime(
+        [
+            SimpleNamespace(
+                final_text="consolidated",
+                errors=[],
+                metadata={
+                    "memory_consolidation.candidate_ids": '["cand-1", "cand-2"]',
+                    "memory_consolidation.state_hash": "hash-123",
+                },
+            )
+        ],
+        registered_agents=["agent-a"],
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=90.0,
+        max_attempts=1,
+    )
+
+    result = executor.execute(
+        {
+            "job_id": "job-consolidate",
+            "agent_id": "agent-a",
+            "payload": {
+                "kind": "agentTurn",
+                "message": "consolidate",
+                "_openminion_memory_consolidation": {"target_scope": "agent:agent-a"},
+            },
+        },
+        {
+            "run_id": "run-consolidate",
+            "due_at": "2026-08-22T00:00:00Z",
+            "isolated_session_id": "consolidation-session",
+        },
+    )
+
+    watermark = result["output"]["coordination_watermark"]
+    assert watermark["target_scope"] == "agent:agent-a"
+    assert watermark["candidate_ids"] == ["cand-1", "cand-2"]
+    assert watermark["state_hash"] == "hash-123"
+    assert watermark["completed_at"]
+
+
 def test_cron_turn_executor_prefers_payload_session_and_forwards_linked_task_id() -> (
     None
 ):

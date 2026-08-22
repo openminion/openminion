@@ -36,6 +36,9 @@ class SQLiteCronRepository:
         misfire_policy: str | Mapping[str, Any] | None = None,
         max_lateness_s: int = 600,
         max_concurrency: int = 1,
+        concurrency_key: str | None = None,
+        max_attempts: int = 3,
+        retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> str:
         return self._store.add_cron_job(
@@ -52,6 +55,9 @@ class SQLiteCronRepository:
             misfire_policy=misfire_policy,
             max_lateness_s=max_lateness_s,
             max_concurrency=max_concurrency,
+            concurrency_key=concurrency_key,
+            max_attempts=max_attempts,
+            retry_backoff_s=retry_backoff_s,
             job_id=job_id,
         )
 
@@ -145,6 +151,26 @@ class SQLiteCronRepository:
             now_iso=now_iso,
         )
 
+    def recover_expired_cron_runs(
+        self,
+        *,
+        now_iso: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self._store.recover_expired_cron_runs(now_iso=now_iso, limit=limit)
+
+    def retry_cron_run(
+        self,
+        run_id: str,
+        *,
+        error: dict[str, Any],
+        now_iso: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self._store.retry_cron_run(run_id, error=error, now_iso=now_iso)
+
+    def get_cron_scope_state(self, concurrency_key: str) -> dict[str, Any] | None:
+        return self._store.get_cron_scope_state(concurrency_key)
+
     def finish_cron_run(
         self,
         run_id: str,
@@ -153,6 +179,7 @@ class SQLiteCronRepository:
         summary: str | None = None,
         artifact_refs: list[dict[str, Any]] | None = None,
         error: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None:
@@ -162,6 +189,7 @@ class SQLiteCronRepository:
             summary=summary,
             artifact_refs=artifact_refs,
             error=error,
+            output=output,
             isolated_session_id=isolated_session_id,
             now_iso=now_iso,
         )

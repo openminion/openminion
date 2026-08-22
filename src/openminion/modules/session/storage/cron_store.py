@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import RLock
 from typing import Any, Mapping
 from uuid import uuid4
@@ -28,13 +28,63 @@ from openminion.modules.task.constants import (
     TASK_INTERNAL_PAUSE_SOURCE_KEY,
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
+from openminion.modules.session.constants import (
+    MAX_CRON_ATTEMPTS,
+    MAX_CRON_RETRY_BACKOFF_SECONDS,
+)
 from openminion.modules.storage.record_store import RecordStore
 
+from .cron_coordination import CronCoordinationStore
 from .json_utils import parse_json, to_json
 from .rows import row_to_cron_job, row_to_cron_run
 
 
-class CronStore:
+def _initial_next_due(
+    schedule: Mapping[str, Any], *, now: datetime, job_id: str
+) -> str | None:
+    if str(schedule["kind"]) == "at":
+        return str(schedule["at"])
+    next_due = compute_next_due(
+        schedule=schedule,
+        after=now,
+        job_id=job_id,
+        last_due=None,
+    )
+    return to_iso_utc(next_due) if next_due is not None else None
+
+
+def _due_job_rows(
+    record_store: RecordStore, *, now_iso: str, now: datetime, limit: int
+) -> list[dict[str, Any]]:
+    rows = record_store.query_dicts(
+        """
+        SELECT * FROM cron_jobs
+        WHERE enabled = 1 AND next_due_at IS NOT NULL AND next_due_at <= ?
+        ORDER BY next_due_at ASC LIMIT ?
+        """,
+        (now_iso, limit),
+    )
+    if rows:
+        return rows
+    fallback_rows = record_store.query_dicts(
+        """
+        SELECT * FROM cron_jobs
+        WHERE enabled = 1 AND next_due_at IS NOT NULL
+        ORDER BY next_due_at ASC
+        """
+    )
+    due_fallback: list[dict[str, Any]] = []
+    for row in fallback_rows:
+        try:
+            due_at = parse_iso_datetime(str(row["next_due_at"]))
+        except Exception:
+            continue
+        if due_at <= now:
+            due_fallback.append(row)
+    return due_fallback[:limit]
+
+
+class CronStore(CronCoordinationStore):
     def __init__(self, record_store: RecordStore, lock: RLock) -> None:
         self._record_store = record_store
         self._lock = lock
@@ -70,6 +120,9 @@ class CronStore:
         misfire_policy: str | Mapping[str, Any] | None = None,
         max_lateness_s: int = 600,
         max_concurrency: int = 1,
+        concurrency_key: str | None = None,
+        max_attempts: int = 3,
+        retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> str:
         normalized_name = str(name or "").strip()
@@ -102,20 +155,17 @@ class CronStore:
         policy = normalize_misfire_policy(misfire_policy)
         lateness = max(0, max_lateness_s)
         concurrency = max(1, max_concurrency)
+        coordination_key = str(concurrency_key or "").strip() or None
+        attempt_limit = max(1, min(int(max_attempts), MAX_CRON_ATTEMPTS))
+        retry_backoff = max(
+            1,
+            min(int(retry_backoff_s), MAX_CRON_RETRY_BACKOFF_SECONDS),
+        )
 
         jid = (job_id or "").strip() or uuid4().hex
         now_dt = utc_now()
         now = to_iso_utc(now_dt)
-        if str(normalized_schedule["kind"]) == "at":
-            next_due = str(normalized_schedule["at"])
-        else:
-            next_due_dt = compute_next_due(
-                schedule=normalized_schedule,
-                after=now_dt,
-                job_id=jid,
-                last_due=None,
-            )
-            next_due = to_iso_utc(next_due_dt) if next_due_dt is not None else None
+        next_due = _initial_next_due(normalized_schedule, now=now_dt, job_id=jid)
 
         with self._lock, self._record_store.transaction():
             self._execute_count(
@@ -123,9 +173,10 @@ class CronStore:
                 INSERT INTO cron_jobs(
                   job_id, name, description, enabled, agent_id, schedule_json, payload_json,
                   delivery_json, session_target, wake_mode, delete_after_run, misfire_policy,
-                  max_lateness_s, max_concurrency, next_due_at, last_run_at, created_at, updated_at
+                  max_lateness_s, max_concurrency, concurrency_key, max_attempts,
+                  retry_backoff_s, next_due_at, last_run_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     jid,
@@ -142,6 +193,9 @@ class CronStore:
                     encode_misfire_policy(policy),
                     lateness,
                     concurrency,
+                    coordination_key,
+                    attempt_limit,
+                    retry_backoff,
                     next_due if enabled else None,
                     None,
                     now,
@@ -292,18 +346,37 @@ class CronStore:
             expires_dt = now_dt + timedelta(seconds=max(1, lease_ttl_s))
         run_id = uuid4().hex
         with self._lock, self._record_store.transaction():
+            coordination_key = str(job.get("concurrency_key") or "").strip()
+            if coordination_key:
+                active = self._query_one(
+                    """
+                    SELECT COUNT(1) AS c
+                    FROM cron_runs AS r
+                    JOIN cron_jobs AS j ON j.job_id = r.job_id
+                    WHERE j.concurrency_key = ?
+                      AND r.state IN ('queued', 'running')
+                    """,
+                    (coordination_key,),
+                )
+                if active is not None and int(active["c"]) > 0:
+                    raise ValueError(
+                        f"cron coordination scope is busy: {coordination_key}"
+                    )
             self._execute_count(
                 """
                 INSERT INTO cron_runs(
-                  run_id, job_id, state, due_at, started_at, finished_at, isolated_session_id,
-                  summary, artifact_refs_json, error_json, lease_owner, lease_expires_at,
+                  run_id, job_id, state, due_at, available_at, started_at, finished_at,
+                  isolated_session_id, summary, artifact_refs_json, error_json, output_json,
+                  lease_owner, lease_expires_at,
                   delivery_targets_json, attempts, created_at, updated_at
                 )
-                VALUES (?, ?, 'queued', ?, NULL, NULL, NULL, NULL, '[]', NULL, ?, ?, '[]', 0, ?, ?)
+                VALUES (?, ?, 'queued', ?, ?, NULL, NULL, NULL, NULL, '[]', NULL, '{}',
+                        ?, ?, '[]', 0, ?, ?)
                 """,
                 (
                     run_id,
                     str(job["job_id"]),
+                    to_iso_utc(due_dt),
                     to_iso_utc(due_dt),
                     str(lease_owner or "").strip() or None,
                     to_iso_utc(expires_dt) if lease_owner else None,
@@ -366,39 +439,14 @@ class CronStore:
 
         queued: list[dict[str, Any]] = []
         with self._lock, self._record_store.transaction():
-            rows = self._record_store.query_dicts(
-                """
-                SELECT *
-                FROM cron_jobs
-                WHERE enabled = 1
-                  AND next_due_at IS NOT NULL
-                  AND next_due_at <= ?
-                ORDER BY next_due_at ASC
-                LIMIT ?
-                """,
-                (now, safe_limit),
+            self._recover_expired_cron_runs_locked(
+                now_dt=now_dt,
+                now_iso=now,
+                limit=max(100, safe_limit * 2),
             )
-            if not rows:
-                fallback_rows = self._record_store.query_dicts(
-                    """
-                    SELECT *
-                    FROM cron_jobs
-                    WHERE enabled = 1
-                      AND next_due_at IS NOT NULL
-                    ORDER BY next_due_at ASC
-                    """,
-                )
-                due_fallback: list[dict[str, Any]] = []
-                for row in fallback_rows:
-                    try:
-                        due_dt = parse_iso_datetime(str(row["next_due_at"]))
-                    except Exception:
-                        continue
-                    if due_dt <= now_dt:
-                        due_fallback.append(row)
-                if len(due_fallback) > safe_limit:
-                    due_fallback = due_fallback[:safe_limit]
-                rows = due_fallback
+            rows = _due_job_rows(
+                self._record_store, now_iso=now, now=now_dt, limit=safe_limit
+            )
 
             for row in rows:
                 job = row_to_cron_job(row)
@@ -410,17 +458,34 @@ class CronStore:
                 ):
                     self._auto_pause_legacy_short_interval_job(job=job, now_iso=now)
                     continue
-                active = self._query_one(
-                    """
-                    SELECT COUNT(1) AS c
-                    FROM cron_runs
-                    WHERE job_id = ?
-                      AND state IN ('queued', 'running')
-                    """,
-                    (str(job["job_id"]),),
-                )
+                coordination_key = str(job.get("concurrency_key") or "").strip()
+                if coordination_key:
+                    active = self._query_one(
+                        """
+                        SELECT COUNT(1) AS c
+                        FROM cron_runs AS r
+                        JOIN cron_jobs AS j ON j.job_id = r.job_id
+                        WHERE j.concurrency_key = ?
+                          AND r.state IN ('queued', 'running')
+                        """,
+                        (coordination_key,),
+                    )
+                else:
+                    active = self._query_one(
+                        """
+                        SELECT COUNT(1) AS c
+                        FROM cron_runs
+                        WHERE job_id = ?
+                          AND state IN ('queued', 'running')
+                        """,
+                        (str(job["job_id"]),),
+                    )
                 active_count = int(active["c"]) if active is not None else 0
-                max_for_job = max(1, int(job.get("max_concurrency", 1)))
+                max_for_job = (
+                    1
+                    if coordination_key
+                    else max(1, int(job.get("max_concurrency", 1)))
+                )
                 if active_count >= max_for_job:
                     continue
 
@@ -450,16 +515,19 @@ class CronStore:
                     inserted = self._execute_count(
                         """
                         INSERT INTO cron_runs(
-                          run_id, job_id, state, due_at, started_at, finished_at, isolated_session_id,
-                          summary, artifact_refs_json, error_json, lease_owner, lease_expires_at,
+                          run_id, job_id, state, due_at, available_at, started_at, finished_at,
+                          isolated_session_id, summary, artifact_refs_json, error_json, output_json,
+                          lease_owner, lease_expires_at,
                           delivery_targets_json, attempts, created_at, updated_at
                         )
-                        VALUES (?, ?, 'queued', ?, NULL, NULL, NULL, NULL, '[]', NULL, ?, ?, '[]', 0, ?, ?)
+                        VALUES (?, ?, 'queued', ?, ?, NULL, NULL, NULL, NULL, '[]', NULL, '{}',
+                                ?, ?, '[]', 0, ?, ?)
                         ON CONFLICT(job_id, due_at) DO NOTHING
                         """,
                         (
                             run_id,
                             str(job["job_id"]),
+                            due_iso,
                             due_iso,
                             owner,
                             lease_expires,
@@ -475,6 +543,7 @@ class CronStore:
                             "job_id": str(job["job_id"]),
                             "state": "queued",
                             "due_at": due_iso,
+                            "available_at": due_iso,
                             "lease_owner": owner,
                             "lease_expires_at": lease_expires,
                             "attempts": 0,
@@ -502,11 +571,17 @@ class CronStore:
 
         acquired: list[dict[str, Any]] = []
         with self._lock, self._record_store.transaction():
+            self._recover_expired_cron_runs_locked(
+                now_dt=now_dt,
+                now_iso=now,
+                limit=max(100, safe_limit * 2),
+            )
             candidates = self._record_store.query_dicts(
                 """
                 SELECT *
                 FROM cron_runs
                 WHERE state = 'queued'
+                  AND (available_at IS NULL OR available_at <= ?)
                   AND (
                     lease_owner IS NULL
                     OR lease_owner = ?
@@ -516,16 +591,36 @@ class CronStore:
                 ORDER BY due_at ASC
                 LIMIT ?
                 """,
-                (owner, now, safe_limit),
+                (now, owner, now, safe_limit),
             )
 
             for row in candidates:
                 run_id = str(row["run_id"])
+                job_id = str(row.get("job_id") or "").strip()
+                job_row = (
+                    self._query_one(
+                        "SELECT concurrency_key FROM cron_jobs WHERE job_id = ?",
+                        (job_id,),
+                    )
+                    if job_id
+                    else None
+                )
+                coordination_key = (
+                    str(job_row.get("concurrency_key") or "").strip()
+                    if job_row is not None
+                    else ""
+                )
+                if coordination_key and self._scope_has_running_run_locked(
+                    coordination_key,
+                    excluding_run_id=run_id,
+                ):
+                    continue
                 updated = self._execute_count(
                     """
                     UPDATE cron_runs
                     SET state = 'running',
                         started_at = COALESCE(started_at, ?),
+                        available_at = NULL,
                         lease_owner = ?,
                         lease_expires_at = ?,
                         attempts = attempts + 1,
@@ -584,6 +679,7 @@ class CronStore:
         summary: str | None = None,
         artifact_refs: list[dict[str, Any]] | None = None,
         error: dict[str, Any] | None = None,
+        output: dict[str, Any] | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict[str, Any] | None:
@@ -602,7 +698,7 @@ class CronStore:
         with self._lock, self._record_store.transaction():
             row = self._query_one(
                 """
-                SELECT r.*, j.schedule_json, j.delete_after_run
+                SELECT r.*, j.schedule_json, j.delete_after_run, j.concurrency_key
                 FROM cron_runs AS r
                 LEFT JOIN cron_jobs AS j ON j.job_id = r.job_id
                 WHERE r.run_id = ?
@@ -619,6 +715,7 @@ class CronStore:
                     summary = ?,
                     artifact_refs_json = ?,
                     error_json = ?,
+                    output_json = ?,
                     isolated_session_id = ?,
                     lease_owner = NULL,
                     lease_expires_at = NULL,
@@ -631,6 +728,7 @@ class CronStore:
                     summary,
                     to_json(artifact_refs or []),
                     to_json(error) if error is not None else None,
+                    to_json(output or {}),
                     str(isolated_session_id or "").strip() or None,
                     now,
                     now,
@@ -650,21 +748,19 @@ class CronStore:
                     (now, now, job_id),
                 )
 
-                schedule = parse_json(row["schedule_json"], {})
-                if normalized_state == "finished" and str(schedule.get("kind")) == "at":
-                    if bool(int(row["delete_after_run"] or 0)):
-                        self._execute_count(
-                            "DELETE FROM cron_jobs WHERE job_id = ?", (job_id,)
-                        )
-                    else:
-                        self._execute_count(
-                            """
-                            UPDATE cron_jobs
-                            SET enabled = 0, next_due_at = NULL, updated_at = ?
-                            WHERE job_id = ?
-                            """,
-                            (now, job_id),
-                        )
+                self._persist_scope_watermark_locked(
+                    row=row,
+                    state=normalized_state,
+                    output=output,
+                    run_id=rid,
+                    now_iso=now,
+                )
+                self._finalize_one_time_job_locked(
+                    row=row,
+                    state=normalized_state,
+                    job_id=job_id,
+                    now_iso=now,
+                )
 
             updated_row = self._query_one(
                 "SELECT * FROM cron_runs WHERE run_id = ?",

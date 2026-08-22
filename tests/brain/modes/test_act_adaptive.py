@@ -1580,6 +1580,7 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     services = _FakeServices()
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         memory_api=SimpleNamespace(
             _backend=SimpleNamespace(
                 candidate_update=MagicMock(),
@@ -1609,6 +1610,13 @@ def test_act_adaptive_applies_memory_consolidation_decisions() -> None:
     assert result.action_result.outputs["memory_consolidation.applied_count"] == 2
     assert result.action_result.outputs["memory_consolidation.promoted_count"] == 1
     assert result.action_result.outputs["memory_consolidation.deferred_count"] == 1
+    assert result.action_result.outputs["memory_consolidation.target_scope"] == (
+        "agent:agent"
+    )
+    assert result.action_result.outputs["memory_consolidation.candidate_ids"] == [
+        "cand-1"
+    ]
+    assert result.action_result.outputs["memory_consolidation.state_hash"]
     backend = services.runner.memory_api._backend
     assert backend.promote_candidate.call_count == 1
 
@@ -1653,6 +1661,7 @@ def test_act_adaptive_forces_answer_only_closure_for_direct_tool_turn() -> None:
     ctx, services = _ctx(llm_client, executor)
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         _idempotency_key=lambda **_: "idem-direct-tool-clamp",
     )
     ctx.user_input = 'tool file.list_dir {"path":"."}'
@@ -1795,6 +1804,7 @@ def test_act_adaptive_clamps_overexpanded_entry_batch_for_explicit_tool_command(
     ctx, services = _ctx(llm_client, executor)
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         _idempotency_key=lambda **_: "idem-direct-tool-clamp",
     )
     ctx.user_input = 'tool file.list_dir {"path":"."}'
@@ -3213,6 +3223,7 @@ def test_act_adaptive_forces_answer_only_closure_after_successful_duplicate_batc
     ctx, services = _ctx(llm_client, executor)
     services.runner = SimpleNamespace(
         tool_api=None,
+        options=SimpleNamespace(failure_strategy="halt"),
         _idempotency_key=lambda **_: "idem-duplicate-batch-closure",
     )
     ctx.user_input = "inspect the repo root"

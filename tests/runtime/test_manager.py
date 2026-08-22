@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Event
 from time import monotonic, sleep
 
 from openminion.services.runtime import AgentRuntimeManager, TurnRequest, TurnResponse
@@ -128,3 +129,51 @@ def test_shutdown_does_not_wait_full_sweep_interval() -> None:
     manager.shutdown()
     elapsed = monotonic() - started
     assert elapsed < 2.0
+
+
+def test_foreground_visibility_excludes_cron_and_metadata_survives() -> None:
+    release = Event()
+
+    def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
+        del emit_chunk, cancel_event
+        release.wait(timeout=2.0)
+        return TurnResponse(
+            final_text=f"ok:{req.trace_id}",
+            metadata={"watermark": "preserved"},
+            stats={"calls": 1},
+        )
+
+    manager = AgentRuntimeManager(
+        turn_executor=_executor,
+        max_agents_hot=2,
+        max_global_concurrency=2,
+    )
+    manager.start()
+    try:
+        background = manager.submit_turn(
+            TurnRequest(
+                trace_id="cron-trace",
+                agent_id="background-agent",
+                session_id="cron-session",
+                input_text="consolidate",
+                meta={"cron_run_id": "run-1"},
+            )
+        )
+        assert manager.has_foreground_work() is False
+        foreground = manager.submit_turn(
+            TurnRequest(
+                trace_id="user-trace",
+                agent_id="foreground-agent",
+                session_id="user-session",
+                input_text="hello",
+            )
+        )
+        assert manager.has_foreground_work() is True
+        release.set()
+        foreground_result = foreground.result(timeout_s=2.0)
+        background.result(timeout_s=2.0)
+        assert foreground_result.metadata == {"watermark": "preserved"}
+        assert foreground_result.stats == {"calls": 1}
+        assert manager.has_foreground_work() is False
+    finally:
+        manager.shutdown()

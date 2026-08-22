@@ -385,6 +385,9 @@ def test_pause_resume_and_show_preserve_runs_and_exact_id(
     assert task["failure_count"] == 1
     assert len(task["runs"]) == 1
     assert task["runs"][0]["run_id"] == run_id
+    assert task["runs"][0]["available_at"] is not None
+    assert task["runs"][0]["output"] == {}
+    assert task["retry_policy"] == {"max_attempts": 3, "retry_backoff_s": 30}
 
     resumed = _h_task_resume({"task_id": task_id}, ctx)
     assert resumed["resumed"] is True
@@ -491,6 +494,9 @@ def test_task_consolidate_memory_creates_cron_backed_payload(
     assert consolidation["target_scope"] == "agent:agent-a"
     assert consolidation["max_iterations"] == 2
     assert consolidation["timeout_seconds"] == 30
+    assert row["concurrency_key"] == "memory-consolidation:agent:agent-a"
+    assert row["max_attempts"] == 3
+    assert row["retry_backoff_s"] == 30
 
 
 def test_task_list_surfaces_consolidation_metadata(
@@ -513,6 +519,8 @@ def test_task_list_surfaces_consolidation_metadata(
         "timeout_seconds": 30,
         "max_iterations": 2,
     }
+    assert task["concurrency_key"] == "memory-consolidation:agent:agent-a"
+    assert task["retry_policy"] == {"max_attempts": 3, "retry_backoff_s": 30}
 
 
 def test_task_watch_creates_watch_payload_and_stable_session_id(

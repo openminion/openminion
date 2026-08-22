@@ -271,6 +271,9 @@ CRON_SCHEMA: tuple[str, ...] = (
       misfire_policy     TEXT NOT NULL DEFAULT 'run_once',
       max_lateness_s     INTEGER NOT NULL DEFAULT 600,
       max_concurrency    INTEGER NOT NULL DEFAULT 1,
+      concurrency_key    TEXT,
+      max_attempts       INTEGER NOT NULL DEFAULT 3,
+      retry_backoff_s    INTEGER NOT NULL DEFAULT 30,
       next_due_at        TEXT,
       last_run_at        TEXT,
       created_at         TEXT NOT NULL,
@@ -282,17 +285,23 @@ CRON_SCHEMA: tuple[str, ...] = (
     ON cron_jobs(enabled, next_due_at)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_cron_jobs_concurrency_key
+    ON cron_jobs(concurrency_key)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS cron_runs (
       run_id               TEXT PRIMARY KEY,
       job_id               TEXT,
       state                TEXT NOT NULL,
       due_at               TEXT NOT NULL,
+      available_at         TEXT,
       started_at           TEXT,
       finished_at          TEXT,
       isolated_session_id  TEXT,
       summary              TEXT,
       artifact_refs_json   TEXT NOT NULL DEFAULT '[]',
       error_json           TEXT,
+      output_json          TEXT NOT NULL DEFAULT '{}',
       lease_owner          TEXT,
       lease_expires_at     TEXT,
       delivery_targets_json TEXT NOT NULL DEFAULT '[]',
@@ -313,6 +322,19 @@ CRON_SCHEMA: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_cron_runs_state_lease
     ON cron_runs(state, lease_expires_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_cron_runs_state_available
+    ON cron_runs(state, available_at, due_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS cron_scope_state (
+      concurrency_key     TEXT PRIMARY KEY,
+      last_success_run_id TEXT NOT NULL,
+      last_success_at     TEXT NOT NULL,
+      watermark_json      TEXT NOT NULL DEFAULT '{}',
+      updated_at          TEXT NOT NULL
+    )
     """,
 )
 

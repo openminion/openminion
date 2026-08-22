@@ -63,11 +63,13 @@ def _recent_runs(
                 "run_id": _safe_str(run, "run_id"),
                 "state": state,
                 "due_at": run.get("due_at"),
+                "available_at": run.get("available_at"),
                 "started_at": run.get("started_at"),
                 "finished_at": run.get("finished_at"),
                 "summary": run.get("summary"),
                 "attempts": int(run.get("attempts", 0) or 0),
                 "error": run.get("error"),
+                "output": run.get("output"),
             }
         )
     return recent, failure_count
@@ -100,6 +102,11 @@ def _task_show_payload(
         "next_due_at": job.get("next_due_at"),
         "session_target": _safe_str(job, "session_target"),
         "delete_after_run": bool(job.get("delete_after_run", False)),
+        "concurrency_key": _safe_str(job, "concurrency_key") or None,
+        "retry_policy": {
+            "max_attempts": int(job.get("max_attempts", 3) or 3),
+            "retry_backoff_s": int(job.get("retry_backoff_s", 30) or 30),
+        },
         "latest_run_state": latest_run_state,
         "latest_run_at": latest_run_at,
         "failure_count": failure_count,
@@ -137,6 +144,11 @@ def _task_list_payload(
                 "name": _safe_str(job, "name"),
                 "enabled": bool(job.get("enabled", False)),
                 "next_due_at": job.get("next_due_at"),
+                "concurrency_key": _safe_str(job, "concurrency_key") or None,
+                "retry_policy": {
+                    "max_attempts": int(job.get("max_attempts", 3) or 3),
+                    "retry_backoff_s": int(job.get("retry_backoff_s", 30) or 30),
+                },
                 "schedule": {
                     **schedule_obj,
                     "summary": summary,

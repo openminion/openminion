@@ -24,6 +24,9 @@ class TaskManagerScheduleMixin:
         misfire_policy: str | Mapping[str, Any] | None = None,
         max_lateness_s: int = 600,
         max_concurrency: int = 1,
+        concurrency_key: str | None = None,
+        max_attempts: int = 3,
+        retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> TaskLifecycleRecord:
         created_job_id = self._cron_repository.add_cron_job(
@@ -40,6 +43,9 @@ class TaskManagerScheduleMixin:
             misfire_policy=misfire_policy,
             max_lateness_s=max_lateness_s,
             max_concurrency=max_concurrency,
+            concurrency_key=concurrency_key,
+            max_attempts=max_attempts,
+            retry_backoff_s=retry_backoff_s,
             job_id=job_id,
         )
         try:
@@ -105,6 +111,9 @@ class TaskManagerScheduleMixin:
         misfire_policy: str | Mapping[str, Any] | None = None,
         max_lateness_s: int = 600,
         max_concurrency: int = 1,
+        concurrency_key: str | None = None,
+        max_attempts: int = 3,
+        retry_backoff_s: int = 30,
         job_id: str | None = None,
     ) -> str:
         return self._cron_repository.add_cron_job(
@@ -121,6 +130,9 @@ class TaskManagerScheduleMixin:
             misfire_policy=misfire_policy,
             max_lateness_s=max_lateness_s,
             max_concurrency=max_concurrency,
+            concurrency_key=concurrency_key,
+            max_attempts=max_attempts,
+            retry_backoff_s=retry_backoff_s,
             job_id=job_id,
         )
 

@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
@@ -177,9 +177,11 @@ class TurnHandle:
         *,
         trace_id: str,
         on_cancel: Callable[[str], bool],
+        background: bool = False,
     ) -> None:
         self.trace_id = trace_id
         self._on_cancel = on_cancel
+        self._background = background
         self._cancel_event = Event()
         self._result_ready = Event()
         self._result: TurnResponse | None = None
@@ -395,6 +397,10 @@ class AgentRuntimeManager:
         with self._lock:
             return [instance.status() for instance in self._instances.values()]
 
+    def has_foreground_work(self) -> bool:
+        with self._lock:
+            return any(not handle._background for handle in self._traces.values())
+
     def evict(self, agent_id: str, reason: str) -> None:
         self._evict_agent(agent_id=agent_id, reason=reason, force=True)
 
@@ -432,7 +438,10 @@ class AgentRuntimeManager:
             raise ValueError("input_text must be non-empty")
 
         self.get_or_create_agent(request.agent_id)
-        handle = TurnHandle(trace_id=request.trace_id, on_cancel=self.cancel_turn)
+        background = bool(str(request.meta.get("cron_run_id", "") or "").strip())
+        handle = TurnHandle(
+            trace_id=request.trace_id, on_cancel=self.cancel_turn, background=background
+        )
         queued = _QueuedTurn(
             request=request, handle=handle, enqueued_at_mono=monotonic()
         )
@@ -705,20 +714,13 @@ class AgentRuntimeManager:
                     instance.active_trace_id = ""
 
             duration_ms = max(0, int((monotonic() - started) * 1000))
-            telemetry = response.telemetry
-            response = TurnResponse(
-                final_text=response.final_text,
-                artifacts=list(response.artifacts),
-                tool_calls_summary=list(response.tool_calls_summary),
-                memory_write_intents=list(response.memory_write_intents),
-                telemetry=TurnTelemetry(
-                    tokens_in=telemetry.tokens_in,
-                    tokens_out=telemetry.tokens_out,
+            response = replace(
+                response,
+                telemetry=replace(
+                    response.telemetry,
                     duration_ms=duration_ms,
-                    retries=telemetry.retries,
                     queue_wait_ms=queue_wait_ms,
                 ),
-                errors=list(response.errors),
             )
             handle._push_chunk(
                 TurnChunk(
@@ -756,6 +758,8 @@ class AgentRuntimeManager:
                 ],
             )
             leftover.handle._set_result(cancelled_response)
+            with self._lock:
+                self._traces.pop(leftover.request.trace_id, None)
 
     def _finish_turn(
         self,

@@ -14,6 +14,7 @@ from openminion.tools.task.routine.dispatcher import (
 from openminion.tools.task.routine.schemas import RoutinePayloadV1
 from openminion.services.runtime.cron.audit import watch_write_audit_entries
 from openminion.modules.task.cron_payloads import (
+    build_cron_turn_result,
     build_cron_request_payload,
     build_expired_watch_result,
     mark_idle_tick_request,
@@ -571,16 +572,12 @@ class CronTurnExecutor:
                     "summary": f"Agent turn failed after {self._max_attempts} attempt(s): {exc}",
                     "error": True,
                 }
-            summary = (
-                str(getattr(result, "final_text", "") or "").strip()
-                or "Agent turn completed."
+            return build_cron_turn_result(
+                result=result,
+                session_id=request.session_id,
+                consolidation=self._consolidation_metadata(payload),
+                completed_at=datetime.now(timezone.utc).isoformat(),
             )
-            metadata = getattr(result, "metadata", {}) or {}
-            return {
-                "summary": summary,
-                "isolated_session_id": request.session_id,
-                "metadata": dict(metadata) if isinstance(metadata, dict) else {},
-            }
         raise AssertionError("unreachable: max attempts is at least one")
 
     def _execute_idle_tick_turn(

@@ -18,7 +18,10 @@ from openminion.modules.config import (
     resolve_module_data_root,
     resolve_module_home_root,
 )
-from ..interfaces import SESSION_INTERFACE_VERSION
+from ..interfaces import (
+    SESSION_INTERFACE_VERSION,
+    SESSION_REPOSITORY_INTERFACE_VERSION,
+)
 from openminion.modules.storage.migrations.module_ids import module_id_from_package
 from openminion.modules.storage.runtime.module_integrity import (
     verify_module_integrity,
@@ -48,6 +51,7 @@ from .components import (
     enqueue_due_cron_runs as _enqueue_due_cron_runs_facade,
     enforce_context_manifest as _enforce_context_manifest_facade,
     finish_cron_run as _finish_cron_run_facade,
+    get_cron_scope_state as _get_cron_scope_state_facade,
     finish_run_record as _finish_run_record_facade,
     get_active_prompt_context as _get_active_prompt_context_facade,
     get_cron_job as _get_cron_job_facade,
@@ -66,8 +70,10 @@ from .components import (
     mark_cron_delivery_target as _mark_cron_delivery_target_facade,
     reindex_sidecars as _reindex_sidecars_facade,
     renew_cron_run_lease as _renew_cron_run_lease_facade,
+    recover_expired_cron_runs as _recover_expired_cron_runs_facade,
     renew_session_turn_lease as _renew_session_turn_lease_facade,
     replace_cron_job_payload as _replace_cron_job_payload_facade,
+    retry_cron_run as _retry_cron_run_facade,
     release_session_turn_lease as _release_session_turn_lease_facade,
     save_compression_checkpoint as _save_compression_checkpoint_facade,
     save_seed_bundle as _save_seed_bundle_facade,
@@ -236,6 +242,7 @@ class SQLiteSessionStore(SessionStore):
     """SQLite-backed session store for openminion-session."""
 
     contract_version = SESSION_INTERFACE_VERSION
+    repository_contract_version = SESSION_REPOSITORY_INTERFACE_VERSION
 
     def __init__(
         self,
@@ -381,6 +388,9 @@ class SQLiteSessionStore(SessionStore):
     enqueue_due_cron_runs = _enqueue_due_cron_runs_facade
     acquire_cron_runs = _acquire_cron_runs_facade
     renew_cron_run_lease = _renew_cron_run_lease_facade
+    recover_expired_cron_runs = _recover_expired_cron_runs_facade
+    retry_cron_run = _retry_cron_run_facade
+    get_cron_scope_state = _get_cron_scope_state_facade
     acquire_session_turn_lease = _acquire_session_turn_lease_facade
     renew_session_turn_lease = _renew_session_turn_lease_facade
     release_session_turn_lease = _release_session_turn_lease_facade
