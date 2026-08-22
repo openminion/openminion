@@ -2015,6 +2015,155 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
     ] == ["task_plan.declared"]
 
 
+def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
+    plan_id = "cross-turn-plan"
+
+    def _plan_call(call_id: str, action: str, **arguments: Any) -> LLMResponse:
+        return LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(
+                    id=call_id,
+                    name=PLAN_TOOL_NAME,
+                    arguments={"action": action, "plan_id": plan_id, **arguments},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    steps = [
+        {
+            "step_id": f"step-{index}",
+            "description": description,
+            "status": "pending",
+        }
+        for index, description in enumerate(("start", "midpoint", "finish"), 1)
+    ]
+    runtime = _FakeRuntime(
+        responses=[
+            _plan_call(
+                "declare",
+                "declare",
+                objective="Practice cross-turn plan continuity",
+                steps=steps,
+            ),
+            *[
+                _plan_call(
+                    f"complete-step-{index}",
+                    "step_completed",
+                    step_id=f"step-{index}",
+                    output_summary=f"completed step {index}",
+                )
+                for index in range(1, 4)
+            ],
+            _plan_call("complete-plan", "complete", reason="all steps completed"),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Completed all three plan steps.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The plan reached its terminal state.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, llm_calls_max=10),
+        session_api=session_api,
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset(), max_iterations=8),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="complete a three-step plan")],
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Completed all three plan steps."
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == [
+        "task_plan.declared",
+        "task_plan.step_completed",
+        "task_plan.step_completed",
+        "task_plan.step_completed",
+        "task_plan.completed",
+    ]
+
+
+def test_autonomous_plan_signal_ends_current_loop_turn() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="declare",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "declare",
+                            "plan_id": "autonomous-plan",
+                            "objective": "Continue in a fresh turn",
+                            "steps": [
+                                {
+                                    "step_id": "step-1",
+                                    "description": "First step",
+                                    "status": "pending",
+                                }
+                            ],
+                            "continue_plan_autonomously": True,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="This response belongs to the next turn.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, llm_calls_max=5),
+        session_api=session_api,
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset(), max_iterations=4),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="start an autonomous plan")],
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Recorded task plan: autonomous-plan"
+    assert len(runtime.calls) == 1
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == ["task_plan.declared"]
+
+
 def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
     runtime = _FakeRuntime(
         responses=[

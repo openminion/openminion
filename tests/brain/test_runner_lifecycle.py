@@ -5,6 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from openminion.modules.brain.runner.lifecycle import run_until_idle
+from openminion.modules.brain.runner.tick.orchestrator import (
+    _refresh_budget_for_new_trigger,
+)
 from openminion.modules.brain.schemas import BudgetCounters, StepOutput, WorkingState
 
 
@@ -100,3 +103,40 @@ def test_run_until_idle_budget_checks_continue_tick() -> None:
 
     assert result.status == "waiting_user"
     assert "tick budget is exhausted" in str(result.message or "").lower()
+
+
+def test_plan_continuation_refreshes_per_turn_budget_without_resetting_plan() -> None:
+    plan = {"plan_id": "plan-1", "steps": [{"step_id": "step-1"}]}
+    state = _step_output(status="waiting_user", ticks=0).working_state
+    state.plan = plan
+    state.goal = "finish all three steps"
+    state.llm_calls_used = 16
+    state.llm_calls_max = 16
+    state.budgets_remaining.tool_calls = 0
+    state.budgets_remaining.tokens = 0
+    state.budgets_remaining.time_ms = 0
+    runner = SimpleNamespace(
+        profile=SimpleNamespace(
+            budgets=SimpleNamespace(
+                max_ticks_per_user_turn=20,
+                max_tool_calls=12,
+                max_a2a_calls=4,
+                max_total_llm_tokens=50000,
+                max_elapsed_ms=480000,
+            )
+        )
+    )
+
+    _refresh_budget_for_new_trigger(runner, state, "plan_continuation")
+
+    assert state.goal == "finish all three steps"
+    assert state.plan == plan
+    assert state.llm_calls_used == 0
+    assert state.llm_calls_max == 20
+    assert state.budgets_remaining == BudgetCounters(
+        ticks=20,
+        tool_calls=12,
+        a2a_calls=4,
+        tokens=50000,
+        time_ms=480000,
+    )

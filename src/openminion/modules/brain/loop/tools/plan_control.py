@@ -229,6 +229,37 @@ def plan_tool_enabled(profile: Any) -> bool:
     return bool(getattr(profile, "allow_plan_tool", True))
 
 
+def plan_tool_call_advances_active_plan(
+    loop_ctx: Any,
+    arguments: dict[str, Any],
+) -> bool:
+    action = str(arguments.get("action", "") or "").strip()
+    if action not in {
+        PLAN_ACTION_STEP_COMPLETED,
+        PLAN_ACTION_STEP_BLOCKED,
+        PLAN_ACTION_ABANDON,
+        PLAN_ACTION_COMPLETE,
+    }:
+        return False
+    active_plan = _current_active_plan(loop_ctx)
+    plan_id = str(arguments.get("plan_id", "") or "").strip()
+    if _active_plan_id(active_plan) != plan_id:
+        return False
+    if action in {PLAN_ACTION_ABANDON, PLAN_ACTION_COMPLETE}:
+        return True
+    step_id = str(arguments.get("step_id", "") or "").strip()
+    for step in list((active_plan or {}).get("steps") or []):
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("step_id", "") or "").strip() != step_id:
+            continue
+        return str(step.get("status", "pending") or "pending").strip() not in {
+            "blocked",
+            "completed",
+        }
+    return False
+
+
 def with_enabled_plan_tool_spec(
     profile: Any,
     tool_specs: list[Any] | tuple[Any, ...],
