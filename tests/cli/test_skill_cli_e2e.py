@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from openminion.cli.commands.skill import (
+    _run_skill_admission,
     _run_skill_ingest,
     _run_skill_list,
     _run_skill_remove,
@@ -59,6 +60,23 @@ def _run(handler, args: Namespace) -> tuple[int, dict]:
     return code, json.loads(out) if out else {}
 
 
+def _admit_skill(*, skill_id: str, version_hash: str, config: Path) -> None:
+    code, payload = _run(
+        _run_skill_admission,
+        Namespace(
+            skill_action="admit",
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash="none",
+            target_status="verified",
+            reason="test fixture admission",
+            config=str(config),
+        ),
+    )
+    assert code == 0
+    assert payload["ok"] is True
+
+
 def test_skill_cli_ingest_list_show_remove(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
     config_path = _write_skill_config(tmp_path)
@@ -80,6 +98,11 @@ def test_skill_cli_ingest_list_show_remove(tmp_path: Path, monkeypatch) -> None:
     version_hash = payload["version_hash"]
     assert skill_id == "cli-chat-smoke-debug"
     assert len(version_hash) == 64
+    _admit_skill(
+        skill_id=skill_id,
+        version_hash=version_hash,
+        config=config_path,
+    )
 
     code, payload = _run(
         _run_skill_list,
@@ -110,7 +133,7 @@ def test_skill_cli_ingest_list_show_remove(tmp_path: Path, monkeypatch) -> None:
     assert payload["ok"] is True
     skill = payload["skill"]
     assert skill["skill_id"] == skill_id
-    assert skill["status"] == "draft"
+    assert skill["status"] == "verified"
     assert skill["tools"] == ["file.read", "exec.run"]
 
     code, payload = _run(
@@ -183,6 +206,11 @@ def test_skill_cli_bundle_skill_uses_descriptor_fields(
     assert code == 0
     assert payload["ok"] is True
     skill_id = payload["skill_id"]
+    _admit_skill(
+        skill_id=skill_id,
+        version_hash=payload["version_hash"],
+        config=config_path,
+    )
 
     code, payload = _run(
         _run_skill_list,
