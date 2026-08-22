@@ -2400,6 +2400,145 @@ def test_terminal_tool_request_uses_existing_direct_tool_closure() -> None:
     )
 
 
+def test_terminal_tool_request_reopens_when_model_continues_with_tools() -> None:
+    seed_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        tool_calls=[
+            ToolCall(
+                id="request-read",
+                name=TOOL_REQUEST_TOOL_NAME,
+                arguments={"name": "file.read", "terminal_after_success": True},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="read",
+                        name="file.read",
+                        arguments={"path": "report.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="suppressed-write-request",
+                        name=TOOL_REQUEST_TOOL_NAME,
+                        arguments={
+                            "name": "file.write",
+                            "terminal_after_success": False,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="write-request",
+                        name=TOOL_REQUEST_TOOL_NAME,
+                        arguments={
+                            "name": "file.write",
+                            "terminal_after_success": False,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="write",
+                        name="file.write",
+                        arguments={"path": "report.py", "content": "fixed"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Read and updated report.py.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The requested file was read and updated.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=8, llm_calls_max=10),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="file.read", args={"path": "report.py"}
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="source"
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="file.write",
+                    args={"path": "report.py", "content": "fixed"},
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="updated"
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.read", "file.write"}),
+            max_iterations=8,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="Read and fix report.py")],
+        tool_specs=[],
+        requestable_tool_specs=_tool_specs("file.read", "file.write"),
+        seed_response=seed_response,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Read and updated report.py."
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "file.read",
+        "file.write",
+    ]
+    assert runtime.calls[1]["tool_choice"] == "none"
+    assert runtime.calls[2]["tool_choice"] == "auto"
+    assert outcome.state.scratchpad[
+        "tool_schema_shortlisting.reopened_terminal_tool"
+    ] == "file.read"
+    assert "tool_choice_none_retry_used" not in outcome.state.scratchpad
+
+
 def test_terminal_tool_closure_retries_marked_response_once() -> None:
     seed_response = LLMResponse(
         ok=True,
