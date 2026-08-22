@@ -192,6 +192,47 @@ def _record_successful_plan_action(
     )
 
 
+def _autonomous_plan_continuation_result(
+    *,
+    summary: str,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    batch_had_progress: bool,
+) -> LoopDispatchResult:
+    loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name=profile.profile_name,
+        mode_name=profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=loop_state,
+        allowed_tools=profile.allowed_tools,
+        final_text=summary,
+    )
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=batch_had_progress,
+        continue_loop=False,
+        outcome=outcome,
+    )
+
+
+def _continue_after_plan_control_result(
+    *, batch_had_progress: bool
+) -> LoopDispatchResult:
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=batch_had_progress,
+        continue_loop=True,
+        outcome=None,
+    )
+
+
 def _handle_decompose_calls(
     loop_ctx: AdaptiveToolLoopContext,
     *,
@@ -459,40 +500,17 @@ def _process_plan_tool_calls(
             tokens_used=iter_input_tokens + iter_output_tokens,
         )
         if autonomous_continuation_summary:
-            loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
-            return (
-                [],
-                batch_had_progress,
-                LoopDispatchResult(
-                    tool_calls=[],
-                    ordered_tool_results=[],
-                    cached_indices=frozenset(),
-                    iter_batch_parallel_count=0,
-                    batch_had_progress=batch_had_progress,
-                    continue_loop=False,
-                    outcome=AdaptiveToolLoopOutcome(
-                        profile_name=profile.profile_name,
-                        mode_name=profile.mode_name,
-                        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
-                        state=loop_state,
-                        allowed_tools=profile.allowed_tools,
-                        final_text=autonomous_continuation_summary,
-                    ),
-                ),
-            )
-        return (
-            [],
-            batch_had_progress,
-            LoopDispatchResult(
-                tool_calls=[],
-                ordered_tool_results=[],
-                cached_indices=frozenset(),
-                iter_batch_parallel_count=0,
+            result = _autonomous_plan_continuation_result(
+                summary=autonomous_continuation_summary,
+                profile=profile,
+                loop_state=loop_state,
                 batch_had_progress=batch_had_progress,
-                continue_loop=True,
-                outcome=None,
-            ),
+            )
+            return [], batch_had_progress, result
+        result = _continue_after_plan_control_result(
+            batch_had_progress=batch_had_progress
         )
+        return [], batch_had_progress, result
     return regular_tool_calls, batch_had_progress, None
 
 
