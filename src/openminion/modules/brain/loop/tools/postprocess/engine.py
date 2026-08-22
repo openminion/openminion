@@ -29,6 +29,7 @@ from ..contracts import (
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
+    AdaptiveToolLoopState,
 )
 from ..correction import build_correction_history_summary
 from ..direct_tool import (
@@ -90,7 +91,7 @@ def _suppressed_tool_retry_message(
     return "This turn cannot call tools. Return a user-facing answer without any tool calls."
 
 
-def _reopen_terminal_tool_request(loop_state: Any) -> bool:
+def _reopen_terminal_tool_request(loop_state: AdaptiveToolLoopState) -> bool:
     terminal_tool = str(
         loop_state.scratchpad.get("tool_schema_shortlisting.terminal_tool", "") or ""
     ).strip()
@@ -109,9 +110,7 @@ def _reopen_terminal_tool_request(loop_state: Any) -> bool:
     loop_state.messages = [
         message
         for message in loop_state.messages
-        if not bool(
-            dict(getattr(message, "meta", {}) or {}).get("direct_tool_closure", False)
-        )
+        if not message.meta.get("direct_tool_closure")
     ]
     loop_state.messages.append(
         Message(

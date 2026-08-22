@@ -234,6 +234,7 @@ class _LoopContext:
     delays_by_path: dict[str, float] = field(default_factory=dict)
     call_windows: list[tuple[str, float, float]] = field(default_factory=list)
     session_api: Any | None = None
+    provider_retry_max_attempts: int = 3
     _index: int = 0
 
     def execute_command(self, *, command, include_reflect: bool = False):
@@ -2682,9 +2683,10 @@ def test_terminal_tool_request_reopens_when_model_continues_with_tools() -> None
     ]
     assert runtime.calls[1]["tool_choice"] == "none"
     assert runtime.calls[2]["tool_choice"] == "auto"
-    assert outcome.state.scratchpad[
-        "tool_schema_shortlisting.reopened_terminal_tool"
-    ] == "file.read"
+    assert (
+        outcome.state.scratchpad["tool_schema_shortlisting.reopened_terminal_tool"]
+        == "file.read"
+    )
     assert "tool_choice_none_retry_used" not in outcome.state.scratchpad
 
 

@@ -233,7 +233,9 @@ async def _complete_unforced_lane(
         )
         if not response.empty_payload_recovered:
             break
-    response.raise_for_recovered_empty("Empty initial response after configured retries")
+    response.raise_for_recovered_empty(
+        "Empty initial response after configured retries"
+    )
     unforced_result = await _handle_unforced_provider_response(
         service,
         executor=executor,
