@@ -129,12 +129,12 @@ def evaluate_coding_verifier(
                 logger=logger,
             )
         )
-    if budget_exhausted:
-        verdict = CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
-    elif blocked:
+    if blocked:
         verdict = CODING_VERIFIER_VERDICT_BLOCKED
     elif is_run_completion_confirmed(goal=goal, results=list(results)):
         verdict = CODING_VERIFIER_VERDICT_COMPLETE
+    elif budget_exhausted:
+        verdict = CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
     else:
         verdict = CODING_VERIFIER_VERDICT_INCOMPLETE
     return CodingVerifierEvaluation(verdict=verdict, results=tuple(results))

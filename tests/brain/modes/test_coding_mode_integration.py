@@ -25,7 +25,10 @@ from openminion.modules.brain.loop.tools.confirmation import (
 )
 from openminion.modules.brain.loop.tools.contracts import PreparedToolDispatch
 from openminion.modules.brain.loop.strategies.coding.verification import (
+    CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED,
+    CODING_VERIFIER_VERDICT_COMPLETE,
     coerce_coding_verifier_verdict,
+    evaluate_coding_verifier,
     serialize_verifier_candidate,
 )
 from openminion.modules.brain.execution.loop_contracts import (
@@ -1626,6 +1629,51 @@ def test_mode_profile_config_round_trips_max_self_corrections() -> None:
 def test_coding_verifier_verdict_rejects_non_enum_values() -> None:
     with pytest.raises(ValueError, match="Coding verifier verdict must be one of"):
         coerce_coding_verifier_verdict("done")
+
+
+def test_coding_verifier_closes_confirmed_work_when_budget_is_exhausted() -> None:
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        command=ToolCommand(
+            title="Run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        ),
+        action_result=ActionResult(
+            command_id=new_uuid(),
+            status="success",
+            summary="tests passed",
+            outputs={"report": "ok"},
+            artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        budget_exhausted=True,
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_COMPLETE
+
+
+def test_coding_verifier_keeps_unconfirmed_exhausted_work_open() -> None:
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        command=ToolCommand(
+            title="Run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        ),
+        action_result=ActionResult(
+            command_id=new_uuid(),
+            status="success",
+            summary="tests passed without an artifact",
+            outputs={"report": "ok"},
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        budget_exhausted=True,
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
 
 
 def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> None:
