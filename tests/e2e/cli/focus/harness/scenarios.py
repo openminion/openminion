@@ -110,6 +110,9 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         ),
         expected_markers=("next steps",),
         timeout=1500,
+        requires_approval=True,
+        max_auto_approvals=4,
+        approval_reply="session",
         max_auto_continuations=4,
     ),
 )
