@@ -3904,6 +3904,9 @@ def test_tool_choice_none_second_retry_salvages_from_compact_tool_evidence() -> 
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
+    assert validate_tool_transcript(LLMRequest(messages=outcome.state.messages)) == (
+        "canonical_events"
+    )
     assert len(runtime.calls) == 3
     assert [message.role for message in runtime.calls[2]["messages"]] == [
         "system",
@@ -3993,6 +3996,14 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
+    assert validate_tool_transcript(LLMRequest(messages=outcome.state.messages)) == (
+        "canonical_events"
+    )
+    assert all(
+        tool_call.id != "call-3"
+        for message in outcome.state.messages
+        for tool_call in message.tool_calls
+    )
 
 
 def test_tool_choice_none_compact_closeout_accepts_model_text_without_label_scoring() -> (

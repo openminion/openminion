@@ -257,10 +257,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             return None
         _debit_llm_usage(self.loop_ctx, response)
         self.loop_state.llm_calls += 1
-        for assistant_message in list(
-            getattr(response, "assistant_messages", []) or []
-        ):
-            self.loop_state.messages.append(assistant_message)
+        self._append_response_messages(response, tool_calls=[])
         if not bool(getattr(response, "ok", False)):
             return None
         if getattr(response, "empty_payload_recovered", False) is True:
