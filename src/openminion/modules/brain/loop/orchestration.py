@@ -705,7 +705,9 @@ def decide(
             )
         except Exception as exc:  # noqa: BLE001
             error_category, retryable = classify_retryable(exc)
-            request_id_payload = provider_request_id_payload(exc)
+            request_id_payload = provider_request_id_payload(
+                getattr(exc, "details", None)
+            )
             if retryable and attempt < max_retries:
                 backoff_ms = compute_backoff_ms(retry_policy, attempt)
                 logger.emit(
@@ -895,7 +897,7 @@ def decide(
             "retry_count": attempt,
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
             "configured_output_limit": budget_max_tokens,
-            **provider_request_id_payload(response),
+            **provider_request_id_payload(response.telemetry),
         },
         trace_id=state.trace_id,
     )

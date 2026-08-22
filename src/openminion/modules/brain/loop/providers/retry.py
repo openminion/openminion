@@ -1,4 +1,5 @@
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -45,14 +46,11 @@ def is_retryable(exc: Exception) -> bool:
     return classify_retryable(exc)[1]
 
 
-def provider_request_id_payload(value: Any) -> dict[str, str]:
-    for owner_name in ("telemetry", "details"):
-        owner = getattr(value, owner_name, None)
-        if isinstance(owner, dict):
-            request_id = str(owner.get("request_id") or "").strip()
-            if request_id:
-                return {"request_id": request_id}
-    return {}
+def provider_request_id_payload(
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    request_id = str((metadata or {}).get("request_id") or "").strip()
+    return {"request_id": request_id} if request_id else {}
 
 
 def compute_backoff_ms(

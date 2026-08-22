@@ -33,7 +33,6 @@ from .postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
     tool_evidence_closeout_text,
 )
-from ..providers.retry import build_provider_retry_policy
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
@@ -315,7 +314,7 @@ class AdaptiveLoopRunnerNoToolMixin:
         if getattr(prepared.response, "empty_payload_recovered", False) is True:
             retry_key = "empty_payload_recovery_retry_count"
             retry_count = int(self.loop_state.scratchpad.get(retry_key, 0) or 0)
-            max_retries = build_provider_retry_policy(self.loop_ctx).max_retries
+            max_retries = self.loop_ctx.provider_retry_max_attempts - 1
             if retry_count < max_retries:
                 self.loop_state.scratchpad[retry_key] = retry_count + 1
                 return self._retry_with_system_message(
