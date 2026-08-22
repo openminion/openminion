@@ -70,6 +70,7 @@ from .providers.retry import (
     build_provider_retry_policy,
     classify_retryable,
     compute_backoff_ms,
+    provider_request_id_payload,
 )
 
 
@@ -634,7 +635,7 @@ def decide(
         )
 
     response = None
-    retry_policy = build_provider_retry_policy(getattr(runner, "config", None))
+    retry_policy = build_provider_retry_policy(runner.options)
     max_retries = retry_policy.max_retries
     last_detection = None
     base_messages = list(_messages_from_context(context))
@@ -704,6 +705,7 @@ def decide(
             )
         except Exception as exc:  # noqa: BLE001
             error_category, retryable = classify_retryable(exc)
+            request_id_payload = provider_request_id_payload(exc)
             if retryable and attempt < max_retries:
                 backoff_ms = compute_backoff_ms(retry_policy, attempt)
                 logger.emit(
@@ -714,6 +716,7 @@ def decide(
                         "reason": "provider_transient_error",
                         "error_category": error_category,
                         "backoff_ms": int(backoff_ms),
+                        **request_id_payload,
                     },
                     trace_id=state.trace_id,
                 )
@@ -728,6 +731,7 @@ def decide(
                     "error": str(exc),
                     "error_category": error_category,
                     "attempts": attempt + 1,
+                    **request_id_payload,
                 },
                 trace_id=state.trace_id,
                 status="error",
@@ -891,6 +895,7 @@ def decide(
             "retry_count": attempt,
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
             "configured_output_limit": budget_max_tokens,
+            **provider_request_id_payload(response),
         },
         trace_id=state.trace_id,
     )

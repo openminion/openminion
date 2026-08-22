@@ -108,6 +108,16 @@ def response_request_id(headers: Mapping[str, Any] | None) -> str:
     return ""
 
 
+def _capture_response_request_id(
+    response_metadata: Dict[str, str] | None,
+    facts: Mapping[str, Any],
+) -> str:
+    request_id = str(facts.get("request_id") or "").strip()
+    if response_metadata is not None and request_id:
+        response_metadata["request_id"] = request_id
+    return request_id
+
+
 def _emit_transport_timeout_counter(
     telemetryctl: Any | None,
     *,
@@ -302,6 +312,7 @@ def http_json_get(
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
         detail, error_facts, safe_detail = _http_error_details(exc)
+        request_id = _capture_response_request_id(response_metadata, error_facts)
         response_bytes = len(detail.encode("utf-8"))
         trace_http_json_response(
             trace_metadata=trace_metadata,
@@ -320,6 +331,7 @@ def http_json_get(
                 "url": url,
                 "status": getattr(exc, "code", 0),
                 "error": safe_detail[:max_chars],
+                **({"request_id": request_id} if request_id else {}),
             }
         )
         if exc.code in {401, 403}:
@@ -548,6 +560,7 @@ def http_json_get(
             "trace_id": trace_id,
             "url": url,
             "payload": truncate_debug_value(parsed, max_chars),
+            **({"request_id": request_id} if request_id else {}),
         }
     )
     emit_performance(
@@ -640,6 +653,7 @@ def http_json_post(
         response_bytes = len(raw.encode("utf-8"))
     except urllib_error.HTTPError as exc:
         detail, error_facts, safe_detail = _http_error_details(exc)
+        request_id = _capture_response_request_id(response_metadata, error_facts)
         response_bytes = len(detail.encode("utf-8"))
         trace_http_json_response(
             trace_metadata=trace_metadata,
@@ -658,6 +672,7 @@ def http_json_post(
                 "url": url,
                 "status": getattr(exc, "code", 0),
                 "error": safe_detail[:max_chars],
+                **({"request_id": request_id} if request_id else {}),
             }
         )
         if exc.code in {401, 403}:
@@ -920,6 +935,7 @@ def http_json_post(
             "trace_id": trace_id,
             "url": url,
             "payload": truncate_debug_value(parsed, max_chars),
+            **({"request_id": request_id} if request_id else {}),
         }
     )
     emit_performance(

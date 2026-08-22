@@ -28,6 +28,7 @@ from .constants import (
     DEFAULT_CONFIG_FILENAMES,
     DEFAULT_INTEGRATED_CONFIG_SUBDIR,
 )
+from .loop.constants import PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
 
 from .act_profiles import (  # noqa: F401
     _ALLOWED_ACT_PROFILES,
@@ -211,6 +212,7 @@ class RequestHandoffConfig(BaseModel):
 
 @dataclass
 class RunnerOptions:
+    provider_retry_max_attempts: int = PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
     max_retries_per_step: int = 2
     max_replans: int = 8
     plan_checkpoint_interval: int = 5

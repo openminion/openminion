@@ -45,6 +45,16 @@ def is_retryable(exc: Exception) -> bool:
     return classify_retryable(exc)[1]
 
 
+def provider_request_id_payload(value: Any) -> dict[str, str]:
+    for owner_name in ("telemetry", "details"):
+        owner = getattr(value, owner_name, None)
+        if isinstance(owner, dict):
+            request_id = str(owner.get("request_id") or "").strip()
+            if request_id:
+                return {"request_id": request_id}
+    return {}
+
+
 def compute_backoff_ms(
     policy: ProviderRetryPolicy,
     attempt: int,
@@ -60,7 +70,7 @@ def compute_backoff_ms(
 
 
 def build_provider_retry_policy(config: Any = None) -> ProviderRetryPolicy:
-    runtime = getattr(config, "runtime", None)
+    runtime = getattr(config, "runtime", config)
     raw = getattr(
         runtime, "provider_retry_max_attempts", PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
     )
@@ -78,4 +88,5 @@ __all__ = [
     "classify_retryable",
     "compute_backoff_ms",
     "is_retryable",
+    "provider_request_id_payload",
 ]
