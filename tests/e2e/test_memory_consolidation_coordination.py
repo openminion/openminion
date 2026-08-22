@@ -5,9 +5,14 @@ from pathlib import Path
 from threading import Event, RLock
 from time import sleep
 
+import pytest
+
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 from openminion.services.cron import CronScheduler
+
+
+pytestmark = pytest.mark.e2e
 
 
 def test_expired_consolidation_yields_then_persists_scope_watermark(
