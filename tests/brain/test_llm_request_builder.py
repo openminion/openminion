@@ -7,6 +7,7 @@ import pytest
 
 from openminion.modules.artifact.errors import ArtifactCtlError
 from openminion.modules.brain.adapters.llm.request import _build_request
+from openminion.modules.brain.schemas import Decision, UserMessageCandidateReport
 from openminion.modules.llm.errors import LLMCtlError
 
 
@@ -236,6 +237,96 @@ def test_build_request_turn_attachments_become_image_content_parts(
     assert user_message.content_parts[0].type == "text"
     assert user_message.content_parts[1].type == "image"
     assert user_message.content_parts[1].source == "path"
+
+
+def test_build_request_excludes_attachment_images_from_user_message_candidate_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _patch_tool_bundle(monkeypatch)
+    artifact_ref = "artifact://sha256/" + "a" * 64
+    image_path = tmp_path / "shot.png"
+    image_path.write_bytes(b"png")
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        "openminion.modules.brain.adapters.llm.request.inspect_artifact_image",
+        lambda ref: (inspected.append(ref) or "image/png", 1),
+    )
+
+    def _context() -> dict[str, object]:
+        return {
+            "messages": [
+                {"role": "assistant", "content": "Ready."},
+                {
+                    "role": "user",
+                    "content": "What changed?",
+                    "content_parts": [
+                        {
+                            "type": "text",
+                            "text": "What changed?",
+                            "segment_ids": ["turn:current"],
+                        },
+                        {
+                            "type": "image",
+                            "source": "url",
+                            "url": "https://example.invalid/normalized.png",
+                            "mime_type": "image/png",
+                        },
+                    ],
+                },
+            ],
+            "turns": [
+                {
+                    "turn_id": "current",
+                    "role": "user",
+                    "content": "What changed?",
+                    "attachments": [artifact_ref, str(image_path)],
+                }
+            ],
+            "hints": {"user_input": "What changed?"},
+        }
+
+    auxiliary = _build_request(
+        model="fake-model",
+        purpose="reflect",
+        context=_context(),
+        schema=UserMessageCandidateReport,
+        temperature=0.0,
+    )
+    assert inspected == []
+    assert any(message.content == "What changed?" for message in auxiliary.messages)
+    assert [
+        part
+        for message in auxiliary.messages
+        for part in message.content_parts
+        if part.type == "image"
+    ] == []
+
+    same_name_impostor = type("UserMessageCandidateReport", (), {})
+    ordinary = _build_request(
+        model="fake-model",
+        purpose="decide",
+        context=_context(),
+        schema=Decision,
+        temperature=0.0,
+    )
+    impostor = _build_request(
+        model="fake-model",
+        purpose="reflect",
+        context=_context(),
+        schema=same_name_impostor,
+        temperature=0.0,
+    )
+
+    assert inspected == [artifact_ref, artifact_ref]
+    for request in (ordinary, impostor):
+        image_sources = [
+            part.source
+            for message in request.messages
+            for part in message.content_parts
+            if part.type == "image"
+        ]
+        assert image_sources == ["url", "path", "artifact"]
 
 
 def test_build_request_selects_current_then_newest_historical_artifacts(

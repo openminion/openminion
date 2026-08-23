@@ -294,7 +294,9 @@ def _merge_selected_turn_images(
     return messages
 
 
-def _messages_from_context(context: dict[str, Any]) -> list[Any]:
+def _messages_from_context(
+    context: dict[str, Any], *, include_images: bool = True
+) -> list[Any]:
     from openminion.modules.llm.schemas import Message
     from openminion.modules.llm.schemas import ImageContentPart, TextContentPart
 
@@ -334,15 +336,30 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
 
     messages = [Message.model_validate(m) for m in normalized_pack_messages]
     selected_turn_ids = _message_turn_ids(messages)
+    if not include_images:
+        messages = [
+            message.model_copy(
+                update={
+                    "content_parts": [
+                        part
+                        for part in message.content_parts
+                        if getattr(part, "type", "") != "image"
+                    ]
+                }
+            )
+            for message in messages
+        ]
     current_turn_id = _latest_user_turn_id(turns)
     selected_artifact_turn_ids = set(selected_turn_ids)
     if messages and current_turn_id:
         selected_artifact_turn_ids.add(current_turn_id)
-    _validate_artifact_alignment(turns, messages, selected_turn_ids)
-    artifact_parts = _artifact_image_parts_by_turn(
-        turns,
-        selected_turn_ids=selected_artifact_turn_ids or None,
-    )
+    artifact_parts: dict[str, list[Any]] = {}
+    if include_images:
+        _validate_artifact_alignment(turns, messages, selected_turn_ids)
+        artifact_parts = _artifact_image_parts_by_turn(
+            turns,
+            selected_turn_ids=selected_artifact_turn_ids or None,
+        )
     turn_messages: list[Any] = []
     images_by_turn: dict[str, list[Any]] = {}
     for turn_index, turn in enumerate(turns):
@@ -361,6 +378,8 @@ def _messages_from_context(context: dict[str, Any]) -> list[Any]:
                 )
             )
         for attachment in attachments:
+            if not include_images:
+                continue
             if is_canonical_artifact_ref(attachment):
                 continue
             mime = str(mimetypes.guess_type(attachment)[0] or "").strip().lower()
@@ -765,6 +784,7 @@ def _build_request(
     schema: type,
     temperature: float,
 ) -> Any:
+    from openminion.modules.brain.schemas import UserMessageCandidateReport
     from openminion.modules.llm.schemas import LLMRequest, ToolSpec
 
     hints = context.get("hints", {}) if isinstance(context.get("hints"), dict) else {}
@@ -780,7 +800,12 @@ def _build_request(
     )
 
     messages = _append_system_messages(
-        list(_messages_from_context(context)),
+        list(
+            _messages_from_context(
+                context,
+                include_images=schema is not UserMessageCandidateReport,
+            )
+        ),
         str(hints.get(STRUCTURED_RETRY_MESSAGE_HINT, "")).strip(),
         _build_compound_intent_guidance_message(
             purpose=purpose,
