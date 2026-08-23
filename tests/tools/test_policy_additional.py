@@ -74,11 +74,12 @@ def test_command_mode_invalid_value_raises_error():
     assert excinfo.value.code == "INVALID_ARGUMENT"
 
 
-def test_default_policy_allows_git_and_plan_runtime_prefixes():
+def test_default_policy_allows_core_runtime_prefixes():
     policy = Policy(raw={})
 
     policy.ensure_tool_allowed("git.status")
     policy.ensure_tool_allowed("plan.list")
+    policy.ensure_tool_allowed("memory.write")
 
 
 def test_exact_tool_allow_does_not_admit_neighboring_names() -> None:

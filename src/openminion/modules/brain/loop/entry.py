@@ -39,8 +39,8 @@ def clarify_tool_spec() -> ToolSpec:
         description=(
             "Ask only when required information blocks meaningful progress and "
             "cannot be discovered with an available or inactive tool or a "
-            "documented default. If a tool can investigate it, call tool.request "
-            "before asking the user."
+            "documented default. If a tool can investigate, use the visible "
+            "tool control before asking the user."
         ),
         input_schema={
             "type": "object",
@@ -363,7 +363,5 @@ def build_entry_requestable_tool_specs(
         else ACT_ADAPTIVE_ALLOWED_TOOLS
     )
     if runner is not None:
-        allowed_tools = frozenset(
-            {*allowed_tools, *collect_runtime_tool_names(runner)}
-        )
+        allowed_tools = frozenset({*allowed_tools, *collect_runtime_tool_names(runner)})
     return build_runtime_tool_specs(runner, allowed_tools=allowed_tools)

@@ -1,5 +1,7 @@
 """Shared brain decision prompt fragments."""
 
+from typing import Any
+
 DECIDE_STYLE_OVERRIDES: dict[str, str] = {
     "entry_response_rule": (
         "This is the unified entry call. Start the work directly and return one "
@@ -46,10 +48,29 @@ BRAIN_FRESHNESS_POLICY_CONSTRAINT = (
 ENTRY_CLARIFY_RECONSIDERATION_MESSAGE = (
     "Reconsider the clarification before asking the user. Check the inactive tool "
     "directory and the visible tools. If a tool can investigate the missing "
-    "information or make meaningful progress, call tool.request or that tool now. "
-    "Keep the clarify call only when no available tool or documented default can "
-    "resolve the required detail."
+    "information or make meaningful progress, call the visible tool-request control "
+    "(`tool.request` or provider-safe `tool_request`) or that tool now. Keep the "
+    "clarify call only when no available tool or documented default can resolve the "
+    "required detail."
 )
+
+
+def build_entry_inactive_tool_directory(tool_specs: list[Any]) -> str:
+    lines = [
+        "Execution tool schemas in this directory are inactive and cannot be called "
+        "directly. To use one, call the visible tool-request activation control "
+        "(`tool.request` or provider-safe `tool_request`) with its exact name from "
+        "this directory."
+    ]
+    for spec in tool_specs:
+        name = str(getattr(spec, "name", "") or "").strip()
+        if not name:
+            continue
+        description = " ".join(str(getattr(spec, "description", "") or "").split())
+        if len(description) > 120:
+            description = f"{description[:117].rstrip()}..."
+        lines.append(f"- {name}: {description or name}")
+    return "\n".join(lines)
 
 
 def fixed_profile_rewrites(default_act_profile: str) -> dict[str, str]:
@@ -66,5 +87,6 @@ __all__ = [
     "BRAIN_FRESHNESS_POLICY_CONSTRAINT",
     "DECIDE_STYLE_OVERRIDES",
     "ENTRY_CLARIFY_RECONSIDERATION_MESSAGE",
+    "build_entry_inactive_tool_directory",
     "fixed_profile_rewrites",
 ]

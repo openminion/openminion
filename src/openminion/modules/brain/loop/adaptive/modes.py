@@ -83,6 +83,7 @@ from .context import (
 )
 from .tool_scope import (
     _adaptive_public_attr,
+    _prepare_entry_selected_tool_scope,
     _public_act_label,
     _public_act_tag,
     _with_requested_allowed_tools,
@@ -461,7 +462,11 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         runtime_tool_registry_available = (
             getattr(getattr(runner, "tool_api", None), "registry", None) is not None
         )
-        if _seed_requests_inactive_tool(seed_response):
+        if decision_reason_code == "entry_tool_call":
+            tool_specs, requestable_tool_specs = _prepare_entry_selected_tool_scope(
+                full_tool_specs, seed_response, shortlisting_scratchpad
+            )
+        elif _seed_requests_inactive_tool(seed_response):
             tool_specs = []
             requestable_tool_specs = list(full_tool_specs)
             shortlisting_scratchpad.update(
