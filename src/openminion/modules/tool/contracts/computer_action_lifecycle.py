@@ -530,12 +530,12 @@ def _validate_record_timestamps(record: ActionRecordV1) -> None:
             _validation_error("record expiry time is invalid")
         if cancellation is not None and observed < _instant(cancellation.requested_at):
             _validation_error("record expiry precedes cancellation")
-        if (
-            cancellation is not None
-            and cancellation.reason == "expired"
-            and (cancellation.requested_at != expiry.observed_at)
-        ):
-            _validation_error("expiry cancellation time is invalid")
+    if (
+        cancellation is not None
+        and cancellation.reason == "expired"
+        and (expiry is None or cancellation.requested_at != expiry.observed_at)
+    ):
+        _validation_error("expiry cancellation time is invalid")
     control = record.control
     if control is not None and (
         _instant(control.observed_at) < created

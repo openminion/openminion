@@ -567,6 +567,11 @@ def test_expiry_after_dispatch_requests_cancellation(accepted: bool) -> None:
     assert cancelling.cancellation.reason == "expired"
     assert cancelling.cancellation.requested_at == EXPIRES_AT
 
+    missing_expiry = cancelling.model_dump(mode="json")
+    missing_expiry["expiry"] = None
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(missing_expiry)
+
 
 def test_expiry_requires_clock_fact_at_or_after_invocation_expiry() -> None:
     invocation = _invocation()
