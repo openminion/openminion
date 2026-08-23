@@ -109,9 +109,7 @@ def test_reopening_store_does_not_activate_pending_version(tmp_path: Path) -> No
     reopened = SQLiteSkillStore(db_path, wal=False)
     try:
         assert reopened.get_active_skill_version_hash(skill_id="deploy") is None
-        admission = reopened.get_skill_admission(
-            skill_id="deploy", version_hash="v1"
-        )
+        admission = reopened.get_skill_admission(skill_id="deploy", version_hash="v1")
         assert admission is not None
         assert admission["state"] == "pending"
     finally:

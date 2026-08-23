@@ -128,8 +128,7 @@ def test_terminal_telemetry_labels_latest_completed_invocation(
     assert output.startswith("latest invocation")
     assert "latest failed invocation" not in output
     assert (
-        "next: /telemetry failed | /telemetry invocation invocation-completed"
-        in output
+        "next: /telemetry failed | /telemetry invocation invocation-completed" in output
     )
     assert "shell: telemetryctl debug bundle invocation-completed" in output
     assert "next: telemetryctl" not in output
@@ -150,10 +149,7 @@ def test_terminal_trace_show_labels_explicit_raw_shell_access(
 
     assert "prompt" not in output
     assert "hidden" not in output
-    assert (
-        "shell (raw content): telemetryctl trace show "
-        f"{relative} --raw" in output
-    )
+    assert f"shell (raw content): telemetryctl trace show {relative} --raw" in output
 
 
 def test_terminal_telemetry_usage_and_missing_store_do_not_fall_through(

@@ -53,9 +53,7 @@ def test_normalize_dynamic_mcp_model_tool_id_after_bootstrap() -> None:
         assert normalize_tool_name_for_brain("mcp.fixture.echo_text") == (
             "mcp.fixture.echo_text"
         )
-        runner = SimpleNamespace(
-            tool_api=SimpleNamespace(registry=bootstrap.registry)
-        )
+        runner = SimpleNamespace(tool_api=SimpleNamespace(registry=bootstrap.registry))
         assert "mcp.fixture.echo_text" in collect_runtime_tool_names(runner)
     finally:
         manager = getattr(bootstrap, "mcp_manager", None)

@@ -113,9 +113,7 @@ def latest_done_after_submission(
     return match
 
 
-def latest_terminal_failure(
-    transcript: str, *, offset: int
-) -> re.Match[str] | None:
+def latest_terminal_failure(transcript: str, *, offset: int) -> re.Match[str] | None:
     visible_offset = _visible_offset(transcript, offset=offset)
     return _TERMINAL_FAILURE_RE.search(visible_text(transcript), visible_offset)
 
@@ -165,13 +163,19 @@ def inline_approval_menu(screen_text: str) -> str | None:
     ]
     if compact_matches:
         latest_compact = compact_matches[-1]
-        if _compact_approval_inline_status_follows(
-            screen_text,
-            match=latest_compact,
-        ) or _compact_approval_active_tool_follows(
-            screen_text,
-            match=latest_compact,
-        ) or not _interactive_surface_follows(screen_text, offset=latest_compact.end()):
+        if (
+            _compact_approval_inline_status_follows(
+                screen_text,
+                match=latest_compact,
+            )
+            or _compact_approval_active_tool_follows(
+                screen_text,
+                match=latest_compact,
+            )
+            or not _interactive_surface_follows(
+                screen_text, offset=latest_compact.end()
+            )
+        ):
             return "compact"
     legacy_matches = list(_LEGACY_INLINE_APPROVAL_RE.finditer(screen_text))
     if legacy_matches and not _interactive_surface_follows(
@@ -187,11 +191,14 @@ def _compact_approval_answered(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.search(
-        r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
-        trailing,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
+            trailing,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _compact_approval_submitted(
@@ -200,11 +207,14 @@ def _compact_approval_submitted(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.search(
-        r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)[ \t]*\r?\n",
-        trailing,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)[ \t]*\r?\n",
+            trailing,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _compact_approval_inline_status_follows(

@@ -284,9 +284,7 @@ def _run_skill_ingest(
         f"ingest payload was not ok for agent={target.agent_id}\n"
         f"transcript={transcript_path}\n{transcript}"
     )
-    admit_transcript_path = (
-        transcript_dir / f"admit-{fixture_path.parent.name}.json"
-    )
+    admit_transcript_path = transcript_dir / f"admit-{fixture_path.parent.name}.json"
     admitted = subprocess.run(
         [
             str(python_bin()),

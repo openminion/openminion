@@ -49,7 +49,9 @@ def _stamp_pending_run_context(runner: "BrainRunner", state) -> str | None:
     return pending_trigger
 
 
-def _refresh_budget_for_new_trigger(runner: "BrainRunner", state, trigger: str | None) -> None:
+def _refresh_budget_for_new_trigger(
+    runner: "BrainRunner", state, trigger: str | None
+) -> None:
     if trigger not in {"plan_continuation", "idle_tick"}:
         return
     if mission_is_active(state):
