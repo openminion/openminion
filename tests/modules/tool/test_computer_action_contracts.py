@@ -429,6 +429,11 @@ def test_grant_matches_all_authoritative_identity_target_and_capability_facts() 
             }
         )
 
+    not_yet_issued = grant.model_copy(update={"issued_at": ACKNOWLEDGED_AT})
+    with pytest.raises(ComputerActionContractError) as early:
+        match_desktop_grant(invocation, not_yet_issued, DISPATCHED_AT)
+    assert early.value.code == "grant_revoked"
+
 
 def test_grant_and_capability_state_coupling_fail_closed() -> None:
     invocation = _invocation()
@@ -617,6 +622,43 @@ def test_control_facts_never_resume_or_claim_non_delivery(kind: str) -> None:
     terminal = transition(dispatched, control, CANCELLED_AT)
     assert terminal.terminal_state == "outcome_unknown"
     assert terminal.error == _error("executor_unavailable")
+
+
+def test_pending_control_rejects_before_dispatch() -> None:
+    invocation = _invocation()
+    pending = create_record(invocation, REQUESTED_AT)
+    control = ActionControlFactV1(
+        **_identity(invocation), kind="disconnect", observed_at=DISPATCHED_AT
+    )
+    terminal = transition(pending, control, DISPATCHED_AT)
+    assert terminal.terminal_state == "rejected"
+    assert terminal.dispatch is None
+    assert terminal.error == _error("executor_unavailable")
+
+
+def test_accepted_cancellation_and_unknown_result_are_explicit() -> None:
+    invocation = _invocation()
+    accepted = transition(
+        transition(
+            create_record(invocation, REQUESTED_AT),
+            _dispatch(invocation),
+            DISPATCHED_AT,
+        ),
+        _ack(invocation),
+        ACKNOWLEDGED_AT,
+    )
+    cancelling = transition(accepted, _cancel(invocation), CANCELLED_AT)
+    assert cancelling.phase == "cancel_requested"
+    assert cancelling.pre_cancel_phase == "accepted"
+
+    unknown_result = _result(
+        invocation,
+        state="outcome_unknown",
+        error=_error("executor_unavailable"),
+    )
+    terminal = transition(accepted, unknown_result, ENDED_AT)
+    assert terminal.terminal_state == "outcome_unknown"
+    assert terminal.result == unknown_result
 
 
 def test_replay_and_conflicting_terminal_result_fail_closed() -> None:
@@ -870,6 +912,21 @@ def test_golden_contract_vectors() -> None:
         normalized = model.model_validate(fixture[key])
         assert canonical_json(normalized) == canonical_json(fixture[key])
     assert fixture["fixed_errors"] == ERROR_MESSAGES
+
+    invocation = ActionInvocationV1.model_validate(fixture["invocation"])
+    derived = create_record(invocation, invocation.requested_at)
+    for key, now in (
+        ("dispatch", fixture["dispatch"]["dispatched_at"]),
+        ("acknowledgement", fixture["acknowledgement"]["acknowledged_at"]),
+        ("result", fixture["result"]["ended_at"]),
+    ):
+        derived = transition(
+            derived, reverse_models[key].model_validate(fixture[key]), now
+        )
+    assert canonical_json(derived) == canonical_json(fixture["delivered_record"])
+    assert canonical_json(project_action_audit(derived)) == canonical_json(
+        fixture["audit"]
+    )
 
     for negative in fixture["negative_cases"]:
         if negative["name"] in {"model_text", "spoofed_session"}:
