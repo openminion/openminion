@@ -13,6 +13,14 @@ _SEEDED_REPLAY_CONTROL_TOOL_PREFIXES = ("plan.",)
 _SEEDED_REPLAY_CONTROL_TOOLS = frozenset({"decompose"})
 
 
+def _entry_selected_tool_names(entry_response: Any | None) -> set[str]:
+    return {
+        str(getattr(call, "name", "") or "").strip()
+        for call in list(getattr(entry_response, "tool_calls", []) or [])
+        if str(getattr(call, "name", "") or "").strip()
+    }
+
+
 def _with_direct_tool_requested_allowed_tools(
     tool_names: frozenset[str],
     direct_tool_turn: DirectToolTurnContext | None,
@@ -35,12 +43,7 @@ def _with_entry_selected_allowed_tools(
 ) -> frozenset[str]:
     if str(decision_reason_code or "").strip() != "entry_tool_call":
         return tool_names
-    selected = {
-        str(getattr(call, "name", "") or "").strip()
-        for call in list(getattr(entry_response, "tool_calls", []) or [])
-        if str(getattr(call, "name", "") or "").strip()
-    }
-    return frozenset({*tool_names, *selected})
+    return frozenset({*tool_names, *_entry_selected_tool_names(entry_response)})
 
 
 def _with_requested_allowed_tools(
@@ -56,6 +59,30 @@ def _with_requested_allowed_tools(
         decision_reason_code=decision_reason_code,
         entry_response=entry_response,
     )
+
+
+def _prepare_entry_selected_tool_scope(
+    full_tool_specs: list[Any],
+    entry_response: Any | None,
+    scratchpad: dict[str, Any],
+) -> tuple[list[Any], list[Any]]:
+    requestable_tool_specs = list(full_tool_specs)
+    scratchpad.update(
+        {
+            "tool_schema_shortlisting.enabled": True,
+            "tool_schema_shortlisting.reason": "entry_selected_tool",
+            "tool_schema_shortlisting.candidate_count": len(full_tool_specs),
+            "tool_schema_shortlisting.active_count": 0,
+            "tool_schema_shortlisting.llm_call_made": False,
+        }
+    )
+    selected_names = _entry_selected_tool_names(entry_response)
+    active_tool_specs = [
+        spec
+        for spec in requestable_tool_specs
+        if str(getattr(spec, "name", "") or "").strip() in selected_names
+    ]
+    return active_tool_specs, requestable_tool_specs
 
 
 def _without_control_tool_names(tool_names: frozenset[str]) -> frozenset[str]:

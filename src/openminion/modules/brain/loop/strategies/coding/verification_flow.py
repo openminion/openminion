@@ -36,7 +36,7 @@ from .verification import (
 
 
 class CodingVerificationMixin:
-    _VERIFIER_CANDIDATE_TOOLS = frozenset({"exec.run", "file.read"})
+    _VERIFIER_CANDIDATE_TOOLS = frozenset({"exec.poll", "exec.run", "file.read"})
 
     def _stage_required_write_direct_tool(self: Any) -> None:
         if getattr(self._loop_state, "direct_tool_turn", None) is not None:
@@ -81,6 +81,28 @@ class CodingVerificationMixin:
             not in self._VERIFIER_CANDIDATE_TOOLS
         ):
             return
+        tool_name = str(command.tool_name or "").strip().lower()
+        execution_status = (
+            str(action_result.outputs.get("status", "") or "").strip().lower()
+        )
+        session_id = str(action_result.outputs.get("session_id", "") or "").strip()
+        if tool_name in {"exec.poll", "exec.run"} and execution_status == "running":
+            if session_id:
+                self._loop_state.scratchpad["coding.pending_verifier_session_id"] = (
+                    session_id
+                )
+            return
+        pending_session_id = str(
+            self._loop_state.scratchpad.get("coding.pending_verifier_session_id", "")
+            or ""
+        ).strip()
+        if pending_session_id:
+            if tool_name == "file.read":
+                return
+            if tool_name == "exec.poll" and session_id == pending_session_id:
+                self._loop_state.scratchpad.pop(
+                    "coding.pending_verifier_session_id", None
+                )
         payload = serialize_verifier_candidate(
             command=command,
             action_result=action_result,
@@ -239,6 +261,15 @@ class CodingVerificationMixin:
                 ),
             )
         command, action_result = candidate
+        mutation_refs = self._successful_mutating_artifact_refs()
+        if mutation_refs:
+            refs_by_id = {
+                ref.ref: ref for ref in [*action_result.artifact_refs, *mutation_refs]
+            }
+            action_result = action_result.model_copy(
+                update={"artifact_refs": list(refs_by_id.values())},
+                deep=True,
+            )
         evaluation = evaluate_coding_verifier(
             goal=verifier_goal,
             command=command,

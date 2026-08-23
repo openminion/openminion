@@ -1,7 +1,6 @@
 import asyncio
 import inspect
 import json
-import sys
 import time
 import uuid
 from collections.abc import Mapping
@@ -511,9 +510,9 @@ class BrainBridgeTurnMixin:
                 turn_id=turn_id,
                 turn_start_time=turn_start_time,
             )
-        finally:
-            if exc := sys.exception():
-                await telemetry.fail(exc)
+        except BaseException as exc:  # noqa: BLE001 - preserve cancellation lifecycle
+            await telemetry.fail(exc)
+            raise
         response.metadata.setdefault("invocation_id", invocation_id)
         response.metadata.setdefault("execution_id", execution_id)
         response.metadata.setdefault("invocation_scope", invocation_scope)

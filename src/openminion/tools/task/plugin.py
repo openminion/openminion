@@ -39,6 +39,8 @@ from .constants import (
     CONSOLIDATION_PAYLOAD_KEY,
     DEFAULT_TASK_NAME_MAX_CHARS,
     DEFAULT_CONSOLIDATION_MAX_ITERATIONS,
+    DEFAULT_CONSOLIDATION_MAX_ATTEMPTS,
+    DEFAULT_CONSOLIDATION_RETRY_BACKOFF_SECONDS,
     DEFAULT_CONSOLIDATION_TIMEOUT_SECONDS,
     DEFAULT_WATCH_MAX_ITERATIONS,
     EVERY_UNIT_TO_MS,
@@ -642,6 +644,9 @@ def _h_task_consolidate_memory(
             delete_after_run=False,
             misfire_policy="skip",
             max_concurrency=1,
+            concurrency_key=f"memory-consolidation:{target_scope}",
+            max_attempts=DEFAULT_CONSOLIDATION_MAX_ATTEMPTS,
+            retry_backoff_s=DEFAULT_CONSOLIDATION_RETRY_BACKOFF_SECONDS,
             job_id=job_id,
         )
         job = manager.get_scheduled_job(task_row.task_id) or {}

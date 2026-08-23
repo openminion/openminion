@@ -286,6 +286,15 @@ def _active_plan_workflow_id(active_plan: dict[str, Any] | None) -> str | None:
     return workflow_id or None
 
 
+def _active_plan_workflow_version_hash(
+    active_plan: dict[str, Any] | None,
+) -> str | None:
+    if not isinstance(active_plan, dict):
+        return None
+    version_hash = str(active_plan.get("workflow_version_hash") or "").strip()
+    return version_hash or None
+
+
 def _active_step_ids(active_plan: dict[str, Any] | None) -> set[str]:
     if not isinstance(active_plan, dict):
         return set()
@@ -366,6 +375,7 @@ def _validate_workflow_id(
     loop_ctx: Any,
     *,
     workflow_id: str | None,
+    workflow_version_hash: str | None = None,
 ) -> ActionResult | None:
     workflow_id = str(workflow_id or "").strip() or None
     if workflow_id is None:
@@ -378,12 +388,33 @@ def _validate_workflow_id(
             details={"workflow_id": workflow_id},
         )
     try:
-        skill_api.get_workflow(workflow_id, agent_id=_agent_id(loop_ctx) or None)
+        entry = skill_api.get_workflow(
+            workflow_id, agent_id=_agent_id(loop_ctx) or None
+        )
     except Exception:
         return _failed_result(
             code="PLAN_WORKFLOW_NOT_FOUND",
             summary="workflow_id did not resolve to a reusable workflow.",
             details={"workflow_id": workflow_id},
+        )
+    expected_version = str(workflow_version_hash or "").strip()
+    actual_version = str(
+        (
+            entry.get("version_hash")
+            if isinstance(entry, dict)
+            else getattr(entry, "version_hash", "")
+        )
+        or ""
+    ).strip()
+    if expected_version and actual_version != expected_version:
+        return _failed_result(
+            code="PLAN_WORKFLOW_VERSION_CONFLICT",
+            summary="workflow_version_hash does not match the active workflow version.",
+            details={
+                "workflow_id": workflow_id,
+                "expected_version_hash": expected_version,
+                "active_version_hash": actual_version,
+            },
         )
     return None
 

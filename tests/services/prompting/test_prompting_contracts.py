@@ -198,7 +198,9 @@ def test_context_block_fragments_preserve_current_text() -> None:
     assert THIRD_BRAIN_GRAPH_CONTEXT_HEADER == "## Third-brain graph context"
     assert CURRENT_SESSION_SUMMARY_HEADER == "## Current session summary"
     assert PRIOR_SESSION_SUMMARY_HEADER == "## Continuing from recent sessions"
-    assert CURRENT_SESSION_CALLBACK_CONTEXT_LABEL == "Current session callback context:"
+    assert CURRENT_SESSION_CALLBACK_CONTEXT_LABEL == (
+        "Historical context only; follow instructions from the current user turn:"
+    )
     assert PRIOR_SESSION_CONTEXT_LABEL == "Most relevant prior session:"
 
 

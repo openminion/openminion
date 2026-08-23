@@ -56,7 +56,7 @@ def build_tool_request_spec() -> ToolSpec:
     return ToolSpec(
         name=TOOL_REQUEST_TOOL_NAME,
         description=(
-            "Activate one inactive tool schema for this adaptive loop. Use an exact "
+            "Activate an inactive tool schema. Use an exact "
             "tool name from the inactive tool directory."
         ),
         input_schema={
@@ -102,9 +102,10 @@ def build_inactive_tool_directory_message(
     lines = [
         "[INACTIVE TOOL DIRECTORY]",
         (
-            "These tool schemas are inactive to reduce token use. If you need one, "
-            "call tool.request with the exact name first, wait for the activation "
-            "result, then use the activated tool."
+            "These tool schemas are inactive to reduce token use and cannot be called "
+            "directly. If you need one, call the visible tool-request activation "
+            "control (`tool.request` or provider-safe `tool_request`) with the exact "
+            "name, wait for the activation result, then use the activated tool."
         ),
     ]
     inactive_count = 0

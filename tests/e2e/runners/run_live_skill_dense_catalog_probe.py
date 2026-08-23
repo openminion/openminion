@@ -219,6 +219,8 @@ def _probe_positive_scenario(
     assert proc.stdin is not None
     proc.stdin.write(f"{scenario.prompt}\n")
     proc.stdin.flush()
+    proc.stdin.close()
+    proc.stdin = None
 
     selected_payload: dict[str, Any] | None = None
     selected_skill_id: str | None = None
@@ -349,6 +351,8 @@ def _probe_missing_negative(
     assert proc.stdin is not None
     proc.stdin.write(f"{matrix._MISSING_SKILL_PROMPT}\n")
     proc.stdin.flush()
+    proc.stdin.close()
+    proc.stdin = None
 
     final_events: list[dict[str, Any]] = []
     deadline = time.time() + timeout_seconds
@@ -556,3 +560,7 @@ def main() -> int:
         f"pass_count={summary['pass_count']} failure_count={summary['failure_count']}"
     )
     return 0 if not failures else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

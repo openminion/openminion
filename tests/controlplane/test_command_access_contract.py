@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from openminion.modules.controlplane.commands.registry import CommandRegistry
 from openminion.modules.controlplane.contracts.models import (
     AuthContext,
@@ -12,7 +14,10 @@ from openminion.modules.controlplane.runtime import EchoBrain
 from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
 from openminion.modules.controlplane.runtime.parser import SlashCommandParser
 from openminion.modules.controlplane.runtime.router import Router
-from openminion.modules.controlplane.runtime.security import ScopeAuthorizer
+from openminion.modules.controlplane.runtime.security import (
+    ScopeAuthorizer,
+    is_pair_command,
+)
 from openminion.modules.controlplane.runtime.worker.inbox import InboxWorker
 from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 
@@ -53,6 +58,20 @@ def test_builtin_commands_use_command_specific_scopes() -> None:
         AuthContext(role="paired", scopes=("chat.interact",))
     ) == (True, "ok")
     store.close()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("/pair", True),
+        ("/pair token", True),
+        ("/pair@OpenMinionBot token", False),
+        ("/pairing", False),
+        ("/paired status", False),
+    ],
+)
+def test_pair_command_boundary_is_exact(text: str, expected: bool) -> None:
+    assert is_pair_command(text) is expected
 
 
 def test_unavailable_commands_fail_and_stay_out_of_help() -> None:

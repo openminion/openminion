@@ -21,6 +21,9 @@ _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
     "task_plan.revision",
     "task_plan.abandoned",
     "task_plan.completed",
+    "memory_consolidation.target_scope",
+    "memory_consolidation.candidate_ids",
+    "memory_consolidation.state_hash",
 )
 
 
@@ -90,9 +93,7 @@ def _build_turn_response_metadata(
     action_error = getattr(getattr(step_out, "action_result", None), "error", None)
     if action_error is not None:
         metadata["error_code"] = str(getattr(action_error, "code", "") or "")
-        metadata["error_message"] = str(
-            getattr(action_error, "message", "") or ""
-        )
+        metadata["error_message"] = str(getattr(action_error, "message", "") or "")
         error_details = getattr(action_error, "details", None)
         if isinstance(error_details, dict) and error_details:
             metadata["error_details"] = json.dumps(error_details, sort_keys=True)

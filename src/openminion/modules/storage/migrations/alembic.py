@@ -141,7 +141,7 @@ def run_module_env(
                 poolclass=pool.NullPool,
             )
 
-        with external_engine.connect() as connection:
+        with external_engine.begin() as connection:
             _run_with_connection(connection)
 
     if context.is_offline_mode():

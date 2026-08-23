@@ -7,7 +7,11 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
+    ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
 )
@@ -37,6 +41,7 @@ from .terminal_results import (
     _exit_continue,
     _exit_final_text,
 )
+from .runtime import _is_budget_exhausted
 
 
 def _direct_termination_result(
@@ -168,6 +173,17 @@ def _result_from_outcome(
         )
         if missing_write_result is not None:
             return missing_write_result
+    finalization_result = _finalization_result(
+        runner,
+        ctx,
+        loop=loop,
+        outcome=outcome,
+        allowed_tools=allowed_tools,
+        build_error_result=build_error_result,
+        build_blocked_result=build_blocked_result,
+    )
+    if finalization_result is not None:
+        return finalization_result
     direct_result = _direct_termination_result(
         runner,
         ctx,
@@ -275,6 +291,75 @@ def _result_from_outcome(
         working_state=ctx.state,
         message=message,
         action_result=build_error_result(message, "coding_loop_error"),
+    )
+
+
+def _finalization_result(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    loop: Any,
+    outcome: Any,
+    allowed_tools: frozenset[str],
+    build_error_result,
+    build_blocked_result,
+) -> ExecutionResult | None:
+    reason = outcome.termination_reason
+    if reason in {
+        ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+        ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
+    }:
+        message = str(outcome.final_text or "").strip() or (
+            "Coding evidence was recorded, but the requested final deliverable "
+            "is not yet complete. Continue in a new turn to resume."
+        )
+        code = (
+            "coding_finalization_incomplete"
+            if reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+            else "coding_finalization_blocked"
+        )
+        blocked_result = build_blocked_result(message, code)
+        blocked_result.outputs = {
+            **loop.telemetry_payload(allowed_tools),
+            "adaptive.finalization_status": dict(outcome.finalization_status or {}),
+        }
+        runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
+        return ExecutionResult.from_step_output(
+            ctx.respond(
+                message=message,
+                status=BRAIN_STATE_WAITING_USER,
+                action_result=blocked_result,
+            )
+        )
+    if reason not in {
+        ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+        ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
+    }:
+        return None
+    if reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING and _is_budget_exhausted(
+        ctx, loop
+    ):
+        return _exit_budget_exhausted(
+            runner,
+            ctx,
+            loop,
+            allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
+    message = outcome.error_message or (
+        "Coding loop could not produce a truthful final response from the "
+        "recorded tool evidence."
+    )
+    code = (
+        "coding_finalization_contract_missing"
+        if reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+        else "coding_direct_tool_closure_failed"
+    )
+    return ExecutionResult(
+        status=BRAIN_STATE_ERROR,
+        working_state=ctx.state,
+        message=message,
+        action_result=build_error_result(message, code),
     )
 
 

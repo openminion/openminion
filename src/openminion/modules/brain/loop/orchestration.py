@@ -26,6 +26,7 @@ from openminion.modules.brain.loop.tools.runtime import (
     build_runtime_tool_specs,
 )
 from openminion.modules.llm.client_call import response_cost_payload
+from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
@@ -48,6 +49,7 @@ from openminion.modules.brain.retry import build_entry_retry_message
 from openminion.modules.llm import ProviderError
 from openminion.modules.prompting.decision import (
     ENTRY_CLARIFY_RECONSIDERATION_MESSAGE,
+    build_entry_inactive_tool_directory,
 )
 from .entry_routing import (
     _bypass_decision_for_route,
@@ -70,6 +72,7 @@ from .providers.retry import (
     build_provider_retry_policy,
     classify_retryable,
     compute_backoff_ms,
+    provider_request_id_payload,
 )
 
 
@@ -102,28 +105,16 @@ def _apply_freshness_result(
     )
 
 
-def _compact_entry_tool_directory(tool_specs: list[Any]) -> str:
-    lines = [
-        "Execution tool schemas are inactive until requested. If execution is "
-        "needed, call tool.request with one exact name from this directory."
-    ]
-    for spec in tool_specs:
-        name = str(getattr(spec, "name", "") or "").strip()
-        if not name:
-            continue
-        description = " ".join(str(getattr(spec, "description", "") or "").split())
-        if len(description) > 120:
-            description = f"{description[:117].rstrip()}..."
-        lines.append(f"- {name}: {description or name}")
-    return "\n".join(lines)
-
-
 def _json_size(value: Any) -> int:
     return len(
         json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode(
             "utf-8"
         )
     )
+
+
+def _tool_names_json(tool_specs: list[Any]) -> str:
+    return json.dumps([spec.name for spec in tool_specs if spec.name.strip()])
 
 
 def _entry_request_metrics(
@@ -573,7 +564,7 @@ def decide(
         style_overrides = hints.setdefault("style_overrides", {})
         if isinstance(style_overrides, dict):
             style_overrides["entry_inactive_tool_directory"] = (
-                _compact_entry_tool_directory(requestable_tool_specs)
+                build_entry_inactive_tool_directory(requestable_tool_specs)
             )
     if normalized_capability_category:
         hints["capability_category"] = normalized_capability_category
@@ -634,7 +625,7 @@ def decide(
         )
 
     response = None
-    retry_policy = build_provider_retry_policy(getattr(runner, "config", None))
+    retry_policy = build_provider_retry_policy(runner.options)
     max_retries = retry_policy.max_retries
     last_detection = None
     base_messages = list(_messages_from_context(context))
@@ -650,6 +641,7 @@ def decide(
         "agent_id": state.agent_id,
         "trace_id": state.trace_id,
         "capability_category": normalized_capability_category,
+        REQUESTABLE_TOOL_NAMES_METADATA_KEY: _tool_names_json(requestable_tool_specs),
     }
     expected_trailers = hints.get(EXPECTED_TRAILERS_METADATA_KEY)
     if isinstance(expected_trailers, list | tuple) and expected_trailers:
@@ -704,6 +696,9 @@ def decide(
             )
         except Exception as exc:  # noqa: BLE001
             error_category, retryable = classify_retryable(exc)
+            request_id_payload = provider_request_id_payload(
+                getattr(exc, "details", None)
+            )
             if retryable and attempt < max_retries:
                 backoff_ms = compute_backoff_ms(retry_policy, attempt)
                 logger.emit(
@@ -714,6 +709,7 @@ def decide(
                         "reason": "provider_transient_error",
                         "error_category": error_category,
                         "backoff_ms": int(backoff_ms),
+                        **request_id_payload,
                     },
                     trace_id=state.trace_id,
                 )
@@ -728,6 +724,7 @@ def decide(
                     "error": str(exc),
                     "error_category": error_category,
                     "attempts": attempt + 1,
+                    **request_id_payload,
                 },
                 trace_id=state.trace_id,
                 status="error",
@@ -891,6 +888,7 @@ def decide(
             "retry_count": attempt,
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
             "configured_output_limit": budget_max_tokens,
+            **provider_request_id_payload(response.telemetry),
         },
         trace_id=state.trace_id,
     )

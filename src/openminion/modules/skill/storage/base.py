@@ -29,7 +29,51 @@ class SkillStore(ABC):
         source_artifact_ref: str,
         package_json: str,
         created_at: str,
+        content_fingerprint: str = "",
     ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_skill_admission(
+        self, *, skill_id: str, version_hash: str
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_skill_version_by_fingerprint(
+        self, *, skill_id: str, content_fingerprint: str
+    ) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def stage_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        content_fingerprint: str,
+        authority_class: str,
+        created_at: str,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_active_skill_version_hash(self, *, skill_id: str) -> str | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def activate_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        expected_active_version_hash: str | None,
+        target_status: str,
+        authority_class: str,
+        reviewer_id: str,
+        reason: str,
+        decided_at: str,
+    ) -> bool:
         raise NotImplementedError
 
     @abstractmethod

@@ -9,7 +9,6 @@ scripts/manual/llmlingua2_ab_eval.py	2
 scripts/manual/report_broad_exception_handlers.py	3
 scripts/smoke/interactive_demo_launch_smoke.py	3
 scripts/smoke/interactive_real_config_launch_smoke.py	4
-scripts/smoke/memory_sleep_smoke.py	2
 scripts/validate/asyncio_run_boundary.py	2
 scripts/validate/config_manager_usage.py	2
 scripts/validate/control_value_constants.py	2
@@ -620,7 +619,6 @@ tests/integration/test_rmq_phase_b_diversity.py	4
 tests/integration/test_rmq_phase_c_recall.py	4
 tests/integration/test_runtime_storage_postgres.py	3
 tests/integration/test_security_attack_chain.py	3
-tests/integration/test_sleep_consolidation_loop.py	3
 tests/integration/test_status_payload_audit_health.py	4
 tests/integration/test_success_path_memory_creation.py	4
 tests/integration/test_tgcr_goal_run_lifecycle.py	4
@@ -898,7 +896,6 @@ tests/services/agent/execution/test_ar13_finalization_trigger_widening.py	4
 tests/services/agent/execution/test_ar14_empty_response_shared_validator.py	5
 tests/services/agent/execution/test_ar15_deadline_predicate.py	3
 tests/services/agent/execution/test_tool_follow_up.py	3
-tests/services/agent/memory/test_sleep_runner.py	2
 tests/services/agent/test_agent_execution.py	2
 tests/services/agent/test_agent_lifecycle.py	2
 tests/services/agent/test_candidate_first_learning.py	3

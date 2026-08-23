@@ -121,6 +121,16 @@ def test_brain_runner_afe_event_is_authoritative_for_prose_candidate_staging(
     assert payload["staged_candidates"] == 2
     assert payload["initial_confidence"] == 0.3
 
+    llm_call_id = str(payload["llm_call_id"])
+    assert not any(
+        event.get("type") == "context.manifest.validation_failed"
+        and event.get("payload", {}).get("llm_call_id") == llm_call_id
+        for event in events
+    )
+    call_order = runner._call_order_tracker[llm_call_id]  # noqa: SLF001
+    assert call_order["manifest_emitted"] is True
+    assert call_order["completed_at"] is not None
+
     candidates = _candidate_payloads(memory_api)
     assert len(candidates) == 2
     assert {row["record_type"] for row in candidates} == {"fact", "user_preference"}

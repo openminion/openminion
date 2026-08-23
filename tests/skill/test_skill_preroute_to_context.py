@@ -14,6 +14,7 @@ from openminion.modules.context.schemas import (
 )
 from openminion.modules.context.service import ContextCtlService
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 PROCEDURAL_SKILL = """
@@ -145,7 +146,7 @@ class _ArtifactClient:
 def test_catalog_loads_ingested_skills(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        ctl.ingest_text(name="Deploy Checker", markdown=PROCEDURAL_SKILL)
+        ingest_text_and_admit(ctl, name="Deploy Checker", markdown=PROCEDURAL_SKILL)
         catalog = _load_catalog(skill_api=ctl, agent_id="test-agent")
         assert len(catalog) == 1
         assert catalog[0]["id"] == "deploy_checker"
@@ -159,7 +160,8 @@ def test_resolve_skill_hints_direct_selects_single_catalog_skill_without_llm(
 ) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        _skill_id, version_hash, _ = ctl.ingest_text(
+        _skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl,
             name="Deploy Checker",
             markdown=PROCEDURAL_SKILL,
         )
@@ -241,11 +243,13 @@ def test_blank_intent_skips_skill_hints() -> None:
 def test_multi_skill_refs_render_multiple_snippets(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
-        deploy_id, deploy_hash, _ = ctl.ingest_text(
+        deploy_id, deploy_hash, _ = ingest_text_and_admit(
+            ctl,
             name="Deploy Checker",
             markdown=PROCEDURAL_SKILL,
         )
-        rollback_id, rollback_hash, _ = ctl.ingest_text(
+        rollback_id, rollback_hash, _ = ingest_text_and_admit(
+            ctl,
             name="Rollback Guide",
             markdown=SECONDARY_SKILL,
         )

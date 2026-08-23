@@ -111,6 +111,7 @@ class CommandRegistryMemorySkillMixin:
             from openminion.modules.skill import Skill
             from openminion.modules.skill.constants import DEFAULT_CONFIG_FILENAME
             from openminion.modules.skill.errors import SkillError
+            from openminion.modules.skill.interfaces import SkillIngestAuthority
         except ModuleNotFoundError:
             return CommandResult(
                 ok=False,
@@ -123,7 +124,12 @@ class CommandRegistryMemorySkillMixin:
         try:
             ctl = Skill(DEFAULT_CONFIG_FILENAME)
             try:
-                skill_id, version_hash, warnings = ctl.ingest_file(path=path)
+                skill_id, version_hash, warnings = ctl.ingest_file(
+                    path=path,
+                    authority=SkillIngestAuthority.runtime(
+                        surface="controlplane.skill.ingest", source_kind="local"
+                    ),
+                )
                 lines = [
                     "Successfully ingested skill",
                     f"  skill_id: {skill_id}",

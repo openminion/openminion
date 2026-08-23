@@ -240,7 +240,6 @@ src/openminion/modules/memory/runtime/remote_transport.py	1	0	current broad-hand
 src/openminion/modules/memory/runtime/retrieval_pipeline.py	4	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/session_lifecycle.py	12	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/skill_promotion.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/memory/runtime/sleep_runner.py	4	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/staging.py	4	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/turn_recording.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/service/queries.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

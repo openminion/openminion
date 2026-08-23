@@ -26,12 +26,16 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message
-from .runtime import _extract_visible_response_text
-from .runtime import _normalize_finalization_status_response
+from .runtime import (
+    _extract_visible_response_text,
+    _normalize_finalization_status_response,
+)
 
 from .budget import _debit_llm_usage
 from .budget_finalization import (
+    _budget_finalization_original_request,
     _finalization_status_from_response,
+    _last_user_message_text,
     _retry_answer_only_completion_if_needed,
 )
 from .budget_answer import (
@@ -652,9 +656,19 @@ def _force_budget_answer_only_finalization(
         else None,
         "metadata": metadata,
     }
+    finalization_messages = _answer_only_finalization_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        tool_results=_successful_substantive_tool_results(loop_state),
+        reason=(
+            "The tool budget or a per-tool limit has been reached. Do not call "
+            "more tools. This must be the final answer for the current turn."
+            f"{finalization_instruction}"
+        ),
+    )
     try:
         response = runtime.complete(
-            messages=loop_state.messages,
+            messages=finalization_messages,
             **complete_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
@@ -682,6 +696,7 @@ def _force_budget_answer_only_finalization(
         profile=profile,
         loop_state=loop_state,
         runtime=runtime,
+        messages=finalization_messages,
         complete_kwargs=complete_kwargs,
         public_mode_tag=public_mode_tag,
         allowed_tools=allowed_tools,
@@ -772,23 +787,6 @@ def _budget_finalization_has_substantive_user_message(
     return False
 
 
-def _budget_finalization_original_request(loop_ctx: AdaptiveToolLoopContext) -> str:
-    state = getattr(loop_ctx, "state", None)
-    candidates = (
-        getattr(loop_ctx, "user_input", ""),
-        getattr(state, "last_user_input", "") if state is not None else "",
-        getattr(state, "goal", "") if state is not None else "",
-        getattr(state, "pending_confirmation_last_user_input", "")
-        if state is not None
-        else "",
-    )
-    for candidate in candidates:
-        text = str(candidate or "").strip()
-        if text:
-            return text
-    return ""
-
-
 def _truncate_answer_only_text(
     value: Any, *, limit: int = BUDGET_ANSWER_ONLY_TEXT_LIMIT
 ) -> str:
@@ -844,16 +842,6 @@ def _compact_answer_only_tool_results(
     return compacted
 
 
-def _last_user_message_text(messages: list[Message]) -> str:
-    for message in reversed(messages):
-        if str(getattr(message, "role", "") or "").strip().lower() != "user":
-            continue
-        text = str(getattr(message, "content", "") or "").strip()
-        if text:
-            return text
-    return ""
-
-
 def _answer_only_finalization_messages(
     *,
     loop_ctx: AdaptiveToolLoopContext,
@@ -876,8 +864,9 @@ def _answer_only_finalization_messages(
                 f"{reason} Use only the successful tool evidence below and write "
                 "the best user-facing final answer now. Do not narrate future "
                 "steps, do not say you will continue, and preserve any explicit "
-                "output format or headings the user requested. If evidence is "
-                "partial, say that briefly and still answer."
+                "output format, headings, citation requirements, and exact-date "
+                "requirements the user requested. If evidence is partial, say "
+                "that briefly and still answer."
             ),
         ),
         Message(
@@ -885,6 +874,7 @@ def _answer_only_finalization_messages(
             content=(
                 "Original user request for this turn:\n"
                 f"{original_request or '<unknown>'}\n\n"
+                "Do not infer or substitute a different task.\n\n"
                 "Successful tool evidence already gathered:\n"
                 f"{evidence_json}"
             ),

@@ -22,6 +22,7 @@ from .plan import (
     _active_plan_continues_after_step,
     _active_plan_id,
     _active_plan_workflow_id,
+    _active_plan_workflow_version_hash,
     _append_invalid_task_plan_event,
     _append_task_plan_event,
     _clear_active_plan_override,
@@ -164,6 +165,12 @@ def build_plan_tool_spec() -> ToolSpec:
                         "workflow catalog."
                     ),
                 },
+                "workflow_version_hash": {
+                    "type": "string",
+                    "description": (
+                        "Optional active skill version hash that pins workflow_id."
+                    ),
+                },
                 "root_goal_id": {
                     "type": "string",
                     "description": (
@@ -220,6 +227,37 @@ def plan_tool_enabled(profile: Any) -> bool:
     # `plan` is a loop-local control surface, not a provider-dispatched tool.
     # It remains available when ordinary runtime tools are suppressed.
     return bool(getattr(profile, "allow_plan_tool", True))
+
+
+def plan_tool_call_advances_active_plan(
+    loop_ctx: Any,
+    arguments: dict[str, Any],
+) -> bool:
+    action = str(arguments.get("action", "") or "").strip()
+    if action not in {
+        PLAN_ACTION_STEP_COMPLETED,
+        PLAN_ACTION_STEP_BLOCKED,
+        PLAN_ACTION_ABANDON,
+        PLAN_ACTION_COMPLETE,
+    }:
+        return False
+    active_plan = _current_active_plan(loop_ctx)
+    plan_id = str(arguments.get("plan_id", "") or "").strip()
+    if _active_plan_id(active_plan) != plan_id:
+        return False
+    if action in {PLAN_ACTION_ABANDON, PLAN_ACTION_COMPLETE}:
+        return True
+    step_id = str(arguments.get("step_id", "") or "").strip()
+    for step in list((active_plan or {}).get("steps") or []):
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("step_id", "") or "").strip() != step_id:
+            continue
+        return str(step.get("status", "pending") or "pending").strip() not in {
+            "blocked",
+            "completed",
+        }
+    return False
 
 
 def with_enabled_plan_tool_spec(
@@ -295,6 +333,7 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             "plan_id": arguments.get("plan_id"),
             "objective": arguments.get("objective") or arguments.get("plan_id"),
             "workflow_id": arguments.get("workflow_id"),
+            "workflow_version_hash": arguments.get("workflow_version_hash"),
             "root_goal_id": arguments.get("root_goal_id"),
             "status": "active",
             "steps": list(arguments.get("steps") or []),
@@ -303,7 +342,11 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             ),
         }
     )
-    workflow_failure = _validate_workflow_id(loop_ctx, workflow_id=plan.workflow_id)
+    workflow_failure = _validate_workflow_id(
+        loop_ctx,
+        workflow_id=plan.workflow_id,
+        workflow_version_hash=plan.workflow_version_hash,
+    )
     if workflow_failure is not None:
         return workflow_failure
     active_plan = _current_active_plan(loop_ctx)
@@ -461,10 +504,12 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
     full_plan = revision.to_task_plan(
         fallback_objective=str((active_plan or {}).get("objective") or ""),
         fallback_workflow_id=_active_plan_workflow_id(active_plan),
+        fallback_workflow_version_hash=_active_plan_workflow_version_hash(active_plan),
     )
     workflow_failure = _validate_workflow_id(
         loop_ctx,
         workflow_id=full_plan.workflow_id,
+        workflow_version_hash=full_plan.workflow_version_hash,
     )
     if workflow_failure is not None:
         return workflow_failure

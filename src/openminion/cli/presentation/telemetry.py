@@ -82,7 +82,9 @@ def render_trace_slash(args: str, *, runtime: Any) -> str:
             f"trace: {payload['path']}\n"
             f"kind: {payload['kind']}\n"
             f"size_bytes: {payload['size_bytes']}\n"
-            f"modified_at: {payload['modified_at']}"
+            f"modified_at: {payload['modified_at']}\n"
+            "shell (raw content): telemetryctl trace show "
+            f"{shlex.quote(path)} --raw"
         )
     return TRACE_USAGE
 
@@ -181,12 +183,25 @@ def _card_title(report: TelemetryDebugReport) -> str:
 
 
 def _next_actions(report: TelemetryDebugReport) -> str:
-    actions = list(report.links.commands[:2])
+    kind = report.selection.kind if report.selection else "latest"
+    actions = []
+    if kind != "latest":
+        actions.append("/telemetry latest")
+    if kind != "failed":
+        actions.append("/telemetry failed")
+    invocation_id = (
+        report.selection.selected_invocation_id if report.selection else None
+    )
+    if invocation_id and kind != "invocation_id":
+        actions.append(f"/telemetry invocation {invocation_id}")
     if report.links.trace_paths:
         actions.append("/trace list")
     if not actions:
-        actions.append("telemetryctl debug latest")
-    return "next: " + " | ".join(actions)
+        actions.append("/telemetry latest")
+    lines = ["next: " + " | ".join(actions)]
+    if report.links.commands:
+        lines.append("shell: " + report.links.commands[0])
+    return "\n".join(lines)
 
 
 def _trace_limit(parts: list[str]) -> int | None:

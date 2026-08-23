@@ -159,8 +159,19 @@ openminion autonomy start \
   --workspace /path/to/project \
   --verification-domain coding \
   --verify-command "python -m pytest -q" \
+  --turn-timeout-seconds 900 \
+  --verification-timeout-seconds 900 \
   --max-iterations 4
 ```
+
+The turn timeout applies to each agent cycle; the verification timeout applies
+to each configured command. Raise the relevant bound for large coding turns,
+builds, or test suites instead of weakening the verifier.
+
+The default `local-safe` permission profile grants file write, copy, and move
+inside the selected workspace without an approval prompt. The existing local
+path policy still rejects out-of-workspace paths, and other tools keep their
+normal policy and approval behavior.
 
 Use `openminion autonomy resume RUN_ID` after a blocked cycle. Persisted agent,
 configuration, workspace, verifier, permission profile, and budget selectors

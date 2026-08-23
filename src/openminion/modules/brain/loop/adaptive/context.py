@@ -41,6 +41,7 @@ from openminion.modules.brain.trailers import (
 )
 
 from ..services import runner_from_context
+from ..providers.retry import build_provider_retry_policy
 
 
 def _adaptive_loop_metadata(ctx: ExecutionContext, *, purpose: str) -> dict[str, Any]:
@@ -141,6 +142,9 @@ class _AdaptiveLoopContextAdapter:
             options=SimpleNamespace(failure_strategy="halt")
         )
         self.session_api = getattr(self._runner, "session_api", None)
+        self.provider_retry_max_attempts = build_provider_retry_policy(
+            self._runner.options
+        ).max_attempts
         self.prepared_parallel_dispatch_supported = all(
             callable(getattr(ctx.command_executor, name, None))
             for name in (

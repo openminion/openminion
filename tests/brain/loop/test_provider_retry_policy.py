@@ -100,6 +100,13 @@ def test_factory_honors_config_knob() -> None:
     assert build_provider_retry_policy(_Config()).max_attempts == 5
 
 
+def test_factory_honors_direct_runner_options_knob() -> None:
+    class _RunnerOptions:
+        provider_retry_max_attempts = 1
+
+    assert build_provider_retry_policy(_RunnerOptions()).max_attempts == 1
+
+
 def test_factory_clamps_to_sane_band() -> None:
     class _Runtime:
         provider_retry_max_attempts = 999

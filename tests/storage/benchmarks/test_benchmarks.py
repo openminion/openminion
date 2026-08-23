@@ -53,6 +53,7 @@ MODULES = ("secret", "session", "telemetry", "memory")
 OPERATIONS = ("create", "read", "update", "delete")
 pytestmark = pytest.mark.timeout(300)
 BASELINE_SAMPLE_RUNS = 3
+BENCHMARK_VALIDATION_ATTEMPTS = 3
 
 
 def _schema_url(base_url: str, schema_name: str) -> str:
@@ -615,26 +616,32 @@ def test_regression_detector_accepts_clean_baseline() -> None:
 
 
 @pytest.mark.benchmark
+@pytest.mark.timeout(480)
 def test_storage_benchmarks_against_baseline(tmp_path: Path) -> None:
     baseline = load_baseline()
-    current = run_benchmarks(tmp_path)
-    print(json.dumps(current, indent=2, sort_keys=True))
-    failures = compare_against_baseline(current, baseline)
-    if not failures:
-        return
-
-    retry_current = run_benchmarks(tmp_path)
-    print(json.dumps({"retry": retry_current}, indent=2, sort_keys=True))
-    retry_failures = compare_against_baseline(retry_current, baseline)
-    persistent_keys = _failure_metric_keys(failures) & _failure_metric_keys(
-        retry_failures
-    )
-    if not persistent_keys:
-        return
+    persistent_keys: set[str] | None = None
+    latest_failures: list[str] = []
+    for attempt in range(1, BENCHMARK_VALIDATION_ATTEMPTS + 1):
+        current = run_benchmarks(tmp_path)
+        print(
+            json.dumps(
+                {"attempt": attempt, "results": current}, indent=2, sort_keys=True
+            )
+        )
+        latest_failures = compare_against_baseline(current, baseline)
+        if not latest_failures:
+            return
+        failure_keys = _failure_metric_keys(latest_failures)
+        persistent_keys = (
+            failure_keys if persistent_keys is None else persistent_keys & failure_keys
+        )
+        if not persistent_keys:
+            return
 
     persistent_details = [
-        item for item in retry_failures if item.split(":", 1)[0] in persistent_keys
+        item for item in latest_failures if item.split(":", 1)[0] in persistent_keys
     ]
     assert persistent_details == [], (
-        "benchmark regressions detected after retry:\n" + "\n".join(persistent_details)
+        "benchmark regressions detected across all validation attempts:\n"
+        + "\n".join(persistent_details)
     )

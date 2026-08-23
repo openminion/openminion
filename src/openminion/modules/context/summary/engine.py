@@ -70,7 +70,7 @@ class SessionSummaryEngine:
             else normalized
         )
         return " / ".join(
-            f"{turn.role}: {_truncate(turn.text, max_chars=max_chars_per_turn)}"
+            f"{turn.role}: {_edge_excerpt(turn.text, max_chars=max_chars_per_turn)}"
             for turn in selected
         ).strip()
 
@@ -114,7 +114,20 @@ def _truncate(value: str, *, max_chars: int) -> str:
     compact = " ".join(str(value or "").strip().split())
     if len(compact) <= max_chars:
         return compact
+    if max_chars <= 3:
+        return compact[:max_chars]
     return compact[: max_chars - 3].rstrip() + "..."
+
+
+def _edge_excerpt(value: str, *, max_chars: int) -> str:
+    compact = " ".join(str(value or "").strip().split())
+    if len(compact) <= max_chars:
+        return compact
+    separator = "..."
+    available = max_chars - len(separator)
+    head_chars = available // 2
+    tail_chars = available - head_chars
+    return f"{compact[:head_chars].rstrip()}{separator}{compact[-tail_chars:].lstrip()}"
 
 
 def _dedupe_summary_lines(value: str) -> str:

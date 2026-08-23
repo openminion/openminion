@@ -119,6 +119,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/memory", "Show memory inventory", "_slash_memory", "_slash_memory"
     ),
     SlashCommandMetadata(
+        "/graph",
+        "Show graph viewer commands",
+        "_slash_graph",
+        "_slash_graph",
+    ),
+    SlashCommandMetadata(
         "/tasks", "Show task inventory", "_slash_tasks", "_slash_tasks", ("/task",)
     ),
     SlashCommandMetadata(
@@ -226,6 +232,7 @@ _BUSY_SAFE_SLASH_COMMANDS = frozenset(
         "/details",
         "/editor",
         "/export",
+        "/graph",
         "/help",
         "/mcp",
         "/memory",

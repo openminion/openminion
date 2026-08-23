@@ -37,6 +37,33 @@ class _FinalizedAnswer(FinalizationStatus):
     final_answer: str = Field(min_length=1)
 
 
+def _budget_finalization_original_request(loop_ctx: AdaptiveToolLoopContext) -> str:
+    state = getattr(loop_ctx, "state", None)
+    candidates = (
+        getattr(loop_ctx, "user_input", ""),
+        getattr(state, "last_user_input", "") if state is not None else "",
+        getattr(state, "goal", "") if state is not None else "",
+        getattr(state, "pending_confirmation_last_user_input", "")
+        if state is not None
+        else "",
+    )
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _last_user_message_text(messages: list[Message]) -> str:
+    for message in reversed(messages):
+        if str(getattr(message, "role", "") or "").strip().lower() != "user":
+            continue
+        text = str(getattr(message, "content", "") or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _retry_answer_only_completion_if_needed(
     *,
     response: Any,
@@ -44,6 +71,7 @@ def _retry_answer_only_completion_if_needed(
     profile: AdaptiveToolLoopProfile,
     loop_state: AdaptiveToolLoopState,
     runtime: Any,
+    messages: list[Message],
     complete_kwargs: dict[str, Any],
     public_mode_tag: str,
     allowed_tools: list[str],
@@ -63,7 +91,7 @@ def _retry_answer_only_completion_if_needed(
     loop_state.scratchpad[retry_key] = True
     _debit_llm_usage(loop_ctx, response)
     loop_state.llm_calls += 1
-    retry_messages = list(loop_state.messages)
+    retry_messages = list(messages)
     retry_messages.extend(list(getattr(response, "assistant_messages", []) or []))
     retry_messages.append(
         Message(

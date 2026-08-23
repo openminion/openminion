@@ -10,141 +10,9 @@ from openminion.modules.storage.runtime.module_store import (
     BaseModuleStore,
 )
 from openminion.modules.storage.record_store import RecordStore
+
 from .migrations import list_migrations
-
-
-def _create_skill_schema(record_store: RecordStore) -> None:
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skills (
-            skill_id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            status TEXT NOT NULL,
-            scope TEXT NOT NULL,
-            agent_id TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skill_versions (
-            skill_id TEXT NOT NULL,
-            version_hash TEXT NOT NULL,
-            source_artifact_ref TEXT NOT NULL,
-            package_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            PRIMARY KEY (skill_id, version_hash),
-            FOREIGN KEY(skill_id) REFERENCES skills(skill_id)
-        )
-        """
-    )
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skill_index (
-            skill_id TEXT NOT NULL,
-            version_hash TEXT NOT NULL,
-            tags_json TEXT NOT NULL,
-            tools_json TEXT NOT NULL,
-            keywords_json TEXT NOT NULL,
-            applies_to_json TEXT NOT NULL,
-            PRIMARY KEY (skill_id, version_hash),
-            FOREIGN KEY(skill_id, version_hash) REFERENCES skill_versions(skill_id, version_hash)
-        )
-        """
-    )
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skill_runs (
-            run_id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            agent_id TEXT NOT NULL,
-            skill_id TEXT NOT NULL,
-            version_hash TEXT NOT NULL,
-            used_for TEXT NOT NULL,
-            outcome TEXT NOT NULL,
-            evidence_refs_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(skill_id, version_hash) REFERENCES skill_versions(skill_id, version_hash)
-        )
-        """
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skills_scope ON skills(scope, agent_id)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skills_updated ON skills(updated_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_versions_skill ON skill_versions(skill_id, created_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_runs_skill ON skill_runs(skill_id, created_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_runs_session ON skill_runs(session_id, created_at)"
-    )
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skill_proposals (
-            proposal_id TEXT PRIMARY KEY,
-            source_task_shape_ref TEXT NOT NULL,
-            proposer_policy_id TEXT NOT NULL,
-            proposed_at TEXT NOT NULL,
-            proposal_json TEXT NOT NULL,
-            queue_state TEXT NOT NULL,
-            applied_addition_json TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skill_proposal_reviews (
-            proposal_id TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            reviewer_id TEXT NOT NULL,
-            review_policy_id TEXT NOT NULL,
-            decided_at TEXT NOT NULL,
-            review_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(proposal_id) REFERENCES skill_proposals(proposal_id)
-        )
-        """
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_proposals_state ON skill_proposals(queue_state, created_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_proposals_shape ON skill_proposals(source_task_shape_ref)"
-    )
-    record_store.execute_count(
-        """
-        CREATE TABLE IF NOT EXISTS skill_suggestion_audit (
-            event_id TEXT PRIMARY KEY,
-            proposal_id TEXT NOT NULL,
-            signature TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            reason TEXT,
-            outcome TEXT,
-            surfaced_at TEXT NOT NULL
-        )
-        """
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_suggestion_audit_signature ON skill_suggestion_audit(signature, surfaced_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_suggestion_audit_event ON skill_suggestion_audit(event_type, surfaced_at)"
-    )
-    record_store.execute_count(
-        "CREATE INDEX IF NOT EXISTS idx_skill_suggestion_audit_proposal ON skill_suggestion_audit(proposal_id, surfaced_at)"
-    )
+from .schema import create_skill_schema
 
 
 class _SkillStoreMixin(SkillStore):
@@ -164,7 +32,6 @@ class _SkillStoreMixin(SkillStore):
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(skill_id) DO UPDATE SET
                 name=excluded.name,
-                status=excluded.status,
                 scope=excluded.scope,
                 agent_id=excluded.agent_id,
                 updated_at=excluded.updated_at
@@ -180,11 +47,15 @@ class _SkillStoreMixin(SkillStore):
         source_artifact_ref: str,
         package_json: str,
         created_at: str,
+        content_fingerprint: str = "",
     ) -> None:
         self._record_store.execute_count(
             """
-            INSERT INTO skill_versions(skill_id, version_hash, source_artifact_ref, package_json, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO skill_versions(
+                skill_id, version_hash, source_artifact_ref, package_json,
+                content_fingerprint, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(skill_id, version_hash) DO NOTHING
             """,
             (
@@ -192,9 +63,149 @@ class _SkillStoreMixin(SkillStore):
                 version_hash,
                 source_artifact_ref,
                 package_json,
+                content_fingerprint,
                 created_at,
             ),
         )
+
+    def get_skill_admission(
+        self, *, skill_id: str, version_hash: str
+    ) -> dict[str, Any] | None:
+        rows = self._record_store.query_dicts(
+            """
+            SELECT * FROM skill_version_admissions
+            WHERE skill_id = ? AND version_hash = ?
+            LIMIT 1
+            """,
+            (skill_id, version_hash),
+        )
+        return dict(rows[0]) if rows else None
+
+    def find_skill_version_by_fingerprint(
+        self, *, skill_id: str, content_fingerprint: str
+    ) -> dict[str, Any] | None:
+        rows = self._record_store.query_dicts(
+            """
+            SELECT sv.version_hash, sv.package_json, a.state, a.target_status
+            FROM skill_versions sv
+            LEFT JOIN skill_version_admissions a
+              ON a.skill_id = sv.skill_id AND a.version_hash = sv.version_hash
+            WHERE sv.skill_id = ? AND sv.content_fingerprint = ?
+            ORDER BY sv.created_at DESC, sv.version_hash DESC
+            LIMIT 1
+            """,
+            (skill_id, content_fingerprint),
+        )
+        return dict(rows[0]) if rows else None
+
+    def stage_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        content_fingerprint: str,
+        authority_class: str,
+        created_at: str,
+    ) -> None:
+        self._record_store.execute_count(
+            """
+            INSERT INTO skill_version_admissions(
+                skill_id, version_hash, state, target_status,
+                content_fingerprint, authority_class, reviewer_id,
+                reason, created_at, decided_at
+            ) VALUES (?, ?, 'pending', 'draft', ?, ?, NULL, NULL, ?, NULL)
+            ON CONFLICT(skill_id, version_hash) DO NOTHING
+            """,
+            (
+                skill_id,
+                version_hash,
+                content_fingerprint,
+                authority_class,
+                created_at,
+            ),
+        )
+
+    def get_active_skill_version_hash(self, *, skill_id: str) -> str | None:
+        rows = self._record_store.query_dicts(
+            "SELECT active_version_hash FROM skills WHERE skill_id = ? LIMIT 1",
+            (skill_id,),
+        )
+        if not rows:
+            return None
+        return str(rows[0].get("active_version_hash") or "").strip() or None
+
+    def activate_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        expected_active_version_hash: str | None,
+        target_status: str,
+        authority_class: str,
+        reviewer_id: str,
+        reason: str,
+        decided_at: str,
+    ) -> bool:
+        with self._record_store.transaction():
+            versions = self._record_store.query_dicts(
+                """
+                SELECT content_fingerprint FROM skill_versions
+                WHERE skill_id = ? AND version_hash = ?
+                """,
+                (skill_id, version_hash),
+            )
+            if not versions:
+                raise KeyError(f"skill version not found: {skill_id}@{version_hash}")
+            if expected_active_version_hash is None:
+                updated = self._record_store.execute_count(
+                    """
+                    UPDATE skills SET active_version_hash = ?, status = ?, updated_at = ?
+                    WHERE skill_id = ? AND active_version_hash IS NULL
+                    """,
+                    (version_hash, target_status, decided_at, skill_id),
+                )
+            else:
+                updated = self._record_store.execute_count(
+                    """
+                    UPDATE skills SET active_version_hash = ?, status = ?, updated_at = ?
+                    WHERE skill_id = ? AND active_version_hash = ?
+                    """,
+                    (
+                        version_hash,
+                        target_status,
+                        decided_at,
+                        skill_id,
+                        expected_active_version_hash,
+                    ),
+                )
+            if updated != 1:
+                return False
+            self._record_store.execute_count(
+                """
+                INSERT INTO skill_version_admissions(
+                    skill_id, version_hash, state, target_status,
+                    content_fingerprint, authority_class, reviewer_id,
+                    reason, created_at, decided_at
+                ) VALUES (?, ?, 'admitted', ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id, version_hash) DO UPDATE SET
+                    state='admitted', target_status=excluded.target_status,
+                    authority_class=excluded.authority_class,
+                    reviewer_id=excluded.reviewer_id, reason=excluded.reason,
+                    decided_at=excluded.decided_at
+                """,
+                (
+                    skill_id,
+                    version_hash,
+                    target_status,
+                    str(versions[0].get("content_fingerprint") or ""),
+                    authority_class,
+                    reviewer_id,
+                    reason,
+                    decided_at,
+                    decided_at,
+                ),
+            )
+            return True
 
     def upsert_skill_index(
         self,
@@ -242,17 +253,34 @@ class _SkillStoreMixin(SkillStore):
         else:
             rows = self._record_store.query_dicts(
                 """
-                SELECT package_json
-                FROM skill_versions
-                WHERE skill_id = ?
-                ORDER BY created_at DESC, version_hash DESC
+                SELECT sv.package_json, a.target_status
+                FROM skills s
+                JOIN skill_versions sv ON sv.skill_id = s.skill_id
+                    AND sv.version_hash = COALESCE(
+                        s.active_version_hash,
+                        CASE WHEN NOT EXISTS (
+                            SELECT 1 FROM skill_version_admissions pending
+                            WHERE pending.skill_id = s.skill_id
+                        ) THEN (
+                            SELECT version_hash FROM skill_versions legacy
+                            WHERE legacy.skill_id = s.skill_id
+                            ORDER BY created_at DESC, version_hash DESC LIMIT 1
+                        ) END
+                    )
+                LEFT JOIN skill_version_admissions a
+                    ON a.skill_id = sv.skill_id AND a.version_hash = sv.version_hash
+                WHERE s.skill_id = ?
                 LIMIT 1
                 """,
                 (skill_id,),
             )
         if not rows:
             return None
-        return _json_loads(str(rows[0]["package_json"]), {})
+        package = _json_loads(str(rows[0]["package_json"]), {})
+        target_status = rows[0].get("target_status")
+        if not version_hash and target_status:
+            package["status"] = str(target_status)
+        return package
 
     def list_latest_skills(
         self,
@@ -292,15 +320,23 @@ class _SkillStoreMixin(SkillStore):
                 s.status,
                 s.scope,
                 s.agent_id,
+                s.active_version_hash,
+                EXISTS(
+                    SELECT 1 FROM skill_version_admissions a
+                    WHERE a.skill_id = s.skill_id
+                ) AS has_admission,
                 sv.version_hash,
                 sv.package_json,
                 sv.created_at,
+                a.target_status,
                 si.tags_json,
                 si.tools_json,
                 si.keywords_json,
                 si.applies_to_json
             FROM skills s
             JOIN skill_versions sv ON sv.skill_id = s.skill_id
+            LEFT JOIN skill_version_admissions a
+              ON a.skill_id = sv.skill_id AND a.version_hash = sv.version_hash
             LEFT JOIN skill_index si ON si.skill_id = sv.skill_id AND si.version_hash = sv.version_hash
             {where_sql}
             ORDER BY s.skill_id ASC, sv.created_at DESC, sv.version_hash DESC
@@ -311,8 +347,16 @@ class _SkillStoreMixin(SkillStore):
         latest: dict[str, dict[str, Any]] = {}
         for row in rows:
             skill_key = str(row["skill_id"])
+            active_hash = str(row.get("active_version_hash") or "")
+            if not active_hash and bool(row.get("has_admission")):
+                continue
+            if active_hash and str(row["version_hash"]) != active_hash:
+                continue
             if skill_key in latest:
                 continue
+            package = _json_loads(str(row["package_json"]), {})
+            if row.get("target_status"):
+                package["status"] = str(row["target_status"])
             latest[skill_key] = {
                 "skill_id": skill_key,
                 "name": str(row["name"]),
@@ -320,7 +364,7 @@ class _SkillStoreMixin(SkillStore):
                 "scope": str(row["scope"]),
                 "agent_id": row["agent_id"],
                 "version_hash": str(row["version_hash"]),
-                "package": _json_loads(str(row["package_json"]), {}),
+                "package": package,
                 "created_at": str(row["created_at"]),
                 "tags": _json_loads(row["tags_json"], []),
                 "tools": _json_loads(row["tools_json"], []),
@@ -383,6 +427,15 @@ class _SkillStoreMixin(SkillStore):
     ) -> dict[str, int]:
         with self._record_store.transaction():
             if version_hash:
+                self._record_store.execute_count(
+                    "UPDATE skills SET active_version_hash = NULL "
+                    "WHERE skill_id = ? AND active_version_hash = ?",
+                    (skill_id, version_hash),
+                )
+                self._record_store.execute_count(
+                    "DELETE FROM skill_version_admissions WHERE skill_id = ? AND version_hash = ?",
+                    (skill_id, version_hash),
+                )
                 runs = self._record_store.execute_count(
                     "DELETE FROM skill_runs WHERE skill_id = ? AND version_hash = ?",
                     (skill_id, version_hash),
@@ -406,6 +459,10 @@ class _SkillStoreMixin(SkillStore):
                         (skill_id,),
                     )
             else:
+                self._record_store.execute_count(
+                    "DELETE FROM skill_version_admissions WHERE skill_id = ?",
+                    (skill_id,),
+                )
                 runs = self._record_store.execute_count(
                     "DELETE FROM skill_runs WHERE skill_id = ?",
                     (skill_id,),
@@ -771,7 +828,7 @@ class SQLiteSkillStore(BaseModuleSQLiteStore, _SkillStoreMixin):
 
     def _init_schema(self) -> None:
         with self._lock:
-            _create_skill_schema(self._record_store)
+            create_skill_schema(self._record_store)
 
     def _list_migrations(self) -> list[str]:
         return list_migrations()
@@ -786,7 +843,7 @@ class PostgresSkillStore(BaseModuleStore, _SkillStoreMixin):
 
     def _init_schema(self) -> None:
         with self._lock:
-            _create_skill_schema(self._record_store)
+            create_skill_schema(self._record_store)
 
     def _list_migrations(self) -> list[str]:
         return list_migrations()

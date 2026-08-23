@@ -8,6 +8,10 @@ from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
     CronStoreProtocol,
 )
+from openminion.modules.task.scheduling.coordination import (
+    persist_cron_run_outcome,
+    recover_and_acquire_cron_runs,
+)
 
 if TYPE_CHECKING:
     from openminion.services.supervision import SupervisionPolicy
@@ -64,6 +68,7 @@ CronDeliveryHandler = Callable[
     [str, str, dict[str, Any], dict[str, Any], CronExecutionResult], None
 ]
 CronEventHook = Callable[[str, dict[str, Any]], None]
+CronAdmissionProbe = Callable[[], bool]
 
 
 @dataclass
@@ -89,6 +94,7 @@ class CronScheduler:
         execute_agent_turn: CronExecutor | None = None,
         delivery_handler: CronDeliveryHandler | None = None,
         on_event: CronEventHook | None = None,
+        can_start_background_work: CronAdmissionProbe | None = None,
     ) -> None:
         self._store = store
         self._daemon_id = str(daemon_id or uuid4().hex).strip()
@@ -105,6 +111,7 @@ class CronScheduler:
         )
         self._delivery_handler = delivery_handler
         self._on_event = on_event
+        self._can_start_background_work = can_start_background_work or (lambda: True)
 
         self._lock = RLock()
         self._stop_event = Event()
@@ -189,15 +196,13 @@ class CronScheduler:
 
             if capacity > 0:
                 try:
-                    self._store.enqueue_due_cron_runs(
-                        self._daemon_id,
-                        lease_ttl_s=self._lease_ttl_seconds,
-                        max_jobs=max(1, capacity * 2),
-                    )
-                    runs = self._store.acquire_cron_runs(
-                        self._daemon_id,
-                        lease_ttl_s=self._lease_ttl_seconds,
-                        limit=capacity,
+                    runs = recover_and_acquire_cron_runs(
+                        store=self._store,
+                        daemon_id=self._daemon_id,
+                        lease_ttl_seconds=self._lease_ttl_seconds,
+                        capacity=capacity,
+                        can_start_background_work=self._can_start_background_work,
+                        emit=self._emit,
                     )
                     for run in runs:
                         self._start_worker(run)
@@ -271,6 +276,7 @@ class CronScheduler:
         state = "finished"
         error: dict[str, Any] | None = None
         result = CronExecutionResult()
+        job: dict[str, Any] | None = None
 
         try:
             if not job_id:
@@ -307,14 +313,19 @@ class CronScheduler:
             stop_event.set()
             if renew_thread.is_alive():
                 renew_thread.join(timeout=1.0)
+            persisted_state = state
             try:
-                self._store.finish_cron_run(
-                    run_id,
+                persisted_state = persist_cron_run_outcome(
+                    store=self._store,
+                    run_id=run_id,
+                    job_id=job_id,
                     state=state,
-                    summary=result.summary if result.summary else None,
+                    summary=result.summary,
                     artifact_refs=result.artifact_refs,
+                    output=result.output,
                     error=error,
                     isolated_session_id=result.isolated_session_id,
+                    emit=self._emit,
                 )
             except Exception as exc:
                 self._emit(
@@ -327,7 +338,7 @@ class CronScheduler:
                 {
                     "run_id": run_id,
                     "job_id": job_id,
-                    "state": state,
+                    "state": persisted_state,
                     "summary": result.summary,
                     "error": error,
                 },
@@ -463,6 +474,10 @@ class CronScheduler:
         if isinstance(value, str):
             return CronExecutionResult(summary=value)
         if isinstance(value, dict):
+            if bool(value.get("error", False)):
+                raise RuntimeError(
+                    str(value.get("summary") or "cron executor reported failure")
+                )
             summary = str(value.get("summary", "") or "").strip()
             artifact_refs_raw = value.get("artifact_refs", [])
             artifact_refs = (

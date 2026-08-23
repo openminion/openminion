@@ -79,6 +79,7 @@ _INT_MIN_DEFAULTS = (
     ("agent_loop_max_steps", 1, 4),
     ("agent_loop_tool_result_max_chars", 256, 4000),
     ("brain_turn_timeout_seconds", 1, 120),
+    ("provider_retry_max_attempts", 1, 3),
     ("memory_retrieval_max_chars", 256, 2000),
     ("memory_log_retention_days", 1, 30),
     ("memory_max_facts", 1, 200),
@@ -121,9 +122,8 @@ def _parse_telemetry_exporter_config(raw: Any) -> OTELExporterConfig:
     if isinstance(headers_raw, dict):
         for key, value in headers_raw.items():
             clean_key = str(key or "").strip()
-            if not clean_key:
-                continue
-            headers[clean_key] = str(value or "")
+            if clean_key:
+                headers[clean_key] = str(value or "")
     include_assistant_body = _as_bool(raw.get("include_assistant_body"), False)
     return OTELExporterConfig(
         enabled=_as_bool(raw.get("enabled"), False),

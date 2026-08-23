@@ -12,6 +12,8 @@ from openminion.cli.theme import DARK
 from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.presentation.models import MessageKind
 from openminion.cli.interactive.widgets import FocusTranscript
+from openminion.modules.telemetry.schemas import TelemetryEvent
+from openminion.modules.telemetry.service import TelemetryService
 
 
 @pytest.fixture(autouse=True)
@@ -203,6 +205,20 @@ async def test_mcp_command_renders_status_report() -> None:
 
 
 @pytest.mark.asyncio
+async def test_graph_command_surfaces_viewer_commands() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DemoFocusRuntime(working_dir=tmp, session="graph-test")
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.screen._handle_command("/graph current --node-kind fact")
+            await pilot.pause()
+            body = _last_system_body(app.screen.query_one(FocusTranscript))
+
+    assert "openminion graph view --current --node-kind fact" in body
+
+
+@pytest.mark.asyncio
 async def test_compact_command_surfaces_not_supported_when_hook_missing() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runtime = _DemoFocusRuntime(working_dir=tmp, session="compact-test")
@@ -311,6 +327,54 @@ class _TelemetrySlashHarness(SlashCommandMixin):
 
     def _push_system_body(self, body: str) -> None:
         self.messages.append(body)
+
+
+def _record_focus_telemetry_invocation(data_root: Path) -> None:
+    service = TelemetryService(
+        data_root / "telemetry" / "telemetry.db",
+        env={
+            "OPENMINION_HOME": str(data_root),
+            "OPENMINION_DATA_ROOT": str(data_root),
+        },
+    )
+    service.record_event_sync(
+        TelemetryEvent(
+            session_id="focus-session",
+            turn_id="focus-turn",
+            invocation_id="focus-invocation",
+            agent_id="focus-agent",
+            event_type="agent.invocation.started",
+            timestamp=1.0,
+            event_id="focus-start",
+        )
+    )
+    service.record_event_sync(
+        TelemetryEvent(
+            session_id="focus-session",
+            turn_id="focus-turn",
+            invocation_id="focus-invocation",
+            agent_id="focus-agent",
+            event_type="agent.invocation.completed",
+            timestamp=2.0,
+            event_id="focus-completed",
+            data={"status": "completed"},
+        )
+    )
+    service.close_sync()
+
+
+def test_focus_telemetry_uses_slash_actions_and_labels_shell_command(
+    tmp_path: Path,
+) -> None:
+    _record_focus_telemetry_invocation(tmp_path)
+    harness = _TelemetrySlashHarness(tmp_path)
+
+    harness._handle_command("/telemetry")
+
+    body = harness.messages[-1]
+    assert "next: /telemetry failed | /telemetry invocation focus-invocation" in body
+    assert "shell: telemetryctl debug bundle focus-invocation" in body
+    assert "next: telemetryctl" not in body
 
 
 def test_focus_telemetry_and_trace_errors_stay_local(tmp_path: Path) -> None:

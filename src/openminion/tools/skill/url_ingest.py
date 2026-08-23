@@ -328,8 +328,7 @@ def ingest_skill_url(
     name: str | None = None,
     scope: str = "global",
     max_snippet_tokens: int = 500,
-    enforce_safety: bool = True,
-    trust: str | None = None,
+    authority: Any = None,
 ) -> dict[str, Any]:
     fetch_result = fetch_skill_markdown_from_url(url)
     if not fetch_result["ok"]:
@@ -348,7 +347,7 @@ def ingest_skill_url(
 
     risk_level, issues = scan(markdown)
     safe = risk_level != "critical"
-    if enforce_safety and not safe:
+    if not safe:
         return {
             "ok": False,
             "error": {
@@ -358,7 +357,7 @@ def ingest_skill_url(
             "risk_level": risk_level,
             "safe": False,
             "issues": issues,
-            "safety_enforced": enforce_safety,
+            "safety_enforced": True,
             "source_type": "url",
             "source_url": url,
             "name": resolved_name,
@@ -373,8 +372,7 @@ def ingest_skill_url(
             name=resolved_name,
             markdown=markdown,
             scope=scope,
-            trust=trust,
-            promotion_path="runtime",
+            authority=authority,
         )
     except Exception as exc:
         return {
@@ -410,7 +408,7 @@ def ingest_skill_url(
         "risk_level": risk_level,
         "safe": safe,
         "issues": issues,
-        "safety_enforced": enforce_safety,
+        "safety_enforced": True,
         "source_type": "url",
         "source_url": url,
         "name": resolved_name,

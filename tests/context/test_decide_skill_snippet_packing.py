@@ -15,6 +15,7 @@ from openminion.modules.context.service import (
     _apply_mode_budget_bias,
 )
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 
 
 _SKILL_MARKDOWN = """
@@ -145,9 +146,10 @@ def test_act_mode_bias_bumps_skill_budget() -> None:
 def test_decide_build_pack_includes_skill_snippet_segment(tmp_path: Path) -> None:
     skillctl = Skill(_skill_cfg(tmp_path))
     try:
-        skill_id, version_hash, _ = skillctl.ingest_text(
-            name="Deploy Checker",
-            markdown=_SKILL_MARKDOWN,
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            skillctl,
+            "Deploy Checker",
+            _SKILL_MARKDOWN,
         )
         service = ContextCtlService(
             identityctl=_DecideIdentityClient(),

@@ -180,6 +180,7 @@ class AdaptiveToolLoopLLMRuntime(Protocol):
 class AdaptiveToolLoopContext(Protocol):
     state: WorkingState
     session_api: Any | None
+    provider_retry_max_attempts: int
 
     def execute_command(
         self,

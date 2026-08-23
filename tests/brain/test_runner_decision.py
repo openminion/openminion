@@ -529,6 +529,90 @@ class RunnerDecisionTests(unittest.TestCase):
         self.assertEqual(len(sleep_calls), 1)
         self.assertGreater(sleep_calls[0], 0.0)
 
+    def test_decide_honors_single_attempt_and_records_provider_request_id(
+        self,
+    ) -> None:
+        llm_api = _StaticEntryLLM(
+            LLMCtlError(
+                "PROVIDER_ERROR",
+                "Bad Gateway",
+                {"status_code": 502, "request_id": "portal-request-1"},
+            )
+        )
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=llm_api,
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+            options=RunnerOptions(provider_retry_max_attempts=1),
+        )
+        state = WorkingState(
+            session_id="s-no-provider-retry",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+        )
+        logger = MagicMock()
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+        ):
+            decision = runner._decide(
+                state=state,
+                user_input="hi",
+                logger=logger,
+            )
+
+        self.assertEqual(decision.reason_code, "provider_error")
+        self.assertEqual(llm_api.call_count, 1)
+        retry_events = [
+            call
+            for call in logger.emit.call_args_list
+            if call.args and call.args[0] == "llm.call.retry"
+        ]
+        self.assertEqual(retry_events, [])
+        failed_event = next(
+            call
+            for call in logger.emit.call_args_list
+            if call.args and call.args[0] == "llm.call.failed"
+        )
+        self.assertEqual(failed_event.args[1]["request_id"], "portal-request-1")
+
+    def test_decide_records_successful_provider_request_id(self) -> None:
+        response = _entry_text_response("ok")
+        response.telemetry = {"request_id": "portal-request-2"}
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=_StaticEntryLLM(response),
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id="s-provider-request-id",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+        )
+        logger = MagicMock()
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+        ):
+            runner._decide(state=state, user_input="hi", logger=logger)
+
+        completed_event = next(
+            call
+            for call in logger.emit.call_args_list
+            if call.args and call.args[0] == "llm.call.completed"
+        )
+        self.assertEqual(completed_event.args[1]["request_id"], "portal-request-2")
+
     def test_decide_does_not_retry_invalid_argument(self) -> None:
         """AR-04 (2026-06-18): a deterministic 400 / INVALID_ARGUMENT fault
         is NOT retried — retrying a malformed request just burns budget.

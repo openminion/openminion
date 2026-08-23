@@ -21,8 +21,10 @@ from openminion.modules.brain.loop import adaptive
 from openminion.modules.brain.loop.adaptive import context as adaptive_context
 from openminion.modules.brain.loop.adaptive import modes as adaptive_modes
 from openminion.modules.brain.loop.adaptive.tool_scope import (
+    _prepare_entry_selected_tool_scope,
     _with_entry_selected_allowed_tools,
 )
+from openminion.modules.prompting.decision import build_entry_inactive_tool_directory
 from openminion.modules.brain.loop.adaptive import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     ActLoopMode,
@@ -725,6 +727,35 @@ def test_entry_selected_runtime_tool_is_added_only_for_entry_tool_calls() -> Non
         decision_reason_code="respond",
         entry_response=response,
     ) == frozenset({"file.read"})
+
+
+def test_entry_selected_runtime_tool_survives_schema_shortlisting() -> None:
+    response = SimpleNamespace(tool_calls=[SimpleNamespace(name="memory.write")])
+    full_specs = [
+        SimpleNamespace(name="file.read"),
+        SimpleNamespace(name="memory.write"),
+    ]
+    scratchpad: dict[str, Any] = {}
+
+    active, requestable = _prepare_entry_selected_tool_scope(
+        full_specs,
+        response,
+        scratchpad,
+    )
+
+    assert [spec.name for spec in active] == ["memory.write"]
+    assert requestable == full_specs
+    assert scratchpad["tool_schema_shortlisting.reason"] == "entry_selected_tool"
+
+
+def test_entry_inactive_tool_directory_uses_visible_activation_control() -> None:
+    rendered = build_entry_inactive_tool_directory(
+        [SimpleNamespace(name="memory.write", description="Store a memory.")]
+    )
+
+    assert "cannot be called directly" in rendered
+    assert "provider-safe `tool_request`" in rendered
+    assert "- memory.write: Store a memory." in rendered
 
 
 def test_context_adapter_dispatch_fallbacks_and_confirmation_paths() -> None:

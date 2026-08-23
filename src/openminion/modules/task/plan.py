@@ -103,6 +103,7 @@ class TaskPlan(BaseModel):
     plan_id: str = Field(min_length=1)
     objective: str = Field(min_length=1)
     workflow_id: str | None = None
+    workflow_version_hash: str | None = None
     root_goal_id: str | None = None
     status: TaskPlanStatus = "active"
     steps: list[TaskPlanStep] = Field(min_length=1)
@@ -113,7 +114,9 @@ class TaskPlan(BaseModel):
     def _strip_required_text(cls, value: Any) -> str:
         return _trimmed_non_empty(value)
 
-    @field_validator("workflow_id", "root_goal_id", mode="before")
+    @field_validator(
+        "workflow_id", "workflow_version_hash", "root_goal_id", mode="before"
+    )
     @classmethod
     def _optional_identifier(cls, value: Any) -> str | None:
         return _trimmed_non_empty(value) or None
@@ -197,6 +200,7 @@ class TaskPlanRevision(BaseModel):
     revised_steps: list[TaskPlanStep] = Field(min_length=1)
     objective: str | None = None
     workflow_id: str | None = None
+    workflow_version_hash: str | None = None
     continue_plan_autonomously: bool = False
 
     @field_validator("plan_id", mode="before")
@@ -209,7 +213,7 @@ class TaskPlanRevision(BaseModel):
     def _strip_reason(cls, value: Any) -> str:
         return _trimmed_non_empty(value)
 
-    @field_validator("objective", "workflow_id", mode="before")
+    @field_validator("objective", "workflow_id", "workflow_version_hash", mode="before")
     @classmethod
     def _optional_text(cls, value: Any) -> str | None:
         return _trimmed_non_empty(value) or None
@@ -219,11 +223,15 @@ class TaskPlanRevision(BaseModel):
         *,
         fallback_objective: str,
         fallback_workflow_id: str | None = None,
+        fallback_workflow_version_hash: str | None = None,
     ) -> TaskPlan:
         return TaskPlan(
             plan_id=self.plan_id,
             objective=self.objective or fallback_objective,
             workflow_id=self.workflow_id or fallback_workflow_id,
+            workflow_version_hash=(
+                self.workflow_version_hash or fallback_workflow_version_hash
+            ),
             root_goal_id=None,
             status="active",
             steps=list(self.revised_steps),

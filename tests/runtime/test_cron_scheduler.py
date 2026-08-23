@@ -99,6 +99,22 @@ class FakeCronStore:
             self.renew_counts[run_id] = self.renew_counts.get(run_id, 0) + 1
             return True
 
+    def recover_expired_cron_runs(
+        self, *, now_iso: str | None = None, limit: int = 100
+    ) -> list[dict]:
+        del now_iso, limit
+        return []
+
+    def retry_cron_run(
+        self,
+        run_id: str,
+        *,
+        error: dict,
+        now_iso: str | None = None,
+    ) -> dict | None:
+        del run_id, error, now_iso
+        return None
+
     def get_cron_job(self, job_id: str) -> dict | None:
         with self._lock:
             job = self.jobs.get(job_id)
@@ -112,6 +128,7 @@ class FakeCronStore:
         summary: str | None = None,
         artifact_refs: list[dict] | None = None,
         error: dict | None = None,
+        output: dict | None = None,
         isolated_session_id: str | None = None,
         now_iso: str | None = None,
     ) -> dict | None:
@@ -123,6 +140,7 @@ class FakeCronStore:
             run["state"] = state
             run["summary"] = summary
             run["error"] = error
+            run["output"] = output or {}
             run["isolated_session_id"] = isolated_session_id
             self.finished_count += 1
             self.finished.set()

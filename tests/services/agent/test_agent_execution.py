@@ -208,9 +208,9 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         self.assertEqual(response.text, "valid reply")
         self.assertEqual(provider.call_count, 2)
 
-    def test_repeated_initial_marked_response_raises_typed_provider_error(self) -> None:
+    def test_repeated_initial_marked_response_honors_provider_retry_limit(self) -> None:
         marked = _recovered_empty_response()
-        provider = _RecoveredEmptySequenceProvider(marked, marked)
+        provider = _RecoveredEmptySequenceProvider(marked, marked, marked)
         config = OpenMinionConfig()
         _csc_install_default_agent(config)  # type: ignore[attr-defined]
         service = AgentService(
@@ -226,7 +226,27 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
             )
 
         self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
-        self.assertEqual(provider.call_count, 2)
+        self.assertEqual(provider.call_count, 3)
+
+    def test_initial_marked_response_honors_single_provider_attempt(self) -> None:
+        provider = _RecoveredEmptySequenceProvider(_recovered_empty_response())
+        config = OpenMinionConfig()
+        config.runtime.provider_retry_max_attempts = 1
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            provider,
+            logging.getLogger("openminion.tests"),
+        )
+
+        with self.assertRaises(ProviderError) as raised:
+            asyncio.run(
+                service.run_turn(Message(channel="console", target="me", body="hello"))
+            )
+
+        self.assertEqual(raised.exception.code, "EMPTY_PROVIDER_RESPONSE")
+        self.assertEqual(provider.call_count, 1)
 
     def test_post_tool_marked_response_retries_once_and_keeps_tool_result(self) -> None:
         marked = _recovered_empty_response()

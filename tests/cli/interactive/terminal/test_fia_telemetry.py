@@ -24,8 +24,15 @@ def _record_invocation(
     invocation_id: str,
     *,
     terminal_event: str = "agent.invocation.failed",
+    trace_path: str | None = None,
 ) -> None:
-    service = TelemetryService(data_root / "telemetry" / "telemetry.db")
+    service = TelemetryService(
+        data_root / "telemetry" / "telemetry.db",
+        env={
+            "OPENMINION_HOME": str(data_root),
+            "OPENMINION_DATA_ROOT": str(data_root),
+        },
+    )
 
     async def record() -> None:
         await service.record_event(
@@ -41,6 +48,23 @@ def _record_invocation(
             )
         )
         status = terminal_event.rsplit(".", maxsplit=1)[-1]
+        if trace_path:
+            await service.record_event(
+                TelemetryEvent(
+                    session_id="session-1",
+                    turn_id="turn-1",
+                    invocation_id=invocation_id,
+                    agent_id="agent-1",
+                    event_type="llm.call.completed",
+                    timestamp=1.5,
+                    event_id="call-1",
+                    data={
+                        "llm_call_id": "call-1",
+                        "trace_artifact_paths": [trace_path],
+                        "trace_artifacts_complete": True,
+                    },
+                )
+            )
         terminal_data = {"status": status}
         if status == "failed":
             terminal_data["error"] = {"type": "TEST_FAILURE"}
@@ -103,7 +127,29 @@ def test_terminal_telemetry_labels_latest_completed_invocation(
 
     assert output.startswith("latest invocation")
     assert "latest failed invocation" not in output
-    assert "telemetryctl debug bundle invocation-completed" in output
+    assert (
+        "next: /telemetry failed | /telemetry invocation invocation-completed" in output
+    )
+    assert "shell: telemetryctl debug bundle invocation-completed" in output
+    assert "next: telemetryctl" not in output
+
+
+def test_terminal_trace_show_labels_explicit_raw_shell_access(
+    tmp_path: Path,
+) -> None:
+    relative = "llm/agent-1/run-1/step01-call01-structured.json"
+    trace_path = tmp_path / "traces" / relative
+    trace_path.parent.mkdir(parents=True)
+    trace_path.write_text('{"prompt":"hidden"}', encoding="utf-8")
+    _record_invocation(tmp_path, "invocation-trace", trace_path=relative)
+    runtime = _Runtime(tmp_path)
+
+    _run_slash("/telemetry", runtime, tmp_path)
+    output = _run_slash(f"/trace show {relative}", runtime, tmp_path)
+
+    assert "prompt" not in output
+    assert "hidden" not in output
+    assert f"shell (raw content): telemetryctl trace show {relative} --raw" in output
 
 
 def test_terminal_telemetry_usage_and_missing_store_do_not_fall_through(

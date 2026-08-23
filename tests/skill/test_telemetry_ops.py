@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_text_and_admit
 from openminion.modules.skill.diagnostics.events import emit_skill_operation
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 
@@ -34,7 +35,8 @@ def test_skill_service_emits_shortlist_expand_select_and_fallback(
     ctl = TelemetryCtl(telemetry)
     skill = Skill(_cfg(tmp_path), telemetryctl=ctl)
     skill.set_telemetry_context(session_id="sess-skill", turn_id="turn-1")
-    skill_id, version_hash, warnings = skill.ingest_text(
+    skill_id, version_hash, warnings = ingest_text_and_admit(
+        skill,
         name="Restart Docker Services Safely",
         markdown=DOCKER_SKILL,
     )

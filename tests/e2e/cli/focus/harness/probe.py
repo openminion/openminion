@@ -99,9 +99,21 @@ def latest_done_event(transcript: str, *, offset: int) -> re.Match[str] | None:
     return match
 
 
-def latest_terminal_failure(
-    transcript: str, *, offset: int
+def latest_done_after_submission(
+    transcript: str,
+    submission_probe: str,
 ) -> re.Match[str] | None:
+    """Return completion rendered after the latest submitted composer input."""
+    trailing = screen_after_submission(transcript, submission_probe)
+    if trailing is None:
+        return None
+    match: re.Match[str] | None = None
+    for match in _DONE_RE.finditer(trailing):
+        pass
+    return match
+
+
+def latest_terminal_failure(transcript: str, *, offset: int) -> re.Match[str] | None:
     visible_offset = _visible_offset(transcript, offset=offset)
     return _TERMINAL_FAILURE_RE.search(visible_text(transcript), visible_offset)
 
@@ -151,13 +163,19 @@ def inline_approval_menu(screen_text: str) -> str | None:
     ]
     if compact_matches:
         latest_compact = compact_matches[-1]
-        if _compact_approval_inline_status_follows(
-            screen_text,
-            match=latest_compact,
-        ) or _compact_approval_active_tool_follows(
-            screen_text,
-            match=latest_compact,
-        ) or not _interactive_surface_follows(screen_text, offset=latest_compact.end()):
+        if (
+            _compact_approval_inline_status_follows(
+                screen_text,
+                match=latest_compact,
+            )
+            or _compact_approval_active_tool_follows(
+                screen_text,
+                match=latest_compact,
+            )
+            or not _interactive_surface_follows(
+                screen_text, offset=latest_compact.end()
+            )
+        ):
             return "compact"
     legacy_matches = list(_LEGACY_INLINE_APPROVAL_RE.finditer(screen_text))
     if legacy_matches and not _interactive_surface_follows(
@@ -173,11 +191,14 @@ def _compact_approval_answered(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.search(
-        r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
-        trailing,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\r?\n|[ \t]*$)",
+            trailing,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _compact_approval_submitted(
@@ -186,11 +207,14 @@ def _compact_approval_submitted(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.search(
-        r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)[ \t]*\r?\n",
-        trailing,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.search(
+            r"(?:^|\r?\n)[ \t]*(?:y|yes|a|always|n|no)[ \t]*\r?\n",
+            trailing,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _compact_approval_inline_status_follows(
@@ -642,12 +666,17 @@ class FocusProbe:
         event_offset = len(session.visible_transcript)
         approvals = 0
         continuations = 0
+        continuation_probe: str | None = None
         deadline = time.monotonic() + scenario.timeout
         while time.monotonic() < deadline:
             time.sleep(0.1)
             transcript = session.visible_transcript
             screen_text = session.screen_text
-            done_match = latest_done_event(transcript, offset=event_offset)
+            done_match = (
+                latest_done_after_submission(transcript, continuation_probe)
+                if continuation_probe is not None
+                else latest_done_event(transcript, offset=event_offset)
+            )
             failure_match = latest_terminal_failure(transcript, offset=event_offset)
             approval_needs_reply = approval_prompt_needs_reply(
                 transcript,
@@ -690,7 +719,10 @@ class FocusProbe:
                     and continuations < scenario.max_auto_continuations
                 ):
                     continuations += 1
-                    session.send("continue\r")
+                    continuation_probe = self._submit_composer_line(
+                        session,
+                        "continue",
+                    )
                     event_offset = len(session.visible_transcript)
                     deadline = time.monotonic() + scenario.timeout
                     continue

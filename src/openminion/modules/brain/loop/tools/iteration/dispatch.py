@@ -13,6 +13,7 @@ from openminion.modules.llm.schemas import Message
 from ..budget_control import _effective_cap
 from ..contracts import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
+    ADAPTIVE_TERM_FINAL_TEXT,
     AdaptiveToolLoopContext,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
@@ -35,6 +36,7 @@ from ..dispatch import (
 from ..evidence import _count_substantive_non_control_tool_results
 from ..messages import action_result_to_tool_message
 from ..plan_control import (
+    PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
     PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY,
     PLAN_TOOL_NAME,
@@ -187,6 +189,47 @@ def _record_successful_plan_action(
     loop_state.scratchpad[PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY] = recorded_actions
     loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
         _count_substantive_non_control_tool_results(loop_state)
+    )
+
+
+def _autonomous_plan_continuation_result(
+    *,
+    summary: str,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    batch_had_progress: bool,
+) -> LoopDispatchResult:
+    loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name=profile.profile_name,
+        mode_name=profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=loop_state,
+        allowed_tools=profile.allowed_tools,
+        final_text=summary,
+    )
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=batch_had_progress,
+        continue_loop=False,
+        outcome=outcome,
+    )
+
+
+def _continue_after_plan_control_result(
+    *, batch_had_progress: bool
+) -> LoopDispatchResult:
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        batch_had_progress=batch_had_progress,
+        continue_loop=True,
+        outcome=None,
     )
 
 
@@ -387,6 +430,7 @@ def _process_plan_tool_calls(
     set_turn_progress: Any,
 ) -> tuple[list[Any], bool, LoopDispatchResult | None]:
     batch_had_progress = False
+    autonomous_continuation_summary = ""
     plan_tool_calls = [
         tool_call for tool_call in tool_calls if _is_plan_tool_call(tool_call)
     ]
@@ -402,6 +446,11 @@ def _process_plan_tool_calls(
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
             _record_successful_plan_action(loop_state, arguments)
+            outputs = dict(getattr(action_result, "outputs", {}) or {})
+            if bool(outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, False)):
+                autonomous_continuation_summary = str(
+                    getattr(action_result, "summary", "") or ""
+                ).strip()
         loop_state.messages.append(
             action_result_to_tool_message(
                 getattr(tool_call, "id", None),
@@ -450,19 +499,18 @@ def _process_plan_tool_calls(
             tool_records=iter_tool_records,
             tokens_used=iter_input_tokens + iter_output_tokens,
         )
-        return (
-            [],
-            batch_had_progress,
-            LoopDispatchResult(
-                tool_calls=[],
-                ordered_tool_results=[],
-                cached_indices=frozenset(),
-                iter_batch_parallel_count=0,
+        if autonomous_continuation_summary:
+            result = _autonomous_plan_continuation_result(
+                summary=autonomous_continuation_summary,
+                profile=profile,
+                loop_state=loop_state,
                 batch_had_progress=batch_had_progress,
-                continue_loop=True,
-                outcome=None,
-            ),
+            )
+            return [], batch_had_progress, result
+        result = _continue_after_plan_control_result(
+            batch_had_progress=batch_had_progress
         )
+        return [], batch_had_progress, result
     return regular_tool_calls, batch_had_progress, None
 
 

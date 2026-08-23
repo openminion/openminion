@@ -1,5 +1,4 @@
 import json
-import sys
 from typing import Any, Optional
 
 from openminion.base.types import AgentResponse, Message
@@ -228,13 +227,15 @@ async def _complete_unforced_lane(
         system_prompt=runtime.system_prompt,
         history=runtime.provider_history,
     )
-    for _ in range(2):
+    for _ in range(service._config.runtime.provider_retry_max_attempts):
         response = await executor.call_provider(
             request, tool_call_strategy=tool_call_strategy
         )
         if not response.empty_payload_recovered:
             break
-    response.raise_for_recovered_empty("Empty initial response after retry")
+    response.raise_for_recovered_empty(
+        "Empty initial response after configured retries"
+    )
     unforced_result = await _handle_unforced_provider_response(
         service,
         executor=executor,
@@ -437,6 +438,6 @@ class AgentTurnFlowMixin:
                 finalize_response=_finalize_response,
             )
             return await telemetry.finish(response)
-        finally:
-            if exc := sys.exception():
-                await telemetry.fail(exc)
+        except BaseException as exc:  # noqa: BLE001 - preserve cancellation lifecycle
+            await telemetry.fail(exc)
+            raise

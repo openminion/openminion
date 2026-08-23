@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from openminion.modules.skill.runtime.skill import Skill
+from tests.skill.admission_helpers import ingest_file_and_admit
+
 
 SAMPLES_ROOT = Path(__file__).resolve().parents[2] / "examples" / "skills"
 
@@ -20,13 +23,11 @@ def _cfg(tmp_path: Path) -> dict:
 
 class TestControlplaneIntegration:
     def test_skill_library_compatible_with_controlplane(self, tmp_path: Path):
-        from openminion.modules.skill.runtime.skill import Skill
-
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            _skill_id, _version_hash, _warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(
@@ -42,13 +43,11 @@ class TestControlplaneIntegration:
             ctl.close()
 
     def test_concrete_flow_skill_has_required_steps(self, tmp_path: Path):
-        from openminion.modules.skill.runtime.skill import Skill
-
         ctl = Skill(_cfg(tmp_path))
         try:
             path = SAMPLES_ROOT / "api-account-create-post-share" / "SKILL.md"
-            skill_id, version_hash, warnings = ctl.ingest_file(
-                path, name="api-account-create-post-share"
+            _skill_id, _version_hash, _warnings = ingest_file_and_admit(
+                ctl, path, name="api-account-create-post-share"
             )
 
             snippet, _ = ctl.render_snippet(

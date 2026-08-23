@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from openminion.api.turns import run_turn
 from openminion.modules.cli_common import resolve_module_cli_db_path
 from openminion.modules.task import (
     AutonomyRun,
@@ -15,13 +17,122 @@ from openminion.modules.task import (
     TaskLifecycleState,
     TaskManager,
 )
-from openminion.modules.task.autonomy import VerificationWaiver, now_ms
+from openminion.modules.task.autonomy import (
+    VerificationWaiver,
+    autonomy_permission_metadata,
+    now_ms,
+)
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import (
     build_project_run_projection,
     save_project_run_checkpoint,
     validate_project_verifier,
 )
+from openminion.services.runtime.project_worker import (
+    ProjectTurnRequest,
+    ProjectTurnResult,
+    project_condition_from_metadata,
+    project_metadata_refs,
+    project_turn_inbound_metadata,
+)
+
+
+def workspace_path_from_ref(workspace_ref: str | None) -> Path | None:
+    if not workspace_ref or not workspace_ref.startswith("local:"):
+        return None
+    path_part = workspace_ref.removeprefix("local:").split("#", 1)[0]
+    return Path(path_part).expanduser().resolve(strict=False)
+
+
+def run_project_turn(
+    run: AutonomyRun,
+    request: ProjectTurnRequest,
+    *,
+    replay_response: str = "",
+) -> ProjectTurnResult:
+    metadata: dict[str, object] = {}
+    summary = replay_response
+    if not summary:
+        workspace = workspace_path_from_ref(run.workspace_ref)
+        response = run_turn(
+            config_path=run.execution_selectors.config_ref,
+            payload={
+                "message": request.prompt,
+                "agent_id": run.execution_selectors.agent_id,
+                "session_id": request.session_id,
+                "channel": "console",
+                "target": "autonomy",
+                "deliver": False,
+                "timeout_seconds": run.execution_selectors.turn_timeout_seconds,
+                "inbound_metadata": project_turn_inbound_metadata(
+                    request,
+                    base={
+                        "source": "openminion.autonomy.project",
+                        "autonomy_run_id": request.run_id,
+                        "project_run_id": request.project_run_id,
+                        "task_id": request.task_id,
+                        "goal_id": request.goal_id,
+                        "cycle_id": request.cycle_id,
+                        "turn_timeout_seconds": str(
+                            run.execution_selectors.turn_timeout_seconds
+                        ),
+                        **autonomy_permission_metadata(run.permission_profile_id),
+                        **(
+                            {"workspace_root": str(workspace)}
+                            if workspace is not None
+                            else {}
+                        ),
+                    },
+                ),
+            },
+        )
+        summary = (
+            str(response.get("final_text", "") or response.get("body", "")).strip()
+            or "Project cycle completed without visible final text."
+        )
+        raw_metadata = response.get("metadata")
+        if isinstance(raw_metadata, dict):
+            metadata = raw_metadata
+
+    evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
+    evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
+    tool_results = _project_tool_results(metadata)
+    tool_result_refs = tuple(
+        f"tool-call:{call_id}"
+        for item in tool_results
+        if bool(item.get("ok"))
+        and (
+            call_id := str(item.get("call_id") or item.get("command_id") or "").strip()
+        )
+    )
+    tool_call_count = metadata.get("tool_call_count", len(tool_results))
+    if isinstance(tool_call_count, str) and tool_call_count.isdigit():
+        tool_call_count = int(tool_call_count)
+    return ProjectTurnResult(
+        summary=summary,
+        condition=project_condition_from_metadata(metadata),
+        evidence_refs=tuple(dict.fromkeys((*evidence_refs, *tool_result_refs))),
+        evidence_kinds=tuple(
+            dict.fromkeys(
+                (*evidence_kinds, *(("tool_result",) if tool_result_refs else ()))
+            )
+        ),
+        effect_refs=project_metadata_refs(metadata, "effect_refs"),
+        tool_call_count=int(tool_call_count) if isinstance(tool_call_count, int) else 0,
+    )
+
+
+def _project_tool_results(metadata: dict[str, object]) -> tuple[dict[str, object], ...]:
+    for key in ("tool_calls_cumulative", "tool_results"):
+        raw = metadata.get(key)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(raw, list):
+            return tuple(item for item in raw if isinstance(item, dict))
+    return ()
 
 
 def project_task_manager(args: argparse.Namespace) -> TaskManager:
@@ -102,6 +213,12 @@ def apply_resume_overrides(
     commands = tuple(getattr(args, "verify_command", ()) or ())
     if commands:
         selector_updates["verification_commands"] = commands
+    turn_timeout = getattr(args, "turn_timeout_seconds", None)
+    if turn_timeout is not None:
+        selector_updates["turn_timeout_seconds"] = int(turn_timeout)
+    verification_timeout = getattr(args, "verification_timeout_seconds", None)
+    if verification_timeout is not None:
+        selector_updates["verification_timeout_seconds"] = int(verification_timeout)
     domain = str(getattr(args, "verification_domain", None) or "").strip()
     if domain:
         selector_updates["verification_domain"] = domain
@@ -237,7 +354,9 @@ __all__ = [
     "initialize_project",
     "persisted_verification_waiver",
     "project_task_manager",
+    "run_project_turn",
     "resume_project_task",
     "schedule_unattended_project",
     "verifier_preflight_error",
+    "workspace_path_from_ref",
 ]

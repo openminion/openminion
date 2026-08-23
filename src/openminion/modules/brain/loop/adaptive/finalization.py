@@ -391,16 +391,37 @@ class ActLoopFinalizationMixin:
                 telemetry_payload["goal_revision.skipped_reason"] = (
                     "memory_api_unavailable"
                 )
+        module_state = dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {})
+        raw_consolidation = module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
+        target_scope = ""
+        if isinstance(raw_consolidation, dict):
+            from openminion.modules.memory.runtime.consolidation.eligibility import (
+                candidate_state_hash,
+            )
+
+            target_scope = str(raw_consolidation.get("target_scope", "") or "").strip()
+            raw_candidates = raw_consolidation.get("candidates", [])
+            candidates = raw_candidates if isinstance(raw_candidates, list) else []
+            candidate_ids = [
+                str(item.get("candidate_id", "") or "").strip()
+                for item in candidates
+                if isinstance(item, dict)
+                and str(item.get("candidate_id", "") or "").strip()
+            ]
+            telemetry_payload.update(
+                {
+                    "memory_consolidation.target_scope": target_scope,
+                    "memory_consolidation.candidate_ids": candidate_ids,
+                    "memory_consolidation.state_hash": candidate_state_hash(
+                        candidate_ids
+                    ),
+                }
+            )
         if loop_outcome.memory_consolidation_decisions:
             runner = runner_from_context(ctx)
             memory_api = (
                 getattr(runner, "memory_api", None) if runner is not None else None
             )
-            target_scope = ""
-            module_state = dict(getattr(ctx.state, STATE_KEY_MODULE_STATE, {}) or {})
-            raw = module_state.get(MEMORY_CONSOLIDATION_MODULE_STATE_KEY)
-            if isinstance(raw, dict):
-                target_scope = str(raw.get("target_scope", "") or "").strip()
             consolidation_result = adaptive_modes.apply_memory_consolidation_decisions(
                 memory_api,
                 decisions=list(loop_outcome.memory_consolidation_decisions),

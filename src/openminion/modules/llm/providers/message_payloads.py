@@ -11,7 +11,10 @@ from openminion.base.config.paths import resolve_home_root
 from ..errors import LLMCtlError
 from ..schemas import ImageContentPart, LLMRequest, Message, ToolCall, UsageInfo
 from ..schemas import TextContentPart
-from ..constants import LLM_TOOL_CALL_STATUS_PARSED
+from ..constants import (
+    LLM_TOOL_CALL_STATUS_PARSED,
+    REQUESTABLE_TOOL_NAMES_METADATA_KEY,
+)
 from .tool_calling import (
     build_fallback_tool_call_instruction,
     is_schema_only_submit_output_tools,
@@ -674,7 +677,16 @@ def _resolve_model(
 
 
 def _resolve_tool_names(request: LLMRequest) -> List[str]:
-    return [tool.name for tool in request.tools or [] if tool.name.strip()]
+    names = [tool.name for tool in request.tools or [] if tool.name.strip()]
+    requestable = request.metadata.get(REQUESTABLE_TOOL_NAMES_METADATA_KEY, [])
+    if isinstance(requestable, str):
+        try:
+            requestable = json.loads(requestable)
+        except json.JSONDecodeError:
+            requestable = []
+    if isinstance(requestable, list | tuple):
+        names.extend(str(name).strip() for name in requestable if str(name).strip())
+    return list(dict.fromkeys(names))
 
 
 def _decode_nested_json_object(raw_value: Any) -> dict[str, Any] | None:

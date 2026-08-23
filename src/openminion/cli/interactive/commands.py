@@ -15,6 +15,7 @@ from openminion.cli.presentation.animation import (
     resolve_focus_animation,
 )
 from openminion.cli.presentation.browser import render_browser_command
+from openminion.cli.presentation.graph import render_graph_command
 from openminion.cli.interactive.project_context import (
     resolve_project_context,
     write_init_template,
@@ -347,6 +348,9 @@ class SlashCommandMixin:
         from openminion.cli.presentation.visible_parity import render_memory_report
 
         self._push_system_body(render_memory_report(self._runtime))
+
+    def _slash_graph(self, args: str) -> None:
+        self._push_system_body(render_graph_command(args))
 
     def _slash_tasks(self, args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_tasks_report

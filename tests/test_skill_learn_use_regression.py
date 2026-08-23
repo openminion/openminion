@@ -4,6 +4,7 @@ import pytest
 
 from openminion.modules.skill import Skill
 from openminion.modules.skill.errors import SkillError
+from tests.skill.admission_helpers import ingest_file_and_admit
 
 
 def _skill_fixture_path() -> Path:
@@ -47,7 +48,11 @@ def test_skill_ingest_valid_skill(skill_path: Path) -> None:
 def test_skill_list_shows_ingested_skills(skill_path: Path) -> None:
     ctl = Skill({})
     try:
-        ctl.ingest_file(path=str(skill_path), name="test-plan-checkpoints")
+        ingest_file_and_admit(
+            ctl,
+            path=str(skill_path),
+            name="test-plan-checkpoints",
+        )
         skills = ctl.list_skills({})
         assert isinstance(skills, list)
         assert len(skills) >= 1

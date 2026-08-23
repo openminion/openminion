@@ -2828,6 +2828,9 @@ def test_postprocess_turn_attaches_structured_action_output_metadata() -> None:
                     "response_preferences": {},
                 },
                 "session_work_summary": "Compared uv and pipx using official docs.",
+                "memory_consolidation.target_scope": "agent:agent-a",
+                "memory_consolidation.candidate_ids": ["cand-1"],
+                "memory_consolidation.state_hash": "hash-123",
             },
         ),
         working_state=SimpleNamespace(
@@ -2864,6 +2867,9 @@ def test_postprocess_turn_attaches_structured_action_output_metadata() -> None:
         response.metadata["session_work_summary"]
         == "Compared uv and pipx using official docs."
     )
+    assert response.metadata["memory_consolidation.target_scope"] == "agent:agent-a"
+    assert response.metadata["memory_consolidation.candidate_ids"] == '["cand-1"]'
+    assert response.metadata["memory_consolidation.state_hash"] == "hash-123"
 
 
 def test_postprocess_turn_salvages_finalization_status_trailer_from_message() -> None:

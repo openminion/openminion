@@ -1031,6 +1031,59 @@ class ProviderHTTPTests(unittest.TestCase):
             "minimax_bracket",
         )
 
+    def test_openai_accepts_native_call_from_requestable_tool_directory(self) -> None:
+        provider = OpenAIProvider()
+        request = LLMRequest.model_validate(
+            {
+                "model": "MiniMax-M2.7",
+                "messages": [{"role": "user", "content": "remember this"}],
+                "tools": [
+                    {
+                        "name": "tool.request",
+                        "description": "Activate an inactive tool.",
+                        "input_schema": {"type": "object"},
+                    }
+                ],
+                "metadata": {"requestable_tool_names": '["memory.write"]'},
+            }
+        )
+        payload = {
+            "model": "MiniMax-M2.7",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-memory",
+                                "type": "function",
+                                "function": {
+                                    "name": "memory.write",
+                                    "arguments": '{"content":"remember this"}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(payload),
+        ):
+            response = provider.complete(
+                request,
+                {
+                    "api_key": "test-key",
+                    "base_url": "https://api.minimax.io/v1",
+                    "tool_call_strategy": "hybrid",
+                },
+            )
+
+        self.assertEqual([call.name for call in response.tool_calls], ["memory.write"])
+
     def test_openai_official_minimax_hides_think_blocks_from_visible_output(
         self,
     ) -> None:

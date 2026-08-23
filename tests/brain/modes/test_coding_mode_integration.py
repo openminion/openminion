@@ -25,7 +25,10 @@ from openminion.modules.brain.loop.tools.confirmation import (
 )
 from openminion.modules.brain.loop.tools.contracts import PreparedToolDispatch
 from openminion.modules.brain.loop.strategies.coding.verification import (
+    CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED,
+    CODING_VERIFIER_VERDICT_COMPLETE,
     coerce_coding_verifier_verdict,
+    evaluate_coding_verifier,
     serialize_verifier_candidate,
 )
 from openminion.modules.brain.execution.loop_contracts import (
@@ -51,7 +54,8 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.schemas.closure import ClosureJudgment
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
-from openminion.modules.llm.schemas import LLMResponse, ToolCall, UsageInfo
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse, ToolCall, UsageInfo
+from openminion.modules.llm.transcript import validate_tool_transcript
 
 _PLANNER_CONTEXT_TOOLS = frozenset(
     {"code.repo_index", "code.repo_map", "code.symbol_find"}
@@ -1453,14 +1457,14 @@ def test_coding_self_correction_continues_then_finishes_without_user_input() -> 
     assert follow_up.action_result.outputs["coding.self_corrections"] == 1
 
 
-def test_coding_final_text_continue_preserves_state_and_resumes_without_user_input() -> (
+def test_coding_read_only_continue_preserves_state_and_resumes_without_user_input() -> (
     None
 ):
     services = _FakeServices(
         closure_judgment=ClosureJudgment(
             satisfied=False,
             next_action="continue",
-            reason="Only pyproject.toml was created.",
+            reason="Only pyproject.toml was inspected.",
         ),
         closure_disposition="continue",
     )
@@ -1476,10 +1480,9 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         tool_calls=[
                             ToolCall(
                                 id="tc-pyproject",
-                                name="file.write",
+                                name="file.read",
                                 arguments={
                                     "path": "/workspace/pyproject.toml",
-                                    "content": "[project]\\nname='scratch'\\n",
                                 },
                             )
                         ],
@@ -1489,14 +1492,14 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         ok=True,
                         provider="fake",
                         model="fake-model",
-                        output_text="Created pyproject.toml.",
+                        output_text="Inspected pyproject.toml.",
                         finish_reason="stop",
                     ),
                 ]
             ),
             _FakeCommandExecutor(),
             services=services,
-            user_input="build a scratch project",
+            user_input="inspect a scratch project",
         )
     )
 
@@ -1520,10 +1523,9 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         tool_calls=[
                             ToolCall(
                                 id="tc-readme",
-                                name="file.write",
+                                name="file.read",
                                 arguments={
                                     "path": "/workspace/README.md",
-                                    "content": "# Scratch project\\n",
                                 },
                             )
                         ],
@@ -1533,7 +1535,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
                         ok=True,
                         provider="fake",
                         model="fake-model",
-                        output_text="Scratch project scaffold completed.",
+                        output_text="Scratch project inspection completed.",
                         finish_reason="stop",
                     ),
                 ]
@@ -1545,7 +1547,7 @@ def test_coding_final_text_continue_preserves_state_and_resumes_without_user_inp
     )
 
     assert follow_up.status == "done"
-    assert follow_up.message == "Scratch project scaffold completed."
+    assert follow_up.message == "Scratch project inspection completed."
 
 
 def test_coding_verify_failure_blocks_when_self_correction_cap_is_exceeded() -> None:
@@ -1627,6 +1629,51 @@ def test_mode_profile_config_round_trips_max_self_corrections() -> None:
 def test_coding_verifier_verdict_rejects_non_enum_values() -> None:
     with pytest.raises(ValueError, match="Coding verifier verdict must be one of"):
         coerce_coding_verifier_verdict("done")
+
+
+def test_coding_verifier_closes_confirmed_work_when_budget_is_exhausted() -> None:
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        command=ToolCommand(
+            title="Run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        ),
+        action_result=ActionResult(
+            command_id=new_uuid(),
+            status="success",
+            summary="tests passed",
+            outputs={"report": "ok"},
+            artifact_refs=[ArtifactRef(ref="runtime://pytest-report.txt")],
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        budget_exhausted=True,
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_COMPLETE
+
+
+def test_coding_verifier_keeps_unconfirmed_exhausted_work_open() -> None:
+    evaluation = evaluate_coding_verifier(
+        goal=_coding_verifier_goal(),
+        command=ToolCommand(
+            title="Run tests",
+            tool_name="exec.run",
+            args={"argv": ["pytest", "-q"]},
+        ),
+        action_result=ActionResult(
+            command_id=new_uuid(),
+            status="success",
+            summary="tests passed without an artifact",
+            outputs={"report": "ok"},
+        ),
+        state=_state(),
+        logger=SimpleNamespace(emit=lambda *args, **kwargs: None),
+        budget_exhausted=True,
+    )
+
+    assert evaluation.verdict == CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
 
 
 def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> None:
@@ -1802,9 +1849,6 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
     result = CodingMode().execute(_ctx(llm_client, executor, services=services))
 
     assert result.status == "waiting_user"
-    assert result.action_result is not None
-    assert result.action_result.error is not None
-    assert result.action_result.error.code == "verification_unbound"
     assert result.action_result.outputs["coding.verifier_verdict"] == (
         "verification_unbound"
     )
@@ -2368,7 +2412,10 @@ def test_coding_loop_serializes_write_then_read_same_path() -> None:
 
     result = handler.execute(ctx)
 
-    assert result.status == "done"
+    assert result.status == "waiting_user"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "verification_unbound"
     write_call = next(
         item for item in executor.call_windows if item[0] == "/src/alpha.py"
     )
@@ -2733,6 +2780,9 @@ def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> N
     first_llm_messages = llm_client.calls[0]["messages"]
     assert all(message.content != "yes" for message in first_llm_messages)
     assert sum(1 for message in first_llm_messages if message.role == "tool") >= 2
+    assert validate_tool_transcript(LLMRequest(messages=first_llm_messages)) == (
+        "canonical_events"
+    )
     assert any(
         "do not repeat the same confirmed tool calls" in message.content
         for message in first_llm_messages

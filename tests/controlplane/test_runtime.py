@@ -143,6 +143,26 @@ def test_parser_dot_form() -> None:
     assert "brain" in cmd.args
 
 
+@pytest.mark.parametrize(
+    ("text", "canonical", "args"),
+    [
+        ("/cancel run-1", "cancel", ["run-1"]),
+        ("/approve request-1 once", "approve", ["request-1", "once"]),
+        ("/export md", "export", ["md"]),
+        ("/logs run-1", "logs", ["run-1"]),
+        ("/run status run-1", "run.status", ["run-1"]),
+    ],
+)
+def test_parser_distinguishes_arguments_from_subcommands(
+    text: str, canonical: str, args: list[str]
+) -> None:
+    parsed = SlashCommandParser().parse(text)
+
+    assert parsed is not None
+    assert parsed.canonical == canonical
+    assert parsed.args == args
+
+
 def test_parser_non_command_returns_none() -> None:
     parser = SlashCommandParser()
     assert parser.parse("just chat") is None
@@ -154,7 +174,7 @@ def test_parser_bare_slash_returns_none() -> None:
     assert parser.parse("/") is None
 
 
-def test_command_help_lists_all_commands() -> None:
+def test_command_help_lists_primary_commands_without_compatibility_aliases() -> None:
     store = InMemoryControlPlaneStore()
     registry = CommandRegistry(store=store)
     parser = SlashCommandParser()
@@ -163,6 +183,11 @@ def test_command_help_lists_all_commands() -> None:
     result = registry.execute(cmd, _ctx())
     assert result.ok
     assert "session.new" in result.text
+    assert "/profile.list" in result.text
+    assert "/new" not in result.text
+    assert "/agent" not in result.text
+    assert "/profile.ls" not in result.text
+    assert "/pair.status" not in result.text
     assert "Profile = runtime/model/tools config" in result.text
 
 

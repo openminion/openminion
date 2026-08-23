@@ -12,6 +12,7 @@ from openminion.modules.llm.client_call import (
 from openminion.modules.llm.providers.contracts import ProviderResponse
 from openminion.modules.llm.providers.message_payloads import _messages_openai_like
 from openminion.modules.llm.schemas import LLMRequest, Message
+from openminion.modules.llm.transcript import validate_tool_transcript
 from openminion.modules.tool.contracts import ProviderToolCall
 from openminion.services.agent.context.history import _map_history_to_provider
 
@@ -51,6 +52,44 @@ def test_tool_only_provider_response_retains_assistant_call_owner() -> None:
             ],
         )
     ]
+
+
+def test_provider_calls_without_ids_receive_unique_batch_ids() -> None:
+    payload = llm_response_kwargs(
+        resp=ProviderResponse(
+            text="",
+            model="adapter-neutral-model",
+            tool_calls=[
+                ProviderToolCall(id="", name="file.read", arguments={"path": "a"}),
+                ProviderToolCall(id="", name="file.read", arguments={"path": "b"}),
+            ],
+        ),
+        req=SimpleNamespace(model="adapter-neutral-model"),
+        client_name="adapter-neutral",
+        structured_fields={},
+        trace_context={},
+    )
+    calls = payload["tool_calls"]
+    messages = [
+        *payload["assistant_messages"],
+        Message(
+            role="tool",
+            content="a",
+            tool_call_id=calls[0].id,
+            tool_status="success",
+        ),
+        Message(
+            role="tool",
+            content="b",
+            tool_call_id=calls[1].id,
+            tool_status="success",
+        ),
+    ]
+
+    assert [call.id for call in calls] == ["call_1", "call_2"]
+    assert validate_tool_transcript(LLMRequest(messages=messages)) == (
+        "canonical_events"
+    )
 
 
 def test_provider_recovery_marker_survives_llm_response_conversion() -> None:

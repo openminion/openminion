@@ -1,7 +1,8 @@
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+import json
 from sqlite3 import Error as SQLiteError
-from typing import Any
+from typing import Any, Mapping
 
 from openminion.tools.task.constants import (
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -21,6 +22,55 @@ MetadataResolver = Callable[[dict[str, Any]], dict[str, Any] | None]
 WatchOutputBuilder = Callable[..., dict[str, Any]]
 WatchTerminalSummaryBuilder = Callable[..., str]
 WatchTtlChecker = Callable[..., bool]
+
+
+def build_cron_turn_result(
+    *,
+    result: Any,
+    session_id: str,
+    consolidation: Mapping[str, Any] | None,
+    completed_at: str,
+) -> dict[str, Any]:
+    errors = getattr(result, "errors", None)
+    if errors:
+        first_error = errors[0]
+        raise RuntimeError(
+            str(
+                getattr(first_error, "message", "cron turn failed")
+                or "cron turn failed"
+            )
+        )
+    metadata = getattr(result, "metadata", {}) or {}
+    metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
+    response: dict[str, Any] = {
+        "summary": str(getattr(result, "final_text", "") or "").strip()
+        or "Agent turn completed.",
+        "isolated_session_id": session_id,
+        "metadata": metadata_dict,
+    }
+    if consolidation is None:
+        return response
+
+    raw_candidate_ids = metadata_dict.get("memory_consolidation.candidate_ids", "[]")
+    try:
+        decoded_candidate_ids = json.loads(str(raw_candidate_ids))
+    except (TypeError, ValueError):
+        decoded_candidate_ids = []
+    response["output"] = {
+        "coordination_watermark": {
+            "target_scope": str(consolidation.get("target_scope", "") or "").strip(),
+            "candidate_ids": (
+                [str(item) for item in decoded_candidate_ids]
+                if isinstance(decoded_candidate_ids, list)
+                else []
+            ),
+            "state_hash": str(
+                metadata_dict.get("memory_consolidation.state_hash", "") or ""
+            ).strip(),
+            "completed_at": completed_at,
+        }
+    }
+    return response
 
 
 def build_expired_watch_result(

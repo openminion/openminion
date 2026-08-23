@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import mimetypes
 import re
 import uuid
 from pathlib import Path
@@ -8,6 +10,8 @@ from typing import Any, Iterable, Mapping, cast
 from openminion.modules.skill.runtime.bundle_metadata import (
     BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL,
     BUNDLE_METADATA_TRUST_UNTRUSTED_REMOTE,
+    agent_skills_conformance_warnings,
+    agent_skills_metadata,
     companion_metadata_unavailable_warning,
     load_companion_metadata,
     resolve_bundle_metadata_trust,
@@ -16,14 +20,16 @@ from openminion.modules.skill.constants import (
     HIGH_RISK_CLASSES,
     RISK_CLASS_HIGH,
     RISK_CLASS_LOW,
+    SKILL_BUNDLE_MAX_RESOURCES,
+    SKILL_BUNDLE_MAX_RESOURCE_BYTES,
+    SKILL_BUNDLE_MAX_TOTAL_RESOURCE_BYTES,
     SKILL_STATUSES,
-    SKILL_STATUS_BLESSED,
     SKILL_STATUS_DRAFT,
-    SKILL_STATUS_VERIFIED,
     SKILL_TOOL_REGISTRY_UNAVAILABLE,
     VERIFIED_SKILL_STATUSES,
 )
 from openminion.modules.skill.errors import SkillError
+from openminion.modules.skill.interfaces import SkillIngestAuthority
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.modules.skill.models import (
     LintIssue,
@@ -41,7 +47,6 @@ from openminion.modules.skill.runtime.parser import (
     front_matter_unknown_key_warnings,
     parse_markdown,
 )
-from openminion.modules.skill.proposal.review import _RUNTIME_REVIEWER_IDS
 
 _DANGEROUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\brm\s+-rf\b", re.IGNORECASE),
@@ -90,6 +95,43 @@ def _capability_metadata(front_matter: Mapping[str, Any]) -> dict[str, list[str]
             "forbidden_claims",
             "evidence_expectations",
         )
+    }
+
+
+def _package_tools(
+    *,
+    front_matter: Mapping[str, Any],
+    sections: Mapping[str, str],
+    companion_metadata: Mapping[str, Any],
+    known_tools: Iterable[str],
+) -> tuple[list[str], list[str]]:
+    front_tools = normalize_text_list(front_matter.get("tools"))
+    bundle_tools = normalize_text_list(
+        (companion_metadata.get("dependency_hints") or {}).get("tools")
+    )
+    section_tools = [
+        tool for value in sections.values() for tool in detect_tools(value)
+    ]
+    authoritative = _dedupe(front_tools + bundle_tools)
+    promoted = [
+        tool
+        for tool in section_tools
+        if _is_high_confidence_runtime_tool(
+            tool,
+            authoritative_tools=authoritative,
+            known_tools=known_tools,
+        )
+    ]
+    tools = _dedupe(authoritative + promoted)
+    return tools, _dedupe([tool for tool in section_tools if tool not in set(tools)])
+
+
+def _package_applies_to(front_matter: Mapping[str, Any]) -> dict[str, list[str]]:
+    value = front_matter.get("applies_to")
+    raw = cast(dict[str, Any], value if isinstance(value, dict) else {})
+    return {
+        "intents": normalize_text_list(raw.get("intents")),
+        "steps": normalize_text_list(raw.get("steps")),
     }
 
 
@@ -156,7 +198,11 @@ class SkillIngestMixin:
         agent_id: str | None = None,
         trust: str | None = None,
         promotion_path: str = "operator",
+        authority: SkillIngestAuthority | None = None,
     ) -> tuple[str, str, list[str]]:
+        resolved_authority = authority or SkillIngestAuthority.runtime(
+            surface="python.skill.ingest_text", source_kind="local"
+        )
         source_ref = self._store_source(name=name, markdown=markdown)
         return self._build_and_finalize_ingest(
             markdown=markdown,
@@ -167,7 +213,7 @@ class SkillIngestMixin:
             bundle_root=None,
             trust=trust,
             remote_source=False,
-            promotion_path=promotion_path,
+            authority=resolved_authority,
         )
 
     def ingest_file(
@@ -179,6 +225,7 @@ class SkillIngestMixin:
         agent_id: str | None = None,
         trust: str | None = None,
         promotion_path: str = "operator",
+        authority: SkillIngestAuthority | None = None,
     ) -> tuple[str, str, list[str]]:
         src = Path(path).expanduser()
         try:
@@ -194,6 +241,9 @@ class SkillIngestMixin:
             )
             raise
         text = src.read_text(encoding="utf-8")
+        resolved_authority = authority or SkillIngestAuthority.runtime(
+            surface="python.skill.ingest_file", source_kind="local"
+        )
         resolved_name = name or src.stem
         try:
             source_ref = self._store_source(name=resolved_name, markdown=text)
@@ -206,7 +256,7 @@ class SkillIngestMixin:
                 bundle_root=src.parent,
                 trust=trust,
                 remote_source=False,
-                promotion_path=promotion_path,
+                authority=resolved_authority,
             )
         except Exception as exc:
             self._emit_event(
@@ -228,6 +278,7 @@ class SkillIngestMixin:
         agent_id: str | None = None,
         trust: str | None = None,
         promotion_path: str = "operator",
+        authority: SkillIngestAuthority | None = None,
     ) -> tuple[str, str, list[str]]:
         if self._artifact_loader is None:
             raise SkillError(
@@ -242,6 +293,9 @@ class SkillIngestMixin:
         else:
             markdown = str(payload)
 
+        resolved_authority = authority or SkillIngestAuthority.runtime(
+            surface="python.skill.ingest_artifact", source_kind="local"
+        )
         return self._build_and_finalize_ingest(
             markdown=markdown,
             explicit_name=name,
@@ -251,7 +305,7 @@ class SkillIngestMixin:
             bundle_root=None,
             trust=trust,
             remote_source=False,
-            promotion_path=promotion_path,
+            authority=resolved_authority,
         )
 
     def ingest_url(
@@ -264,7 +318,11 @@ class SkillIngestMixin:
         agent_id: str | None = None,
         trust: str | None = None,
         promotion_path: str = "runtime",
+        authority: SkillIngestAuthority | None = None,
     ) -> tuple[str, str, list[str]]:
+        resolved_authority = authority or SkillIngestAuthority.runtime(
+            surface="python.skill.ingest_url", source_kind="remote"
+        )
         source_ref = self._store_source(name=name, markdown=markdown)
         return self._build_and_finalize_ingest(
             markdown=markdown,
@@ -275,8 +333,8 @@ class SkillIngestMixin:
             bundle_root=None,
             trust=trust,
             remote_source=True,
-            promotion_path=promotion_path,
             source_url=url,
+            authority=resolved_authority,
         )
 
     def _build_and_finalize_ingest(
@@ -290,7 +348,7 @@ class SkillIngestMixin:
         bundle_root: Path | None,
         trust: str | None,
         remote_source: bool,
-        promotion_path: str,
+        authority: SkillIngestAuthority,
         source_url: str | None = None,
     ) -> tuple[str, str, list[str]]:
         package, parse_warnings = self._build_package(
@@ -302,6 +360,7 @@ class SkillIngestMixin:
             bundle_root=bundle_root,
             trust=trust,
             remote_source=remote_source,
+            authority=authority,
         )
         return self._finalize_ingest(
             package=package,
@@ -309,8 +368,8 @@ class SkillIngestMixin:
             source_ref=source_ref,
             scope=scope,
             markdown=markdown,
-            promotion_path=promotion_path,
             source_url=source_url,
+            authority=authority,
         )
 
     def _store_source(self, *, name: str, markdown: str) -> str:
@@ -334,8 +393,68 @@ class SkillIngestMixin:
         )
         return f"artifact://sha256/{ref.hash}"
 
+    def _collect_bundle_resources(
+        self, bundle_root: Path | None
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        if bundle_root is None:
+            return [], []
+        root = bundle_root.resolve()
+        resources: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        total_bytes = 0
+        for kind in ("references", "assets", "scripts"):
+            resource_root = root / kind
+            if not resource_root.is_dir():
+                continue
+            for path in sorted(resource_root.rglob("*")):
+                if len(resources) >= SKILL_BUNDLE_MAX_RESOURCES:
+                    warnings.append("bundle.resources.count_limit")
+                    return resources, warnings
+                if path.is_symlink() or not path.is_file():
+                    if path.is_symlink():
+                        warnings.append("bundle.resources.symlink_skipped")
+                    continue
+                resolved = path.resolve()
+                if not resolved.is_relative_to(root):
+                    warnings.append("bundle.resources.path_escape_skipped")
+                    continue
+                size = resolved.stat().st_size
+                if size > SKILL_BUNDLE_MAX_RESOURCE_BYTES:
+                    warnings.append("bundle.resources.file_size_limit")
+                    continue
+                if total_bytes + size > SKILL_BUNDLE_MAX_TOTAL_RESOURCE_BYTES:
+                    warnings.append("bundle.resources.total_size_limit")
+                    return resources, warnings
+                payload = resolved.read_bytes()
+                media_type = (
+                    mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+                )
+                relative_path = resolved.relative_to(root).as_posix()
+                ref = self._blob_store.put_bytes(
+                    payload,
+                    media_type=media_type,
+                    ext=resolved.suffix.lstrip("."),
+                    meta={"skill_resource_path": relative_path},
+                )
+                resources.append(
+                    {
+                        "path": relative_path,
+                        "kind": kind,
+                        "size_bytes": size,
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "artifact_ref": f"artifact://sha256/{ref.hash}",
+                        "executable": False,
+                    }
+                )
+                total_bytes += size
+        return resources, warnings
+
     def _persist_package(
-        self, *, package: SkillPackage, index_keywords: list[str]
+        self,
+        *,
+        package: SkillPackage,
+        index_keywords: list[str],
+        admission_authority_class: str | None = None,
     ) -> list[str]:
         warnings: list[str] = []
         try:
@@ -353,6 +472,7 @@ class SkillIngestMixin:
                 source_artifact_ref=package.source_artifact_ref,
                 package_json=canonical_json(package.to_dict()),
                 created_at=package.created_at,
+                content_fingerprint=package.to_content_fingerprint(),
             )
             self.store.upsert_skill_index(
                 skill_id=package.skill_id,
@@ -362,6 +482,14 @@ class SkillIngestMixin:
                 keywords_json=canonical_json(index_keywords),
                 applies_to_json=canonical_json(package.applies_to),
             )
+            if admission_authority_class is not None:
+                self.store.stage_skill_version(
+                    skill_id=package.skill_id,
+                    version_hash=package.version_hash,
+                    content_fingerprint=package.to_content_fingerprint(),
+                    authority_class=admission_authority_class,
+                    created_at=package.created_at,
+                )
         except Exception as exc:
             self._hybrid_store.write_row(
                 "skill_ingest",
@@ -382,6 +510,46 @@ class SkillIngestMixin:
             warnings.append(f"storage.sqlite_error:{exc}")
         return warnings
 
+    def _load_bundle_context(
+        self,
+        *,
+        front_matter: Mapping[str, Any],
+        bundle_root: Path | None,
+        trust: str | None,
+        remote_source: bool,
+        authority: SkillIngestAuthority,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
+        if authority.source_kind != ("remote" if remote_source else "local"):
+            raise SkillError(
+                "INVALID_ARGUMENT",
+                "skill authority source_kind does not match ingest source",
+            )
+        if not authority.can_admit and trust is not None:
+            raise SkillError(
+                "SKILL_INGEST_AUTHORITY_OVERRIDE_REJECTED",
+                "Runtime skill ingest cannot declare trust.",
+                {"field_names": ["trust"], "surface": authority.surface},
+            )
+        resolved_trust = self._resolve_bundle_trust(
+            trust=trust,
+            remote_source=remote_source,
+            authority=authority,
+        )
+        companion = load_companion_metadata(bundle_root, trust=resolved_trust)
+        warnings: list[str] = []
+        companion_warning = companion_metadata_unavailable_warning(companion)
+        if companion_warning is not None:
+            warnings.append(companion_warning)
+        portable_metadata, metadata_warnings = agent_skills_metadata(front_matter)
+        warnings.extend(metadata_warnings)
+        if portable_metadata:
+            companion.setdefault("bundle_metadata", {})["agent_skills"] = (
+                portable_metadata
+            )
+        resources, resource_warnings = self._collect_bundle_resources(bundle_root)
+        warnings.extend(resource_warnings)
+        return companion, resources, warnings
+
     def _build_package(
         self,
         *,
@@ -393,6 +561,7 @@ class SkillIngestMixin:
         bundle_root: Path | None,
         trust: str | None,
         remote_source: bool,
+        authority: SkillIngestAuthority,
     ) -> tuple[SkillPackage, list[str]]:
         front_matter, sections, summary, parse_warnings = parse_markdown(markdown)
         sections = dict(sections)
@@ -406,17 +575,14 @@ class SkillIngestMixin:
 
         description = _front_matter_description(front_matter)
         short_description = _front_matter_short_description(front_matter)
-        resolved_trust = self._resolve_bundle_trust(
+        companion_metadata, resources, bundle_warnings = self._load_bundle_context(
+            front_matter=front_matter,
+            bundle_root=bundle_root,
             trust=trust,
             remote_source=remote_source,
+            authority=authority,
         )
-        companion_metadata = load_companion_metadata(
-            bundle_root,
-            trust=resolved_trust,
-        )
-        companion_warning = companion_metadata_unavailable_warning(companion_metadata)
-        if companion_warning is not None:
-            parse_warnings.append(companion_warning)
+        parse_warnings.extend(bundle_warnings)
         if not str(sections.get("summary", "")).strip():
             summary_section = description or short_description
             if summary_section:
@@ -428,9 +594,31 @@ class SkillIngestMixin:
         name = str(front_matter.get("name", "")).strip() or explicit_name.strip()
         if not name:
             raise SkillError("INVALID_ARGUMENT", "Skill name must be non-empty")
+        agent_skills_metadata = dict(
+            companion_metadata.get("bundle_metadata", {}).get("agent_skills", {})
+        )
+        parse_warnings.extend(
+            agent_skills_conformance_warnings(
+                name=name,
+                description=description,
+                metadata=agent_skills_metadata,
+                resources=resources,
+            )
+        )
 
         raw_skill_id = str(front_matter.get("id", "")).strip() or slugify(name)
-        status = normalize_status(str(front_matter.get("status", SKILL_STATUS_DRAFT)))
+        requested_status = normalize_status(
+            str(front_matter.get("status", SKILL_STATUS_DRAFT))
+        )
+        if not authority.can_admit and requested_status != SKILL_STATUS_DRAFT:
+            raise SkillError(
+                "SKILL_INGEST_AUTHORITY_OVERRIDE_REJECTED",
+                "Runtime skill ingest cannot declare catalog-visible status.",
+                {"field_names": ["status"], "surface": authority.surface},
+            )
+        if "status" in front_matter:
+            parse_warnings.append("frontmatter.status_non_authoritative")
+        status = SKILL_STATUS_DRAFT
         risk_class = normalize_risk(str(front_matter.get("risk", RISK_CLASS_LOW)))
 
         scope_norm = (scope or "global").strip().lower()
@@ -439,38 +627,15 @@ class SkillIngestMixin:
                 "INVALID_ARGUMENT", "scope must be one of: global, agent, project"
             )
 
-        front_tools = normalize_text_list(front_matter.get("tools"))
-        bundle_tools = normalize_text_list(
-            (companion_metadata.get("dependency_hints") or {}).get("tools")
-        )
-        section_tools: list[str] = []
-        for value in sections.values():
-            section_tools.extend(detect_tools(value))
-        authoritative_tools = _dedupe(front_tools + bundle_tools)
-        promoted_section_tools = [
-            tool
-            for tool in section_tools
-            if _is_high_confidence_runtime_tool(
-                tool,
-                authoritative_tools=authoritative_tools,
-                known_tools=self._known_tools,
-            )
-        ]
-        tools = _dedupe(authoritative_tools + promoted_section_tools)
-        reference_hints = _dedupe(
-            [tool for tool in section_tools if tool not in set(tools)]
+        tools, reference_hints = _package_tools(
+            front_matter=front_matter,
+            sections=sections,
+            companion_metadata=companion_metadata,
+            known_tools=self._known_tools,
         )
 
         tags = normalize_text_list(front_matter.get("tags"))
-        applies_to_value = front_matter.get("applies_to")
-        applies_to_raw = cast(
-            dict[str, Any],
-            applies_to_value if isinstance(applies_to_value, dict) else {},
-        )
-        applies_to = {
-            "intents": normalize_text_list(applies_to_raw.get("intents")),
-            "steps": normalize_text_list(applies_to_raw.get("steps")),
-        }
+        applies_to = _package_applies_to(front_matter)
 
         inputs_schema = [
             item for item in front_matter.get("inputs", []) if isinstance(item, dict)
@@ -526,6 +691,7 @@ class SkillIngestMixin:
             else None,
             created_at=now,
             updated_at=now,
+            resources=resources,
             **_capability_metadata(front_matter),
         )
         package.version_hash = package.to_version_hash()
@@ -636,8 +802,8 @@ class SkillIngestMixin:
         source_ref: str,
         scope: str,
         markdown: str,
-        promotion_path: str,
         source_url: str | None = None,
+        authority: SkillIngestAuthority,
     ) -> tuple[str, str, list[str]]:
         lint_issues = self._lint_package(package)
         errors = [item for item in lint_issues if item.severity == "error"]
@@ -655,25 +821,23 @@ class SkillIngestMixin:
             package.version_hash = package.to_version_hash()
             warning_msgs.append("lint.forced_status_draft")
 
-        previous_status = self._baseline_previous_status(package.skill_id)
-        self._assert_trust_promotion_allowed(
-            package=package,
-            previous_status=previous_status,
-            new_status=package.status,
-            promotion_path=promotion_path,
-            reviewer_id=None,
-        )
-
         index_keywords = package.keyword_candidates()
+        fingerprint = package.to_content_fingerprint()
+        existing = self.store.find_skill_version_by_fingerprint(
+            skill_id=package.skill_id,
+            content_fingerprint=fingerprint,
+        )
+        if existing is not None:
+            warning_msgs.append("admission.duplicate_content")
+            return package.skill_id, str(existing["version_hash"]), warning_msgs
         warning_msgs.extend(
-            self._persist_package(package=package, index_keywords=index_keywords)
+            self._persist_package(
+                package=package,
+                index_keywords=index_keywords,
+                admission_authority_class=authority.authority_class,
+            )
         )
-        self._emit_untrusted_promotion_audit(
-            package=package,
-            previous_status=previous_status,
-            new_status=package.status,
-            promotion_path=promotion_path,
-        )
+        warning_msgs.append("admission.pending")
 
         self._emit_event(
             "skill.ingested",
@@ -686,6 +850,8 @@ class SkillIngestMixin:
                 "title": package.display_name or package.name,
                 "tags": list(package.tags),
                 "trust": str(package.bundle_metadata.get("trust") or ""),
+                "admission_state": "pending",
+                "authority_class": authority.authority_class,
                 "text": markdown,
             },
         )
@@ -697,7 +863,14 @@ class SkillIngestMixin:
         *,
         trust: str | None,
         remote_source: bool,
+        authority: SkillIngestAuthority,
     ) -> str:
+        if not authority.can_admit:
+            return (
+                BUNDLE_METADATA_TRUST_UNTRUSTED_REMOTE
+                if remote_source
+                else BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL
+            )
         try:
             return resolve_bundle_metadata_trust(trust, remote=remote_source)
         except ValueError as exc:
@@ -706,74 +879,6 @@ class SkillIngestMixin:
                 str(exc),
                 {"trust": trust, "remote_source": remote_source},
             ) from exc
-
-    def _baseline_previous_status(self, skill_id: str) -> str:
-        existing = self.store.get_skill_package(skill_id=skill_id, version_hash=None)
-        if existing is None:
-            return SKILL_STATUS_DRAFT
-        return SkillPackage.from_dict(existing).status
-
-    def _assert_trust_promotion_allowed(
-        self,
-        *,
-        package: SkillPackage,
-        previous_status: str,
-        new_status: str,
-        promotion_path: str,
-        reviewer_id: str | None,
-    ) -> None:
-        if not _is_catalog_visible_promotion(previous_status, new_status):
-            return
-        trust = _bundle_trust(package)
-        if trust != BUNDLE_METADATA_TRUST_UNTRUSTED_REMOTE:
-            return
-        normalized_path = str(promotion_path or "").strip().lower() or "runtime"
-        if normalized_path in {"operator", "api"}:
-            return
-        normalized_reviewer = str(reviewer_id or "").strip().lower()
-        if normalized_reviewer and normalized_reviewer not in _RUNTIME_REVIEWER_IDS:
-            return
-        raise SkillError(
-            "INVALID_ARGUMENT",
-            "reviewer_id must be operator-supplied",
-            {
-                "skill_id": package.skill_id,
-                "trust": trust,
-                "previous_status": previous_status,
-                "new_status": new_status,
-                "promotion_path": normalized_path,
-            },
-        )
-
-    def _emit_untrusted_promotion_audit(
-        self,
-        *,
-        package: SkillPackage,
-        previous_status: str,
-        new_status: str,
-        promotion_path: str,
-    ) -> None:
-        if not _is_catalog_visible_promotion(previous_status, new_status):
-            return
-        trust = _bundle_trust(package)
-        if trust not in {
-            BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL,
-            BUNDLE_METADATA_TRUST_UNTRUSTED_REMOTE,
-        }:
-            return
-        self._emit_skill_operation(
-            operation="untrusted_source_promotion",
-            status="ok",
-            extra={
-                "skill_id": package.skill_id,
-                "version_hash": package.version_hash,
-                "trust": trust,
-                "previous_status": previous_status,
-                "new_status": new_status,
-                "promotion_path": str(promotion_path or "").strip().lower()
-                or "runtime",
-            },
-        )
 
 
 def _source_ref_to_digest(ref: str) -> str | None:
@@ -884,22 +989,3 @@ def _is_high_confidence_runtime_tool(
         return False
     known = {item.strip() for item in known_tools if item.strip()}
     return text in known
-
-
-def _bundle_trust(package: SkillPackage) -> str:
-    bundle_metadata = (
-        package.bundle_metadata if isinstance(package.bundle_metadata, dict) else {}
-    )
-    return str(bundle_metadata.get("trust") or "").strip().lower()
-
-
-def _is_catalog_visible_promotion(previous_status: str, new_status: str) -> bool:
-    previous = normalize_status(previous_status)
-    current = normalize_status(new_status)
-    if previous == current:
-        return False
-    return (
-        (previous == SKILL_STATUS_DRAFT and current == SKILL_STATUS_VERIFIED)
-        or (previous == SKILL_STATUS_VERIFIED and current == SKILL_STATUS_BLESSED)
-        or (previous == SKILL_STATUS_DRAFT and current == SKILL_STATUS_BLESSED)
-    )

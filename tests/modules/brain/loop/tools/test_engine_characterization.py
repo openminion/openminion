@@ -88,6 +88,9 @@ from openminion.modules.brain.loop.tools.postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
     _looks_like_unexecutable_tool_payload_text,
 )
+from openminion.modules.brain.loop.tools.postprocess.engine import (
+    AdaptiveLoopRunnerPostprocessMixin,
+)
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
 from openminion.modules.brain.loop.tools.no_tool import AdaptiveLoopRunnerNoToolMixin
 from openminion.modules.brain.loop.tools.iteration.termination import (
@@ -112,16 +115,55 @@ from openminion.modules.brain.loop.tools import (
 from openminion.modules.brain.loop.entry import decompose_tool_spec
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
 from openminion.modules.llm.schemas import (
+    LLMRequest,
     LLMResponse,
     Message,
     ToolCall,
     ToolSpec,
     UsageInfo,
 )
+from openminion.modules.llm.transcript import validate_tool_transcript
 
 
 class _NoToolRepairHarness(AdaptiveLoopRunnerNoToolMixin):
     pass
+
+
+class _ResponseAppendHarness(AdaptiveLoopRunnerPostprocessMixin):
+    pass
+
+
+def test_append_response_messages_discards_noncanonical_embedded_tool_calls() -> None:
+    harness = _ResponseAppendHarness()
+    harness.loop_state = AdaptiveToolLoopState()
+    response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="Continue with verification.",
+        assistant_messages=[
+            Message(
+                role="assistant",
+                content="Continue with verification.",
+                tool_calls=[
+                    ToolCall(
+                        id="stale-call",
+                        name="exec.run",
+                        arguments={"command": "[malformed"},
+                    )
+                ],
+            )
+        ],
+        tool_calls=[],
+    )
+
+    harness._append_response_messages(response)
+
+    assert harness.loop_state.messages[0].tool_calls == []
+    assert (
+        validate_tool_transcript(LLMRequest(messages=harness.loop_state.messages))
+        == "canonical_events"
+    )
 
 
 # Shared fixtures — mirror tests/brain/tool_loops/test_engine.py style
@@ -168,6 +210,7 @@ class _LoopContext:
     commands: list[Any] = field(default_factory=list)
     statuses: list[dict[str, Any]] = field(default_factory=list)
     session_api: Any | None = None
+    provider_retry_max_attempts: int = 3
     _index: int = 0
 
     def execute_command(self, *, command, include_reflect: bool = False):
@@ -2663,7 +2706,7 @@ def test_loop_retries_marked_no_tool_response_once() -> None:
     assert len(runtime.calls) == 2
 
 
-def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
+def test_loop_repeated_marked_no_tool_response_honors_provider_retry_limit() -> None:
     marked = LLMResponse(
         ok=True,
         provider="fake",
@@ -2671,7 +2714,7 @@ def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
         output_text="display fallback",
         empty_payload_recovered=True,
     )
-    runtime = _FakeRuntime(responses=[marked, marked])
+    runtime = _FakeRuntime(responses=[marked, marked, marked])
 
     with pytest.raises(ProviderError, match="EMPTY_PROVIDER_RESPONSE"):
         run_adaptive_tool_loop(
@@ -2683,7 +2726,30 @@ def test_loop_repeated_marked_no_tool_response_raises_typed_error() -> None:
             tool_specs=[],
         )
 
-    assert len(runtime.calls) == 2
+    assert len(runtime.calls) == 3
+
+
+def test_loop_marked_no_tool_response_honors_single_provider_attempt() -> None:
+    marked = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="display fallback",
+        empty_payload_recovered=True,
+    )
+    runtime = _FakeRuntime(responses=[marked])
+
+    with pytest.raises(ProviderError, match="EMPTY_PROVIDER_RESPONSE"):
+        run_adaptive_tool_loop(
+            _LoopContext(state=_state(), provider_retry_max_attempts=1),
+            profile=_profile(allowed_tools=frozenset()),
+            runtime=runtime,
+            model="m",
+            initial_messages=[Message(role="user", content="answer")],
+            tool_specs=[],
+        )
+
+    assert len(runtime.calls) == 1
 
 
 def test_loop_general_adaptive_profile_finalization_incomplete() -> None:
@@ -3839,6 +3905,9 @@ def test_tool_choice_none_second_retry_salvages_from_compact_tool_evidence() -> 
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
+    assert validate_tool_transcript(LLMRequest(messages=outcome.state.messages)) == (
+        "canonical_events"
+    )
     assert len(runtime.calls) == 3
     assert [message.role for message in runtime.calls[2]["messages"]] == [
         "system",
@@ -3928,6 +3997,14 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
+    assert validate_tool_transcript(LLMRequest(messages=outcome.state.messages)) == (
+        "canonical_events"
+    )
+    assert all(
+        tool_call.id != "call-3"
+        for message in outcome.state.messages
+        for tool_call in message.tool_calls
+    )
 
 
 def test_tool_choice_none_compact_closeout_accepts_model_text_without_label_scoring() -> (
@@ -4478,9 +4555,73 @@ class TestForceBudgetAnswerOnlyFinalization:
             "Research the second topic."
         )
         assert len(runtime.calls) == 2
-        assert "Append finalization_status" in str(
-            runtime.calls[0]["messages"][-1].content
+        assert any(
+            "Append finalization_status" in str(message.content)
+            for message in runtime.calls[0]["messages"]
+            if message.role == "system"
         )
+
+    def test_budget_closeout_uses_compact_tool_evidence(self) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"web.search"}),
+            profile_name="general_adaptive_v1",
+        )
+        large_transcript_marker = "large-transcript-marker-" * 2_000
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(role="user", content="Research the topic."),
+                Message(role="tool", content=large_transcript_marker),
+            ],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "web.search",
+                        "ok": True,
+                        "content": "Useful search result",
+                        "data": {"results": ["source one"]},
+                    }
+                ]
+            },
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.goal = "Research the topic."
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="A final answer.",
+                    finalization_status={
+                        "status": "final_answer",
+                        "reasoning": "The gathered evidence answers the request.",
+                        "remaining_work": "",
+                    },
+                    finish_reason="stop",
+                )
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=_LoopContext(state=state),
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"web.search"}),
+            public_mode_tag="act",
+        )
+
+        sent_text = "\n".join(
+            str(message.content) for message in runtime.calls[0]["messages"]
+        )
+        assert result is not None
+        assert result.final_text == "A final answer."
+        assert "Useful search result" in sent_text
+        assert large_transcript_marker not in sent_text
 
     def test_budget_exhaustion_forces_answer_only_from_prior_tool_evidence(
         self,
@@ -4542,7 +4683,10 @@ class TestForceBudgetAnswerOnlyFinalization:
     ) -> None:
         prof = _profile(allowed_tools=frozenset({"x"}))
         st_loop = AdaptiveToolLoopState(
-            messages=[Message(role="tool", content='{"status":"success"}')],
+            messages=[
+                Message(role="tool", content='{"status":"success"}'),
+                Message(role="assistant", content="large transcript " * 2_000),
+            ],
             total_tool_calls=1,
         )
         state = _state()
@@ -4731,7 +4875,7 @@ class TestForceBudgetAnswerOnlyFinalization:
             for message in runtime.calls[-1]["messages"]
             if message.role == "system"
         ]
-        assert len(user_messages) == 2
+        assert len(user_messages) == 1
         assert user_messages[-1].startswith("Original user request for this turn")
         assert "PyPA console-script guidance" in user_messages[-1]
         assert any("exact-date requirements" in text for text in system_messages)
@@ -5203,6 +5347,10 @@ class TestFinalizeIterationCapExit:
             if message.role == "system"
         ]
         assert any("Do not call tools" in message for message in retry_system_messages)
+        assert all(
+            "large transcript" not in str(message.content)
+            for message in runtime.calls[1]["messages"]
+        )
 
     def test_force_finalization_retries_embedded_tool_call_json(self) -> None:
         leaked_text = (
@@ -6939,6 +7087,8 @@ def test_loop_keeps_requested_tools_active_across_later_requests() -> None:
     ]
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert inactive_directories
+    assert "cannot be called directly" in inactive_directories[-1]
+    assert "provider-safe `tool_request`" in inactive_directories[-1]
     assert "- extra.one:" not in inactive_directories[-1]
 
 

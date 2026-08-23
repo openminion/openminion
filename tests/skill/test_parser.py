@@ -353,7 +353,6 @@ def test_unknown_front_matter_key_warning_fires_once_per_unique_key() -> None:
     assert sorted(warnings) == sorted(
         [
             "parse.warning:unknown_front_matter_key:authors",
-            "parse.warning:unknown_front_matter_key:license",
             "parse.warning:unknown_front_matter_key:examples",
         ]
     )
