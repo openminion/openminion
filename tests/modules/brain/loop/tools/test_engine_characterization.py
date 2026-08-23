@@ -160,9 +160,10 @@ def test_append_response_messages_discards_noncanonical_embedded_tool_calls() ->
     harness._append_response_messages(response)
 
     assert harness.loop_state.messages[0].tool_calls == []
-    assert validate_tool_transcript(
-        LLMRequest(messages=harness.loop_state.messages)
-    ) == "canonical_events"
+    assert (
+        validate_tool_transcript(LLMRequest(messages=harness.loop_state.messages))
+        == "canonical_events"
+    )
 
 
 # Shared fixtures — mirror tests/brain/tool_loops/test_engine.py style
@@ -4554,9 +4555,73 @@ class TestForceBudgetAnswerOnlyFinalization:
             "Research the second topic."
         )
         assert len(runtime.calls) == 2
-        assert "Append finalization_status" in str(
-            runtime.calls[0]["messages"][-1].content
+        assert any(
+            "Append finalization_status" in str(message.content)
+            for message in runtime.calls[0]["messages"]
+            if message.role == "system"
         )
+
+    def test_budget_closeout_uses_compact_tool_evidence(self) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"web.search"}),
+            profile_name="general_adaptive_v1",
+        )
+        large_transcript_marker = "large-transcript-marker-" * 2_000
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(role="user", content="Research the topic."),
+                Message(role="tool", content=large_transcript_marker),
+            ],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "web.search",
+                        "ok": True,
+                        "content": "Useful search result",
+                        "data": {"results": ["source one"]},
+                    }
+                ]
+            },
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.goal = "Research the topic."
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="A final answer.",
+                    finalization_status={
+                        "status": "final_answer",
+                        "reasoning": "The gathered evidence answers the request.",
+                        "remaining_work": "",
+                    },
+                    finish_reason="stop",
+                )
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=_LoopContext(state=state),
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"web.search"}),
+            public_mode_tag="act",
+        )
+
+        sent_text = "\n".join(
+            str(message.content) for message in runtime.calls[0]["messages"]
+        )
+        assert result is not None
+        assert result.final_text == "A final answer."
+        assert "Useful search result" in sent_text
+        assert large_transcript_marker not in sent_text
 
     def test_budget_exhaustion_forces_answer_only_from_prior_tool_evidence(
         self,
@@ -4618,7 +4683,10 @@ class TestForceBudgetAnswerOnlyFinalization:
     ) -> None:
         prof = _profile(allowed_tools=frozenset({"x"}))
         st_loop = AdaptiveToolLoopState(
-            messages=[Message(role="tool", content='{"status":"success"}')],
+            messages=[
+                Message(role="tool", content='{"status":"success"}'),
+                Message(role="assistant", content="large transcript " * 2_000),
+            ],
             total_tool_calls=1,
         )
         state = _state()
@@ -4807,7 +4875,7 @@ class TestForceBudgetAnswerOnlyFinalization:
             for message in runtime.calls[-1]["messages"]
             if message.role == "system"
         ]
-        assert len(user_messages) == 2
+        assert len(user_messages) == 1
         assert user_messages[-1].startswith("Original user request for this turn")
         assert "PyPA console-script guidance" in user_messages[-1]
         assert any("exact-date requirements" in text for text in system_messages)
@@ -5279,6 +5347,10 @@ class TestFinalizeIterationCapExit:
             if message.role == "system"
         ]
         assert any("Do not call tools" in message for message in retry_system_messages)
+        assert all(
+            "large transcript" not in str(message.content)
+            for message in runtime.calls[1]["messages"]
+        )
 
     def test_force_finalization_retries_embedded_tool_call_json(self) -> None:
         leaked_text = (
@@ -7015,6 +7087,8 @@ def test_loop_keeps_requested_tools_active_across_later_requests() -> None:
     ]
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert inactive_directories
+    assert "cannot be called directly" in inactive_directories[-1]
+    assert "provider-safe `tool_request`" in inactive_directories[-1]
     assert "- extra.one:" not in inactive_directories[-1]
 
 
