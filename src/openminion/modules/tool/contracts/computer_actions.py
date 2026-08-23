@@ -13,6 +13,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from typing import Annotated, Literal, Never, TypeAlias, cast
 
 from pydantic import (
@@ -30,7 +31,7 @@ SCHEMA_VERSION = 1
 _HEX_48 = re.compile(r"^[0-9a-f]{48}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 Risk: TypeAlias = Literal["low", "medium", "high", "critical"]
 Capability: TypeAlias = Literal[
@@ -45,6 +46,15 @@ CancellationReason: TypeAlias = Literal[
     "user_stop",
     "session_cancel",
     "grant_revoked",
+    "permission_revoked",
+    "source_changed",
+    "app_shutdown",
+    "expired",
+]
+GrantRevocationReason: TypeAlias = Literal[
+    "user_stop",
+    "session_cancel",
+    "daemon_disconnect",
     "permission_revoked",
     "source_changed",
     "app_shutdown",
@@ -112,26 +122,21 @@ _MODIFIERS = {"alt", "control", "meta", "shift"}
 
 
 def _validation_error(message: str, cause: Exception | None = None) -> Never:
-    if cause is not None:
-        raise ValueError(message) from cause  # allow-bare-raise: schema validation
-    raise ValueError(message)  # allow-bare-raise: schema validation
+    raise ValueError(message) from cause  # allow-bare-raise: schema validation
 
 
 def _identity(value: str, maximum: int) -> str:
     if not isinstance(value, str):
         _validation_error("identity must be a string")
     encoded = value.encode("utf-8")
-    if not encoded or len(encoded) > maximum or _CONTROL.search(value):
+    if (
+        not encoded
+        or not value.strip()
+        or len(encoded) > maximum
+        or _CONTROL.search(value)
+    ):
         _validation_error("identity is outside its admitted bound")
     return value
-
-
-def _identity_128(value: str) -> str:
-    return _identity(value, 128)
-
-
-def _identity_256(value: str) -> str:
-    return _identity(value, 256)
 
 
 def _hex_48(value: str) -> str:
@@ -158,8 +163,8 @@ def _timestamp(value: str) -> str:
     return value
 
 
-Identity128 = Annotated[str, AfterValidator(_identity_128)]
-Identity256 = Annotated[str, AfterValidator(_identity_256)]
+Identity128 = Annotated[str, AfterValidator(partial(_identity, maximum=128))]
+Identity256 = Annotated[str, AfterValidator(partial(_identity, maximum=256))]
 Hex48 = Annotated[str, AfterValidator(_hex_48)]
 Hex64 = Annotated[str, AfterValidator(_hex_64)]
 Timestamp = Annotated[str, AfterValidator(_timestamp)]
@@ -384,7 +389,7 @@ class ActionInvocationV1(BaseModel):
             _validation_error("action expiry is invalid")
         if not (
             _instant(self.target.frame_captured_at)
-            <= requested
+            < requested
             < _instant(self.target.frame_expires_at)
         ):
             _validation_error("frame is not current at request time")
@@ -457,7 +462,7 @@ class DesktopGrantV1(BaseModel):
     expires_at: Timestamp
     state: Literal["active", "revoked", "expired"]
     revoked_at: Timestamp | None
-    revocation_reason: CancellationReason | Literal["daemon_disconnect"] | None
+    revocation_reason: GrantRevocationReason | None
 
     @model_validator(mode="after")
     def _coupled(self) -> DesktopGrantV1:
@@ -674,8 +679,6 @@ FactV1: TypeAlias = (
 
 
 def parse_action_intent(payload: str | bytes | Mapping[str, object]) -> ActionIntentV1:
-    """Parse untrusted intent with duplicate-key and model-text rejection."""
-
     try:
         value = (
             _decode_json(payload)
@@ -693,7 +696,8 @@ def parse_action_intent(payload: str | bytes | Mapping[str, object]) -> ActionIn
     except ComputerActionContractError:
         raise
     except (UnicodeError, ValueError, TypeError, ValidationError, json.JSONDecodeError):
-        _fail("invalid_action")
+        pass
+    _fail("invalid_action")
 
 
 def bind_action_target(
@@ -704,8 +708,6 @@ def bind_action_target(
     frame_id: str,
     requested_at: str,
 ) -> ActionTargetV1:
-    """Bind one current observing display-parent frame without native facts."""
-
     if not frame.observing or (frame.session_id, frame.capture_id, frame.frame_id) != (
         session_id,
         capture_id,
@@ -723,6 +725,7 @@ def bind_action_target(
         or isinstance(scale, bool)
         or not isinstance(scale, (int, float))
         or not math.isfinite(scale)
+        or not 0.5 <= scale <= 4.0
     ):
         _fail("unsupported_action")
     try:
@@ -742,7 +745,7 @@ def bind_action_target(
         _fail("invalid_action")
     if (
         not _instant(target.frame_captured_at)
-        <= _instant(requested_at)
+        < _instant(requested_at)
         < _instant(target.frame_expires_at)
         or _milliseconds(target.frame_captured_at, requested_at) > 30000
     ):
@@ -753,8 +756,6 @@ def bind_action_target(
 def build_action_invocation(
     intent: ActionIntentV1 | Mapping[str, object], context: TrustedActionContextV1
 ) -> ActionInvocationV1:
-    """Bind model-authored action arguments to authoritative runtime facts."""
-
     parsed = (
         intent if isinstance(intent, ActionIntentV1) else parse_action_intent(intent)
     )
@@ -799,15 +800,9 @@ def build_action_invocation(
 def match_desktop_grant(
     invocation: ActionInvocationV1, grant: DesktopGrantV1 | None, now: str
 ) -> DesktopGrantV1:
-    """Validate one invocation against one current, exact desktop grant."""
-
     _timestamp_or_fail(now)
     if grant is None:
         _fail("grant_required")
-    if grant.state != "active" or _instant(now) >= _instant(grant.expires_at):
-        _fail("grant_revoked")
-    if _instant(now) >= _instant(invocation.expires_at):
-        _fail("expired")
     expected = (
         invocation.daemon_id,
         invocation.desktop_client_id,
@@ -833,6 +828,12 @@ def match_desktop_grant(
         or invocation.action.kind not in grant.action_kinds
     ):
         _fail("grant_required")
+    if grant.state != "active" or not (
+        _instant(grant.issued_at) <= _instant(now) < _instant(grant.expires_at)
+    ):
+        _fail("grant_revoked")
+    if _instant(now) >= _instant(invocation.expires_at):
+        _fail("expired")
     return grant
 
 
@@ -911,8 +912,8 @@ def _validate_trusted_context(context: TrustedActionContextV1) -> None:
         context.tool_call_id,
         context.actor_id,
     ):
-        _identity_128(value)
-    _identity_256(context.session_id)
+        _identity(value, 128)
+    _identity(context.session_id, 256)
     if context.actor_kind != "agent" or context.registered_risk_floor != "high":
         _validation_error("trusted policy facts are invalid")
     _timestamp(context.requested_at)
@@ -923,7 +924,7 @@ def _approval_matches(
     approval: AppliedApprovalFactV1, context: TrustedActionContextV1
 ) -> bool:
     try:
-        _identity_128(approval.approval_id)
+        _identity(approval.approval_id, 128)
     except (UnicodeError, ValueError, TypeError):
         return False
     return approval.state == "applied" and (

@@ -19,6 +19,7 @@ from .computer_actions import (
     Capability,
     ErrorCode,
     FactV1,
+    Hex48,
     Hex64,
     Identity128,
     Identity256,
@@ -73,6 +74,7 @@ class ActionAuditProjectionV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     schema_version: Literal[1]
+    action_id: Hex48
     session_id: Identity256
     trace_id: Identity128
     turn_id: Identity128
@@ -132,8 +134,11 @@ def create_or_replay(
     invocation: ActionInvocationV1,
     now: str,
 ) -> ActionRecordV1:
+    _timestamp_or_fail(now)
     if existing is None:
         return create_record(invocation, now)
+    if _instant(now) < _instant(existing.updated_at):
+        _fail("result_conflict")
     same_identity = (
         existing.invocation.action_id == invocation.action_id
         and existing.invocation.idempotency_key == invocation.idempotency_key
@@ -147,6 +152,11 @@ def transition(record: ActionRecordV1, fact: FactV1, now: str) -> ActionRecordV1
     """Apply one identity-bound lifecycle fact to one immutable record."""
 
     _validate_transition_admission(record, fact, now)
+    if isinstance(fact, ActionExpireFactV1) and (
+        fact.observed_at != now
+        or _instant(now) < _instant(record.invocation.expires_at)
+    ):
+        _fail("result_conflict")
     if _stored_fact(record, fact) == fact:
         return record
     if record.phase == "terminal":
@@ -171,6 +181,7 @@ def project_action_audit(record: ActionRecordV1) -> ActionAuditProjectionV1:
     result = record.result
     return ActionAuditProjectionV1(
         schema_version=SCHEMA_VERSION,
+        action_id=invocation.action_id,
         session_id=invocation.session_id,
         trace_id=invocation.trace_id,
         turn_id=invocation.turn_id,
@@ -293,9 +304,10 @@ def _apply_rejected_acknowledgement(
     )
     if not dispatched_origin or fact.error is None:
         _fail("result_conflict")
-    if fact.error.code == "expired" and _instant(fact.acknowledged_at) < _instant(
+    acknowledged_expired = _instant(fact.acknowledged_at) >= _instant(
         record.invocation.expires_at
-    ):
+    )
+    if (fact.error.code == "expired") != acknowledged_expired:
         _fail("result_conflict")
     return record.model_copy(
         update={
@@ -343,10 +355,6 @@ def _apply_cancellation(
 def _apply_expiry(
     record: ActionRecordV1, fact: ActionExpireFactV1, now: str
 ) -> ActionRecordV1:
-    if fact.observed_at != now or _instant(now) < _instant(
-        record.invocation.expires_at
-    ):
-        _fail("result_conflict")
     if record.phase == "pending":
         return record.model_copy(
             update={
@@ -439,6 +447,7 @@ def _validate_record_coupling(record: ActionRecordV1) -> None:
     if _instant(record.updated_at) < _instant(record.created_at):
         _validation_error("record update precedes creation")
     _validate_record_identities(record)
+    _validate_record_timestamps(record)
     if record.phase == "terminal":
         _validate_terminal_record(record)
     else:
@@ -459,6 +468,94 @@ def _validate_record_identities(record: ActionRecordV1) -> None:
         for fact in facts
     ):
         _validation_error("record fact identity mismatch")
+
+
+def _validate_record_timestamps(record: ActionRecordV1) -> None:
+    invocation = record.invocation
+    requested = _instant(invocation.requested_at)
+    expires = _instant(invocation.expires_at)
+    created = _instant(record.created_at)
+    updated = _instant(record.updated_at)
+    if not requested <= created < expires:
+        _validation_error("record creation time is invalid")
+    facts = tuple(
+        _instant(_fact_timestamp(fact))
+        for fact in (
+            record.dispatch,
+            record.acknowledgement,
+            record.cancellation,
+            record.expiry,
+            record.control,
+            record.result,
+        )
+        if fact is not None
+    )
+    if any(timestamp > updated for timestamp in facts):
+        _validation_error("record fact follows update time")
+    dispatch = record.dispatch
+    if dispatch is not None and not (
+        requested <= _instant(dispatch.dispatched_at) < expires
+    ):
+        _validation_error("record dispatch time is invalid")
+    acknowledgement = record.acknowledgement
+    if acknowledgement is not None:
+        if dispatch is None or _instant(acknowledgement.acknowledged_at) < _instant(
+            dispatch.dispatched_at
+        ):
+            _validation_error("record acknowledgement time is invalid")
+        if acknowledgement.state == "accepted" and not (
+            _instant(acknowledgement.acknowledged_at) < expires
+        ):
+            _validation_error("accepted acknowledgement is too late")
+        acknowledged_expired = _instant(acknowledgement.acknowledged_at) >= expires
+        if acknowledgement.state == "rejected" and (
+            (acknowledgement.error.code == "expired") != acknowledged_expired
+        ):
+            _validation_error("rejected acknowledgement time is invalid")
+    cancellation = record.cancellation
+    if cancellation is not None:
+        cancelled = _instant(cancellation.requested_at)
+        if cancelled < requested or (
+            dispatch is not None and cancelled < _instant(dispatch.dispatched_at)
+        ):
+            _validation_error("record cancellation time is invalid")
+        if acknowledgement is not None and not (
+            _instant(acknowledgement.acknowledged_at) < cancelled
+        ):
+            _validation_error("record acknowledgement follows cancellation")
+    expiry = record.expiry
+    if expiry is not None:
+        observed = _instant(expiry.observed_at)
+        if observed < expires:
+            _validation_error("record expiry time is invalid")
+        if cancellation is not None and observed < _instant(cancellation.requested_at):
+            _validation_error("record expiry precedes cancellation")
+        if (
+            cancellation is not None
+            and cancellation.reason == "expired"
+            and (cancellation.requested_at != expiry.observed_at)
+        ):
+            _validation_error("expiry cancellation time is invalid")
+    control = record.control
+    if control is not None and (
+        _instant(control.observed_at) < created
+        or (
+            dispatch is not None
+            and _instant(control.observed_at) < _instant(dispatch.dispatched_at)
+        )
+    ):
+        _validation_error("record control time is invalid")
+    result = record.result
+    if result is not None:
+        anchor = (
+            acknowledgement.acknowledged_at
+            if acknowledgement
+            else (dispatch.dispatched_at if dispatch else None)
+        )
+        if anchor is None or not (
+            _instant(anchor) <= _instant(result.started_at) < expires
+        ):
+            _validation_error("record result time is invalid")
 
 
 def _validate_active_record(record: ActionRecordV1) -> None:
@@ -517,20 +614,21 @@ def _validate_terminal_record(record: ActionRecordV1) -> None:
         valid = (
             record.result is not None
             and record.result.state == "delivered"
+            and record.control is None
             and record.error is None
         )
     elif record.terminal_state == "interrupted_before_delivery":
         valid = (
             record.result is not None
             and record.result.state == "interrupted_before_delivery"
+            and record.control is None
             and record.error == record.result.error
         )
     elif record.terminal_state == "outcome_unknown":
+        terminal_owners = (record.control is not None, record.result is not None)
         valid = (
-            (
-                record.control is not None
-                or (record.result and record.result.state == "outcome_unknown")
-            )
+            sum(terminal_owners) == 1
+            and (record.result is None or record.result.state == "outcome_unknown")
             and record.error is not None
             and record.error.code == "executor_unavailable"
         )
@@ -541,10 +639,26 @@ def _validate_terminal_record(record: ActionRecordV1) -> None:
 
 
 def _valid_rejected_record(record: ActionRecordV1) -> bool:
-    owner = (
-        bool(record.acknowledgement and record.acknowledgement.state == "rejected")
-        or bool(record.cancellation and record.dispatch is None)
-        or bool(record.expiry and record.dispatch is None)
-        or bool(record.control and record.dispatch is None)
+    if record.error is None or record.result is not None:
+        return False
+    acknowledgement = record.acknowledgement
+    if acknowledgement is not None:
+        return bool(
+            acknowledgement.state == "rejected"
+            and record.dispatch is not None
+            and record.control is None
+            and record.error == acknowledgement.error
+            and (record.expiry is None or record.cancellation is not None)
+        )
+    pending_owners = (
+        record.cancellation is not None,
+        record.expiry is not None,
+        record.control is not None,
     )
-    return record.error is not None and record.result is None and owner
+    if record.dispatch is not None or sum(pending_owners) != 1:
+        return False
+    if record.cancellation is not None:
+        return record.error == _cancellation_error(record.cancellation.reason)
+    if record.expiry is not None:
+        return record.error == _error("expired")
+    return record.error == _error("executor_unavailable")

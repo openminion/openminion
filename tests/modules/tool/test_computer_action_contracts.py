@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import importlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,6 +30,7 @@ from openminion.modules.tool.contracts.computer_actions import (
     CapabilityStateV1,
     ComputerActionContractError,
     DesktopGrantV1,
+    ERROR_MESSAGES,
     TrustedActionContextV1,
     TrustedCaptureFrameV1,
     bind_action_target,
@@ -263,6 +264,7 @@ def test_untrusted_intent_fails_with_fixed_safe_errors(
         parse_action_intent(payload)
     assert caught.value.code == code
     assert "do-not-log" not in str(caught.value)
+    assert caught.value.__context__ is None
 
 
 def test_duplicate_json_key_is_rejected_before_validation() -> None:
@@ -319,6 +321,33 @@ def test_trusted_capture_binding_derives_scale_and_rejects_window_or_stale_frame
         )
     assert unsupported.value.code == "unsupported_action"
 
+    for scale in (0.4996, 4.0004):
+        invalid_scale = TrustedCaptureFrameV1(
+            **{**frame.__dict__, "scale_factor": scale}
+        )
+        with pytest.raises(ComputerActionContractError) as invalid:
+            bind_action_target(
+                invalid_scale,
+                session_id="session-safe",
+                capture_id=CAPTURE_ID,
+                frame_id=FRAME_ID,
+                requested_at=REQUESTED_AT,
+            )
+        assert invalid.value.code == "unsupported_action"
+
+    simultaneous = TrustedCaptureFrameV1(
+        **{**frame.__dict__, "captured_at": REQUESTED_AT}
+    )
+    with pytest.raises(ComputerActionContractError) as stale:
+        bind_action_target(
+            simultaneous,
+            session_id="session-safe",
+            capture_id=CAPTURE_ID,
+            frame_id=FRAME_ID,
+            requested_at=REQUESTED_AT,
+        )
+    assert stale.value.code == "frame_stale"
+
 
 def test_trusted_builder_requires_matching_applied_approval() -> None:
     with pytest.raises(ComputerActionContractError) as missing:
@@ -336,6 +365,14 @@ def test_trusted_builder_requires_matching_applied_approval() -> None:
         )
     assert mismatch.value.code == "approval_mismatch"
 
+    for invalid_id in ("   ", "daemon\u0085unsafe"):
+        invalid_context = TrustedActionContextV1(
+            **{**context.__dict__, "daemon_id": invalid_id}
+        )
+        with pytest.raises(ComputerActionContractError) as invalid:
+            build_action_invocation(_intent(), invalid_context)
+        assert invalid.value.code == "invalid_action"
+
 
 def test_grant_matches_all_authoritative_identity_target_and_capability_facts() -> None:
     invocation = _invocation()
@@ -346,6 +383,26 @@ def test_grant_matches_all_authoritative_identity_target_and_capability_facts() 
     with pytest.raises(ComputerActionContractError) as caught:
         match_desktop_grant(invocation, wrong, ACKNOWLEDGED_AT)
     assert caught.value.code == "grant_required"
+
+    revoked = grant.model_copy(
+        update={
+            "state": "revoked",
+            "revoked_at": ACKNOWLEDGED_AT,
+            "revocation_reason": "user_stop",
+        }
+    )
+    wrong_revoked = revoked.model_copy(update={"session_id": "other-session"})
+    with pytest.raises(ComputerActionContractError) as mismatch:
+        match_desktop_grant(invocation, wrong_revoked, ACKNOWLEDGED_AT)
+    assert mismatch.value.code == "grant_required"
+
+    with pytest.raises(ValidationError):
+        DesktopGrantV1.model_validate(
+            {
+                **revoked.model_dump(mode="json"),
+                "revocation_reason": "grant_revoked",
+            }
+        )
 
 
 def test_grant_and_capability_state_coupling_fail_closed() -> None:
@@ -379,10 +436,10 @@ def test_delivered_lifecycle_and_audit_projection_are_exact_and_redacted() -> No
     assert terminal.phase == "terminal"
     assert terminal.terminal_state == "delivered"
     assert audit.phase == "terminal"
+    assert audit.action_id == ACTION_ID
     assert audit.approval_present is True
     public = canonical_json(audit)
     for forbidden in (
-        ACTION_ID,
         IDEMPOTENCY_KEY,
         "daemon-safe",
         "client-safe",
@@ -461,6 +518,26 @@ def test_expiry_is_persisted_idempotent_and_preserves_first_cancel_reason() -> N
     assert transition(terminal, later_expiry, FRAME_EXPIRES_AT) is terminal
 
 
+@pytest.mark.parametrize("accepted", [False, True])
+def test_expiry_after_dispatch_requests_cancellation(accepted: bool) -> None:
+    invocation = _invocation()
+    record = transition(
+        create_record(invocation, REQUESTED_AT),
+        _dispatch(invocation),
+        DISPATCHED_AT,
+    )
+    if accepted:
+        record = transition(record, _ack(invocation), ACKNOWLEDGED_AT)
+    expiry = ActionExpireFactV1(
+        **_identity(invocation), kind="expire", observed_at=EXPIRES_AT
+    )
+    cancelling = transition(record, expiry, EXPIRES_AT)
+    assert cancelling.phase == "cancel_requested"
+    assert cancelling.expiry == expiry
+    assert cancelling.cancellation.reason == "expired"
+    assert cancelling.cancellation.requested_at == EXPIRES_AT
+
+
 def test_expiry_requires_clock_fact_at_or_after_invocation_expiry() -> None:
     invocation = _invocation()
     record = create_record(invocation, REQUESTED_AT)
@@ -477,6 +554,30 @@ def test_expiry_requires_clock_fact_at_or_after_invocation_expiry() -> None:
     with pytest.raises(ComputerActionContractError) as direct_error:
         transition(record, direct, EXPIRES_AT)
     assert direct_error.value.code == "result_conflict"
+
+    terminal = transition(
+        record,
+        expiry := ActionExpireFactV1(
+            **_identity(invocation), kind="expire", observed_at=EXPIRES_AT
+        ),
+        EXPIRES_AT,
+    )
+    with pytest.raises(ComputerActionContractError) as wrong_now:
+        transition(terminal, expiry, FRAME_EXPIRES_AT)
+    assert wrong_now.value.code == "result_conflict"
+
+    delivered = transition(
+        transition(
+            transition(record, _dispatch(invocation), DISPATCHED_AT),
+            _ack(invocation),
+            ACKNOWLEDGED_AT,
+        ),
+        _result(invocation),
+        ENDED_AT,
+    )
+    with pytest.raises(ComputerActionContractError) as terminal_early:
+        transition(delivered, early, EXPIRES_AT)
+    assert terminal_early.value.code == "result_conflict"
 
 
 @pytest.mark.parametrize("kind", ["disconnect", "restart", "executor_unavailable"])
@@ -517,26 +618,130 @@ def test_replay_and_conflicting_terminal_result_fail_closed() -> None:
         transition(delivered, _cancel(invocation), ENDED_AT)
     assert conflict.value.code == "result_conflict"
 
+    with pytest.raises(ComputerActionContractError) as noncanonical_now:
+        create_or_replay(record, invocation, "not-a-time")
+    assert noncanonical_now.value.code == "result_conflict"
+    with pytest.raises(ComputerActionContractError) as earlier_now:
+        create_or_replay(record, invocation, FRAME_CAPTURED_AT)
+    assert earlier_now.value.code == "result_conflict"
+
+
+def test_dispatched_origin_result_without_ack_is_truthful() -> None:
+    invocation = _invocation()
+    dispatched = transition(
+        create_record(invocation, REQUESTED_AT),
+        _dispatch(invocation),
+        DISPATCHED_AT,
+    )
+    cancelling = transition(dispatched, _cancel(invocation), CANCELLED_AT)
+    terminal = transition(cancelling, _result(invocation), ENDED_AT)
+    assert terminal.acknowledgement is None
+    assert terminal.terminal_state == "delivered"
+
+
+def test_record_deserialization_rejects_causal_time_drift() -> None:
+    invocation = _invocation()
+    dispatched = transition(
+        create_record(invocation, REQUESTED_AT),
+        _dispatch(invocation),
+        DISPATCHED_AT,
+    )
+    invalid_dispatch = dispatched.model_dump(mode="json")
+    invalid_dispatch["dispatch"]["dispatched_at"] = FRAME_CAPTURED_AT
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(invalid_dispatch)
+
+    accepted = transition(dispatched, _ack(invocation), ACKNOWLEDGED_AT)
+    delivered = transition(accepted, _result(invocation), ENDED_AT)
+    invalid_update = delivered.model_dump(mode="json")
+    invalid_update["updated_at"] = STARTED_AT
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(invalid_update)
+
+
+def test_terminal_records_have_one_terminal_fact_owner() -> None:
+    invocation = _invocation()
+    pending = create_record(invocation, REQUESTED_AT)
+    accepted = transition(
+        transition(
+            create_record(invocation, REQUESTED_AT),
+            _dispatch(invocation),
+            DISPATCHED_AT,
+        ),
+        _ack(invocation),
+        ACKNOWLEDGED_AT,
+    )
+    delivered = transition(accepted, _result(invocation), ENDED_AT)
+    control = ActionControlFactV1(
+        **_identity(invocation), kind="disconnect", observed_at=ENDED_AT
+    )
+    conflicting_delivered = delivered.model_dump(mode="json")
+    conflicting_delivered["control"] = control.model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(conflicting_delivered)
+
+    unknown = transition(accepted, control, ENDED_AT)
+    conflicting_unknown = unknown.model_dump(mode="json")
+    conflicting_unknown["result"] = _result(
+        invocation,
+        state="outcome_unknown",
+        error=_error("executor_unavailable"),
+    ).model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(conflicting_unknown)
+
+    rejected = transition(pending, _cancel(invocation), CANCELLED_AT)
+    conflicting_rejected = rejected.model_dump(mode="json")
+    conflicting_rejected["control"] = control.model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(conflicting_rejected)
+
+    rejected_ack = ActionAcknowledgementV1(
+        **_identity(invocation),
+        state="rejected",
+        acknowledged_at=ACKNOWLEDGED_AT,
+        error=_error("grant_revoked"),
+    )
+    ack_terminal = transition(
+        transition(pending, _dispatch(invocation), DISPATCHED_AT),
+        rejected_ack,
+        ACKNOWLEDGED_AT,
+    )
+    mismatched_error = ack_terminal.model_dump(mode="json")
+    mismatched_error["error"] = _error("target_changed").model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(mismatched_error)
+
 
 def test_contract_is_not_registered_as_tool() -> None:
     registry = ToolRegistry()
-    names = set(registry.list()) | {spec.name for spec in registry.provider_specs()}
-    assert not any("computer" in name or "desktop" in name for name in names)
+    assert registry.list() == {}
+    assert registry.provider_specs() == []
 
 
 def test_import_is_dependency_neutral() -> None:
-    before = set(sys.modules)
-    importlib.reload(
-        importlib.import_module("openminion.modules.tool.contracts.computer_actions")
+    probe = """
+import json
+import sys
+before = set(sys.modules)
+import openminion.modules.tool.contracts.computer_actions
+import openminion.modules.tool.contracts.computer_action_lifecycle
+added = set(sys.modules) - before
+forbidden = (
+    'openminion.api', 'openminion.cli', 'openminion.providers',
+    'openminion.services', 'openminion.modules.policy',
+    'openminion.modules.session', 'openminion.modules.tool.registry',
+    'electron', 'playwright', 'pyautogui',
+)
+print(json.dumps(sorted(name for name in added if name.startswith(forbidden))))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    importlib.reload(
-        importlib.import_module(
-            "openminion.modules.tool.contracts.computer_action_lifecycle"
-        )
-    )
-    added = set(sys.modules) - before
-    forbidden = ("openminion.api", "electron", "playwright", "pyautogui")
-    assert not any(name.startswith(forbidden) for name in added)
+    assert json.loads(result.stdout) == []
 
 
 def test_golden_contract_vectors() -> None:
@@ -571,22 +776,29 @@ def test_golden_contract_vectors() -> None:
         "audit": ActionAuditProjectionV1,
     }
     for key, model in reverse_models.items():
-        assert model.model_validate(fixture[key]).schema_version == 1
-    assert sorted(fixture["fixed_errors"]) == sorted(
-        [
-            "approval_mismatch",
-            "approval_required",
-            "cancelled",
-            "executor_unavailable",
-            "expired",
-            "frame_stale",
-            "grant_required",
-            "grant_revoked",
-            "invalid_action",
-            "permission_revoked",
-            "replay_conflict",
-            "result_conflict",
-            "target_changed",
-            "unsupported_action",
-        ]
-    )
+        normalized = model.model_validate(fixture[key])
+        assert canonical_json(normalized) == canonical_json(fixture[key])
+    assert fixture["fixed_errors"] == ERROR_MESSAGES
+
+    for negative in fixture["negative_cases"]:
+        if negative["name"] in {"model_text", "spoofed_session"}:
+            with pytest.raises(ComputerActionContractError) as error:
+                parse_action_intent(negative["input"])
+            assert error.value.code == negative["error"]
+        elif negative["name"] == "lowered_effective_risk":
+            invalid = dict(fixture["invocation"])
+            invalid[negative["field"]] = negative["value"]
+            with pytest.raises(ValidationError):
+                ActionInvocationV1.model_validate(invalid)
+            assert negative["error"] == "invalid_action"
+        else:
+            changed = dict(fixture["invocation"])
+            changed[negative["field"]] = negative["value"]
+            changed["effective_risk"] = "critical"
+            with pytest.raises(ComputerActionContractError) as error:
+                create_or_replay(
+                    ActionRecordV1.model_validate(fixture["delivered_record"]),
+                    ActionInvocationV1.model_validate(changed),
+                    fixture["delivered_record"]["updated_at"],
+                )
+            assert error.value.code == negative["error"]
