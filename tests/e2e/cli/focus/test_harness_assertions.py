@@ -23,6 +23,7 @@ from tests.e2e.cli.focus.harness.probe import (
     inline_approval_key,
     inline_approval_menu,
     latest_approval_prompt,
+    latest_done_after_submission,
     latest_done_event,
     latest_terminal_failure,
     latest_turn_event,
@@ -287,6 +288,27 @@ def test_latest_done_event_excludes_completion_before_new_activity() -> None:
     offset = transcript.index("● Policy confirmation")
 
     assert latest_done_event(transcript, offset=offset) is None
+
+
+def test_latest_done_after_submission_ignores_completion_from_prior_redraw() -> None:
+    transcript = (
+        "Done in 2m11s\n"
+        "continue\n"
+        "Working...\n\f\n"
+        "Done in 2m11s\n"
+        "continue\n"
+        "Running file.read(greet.py)\n"
+    )
+
+    assert latest_done_after_submission(transcript, "continue") is None
+
+    transcript += (
+        "\f\nDone in 2m11s\ncontinue\nResult: project validated.\nDone in 38s\n"
+    )
+    match = latest_done_after_submission(transcript, "continue")
+
+    assert match is not None
+    assert match.group(0) == "Done in 38s"
 
 
 def test_latest_approval_prompt_wins_when_completion_text_follows() -> None:

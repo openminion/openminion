@@ -99,6 +99,20 @@ def latest_done_event(transcript: str, *, offset: int) -> re.Match[str] | None:
     return match
 
 
+def latest_done_after_submission(
+    transcript: str,
+    submission_probe: str,
+) -> re.Match[str] | None:
+    """Return completion rendered after the latest submitted composer input."""
+    trailing = screen_after_submission(transcript, submission_probe)
+    if trailing is None:
+        return None
+    match: re.Match[str] | None = None
+    for match in _DONE_RE.finditer(trailing):
+        pass
+    return match
+
+
 def latest_terminal_failure(
     transcript: str, *, offset: int
 ) -> re.Match[str] | None:
@@ -642,12 +656,17 @@ class FocusProbe:
         event_offset = len(session.visible_transcript)
         approvals = 0
         continuations = 0
+        continuation_probe: str | None = None
         deadline = time.monotonic() + scenario.timeout
         while time.monotonic() < deadline:
             time.sleep(0.1)
             transcript = session.visible_transcript
             screen_text = session.screen_text
-            done_match = latest_done_event(transcript, offset=event_offset)
+            done_match = (
+                latest_done_after_submission(transcript, continuation_probe)
+                if continuation_probe is not None
+                else latest_done_event(transcript, offset=event_offset)
+            )
             failure_match = latest_terminal_failure(transcript, offset=event_offset)
             approval_needs_reply = approval_prompt_needs_reply(
                 transcript,
@@ -690,7 +709,10 @@ class FocusProbe:
                     and continuations < scenario.max_auto_continuations
                 ):
                     continuations += 1
-                    session.send("continue\r")
+                    continuation_probe = self._submit_composer_line(
+                        session,
+                        "continue",
+                    )
                     event_offset = len(session.visible_transcript)
                     deadline = time.monotonic() + scenario.timeout
                     continue
