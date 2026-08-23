@@ -44,3 +44,23 @@ def test_render_summary_short_and_long_use_recent_window() -> None:
     assert "assistant: two" in short
     assert "user: one" not in long
     assert "assistant: two" in long
+
+
+def test_render_summary_short_preserves_both_ends_of_long_turns() -> None:
+    engine = SessionSummaryEngine()
+    short = engine.render_summary_short(
+        [
+            SummaryTurn(
+                role="user",
+                text=(
+                    "This is a long continuity setup with filler in the middle "
+                    "and the durable marker is COBALT-731."
+                ),
+            )
+        ],
+        max_chars_per_turn=50,
+    )
+
+    assert "This is a long continui" in short
+    assert "COBALT-731" in short
+    assert len(short.removeprefix("user: ")) == 50

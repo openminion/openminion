@@ -20,6 +20,8 @@ from openminion.modules.prompting.memory import (
     CURRENT_SESSION_SUMMARY_HEADER,
     PRIOR_SESSION_CONTEXT_LABEL,
     PRIOR_SESSION_SUMMARY_HEADER,
+    session_summary_preview,
+    truncate_session_summary_text,
 )
 
 
@@ -334,19 +336,6 @@ class SessionLifecycleMixin:
         if status == "paused":
             return 1
         return 0
-
-    def _truncate_session_summary_text(
-        self, text: Any, *, max_chars: int, ellipsis: bool = True
-    ) -> str:
-        normalized = str(text or "").strip()
-        limit = max(0, int(max_chars))
-        if limit <= 0:
-            return ""
-        if len(normalized) <= limit:
-            return normalized
-        if not ellipsis or limit <= 3:
-            return normalized[:limit].rstrip()
-        return normalized[: max(0, limit - 3)].rstrip() + "..."
 
     def _run_session_summary_structurer(
         self,
@@ -731,7 +720,11 @@ class SessionLifecycleMixin:
                     if len(target) >= 3:
                         break
         lines = (
-            [CURRENT_SESSION_SUMMARY_HEADER, "", CURRENT_SESSION_CALLBACK_CONTEXT_LABEL]
+            [
+                CURRENT_SESSION_SUMMARY_HEADER,
+                "",
+                CURRENT_SESSION_CALLBACK_CONTEXT_LABEL,
+            ]
             if current_session
             else [
                 PRIOR_SESSION_SUMMARY_HEADER,
@@ -742,27 +735,23 @@ class SessionLifecycleMixin:
         key_decision_section: list[str] | None = None
         if first["decisions"]:
             key_decision_limit = 120 if current_session else 88
-            key_decision = self._truncate_session_summary_text(
+            key_decision = truncate_session_summary_text(
                 first["decisions"][0],
                 max_chars=key_decision_limit,
             )
             if key_decision:
                 key_decision_section = [f"  Key decision: {key_decision}"]
-        summary_preview = ""
-        if first["summary_text"]:
-            summary_preview_limit = 88 if current_session else 120
-            if active_thread is not None and not current_session:
-                summary_preview_limit = 48
-            summary_preview = self._truncate_session_summary_text(
-                first["summary_text"],
-                max_chars=summary_preview_limit,
-            )
+        summary_preview = session_summary_preview(
+            first,
+            current_session=current_session,
+            has_active_thread=active_thread is not None,
+        )
         optional_sections: list[list[str]] = []
         title_section: list[str] | None = None
         if first["title"]:
             title_section = [
                 "  Title: "
-                + self._truncate_session_summary_text(
+                + truncate_session_summary_text(
                     first["title"],
                     max_chars=72,
                 )
@@ -772,7 +761,7 @@ class SessionLifecycleMixin:
             topic_label = ", ".join(str(item) for item in first["keywords"][:5])
             topic_section = [
                 "  Topic: "
-                + self._truncate_session_summary_text(
+                + truncate_session_summary_text(
                     topic_label,
                     max_chars=72,
                 )
@@ -784,7 +773,7 @@ class SessionLifecycleMixin:
             active_thread_lines = ["", "Active thread:"]
             active_thread_lines.append(
                 "  Topic: "
-                + self._truncate_session_summary_text(
+                + truncate_session_summary_text(
                     active_thread.get("topic", ""),
                     max_chars=64,
                 )
@@ -796,14 +785,14 @@ class SessionLifecycleMixin:
             if next_step:
                 active_thread_lines.append(
                     "  Next step: "
-                    + self._truncate_session_summary_text(next_step, max_chars=120)
+                    + truncate_session_summary_text(next_step, max_chars=120)
                 )
             active_thread_section = active_thread_lines
         open_question_section: list[str] | None = None
         if first["open_questions"]:
             open_question_section = [
                 "  Open question: "
-                + self._truncate_session_summary_text(
+                + truncate_session_summary_text(
                     first["open_questions"][0],
                     max_chars=96,
                 )
@@ -819,10 +808,10 @@ class SessionLifecycleMixin:
                 if index == preferred_index:
                     continue
                 entry = entries[index]
-                label = self._truncate_session_summary_text(
+                label = truncate_session_summary_text(
                     entry["title"] or "Session summary", max_chars=48
                 )
-                condensed = self._truncate_session_summary_text(
+                condensed = truncate_session_summary_text(
                     entry["summary_text"] or label, max_chars=80
                 )
                 other_recent_section.append(f"  • {label} — {condensed or label}")
@@ -860,7 +849,7 @@ class SessionLifecycleMixin:
             optional_sections.append(
                 ["", header]
                 + [
-                    "  - " + self._truncate_session_summary_text(item, max_chars=96)
+                    "  - " + truncate_session_summary_text(item, max_chars=96)
                     for item in prior_items[:3]
                 ]
             )
