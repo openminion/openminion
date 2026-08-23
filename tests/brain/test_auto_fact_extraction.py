@@ -143,6 +143,7 @@ def _runner(
         context_api=context_api,
         session_api=session_store,
         memory_api=memory_api,
+        _call_order_tracker={},
         _build_context=_build_context,
         _debit_tokens=lambda *args, **kwargs: None,
     )

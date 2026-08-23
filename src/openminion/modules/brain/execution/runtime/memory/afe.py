@@ -188,6 +188,13 @@ def _run_afe_reflection(
     logger: CanonicalEventLogger,
     config_data: _AfeConfigData,
 ) -> UserMessageCandidateReport | list[str]:
+    _runner_delegate(
+        "_track_call_started",
+        runner,
+        config_data.llm_call_id,
+        "reflect",
+        config_data.model,
+    )
     try:
         context = _runner_delegate(
             "_build_context",
@@ -217,6 +224,8 @@ def _run_afe_reflection(
             status="warning",
             error=str(exc),
         )
+    finally:
+        _runner_delegate("_track_call_completed", runner, config_data.llm_call_id)
 
 
 def _stage_afe_candidates(
