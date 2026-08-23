@@ -28,6 +28,10 @@ from openminion.modules.task.project import (
     evaluate_project_effect_replay,
     evaluate_project_verification_closure,
 )
+from openminion.modules.task.project.turn import (
+    ProjectTurnRequest,
+    project_turn_from_payload,
+)
 
 
 def _task_record(state: TaskLifecycleState = TaskLifecycleState.ACTIVE):
@@ -74,6 +78,44 @@ def _project_run(
         metrics_summary_ref="artifact:metrics.json",
         blocked_reason=blocked_reason,
     )
+
+
+@pytest.mark.parametrize(
+    ("error_code", "summary"),
+    (
+        ("empty_provider_response", "provider response was empty"),
+        ("unusable_provider_response", "provider response was unusable"),
+        ("provider_timeout", "provider request timed out"),
+        ("cancelled", "project turn was cancelled"),
+        ("malformed_provider_response", "provider response was malformed"),
+        ("context_overflow", "active context exceeded its budget"),
+    ),
+)
+def test_project_turn_error_payloads_collapse_to_runtime_error(
+    error_code: str,
+    summary: str,
+) -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    with pytest.raises(RuntimeError, match=summary):
+        project_turn_from_payload(
+            request,
+            payload={},
+            execute=lambda _: {
+                "error": True,
+                "summary": summary,
+                "metadata": {"error_code": error_code},
+            },
+        )
 
 
 def test_operator_inbox_projects_all_local_states_with_resume_actions() -> None:
