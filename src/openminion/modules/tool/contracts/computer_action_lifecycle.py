@@ -661,10 +661,7 @@ def _valid_control_history(record: ActionRecordV1) -> bool:
     if record.control is None or record.result is not None:
         return False
     if record.dispatch is None:
-        return all(
-            item is None
-            for item in (record.acknowledgement, record.cancellation, record.expiry)
-        )
+        return False
     if record.acknowledgement is not None and (
         record.acknowledgement.state != "accepted"
     ):

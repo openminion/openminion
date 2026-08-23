@@ -640,6 +640,55 @@ def test_pending_control_rejects_before_dispatch() -> None:
     assert terminal.dispatch is None
     assert terminal.error == _error("executor_unavailable")
 
+    unreachable = terminal.model_copy(update={"terminal_state": "outcome_unknown"})
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(unreachable.model_dump(mode="json"))
+
+
+def test_control_terminal_requires_dispatched_non_rejected_history() -> None:
+    invocation = _invocation()
+    dispatched = transition(
+        create_record(invocation, REQUESTED_AT),
+        _dispatch(invocation),
+        DISPATCHED_AT,
+    )
+    rejected_ack = ActionAcknowledgementV1(
+        **_identity(invocation),
+        state="rejected",
+        acknowledged_at=ACKNOWLEDGED_AT,
+        error=_error("grant_revoked"),
+    )
+    rejected = transition(dispatched, rejected_ack, ACKNOWLEDGED_AT)
+    invalid_ack_history = rejected.model_copy(
+        update={
+            "control": ActionControlFactV1(
+                **_identity(invocation),
+                kind="disconnect",
+                observed_at=CANCELLED_AT,
+            ),
+            "terminal_state": "outcome_unknown",
+            "error": _error("executor_unavailable"),
+            "updated_at": CANCELLED_AT,
+        }
+    )
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(invalid_ack_history.model_dump(mode="json"))
+
+    expiry = ActionExpireFactV1(
+        **_identity(invocation), kind="expire", observed_at=EXPIRES_AT
+    )
+    invalid_expiry_history = transition(
+        dispatched,
+        ActionControlFactV1(
+            **_identity(invocation),
+            kind="restart",
+            observed_at=EXPIRES_AT,
+        ),
+        EXPIRES_AT,
+    ).model_copy(update={"expiry": expiry})
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(invalid_expiry_history.model_dump(mode="json"))
+
 
 def test_accepted_cancellation_and_unknown_result_are_explicit() -> None:
     invocation = _invocation()
