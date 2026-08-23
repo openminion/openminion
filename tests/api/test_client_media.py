@@ -1084,15 +1084,7 @@ def test_desktop_image_media_reaches_provider_payload(
             media_id
         ].artifact_ref
         session_api = loopback_media.server._runtime.gateway._agent._runner.session_api
-        brain_session_ids = [
-            str(item["session_id"])
-            for item in session_api.store.list_sessions(limit=100)
-            if str(item["session_id"]).startswith(
-                f"{loopback_media.session_id}::conv:"
-            )
-        ]
-        assert len(brain_session_ids) == 1
-        turns = session_api.list_turns(brain_session_ids[0])
+        turns = session_api.list_turns(loopback_media.session_id)
         user_turns = [turn for turn in turns if turn.get("role") == "user"]
         assert len(user_turns) == 1
         assert user_turns[0]["attachments"] == [artifact_ref]
