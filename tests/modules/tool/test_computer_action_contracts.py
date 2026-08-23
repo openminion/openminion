@@ -40,7 +40,6 @@ from openminion.modules.tool.contracts.computer_actions import (
     match_desktop_grant,
     parse_action_intent,
 )
-from openminion.modules.tool.registry import ToolRegistry
 
 ACTION_ID = "a" * 48
 GRANT_ID = "b" * 48
@@ -348,6 +347,20 @@ def test_trusted_capture_binding_derives_scale_and_rejects_window_or_stale_frame
         )
     assert stale.value.code == "frame_stale"
 
+    malformed = TrustedCaptureFrameV1(
+        **{**frame.__dict__, "captured_at": "secret-path-token"}
+    )
+    with pytest.raises(ComputerActionContractError) as safe:
+        bind_action_target(
+            malformed,
+            session_id="session-safe",
+            capture_id=CAPTURE_ID,
+            frame_id=FRAME_ID,
+            requested_at=REQUESTED_AT,
+        )
+    assert safe.value.code == "invalid_action"
+    assert safe.value.__context__ is None
+
 
 def test_trusted_builder_requires_matching_applied_approval() -> None:
     with pytest.raises(ComputerActionContractError) as missing:
@@ -372,6 +385,18 @@ def test_trusted_builder_requires_matching_applied_approval() -> None:
         with pytest.raises(ComputerActionContractError) as invalid:
             build_action_invocation(_intent(), invalid_context)
         assert invalid.value.code == "invalid_action"
+        assert invalid.value.__context__ is None
+
+    simultaneous_target = _target().model_copy(
+        update={"frame_captured_at": REQUESTED_AT}
+    )
+    invalid_target_context = TrustedActionContextV1(
+        **{**context.__dict__, "target": simultaneous_target}
+    )
+    with pytest.raises(ComputerActionContractError) as invalid_target:
+        build_action_invocation(_intent(), invalid_target_context)
+    assert invalid_target.value.code == "invalid_action"
+    assert invalid_target.value.__context__ is None
 
 
 def test_grant_matches_all_authoritative_identity_target_and_capability_facts() -> None:
@@ -621,6 +646,7 @@ def test_replay_and_conflicting_terminal_result_fail_closed() -> None:
     with pytest.raises(ComputerActionContractError) as noncanonical_now:
         create_or_replay(record, invocation, "not-a-time")
     assert noncanonical_now.value.code == "result_conflict"
+    assert noncanonical_now.value.__context__ is None
     with pytest.raises(ComputerActionContractError) as earlier_now:
         create_or_replay(record, invocation, FRAME_CAPTURED_AT)
     assert earlier_now.value.code == "result_conflict"
@@ -713,10 +739,75 @@ def test_terminal_records_have_one_terminal_fact_owner() -> None:
         ActionRecordV1.model_validate(mismatched_error)
 
 
+def test_terminal_result_requires_reachable_prehistory() -> None:
+    invocation = _invocation()
+    pending = create_record(invocation, REQUESTED_AT)
+    dispatched = transition(pending, _dispatch(invocation), DISPATCHED_AT)
+    result = _result(invocation)
+
+    no_ack_or_cancel = dispatched.model_dump(mode="json")
+    no_ack_or_cancel.update(
+        phase="terminal",
+        result=result.model_dump(mode="json"),
+        terminal_state="delivered",
+        updated_at=ENDED_AT,
+    )
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(no_ack_or_cancel)
+
+    rejected_ack = ActionAcknowledgementV1(
+        **_identity(invocation),
+        state="rejected",
+        acknowledged_at=ACKNOWLEDGED_AT,
+        error=_error("grant_revoked"),
+    )
+    rejected = transition(dispatched, rejected_ack, ACKNOWLEDGED_AT)
+    rejected_then_delivered = rejected.model_dump(mode="json")
+    rejected_then_delivered.update(
+        result=result.model_dump(mode="json"),
+        terminal_state="delivered",
+        error=None,
+        updated_at=ENDED_AT,
+    )
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(rejected_then_delivered)
+
+    cancelling = transition(dispatched, _cancel(invocation), CANCELLED_AT)
+    mismatched_result = _result(
+        invocation,
+        state="interrupted_before_delivery",
+        error=_error("grant_revoked"),
+    )
+    mismatched_cancel = cancelling.model_dump(mode="json")
+    mismatched_cancel.update(
+        phase="terminal",
+        pre_cancel_phase=None,
+        result=mismatched_result.model_dump(mode="json"),
+        terminal_state="interrupted_before_delivery",
+        error=mismatched_result.error.model_dump(mode="json"),
+        updated_at=ENDED_AT,
+    )
+    with pytest.raises(ValidationError):
+        ActionRecordV1.model_validate(mismatched_cancel)
+
+
 def test_contract_is_not_registered_as_tool() -> None:
-    registry = ToolRegistry()
-    assert registry.list() == {}
-    assert registry.provider_specs() == []
+    from openminion.modules.tool import build_default_tool_registry
+
+    registry = build_default_tool_registry()
+    contract_modules = {
+        "openminion.modules.tool.contracts.computer_actions",
+        "openminion.modules.tool.contracts.computer_action_lifecycle",
+    }
+    assert all(
+        type(tool).__module__ not in contract_modules
+        for tool in registry.list().values()
+    )
+    intent_keys = {"schema_version", "action", "requested_risk"}
+    exposed = registry.provider_specs() + registry.model_provider_specs()
+    assert all(
+        set(spec.parameters.get("properties", {})) != intent_keys for spec in exposed
+    )
 
 
 def test_import_is_dependency_neutral() -> None:

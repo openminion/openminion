@@ -102,6 +102,19 @@ _CAPABILITY_BY_ACTION: dict[str, str] = {
     "wait": "computer.wait",
 }
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+_IDENTITY_FIELDS = (
+    "schema_version",
+    "action_id",
+    "idempotency_key",
+    "daemon_id",
+    "desktop_client_id",
+    "user_id",
+    "session_id",
+    "trace_id",
+    "turn_id",
+    "tool_call_id",
+    "actor_id",
+)
 _KEY_TOKENS = {
     "backspace",
     "delete",
@@ -728,6 +741,7 @@ def bind_action_target(
         or not 0.5 <= scale <= 4.0
     ):
         _fail("unsupported_action")
+    target: ActionTargetV1 | None = None
     try:
         target = ActionTargetV1(
             capture_id=frame.capture_id,
@@ -742,6 +756,8 @@ def bind_action_target(
         )
         _timestamp(requested_at)
     except (TypeError, ValueError, ValidationError):
+        target = None
+    if target is None:
         _fail("invalid_action")
     if (
         not _instant(target.frame_captured_at)
@@ -759,9 +775,12 @@ def build_action_invocation(
     parsed = (
         intent if isinstance(intent, ActionIntentV1) else parse_action_intent(intent)
     )
+    context_valid = True
     try:
         _validate_trusted_context(context)
     except (UnicodeError, ValueError, TypeError, ValidationError):
+        context_valid = False
+    if not context_valid:
         _fail("invalid_action")
     approval = context.approval
     if approval is None:
@@ -769,8 +788,9 @@ def build_action_invocation(
     if not _approval_matches(approval, context):
         _fail("approval_mismatch")
     effective = "critical" if parsed.requested_risk == "critical" else "high"
+    invocation: ActionInvocationV1 | None = None
     try:
-        return ActionInvocationV1(
+        invocation = ActionInvocationV1(
             schema_version=SCHEMA_VERSION,
             action_id=context.action_id,
             idempotency_key=context.idempotency_key,
@@ -794,7 +814,10 @@ def build_action_invocation(
             approval_id=approval.approval_id,
         )
     except ValidationError:
+        pass
+    if invocation is None:
         _fail("invalid_action")
+    return invocation
 
 
 def match_desktop_grant(
@@ -941,25 +964,16 @@ def _approval_matches(
 
 
 def _identity_tuple(value: ActionInvocationV1 | FactV1) -> tuple[object, ...]:
-    return (
-        value.schema_version,
-        value.action_id,
-        value.idempotency_key,
-        value.daemon_id,
-        value.desktop_client_id,
-        value.user_id,
-        value.session_id,
-        value.trace_id,
-        value.turn_id,
-        value.tool_call_id,
-        value.actor_id,
-    )
+    return tuple(getattr(value, key) for key in _IDENTITY_FIELDS)
 
 
 def _timestamp_or_fail(value: str) -> None:
+    valid = True
     try:
         _timestamp(value)
     except (ValueError, TypeError):
+        valid = False
+    if not valid:
         _fail("result_conflict")
 
 
@@ -979,17 +993,4 @@ def _error(code: ErrorCode) -> ActionErrorV1:
 
 
 def _identity_dict(value: ActionInvocationV1) -> dict[str, object]:
-    keys = (
-        "schema_version",
-        "action_id",
-        "idempotency_key",
-        "daemon_id",
-        "desktop_client_id",
-        "user_id",
-        "session_id",
-        "trace_id",
-        "turn_id",
-        "tool_call_id",
-        "actor_id",
-    )
-    return {key: getattr(value, key) for key in keys}
+    return {key: getattr(value, key) for key in _IDENTITY_FIELDS}

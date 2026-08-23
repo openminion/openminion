@@ -612,16 +612,16 @@ def _validate_terminal_record(record: ActionRecordV1) -> None:
         _validation_error("terminal record coupling is invalid")
     if record.terminal_state == "delivered":
         valid = (
-            record.result is not None
+            _valid_result_history(record)
+            and record.result is not None
             and record.result.state == "delivered"
-            and record.control is None
             and record.error is None
         )
     elif record.terminal_state == "interrupted_before_delivery":
         valid = (
-            record.result is not None
+            _valid_result_history(record)
+            and record.result is not None
             and record.result.state == "interrupted_before_delivery"
-            and record.control is None
             and record.error == record.result.error
         )
     elif record.terminal_state == "outcome_unknown":
@@ -629,6 +629,8 @@ def _validate_terminal_record(record: ActionRecordV1) -> None:
         valid = (
             sum(terminal_owners) == 1
             and (record.result is None or record.result.state == "outcome_unknown")
+            and (record.result is None or _valid_result_history(record))
+            and (record.control is None or _valid_control_history(record))
             and record.error is not None
             and record.error.code == "executor_unavailable"
         )
@@ -636,6 +638,38 @@ def _validate_terminal_record(record: ActionRecordV1) -> None:
         valid = _valid_rejected_record(record)
     if not valid:
         _validation_error("terminal record coupling is invalid")
+
+
+def _valid_result_history(record: ActionRecordV1) -> bool:
+    if record.result is None or record.control is not None or record.dispatch is None:
+        return False
+    acknowledgement = record.acknowledgement
+    if acknowledgement is not None and acknowledgement.state != "accepted":
+        return False
+    if acknowledgement is None and record.cancellation is None:
+        return False
+    if record.expiry is not None and record.cancellation is None:
+        return False
+    return not (
+        record.cancellation is not None
+        and record.result.state == "interrupted_before_delivery"
+        and record.result.error != _cancellation_error(record.cancellation.reason)
+    )
+
+
+def _valid_control_history(record: ActionRecordV1) -> bool:
+    if record.control is None or record.result is not None:
+        return False
+    if record.dispatch is None:
+        return all(
+            item is None
+            for item in (record.acknowledgement, record.cancellation, record.expiry)
+        )
+    if record.acknowledgement is not None and (
+        record.acknowledgement.state != "accepted"
+    ):
+        return False
+    return record.expiry is None or record.cancellation is not None
 
 
 def _valid_rejected_record(record: ActionRecordV1) -> bool:
