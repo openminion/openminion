@@ -106,6 +106,7 @@ def test_project_worker_replans_once_then_commits_verified_completion(
             turns.append(request)
             or ProjectTurnResult(
                 summary="worked",
+                gateway_run_id=f"gateway:{request.cycle_id}",
                 evidence_refs=(f"artifact:{request.cycle_id}",),
                 evidence_kinds=("artifact",),
             )
@@ -123,6 +124,7 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert len(turns) == 2
     assert "Prior verifier refs:" in turns[1].prompt
     assert checkpoint is not None
+    assert checkpoint.payload["gateway_run_id"].endswith(":cycle:2")
     assert checkpoint.expected_checkpoint_id.endswith(":cycle:1")
     assert manager.get_task("task-1").state == TaskLifecycleState.DONE
 

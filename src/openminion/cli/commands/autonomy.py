@@ -90,7 +90,18 @@ def run_autonomy(args: argparse.Namespace) -> int:
     raise RuntimeError(f"Unknown autonomy command: {action}")
 
 
+def _validate_cycle_interval(args: argparse.Namespace) -> None:
+    value = getattr(args, "cycle_interval_seconds", None)
+    if value is None:
+        return
+    if not bool(getattr(args, "unattended", False)):
+        raise ValueError("--cycle-interval-seconds requires --unattended")
+    if not 1 <= int(value) <= 3600:
+        raise ValueError("--cycle-interval-seconds must be in 1..3600")
+
+
 def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
+    _validate_cycle_interval(args)
     goal = _resolve_goal(args)
     workspace = _resolve_workspace(args)
     verification_commands = tuple(getattr(args, "verify_command", ()) or ())
@@ -190,6 +201,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
 
 
 def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
+    _validate_cycle_interval(args)
     run = store.require(str(args.run_id))
     if run.status in {AutonomyRunStatus.COMPLETED, AutonomyRunStatus.CANCELLED}:
         raise RuntimeError(f"autonomy run cannot be resumed from {run.status}")
@@ -931,6 +943,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Schedule bounded project cycles through the existing daemon",
     )
+    start.add_argument("--cycle-interval-seconds", type=int, default=None)
     start.add_argument("--task-db", default="", help=argparse.SUPPRESS)
     _add_execution_proof_args(start)
     add_json_output_flag(start)
@@ -966,6 +979,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=None,
     )
     resume.add_argument("--unattended", action="store_true")
+    resume.add_argument("--cycle-interval-seconds", type=int, default=None)
     resume.add_argument("--task-db", default="", help=argparse.SUPPRESS)
     _add_execution_proof_args(resume)
     add_json_output_flag(resume)

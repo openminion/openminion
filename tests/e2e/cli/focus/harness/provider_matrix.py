@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
 import time
-from typing import Any, Literal
+from typing import Any, get_args, Literal
+from urllib.parse import urlparse
 
+from openminion.base.config.runtime.profile import (
+    build_runtime_config,
+    resolve_runtime_profile,
+)
 from openminion.base.generated_paths import resolve_generated_root
+from openminion.cli.config import load_cli_config
+from openminion.modules.llm.orchestration import (
+    ProviderCapabilityName,
+    load_catalog_config,
+    profile_capability_facts,
+)
 
 MatrixClassification = Literal[
     "pass",
@@ -95,9 +107,14 @@ class ProviderSessionTarget:
     api_protocol: str
     endpoint_authority: str
     config_ref: str
+    config_sha256: str
     agent_id: str
+    catalog_ref: str
+    catalog_sha256: str
+    profile_id: str
     expected_model: str
     required_capabilities: tuple[str, ...]
+    timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -159,15 +176,15 @@ def load_provider_session_resilience_manifest(
 
     run_id = _required_str(payload, "run_id")
     messages_payload = payload.get("messages")
-    if not isinstance(messages_payload, list) or len(messages_payload) < 2:
-        raise ValueError("manifest requires at least two messages")
+    if not isinstance(messages_payload, list) or len(messages_payload) != 2:
+        raise ValueError("manifest requires exactly two messages")
     messages = tuple(str(message).strip() for message in messages_payload)
     if not all(messages):
         raise ValueError("manifest messages cannot be empty")
     required_output_marker = _required_str(payload, "required_output_marker")
     targets_payload = payload.get("targets")
-    if not isinstance(targets_payload, list) or len(targets_payload) < 2:
-        raise ValueError("manifest requires at least two provider targets")
+    if not isinstance(targets_payload, list) or len(targets_payload) != 2:
+        raise ValueError("manifest requires exactly two provider targets")
 
     targets = tuple(
         _parse_provider_session_target(target, repo_root=repo_root)
@@ -234,9 +251,8 @@ def write_provider_session_resilience_report(
         "run_id": manifest.run_id,
         "generated_at_epoch": int(time.time()),
         "validation_only": validation_only,
-        "manifest_path": str(manifest_path.resolve(strict=False)),
         "rows": report_rows,
-        "injected_failures": [asdict(item) for item in manifest.injected_failures],
+        "planned_injected_failure_count": len(manifest.injected_failures),
         "redaction_status": "redacted",
     }
     json_path = output_root / "certification-report.json"
@@ -307,6 +323,12 @@ def _parse_provider_session_target(
     normalized_capabilities = tuple(str(item).strip() for item in capabilities)
     if not all(normalized_capabilities):
         raise ValueError("provider target capability facts cannot be empty")
+    allowed_capabilities = frozenset(get_args(ProviderCapabilityName))
+    invalid_capabilities = sorted(set(normalized_capabilities) - allowed_capabilities)
+    if invalid_capabilities:
+        raise ValueError(
+            "unsupported provider capabilities: " + ", ".join(invalid_capabilities)
+        )
 
     config_ref = _required_str(payload, "config_ref")
     config_path = Path(config_ref).expanduser()
@@ -315,19 +337,106 @@ def _parse_provider_session_target(
     if not config_path.exists():
         raise ValueError(f"provider config does not exist: {config_ref}")
 
-    return ProviderSessionTarget(
-        provider_class=provider_class_key(
-            adapter=str(provider_class["adapter"]),
-            api_protocol=str(provider_class["api_protocol"]),
-            endpoint_authority=str(provider_class["endpoint_authority"]),
-        ),
+    config_sha256 = _required_sha256(payload, "config_sha256")
+    if _sha256(config_path) != config_sha256:
+        raise ValueError("provider config SHA-256 mismatch")
+
+    catalog_ref = _required_str(payload, "catalog_ref")
+    catalog_path = Path(catalog_ref).expanduser()
+    if not catalog_path.is_absolute():
+        catalog_path = repo_root / catalog_path
+    if not catalog_path.exists():
+        raise ValueError(f"provider catalog does not exist: {catalog_ref}")
+    catalog_sha256 = _required_sha256(payload, "catalog_sha256")
+    if _sha256(catalog_path) != catalog_sha256:
+        raise ValueError("provider catalog SHA-256 mismatch")
+
+    timeout_seconds = payload.get("timeout_seconds")
+    if (
+        not isinstance(timeout_seconds, int)
+        or isinstance(timeout_seconds, bool)
+        or not 1 <= timeout_seconds <= 1800
+    ):
+        raise ValueError(
+            "provider target timeout_seconds must be an integer in 1..1800"
+        )
+
+    agent_id = _required_str(payload, "agent_id")
+    config = load_cli_config(
+        config_path,
+        home_root=repo_root,
+        data_root=repo_root / ".openminion",
+    )
+    runtime_config = build_runtime_config(config, agent_id=agent_id)
+    runtime_profile = resolve_runtime_profile(runtime_config, agent_id=agent_id)
+    provider_config = getattr(runtime_config.providers, runtime_profile.provider, None)
+    if provider_config is None:
+        raise ValueError("effective provider config is unavailable")
+    identity = getattr(provider_config, "provider_identity", None)
+    if not isinstance(identity, dict):
+        raise ValueError("effective provider identity must be explicit")
+    adapter = str(identity.get("transport_adapter") or "").strip()
+    api_protocol = str(identity.get("wire_protocol_family") or "").strip()
+    if not adapter or not api_protocol:
+        raise ValueError("effective provider identity is incomplete")
+    model = str(getattr(provider_config, "model", "") or "").strip()
+    base_url = str(getattr(provider_config, "base_url", "") or "").strip()
+    endpoint_authority = str(urlparse(base_url).netloc or "").strip().lower()
+    if not model or not endpoint_authority:
+        raise ValueError("effective provider model or endpoint is unavailable")
+
+    profile_id = _required_str(payload, "profile_id")
+    catalog = load_catalog_config(catalog_path)
+    profile = next((item for item in catalog.profiles if item.id == profile_id), None)
+    if profile is None:
+        raise ValueError(f"provider catalog profile not found: {profile_id}")
+    expected_model = _required_str(payload, "expected_model")
+    if (
+        profile.provider != runtime_profile.provider
+        or profile.model != model
+        or expected_model != model
+        or (profile.endpoint or "").rstrip("/") != base_url.rstrip("/")
+    ):
+        raise ValueError("effective provider facts do not match the catalog profile")
+    capability_facts = profile_capability_facts(profile)
+    missing_capabilities = [
+        capability
+        for capability in normalized_capabilities
+        if not capability_facts[capability]
+    ]
+    if missing_capabilities:
+        raise ValueError(
+            "catalog profile lacks required capabilities: "
+            + ", ".join(missing_capabilities)
+        )
+
+    declared_key = provider_class_key(
         adapter=str(provider_class["adapter"]),
         api_protocol=str(provider_class["api_protocol"]),
         endpoint_authority=str(provider_class["endpoint_authority"]),
+    )
+    resolved_key = provider_class_key(
+        adapter=adapter,
+        api_protocol=api_protocol,
+        endpoint_authority=endpoint_authority,
+    )
+    if declared_key != resolved_key:
+        raise ValueError("declared provider class does not match effective config")
+
+    return ProviderSessionTarget(
+        provider_class=resolved_key,
+        adapter=adapter,
+        api_protocol=api_protocol,
+        endpoint_authority=endpoint_authority,
         config_ref=config_ref,
-        agent_id=_required_str(payload, "agent_id"),
-        expected_model=_required_str(payload, "expected_model"),
+        config_sha256=config_sha256,
+        agent_id=agent_id,
+        catalog_ref=catalog_ref,
+        catalog_sha256=catalog_sha256,
+        profile_id=profile_id,
+        expected_model=expected_model,
         required_capabilities=normalized_capabilities,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -352,6 +461,7 @@ def build_provider_session_certification_row(
     classification: MatrixClassification,
     failure_code: str,
     latency_ms: int | None = None,
+    provider_attempts: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
         "provider_class": target.provider_class,
@@ -362,19 +472,32 @@ def build_provider_session_certification_row(
         "agent_id": target.agent_id,
         "session_id": f"{run_id}:{target.provider_class}",
         "command": shlex.join(
-            provider_session_probe_args(
-                target,
-                run_id=run_id,
-                messages=tuple(
-                    f"<redacted-message-{index + 1}>" for index in range(len(messages))
-                ),
-                required_output_marker="<redacted-continuity-marker>",
+            (
+                "tests/e2e/runners/run_cli_chat_probe.py",
+                "--config",
+                "<redacted-config>",
+                "--agent",
+                target.agent_id,
+                "--session",
+                f"{run_id}:{target.provider_class}",
+                "--message",
+                "<redacted-message-1>",
+                "--message",
+                "<redacted-message-2>",
+                "--require-final-output-marker",
+                "<redacted-continuity-marker>",
+                "--timeout",
+                str(target.timeout_seconds),
             )
         ),
+        "config_sha256": target.config_sha256,
+        "catalog_sha256": target.catalog_sha256,
+        "profile_id": target.profile_id,
         "required_capabilities": list(target.required_capabilities),
         "classification": classification,
         "failure_code": failure_code,
-        "retry_fallback_owner": "",
+        "provider_attempts": provider_attempts or [],
+        "fallback_disposition": "not_applicable",
         "final_provider_class": target.provider_class
         if classification == "pass"
         else "",
@@ -384,8 +507,6 @@ def build_provider_session_certification_row(
         "quality_result": (
             "passed_two_turn_probe" if classification == "pass" else "not_evaluated"
         ),
-        "transcript_ref": "",
-        "trace_ref": "",
         "redaction_status": "redacted",
     }
 
@@ -408,7 +529,8 @@ def provider_session_probe_args(
     ]
     for message in messages:
         args.extend(("--message", message))
-    args.extend(("--require-output-marker", required_output_marker))
+    args.extend(("--require-final-output-marker", required_output_marker))
+    args.extend(("--timeout", str(target.timeout_seconds)))
     return tuple(args)
 
 
@@ -425,14 +547,6 @@ def _render_certification_markdown(payload: dict[str, Any]) -> str:
             f"{row['provider_class']} | {row['agent_id']} | {row['model']} | "
             f"{row['classification']} | {row['failure_code'] or '-'} |"
         )
-    if payload["injected_failures"]:
-        lines.extend(("", "## Injected Failures", ""))
-        for failure in payload["injected_failures"]:
-            lines.append(
-                "- "
-                f"{failure['provider_class']}: {failure['failure_code']} "
-                f"(retry_eligible={failure['retry_eligible']})"
-            )
     return "\n".join(lines) + "\n"
 
 
@@ -441,6 +555,19 @@ def _required_str(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"missing required field: {key}")
     return value.strip()
+
+
+def _required_sha256(payload: dict[str, Any], key: str) -> str:
+    value = _required_str(payload, key).lower()
+    if len(value) != 64 or any(
+        character not in "0123456789abcdef" for character in value
+    ):
+        raise ValueError(f"{key} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _require_mapping_keys(

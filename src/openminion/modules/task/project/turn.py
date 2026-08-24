@@ -29,6 +29,7 @@ class ProjectTurnRequest:
 @dataclass(frozen=True)
 class ProjectTurnResult:
     summary: str
+    gateway_run_id: str = ""
     condition: AutonomyLoopConditionKind = AutonomyLoopConditionKind.PRODUCTIVE
     evidence_refs: tuple[str, ...] = ()
     evidence_kinds: tuple[str, ...] = ()
@@ -105,6 +106,7 @@ def project_turn_from_payload(
     metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
     return ProjectTurnResult(
         summary=str(turn_result.get("summary") or "Project cycle completed."),
+        gateway_run_id=str(metadata.get("run_id") or "").strip(),
         condition=project_condition_from_metadata(metadata),
         evidence_refs=project_metadata_refs(
             metadata,

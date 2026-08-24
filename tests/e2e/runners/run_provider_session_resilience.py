@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -45,13 +47,36 @@ def _live_row(
         required_output_marker=required_output_marker,
     )
     started = time.monotonic()
-    result = subprocess.run(
-        [sys.executable, *probe_args],
-        cwd=_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="openminion-psrc-") as temp_dir:
+        summary_path = Path(temp_dir) / "summary.json"
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    *probe_args,
+                    "--summary-output",
+                    str(summary_path),
+                ],
+                cwd=_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=target.timeout_seconds + 30,
+            )
+        except subprocess.TimeoutExpired:
+            return build_provider_session_certification_row(
+                target=target,
+                run_id=run_id,
+                messages=messages,
+                classification="provider_residual",
+                failure_code="outer_timeout",
+                latency_ms=round((time.monotonic() - started) * 1000),
+            )
+        summary = (
+            json.loads(summary_path.read_text(encoding="utf-8"))
+            if summary_path.exists()
+            else {}
+        )
     latency_ms = round((time.monotonic() - started) * 1000)
     status = _PROBE_STATUS_RE.findall(result.stdout)
     phase = status[-1] if status else ""
@@ -77,6 +102,7 @@ def _live_row(
         classification=classification,
         failure_code=failure_code,
         latency_ms=latency_ms,
+        provider_attempts=list(summary.get("provider_attempts") or []),
     )
 
 

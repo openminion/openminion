@@ -110,6 +110,7 @@ def run_project_turn(
         tool_call_count = int(tool_call_count)
     return ProjectTurnResult(
         summary=summary,
+        gateway_run_id=str(metadata.get("run_id") or "").strip(),
         condition=project_condition_from_metadata(metadata),
         evidence_refs=tuple(dict.fromkeys((*evidence_refs, *tool_result_refs))),
         evidence_kinds=tuple(
@@ -285,6 +286,7 @@ def schedule_unattended_project(
     manager: TaskManager,
     run: AutonomyRun,
 ) -> AutonomyRun:
+    cycle_interval_seconds = int(getattr(args, "cycle_interval_seconds", None) or 1)
     cron_store = configured_cron_store(
         args,
         config_ref=run.execution_selectors.config_ref,
@@ -295,7 +297,10 @@ def schedule_unattended_project(
             name=f"Project cycle {run.run_id}",
             schedule={
                 "kind": "at",
-                "at": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+                "at": (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=cycle_interval_seconds)
+                ).isoformat(),
             },
             payload={
                 "kind": "projectCycle",
@@ -303,6 +308,7 @@ def schedule_unattended_project(
                 "task_id": run.task_id,
                 "goal_id": run.goal_id,
                 "session_id": run.session_id,
+                "cycle_interval_seconds": cycle_interval_seconds,
             },
             agent_id=run.execution_selectors.agent_id,
             session_target="isolated",
