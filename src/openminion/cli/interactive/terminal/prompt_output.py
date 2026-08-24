@@ -2,8 +2,11 @@ import io
 from collections.abc import Callable
 from typing import Any
 
-from prompt_toolkit import print_formatted_text
+from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.application.current import get_app_or_none, set_app
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.renderer import print_formatted_text
+from prompt_toolkit.styles import DummyStyle
 from rich.console import Console
 
 
@@ -26,7 +29,7 @@ def write_console_render_via_prompt_output(
     payload = buffer.getvalue()
     if not payload:
         return
-    print_formatted_text(ANSI(payload), output=prompt_output, end="", flush=True)
+    print_formatted_text(prompt_output, ANSI(payload), DummyStyle())
 
 
 def write_terminal_control_via_prompt_output(
@@ -48,9 +51,11 @@ def build_prompt_safe_terminal_writer(
 ) -> Callable[[Callable[[], None]], Any]:
     def _run_with_prompt(render: Callable[[], None]) -> Any:
         app = getattr(prompt_session, "app", None)
-        runner = getattr(app, "run_in_terminal", None)
-        if callable(runner):
-            return runner(render, render_cli_done=False)
+        if bool(getattr(app, "is_running", False)):
+            if get_app_or_none() is app:
+                return run_in_terminal(render, render_cli_done=False)
+            with set_app(app):
+                return run_in_terminal(render, render_cli_done=False)
         render()
         return None
 

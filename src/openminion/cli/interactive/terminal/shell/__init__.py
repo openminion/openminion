@@ -728,6 +728,7 @@ async def _run_terminal_focus_async(
     startup_notice_task = _schedule_startup_notice(
         startup_notice,
         transcript=transcript,
+        prompt_session=composer.prompt_session,
     )
     loop = _TerminalFocusLoop(
         runtime=runtime,
