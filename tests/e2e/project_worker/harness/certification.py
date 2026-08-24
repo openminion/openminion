@@ -100,6 +100,7 @@ def _require_runtime_import(
         raise ValueError("runtime_python is unavailable")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(runtime_source_root / "src")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
         [
             str(runtime_python),
