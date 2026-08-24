@@ -35,12 +35,8 @@ TEST_ROOT_ENV_NAMES = (
     "OPENMINION_DATA_ROOT",
     "OPENMINION_GENERATED_ROOT",
 )
-OPENMINION_IMPORT_RE = re.compile(
-    r"(?m)^(?:from|import)\s+openminion(?:\.|\s)"
-)
-MAIN_GUARD_RE = re.compile(
-    r'''(?m)^if\s+__name__\s*==\s*["']__main__["']\s*:'''
-)
+OPENMINION_IMPORT_RE = re.compile(r"(?m)^(?:from|import)\s+openminion(?:\.|\s)")
+MAIN_GUARD_RE = re.compile(r"""(?m)^if\s+__name__\s*==\s*["']__main__["']\s*:""")
 PYTHON_RUNNER_ROOT_EXEMPTIONS = {
     "tests/ci/runners/run_exec_validation_matrix_lane.py": (
         "delegates only to pytest, whose conftest owns isolation"
@@ -66,9 +62,7 @@ PYTHON_RUNNER_ROOT_EXEMPTIONS = {
 }
 
 
-def _runtime_roots_precede_openminion_imports(
-    text: str, setup_name: str
-) -> bool:
+def _runtime_roots_precede_openminion_imports(text: str, setup_name: str) -> bool:
     openminion_import = OPENMINION_IMPORT_RE.search(text)
     if openminion_import is None:
         return True

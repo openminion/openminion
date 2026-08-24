@@ -42,6 +42,8 @@ from openminion.modules.session.runtime.continuation import (  # noqa: E402
 from openminion.modules.session.storage.sqlite_store import (  # noqa: E402
     SQLiteSessionStore,
 )
+
+
 class _Runtime:
     def __init__(self, store: SQLiteSessionStore) -> None:
         self.session_continuation_store = store

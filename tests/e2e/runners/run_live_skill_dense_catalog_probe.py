@@ -33,6 +33,8 @@ from tests.helpers.live_skill_targets import (  # noqa: E402
     dense_skill_artifact_dirname,
     official_skill_dense_targets,
 )
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     scenario: str

@@ -51,6 +51,8 @@ from tests.helpers.live_skill_targets import (  # noqa: E402
     representative_skill_dense_targets,
     validate_skill_live_target,
 )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate NL named-skill quality baseline reports."

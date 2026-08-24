@@ -131,9 +131,7 @@ def test_test_runtime_root_validation_rejects_late_runner_isolation(
 
     assert data_root_defaults.main() == 1
     captured = capsys.readouterr()
-    assert (
-        "runtime-root isolation must precede OpenMinion imports" in captured.err
-    )
+    assert "runtime-root isolation must precede OpenMinion imports" in captured.err
 
 
 def test_test_runtime_root_validation_rejects_unmanaged_direct_test(

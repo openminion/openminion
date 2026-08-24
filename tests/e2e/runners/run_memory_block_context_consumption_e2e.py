@@ -27,6 +27,8 @@ from tests.context.test_memory_block_context_consumption import (  # noqa: E402
     _request,
     _service,
 )
+
+
 def _default_output_path() -> Path:
     return (
         resolve_generated_root(home_root=ROOT)
