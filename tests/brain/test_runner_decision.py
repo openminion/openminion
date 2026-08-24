@@ -567,6 +567,10 @@ class RunnerDecisionTests(unittest.TestCase):
             )
 
         self.assertEqual(decision.reason_code, "provider_error")
+        self.assertIn(
+            "Provider request ID: portal-request-1.",
+            decision.answer,
+        )
         self.assertEqual(llm_api.call_count, 1)
         retry_events = [
             call
