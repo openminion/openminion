@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,7 +6,17 @@ from datetime import datetime, timedelta, timezone
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 from typing import Any
+
+OPENMINION_ROOT = Path(__file__).resolve().parents[2]
+if str(OPENMINION_ROOT) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-memory-retention-")
 
 from openminion.modules.memory.models import MemoryRecord
 from openminion.modules.memory.runtime.retention import (

@@ -21,6 +21,11 @@ if str(OPENMINION_DIR) not in sys.path:
 if str(OPENMINION_SRC) not in sys.path:
     sys.path.insert(0, str(OPENMINION_SRC))
 
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-live-skill-probe-")
+
 from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
 from tests.e2e import test_live_skill_dense_catalog_matrix as matrix  # noqa: E402
 from tests.helpers.live_skill_targets import (  # noqa: E402
@@ -28,9 +33,6 @@ from tests.helpers.live_skill_targets import (  # noqa: E402
     dense_skill_artifact_dirname,
     official_skill_dense_targets,
 )
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
-
-
 @dataclass(frozen=True)
 class ProbeResult:
     scenario: str
@@ -421,7 +423,6 @@ def _probe_missing_negative(
 
 
 def main() -> int:
-    isolate_runtime_roots(prefix="openminion-live-skill-probe-")
     args = _parse_args()
     target = _resolve_target(args.target)
     matrix.validate_skill_live_target(target)

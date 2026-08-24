@@ -13,6 +13,11 @@ for import_root in (ROOT, SRC):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
 
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-memory-block-e2e-")
+
 from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
 
 from sophiagraph import SophiaGraphMemoryStore  # noqa: E402
@@ -22,9 +27,6 @@ from tests.context.test_memory_block_context_consumption import (  # noqa: E402
     _request,
     _service,
 )
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
-
-
 def _default_output_path() -> Path:
     return (
         resolve_generated_root(home_root=ROOT)
@@ -34,7 +36,6 @@ def _default_output_path() -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    isolate_runtime_roots(prefix="openminion-memory-block-e2e-")
     parser = argparse.ArgumentParser(
         description="Prove a pinned Sophiagraph block enters OpenMinion context."
     )

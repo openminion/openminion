@@ -16,14 +16,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from openminion.modules.brain.paths import resolve_brain_sessions_db_path
-
 FRAMEWORK_ROOT = Path(__file__).resolve().parents[4]
 OPENMINION_ROOT = FRAMEWORK_ROOT / "openminion"
 if str(OPENMINION_ROOT) not in sys.path:
     sys.path.insert(0, str(OPENMINION_ROOT))
 
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-cli-chat-probe-")
+
+from openminion.modules.brain.paths import (  # noqa: E402
+    resolve_brain_sessions_db_path,
+)
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
@@ -1216,7 +1221,6 @@ def _write_probe_artifacts(
 
 
 def main() -> int:
-    isolate_runtime_roots(prefix="openminion-cli-chat-probe-")
     parser = argparse.ArgumentParser(
         description="Run one PTY-backed OpenMinion chat probe."
     )
