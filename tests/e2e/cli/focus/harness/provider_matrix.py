@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
+import shlex
 import time
 from typing import Any, Literal
 
@@ -109,6 +110,8 @@ class ProviderSessionInjectedFailure:
 @dataclass(frozen=True)
 class ProviderSessionResilienceManifest:
     run_id: str
+    messages: tuple[str, ...]
+    required_output_marker: str
     targets: tuple[ProviderSessionTarget, ...]
     injected_failures: tuple[ProviderSessionInjectedFailure, ...]
 
@@ -155,6 +158,13 @@ def load_provider_session_resilience_manifest(
         raise ValueError("manifest contains a secret-bearing field")
 
     run_id = _required_str(payload, "run_id")
+    messages_payload = payload.get("messages")
+    if not isinstance(messages_payload, list) or len(messages_payload) < 2:
+        raise ValueError("manifest requires at least two messages")
+    messages = tuple(str(message).strip() for message in messages_payload)
+    if not all(messages):
+        raise ValueError("manifest messages cannot be empty")
+    required_output_marker = _required_str(payload, "required_output_marker")
     targets_payload = payload.get("targets")
     if not isinstance(targets_payload, list) or len(targets_payload) < 2:
         raise ValueError("manifest requires at least two provider targets")
@@ -181,6 +191,8 @@ def load_provider_session_resilience_manifest(
     )
     return ProviderSessionResilienceManifest(
         run_id=run_id,
+        messages=messages,
+        required_output_marker=required_output_marker,
         targets=targets,
         injected_failures=failures,
     )
@@ -192,6 +204,7 @@ def write_provider_session_resilience_report(
     manifest_path: Path,
     root: Path | None = None,
     validation_only: bool = True,
+    rows: list[dict[str, object]] | None = None,
 ) -> tuple[Path, Path]:
     repo_root = root or Path(__file__).resolve().parents[6]
     output_root = (
@@ -200,21 +213,29 @@ def write_provider_session_resilience_report(
         / _safe_segment(manifest.run_id)
     )
     output_root.mkdir(parents=True, exist_ok=True)
-    rows = [
-        _certification_row(
-            target=target,
-            run_id=manifest.run_id,
-            validation_only=validation_only,
-        )
-        for target in manifest.targets
-    ]
+    report_rows = (
+        rows
+        if rows is not None
+        else [
+            build_provider_session_certification_row(
+                target=target,
+                run_id=manifest.run_id,
+                messages=manifest.messages,
+                classification="blocked_external"
+                if validation_only
+                else "not_applicable",
+                failure_code="validate_only_live_not_run" if validation_only else "",
+            )
+            for target in manifest.targets
+        ]
+    )
     payload = {
         "schema_version": CERTIFICATION_REPORT_SCHEMA_VERSION,
         "run_id": manifest.run_id,
         "generated_at_epoch": int(time.time()),
         "validation_only": validation_only,
         "manifest_path": str(manifest_path.resolve(strict=False)),
-        "rows": rows,
+        "rows": report_rows,
         "injected_failures": [asdict(item) for item in manifest.injected_failures],
         "redaction_status": "redacted",
     }
@@ -323,11 +344,14 @@ def _parse_injected_failure(payload: object) -> ProviderSessionInjectedFailure:
     )
 
 
-def _certification_row(
+def build_provider_session_certification_row(
     *,
     target: ProviderSessionTarget,
     run_id: str,
-    validation_only: bool,
+    messages: tuple[str, ...],
+    classification: MatrixClassification,
+    failure_code: str,
+    latency_ms: int | None = None,
 ) -> dict[str, object]:
     return {
         "provider_class": target.provider_class,
@@ -337,30 +361,55 @@ def _certification_row(
         "model": target.expected_model,
         "agent_id": target.agent_id,
         "session_id": f"{run_id}:{target.provider_class}",
-        "command": _probe_command_for_target(target, run_id=run_id),
+        "command": shlex.join(
+            provider_session_probe_args(
+                target,
+                run_id=run_id,
+                messages=tuple(
+                    f"<redacted-message-{index + 1}>" for index in range(len(messages))
+                ),
+                required_output_marker="<redacted-continuity-marker>",
+            )
+        ),
         "required_capabilities": list(target.required_capabilities),
-        "classification": "blocked_external" if validation_only else "not_applicable",
-        "failure_code": "validate_only_live_not_run" if validation_only else "",
+        "classification": classification,
+        "failure_code": failure_code,
         "retry_fallback_owner": "",
-        "final_provider_class": "",
-        "latency_ms": None,
+        "final_provider_class": target.provider_class
+        if classification == "pass"
+        else "",
+        "latency_ms": latency_ms,
         "token_count": None,
         "cost": None,
-        "quality_result": "not_evaluated",
+        "quality_result": (
+            "passed_two_turn_probe" if classification == "pass" else "not_evaluated"
+        ),
         "transcript_ref": "",
         "trace_ref": "",
         "redaction_status": "redacted",
     }
 
 
-def _probe_command_for_target(target: ProviderSessionTarget, *, run_id: str) -> str:
-    return (
-        "tests/e2e/runners/run_cli_chat_probe.py "
-        f"--config {target.config_ref} "
-        f"--agent {target.agent_id} "
-        f"--session {run_id}:{target.provider_class} "
-        "--message '<turn-1>' --message '<turn-2>'"
-    )
+def provider_session_probe_args(
+    target: ProviderSessionTarget,
+    *,
+    run_id: str,
+    messages: tuple[str, ...],
+    required_output_marker: str,
+) -> tuple[str, ...]:
+    args = [
+        "tests/e2e/runners/run_cli_chat_probe.py",
+        "--config",
+        target.config_ref,
+        "--agent",
+        target.agent_id,
+        "--session",
+        f"{run_id}:{target.provider_class}",
+    ]
+    for message in messages:
+        args.extend(("--message", message))
+    args.extend(("--require-output-marker", required_output_marker))
+    return tuple(args)
 
 
 def _render_certification_markdown(payload: dict[str, Any]) -> str:
@@ -550,9 +599,11 @@ __all__ = [
     "ProviderSessionResilienceManifest",
     "ProviderSessionTarget",
     "build_provider_matrix",
+    "build_provider_session_certification_row",
     "load_provider_matrix",
     "load_provider_session_resilience_manifest",
     "provider_class_key",
+    "provider_session_probe_args",
     "write_provider_session_resilience_report",
     "write_provider_matrix",
 ]

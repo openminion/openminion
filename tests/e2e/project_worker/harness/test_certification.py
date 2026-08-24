@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
@@ -31,6 +32,30 @@ def _manifest(
 ) -> dict[str, object]:
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
+    (workspace / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    subprocess.run(["git", "add", "fixture.txt"], cwd=workspace, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=OpenMinion Tests",
+            "-c",
+            "user.email=tests@openminion.local",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=workspace,
+        check=True,
+    )
+    source_revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     now = datetime(2026, 8, 7, tzinfo=UTC)
     return {
         "schema_version": RUN_SCHEMA_VERSION,
@@ -44,7 +69,7 @@ def _manifest(
         "minimum_elapsed_seconds": minimum_elapsed_seconds,
         "workspace_path": str(workspace),
         "approved_workspace_path": str(workspace),
-        "source_revision": "fixture",
+        "source_revision": source_revision,
         "provider": {
             "config_ref": "test-configs/redacted-provider.json",
             "agent_id": "fixture-agent",
@@ -70,6 +95,8 @@ def _manifest(
                 "scheduled_wake",
             ],
             "side_effect_scope": "none",
+            "execution_command": "python -c pass",
+            "evidence_file": "evidence.json",
         },
     }
 
@@ -101,15 +128,39 @@ def test_certification_manifest_accepts_valid_pilot_kinds(
     manifest = validate_certification_manifest(
         path,
         now=datetime(2026, 8, 7, tzinfo=UTC),
+        for_live_run=True,
     )
 
     assert manifest.pilot_kind == pilot_kind
     assert manifest.minimum_elapsed_seconds == minimum
 
 
+def test_certification_manifest_freezes_live_paths(tmp_path: Path) -> None:
+    path = _write_manifest(tmp_path, _manifest(tmp_path))
+
+    manifest = validate_certification_manifest(
+        path,
+        now=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+    manifest.slo["execution_command"] = "changed after validation"
+    manifest.slo["evidence_file"] = "changed.json"
+
+    assert manifest.execution_command == "python -c pass"
+    assert manifest.evidence_file == "evidence.json"
+
+
 @pytest.mark.parametrize(
     "mutation",
-    ("compressed", "undersized", "missing_slo", "expired", "unapproved_workspace"),
+    (
+        "compressed",
+        "undersized",
+        "missing_slo",
+        "expired",
+        "unapproved_workspace",
+        "revision_mismatch",
+        "missing_execution_command",
+        "missing_evidence_file",
+    ),
 )
 def test_certification_manifest_rejects_invalid_cases(
     tmp_path: Path,
@@ -126,10 +177,25 @@ def test_certification_manifest_rejects_invalid_cases(
         payload["approval_expires_utc"] = "2020-01-01T00:00:00Z"
     elif mutation == "unapproved_workspace":
         payload["approved_workspace_path"] = str(tmp_path / "other")
+    elif mutation == "revision_mismatch":
+        payload["source_revision"] = "not-the-approved-revision"
+    elif mutation == "missing_execution_command":
+        payload["slo"].pop("execution_command")
+    elif mutation == "missing_evidence_file":
+        payload["slo"].pop("evidence_file")
     path = _write_manifest(tmp_path, payload)
 
     with pytest.raises(ValueError):
-        validate_certification_manifest(path, now=datetime(2026, 8, 7, tzinfo=UTC))
+        validate_certification_manifest(
+            path,
+            now=datetime(2026, 8, 7, tzinfo=UTC),
+            for_live_run=mutation
+            in {
+                "revision_mismatch",
+                "missing_execution_command",
+                "missing_evidence_file",
+            },
+        )
 
 
 def test_certification_report_writes_generated_root_without_secrets(
@@ -221,6 +287,38 @@ def test_certify_runner_validate_only_writes_report(
     assert "certification-report.json" in result.stdout
 
 
+def test_certify_runner_validate_only_accepts_legacy_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
+    payload = _manifest(tmp_path)
+    payload["source_revision"] = "legacy-validation-only"
+    payload["slo"].pop("execution_command")
+    payload["slo"].pop("evidence_file")
+    manifest_path = _write_manifest(tmp_path, payload)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tests/e2e/runners/run_project_worker_e2e.py",
+            "certify",
+            "--manifest",
+            str(manifest_path),
+            "--validate-only",
+        ],
+        cwd=Path(__file__).resolve().parents[4],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "certification-report.json" in result.stdout
+
+
 def test_project_worker_list_keeps_existing_modes() -> None:
     result = subprocess.run(
         [sys.executable, "tests/e2e/runners/run_project_worker_e2e.py", "list"],
@@ -256,30 +354,43 @@ def test_live_certification_rejects_compressed_execution(
     }
     workspace = Path(str(payload["workspace_path"]))
     evidence_path = workspace / "evidence.json"
-    evidence_path.write_text(
-        json.dumps(
-            {
-                "metrics": {
-                    "token": 1,
-                    "cost": 0.01,
-                    "retry": 0,
-                    "iteration": 1,
-                    "storage": 1,
-                },
-                "recovery_events": [
-                    {"kind": kind}
-                    for kind in (
-                        "restart",
-                        "reconnect",
-                        "interruption",
-                        "scheduled_wake",
-                    )
-                ],
-            }
-        ),
-        encoding="utf-8",
+    recovery_kinds = (
+        "restart",
+        "reconnect",
+        "interruption",
+        "scheduled_wake",
     )
-    payload["slo"]["execution_command"] = "python -c pass"
+    evidence = {
+        "run_id": payload["run_id"],
+        "metrics": {
+            "token": 1,
+            "cost": 0.01,
+            "retry": 0,
+            "iteration": 1,
+            "storage": 1,
+        },
+        "recovery_events": [
+            {
+                "kind": kind,
+                "run_id": payload["run_id"],
+                "occurred_at_utc": now.isoformat(),
+            }
+            for kind in recovery_kinds
+        ]
+        + [
+            {
+                "kind": "restart",
+                "run_id": "another-run",
+                "occurred_at_utc": now.isoformat(),
+            },
+            {
+                "kind": "restart",
+                "run_id": payload["run_id"],
+                "occurred_at_utc": (now + timedelta(hours=10)).isoformat(),
+            },
+        ],
+    }
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
     payload["slo"]["evidence_file"] = str(evidence_path)
     goal_path = tmp_path / "goal.md"
     goal_path.write_text("complete the bounded fixture", encoding="utf-8")
@@ -289,11 +400,12 @@ def test_live_certification_rejects_compressed_execution(
         manifest_path,
         now=now,
     )
-    monkeypatch.setattr(
-        certification.subprocess,
-        "run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="verified\n"),
-    )
+
+    def successful_run(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        stdout = manifest.source_revision if args[0] == "git" else "verified\n"
+        return SimpleNamespace(returncode=0, stdout=stdout)
+
+    monkeypatch.setattr(certification.subprocess, "run", successful_run)
     exit_code, json_path, _ = run_certification(
         manifest,
         manifest_path=manifest_path,
@@ -305,3 +417,54 @@ def test_live_certification_rejects_compressed_execution(
     assert report["outcome"] == "failed_certification"
     assert report["evidence"]["verifier_passed"] is True
     assert report["evidence"]["metrics"]["elapsed_seconds"] < 28_800
+    assert {item["kind"] for item in report["evidence"]["recovery_events"]} == set(
+        recovery_kinds
+    )
+    assert all(
+        item["run_id"] == manifest.run_id
+        for item in report["evidence"]["recovery_events"]
+    )
+
+    evidence["run_id"] = "another-run"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    exit_code, json_path, _ = run_certification(
+        replace(manifest, minimum_elapsed_seconds=0),
+        manifest_path=manifest_path,
+        root=tmp_path,
+    )
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert report["evidence"]["recovery_events"] == []
+    assert report["evidence"]["metrics"]["token"] == 0
+
+
+def test_live_certification_rechecks_source_revision(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+    manifest = validate_certification_manifest(
+        manifest_path,
+        now=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+    workspace = Path(manifest.workspace_path)
+    (workspace / "changed.txt").write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "changed.txt"], cwd=workspace, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=OpenMinion Tests",
+            "-c",
+            "user.email=tests@openminion.local",
+            "commit",
+            "-qm",
+            "change revision",
+        ],
+        cwd=workspace,
+        check=True,
+    )
+
+    with pytest.raises(ValueError, match="revision"):
+        run_certification(manifest, manifest_path=manifest_path, root=tmp_path)

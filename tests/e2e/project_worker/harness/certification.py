@@ -40,13 +40,30 @@ class CertificationManifest:
     model: str
     profile: str
     goal_file: str
+    execution_command: str
+    evidence_file: str
     slo: dict[str, Any]
+
+
+def _require_source_revision(workspace: Path, source_revision: str) -> None:
+    revision = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if revision.returncode != 0:
+        raise ValueError("approved workspace is not a Git worktree")
+    if revision.stdout.strip() != source_revision:
+        raise ValueError("approved workspace revision does not match source_revision")
 
 
 def validate_certification_manifest(
     path: Path,
     *,
     now: datetime | None = None,
+    for_live_run: bool = False,
 ) -> CertificationManifest:
     payload = _read_json(path)
     if payload.get("schema_version") != RUN_SCHEMA_VERSION:
@@ -80,6 +97,9 @@ def validate_certification_manifest(
         raise ValueError("workspace_path does not match approved_workspace_path")
     if not workspace.exists():
         raise ValueError("approved workspace does not exist")
+    source_revision = _required_str(payload, "source_revision")
+    if for_live_run:
+        _require_source_revision(workspace, source_revision)
 
     slo = _require_mapping_keys(
         payload,
@@ -92,6 +112,12 @@ def validate_certification_manifest(
             "side_effect_scope",
         ),
     )
+    execution_command = str(slo.get("execution_command") or "").strip()
+    evidence_file = str(slo.get("evidence_file") or "").strip()
+    if for_live_run and (not execution_command or not evidence_file):
+        raise ValueError(
+            "live certification requires execution_command and evidence_file"
+        )
     budgets = _require_mapping_keys(
         slo,
         "budgets",
@@ -128,12 +154,14 @@ def validate_certification_manifest(
         approved_end_utc=_utc_text(end),
         minimum_elapsed_seconds=minimum,
         workspace_path=str(workspace.resolve(strict=False)),
-        source_revision=_required_str(payload, "source_revision"),
+        source_revision=source_revision,
         provider_config_ref=str(provider["config_ref"]),
         agent_id=str(provider["agent_id"]),
         model=str(provider["model"]),
         profile=str(provider["profile"]),
         goal_file=_required_str(payload, "goal_file"),
+        execution_command=execution_command,
+        evidence_file=evidence_file,
         slo=slo,
     )
 
@@ -187,6 +215,11 @@ def run_certification(
     manifest_path: Path,
     root: Path,
 ) -> tuple[int, Path, Path]:
+    if not manifest.execution_command or not manifest.evidence_file:
+        raise ValueError(
+            "live certification requires execution_command and evidence_file"
+        )
+    _require_source_revision(Path(manifest.workspace_path), manifest.source_revision)
     current = datetime.now(UTC)
     start = _parse_utc(manifest.approved_start_utc)
     end = _parse_utc(manifest.approved_end_utc)
@@ -196,27 +229,21 @@ def run_certification(
     ):
         raise ValueError("approved run window cannot fit the full pilot")
 
-    execution_command = str(manifest.slo.get("execution_command") or "").strip()
-    evidence_file = str(manifest.slo.get("evidence_file") or "").strip()
-    if not execution_command or not evidence_file:
-        raise ValueError(
-            "live certification requires execution_command and evidence_file"
-        )
-
     started = datetime.now(UTC)
     execution = subprocess.run(
-        shlex.split(execution_command),
+        shlex.split(manifest.execution_command),
         cwd=manifest.workspace_path,
         check=False,
         timeout=max(1, int((end - current).total_seconds())),
     )
     ended = datetime.now(UTC)
     elapsed = (ended - started).total_seconds()
-    evidence_path = Path(evidence_file).expanduser()
+    evidence_path = Path(manifest.evidence_file).expanduser()
     if not evidence_path.is_absolute():
         evidence_path = Path(manifest.workspace_path) / evidence_path
     evidence = _read_json(evidence_path) if evidence_path.exists() else {}
-    metrics = dict(evidence.get("metrics") or {})
+    evidence_run_matches = evidence.get("run_id") == manifest.run_id
+    metrics = dict(evidence.get("metrics") or {}) if evidence_run_matches else {}
     metrics.update({"elapsed_seconds": elapsed, "wall_clock": elapsed})
     for key in ("token", "cost", "retry", "iteration", "storage"):
         metrics.setdefault(key, 0)
@@ -234,11 +261,25 @@ def run_certification(
         text=True,
         timeout=1_800,
     )
-    recovery_events = list(evidence.get("recovery_events") or [])
+    recovery_events = []
+    if evidence_run_matches:
+        for item in evidence.get("recovery_events") or []:
+            if not isinstance(item, dict) or item.get("run_id") != manifest.run_id:
+                continue
+            occurred_at = item.get("occurred_at_utc")
+            if not isinstance(occurred_at, str):
+                continue
+            try:
+                occurred = _parse_utc(occurred_at)
+            except ValueError:
+                continue
+            if start <= occurred <= end:
+                recovery_events.append(item)
     observed_recovery = {str(item.get("kind") or "") for item in recovery_events}
     outcome = (
         "pass"
         if execution.returncode == 0
+        and evidence_run_matches
         and elapsed >= manifest.minimum_elapsed_seconds
         and verifier.returncode == 0
         and set(manifest.slo["recovery_checks"]).issubset(observed_recovery)
