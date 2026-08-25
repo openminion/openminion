@@ -741,3 +741,26 @@ def test_pty_screen_rendering_skips_empty_cells(tmp_path) -> None:
     session._screen.buffer[0][2] = Char(data="B")
 
     assert session._screen_display_lines() == ["AB"]
+
+
+@pytest.mark.parametrize(
+    ("session_env", "expected"),
+    [({}, "xterm-256color"), ({"TERM": "dumb"}, "dumb")],
+)
+def test_pty_session_owns_default_terminal_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    session_env: dict[str, str],
+    expected: str,
+) -> None:
+    monkeypatch.setenv("TERM", "dumb")
+    command = (
+        sys.executable,
+        "-c",
+        "import os; print(os.environ['TERM'])",
+    )
+
+    with PtySession(argv=command, cwd=tmp_path, env=session_env) as session:
+        transcript = session.wait_for_after(expected, offset=0, timeout=5)
+
+    assert expected in transcript
