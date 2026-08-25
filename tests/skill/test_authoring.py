@@ -7,6 +7,8 @@ from pathlib import Path
 from contextlib import redirect_stdout
 from typing import Any, Sequence
 
+import pytest
+
 
 from openminion.modules.skill.authoring import (
     SkillAuthoringDebugView,
@@ -276,6 +278,20 @@ def test_build_skill_authoring_debug_view_determinism() -> None:
         generated_at="2026-05-13T00:00:00Z",
     )
     assert a == b
+
+
+def test_build_skill_authoring_debug_view_surfaces_summary_errors() -> None:
+    class BrokenPackage(_StubPackage):
+        def to_catalog_summary(self) -> dict[str, Any]:
+            raise RuntimeError("broken summary")
+
+    with pytest.raises(RuntimeError, match="broken summary"):
+        build_skill_authoring_debug_view(
+            "skill.demo",
+            package=BrokenPackage(),
+            debug_payload=None,
+            generated_at="2026-05-13T00:00:00Z",
+        )
 
 
 def test_authoring_has_no_prose_verdict_fields() -> None:

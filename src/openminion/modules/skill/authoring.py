@@ -286,13 +286,11 @@ def build_skill_test_report(
 def _package_summary(package: Any) -> dict[str, Any]:
     if package is None:
         return {}
-    if hasattr(package, "to_catalog_summary"):
-        try:
-            summary = package.to_catalog_summary()
-            if isinstance(summary, Mapping):
-                return dict(summary)
-        except Exception:
-            pass
+    summary_builder = getattr(package, "to_catalog_summary", None)
+    if callable(summary_builder):
+        summary = summary_builder()
+        if isinstance(summary, Mapping):
+            return dict(summary)
     skill_id = str(getattr(package, "skill_id", "") or "").strip()
     name = str(getattr(package, "name", "") or "").strip()
     version_hash = str(getattr(package, "version_hash", "") or "").strip()
