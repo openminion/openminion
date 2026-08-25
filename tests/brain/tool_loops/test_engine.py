@@ -1202,6 +1202,116 @@ def test_engine_recovers_seeded_invalid_workdir_with_llm_guidance() -> None:
     )
 
 
+def test_engine_retries_when_model_stops_after_recoverable_argument_failure() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="exec.run",
+                        arguments={
+                            "command": "python -m pytest -q tests",
+                            "workdir": "scratch/project",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="The workdir was invalid.",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="exec.run",
+                        arguments={"command": "python -m pytest -q tests"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Tests passed.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "Verification succeeded after corrected arguments.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="blocked",
+                    summary="workdir does not exist or is not a directory",
+                    outputs={
+                        "error": {
+                            "code": "INVALID_ARGUMENT",
+                            "message": "workdir does not exist or is not a directory",
+                            "details": {"workdir": "scratch/project"},
+                        }
+                    },
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="pytest passed",
+                    outputs={"exit_code": 0},
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"exec.run"}),
+            max_iterations=4,
+            allow_llm_recovery_after_tool_failure=True,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="run tests")],
+        tool_specs=_tool_specs("exec.run"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "exec.run",
+        "exec.run",
+    ]
+    assert len(runtime.calls) == 4
+    assert any(
+        "Make one corrected tool call now" in message.content
+        for message in runtime.calls[2]["messages"]
+        if message.role == "system"
+    )
+
+
 def test_engine_seeded_recovery_drops_direct_tool_latch_for_later_validation() -> None:
     runtime = _FakeRuntime(
         responses=[

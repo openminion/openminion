@@ -5346,11 +5346,95 @@ class TestFinalizeIterationCapExit:
             for message in runtime.calls[1]["messages"]
             if message.role == "system"
         ]
-        assert any("Do not call tools" in message for message in retry_system_messages)
+        assert any("Call submit_output once" in message for message in retry_system_messages)
         assert all(
             "large transcript" not in str(message.content)
             for message in runtime.calls[1]["messages"]
         )
+
+    def test_force_finalization_uses_typed_submit_output_after_ignored_none(
+        self,
+    ) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "content": "wrote and verified files",
+                        "data": {"path": "section_summary.py"},
+                    }
+                ]
+            },
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.last_user_input = (
+            "Finish with design:, validation:, and follow-ups: headings."
+        )
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    tool_calls=[
+                        ToolCall(id="call-1", name="file.read", arguments={})
+                    ],
+                    finish_reason="tool_calls",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="submit_output",
+                            arguments={
+                                "final_answer": (
+                                    "design: complete\nvalidation: passed\n"
+                                    "follow-ups: none"
+                                ),
+                                "status": "final_answer",
+                                "reasoning": "The requested work is complete.",
+                            },
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == (
+            "design: complete\nvalidation: passed\nfollow-ups: none"
+        )
+        assert runtime.calls[1]["tools"][0].name == "submit_output"
+        assert runtime.calls[1]["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
 
     def test_force_finalization_retries_embedded_tool_call_json(self) -> None:
         leaked_text = (

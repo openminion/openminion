@@ -29,6 +29,7 @@ from .contracts import (
 from .runtime import (
     _extract_visible_response_text,
     _normalize_finalization_status_response,
+    _normalize_submit_output_final_answer_response,
 )
 from .status import emit_adaptive_status
 
@@ -97,9 +98,10 @@ def _retry_answer_only_completion_if_needed(
         Message(
             role="system",
             content=(
-                "Do not call tools. The budget finalization step is answer-only. "
-                "Use the successful tool results already in context and return only "
-                "the final user-facing answer now."
+                "The budget finalization step is answer-only. Call submit_output "
+                "once with the complete user-facing answer in final_answer and its "
+                "truthful typed status. Preserve the original request's exact "
+                "labels, headings, and ordering."
             ),
         )
     )
@@ -111,9 +113,15 @@ def _retry_answer_only_completion_if_needed(
         mode_state="budget_answer_only_retry",
     )
     try:
+        retry_kwargs = dict(complete_kwargs)
+        retry_kwargs["tools"] = [_finalized_answer_tool()]
+        retry_kwargs["tool_choice"] = {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
         retried_response = runtime.complete(
             messages=retry_messages,
-            **complete_kwargs,
+            **retry_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
         loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
@@ -125,6 +133,9 @@ def _retry_answer_only_completion_if_needed(
             public_mode_tag=public_mode_tag,
             reason="answer_only_finalization_retry_failed",
         )
+    retried_response = _normalize_submit_output_final_answer_response(
+        retried_response
+    )
     return _normalize_finalization_status_response(retried_response), None
 
 
