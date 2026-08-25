@@ -832,6 +832,15 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertEqual(len(write_completed), 1)
         self.assertEqual(write_started[0].payload.get("patch_id"), patch_id)
         self.assertEqual(write_completed[0].payload.get("patch_id"), patch_id)
+        self.assertEqual(write_started[0].payload.get("capture_state"), "pending")
+        self.assertEqual(
+            write_started[0].payload.get("capture_evidence_id"),
+            write_completed[0].payload.get("capture_evidence_id"),
+        )
+        self.assertEqual(write_completed[0].payload.get("capture_state"), "processed")
+        self.assertEqual(
+            write_completed[0].payload.get("capture_reason"), "write_committed"
+        )
         # V2 generation counter starts at 0 and is incremented before return; first call = 1
         self.assertEqual(write_completed[0].payload.get("generation"), "1")
 
@@ -872,6 +881,14 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         ]
         self.assertEqual(len(write_started), 1)
         self.assertEqual(len(write_failed), 1)
+        self.assertEqual(write_started[0].payload.get("capture_state"), "pending")
+        self.assertEqual(
+            write_started[0].payload.get("capture_evidence_id"),
+            write_failed[0].payload.get("capture_evidence_id"),
+        )
+        self.assertEqual(
+            write_failed[0].payload.get("capture_state"), "failed_terminal"
+        )
         self.assertIn(
             "simulated memory write failure", write_failed[0].payload.get("error", "")
         )

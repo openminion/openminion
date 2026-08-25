@@ -327,6 +327,28 @@ def _parse_retrieval(value: Any) -> RetrievalConfig:
         data.get("type_boost_project_convention", 1.1),
         "retrieval.type_boost_project_convention",
     )
+    precision_mode = str(data.get("precision_mode", "legacy") or "legacy").strip()
+    if precision_mode not in {"legacy", "shadow", "sophiagraph"}:
+        raise ConfigError(
+            "retrieval.precision_mode must be legacy, shadow, or sophiagraph"
+        )
+    precision_candidate_multiplier = int(data.get("precision_candidate_multiplier", 3))
+    if not 1 <= precision_candidate_multiplier <= 3:
+        raise ConfigError(
+            "retrieval.precision_candidate_multiplier must be within [1, 3]"
+        )
+    precision_min_score = float(data.get("precision_min_score", 0.048))
+    if precision_min_score < 0:
+        raise ConfigError("retrieval.precision_min_score must be non-negative")
+    precision_max_items = int(data.get("precision_max_items", 5))
+    if not 1 <= precision_max_items <= 20:
+        raise ConfigError("retrieval.precision_max_items must be within [1, 20]")
+    precision_max_tokens = int(data.get("precision_max_tokens", 500))
+    if not 64 <= precision_max_tokens <= 500:
+        raise ConfigError("retrieval.precision_max_tokens must be within [64, 500]")
+    precision_graph_depth = int(data.get("precision_graph_depth", 1))
+    if precision_graph_depth != 1:
+        raise ConfigError("retrieval.precision_graph_depth must be 1")
     return RetrievalConfig(
         max_results=max_results,
         min_confidence_default=min_conf,
@@ -338,6 +360,12 @@ def _parse_retrieval(value: Any) -> RetrievalConfig:
         type_boost_user_preference=type_boost_user_preference,
         type_boost_pin=type_boost_pin,
         type_boost_project_convention=type_boost_project_convention,
+        precision_mode=precision_mode,
+        precision_candidate_multiplier=precision_candidate_multiplier,
+        precision_min_score=precision_min_score,
+        precision_max_items=precision_max_items,
+        precision_max_tokens=precision_max_tokens,
+        precision_graph_depth=precision_graph_depth,
     )
 
 

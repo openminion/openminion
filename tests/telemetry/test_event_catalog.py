@@ -20,6 +20,7 @@ def test_event_types_is_non_empty_frozenset() -> None:
     # Spot-check representative entries across sections.
     assert "storage.pool.stats" in EVENT_TYPES
     assert "memory.write.completed" in EVENT_TYPES
+    assert "memory.write.rejected" in EVENT_TYPES
     assert "llm.call.started" in EVENT_TYPES
     assert "task_plan.declared" in EVENT_TYPES
     assert "component.started" in EVENT_TYPES

@@ -14,6 +14,8 @@ from openminion.modules.memory.gateway_turn import (
     MEMORY_FOLLOWUP_FAILED_CODE,
     MEMORY_FOLLOWUP_FAILED_REASON,
     derive_memory_patch_id as _maybe_derive_patch_id,
+    emit_memory_write_rejected as _emit_memory_write_rejected,
+    emit_memory_write_started as _emit_memory_write_started,
     emit_memory_write_events as _emit_memory_write_events,
     memory_error_facts,
     record_memory_failure as _record_memory_failure,
@@ -433,6 +435,29 @@ def record_memory_turn(
         emit_memory_event,
         session_turn_fence_token=session_turn_fence_token,
     )
+    scoped_emit_memory_event = partial(
+        fenced_emit_memory_event,
+        session_id=session_id,
+        conversation_id=conversation_id or None,
+        thread_id=thread_id or None,
+        attach_id=attach_id or None,
+    )
+    if not bool(getattr(agent_memory, "enabled", True)):
+        disabled_reason = str(
+            getattr(agent_memory, "disabled_reason", "memory_disabled")
+            or "memory_disabled"
+        )
+        outbound_metadata["memory_enabled"] = "false"
+        outbound_metadata["memory_capture_state"] = "rejected"
+        _emit_memory_write_rejected(
+            emit_memory_event=scoped_emit_memory_event,
+            session_id=session_id,
+            run_id=run_id,
+            request_id=request_id,
+            memory_capsule_strategy=memory_capsule_strategy,
+            reason=disabled_reason,
+        )
+        return
     try:
         patch_id_hint = _maybe_derive_patch_id(
             agent_memory=agent_memory,
@@ -441,18 +466,13 @@ def record_memory_turn(
             request_id=request_id,
             user_message=user_message,
         )
-        fenced_emit_memory_event(
+        _emit_memory_write_started(
+            emit_memory_event=scoped_emit_memory_event,
             session_id=session_id,
-            event_type="memory.write.started",
-            conversation_id=conversation_id or None,
-            thread_id=thread_id or None,
-            attach_id=attach_id or None,
-            payload={
-                "run_id": run_id,
-                "request_id": request_id,
-                "strategy": memory_capsule_strategy,
-                "patch_id": patch_id_hint,
-            },
+            run_id=run_id,
+            request_id=request_id,
+            memory_capsule_strategy=memory_capsule_strategy,
+            patch_id=patch_id_hint,
         )
         memory_patch = agent_memory.record_turn(
             session_id=session_id,
@@ -474,11 +494,8 @@ def record_memory_turn(
             or memory_patch.todos_completed > 0
         )
         _emit_memory_write_events(
-            emit_memory_event=fenced_emit_memory_event,
+            emit_memory_event=scoped_emit_memory_event,
             session_id=session_id,
-            conversation_id=conversation_id,
-            thread_id=thread_id,
-            attach_id=attach_id,
             run_id=run_id,
             request_id=request_id,
             memory_capsule_strategy=memory_capsule_strategy,
@@ -496,12 +513,9 @@ def record_memory_turn(
             session_id=session_id,
             run_id=run_id,
             request_id=request_id,
-            conversation_id=conversation_id,
-            thread_id=thread_id,
-            attach_id=attach_id,
             memory_capsule_strategy=memory_capsule_strategy,
             patch_id_hint=patch_id_hint,
-            emit_memory_event=fenced_emit_memory_event,
+            emit_memory_event=scoped_emit_memory_event,
             outbound_metadata=outbound_metadata,
         )
 

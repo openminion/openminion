@@ -19,6 +19,7 @@ from openminion.modules.memory.config import (
     merge_candidate_learning_config as merge_memory_candidate_learning_config,
     merge_ranking_config as merge_memory_ranking_config,
 )
+from openminion.modules.memory import SophiagraphRecallAdapter
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage import (
     AuditedMemoryStore,
@@ -99,7 +100,9 @@ def _build_memory_v2_gateway_adapter(
     )
     backend_config = resolve_backend_config(memory_config)
     if backend_config.provider == "none":
-        return DisabledMemoryGatewayAdapter(agent_id=agent_id, logger=logger)
+        adapter = DisabledMemoryGatewayAdapter(agent_id=agent_id, logger=logger)
+        adapter.disabled_reason = "backend_none"
+        return adapter
     db_path = memory_root / SERVICES_MEMORY_DB_FILENAME
     try:
         artifactctl = artifactctl_factory()
@@ -154,6 +157,10 @@ def _build_memory_v2_gateway_adapter(
         retrieve_ctl=retrieve_ctl,
         ranking_config=ranking_config,
         candidate_learning_config=candidate_learning_config,
+        recall_adapter=SophiagraphRecallAdapter(
+            backend=backend,
+            provider=backend_config.provider,
+        ),
         brain_sessions_db_path=(
             resolve_brain_sessions_db_path(storage_path=storage_path)
             if storage_path is not None

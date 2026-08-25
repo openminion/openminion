@@ -7,7 +7,9 @@ from openminion.modules.memory.contracts.provenance import (
     MemoryProvenanceEntry,
     TurnProvenanceTrace,
 )
+from openminion.modules.memory.errors import MemctlError
 from openminion.modules.memory.models import MemoryScope
+from openminion.modules.memory.runtime.recall import RecallOutcome
 from openminion.modules.memory.storage.base import (
     ListQueryOptions,
     RecordOrder,
@@ -383,6 +385,155 @@ class ContextBuildersMixin:
             )
         return memory_hits
 
+    def _precision_recall(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        scopes: list[str],
+    ) -> Any | None:
+        adapter = getattr(self, "_recall_adapter", None)
+        options = self._precision_options
+        if options.mode == "legacy":
+            return None
+        if adapter is None:
+            if options.mode == "shadow":
+                return None
+            return RecallOutcome(
+                status="unsupported",
+                reason="recall_adapter_unavailable",
+            )
+        try:
+            outcome = adapter.retrieve(
+                query=query,
+                scopes=scopes,
+                limit=options.max_items,
+                candidate_multiplier=options.candidate_multiplier,
+                minimum_score=options.minimum_score,
+                graph_depth=options.graph_depth,
+            )
+        except MemctlError as exc:
+            self._trace(
+                "memory.recall.precision",
+                {
+                    "session_id": session_id,
+                    "mode": options.mode,
+                    "status": "error",
+                    "error_type": type(exc).__name__,
+                },
+            )
+            if options.mode == "shadow":
+                return None
+            raise
+        self._trace(
+            "memory.recall.precision",
+            {
+                "session_id": session_id,
+                "mode": options.mode,
+                "status": outcome.status,
+                "candidate_count": outcome.candidate_count,
+                "result_count": len(outcome.hits),
+                "threshold_drops": outcome.threshold_drops,
+                "reason": outcome.reason,
+                "capabilities": [
+                    name
+                    for name in (
+                        "keyword",
+                        "graph",
+                        "recency",
+                        "trust",
+                        "vector",
+                        "rerank",
+                    )
+                    if bool(getattr(adapter.capabilities, name, False))
+                ],
+            },
+        )
+        return outcome
+
+    def _recall_hits(
+        self,
+        *,
+        session_id: str,
+        query: str,
+        scopes: list[str],
+    ) -> tuple[list[dict[str, Any]], RecallOutcome | None]:
+        precision = self._precision_recall(
+            session_id=session_id,
+            query=query,
+            scopes=scopes,
+        )
+        options = self._precision_options
+        memory_hits: list[dict[str, Any]] = []
+        if options.mode != "sophiagraph":
+            records = self._service.search_semantic(
+                query=query,
+                scopes=scopes,
+                limit=8,
+            )
+            records = self._filter_retrievable_records(records)
+            records = self._prioritize_structured_retrieval_records(records)
+            memory_hits = self._memory_hits_from_records(records)
+        if precision is None:
+            return memory_hits, None
+
+        precision_hits = self._memory_hits_from_precision(list(precision.hits))
+        if options.mode == "shadow":
+            legacy_ids = {
+                str(item.get("meta", {}).get("record_id", "")) for item in memory_hits
+            }
+            precision_ids = {
+                str(item.get("meta", {}).get("record_id", ""))
+                for item in precision_hits
+            }
+            self._trace(
+                "memory.recall.shadow_comparison",
+                {
+                    "session_id": session_id,
+                    "legacy_count": len(legacy_ids),
+                    "precision_count": len(precision_ids),
+                    "overlap_count": len(legacy_ids & precision_ids),
+                },
+            )
+        if options.mode == "sophiagraph" and precision.status == "ok":
+            memory_hits = precision_hits
+        return memory_hits, precision
+
+    def _memory_hits_from_precision(self, hits: list[Any]) -> list[dict[str, Any]]:
+        memory_hits: list[dict[str, Any]] = []
+        for hit in hits:
+            record = hit.record
+            content = getattr(record, "content", "")
+            if isinstance(content, Mapping):
+                content = content.get("text", content.get("value", str(content)))
+            text = str(content or "").strip()
+            if not text:
+                continue
+            components = {
+                str(component.kind): float(component.raw_score)
+                for component in hit.explanation.components
+            }
+            memory_hits.append(
+                {
+                    "text": text,
+                    "score": float(hit.score),
+                    "unified_score": float(hit.score),
+                    "created_at": getattr(record, "created_at", None),
+                    "meta": {
+                        "record_id": str(getattr(record, "id", "") or ""),
+                        "record_title": str(getattr(record, "title", "") or ""),
+                        "record_type": str(getattr(record, "type", "") or ""),
+                        "record_source": str(getattr(record, "source", "") or ""),
+                        "record_scope": str(getattr(record, "scope", "") or ""),
+                        "record_valid_to": str(getattr(record, "valid_to", "") or ""),
+                        "score_breakdown": components,
+                        "via_relation_ids": list(hit.explanation.via_relation_ids),
+                    },
+                    "source_group": "memory",
+                }
+            )
+        return memory_hits
+
     def _record_retrieval_provenance(
         self,
         *,
@@ -585,13 +736,20 @@ class ContextBuildersMixin:
         try:
             self._maybe_run_session_lifecycle(session_id=session_id)
             retrieval_scopes = [f"session:{session_id}", *self._long_term_scopes()]
-            results = self._service.search_semantic(
+            memory_hits, precision = self._recall_hits(
+                session_id=session_id,
                 query=user_message,
                 scopes=retrieval_scopes,
-                limit=8,
             )
-            results = self._filter_retrievable_records(results)
-            results = self._prioritize_structured_retrieval_records(results)
+            options = self._precision_options
+            if (
+                options.mode == "sophiagraph"
+                and precision is not None
+                and precision.status != "ok"
+            ):
+                meta["memory_recall_status"] = precision.status
+                meta["memory_recall_reason"] = precision.reason
+                return "", meta
             self._pipeline.sync_runtime_state(
                 config=self._config,
                 ranking_config=self._ranking_config,
@@ -599,12 +757,34 @@ class ContextBuildersMixin:
                 trace_fn=self._trace,
             )
             content, meta, retrieve_hits, merged_hits = self._pipeline.rank_and_format(
-                self._memory_hits_from_records(results),
+                memory_hits,
                 session_id=session_id,
                 user_message=user_message,
-                max_chars=limit,
+                max_chars=min(limit, options.max_tokens * 4)
+                if options.mode == "sophiagraph"
+                else limit,
                 project_id=self._project_id,
             )
+            meta["memory_recall_mode"] = options.mode
+            if precision is not None:
+                meta["memory_recall_status"] = precision.status
+                meta["memory_recall_candidates"] = str(precision.candidate_count)
+                meta["memory_recall_threshold_drops"] = str(precision.threshold_drops)
+                meta["memory_recall_abstained"] = str(
+                    precision.status == "ok" and not precision.hits
+                ).lower()
+                meta["memory_recall_capabilities"] = ",".join(
+                    name
+                    for name in (
+                        "keyword",
+                        "graph",
+                        "recency",
+                        "trust",
+                        "vector",
+                        "rerank",
+                    )
+                    if bool(getattr(self._recall_adapter.capabilities, name, False))
+                )
             self._record_retrieval_provenance(
                 session_id=session_id,
                 user_message=user_message,

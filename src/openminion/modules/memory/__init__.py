@@ -15,6 +15,7 @@ from .runtime.provenance import (
     default_provenance_recorder,
     set_default_provenance_recorder,
 )
+from .runtime.recall import SophiagraphRecallAdapter
 from .runtime.scope import resolve_namespace_filter
 from .service import MemoryService
 
@@ -29,6 +30,7 @@ __all__ = [
     "RecordOrder",
     "MEMORY_INTERFACE_VERSION",
     "SearchQueryOptions",
+    "SophiagraphRecallAdapter",
     "resolve_namespace_filter",
     "set_default_provenance_recorder",
     "ensure_memory_compatibility",

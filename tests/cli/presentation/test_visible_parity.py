@@ -6,11 +6,13 @@ from openminion.cli.presentation.visible_parity import (
     handle_statusline_command,
     handle_undo_command,
     render_context_report,
+    format_memory_report,
     render_memory_report,
     render_skills_report,
     render_tasks_report,
     statusline_label,
 )
+from openminion.modules.memory.runtime.capture_status import CaptureProcessingSummary
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
 
@@ -126,6 +128,25 @@ def test_render_memory_report_structures_current_session_summary() -> None:
     assert "Recent records:" in body
     assert "user preference · agent" in body
     assert "assistant: first answer" not in body
+
+
+def test_format_memory_report_shows_content_free_capture_health() -> None:
+    body = format_memory_report(
+        [],
+        [],
+        capture=CaptureProcessingSummary(
+            pending=1,
+            processed=2,
+            succeeded_no_output=3,
+            rejected=0,
+            failed_terminal=1,
+            oldest_pending_at="2026-08-24T00:00:00Z",
+        ),
+    )
+
+    assert "capture     1 pending · 1 failed" in body
+    assert "processed   2 writes · 3 no output" in body
+    assert "oldest      2026-08-24T00:00:00Z" in body
 
 
 def test_render_skills_report_uses_runtime_rows() -> None:

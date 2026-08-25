@@ -205,6 +205,26 @@ async def test_mcp_command_renders_status_report() -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_command_renders_capture_health() -> None:
+    class _MemoryRuntime(_DemoFocusRuntime):
+        def memory_report(self) -> str:
+            return "Memory:\n  capture     1 pending · 0 failed\n  processed   2 writes · 1 no output"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _MemoryRuntime(working_dir=tmp, session="memory-test")
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.screen._handle_command("/memory")
+            await pilot.pause()
+            body = _last_system_body(app.screen.query_one(FocusTranscript))
+
+    assert "1 pending" in body
+    assert "2 writes" in body
+    assert "1 no output" in body
+
+
+@pytest.mark.asyncio
 async def test_graph_command_surfaces_viewer_commands() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         runtime = _DemoFocusRuntime(working_dir=tmp, session="graph-test")
@@ -366,8 +386,9 @@ def _record_focus_telemetry_invocation(data_root: Path) -> None:
 def test_focus_telemetry_uses_slash_actions_and_labels_shell_command(
     tmp_path: Path,
 ) -> None:
-    _record_focus_telemetry_invocation(tmp_path)
-    harness = _TelemetrySlashHarness(tmp_path)
+    data_root = tmp_path / ".openminion"
+    _record_focus_telemetry_invocation(data_root)
+    harness = _TelemetrySlashHarness(data_root)
 
     harness._handle_command("/telemetry")
 

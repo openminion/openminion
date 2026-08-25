@@ -4,6 +4,7 @@ from .action import (
     ActionMetrics,
     ActionResult,
     JobHandle,
+    MemoryUseRef,
     PolicyDecision,
     ReflectReport,
 )

@@ -167,6 +167,9 @@ def normalize_execution_result(
         memory_refs=[str(x) for x in raw.get("memory_refs", [])]
         if isinstance(raw.get("memory_refs"), list)
         else [],
+        memory_use_refs=raw.get("memory_use_refs", [])
+        if isinstance(raw.get("memory_use_refs"), list)
+        else [],
         error=error_obj,
         metrics=metrics,
     )

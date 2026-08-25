@@ -62,7 +62,11 @@ def render_memory_report(runtime: Any) -> str:
 
 
 def format_memory_report(
-    rows: list[Any], candidates: list[Any], *, session_id: str = ""
+    rows: list[Any],
+    candidates: list[Any],
+    *,
+    session_id: str = "",
+    capture: Any | None = None,
 ) -> str:
     records = list(rows or [])
     pending = list(candidates or [])
@@ -71,6 +75,18 @@ def format_memory_report(
         f"  records     {len(records)}",
         f"  candidates  {len(pending)}",
     ]
+    if capture is not None:
+        lines.extend(
+            (
+                f"  capture     {int(getattr(capture, 'pending', 0))} pending · "
+                f"{int(getattr(capture, 'failed_terminal', 0))} failed",
+                f"  processed   {int(getattr(capture, 'processed', 0))} writes · "
+                f"{int(getattr(capture, 'succeeded_no_output', 0))} no output",
+            )
+        )
+        oldest_pending_at = str(getattr(capture, "oldest_pending_at", "") or "")
+        if oldest_pending_at:
+            lines.append(f"  oldest      {oldest_pending_at}")
     if not records and not pending:
         lines.extend(("", "No persisted memory for this session or agent."))
         return "\n".join(lines)

@@ -51,6 +51,11 @@ BASE_CONFIG: dict[str, object] = {
             "max_results": 25,
             "min_confidence_default": 0.55,
             "pin_first": True,
+            "precision_mode": "shadow",
+            "precision_candidate_multiplier": 2,
+            "precision_min_score": 0.04,
+            "precision_max_items": 4,
+            "precision_max_tokens": 320,
         },
         "retention": {
             "enable_soft_delete": True,
@@ -98,6 +103,21 @@ class ConfigLoaderTests(unittest.TestCase):
         config = load_config(None, env=env)
 
         self.assertEqual(config.retrieval.max_results, 25)
+        self.assertEqual(config.retrieval.precision_mode, "shadow")
+        self.assertEqual(config.retrieval.precision_candidate_multiplier, 2)
+        self.assertEqual(config.retrieval.precision_min_score, 0.04)
+        self.assertEqual(config.retrieval.precision_max_items, 4)
+        self.assertEqual(config.retrieval.precision_max_tokens, 320)
+
+    def test_precision_defaults_use_calibrated_dormant_threshold(self) -> None:
+        data = deepcopy(BASE_CONFIG)
+        data["memctl"]["retrieval"].pop("precision_min_score")  # type: ignore[index]
+        path = _write_config(self.tmp_path, data)
+
+        config = load_config(path, env={"HOME": str(self.tmp_path)})
+
+        self.assertEqual(config.retrieval.precision_mode, "shadow")
+        self.assertEqual(config.retrieval.precision_min_score, 0.048)
 
     def test_missing_file_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):

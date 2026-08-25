@@ -89,7 +89,18 @@ class BuiltinKnowledgeBackend(KnowledgeBackend):
     def put_relation(self, relation: MemoryRelationLike) -> str:
         return self.store.put_relation(relation)
 
-    def list_relations(self, record_id: str, *, relation_types=None, limit=None):
+    def list_relations(
+        self,
+        record_id: str,
+        *,
+        direction: str = "both",
+        relation_types=None,
+        limit=None,
+    ):
+        if direction != "both":
+            raise InvalidArgumentError(
+                "built-in memory relations currently support direction='both' only"
+            )
         return self.store.list_relations(
             record_id,
             relation_types=relation_types,

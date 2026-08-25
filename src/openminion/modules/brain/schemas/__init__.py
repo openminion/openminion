@@ -1,5 +1,4 @@
 """Public exports for the brain schemas package."""
-
 # ruff: noqa: F401
 
 from ..meta.schemas import (
@@ -237,6 +236,7 @@ from .state import (
     ClarifyResponse,
     CognitionTier,
     JobHandle,
+    MemoryUseRef,
     LearningLoopMetric,
     MetaDirectiveLogEntry,
     MissionBudgetEnvelope,
