@@ -285,6 +285,43 @@ def test_run_token_usage_can_fall_back_to_request_trace(
     assert summary.total_output_tokens == 4
 
 
+def test_run_usage_can_read_matching_session_events_without_run_record(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": "gateway-run",
+            "llm_call_id": "call-1",
+            "usage": {"prompt_tokens": 6, "completion_tokens": 4},
+        },
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={"run_id": "other-run", "usage": {"prompt_tokens": 100}},
+    )
+
+    summary = StatsService(store).get_run_token_usage(
+        "gateway-run",
+        session_id=session_id,
+    )
+    cost = StatsService(store).get_run_turn_cost(
+        "gateway-run",
+        session_id=session_id,
+    )
+
+    assert summary is not None
+    assert summary.records_emitted > 0
+    assert summary.total_input_tokens == 6
+    assert cost is not None
+    assert cost.provider_calls_total == 1
+
+
 def test_session_stats_summary_uses_always_on_session_events(
     store: SQLiteSessionStore,
 ) -> None:

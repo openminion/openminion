@@ -1,3 +1,4 @@
+import json
 import time
 from typing import Any
 
@@ -43,6 +44,25 @@ _OLLAMA_STRUCTURED_OUTPUT_INSTRUCTION = (
     "Return only a valid JSON object that matches the requested schema. "
     "Do not add prose, markdown, or tool-call wrapper text."
 )
+
+
+def _messages_ollama(
+    request: LLMRequest,
+    *,
+    include_fallback_instruction: bool,
+    enable_vision_input: bool,
+) -> list[dict[str, Any]]:
+    messages = _messages_openai_like(
+        request,
+        include_fallback_instruction=include_fallback_instruction,
+        enable_vision_input=enable_vision_input,
+        supports_vision_input=False,
+    )
+    for message in messages:
+        for tool_call in message.get("tool_calls", []):
+            function = tool_call["function"]
+            function["arguments"] = json.loads(function["arguments"])
+    return messages
 
 
 def _schema_property_names(schema: dict[str, Any]) -> list[str]:
@@ -229,11 +249,10 @@ class OllamaProvider:
             supports_fallback_tool_calling(tool_call_strategy)
             and not schema_only_submit_output
         )
-        messages = _messages_openai_like(
+        messages = _messages_ollama(
             request,
             include_fallback_instruction=include_fallback_instruction,
             enable_vision_input=bool(config.get("enable_vision_input", False)),
-            supports_vision_input=False,
         )
         if schema_only_submit_output:
             messages = _insert_ollama_schema_instruction(

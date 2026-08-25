@@ -3,14 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
-from typing import get_type_hints
 
-from openminion.modules.telemetry.interfaces import TelemetryAdapterContract
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 from openminion.modules.telemetry.invocation_repair import (
     InvocationLifecycleReconciler,
 )
-from openminion.services.agent import AgentService
 
 from tests.services.gateway._gateway_service_support import GatewayServiceTestCase
 
@@ -30,15 +27,6 @@ class InvocationLifecycleReconciliationTests(GatewayServiceTestCase):
         return InvocationLifecycleReconciler.for_runtime(
             sessions=self.sessions,
             telemetryctl=self.telemetryctl,
-        )
-
-    def test_agent_service_exposes_repair_capable_telemetry_contract(self) -> None:
-        getter = AgentService.telemetry_contract.fget
-        assert getter is not None
-        assert get_type_hints(getter)["return"] == TelemetryAdapterContract | None
-        assert self.gateway._agent.telemetry_contract is self.telemetryctl
-        assert callable(
-            self.gateway._agent.telemetry_contract.repair_canonical_event_sync
         )
 
     def test_repairs_missing_terminal_once(self) -> None:

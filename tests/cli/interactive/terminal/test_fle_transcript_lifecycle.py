@@ -4,11 +4,14 @@ import asyncio
 import io
 
 from prompt_toolkit.output.defaults import create_output
+from prompt_toolkit.application.current import get_app_or_none
 from rich.console import Console
 from rich.text import Text
 
 import openminion.cli.interactive.terminal.transcript as transcript_module
+import openminion.cli.interactive.terminal.prompt_output as prompt_output_module
 from openminion.cli.interactive.terminal.prompt_output import (
+    build_prompt_safe_terminal_writer,
     write_console_render_via_prompt_output,
     write_terminal_control_via_prompt_output,
 )
@@ -493,6 +496,42 @@ def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:
     rendered = out.getvalue()
     assert "hello" in rendered
     assert "\x1b[" not in rendered
+
+
+def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> None:
+    console = Console(force_terminal=True, color_system="truecolor", width=160)
+    out = io.StringIO()
+    prompt_output = create_output(stdout=out)
+    marker = object()
+    calls: list[bool] = []
+
+    class _App:
+        is_running = True
+
+    class _Session:
+        app = _App()
+        output = prompt_output
+
+    def _fake_run_in_terminal(render, render_cli_done=False):
+        assert get_app_or_none() is _Session.app
+        calls.append(render_cli_done)
+        render()
+        return marker
+
+    monkeypatch.setattr(
+        prompt_output_module,
+        "run_in_terminal",
+        _fake_run_in_terminal,
+    )
+    monkeypatch.setattr(prompt_output_module, "get_app_or_none", lambda: None)
+    writer = build_prompt_safe_terminal_writer(
+        console=console,
+        prompt_session=_Session(),
+    )
+
+    assert writer(lambda: console.print("Update available")) is marker
+    assert calls == [False]
+    assert "Update available" in out.getvalue()
 
 
 def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:

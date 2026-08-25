@@ -2361,6 +2361,64 @@ class ProviderHTTPTests(unittest.TestCase):
             "native",
         )
 
+    def test_ollama_sends_tool_history_arguments_as_objects(self) -> None:
+        provider = OllamaProvider()
+        request = LLMRequest.model_validate(
+            {
+                "messages": [
+                    {"role": "user", "content": "List files"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "name": "file.list_dir",
+                                "arguments": {"path": "/"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "content": "README.md",
+                        "tool_call_id": "call-1",
+                    },
+                    {"role": "user", "content": "Continue"},
+                ]
+            }
+        )
+        captured: dict[str, Any] = {}
+
+        def _fake_urlopen(http_request, timeout=None):
+            del timeout
+            captured["body"] = json.loads(http_request.data.decode("utf-8"))
+            return _FakeHTTPResponse(
+                {
+                    "model": "gpt-oss:20b",
+                    "message": {"role": "assistant", "content": "Done"},
+                }
+            )
+
+        with patch(
+            "openminion.modules.llm.providers.adapters.urllib_request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            response = provider.complete(
+                request,
+                {"base_url": "http://127.0.0.1:11434"},
+            )
+
+        self.assertTrue(response.ok)
+        assistant = captured["body"]["messages"][1]
+        self.assertEqual(
+            assistant["tool_calls"][0]["function"]["arguments"],
+            {"path": "/"},
+        )
+        self.assertEqual(
+            captured["body"]["messages"][2]["tool_call_id"],
+            "call-1",
+        )
+
     def test_ollama_preserves_native_tool_calls_from_minimax_trace_fixtures(
         self,
     ) -> None:

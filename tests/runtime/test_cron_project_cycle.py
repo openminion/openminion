@@ -153,6 +153,7 @@ def _seed_project(tmp_path, monkeypatch, *, verifier_passes: bool):
             "task_id": run.task_id,
             "goal_id": run.goal_id,
             "session_id": run.session_id,
+            "cycle_interval_seconds": 17,
         },
     }
     return executor, cron_store, runtime_manager, job
@@ -174,6 +175,7 @@ def test_project_cycle_schedules_one_deterministic_wake_and_reconciles_retry(
     next_job_id = first["metadata"]["next_wake_job_id"]
     assert first["metadata"]["decision"] == "continue"
     assert next_job_id in cron_store.jobs
+    assert cron_store.jobs[next_job_id]["payload"]["cycle_interval_seconds"] == 17
     assert replay["metadata"]["reconciled_only"] is True
     assert replay["metadata"]["next_wake_job_id"] == next_job_id
     assert len(runtime_manager.submitted) == 1
@@ -233,8 +235,18 @@ def test_verified_project_cycle_finishes_without_another_wake(
 
 def test_project_cycle_payload_is_isolated_and_requires_durable_ids() -> None:
     assert normalize_payload(
-        {"kind": "projectCycle", "run_id": "run-1", "task_id": "task-1"}
-    ) == {"kind": "projectCycle", "run_id": "run-1", "task_id": "task-1"}
+        {
+            "kind": "projectCycle",
+            "run_id": "run-1",
+            "task_id": "task-1",
+            "cycle_interval_seconds": 17,
+        }
+    ) == {
+        "kind": "projectCycle",
+        "run_id": "run-1",
+        "task_id": "task-1",
+        "cycle_interval_seconds": 17,
+    }
     validate_target_payload_pair(
         session_target="isolated",
         payload_kind="projectCycle",

@@ -35,10 +35,9 @@ TEST_ROOT_ENV_NAMES = (
     "OPENMINION_DATA_ROOT",
     "OPENMINION_GENERATED_ROOT",
 )
+OPENMINION_IMPORT_RE = re.compile(r"(?m)^(?:from|import)\s+openminion(?:\.|\s)")
+MAIN_GUARD_RE = re.compile(r"""(?m)^if\s+__name__\s*==\s*["']__main__["']\s*:""")
 PYTHON_RUNNER_ROOT_EXEMPTIONS = {
-    "tests/brain/diagnostics/runners/run_chx09_mode_matrix.py": (
-        "uses TemporaryDirectory for every matrix run"
-    ),
     "tests/ci/runners/run_exec_validation_matrix_lane.py": (
         "delegates only to pytest, whose conftest owns isolation"
     ),
@@ -61,6 +60,14 @@ PYTHON_RUNNER_ROOT_EXEMPTIONS = {
         "requires an explicit caller-owned root"
     ),
 }
+
+
+def _runtime_roots_precede_openminion_imports(text: str, setup_name: str) -> bool:
+    openminion_import = OPENMINION_IMPORT_RE.search(text)
+    if openminion_import is None:
+        return True
+    setup_index = text.find(f"{setup_name}(")
+    return 0 <= setup_index < openminion_import.start()
 
 
 def _is_path_cwd_call(node: ast.AST) -> bool:
@@ -110,6 +117,13 @@ def main() -> int:
         )
 
     conftest_text = (TESTS_DIR / "conftest.py").read_text(encoding="utf-8")
+    if not _runtime_roots_precede_openminion_imports(
+        conftest_text, "configure_runtime_roots"
+    ):
+        hits.append(
+            "tests/conftest.py: shared collection runtime roots must precede "
+            "OpenMinion imports"
+        )
     for env_name in TEST_ROOT_ENV_NAMES[:2]:
         if f'monkeypatch.setenv("{env_name}"' not in conftest_text:
             hits.append(f"tests/conftest.py: missing isolated {env_name} fixture")
@@ -149,6 +163,30 @@ def main() -> int:
             hits.append(f"{rel}: unmanaged executable test runtime roots")
         if isolated and exempt:
             hits.append(f"{rel}: redundant runtime-root exemption")
+        if isolated and not _runtime_roots_precede_openminion_imports(
+            text, "isolate_runtime_roots"
+        ):
+            hits.append(
+                f"{rel}: runtime-root isolation must precede OpenMinion imports"
+            )
+
+    for path in sorted(TESTS_DIR.rglob("*.py")):
+        if path in python_runners:
+            continue
+        rel = str(path.relative_to(REPO_ROOT))
+        text = path.read_text(encoding="utf-8")
+        if MAIN_GUARD_RE.search(text) is None:
+            continue
+        if OPENMINION_IMPORT_RE.search(text) is None:
+            continue
+        if "isolate_runtime_roots(" not in text:
+            hits.append(f"{rel}: unmanaged executable test runtime roots")
+        elif not _runtime_roots_precede_openminion_imports(
+            text, "isolate_runtime_roots"
+        ):
+            hits.append(
+                f"{rel}: runtime-root isolation must precede OpenMinion imports"
+            )
 
     for path in sorted(TESTS_DIR.glob("**/runners/run_*.sh")):
         rel = str(path.relative_to(REPO_ROOT))

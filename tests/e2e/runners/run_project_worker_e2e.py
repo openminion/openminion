@@ -92,7 +92,10 @@ def _run_certify(args: list[str]) -> int:
 
     manifest_path = Path(parsed.manifest)
     try:
-        manifest = validate_certification_manifest(manifest_path)
+        manifest = validate_certification_manifest(
+            manifest_path,
+            for_live_run=not parsed.validate_only,
+        )
         if parsed.validate_only:
             json_path, markdown_path = write_certification_report(
                 manifest,

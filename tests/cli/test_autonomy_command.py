@@ -109,12 +109,13 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
         return {
             "body": "worked",
             "metadata": {
+                "run_id": "gateway-run-1",
                 "tool_calls_cumulative": json.dumps(
                     [
                         {"tool_name": "file.write", "ok": True, "call_id": "write-1"},
                         {"tool_name": "exec.run", "ok": False, "call_id": "test-1"},
                     ]
-                )
+                ),
             },
         }
 
@@ -137,6 +138,7 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
     assert result.evidence_refs == ("tool-call:write-1",)
     assert result.evidence_kinds == ("tool_result",)
     assert result.tool_call_count == 2
+    assert result.gateway_run_id == "gateway-run-1"
     assert captured_payloads[0]["inbound_metadata"]["workspace_root"] == "/workspace"
     assert captured_payloads[0]["inbound_metadata"]["caller_handles_delivery"] == (
         "true"
@@ -714,6 +716,8 @@ def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
             "--verify-command",
             verify_command,
             "--unattended",
+            "--cycle-interval-seconds",
+            "17",
             "--json",
         ]
     )
@@ -723,6 +727,7 @@ def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(
     assert code == 0
     assert run["status"] == "running"
     assert cron_store.jobs[job_id]["payload"]["kind"] == "projectCycle"
+    assert cron_store.jobs[job_id]["payload"]["cycle_interval_seconds"] == 17
 
     cancel_code, cancelled_output = _run_cli(
         [

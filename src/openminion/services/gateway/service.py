@@ -462,51 +462,33 @@ class GatewayService:
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
-        lease = None
         request_value = str(request_id or "").strip() or uuid4().hex
-        acquire_lease = getattr(self._sessions, "acquire_session_turn_lease", None)
-        if not callable(acquire_lease):
-            self._logger.warning(
-                "session turn lease unavailable; session turn proceeds "
-                "without same-session serialization session_id=%s",
-                session_id,
-            )
-            resolved_session = self._sessions.resolve_session(
-                agent_id=self._agent_id,
-                channel=channel,
-                target=target,
-                session_id=session_id,
-                metadata=inbound_metadata,
-            )
-        else:
-            resolved_session = self._sessions.resolve_session(
-                agent_id=self._agent_id,
-                channel=channel,
-                target=target,
-                session_id=session_id,
-                resume_existing=False,
-            )
+        resolved_session = self._sessions.resolve_session(
+            agent_id=self._agent_id,
+            channel=channel,
+            target=target,
+            session_id=session_id,
+            resume_existing=False,
+        )
         session_value = resolved_session.id
+        lease = self._sessions.acquire_session_turn_lease(
+            session_value,
+            owner=f"gateway:{request_value}",
+            request_id=request_value,
+            ttl_s=60,
+        )
         try:
-            if callable(acquire_lease):
-                lease = acquire_lease(
-                    session_value,
-                    owner=f"gateway:{request_value}",
-                    request_id=request_value,
-                    ttl_s=60,
+            if inbound_metadata:
+                resolved_session = self._sessions.update_session_metadata(
+                    session_id=session_value,
+                    patch=inbound_metadata,
+                    session_turn_fence_token=lease.fence_token,
                 )
-                fence_token = int(getattr(lease, "fence_token", 0))
-                if inbound_metadata:
-                    resolved_session = self._sessions.update_session_metadata(
-                        session_id=session_value,
-                        patch=inbound_metadata,
-                        session_turn_fence_token=fence_token,
-                    )
-                if str(session_id or "").strip():
-                    resolved_session = self._sessions.resume_session(
-                        session_id=session_value,
-                        session_turn_fence_token=fence_token,
-                    )
+            if str(session_id or "").strip():
+                resolved_session = self._sessions.resume_session(
+                    session_id=session_value,
+                    session_turn_fence_token=lease.fence_token,
+                )
             return await self._turn_runner.run(
                 channel=channel,
                 target=target,
@@ -521,22 +503,15 @@ class GatewayService:
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
                 resolved_session=resolved_session,
-                session_turn_lease_owner=str(getattr(lease, "owner", "")),
-                session_turn_fence_token=(
-                    int(getattr(lease, "fence_token", 0)) if lease is not None else None
-                ),
+                session_turn_lease_owner=lease.owner,
+                session_turn_fence_token=lease.fence_token,
             )
         finally:
-            if lease is not None:
-                release_lease = getattr(
-                    self._sessions, "release_session_turn_lease", None
-                )
-                if callable(release_lease):
-                    release_lease(
-                        session_value,
-                        owner=str(getattr(lease, "owner", "")),
-                        fence_token=int(getattr(lease, "fence_token", 0)),
-                    )
+            self._sessions.release_session_turn_lease(
+                session_value,
+                owner=lease.owner,
+                fence_token=lease.fence_token,
+            )
 
     async def run_once(
         self,

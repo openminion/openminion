@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
+import time
 
 import pytest
 
-from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness import FocusProbe, PtySession
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 from tests.e2e.runners.run_cli_focus_e2e import suite_names
 
@@ -71,6 +73,38 @@ def test_focus_pty_survives_resize_after_launch(
         session.resize(rows=18, cols=72)
         transcript = focus_probe.run_slash(session, "/help", marker="/exit")
         write_transcript(artifact_root(tmp_path), "local-resize-help", transcript)
+
+
+def test_focus_startup_notice_preserves_single_composer(
+    focus_probe: FocusProbe,
+) -> None:
+    (focus_probe.data_root / "update-check.json").write_text(
+        json.dumps({"checked_at": time.time(), "latest_version": "99.0.0"}),
+        encoding="utf-8",
+    )
+    command = tuple(
+        part for part in focus_probe.command() if part != "--no-update-check"
+    )
+    environment = focus_probe.environment()
+    environment["TERM"] = "xterm-256color"
+
+    with PtySession(
+        argv=command,
+        cwd=focus_probe.openminion_root,
+        env=environment,
+        rows=42,
+        cols=140,
+    ) as session:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            screen = session.screen_text
+            if "Update available!" in screen and screen.count("Ask anything") == 1:
+                break
+            time.sleep(0.05)
+
+        screen = session.screen_text
+        assert "Update available!" in screen
+        assert screen.count("Ask anything") == 1
 
 
 def test_focus_runner_exposes_tracker_suite_names() -> None:

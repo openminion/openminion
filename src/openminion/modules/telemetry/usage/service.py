@@ -199,20 +199,29 @@ class StatsService:
         self,
         run_id: str,
         *,
+        session_id: str | None = None,
         event_limit: int | None = None,
     ) -> TokenUsageSummary | None:
-        if not hasattr(self._store, "get_run_record"):
-            return None
-        record = self._store.get_run_record(run_id)
-        if record is None:
-            return None
-        session_id = str(record.get("session_id", "") or "").strip()
-        if not session_id:
-            return None
-        meta = record.get("meta")
-        meta_map = dict(meta) if isinstance(meta, dict) else {}
-        request_id = str(meta_map.get("request_id", "") or "").strip()
+        if direct_session := session_id is not None:
+            session_id = str(session_id or "").strip()
+            if not session_id or not str(run_id or "").strip():
+                return None
+            request_id = ""
+        else:
+            if not hasattr(self._store, "get_run_record"):
+                return None
+            record = self._store.get_run_record(run_id)
+            if record is None:
+                return None
+            session_id = str(record.get("session_id", "") or "").strip()
+            if not session_id:
+                return None
+            meta = record.get("meta")
+            meta_map = dict(meta) if isinstance(meta, dict) else {}
+            request_id = str(meta_map.get("request_id", "") or "").strip()
         read = self._read_session_events(session_id, event_limit=event_limit)
+        if direct_session and not read.complete:
+            return None
         direct_events = [
             event
             for event in read.events
@@ -228,6 +237,14 @@ class StatsService:
             if event.get("event_type") in LLM_USAGE_EVENT_TYPES
             and _event_llm_call_id(event)
         }
+        if direct_session and any(
+            event.get("event_type") == "context.manifest.created"
+            and _event_llm_call_id(event) in llm_call_ids
+            and (event_run_id := _event_run_id(event))
+            and event_run_id != run_id
+            for event in read.events
+        ):
+            return None
         usage_events = [
             event
             for event in read.events
@@ -249,20 +266,29 @@ class StatsService:
         self,
         run_id: str,
         *,
+        session_id: str | None = None,
         event_limit: int | None = None,
     ) -> TurnCostEnvelope | None:
-        if not hasattr(self._store, "get_run_record"):
-            return None
-        record = self._store.get_run_record(run_id)
-        if record is None:
-            return None
-        session_id = str(record.get("session_id", "") or "").strip()
-        if not session_id:
-            return None
-        meta = record.get("meta")
-        meta_map = dict(meta) if isinstance(meta, dict) else {}
-        request_id = str(meta_map.get("request_id", "") or "").strip()
+        if direct_session := session_id is not None:
+            session_id = str(session_id or "").strip()
+            if not session_id or not str(run_id or "").strip():
+                return None
+            request_id = ""
+        else:
+            if not hasattr(self._store, "get_run_record"):
+                return None
+            record = self._store.get_run_record(run_id)
+            if record is None:
+                return None
+            session_id = str(record.get("session_id", "") or "").strip()
+            if not session_id:
+                return None
+            meta = record.get("meta")
+            meta_map = dict(meta) if isinstance(meta, dict) else {}
+            request_id = str(meta_map.get("request_id", "") or "").strip()
         read = self._read_session_events(session_id, event_limit=event_limit)
+        if direct_session and not read.complete:
+            return None
         direct_events = [
             event
             for event in read.events
@@ -282,6 +308,14 @@ class StatsService:
             for event in direct_events
             if _event_llm_call_id(event)
         }
+        if direct_session and any(
+            event.get("event_type") == "context.manifest.created"
+            and _event_llm_call_id(event) in llm_call_ids
+            and (event_run_id := _event_run_id(event))
+            and event_run_id != run_id
+            for event in read.events
+        ):
+            return None
         related_events = [
             event
             for event in read.events

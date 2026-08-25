@@ -191,13 +191,15 @@ class CronTurnExecutor:
             return job_id
         next_payload = dict(payload)
         next_payload["kind"] = "projectCycle"
+        cycle_interval_seconds = int(payload.get("cycle_interval_seconds", 1) or 1)
         return str(
             self._cron_store.add_cron_job(
                 name=f"Project cycle {project_run.autonomy_run_id}",
                 schedule={
                     "kind": "at",
                     "at": (
-                        datetime.now(timezone.utc) + timedelta(seconds=1)
+                        datetime.now(timezone.utc)
+                        + timedelta(seconds=cycle_interval_seconds)
                     ).isoformat(),
                 },
                 payload=next_payload,

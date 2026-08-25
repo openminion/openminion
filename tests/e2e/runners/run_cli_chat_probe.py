@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import pty
 import re
@@ -16,14 +17,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from openminion.modules.brain.paths import resolve_brain_sessions_db_path
-
 FRAMEWORK_ROOT = Path(__file__).resolve().parents[4]
 OPENMINION_ROOT = FRAMEWORK_ROOT / "openminion"
 if str(OPENMINION_ROOT) not in sys.path:
     sys.path.insert(0, str(OPENMINION_ROOT))
 
 from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
+if __name__ == "__main__":
+    isolate_runtime_roots(prefix="openminion-cli-chat-probe-")
+
+from openminion.modules.brain.paths import (  # noqa: E402
+    resolve_brain_sessions_db_path,
+)
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
@@ -587,6 +593,7 @@ def _build_summary(
             event_type: event_types.count(event_type)
             for event_type in sorted(set(event_types))
         },
+        "provider_attempts": _provider_attempts(events),
         "inferred_dispatch_sites": _inferred_dispatch_sites(
             bootstrap_events=bootstrap_payloads,
             execution_status_events=execution_status_payloads,
@@ -602,6 +609,7 @@ def _probe_requirement_failure(
     min_tool_events: int = 0,
     required_tool_names: tuple[str, ...] = (),
     required_output_markers: tuple[str, ...] = (),
+    required_final_output_markers: tuple[str, ...] = (),
 ) -> str | None:
     tool_event_count = int(summary.get("tool_event_count") or 0)
     if tool_event_count < min_tool_events:
@@ -639,7 +647,115 @@ def _probe_requirement_failure(
         return (
             f"missing required assistant output marker(s): {', '.join(missing_markers)}"
         )
+    missing_final_markers = [
+        marker
+        for marker in required_final_output_markers
+        if str(marker).strip()
+        and not _final_assistant_output_contains_marker(
+            output,
+            marker=str(marker),
+            messages=messages,
+        )
+    ]
+    if missing_final_markers:
+        return (
+            "missing required final assistant output marker(s): "
+            f"{', '.join(missing_final_markers)}"
+        )
     return None
+
+
+def _final_assistant_output_contains_marker(
+    output: str,
+    *,
+    marker: str,
+    messages: tuple[str, ...],
+) -> bool:
+    if not messages:
+        return False
+    normalized_output = _normalize_probe_text(output)
+    final_message = str(messages[-1])
+    boundary = normalized_output.rfind(final_message)
+    if boundary < 0:
+        return False
+    final_output = normalized_output[boundary + len(final_message) :]
+    return _assistant_output_contains_marker(
+        final_output,
+        marker=marker,
+        messages=(final_message,),
+    )
+
+
+def _provider_attempts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    attempts: list[dict[str, Any]] = []
+    allowed_correlations = (
+        "invocation_id",
+        "execution_id",
+        "agent_id",
+        "trace_key",
+        "session_id",
+        "turn_id",
+    )
+    for event in events:
+        event_type = str(event.get("type") or "").strip()
+        if event_type not in {
+            "llm.call.started",
+            "llm.call.completed",
+            "llm.call.failed",
+        }:
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        error = payload.get("error")
+        error_payload = error if isinstance(error, dict) else {}
+        details = error_payload.get("details")
+        error_details = details if isinstance(details, dict) else {}
+        attempt: dict[str, Any] = {
+            "event_type": event_type,
+            "llm_call_id": str(payload.get("llm_call_id") or ""),
+            "provider_name": str(payload.get("provider_name") or ""),
+            "service_vendor": str(payload.get("service_vendor") or ""),
+            "model": str(payload.get("response_model") or payload.get("model") or ""),
+            "status": str(payload.get("status") or event_type.rsplit(".", 1)[-1]),
+            "error_code": str(error_payload.get("code") or ""),
+            "retry_eligible": (
+                bool(error_details["retryable"])
+                if "retryable" in error_details
+                else None
+            ),
+            "provider_round_trip_ms": _finite_number(
+                payload.get("provider_round_trip_ms")
+            ),
+        }
+        usage = _numeric_mapping(payload.get("usage"))
+        cost = _numeric_mapping(payload.get("cost"))
+        if usage:
+            attempt["usage"] = usage
+        if cost:
+            attempt["cost"] = cost
+        for name in allowed_correlations:
+            value = str(payload.get(name) or "").strip()
+            if value:
+                attempt[name] = value
+        attempts.append(attempt)
+    return attempts
+
+
+def _numeric_mapping(value: object) -> dict[str, int | float]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): number
+        for key, raw in value.items()
+        if (number := _finite_number(raw)) is not None
+    }
+
+
+def _finite_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(float(value)) else None
 
 
 def _assistant_output_contains_marker(
@@ -1216,7 +1332,6 @@ def _write_probe_artifacts(
 
 
 def main() -> int:
-    isolate_runtime_roots(prefix="openminion-cli-chat-probe-")
     parser = argparse.ArgumentParser(
         description="Run one PTY-backed OpenMinion chat probe."
     )
@@ -1252,6 +1367,12 @@ def main() -> int:
             "Fail the probe unless the marker appears in assistant output after "
             "ignoring echoed prompt lines."
         ),
+    )
+    parser.add_argument(
+        "--require-final-output-marker",
+        action="append",
+        default=[],
+        help="Fail unless the marker appears in the final assistant turn.",
     )
     parser.add_argument(
         "--dump-debug-on-exit",
@@ -1436,6 +1557,7 @@ def main() -> int:
         min_tool_events=max(0, int(args.min_tool_events)),
         required_tool_names=tuple(args.require_tool_name or ()),
         required_output_markers=tuple(args.require_output_marker or ()),
+        required_final_output_markers=tuple(args.require_final_output_marker or ()),
     )
     sys.stdout.write(output)
     if requirement_failure is not None:

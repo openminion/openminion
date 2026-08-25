@@ -221,6 +221,7 @@ class ProjectWorker:
                 payload={
                     "decision": evaluation.decision.value,
                     "summary": evaluation.turn.summary,
+                    "gateway_run_id": evaluation.turn.gateway_run_id,
                     "verification": [
                         item.model_dump(mode="json") for item in evaluation.verification
                     ],
