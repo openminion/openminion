@@ -185,11 +185,11 @@ class LoopStateCarriesDynamicCapTests(unittest.TestCase):
         )
         # Every current emission site must use the dynamic cap. The number of
         # sites may change when progress updates are consolidated.
-        dynamic_count = source.count(
-            "llm_call_limit=_effective_cap(profile, loop_state)"
-        ) + source.count(
-            "llm_call_limit=_effective_cap(profile, self.loop_state)"
-        ) + source.count("llm_call_limit=effective_cap(profile, loop_state)")
+        dynamic_count = (
+            source.count("llm_call_limit=_effective_cap(profile, loop_state)")
+            + source.count("llm_call_limit=_effective_cap(profile, self.loop_state)")
+            + source.count("llm_call_limit=effective_cap(profile, loop_state)")
+        )
         self.assertEqual(
             dynamic_count,
             source.count("llm_call_limit="),
