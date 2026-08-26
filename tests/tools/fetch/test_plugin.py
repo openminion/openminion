@@ -16,6 +16,7 @@ from openminion.tools.fetch.plugin import (
     _h_providers,
     register,
 )
+from openminion.tools.fetch.schemas import FetchGetArgs
 
 
 def test_register_adds_fetch_tools() -> None:
@@ -25,6 +26,18 @@ def test_register_adds_fetch_tools() -> None:
     assert "fetch.get" in names
     assert "fetch.head" in names
     assert "fetch.providers" in names
+
+
+def test_fetch_get_accepts_json_encoded_extract_object() -> None:
+    request = FetchGetArgs.model_validate(
+        {
+            "url": "https://example.com",
+            "extract": '{"mode":"text","selector":"main"}',
+        }
+    )
+
+    assert request.extract.mode == "text"
+    assert request.extract.selector == "main"
 
 
 class _FakeProvider:

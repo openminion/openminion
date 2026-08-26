@@ -1196,7 +1196,7 @@ def test_engine_recovers_seeded_invalid_workdir_with_llm_guidance() -> None:
         "exec.run",
     ]
     assert any(
-        "absolute workspace directory" in message.content
+        "already runs from the current workspace root" in message.content
         for message in runtime.calls[0]["messages"]
         if message.role == "system"
     )
@@ -8197,6 +8197,75 @@ def test_general_profile_forces_answer_only_finalization_after_tool_call_cap() -
     assert runtime.calls[-1]["tool_choice"] == "none"
     assert runtime.calls[-1]["tools"] == []
     assert outcome.state.scratchpad["budget_answer_only_finalization_forced"] is True
+
+
+def test_budget_closeout_preserves_answer_as_incomplete_when_typed_recovery_fails() -> (
+    None
+):
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="file.write",
+                        arguments={"path": "result.txt", "content": "done"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="files: result.txt\nvalidation: written",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="typed status unavailable",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=3),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote result.txt",
+                    outputs={"path": "result.txt", "bytes_written": 4},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1",
+            allowed_tools=frozenset({"file.write"}),
+            max_iterations=4,
+            max_tool_calls_per_loop=1,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="write result.txt")],
+        tool_specs=_tool_specs("file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    assert outcome.final_text == "files: result.txt\nvalidation: written"
+    assert outcome.state.scratchpad["typed_finalization_status_conservative_fallback"]
 
 
 def test_budget_hint_injected_when_budget_below_threshold() -> None:

@@ -22,9 +22,9 @@ def build_seeded_invalid_workdir_recovery_message() -> str:
 
     return (
         "The seeded exec.run command used a workdir that does not exist. "
-        "Do not repeat it. Retry the same user task using the absolute workspace "
-        "directory from the original request as exec.run workdir, or use file tools "
-        "with absolute paths for inspection before running verification."
+        "Do not repeat it. exec.run already runs from the current workspace root. "
+        "Retry without workdir when the command targets that root, or use an "
+        "existing subdirectory relative to it."
     )
 
 

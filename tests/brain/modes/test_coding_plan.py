@@ -8,6 +8,9 @@ from openminion.modules.brain.loop.strategies.coding.plan import (
     CodingSubtask,
     coding_plan_from_payload,
 )
+from openminion.modules.brain.loop.strategies.coding.prompts import (
+    build_coding_plan_system_prompt,
+)
 
 
 def test_coding_plan_accepts_ordered_phase_prefix() -> None:
@@ -175,6 +178,13 @@ def test_coding_plan_conflicting_subtask_pairs() -> None:
     )
 
     assert plan.conflicting_subtask_pairs() == [(0, 2)]
+
+
+def test_coding_plan_keeps_cohesive_workspace_changes_in_one_loop() -> None:
+    prompt = build_coding_plan_system_prompt()
+
+    assert "Keep subtasks empty for one cohesive workspace change." in prompt
+    assert "verified without another subtask's output" in prompt
 
 
 def test_coding_plan_from_payload_falls_back_on_invalid_payload() -> None:

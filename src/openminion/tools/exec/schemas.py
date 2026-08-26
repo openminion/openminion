@@ -84,7 +84,10 @@ class ExecRunArgs(BaseModel):
     workdir: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("workdir", *_EXEC_RUN_WORKDIR_ALIASES),
-        description="Working directory relative to workspace root",
+        description=(
+            "Existing working directory relative to the workspace root; omit "
+            "to run in the workspace root"
+        ),
     )
     env: dict[str, str] = Field(
         default_factory=dict, description="Environment overrides"

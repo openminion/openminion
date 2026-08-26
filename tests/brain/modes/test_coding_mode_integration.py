@@ -2083,11 +2083,13 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
         ]
     )
 
+    state = _state()
     result = CodingMode().execute(
         _ctx(
             llm_client,
             _FakeCommandExecutor(),
             services=services,
+            state=state,
             user_input="split work",
         )
     )
@@ -2110,6 +2112,50 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
     assert any("Subtask synthesis:" in item for item in synthesized_prompts)
     assert any("diff -- patch alpha" in item for item in synthesized_prompts)
     assert any("diff -- patch beta" in item for item in synthesized_prompts)
+    assert state.budgets_remaining.tokens == 50000
+    assert state.budgets_remaining.time_ms == 120000
+
+
+def test_coding_subtasks_receive_target_and_success_contract(monkeypatch) -> None:
+    child_prompts: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, logger, depth
+        child_prompts.append(user_input)
+        return ExecutionResult(
+            status="done",
+            working_state=state,
+            message="complete",
+        )
+
+    _patch_child_dispatch(monkeypatch, _fake_invoke)
+    services = _FakeServices(
+        runner=SimpleNamespace(profile=SimpleNamespace(mode_config={}))
+    )
+    CodingMode().execute(
+        _ctx(
+            _FakeLLMClient(
+                responses=[
+                    _subtask_plan_response(),
+                    LLMResponse(
+                        ok=True,
+                        provider="fake",
+                        model="fake-model",
+                        output_text="implementation complete",
+                        finish_reason="stop",
+                    ),
+                ]
+            ),
+            _FakeCommandExecutor(),
+            services=services,
+            user_input="split work",
+        )
+    )
+
+    assert child_prompts == [
+        "Goal: patch alpha\nTarget files: src/a.py\nSuccess criteria: alpha done",
+        "Goal: patch beta\nTarget files: src/b.py\nSuccess criteria: beta done",
+    ]
 
 
 def test_coding_subtasks_conflicting_targets_serialize(monkeypatch) -> None:
@@ -2185,6 +2231,7 @@ def test_coding_subtasks_stop_when_parent_budget_is_exhausted(monkeypatch) -> No
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
         del runner, user_input, logger, depth
         invoked.append(str(decision.objective))
+        state.budgets_remaining.tokens = 0
         return ExecutionResult(
             status="done",
             working_state=state,
