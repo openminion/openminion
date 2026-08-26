@@ -84,8 +84,7 @@ def format_public_status_text(
         and 1 <= phase_status.step_index <= phase_status.step_total
     ):
         return (
-            f"Working on step {phase_status.step_index} "
-            f"of {phase_status.step_total}..."
+            f"Working on step {phase_status.step_index} of {phase_status.step_total}..."
         )
     return primary
 

@@ -56,9 +56,7 @@ def test_render_in_progress_renders_yellow_in_color_mode() -> None:
 
 def test_render_in_progress_contains_verb_form_title() -> None:
     out = _render(
-        _render_in_progress_tool_block(
-            "Bash", {"cmd": "ls -la"}, public_title=False
-        )
+        _render_in_progress_tool_block("Bash", {"cmd": "ls -la"}, public_title=False)
     )
     assert "Bash(ls -la)" in out
 
@@ -74,9 +72,7 @@ def test_render_in_progress_uses_path_arg_for_read_edit() -> None:
 
 def test_render_in_progress_uses_query_arg_for_grep() -> None:
     out = _render(
-        _render_in_progress_tool_block(
-            "Grep", {"query": "TODO"}, public_title=False
-        )
+        _render_in_progress_tool_block("Grep", {"query": "TODO"}, public_title=False)
     )
     assert "Grep(TODO)" in out
 
@@ -122,9 +118,7 @@ def test_render_in_progress_no_body_row() -> None:
 def test_render_in_progress_with_long_arg_truncates() -> None:
     long_cmd = "echo " + "x" * 100
     out = _render(
-        _render_in_progress_tool_block(
-            "Bash", {"cmd": long_cmd}, public_title=False
-        )
+        _render_in_progress_tool_block("Bash", {"cmd": long_cmd}, public_title=False)
     )
     assert "..." in out
 

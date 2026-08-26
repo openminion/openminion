@@ -63,11 +63,7 @@ def format_public_tool_activity(tool_name: str, *, pending: bool) -> str:
     if specialized is not None:
         return specialized[0] if pending else specialized[1]
     display_name = display_name_for_tool_name(canonical)
-    return (
-        f"{display_name} in progress..."
-        if pending
-        else f"{display_name} finished."
-    )
+    return f"{display_name} in progress..." if pending else f"{display_name} finished."
 
 
 def format_tool_call_line(

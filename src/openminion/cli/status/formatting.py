@@ -30,6 +30,8 @@ def format_primary_status_text(
         .replace("\r", "\n")
         .split()
     )
+
+
 __all__ = [
     "DEFAULT_FALLBACK_LABEL",
     "format_elapsed_time",
