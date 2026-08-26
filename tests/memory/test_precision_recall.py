@@ -16,10 +16,7 @@ from openminion.services.runtime.memory import _build_memory_v2_gateway_adapter
 def _memory() -> tuple[InMemoryMemoryStore, MemoryService, SophiagraphRecallAdapter]:
     store = InMemoryMemoryStore()
     service = MemoryService(store=store)
-    recall = SophiagraphRecallAdapter(
-        backend=BuiltinKnowledgeBackend(store),
-        provider="sophiagraph",
-    )
+    recall = SophiagraphRecallAdapter(backend=BuiltinKnowledgeBackend(store))
     return store, service, recall
 
 
@@ -67,6 +64,45 @@ def test_runtime_factory_keeps_backend_none_explicit(tmp_path) -> None:
 
     assert adapter.enabled is False
     assert adapter.disabled_reason == "backend_none"
+
+
+def test_runtime_factory_leaves_external_precision_unsupported(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "openminion.services.runtime.memory.instantiate_backend",
+        lambda **_kwargs: BuiltinKnowledgeBackend(InMemoryMemoryStore()),
+    )
+    adapter = _build_memory_v2_gateway_adapter(
+        config=OpenMinionConfig(),
+        agent_id="alpha",
+        memory_root=tmp_path,
+        logger=logging.getLogger("openminion.tests.precision.external"),
+        config_manager=None,
+        home_root=None,
+        data_root=None,
+        session_context=None,
+        retrieve_ctl=None,
+        storage_path=None,
+        resolve_runtime_memory_config_fn=lambda **_kwargs: {
+            "backend": {
+                "provider": "external",
+                "external_adapter": "test",
+            },
+            "store": {"backend": "mock"},
+            "retrieval": {"precision_mode": "sophiagraph"},
+        },
+        artifactctl_factory=lambda: None,
+    )
+
+    assert adapter._recall_adapter is None  # noqa: SLF001
+    _, metadata = adapter.build_retrieval_context_with_metadata(
+        session_id="session-1",
+        user_message="weather",
+    )
+    assert metadata["memory_recall_status"] == "unsupported"
+    assert metadata["memory_recall_reason"] == "recall_adapter_unavailable"
 
 
 def test_precision_recall_preserves_scores_and_graph_evidence() -> None:
@@ -219,36 +255,6 @@ def test_precision_recall_excludes_invalidated_graph_neighbor() -> None:
     )
 
     assert [hit.record.id for hit in outcome.hits] == [seed_id]
-
-
-def test_precision_recall_reports_disabled_and_unsupported_backends() -> None:
-    backend = BuiltinKnowledgeBackend(InMemoryMemoryStore())
-
-    disabled = SophiagraphRecallAdapter(backend=backend, provider="none").retrieve(
-        query="weather",
-        scopes=["agent:alpha"],
-        limit=5,
-        candidate_multiplier=3,
-        minimum_score=0.0,
-        graph_depth=1,
-    )
-    unsupported = SophiagraphRecallAdapter(
-        backend=backend,
-        provider="external",
-    ).retrieve(
-        query="weather",
-        scopes=["agent:alpha"],
-        limit=5,
-        candidate_multiplier=3,
-        minimum_score=0.0,
-        graph_depth=1,
-    )
-
-    assert (disabled.status, disabled.reason) == ("disabled", "backend_none")
-    assert (unsupported.status, unsupported.reason) == (
-        "unsupported",
-        "precision_recall_unsupported",
-    )
 
 
 def test_gateway_precision_context_keeps_content_and_full_fetch_id() -> None:
