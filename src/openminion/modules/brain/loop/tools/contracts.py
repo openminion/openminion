@@ -511,6 +511,9 @@ def loop_turn_progress_payload(scratchpad: Mapping[str, Any] | None) -> dict[str
     tool_name = str(data.get("turn_progress_tool_name", "") or "").strip()
     if tool_name:
         payload["turn.tool_name"] = tool_name
+    detail_code = str(data.get("turn_progress_detail_code", "") or "").strip()
+    if detail_code:
+        return {**payload, "detail_code": detail_code}
     return payload
 
 

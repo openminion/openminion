@@ -130,8 +130,8 @@ def test_turn_status_ticker_seeds_missing_label_so_footer_stays_visible() -> Non
 
     asyncio.run(_run())
 
-    assert line.turn_status_label == "Working..."
-    assert "Status: Working..." in line.active_status()
+    assert line.turn_status_label == "Working on it..."
+    assert "Status: Working on it..." in line.active_status()
     assert invalidations >= 1
 
 

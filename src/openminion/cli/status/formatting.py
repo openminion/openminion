@@ -7,7 +7,6 @@ from openminion.modules.brain.diagnostics.status import (
     format_phase_status_text,
 )
 
-
 DEFAULT_FALLBACK_LABEL = "Working..."
 
 
@@ -31,8 +30,6 @@ def format_primary_status_text(
         .replace("\r", "\n")
         .split()
     )
-
-
 __all__ = [
     "DEFAULT_FALLBACK_LABEL",
     "format_elapsed_time",

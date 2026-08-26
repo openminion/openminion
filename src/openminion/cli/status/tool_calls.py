@@ -6,6 +6,29 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from openminion.modules.tool.contracts.display_names import (
+    display_name_for_tool_name,
+)
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_CODE_GREP,
+    MODEL_CODE_PATCH,
+    MODEL_CODE_SYMBOL_FIND,
+    MODEL_EXEC_RUN,
+    MODEL_FILE_EDIT,
+    MODEL_FILE_READ,
+    MODEL_FILE_READ_RANGE,
+    MODEL_FILE_SEARCH,
+    MODEL_FILE_WRITE,
+    MODEL_MEMORY_SEARCH,
+    MODEL_OPS_COMMAND_RUN,
+    MODEL_OPS_FILE_READ,
+    MODEL_WEB_FETCH,
+    MODEL_WEB_SEARCH,
+)
+from openminion.modules.tool.contracts.normalization import (
+    normalize_raw_model_tool_name,
+)
+
 MARKER_OK = "●"
 MARKER_FAIL = "✗"
 MARKER_RUNNING = "⏳"
@@ -13,6 +36,38 @@ MARKER_RUNNING = "⏳"
 _COMMAND_PREVIEW_MAX = 80
 _QUERY_PREVIEW_MAX = 80
 _FALLBACK_PREVIEW_MAX = 80
+
+_PUBLIC_TOOL_ACTIVITY: dict[str, tuple[str, str]] = {
+    MODEL_WEB_SEARCH: ("Searching the web...", "Searched the web."),
+    MODEL_WEB_FETCH: ("Reading a source...", "Read a source."),
+    MODEL_EXEC_RUN: ("Running a command...", "Ran a command."),
+    MODEL_OPS_COMMAND_RUN: ("Running a command...", "Ran a command."),
+    MODEL_FILE_READ: ("Reading a file...", "Read a file."),
+    MODEL_FILE_READ_RANGE: ("Reading a file...", "Read a file."),
+    MODEL_OPS_FILE_READ: ("Reading a file...", "Read a file."),
+    MODEL_FILE_EDIT: ("Editing a file...", "Edited a file."),
+    MODEL_CODE_PATCH: ("Editing a file...", "Edited a file."),
+    MODEL_FILE_WRITE: ("Writing a file...", "Wrote a file."),
+    MODEL_FILE_SEARCH: ("Searching files...", "Searched files."),
+    MODEL_CODE_GREP: ("Searching files...", "Searched files."),
+    MODEL_CODE_SYMBOL_FIND: ("Searching files...", "Searched files."),
+    MODEL_MEMORY_SEARCH: ("Searching memory...", "Searched memory."),
+}
+
+
+def format_public_tool_activity(tool_name: str, *, pending: bool) -> str:
+    canonical = normalize_raw_model_tool_name(tool_name)
+    if canonical is None:
+        return "Using a tool..." if pending else "Finished using a tool."
+    specialized = _PUBLIC_TOOL_ACTIVITY.get(canonical)
+    if specialized is not None:
+        return specialized[0] if pending else specialized[1]
+    display_name = display_name_for_tool_name(canonical)
+    return (
+        f"{display_name} in progress..."
+        if pending
+        else f"{display_name} finished."
+    )
 
 
 def format_tool_call_line(
@@ -222,6 +277,7 @@ __all__ = [
     "MARKER_OK",
     "MARKER_FAIL",
     "MARKER_RUNNING",
+    "format_public_tool_activity",
     "format_tool_call_line",
     "format_tool_args_preview",
     "format_tool_provenance_marker",

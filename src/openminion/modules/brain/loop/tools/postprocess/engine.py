@@ -432,7 +432,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
 
     def _prepare_llm_response(self) -> Any:
         profile = self.profile
-        loop_state = self.loop_state
         self.loop_state.iteration += 1
         emit_adaptive_status(
             self.loop_ctx,
@@ -468,11 +467,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
         if intent_state_message is not None:
             self.loop_state.messages.append(intent_state_message)
         _set_turn_progress(
-            loop_state,
+            self.loop_state,
             llm_call_count=self.loop_state.llm_calls + 1,
-            llm_call_limit=_effective_cap(profile, loop_state),
+            llm_call_limit=_effective_cap(profile, self.loop_state),
             progress_phase="thinking...",
             tool_name="",
+            detail_code="thinking",
         )
         emit_adaptive_status(
             self.loop_ctx,
@@ -485,7 +485,6 @@ class AdaptiveLoopRunnerPostprocessMixin(
         llm_tools, llm_tool_choice, response_was_tool_suppressed = (
             self._prepare_llm_request()
         )
-
         if self.pending_response is not None:
             response = self.pending_response
             self.pending_response = None
@@ -528,13 +527,14 @@ class AdaptiveLoopRunnerPostprocessMixin(
         _debit_llm_usage(self.loop_ctx, response)
         self.loop_state.llm_calls += 1
         _set_turn_progress(
-            loop_state,
+            self.loop_state,
             llm_call_count=self.loop_state.llm_calls,
-            llm_call_limit=_effective_cap(profile, loop_state),
+            llm_call_limit=_effective_cap(profile, self.loop_state),
             input_tokens_delta=iter_input_tokens,
             output_tokens_delta=iter_output_tokens,
             progress_phase="composing answer",
             tool_name="",
+            detail_code="composing_answer",
         )
         if not bool(getattr(response, "ok", False)):
             error = getattr(response, "error", None)

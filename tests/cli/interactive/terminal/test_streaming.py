@@ -110,7 +110,8 @@ def test_append_tool_block_renders_inline() -> None:
     handle.append_token("after tool")
     handle.complete()
     output = buffer.getvalue()
-    assert "bash" in output
+    assert "Finished using a tool." in output
+    assert "bash" not in output.lower()
     assert "└ file1" in output
     assert "file1" in output
     assert "after tool" in output

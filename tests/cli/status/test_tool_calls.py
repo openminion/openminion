@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from openminion.cli.status.tool_calls import (
+    format_public_tool_activity,
     MARKER_FAIL,
     MARKER_OK,
     MARKER_RUNNING,
@@ -11,6 +12,28 @@ from openminion.cli.status.tool_calls import (
     format_tool_fallback_marker,
     format_tool_provenance_marker,
 )
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "pending", "expected"),
+    [
+        ("web.search", True, "Searching the web..."),
+        ("web.fetch", False, "Read a source."),
+        ("exec.run", True, "Running a command..."),
+        ("file.read_range", False, "Read a file."),
+        ("code.patch", True, "Editing a file..."),
+        ("file.search", False, "Searched files."),
+        ("memory.search", True, "Searching memory..."),
+        ("task.list", False, "List Tasks finished."),
+        ("provider.private.command", True, "Using a tool..."),
+    ],
+)
+def test_public_tool_activity(
+    tool_name: str,
+    pending: bool,
+    expected: str,
+) -> None:
+    assert format_public_tool_activity(tool_name, pending=pending) == expected
 
 
 def test_web_search_with_provenance_and_duration() -> None:

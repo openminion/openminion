@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal, cast
 
 from rich.console import Console
 from rich.text import Text
@@ -17,6 +17,7 @@ from openminion.cli.presentation.messages import (
     render_system_text,
     render_user_text,
 )
+from openminion.cli.ux.verbosity import VerbosityLevel
 
 from .streaming import (
     TerminalTurnHandle,
@@ -69,8 +70,9 @@ class TerminalTranscript:
         self._selected_message_id: str | None = None
         self._plain_spinner = bool(plain_spinner)
         self._show_response_time = bool(show_response_time)
-        self._verbosity: str = (
-            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity: VerbosityLevel = cast(
+            VerbosityLevel,
+            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal",
         )
         self._hidden_tool_count: int = 0
         self._hidden_failed_count: int = 0
@@ -314,7 +316,14 @@ class TerminalTranscript:
         self._console.print(Text(message.body or ""))
 
     def set_verbosity(self, level: str) -> None:
-        self._verbosity = level if level in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity = cast(
+            VerbosityLevel,
+            level if level in ("quiet", "normal", "verbose") else "normal",
+        )
+
+    @property
+    def verbosity(self) -> VerbosityLevel:
+        return self._verbosity
 
     def handle_tool_started(self, payload: dict[str, Any]) -> None:
         import time as _time
@@ -338,7 +347,11 @@ class TerminalTranscript:
             if self._verbosity == "verbose"
             else self._remember_tool_start(tool_name, args)
         )
-        renderable = _render_in_progress_tool_block(tool_name, args)
+        renderable = _render_in_progress_tool_block(
+            tool_name,
+            args,
+            public_title=self._verbosity != "verbose",
+        )
         handle = self._active_handle
         if handle is not None and hasattr(handle, "set_active_tool"):
             try:

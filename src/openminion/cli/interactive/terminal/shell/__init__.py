@@ -827,19 +827,22 @@ def _build_turn_progress_callback(
         kind = _progress.normalize_progress_kind(payload)
         if kind == "tool_started":
             transcript.handle_tool_started(payload)
-            label = _progress.tool_progress_status_label(payload, verb="Running")
+            label = _progress.tool_progress_status_label(payload, pending=True)
             _set_turn_status(label, "executing")
             return
         if kind == "tool_completed":
             transcript.handle_tool_completed(payload)
-            label = _progress.tool_progress_status_label(payload, verb="Ran")
+            label = _progress.tool_progress_status_label(payload, pending=False)
             _set_turn_status(label, "reviewing")
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
         if payload and handle is not None and status_controller is not None:
             try:
-                view = status_controller.update(payload)
+                view = status_controller.update(
+                    payload,
+                    verbosity=transcript.verbosity,
+                )
             except Exception:
                 view = None
             if view is None:
@@ -927,7 +930,10 @@ async def _run_agent_turn(
 
     status_controller = PhaseStatusController(fallback_label="Working...")
     status_controller.start_turn()
-    initial_status = status_controller.view_model_for(None)
+    initial_status = status_controller.view_model_for(
+        None,
+        verbosity=transcript.verbosity,
+    )
     setter = getattr(handle, "set_status_label", None)
     initial_label = str(initial_status.primary_text or status_controller.fallback_label)
     if callable(setter):

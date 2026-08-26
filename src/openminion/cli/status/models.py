@@ -36,6 +36,7 @@ def build_signature(status: PhaseStatus) -> PhaseStatusSignature:
         status.token_usage_estimated,
         status.tool_name,
         status.progress_phase,
+        status.detail_code,
         status.detail_text,
         status.terminal,
     )

@@ -1,7 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,10 +13,10 @@ from textual.widget import Widget
 from textual.worker import Worker, WorkerCancelled
 
 from openminion.cli.status import PhaseStatusController
+from openminion.cli.ux.verbosity import VerbosityLevel
 from openminion.cli.presentation import (
     ThinkingIndicator,
     build_tool_event_from_progress,
-    format_progress_label,
     tool_call_body,
 )
 from openminion.cli.presentation.animation import (
@@ -106,8 +106,9 @@ class FocusScreen(
         self._working_dir = str(Path(working_dir).expanduser().resolve(strict=False))
         self._requested_agent = str(requested_agent or "").strip() or None
         self._requested_session = str(requested_session or "").strip() or None
-        self._verbosity: str = (
-            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity: VerbosityLevel = cast(
+            VerbosityLevel,
+            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal",
         )
         self._progress: str = (
             progress if progress in ("full", "minimal", "off") else "full"
@@ -629,7 +630,10 @@ class FocusScreen(
         if self._push_durable_activity_row(payload):
             return
         try:
-            view = self._status_controller.update(payload)
+            view = self._status_controller.update(
+                payload,
+                verbosity=self._verbosity,
+            )
         except (QueryError, AttributeError):
             view = None
         try:
@@ -637,8 +641,6 @@ class FocusScreen(
         except (QueryError, AttributeError):
             return
         if view is None:
-            label = format_progress_label(payload, fallback_label="Working...")
-            indicator.status_label = label
             return
         try:
             refreshed = self._status_controller.refresh_view_with_live_elapsed(view)

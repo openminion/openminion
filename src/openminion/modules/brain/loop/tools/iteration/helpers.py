@@ -216,6 +216,7 @@ def _set_turn_progress(
     output_tokens_delta: int = 0,
     progress_phase: str | None = None,
     tool_name: str | None = None,
+    detail_code: str | None = None,
 ) -> None:
     scratchpad = dict(loop_state.scratchpad or {})
     input_total = int(scratchpad.get("turn_progress_input_tokens_total", 0) or 0)
@@ -235,6 +236,8 @@ def _set_turn_progress(
         scratchpad["turn_progress_phase"] = str(progress_phase or "").strip()
     if tool_name is not None:
         scratchpad["turn_progress_tool_name"] = str(tool_name or "").strip()
+    if detail_code is not None:
+        scratchpad["turn_progress_detail_code"] = str(detail_code or "").strip()
     loop_state.scratchpad = scratchpad
 
 

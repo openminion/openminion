@@ -197,8 +197,9 @@ def test_append_tool_block_uses_new_renderer() -> None:
     handle.complete()
     output = buffer.getvalue()
     assert "●" in output
-    assert "Bash" in output
-    assert "ls -la" in output
+    assert "Finished using a tool." in output
+    assert "Bash" not in output
+    assert "ls -la" not in output
     assert "file1" in output
 
 

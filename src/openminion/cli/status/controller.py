@@ -1,11 +1,11 @@
 import time
 from typing import Any, Callable, Mapping
 
+from openminion.cli.ux.verbosity import VerbosityLevel
 from openminion.modules.brain.diagnostics.status import PhaseStatus
 from openminion.modules.tool.contracts.display_names import (
     display_name_for_tool_name,
 )
-
 from .formatting import (
     DEFAULT_FALLBACK_LABEL,
     format_elapsed_time,
@@ -18,6 +18,7 @@ from .models import (
     is_hidden_progress_payload,
     status_from_payload,
 )
+from .public_messages import format_public_status_text
 
 
 _SHOW_SPINNER_TERMINAL_KEYS = frozenset({"waiting_for_user"})
@@ -61,19 +62,25 @@ class PhaseStatusController:
         return max(0.0, float(self._clock() - self._started_at))
 
     def update(
-        self, status: PhaseStatus | Mapping[str, Any] | None
+        self,
+        status: PhaseStatus | Mapping[str, Any] | None,
+        *,
+        verbosity: VerbosityLevel = "normal",
     ) -> PhaseStatusViewModel | None:
         if is_hidden_progress_payload(status if isinstance(status, Mapping) else None):
             return None
         phase_status = status_from_payload(status)
-        signature = build_signature(phase_status)
+        signature = (*build_signature(phase_status), verbosity)
         if signature == self._last_signature:
             return None
         self._last_signature = signature
-        return self._to_view_model(phase_status, signature)
+        return self._to_view_model(phase_status, signature, verbosity=verbosity)
 
     def view_model_for(
-        self, status: PhaseStatus | Mapping[str, Any] | None
+        self,
+        status: PhaseStatus | Mapping[str, Any] | None,
+        *,
+        verbosity: VerbosityLevel = "normal",
     ) -> PhaseStatusViewModel:
         """Return a view model without touching dedup state.
 
@@ -85,8 +92,8 @@ class PhaseStatusController:
         phase_status = status_from_payload(
             None if is_hidden_progress_payload(hidden_payload) else status
         )
-        signature = build_signature(phase_status)
-        return self._to_view_model(phase_status, signature)
+        signature = (*build_signature(phase_status), verbosity)
+        return self._to_view_model(phase_status, signature, verbosity=verbosity)
 
     def snapshot_elapsed_text(self) -> str | None:
         elapsed_seconds = self.elapsed_seconds()
@@ -109,9 +116,13 @@ class PhaseStatusController:
         self,
         status: PhaseStatus,
         signature: PhaseStatusSignature,
+        *,
+        verbosity: VerbosityLevel = "normal",
     ) -> PhaseStatusViewModel:
-        primary = format_primary_status_text(
-            status, fallback_label=self._fallback_label
+        primary = (
+            format_primary_status_text(status, fallback_label=self._fallback_label)
+            if verbosity == "verbose"
+            else format_public_status_text(status)
         )
         mode_label = str(status.mode_label or "").strip() or None
         raw_tool_name = str(status.tool_name or "").strip() or None
