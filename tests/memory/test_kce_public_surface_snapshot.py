@@ -8,6 +8,8 @@ from typing import Any, Literal, TypedDict, get_args, get_origin
 import types
 import unittest
 
+import pytest
+
 from openminion.modules.memory.audit.trust_gate import (
     TrustGateDecision,
     TrustGateEvent,
@@ -50,6 +52,8 @@ from openminion.modules.memory.storage.base import (
     SearchQueryOptions,
 )
 from openminion.modules.memory.trust.types import ClaimKeyPolarity, MemorySourceClass
+
+pytestmark = pytest.mark.package_integration
 
 SNAPSHOT_FILE = (
     Path(__file__).resolve().parents[3]

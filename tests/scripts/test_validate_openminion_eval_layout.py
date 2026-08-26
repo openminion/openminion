@@ -3,6 +3,10 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.package_integration
+
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[2]

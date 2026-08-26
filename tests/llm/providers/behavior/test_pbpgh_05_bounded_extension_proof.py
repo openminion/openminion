@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from openminion.modules.llm.providers.behavior import (
     ProviderIdentity,
     resolve_behavior_profile,
 )
+
+pytestmark = pytest.mark.package_integration
 
 
 def test_typed_identity_construction_is_a_bounded_per_lane_surface():

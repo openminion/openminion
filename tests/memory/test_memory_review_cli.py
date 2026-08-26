@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from openminion.modules.memory.cli import _build_app, _get_service
 from openminion.modules.memory.models import MemoryRecord
+
+pytestmark = pytest.mark.package_integration
 
 
 def _seed(db: Path) -> None:

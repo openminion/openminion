@@ -97,7 +97,7 @@ def test_integration_three_patches_isolated_winner_selected_no_leaks(
         # Each worktree starts from committed state and excludes dirty parent files.
         for i, w in enumerate(worktrees):
             files = sorted(p.name for p in Path(w).iterdir())
-            assert files == [".git", "__pycache__", "patch.txt", "seed.py"]
+            assert set(files) - {"__pycache__"} == {".git", "patch.txt", "seed.py"}
             assert Path(w, "patch.txt").read_text() == f"rollout-{i}-patch\n"
             assert not Path(w, "parent-only.txt").exists()
             diff = _run_git(w, "diff", "--", "seed.py").stdout

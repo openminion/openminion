@@ -362,6 +362,7 @@ def test_module_local_cli_exposes_unified_verbs() -> None:
         )
 
 
+@pytest.mark.package_integration
 def test_skill_authoring_validation_operator_guide_reference_resolves() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     module_readme = repo_root / "docs/modules/openminion-skill/docs/README.md"
