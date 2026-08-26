@@ -183,16 +183,17 @@ class LoopStateCarriesDynamicCapTests(unittest.TestCase):
             "static `profile.max_iterations`. All must go through "
             "`_effective_cap(profile, loop_state)`.",
         )
-        # Exactly 6 dynamic-cap passes (matches pre-AIB count).
+        # Every current emission site must use the dynamic cap. The number of
+        # sites may change when progress updates are consolidated.
         dynamic_count = source.count(
             "llm_call_limit=_effective_cap(profile, loop_state)"
+        ) + source.count(
+            "llm_call_limit=_effective_cap(profile, self.loop_state)"
         ) + source.count("llm_call_limit=effective_cap(profile, loop_state)")
-        self.assertGreaterEqual(
+        self.assertEqual(
             dynamic_count,
-            6,
-            f"Expected ≥6 dynamic-cap `_set_turn_progress` sites; "
-            f"got {dynamic_count}. AIB-03 PPL audit counted 6 "
-            f"`llm_call_limit=` calls across the adaptive loop owners.",
+            source.count("llm_call_limit="),
+            "Every `_set_turn_progress` emission must use the dynamic cap.",
         )
 
 
