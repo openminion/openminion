@@ -59,15 +59,19 @@ def format_public_status_text(
     if phase_status.status_key in _PRIMARY_ONLY_KEYS:
         return primary
 
-    detail_template = DETAIL_MESSAGES_EN.get(str(phase_status.detail_code or ""))
+    detail_code = str(phase_status.detail_code or "")
+    detail_template = DETAIL_MESSAGES_EN.get(detail_code)
     if detail_template:
         values = {
             "step_index": phase_status.step_index,
             "step_total": phase_status.step_total,
         }
-        if "{" not in detail_template or all(
-            values[name] is not None for name in ("step_index", "step_total")
-        ):
+        valid_step = (
+            phase_status.step_index is not None
+            and phase_status.step_total is not None
+            and 1 <= phase_status.step_index <= phase_status.step_total
+        )
+        if detail_code != "plan_checkpoint" or valid_step:
             return detail_template.format(**values)
 
     if phase_status.tool_name:

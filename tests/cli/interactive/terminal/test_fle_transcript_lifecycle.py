@@ -239,9 +239,32 @@ def test_repeated_tool_failure_result_is_collapsed_by_signature() -> None:
     out = buf.getvalue()
     assert out.count("tool_budget_calls_exceeded") == 1
     assert "1 repeated tool result collapsed" in out
-    assert "web.search(MSFT stock) failed ×1" in out
+    assert "Searched the web failed ×1" in out
+    assert "MSFT stock" not in out
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
+
+
+def test_completed_tool_preserves_model_tool_name_for_public_title() -> None:
+    t, buf = _make("normal")
+
+    t.handle_tool_completed(
+        {
+            "call_id": "search-1",
+            "tool_name": "search.serper.search",
+            "model_tool_name": "web.search",
+            "runtime_tool_name": "search.serper.search",
+            "runtime_binding_id": "runtime.search.serper",
+            "args": {"query": "private query"},
+            "content": "one result",
+            "exit_code": 0,
+        }
+    )
+
+    out = buf.getvalue()
+    assert "Searched the web." in out
+    assert "search.serper.search" not in out
+    assert "private query" not in out
 
 
 def test_same_tool_args_with_different_result_still_renders() -> None:

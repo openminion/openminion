@@ -13,6 +13,7 @@ from textual.widget import Widget
 from textual.worker import Worker, WorkerCancelled
 
 from openminion.cli.status import PhaseStatusController
+from openminion.cli.status.tool_calls import format_public_tool_activity
 from openminion.cli.ux.verbosity import VerbosityLevel
 from openminion.cli.presentation import (
     ThinkingIndicator,
@@ -701,7 +702,15 @@ class FocusScreen(
         chat = self.query_one(FocusTranscript)
         if kind == "tool_started":
             self._refresh_header(status_mode="tool")
-            self._push_status_line(state="tool", tool_name=tool_name)
+            status_tool_name = (
+                tool_name
+                if self._verbosity == "verbose"
+                else format_public_tool_activity(
+                    tool_event.model_tool_name or tool_name,
+                    pending=True,
+                )
+            )
+            self._push_status_line(state="tool", tool_name=status_tool_name)
             active_turn = self._active_turn
             if active_turn is not None:
                 widget = active_turn.upsert_tool_block(

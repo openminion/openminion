@@ -50,6 +50,25 @@ def test_plan_checkpoint_uses_named_step_values() -> None:
     assert format_public_status_text(status) == "Finished step 2 of 4."
 
 
+@pytest.mark.parametrize(
+    ("step_index", "step_total"),
+    [(None, 4), (0, 4), (5, 4), (1, 0)],
+)
+def test_invalid_plan_checkpoint_uses_primary_fallback(
+    step_index: int | None,
+    step_total: int,
+) -> None:
+    status = PhaseStatus(
+        trace_id="invalid-plan",
+        status_key="executing",
+        label="raw",
+        detail_code="plan_checkpoint",
+        step_index=step_index,
+        step_total=step_total,
+    )
+    assert format_public_status_text(status) == "Working on it..."
+
+
 def test_terminal_state_wins_over_detail_and_tool() -> None:
     status = PhaseStatus(
         trace_id="approval",

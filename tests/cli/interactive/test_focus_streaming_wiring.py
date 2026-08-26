@@ -180,6 +180,33 @@ async def test_busy_focus_keeps_input_enabled_and_queues_next_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_footer_uses_public_model_tool_name() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-public-tool",
+        chunks=["reply"],
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen._handle_tool_progress(
+            {
+                "kind": "tool_started",
+                "call_id": "search-1",
+                "tool_name": "search.serper.search",
+                "model_tool_name": "web.search",
+                "args": {"query": "private query"},
+            }
+        )
+        await pilot.pause()
+        rendered = app.screen.query_one(FocusStatusLine)._text()
+
+    assert "Searching the web..." in rendered
+    assert "search.serper.search" not in rendered
+    assert "private query" not in rendered
+
+
+@pytest.mark.asyncio
 async def test_escape_interrupt_preserves_queued_focus_message_without_running_it() -> (
     None
 ):
