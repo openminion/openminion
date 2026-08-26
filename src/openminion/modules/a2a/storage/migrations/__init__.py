@@ -9,6 +9,7 @@ TARGET_USER_VERSION = 0
 BASELINE_REVISION = "0001_baseline"
 AUDIT_RECORDS_REVISION = "0002_audit"
 AUDIT_ARCHIVE_REVISION = "0003_archive"
+JOB_OWNER_REVISION = "0004_job_owner"
 
 
 def run_migrations(db_path: str | Path) -> None:
@@ -20,4 +21,9 @@ def run_migrations(db_path: str | Path) -> None:
 
 
 def list_migrations() -> list[str]:
-    return [BASELINE_REVISION, AUDIT_RECORDS_REVISION, AUDIT_ARCHIVE_REVISION]
+    return [
+        BASELINE_REVISION,
+        AUDIT_RECORDS_REVISION,
+        AUDIT_ARCHIVE_REVISION,
+        JOB_OWNER_REVISION,
+    ]

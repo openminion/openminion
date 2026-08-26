@@ -82,6 +82,7 @@ from .parallel import (
     ParallelExecutionStrategy,
     TopologicalDependencyAnalyzer,
 )
+from .recovery import recover_child_failure
 from openminion.modules.brain.loop.services import runner_from_context
 
 
@@ -156,17 +157,13 @@ def _delegate_assignment_from_subtask(subtask: SubtaskSpec):
     inputs = subtask.inputs if isinstance(subtask.inputs, dict) else {}
     suggested = str(subtask.suggested_mode or "").strip().lower()
     target_agent_id = str(inputs.get("target_agent_id") or "").strip()
-    target_capability = str(inputs.get("target_capability") or "").strip() or None
-    if suggested not in _DELEGATE_ASSIGNMENT_MODES and not (
-        target_agent_id or target_capability
-    ):
+    if suggested not in _DELEGATE_ASSIGNMENT_MODES and not target_agent_id:
         return None
     return SimpleNamespace(
         mode=BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
         confidence=float(inputs.get("confidence") or 1.0),
         reason_code=str(inputs.get("reason_code") or "orchestrate_exact_delegate"),
         target_agent_id=target_agent_id,
-        target_capability=target_capability,
         goal=str(inputs.get("goal") or subtask.goal).strip(),
         constraints=str(inputs.get("constraints") or subtask.constraints or ""),
         synthesize_result=bool(inputs.get("synthesize_result", False)),
@@ -732,6 +729,7 @@ class OrchestrateMode:
         synthesized: ExecutionResult,
         results: list[SubtaskResult],
         total: int,
+        recovery: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         completed = sum(1 for item in results if item.status == "completed")
         failed = any(item.status == "failed" for item in results)
@@ -748,6 +746,7 @@ class OrchestrateMode:
                 "total_subtasks": total,
                 "child_tasks": dict(ctx.state.child_tasks),
                 "child_task_order": list(ctx.state.child_task_order),
+                **({"child_recovery": recovery} if recovery else {}),
             },
             error=(
                 ActionError(
@@ -853,6 +852,19 @@ class OrchestrateMode:
             progress_monitor=self._monitor,
             cancellation_policy=self._cancellation,
         )
+        child_results, recovery = recover_child_failure(
+            ctx,
+            child_results=child_results,
+            subtasks=subtasks,
+            budgets=budgets,
+            parent_task_id=parent_task_id,
+            run_subtask=self._run_subtask,
+            emit_recovery=lambda detail: self._emit_status(
+                ctx,
+                mode_state="child_recovery",
+                label=f"{_ORCHESTRATE_PUBLIC_TAG} recovery: {detail}",
+            ),
+        )
         results = self._collector.collect(child_results)
         record_result_aggregation(
             ctx,
@@ -873,6 +885,7 @@ class OrchestrateMode:
             synthesized=synthesized,
             results=results,
             total=len(subtasks),
+            recovery=recovery,
         )
         completed = sum(1 for item in results if item.status == "completed")
         self._emit_status(

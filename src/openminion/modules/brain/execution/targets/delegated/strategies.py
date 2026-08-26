@@ -157,8 +157,6 @@ def _delegate_command(
     }
     if delegation_context.active_skill_id:
         params["active_skill_id"] = delegation_context.active_skill_id
-    if payload.target_capability:
-        params["target_capability"] = payload.target_capability
     parent_context = _delegation_context_payload(
         delegation_context,
         fallback=payload.delegation_context,
@@ -205,10 +203,8 @@ class AcceptOrFailResolver(AgentResolver):
         self,
         *,
         target_agent_id: str | None,
-        target_capability: str | None,
         registry: Any,
     ) -> str:
-        del target_capability
         normalized = _normalized_text(target_agent_id)
         if not normalized:
             raise ValueError("delegate requires target_agent_id in v1")

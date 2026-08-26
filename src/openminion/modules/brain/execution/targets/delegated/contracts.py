@@ -35,7 +35,6 @@ class DelegatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target_agent_id: str = Field(..., min_length=1)
-    target_capability: str | None = None
     goal: str = Field(..., min_length=1)
     constraints: str = ""
     synthesize_result: bool = False
@@ -59,7 +58,6 @@ class AgentResolver(Protocol):
         self,
         *,
         target_agent_id: str | None,
-        target_capability: str | None,
         registry: Any,
     ) -> str: ...
 

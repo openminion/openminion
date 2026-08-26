@@ -89,8 +89,13 @@ def _patch_orchestrate_child_invoke(monkeypatch, fake_invoke) -> None:
 
 
 class _FakeLLMAPI:
-    def __init__(self, answer: str = "synthesized summary") -> None:
+    def __init__(
+        self,
+        answer: str = "synthesized summary",
+        failure_decisions: list[dict[str, str]] | None = None,
+    ) -> None:
         self.answer = answer
+        self.failure_decisions = list(failure_decisions or [])
         self.calls: list[dict[str, Any]] = []
 
     def call_structured(
@@ -104,6 +109,10 @@ class _FakeLLMAPI:
                 "schema": getattr(schema, "__name__", str(schema)),
             }
         )
+        if getattr(schema, "__name__", "") == "ChildFailureDecision":
+            if self.failure_decisions:
+                return self.failure_decisions.pop(0)
+            return {"disposition": "stop"}
         return {"answer": self.answer}
 
 
@@ -380,7 +389,12 @@ def _state() -> WorkingState:
     )
 
 
-def _ctx(*, subtasks: list[dict[str, Any]], decisions: list[Any] | None = None):
+def _ctx(
+    *,
+    subtasks: list[dict[str, Any]],
+    decisions: list[Any] | None = None,
+    failure_decisions: list[dict[str, str]] | None = None,
+):
     runner = _FakeRunner(
         profile=_profile().model_copy(
             update={
@@ -391,7 +405,7 @@ def _ctx(*, subtasks: list[dict[str, Any]], decisions: list[Any] | None = None):
                 }
             }
         ),
-        llm_api=_FakeLLMAPI(),
+        llm_api=_FakeLLMAPI(failure_decisions=failure_decisions),
         decisions=list(decisions or []),
     )
     services = _FakeServices(runner=runner, statuses=[])
@@ -727,6 +741,116 @@ def test_decompose_handler_fails_fast_and_preserves_partial_results(
     assert aggregation["success_count"] == 1
     assert aggregation["failure_count"] == 1
     assert aggregation["completed_required"] is False
+
+
+@pytest.mark.parametrize(
+    ("disposition", "expected_invocations", "expected_statuses"),
+    [
+        ("continue", ["x", "y"], ["failed", "completed"]),
+        ("retry_once", ["x", "retry", "y"], ["completed", "completed"]),
+        ("stop", ["x"], ["failed"]),
+    ],
+)
+def test_orchestrate_child_failure_dispositions_are_bounded(
+    monkeypatch,
+    disposition: str,
+    expected_invocations: list[str],
+    expected_statuses: list[str],
+) -> None:
+    reasons = {
+        "continue": ["x", "y"],
+        "retry_once": ["x", "retry", "y"],
+        "stop": ["x"],
+    }[disposition]
+    decisions = [
+        ActDecision(
+            confidence=0.8,
+            reason_code=reason,
+            act_profile="general",
+            execution_target=ExecutionTargetPayload(kind="local"),
+            sub_intents=[reason],
+        )
+        for reason in reasons
+    ]
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "x", "goal": "Research X", "suggested_mode": "act"},
+            {"subtask_id": "y", "goal": "Research Y", "suggested_mode": "act"},
+        ],
+        decisions=decisions,
+        failure_decisions=[{"disposition": disposition}],
+    )
+    invoked: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        label = str(getattr(decision, "reason_code", "") or "child")
+        invoked.append(label)
+        return _mode_result(state, label, failed=label == "x")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert invoked == expected_invocations
+    assert [
+        item["status"] for item in result.action_result.outputs["subtask_results"]
+    ] == expected_statuses
+    recovery = result.action_result.outputs["child_recovery"]
+    assert recovery["disposition"] == disposition
+    assert (
+        sum(call["schema"] == "ChildFailureDecision" for call in runner.llm_api.calls)
+        == 1
+    )
+
+
+def test_orchestrate_reassigns_failed_child_to_one_exact_target(monkeypatch) -> None:
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "x", "goal": "Research X", "suggested_mode": "act"},
+            {"subtask_id": "y", "goal": "Research Y", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="x",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["x"],
+            ),
+            ActDecision(
+                confidence=0.8,
+                reason_code="y",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["y"],
+            ),
+        ],
+        failure_decisions=[
+            {"disposition": "reassign_exact", "target_agent_id": "agent.research"}
+        ],
+    )
+    runner.agent_registry = {"agent.research": {"state": "healthy"}}
+    invoked: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        target = str(getattr(decision, "target_agent_id", "") or "")
+        label = target or str(getattr(decision, "reason_code", "") or "child")
+        invoked.append(label)
+        return _mode_result(state, label, failed=label == "x")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert invoked == ["x", "agent.research", "y"]
+    assert result.action_result.outputs["child_recovery"] == {
+        "disposition": "reassign_exact",
+        "failed_subtask_id": "x",
+        "target_agent_id": "agent.research",
+        "outcome": "completed",
+    }
 
 
 def test_orchestrate_exact_delegate_assignment_runs_existing_delegate_path() -> None:

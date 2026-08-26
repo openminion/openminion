@@ -40,6 +40,8 @@ class AgentRunResult(Generic[OutputT]):
     output: OutputT
     text: str
     raw: dict[str, Any]
+    run_id: str | None = None
+    run_state: str | None = None
 
 
 class Agent(Generic[InputT, OutputT]):
@@ -110,6 +112,8 @@ class Agent(Generic[InputT, OutputT]):
         if self.subagent_context is not None:
             payload["subagent_context"] = self.subagent_context.as_payload()
             payload["inbound_metadata"] = self.subagent_context.as_inbound_metadata()
+            if self.subagent_context.timeout_seconds is not None:
+                payload["timeout_seconds"] = self.subagent_context.timeout_seconds
         return payload
 
     def _register_handoff_tools_for_run(self, runtime: APIRuntime) -> list[str]:
@@ -202,7 +206,14 @@ class Agent(Generic[InputT, OutputT]):
             self._unregister_handoff_tools(runtime, registered_handoffs)
         reply_text = self._reply_text(raw)
         output = self._coerce_output(reply_text)
-        return AgentRunResult(output=output, text=reply_text, raw=dict(raw or {}))
+        raw_payload = dict(raw or {})
+        return AgentRunResult(
+            output=output,
+            text=reply_text,
+            raw=raw_payload,
+            run_id=str(raw_payload.get("run_id") or "").strip() or None,
+            run_state=str(raw_payload.get("run_state") or "").strip() or None,
+        )
 
     def run(self, message: MessageInput) -> AgentRunResult[Any]:
         return self._run_once(message)

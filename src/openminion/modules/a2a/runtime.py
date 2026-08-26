@@ -207,6 +207,7 @@ class A2ARuntime:
             state=A2A_JOB_STATE_PENDING,
             current_step="queued",
             progress=0.0,
+            owner_agent_id=envelope.from_agent,
             created_at=now,
             updated_at=now,
             heartbeat_at=now,

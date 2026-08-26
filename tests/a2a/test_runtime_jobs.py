@@ -106,3 +106,42 @@ def test_startup_recovery_marks_stale_jobs_failed(root: Path) -> None:
         assert row.error.get("code") == "STALE_JOB"
     finally:
         recovered.close()
+
+
+def test_completed_job_result_survives_runtime_restart(root: Path) -> None:
+    state_path = root / "state-restart.db"
+    first = A2ARuntime(
+        state_store=SQLiteStateStore(state_path),
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=60,
+    )
+    first.register_agent("worker", ["job."], lambda envelope: {"value": 7})
+    request = Envelope.new(
+        from_agent="parent-agent",
+        to_agent="worker",
+        to_capability=None,
+        type="job.start",
+        method="job.run",
+        params={},
+        idempotency_key="job-restart-1",
+        timeout_ms=5000,
+    )
+    task_id = first.job_start(request)
+    deadline = time.time() + 5
+    while first.job_status(task_id).state not in {"SUCCESS", "FAILED", "CANCELED"}:
+        assert time.time() < deadline
+        time.sleep(0.01)
+    first.close(wait=True)
+
+    restarted = A2ARuntime(
+        state_store=SQLiteStateStore(state_path),
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=60,
+    )
+    try:
+        recovered = restarted.job_status(task_id)
+        assert recovered.state == "SUCCESS"
+        assert recovered.result_inline == {"value": 7}
+        assert recovered.owner_agent_id == "parent-agent"
+    finally:
+        restarted.close()

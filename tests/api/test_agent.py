@@ -15,8 +15,16 @@ from openminion.api.agent import (
 
 
 class _FakeRuntime:
-    def __init__(self, reply_body: str = "hello back") -> None:
+    def __init__(
+        self,
+        reply_body: str = "hello back",
+        *,
+        run_id: str | None = None,
+        run_state: str | None = None,
+    ) -> None:
         self.reply_body = reply_body
+        self.run_id = run_id
+        self.run_state = run_state
         self.last_payload: dict[str, Any] | None = None
         self.last_progress_callback: Any = None
         self.closed = False
@@ -24,7 +32,12 @@ class _FakeRuntime:
     def run_turn(self, *, payload, progress_callback=None, **kwargs):
         self.last_payload = payload
         self.last_progress_callback = progress_callback
-        return {"body": self.reply_body, "request_id": "fake-req-1"}
+        result = {"body": self.reply_body, "request_id": "fake-req-1"}
+        if self.run_id:
+            result["run_id"] = self.run_id
+        if self.run_state:
+            result["run_state"] = self.run_state
+        return result
 
     def close(self) -> None:
         self.closed = True
@@ -55,6 +68,15 @@ def test_agent_run_validates_pydantic_output_type() -> None:
     assert isinstance(result.output, _ReplyModel)
     assert result.output.sentiment == "positive"
     assert result.output.summary == "ok"
+
+
+def test_agent_run_preserves_available_run_identity() -> None:
+    runtime = _FakeRuntime("done", run_id="run-1", run_state="completed")
+
+    result = Agent(runtime=runtime).run("work")
+
+    assert result.run_id == "run-1"
+    assert result.run_state == "completed"
 
 
 def test_agent_extracts_json_when_reply_has_prose_wrapper() -> None:

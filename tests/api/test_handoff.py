@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from openminion.api.agent import Agent
 from openminion.api.handoff import (
     Handoff,
@@ -66,7 +68,11 @@ def test_build_delegate_tool_runs_target_agent() -> None:
     decl = build_delegate_tool(handoff)
     args = decl.args_model(message="please refund")
     result = decl.handler(args)
-    assert result == "delegated reply"
+    assert result == {
+        "ok": True,
+        "content": "delegated reply",
+        "data": {"output": "delegated reply"},
+    }
     assert runtime.last_payload["message"] == "please refund"
 
 
@@ -121,7 +127,11 @@ def test_agent_handoff_tool_is_registered_only_during_run() -> None:
     parent.run("please transfer")
 
     assert "transfer_to_child" in parent_runtime.seen_tool_names_during_run
-    assert parent_runtime.tool_result_during_run == "target-produced marker"
+    assert parent_runtime.tool_result_during_run == {
+        "ok": True,
+        "content": "target-produced marker",
+        "data": {"output": "target-produced marker"},
+    }
     assert child_runtime.last_payload["message"] == "child marker"
     assert "transfer_to_child" not in parent_runtime.tools.list()
 
@@ -202,9 +212,7 @@ def test_subagent_has_explicit_bounded_run_context() -> None:
         name="child",
         tools=["safe.read"],
         timeout_seconds=30,
-        deadline_iso="2026-07-24T12:00:00Z",
-        memory_posture="read_only_bounded",
-        cancel_policy="cascade_from_parent",
+        deadline_iso="2099-07-24T12:00:00Z",
     )
 
     context = child.subagent_context
@@ -213,9 +221,7 @@ def test_subagent_has_explicit_bounded_run_context() -> None:
     assert context.child_agent_id == "child"
     assert context.tool_allowlist == ("safe.read",)
     assert context.timeout_seconds == 30
-    assert context.deadline_iso == "2026-07-24T12:00:00Z"
-    assert context.memory_posture == "read_only_bounded"
-    assert context.cancel_policy == "cascade_from_parent"
+    assert context.memory_posture == "none"
     assert context.typed_result_handback is True
     assert context.parent_transcript_inherited is False
     assert context.hidden_reasoning_inherited is False
@@ -226,7 +232,11 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
     runtime = _FakeRuntime()
     parent = Agent(runtime=runtime, name="parent", instructions="parent secret")
     child = subagent(
-        parent, name="child", instructions="child only", tools=["safe.read"]
+        parent,
+        name="child",
+        instructions="child only",
+        tools=["safe.read"],
+        timeout_seconds=30,
     )
 
     child.run("bounded work")
@@ -236,12 +246,42 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
     assert payload["system_prompt"] == "child only"
     assert "parent secret" not in str(payload)
     assert payload["allowed_tools"] == ["safe.read"]
+    assert payload["timeout_seconds"] == 30
     assert payload["subagent_context"]["parent_agent_id"] == "parent"
     assert payload["subagent_context"]["child_agent_id"] == "child"
     assert payload["subagent_context"]["tool_allowlist"] == ["safe.read"]
     assert payload["subagent_context"]["implicit_memory_write"] is False
     assert payload["inbound_metadata"]["subagent_memory_posture"] == "none"
     assert payload["inbound_metadata"]["subagent_tool_allowlist"] == "safe.read"
+
+
+def test_subagent_rejects_unbound_memory_posture_before_run() -> None:
+    parent = Agent(runtime=_FakeRuntime(), name="parent")
+
+    with pytest.raises(ValueError, match="requires memory_grant_id"):
+        subagent(parent, memory_posture="read_only_bounded")
+
+
+def test_subagent_binds_existing_read_only_memory_grant() -> None:
+    parent = Agent(runtime=_FakeRuntime(), name="parent")
+
+    child = subagent(
+        parent,
+        memory_posture="read_only_bounded",
+        memory_grant_id="grant-1",
+    )
+
+    assert child.subagent_context is not None
+    assert child.subagent_context.memory_grant_id == "grant-1"
+
+
+def test_subagent_rejects_elapsed_or_unzoned_deadline() -> None:
+    parent = Agent(runtime=_FakeRuntime(), name="parent")
+
+    with pytest.raises(ValueError, match="has elapsed"):
+        subagent(parent, deadline_iso="2020-01-01T00:00:00Z")
+    with pytest.raises(ValueError, match="include a timezone"):
+        subagent(parent, deadline_iso="2099-01-01T00:00:00")
 
 
 def test_subagent_disallowed_parent_tools_are_absent_by_default() -> None:

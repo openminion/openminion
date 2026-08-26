@@ -62,7 +62,7 @@ def test_delegate_message_from_payload_includes_typed_parent_context_block() -> 
     assert "intent_id: intent-retry" in message
 
 
-def test_configured_agent_handler_forwards_approval_callback_to_child_turn() -> None:
+def test_configured_agent_handler_forwards_child_turn_controls() -> None:
     approval_callback = object()
     calls: list[dict[str, object]] = []
 
@@ -89,9 +89,11 @@ def test_configured_agent_handler_forwards_approval_callback_to_child_turn() -> 
             msg_id="msg-1",
             trace_id="trace-1",
             from_agent="parent",
+            timeout_ms=137_000,
         )
     )
 
     assert payload["body"] == "child completed"
     assert len(calls) == 1
     assert calls[0]["approval_callback"] is approval_callback
+    assert calls[0]["payload"]["timeout_seconds"] == 137

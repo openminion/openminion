@@ -137,6 +137,8 @@ def _build_tool_specs(
         "exec.poll": "Poll the status or output of a running process.",
         "exec.list": "List currently running processes.",
         "exec.kill": "Kill a running process by ID.",
+        "agent.list": "List visible agents before choosing an exact delegation target.",
+        "agent.get": "Inspect one exact visible agent before delegation.",
         "task.delegate": (
             "Delegate coding work to an exact named agent. For code-bearing "
             "child work, inspect the returned outputs for a child artifact "

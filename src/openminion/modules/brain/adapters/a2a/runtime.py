@@ -236,6 +236,7 @@ class A2actlAdapter:
         start = time.monotonic()
         try:
             job = runtime.job_status(str(task_id or "").strip())
+            self._require_job_owner(job)
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
             return response
@@ -254,7 +255,9 @@ class A2actlAdapter:
         runtime = self._ensure_runtime()
         start = time.monotonic()
         try:
-            job = runtime.job_cancel(str(task_id or "").strip())
+            task_id = str(task_id or "").strip()
+            self._require_job_owner(runtime.job_status(task_id))
+            job = runtime.job_cancel(task_id)
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
             return response
@@ -265,6 +268,11 @@ class A2actlAdapter:
                 "error": {"code": "A2A_JOB_CANCEL_FAILED", "message": str(exc)},
                 "metrics": _metrics(start),
             }
+
+    def _require_job_owner(self, job: Any) -> None:
+        owner = str(getattr(job, "owner_agent_id", "") or "").strip()
+        if not owner or owner != self._agent_id:
+            raise PermissionError("A2A job handle does not belong to this agent")
 
     def _ensure_runtime(self):
         if self._runtime is not None:
@@ -453,6 +461,7 @@ class A2actlAdapter:
                 "target": str(getattr(envelope, "from_agent", "") or "a2a").strip()
                 or "a2a",
                 "deliver": False,
+                "timeout_seconds": envelope.timeout_ms / 1000,
                 "inbound_metadata": _delegated_inbound_metadata(
                     envelope=envelope,
                     target_agent_id=agent_id,

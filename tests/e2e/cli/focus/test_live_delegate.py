@@ -7,7 +7,6 @@ import re
 import sqlite3
 import subprocess
 import time
-from types import SimpleNamespace
 
 import pytest
 
@@ -19,11 +18,11 @@ from openminion.modules.artifact.config import (
     IndexConfig,
 )
 from openminion.modules.brain.schemas import WorkingState
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.memory.adapters import OpenMinionDelegationMemoryGrantResolver
 from openminion.modules.policy.models import PolicyConfig, PolicyGrantInput
 from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.session.storage import SQLiteSessionStore
-from openminion.tools.agent.plugin import _h_task_delegate
 from sophiagraph import MemoryRecord
 from sophiagraph.access import (
     AccessConstraint,
@@ -461,24 +460,33 @@ def test_live_focus_code_children_store_and_disposition_artifacts(
     assert {"accept-child", "reject-child"}.issubset(by_id)
 
     with _artifactctl_for_probe(active_probe) as artifactctl:
-        accepted = _h_task_delegate(
-            {
-                "mode": "accept",
-                "workspace_root": str(repo),
-                "child_artifact": by_id["accept-child"],
+        tool_api = ToolAdapter(workspace_root=repo, artifactctl=artifactctl)
+        accepted = tool_api.execute(
+            command={
+                "tool_name": "task.delegate",
+                "args": {
+                    "mode": "accept",
+                    "workspace_root": str(repo),
+                    "child_artifact": by_id["accept-child"],
+                },
             },
-            SimpleNamespace(artifactctl=artifactctl),
+            session_id="oapr-artifact-disposition",
+            trace_id="oapr-accept-child",
         )
-        rejected = _h_task_delegate(
-            {
-                "mode": "reject",
-                "child_artifact": by_id["reject-child"],
+        rejected = tool_api.execute(
+            command={
+                "tool_name": "task.delegate",
+                "args": {
+                    "mode": "reject",
+                    "child_artifact": by_id["reject-child"],
+                },
             },
-            SimpleNamespace(artifactctl=artifactctl),
+            session_id="oapr-artifact-disposition",
+            trace_id="oapr-reject-child",
         )
 
-    assert accepted["status"] == "accepted"
-    assert rejected["status"] == "rejected"
+    assert accepted["outputs"]["status"] == "accepted"
+    assert rejected["outputs"]["status"] == "rejected"
     assert (repo / "accepted.txt").read_text(encoding="utf-8").strip() == (
         "ACCEPTED_CHILD"
     )

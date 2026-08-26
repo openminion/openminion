@@ -220,29 +220,42 @@ def test_plan_only_allows_session_plan_control_exception() -> None:
         )
 
 
-def test_task_delegate_tool_dispatches_through_a2a_path() -> None:
-
+@pytest.mark.parametrize(
+    ("mode", "args"),
+    [
+        ("sync", {"agent_id": "researcher", "instruction": "map the codebase"}),
+        ("async", {"agent_id": "researcher", "instruction": "map the codebase"}),
+        ("status", {"task_id": "task-1"}),
+        ("resume", {"task_id": "task-1"}),
+        ("cancel", {"task_id": "task-1"}),
+        (
+            "accept",
+            {"child_artifact": {"artifact_id": "a1"}, "workspace_root": "/repo"},
+        ),
+        ("reject", {"child_artifact": {"artifact_id": "a1"}}),
+    ],
+)
+def test_task_delegate_tool_dispatches_through_canonical_tool_path(
+    mode: str, args: dict[str, object]
+) -> None:
     state = _make_state(permission_mode="default")
+    delegate_args = {"mode": mode, **args}
     command = ToolCommand(
         kind=BRAIN_COMMAND_KIND_TOOL,
         command_id="delegate-1",
         title="Tool call: task.delegate",
         tool_name="task.delegate",
-        args={
-            "agent_id": "researcher",
-            "instruction": "map the codebase",
-            "timeout_seconds": 60,
-        },
+        args=delegate_args,
         idempotency_key="idem-delegate-1",
     )
     calls: dict[str, object] = {}
 
-    def _call(**kwargs):
+    def _execute(**kwargs):
         calls.update(kwargs)
         return {"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "delegated ok"}
 
     runner = _make_runner()
-    runner.a2a_api = SimpleNamespace(call=_call)
+    runner.tool_api = SimpleNamespace(execute=_execute)
     runner._normalize_execution_result = lambda **kwargs: (
         ActionResult(
             command_id=kwargs["command_id"],
@@ -266,11 +279,9 @@ def test_task_delegate_tool_dispatches_through_a2a_path() -> None:
     assert result.status == BRAIN_ACTION_STATUS_SUCCESS
     assert calls["session_id"] == state.session_id
     payload = calls["command"]
-    assert payload["kind"] == "agent"
-    assert payload["target_agent_id"] == "researcher"
-    assert payload["method"] == "delegate"
-    assert payload["params"]["instruction"] == "map the codebase"
-    assert payload["params"]["timeout_seconds"] == 60
+    assert payload["kind"] == "tool"
+    assert payload["tool_name"] == "task.delegate"
+    assert payload["args"] == delegate_args
 
 
 def test_per_tool_readonly_override_blocks_write_when_global_default() -> None:
