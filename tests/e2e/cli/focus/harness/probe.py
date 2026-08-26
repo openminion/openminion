@@ -589,9 +589,7 @@ class FocusProbe:
             menu = inline_approval_menu(approval_screen)
         key = inline_approval_key(approval_screen, reply)
         if menu == "compact":
-            session.send(key)
-            time.sleep(0.05)
-            session.send("\n")
+            session.send(f"{key}\r")
         else:
             session.send(key)
         deadline = time.monotonic() + 5.0
@@ -600,6 +598,12 @@ class FocusProbe:
             screen_text = session.screen_text
             visible_transcript = session.visible_transcript
             if menu == "compact":
+                screen_matches = list(_COMPACT_INLINE_APPROVAL_RE.finditer(screen_text))
+                if screen_matches and _compact_approval_answered(
+                    screen_text,
+                    match=screen_matches[-1],
+                ):
+                    return
                 compact_matches = list(
                     _COMPACT_INLINE_APPROVAL_RE.finditer(visible_transcript)
                 )
