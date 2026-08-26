@@ -265,13 +265,41 @@ class GapDPrepareTurnProgressCallbackTests(unittest.TestCase):
                 )
                 self.assertEqual(captured[0].detail_code, detail_code)
 
-    def test_adaptive_scratchpad_preserves_thinking_and_composition_codes(self) -> None:
+    def test_adaptive_progress_emits_thinking_and_composition_codes(self) -> None:
+        from openminion.modules.brain.loop.tools.contracts import (
+            AdaptiveToolLoopState,
+        )
+        from openminion.modules.brain.loop.tools.iteration.helpers import (
+            _set_turn_progress,
+        )
+
+        state = AdaptiveToolLoopState()
         for detail_code in ("thinking", "composing_answer"):
             with self.subTest(detail_code=detail_code):
-                payload = loop_turn_progress_payload(
-                    {"turn_progress_detail_code": detail_code}
+                _set_turn_progress(
+                    state,
+                    progress_phase=detail_code,
+                    detail_code=detail_code,
                 )
-                self.assertEqual(payload["detail_code"], detail_code)
+                status = normalize_phase_status(
+                    trace_id=detail_code,
+                    source_phase="ACT",
+                    payload=loop_turn_progress_payload(state.scratchpad),
+                )
+                self.assertEqual(status.detail_code, detail_code)
+
+        _set_turn_progress(
+            state,
+            progress_phase="tool",
+            tool_name="web.search",
+            detail_code="",
+        )
+        tool_status = normalize_phase_status(
+            trace_id="tool",
+            source_phase="ACT",
+            payload=loop_turn_progress_payload(state.scratchpad),
+        )
+        self.assertIsNone(tool_status.detail_code)
 
     def test_event_owned_detail_codes_take_precedence(self) -> None:
         plan = normalize_phase_status(

@@ -352,12 +352,13 @@ class TerminalTranscript:
             if self._verbosity == "verbose"
             else self._remember_tool_start(tool_name, args)
         )
+        rendered_tool_name = (
+            tool_name
+            if self._verbosity == "verbose"
+            else event.model_tool_name or tool_name
+        )
         renderable = _render_in_progress_tool_block(
-            (
-                tool_name
-                if self._verbosity == "verbose"
-                else event.model_tool_name or tool_name
-            ),
+            rendered_tool_name,
             args,
             public_title=self._verbosity != "verbose",
         )
@@ -366,7 +367,7 @@ class TerminalTranscript:
             try:
                 handle.set_active_tool(
                     call_id=call_id or tool_name or "tool",
-                    tool_name=tool_name,
+                    tool_name=rendered_tool_name,
                     args=args,
                     started_at=_time.monotonic(),
                 )

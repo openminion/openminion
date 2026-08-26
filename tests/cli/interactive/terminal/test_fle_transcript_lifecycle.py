@@ -16,6 +16,7 @@ from openminion.cli.interactive.terminal.prompt_output import (
     write_terminal_control_via_prompt_output,
 )
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
 from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -60,6 +61,30 @@ def test_started_idempotent_on_duplicate_call_id() -> None:
     pre_len = len(buf.getvalue())
     t.handle_tool_started({"call_id": "c1", "tool_name": "Bash", "args": {"cmd": "ls"}})
     assert len(buf.getvalue()) == pre_len
+
+
+def test_started_tool_live_state_preserves_public_model_name() -> None:
+    t, buf = _make("normal")
+    handle = TerminalTurnHandle(t._console)
+    t._active_handle = handle
+
+    t.handle_tool_started(
+        {
+            "call_id": "search-1",
+            "tool_name": "search.serper.search",
+            "model_tool_name": "web.search",
+            "args": {"query": "private query"},
+        }
+    )
+
+    assert handle._active_tool is not None
+    assert handle._active_tool["tool_name"] == "web.search"
+    t._console.print(handle._render())
+    rendered = buf.getvalue()
+    assert "Searching the web..." in rendered
+    assert "Using a tool..." not in rendered
+    assert "search.serper.search" not in rendered
+    assert "private query" not in rendered
 
 
 def test_started_handles_empty_call_id() -> None:
