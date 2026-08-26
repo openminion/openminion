@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from threading import Lock
 from typing import Any
 
 from pydantic import Field
@@ -47,6 +48,7 @@ from openminion.modules.brain.runtime.budget.strategy import (
 from openminion.modules.brain.execution.child_tasks import (
     BudgetAllocator,
     CancellationPolicy,
+    ChildContext,
     ChildResultCollector,
     ChildTaskPromoter,
     ChildTaskResult,
@@ -66,13 +68,18 @@ from .strategies import (
     AcceptOrPlanResolver,
     AllInlinePromoter,
     BlockingWait,
+    bounded_child_budget,
     CompletionRatioMonitor,
+    decision_mode_name,
+    debit_parent_budget,
     EqualSplitAllocator,
     FailFastPolicy,
     InlineAndPromotedCollector,
     LLMSynthesizer,
+    merge_delegation_context,
     SequentialStrategy,
     SummaryInheritancePolicy,
+    validate_dependency_context_capacity,
 )
 from .parallel import (
     ConservativeSideEffectPolicy,
@@ -153,7 +160,11 @@ def _parent_task_id_from_context(ctx: ExecutionContext) -> str:
     return "orchestrate-parent"
 
 
-def _delegate_assignment_from_subtask(subtask: SubtaskSpec):
+def _delegate_assignment_from_subtask(
+    subtask: SubtaskSpec,
+    *,
+    inherited_context: Any | None = None,
+):
     inputs = subtask.inputs if isinstance(subtask.inputs, dict) else {}
     suggested = str(subtask.suggested_mode or "").strip().lower()
     target_agent_id = str(inputs.get("target_agent_id") or "").strip()
@@ -168,7 +179,9 @@ def _delegate_assignment_from_subtask(subtask: SubtaskSpec):
         constraints=str(inputs.get("constraints") or subtask.constraints or ""),
         synthesize_result=bool(inputs.get("synthesize_result", False)),
         timeout_ms=inputs.get("timeout_ms"),
-        delegation_context=inputs.get("delegation_context"),
+        delegation_context=merge_delegation_context(
+            inherited_context, inputs.get("delegation_context")
+        ),
         sub_intents=[subtask.goal],
         rationale=str(inputs.get("rationale") or ""),
         question=None,
@@ -254,6 +267,7 @@ class OrchestrateMode:
         self._max_parallel_workers = int(self.default_config["max_parallel_workers"])
         self._max_subtasks = int(self.default_config["max_subtasks"])
         self._max_decompose_depth = int(self.default_config["max_decompose_depth"])
+        self._budget_lock = Lock()
 
     def apply_mode_config(self, *, config, runner, profile) -> None:
         del runner, profile
@@ -354,6 +368,7 @@ class OrchestrateMode:
             normalized.append(updated)
         try:
             normalized = _topologically_sort_subtasks(normalized)
+            validate_dependency_context_capacity(normalized)
         except ValueError as exc:
             return self._reject_prepare(ctx, message=str(exc))
         if emit_status_updates:
@@ -373,12 +388,8 @@ class OrchestrateMode:
         *,
         parent_state: WorkingState,
         child_budget: BudgetCounters,
-        subtask: SubtaskSpec,
+        child_context: ChildContext,
     ) -> WorkingState:
-        child_context = self._inheritance.build_child_context(
-            parent_state=parent_state,
-            subtask=subtask,
-        )
         child_state = parent_state.model_copy(deep=True)
         child_state.goal = child_context.goal
         child_state.last_user_input = child_context.prompt
@@ -422,8 +433,12 @@ class OrchestrateMode:
         child_state: WorkingState,
         subtask: SubtaskSpec,
         prompt: str,
+        inherited_context: Any | None = None,
     ):
-        delegate_assignment = _delegate_assignment_from_subtask(subtask)
+        delegate_assignment = _delegate_assignment_from_subtask(
+            subtask,
+            inherited_context=inherited_context,
+        )
         if delegate_assignment is not None:
             return delegate_assignment
         runner = runner_from_context(ctx)
@@ -480,6 +495,9 @@ class OrchestrateMode:
         output = str(getattr(result, "message", "") or "").strip()
         if not output and action_result is not None:
             output = str(getattr(action_result, "summary", "") or "").strip()
+        action_tokens = int(
+            getattr(getattr(action_result, "metrics", None), "tokens_used", 0) or 0
+        )
         return SubtaskResult(
             subtask_id=subtask.subtask_id,
             goal=subtask.goal,
@@ -487,7 +505,10 @@ class OrchestrateMode:
             mode_used=mode_name,
             output=output,
             error=_subtask_failure_error(result) if status == "failed" else None,
-            tokens_used=max(0, int(budget.tokens) - tokens_remaining),
+            tokens_used=max(
+                action_tokens,
+                max(0, int(budget.tokens) - tokens_remaining),
+            ),
             child_artifact=child_artifact,
         )
 
@@ -528,15 +549,17 @@ class OrchestrateMode:
         budget: BudgetCounters,
         index: int,
         total: int,
+        dependency_results: list[SubtaskResult],
     ) -> ChildTaskResult:
         child_context = self._inheritance.build_child_context(
             parent_state=ctx.state,
             subtask=subtask,
+            dependency_results=dependency_results,
         )
         child_state = self._build_child_state(
             parent_state=ctx.state,
             child_budget=budget,
-            subtask=subtask,
+            child_context=child_context,
         )
         prompt = child_context.prompt or subtask.goal
         decision = self._decide_subtask(
@@ -544,13 +567,9 @@ class OrchestrateMode:
             child_state=child_state,
             subtask=subtask,
             prompt=prompt,
+            inherited_context=child_context.delegation_context,
         )
-        mode_name = (
-            str(
-                getattr(decision, "route", getattr(decision, "mode", "")) or "act"
-            ).strip()
-            or "act"
-        )
+        mode_name = decision_mode_name(decision)
         self._emit_status(
             ctx,
             mode_state="execute_subtask",
@@ -580,6 +599,13 @@ class OrchestrateMode:
             child_state=child_state,
             result=result,
             child_artifact=child_artifact,
+        )
+        debit_parent_budget(
+            ctx,
+            allocated=budget,
+            child_state=child_state,
+            tokens_used=subtask_result.tokens_used,
+            lock=self._budget_lock,
         )
         self._emit_status(
             ctx,
@@ -639,30 +665,28 @@ class OrchestrateMode:
         total: int,
         task_id: str,
         parent_task_id: str,
+        dependency_results: list[SubtaskResult],
     ) -> ChildTaskResult:
-        child_state = self._build_child_state(
-            parent_state=ctx.state,
-            child_budget=budget,
-            subtask=subtask,
-        )
-        child_state.task_backed_task_id = task_id
         child_context = self._inheritance.build_child_context(
             parent_state=ctx.state,
             subtask=subtask,
+            dependency_results=dependency_results,
         )
+        child_state = self._build_child_state(
+            parent_state=ctx.state,
+            child_budget=budget,
+            child_context=child_context,
+        )
+        child_state.task_backed_task_id = task_id
         prompt = child_context.prompt or subtask.goal
         decision = self._decide_subtask(
             ctx,
             child_state=child_state,
             subtask=subtask,
             prompt=prompt,
+            inherited_context=child_context.delegation_context,
         )
-        mode_name = (
-            str(
-                getattr(decision, "route", getattr(decision, "mode", "")) or "act"
-            ).strip()
-            or "act"
-        )
+        mode_name = decision_mode_name(decision)
         self._emit_status(
             ctx,
             mode_state="execute_subtask",
@@ -692,6 +716,13 @@ class OrchestrateMode:
             child_state=child_state,
             result=result,
             child_artifact=child_artifact,
+        )
+        debit_parent_budget(
+            ctx,
+            allocated=budget,
+            child_state=child_state,
+            tokens_used=subtask_result.tokens_used,
+            lock=self._budget_lock,
         )
         child_result = ChildTaskResult(
             subtask_id=subtask.subtask_id,
@@ -779,7 +810,17 @@ class OrchestrateMode:
         index: int,
         total: int,
         parent_task_id: str,
+        completed_results: list[ChildTaskResult] | None = None,
     ) -> ChildTaskResult:
+        budget = bounded_child_budget(budget, ctx.state.budgets_remaining)
+        completed_by_id = {
+            item.subtask_id: item.result for item in completed_results or []
+        }
+        dependency_results = [
+            completed_by_id[subtask_id]
+            for subtask_id in subtask.depends_on
+            if subtask_id in completed_by_id
+        ]
         should_promote = self._promoter.should_promote(subtask)
         record_child_policy_projection(
             ctx,
@@ -805,6 +846,7 @@ class OrchestrateMode:
                 total=total,
                 task_id=task_id,
                 parent_task_id=parent_task_id,
+                dependency_results=dependency_results,
             )
         ctx.state.child_tasks[subtask.subtask_id] = "inline"
         return self._execute_one_subtask(
@@ -813,6 +855,7 @@ class OrchestrateMode:
             budget=budget,
             index=index,
             total=total,
+            dependency_results=dependency_results,
         )
 
     def execute(self, ctx: ExecutionContext) -> ExecutionResult:
@@ -840,13 +883,16 @@ class OrchestrateMode:
             ctx=ctx,
             subtasks=subtasks,
             budgets=budgets,
-            run_subtask=lambda subtask, budget, index, total: self._run_subtask(
-                ctx=ctx,
-                subtask=subtask,
-                budget=budget,
-                index=index,
-                total=total,
-                parent_task_id=parent_task_id,
+            run_subtask=lambda subtask, budget, index, total, completed: (
+                self._run_subtask(
+                    ctx=ctx,
+                    subtask=subtask,
+                    budget=budget,
+                    index=index,
+                    total=total,
+                    parent_task_id=parent_task_id,
+                    completed_results=completed,
+                )
             ),
             failure_policy=self._failure_policy,
             progress_monitor=self._monitor,

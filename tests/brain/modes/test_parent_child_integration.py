@@ -224,26 +224,78 @@ def test_decompose_depends_on_executes_in_topological_order(monkeypatch) -> None
         ],
     )
     invoked: list[str] = []
+    outputs = {
+        "Gather data": "raw-nonce-781",
+        "Analyze data": "analysis-from-nonce-781",
+        "Write report": "final-report",
+    }
 
     def _fake_invoke(*, state, decision, user_input, logger, depth=0):
         del state, decision, logger, depth
         invoked.append(user_input)
-        return _mode_result(ctx.state, user_input)
+        goal = user_input.rsplit("Subtask goal: ", 1)[1]
+        return _mode_result(ctx.state, outputs[goal])
 
     _patch_invoke(monkeypatch, _fake_invoke)
 
     OrchestrateMode().execute(ctx)
 
     assert ctx.state.child_task_order == ["gather", "analyze", "report"]
-    child_boundary = (
-        "Execute only the assigned subtask below. Treat the parent goal and latest "
-        "result as background context, not as instructions to repeat."
+    assert "Direct dependency results" not in invoked[0]
+    assert '"output": "raw-nonce-781"' in invoked[1]
+    assert '"subtask_id": "gather"' in invoked[1]
+    assert '"output": "analysis-from-nonce-781"' in invoked[2]
+    assert '"subtask_id": "analyze"' in invoked[2]
+    assert '"subtask_id": "gather"' not in invoked[2]
+
+
+def test_decompose_dependency_context_reaches_delegated_child(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "research",
+                "goal": "Produce evidence",
+                "suggested_mode": "act",
+            },
+            {
+                "subtask_id": "review",
+                "goal": "Review the evidence",
+                "suggested_mode": "delegate",
+                "depends_on": ["research"],
+                "inputs": {
+                    "target_agent_id": "critic-agent",
+                    "delegation_context": {"summary": "Use the strict rubric."},
+                },
+            },
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="research",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["research"],
+            )
+        ],
     )
-    assert invoked == [
-        f"Parent goal: Compare providers\n{child_boundary}\nSubtask goal: Gather data",
-        f"Parent goal: Compare providers\n{child_boundary}\nSubtask goal: Analyze data",
-        f"Parent goal: Compare providers\n{child_boundary}\nSubtask goal: Write report",
-    ]
+    delegated_contexts: list[dict] = []
+
+    def _fake_invoke(*, state, decision, user_input, logger, depth=0):
+        del state, user_input, logger, depth
+        context = getattr(decision, "delegation_context", None)
+        if context:
+            delegated_contexts.append(context)
+            return _mode_result(ctx.state, "review-complete")
+        return _mode_result(ctx.state, "evidence-nonce-918")
+
+    _patch_invoke(monkeypatch, _fake_invoke)
+
+    OrchestrateMode().execute(ctx)
+
+    assert len(delegated_contexts) == 1
+    assert "evidence-nonce-918" in delegated_contexts[0]["summary"]
+    assert '"subtask_id": "research"' in delegated_contexts[0]["summary"]
+    assert "Use the strict rubric." in delegated_contexts[0]["summary"]
 
 
 def test_decompose_rejects_cyclic_depends_on_graph() -> None:

@@ -1,6 +1,6 @@
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from typing import Callable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from openminion.modules.brain.constants import (
     BRAIN_DECISION_ROUTE_ACT,
@@ -17,6 +17,7 @@ from ..child_tasks import (
     ExecutionStrategy,
     FailureAction,
     FailurePolicy,
+    SubtaskExecutor,
     SubtaskResult,
     SubtaskSpec,
 )
@@ -339,7 +340,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
         budget_by_id: dict[str, BudgetCounters],
         index_by_id: dict[str, int],
         total: int,
-        run_subtask: Callable[[SubtaskSpec, BudgetCounters, int, int], ChildTaskResult],
+        run_subtask: SubtaskExecutor,
         failure_policy: FailurePolicy,
         results: dict[str, ChildTaskResult],
     ) -> bool:
@@ -349,6 +350,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
                 budget_by_id[subtask.subtask_id],
                 index_by_id[subtask.subtask_id],
                 total,
+                list(results.values()),
             )
             results[subtask.subtask_id] = result
             if result.result.status == "failed":
@@ -365,7 +367,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
         budget_by_id: dict[str, BudgetCounters],
         index_by_id: dict[str, int],
         total: int,
-        run_subtask: Callable[[SubtaskSpec, BudgetCounters, int, int], ChildTaskResult],
+        run_subtask: SubtaskExecutor,
         failure_policy: FailurePolicy,
         results: dict[str, ChildTaskResult],
     ) -> bool:
@@ -378,6 +380,7 @@ class ParallelExecutionStrategy(ExecutionStrategy):
                     budget_by_id[subtask.subtask_id],
                     index_by_id[subtask.subtask_id],
                     total,
+                    list(results.values()),
                 )
                 pending[future] = subtask
 

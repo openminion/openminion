@@ -283,7 +283,10 @@ class _ConfiguredRuntimeHandle:
             "body": "delegate ok",
             "session_id": str(payload.get("session_id", "") or ""),
             "run_id": "run-delegate-1",
-            "metadata": {"session_id": str(payload.get("session_id", "") or "")},
+            "metadata": {
+                "session_id": str(payload.get("session_id", "") or ""),
+                "total_tokens_used": "781",
+            },
             "agent_id": str(payload.get("agent_id", "") or ""),
         }
 
@@ -320,6 +323,7 @@ def test_runtime_backed_registration_serves_configured_delegate_target(
     assert result["status"] == BRAIN_ACTION_STATUS_SUCCESS
     assert result["summary"] == "delegate ok"
     assert result["outputs"]["summary"] == "delegate ok"
+    assert result["metrics"]["tokens_used"] == 781
     assert runtime_handle.calls
     payload = runtime_handle.calls[0]["payload"]
     assert payload["agent_id"] == "planner-safe"

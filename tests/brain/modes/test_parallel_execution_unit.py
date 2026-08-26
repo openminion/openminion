@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -34,6 +36,7 @@ from openminion.modules.brain.execution.orchestrate.parallel import (
 )
 from openminion.modules.brain.execution.orchestrate.strategies import (
     FailFastPolicy,
+    debit_parent_budget,
 )
 from openminion.modules.brain.schemas import (
     BudgetCounters,
@@ -167,6 +170,51 @@ def test_even_split_budget_allocator_splits_and_returns_budget() -> None:
     assert unused.a2a_calls == 2
 
 
+def test_parallel_parent_budget_debits_are_atomic() -> None:
+    worker_count = 32
+    barrier = Barrier(worker_count)
+    lock = Lock()
+    ctx = SimpleNamespace(
+        state=WorkingState(
+            session_id="s-budget-debit",
+            agent_id="agent",
+            budgets_remaining=BudgetCounters(
+                ticks=worker_count,
+                tool_calls=worker_count,
+                a2a_calls=worker_count,
+                tokens=worker_count,
+                time_ms=worker_count,
+            ),
+            llm_calls_max=worker_count,
+        )
+    )
+    child_state = SimpleNamespace(
+        budgets_remaining=BudgetCounters(
+            ticks=0, tool_calls=0, a2a_calls=0, tokens=0, time_ms=0
+        ),
+        llm_calls_used=1,
+    )
+    allocated = BudgetCounters(ticks=1, tool_calls=1, a2a_calls=1, tokens=0, time_ms=1)
+
+    def debit() -> None:
+        barrier.wait()
+        debit_parent_budget(
+            ctx,
+            allocated=allocated,
+            child_state=child_state,
+            tokens_used=1,
+            lock=lock,
+        )
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        list(executor.map(lambda _: debit(), range(worker_count)))
+
+    assert ctx.state.budgets_remaining == BudgetCounters(
+        ticks=0, tool_calls=0, a2a_calls=0, tokens=0, time_ms=0
+    )
+    assert ctx.state.llm_calls_used == worker_count
+
+
 def test_order_preserving_result_merger_reorders_out_of_order_results() -> None:
     merger = OrderPreservingResultMerger()
     merged = merger.merge(
@@ -241,7 +289,7 @@ def test_parallel_execution_strategy_is_drop_in_execution_strategy() -> None:
         ctx=ctx,
         subtasks=subtasks,
         budgets=budgets,
-        run_subtask=lambda subtask, budget, index, total: _child_result(
+        run_subtask=lambda subtask, budget, index, total, completed: _child_result(
             subtask.subtask_id,
             output=f"{subtask.goal}:{budget.tokens}:{index}:{total}",
         ),

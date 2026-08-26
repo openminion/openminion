@@ -59,7 +59,7 @@ def _call_response_payload(
             "outputs": normalized_data,
             "artifact_refs": [],
             "memory_refs": [],
-            "metrics": _metrics(started_at),
+            "metrics": _metrics(started_at, normalized_data.get("metadata")),
         }
 
     status_code = str(payload.get("status") or "A2A_FAILED")
@@ -531,10 +531,11 @@ class A2actlAdapter:
                 closer()
 
 
-def _metrics(start_time: float) -> dict[str, Any]:
+def _metrics(start_time: float, usage: Any = None) -> dict[str, Any]:
+    usage_payload = usage if isinstance(usage, Mapping) else {}
     return {
         "latency_ms": int((time.monotonic() - start_time) * 1000),
-        "tokens_used": 0,
+        "tokens_used": int(usage_payload.get("total_tokens_used", 0) or 0),
         "cost_estimate": 0.0,
     }
 
