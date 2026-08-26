@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 import datetime
 import json
@@ -114,11 +116,15 @@ class SQLiteMemoryStore(MemoryStore):
                 migrations=list_migrations(),
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = connect_database(self.db_path)
-        conn.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout))}")
-        conn.isolation_level = None
-        return conn
+        try:
+            conn.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout))}")
+            conn.isolation_level = None
+            yield conn
+        finally:
+            conn.close()
 
     def backup_to(self, path: str | Path) -> Path:
         """Write a consistent SQLite backup for reviewed import rollback."""
