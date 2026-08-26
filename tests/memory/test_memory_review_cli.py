@@ -235,6 +235,7 @@ def test_review_cli_reject_and_markdown_fail_closed(tmp_path, monkeypatch) -> No
             "--db",
             str(db),
         ],
+        terminal_width=200,
     )
     assert missing.exit_code != 0
     assert "--receipt" in missing.output
