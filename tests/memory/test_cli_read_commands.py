@@ -14,6 +14,7 @@ from openminion.modules.memory.models import (
     MemoryRecord,
 )
 
+
 class TestCLIReadCommands(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()

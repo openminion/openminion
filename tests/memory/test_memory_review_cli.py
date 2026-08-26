@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from openminion.modules.memory.cli import _build_app, _get_service
 from openminion.modules.memory.models import MemoryRecord
 
+
 def _seed(db: Path) -> None:
     service = _get_service(str(db))
     service._store.put(  # noqa: SLF001
