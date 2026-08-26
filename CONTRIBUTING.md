@@ -66,6 +66,11 @@ boundary summary than the broader docs.
     `docs/runbooks/controlplane-storage-operations.md`: cross-channel state
     lives in `cp.db`; channel-private transient state stays in the channel DB.
 
+For the provider-free pull-request sequence, run `make ci-check`. It composes
+`format-check`, `lint`, and `test-ci`. `make test` and `make check` remain the
+broader local suites; live providers and external services keep their existing
+opt-in gates.
+
 Commit message guidance:
 
 1. Use commit messages in the form `<type>(<scope>): <summary>` for normal work

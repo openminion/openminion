@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
+import tempfile
 
 REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_IMPORT_ROOT) not in sys.path:
@@ -54,20 +56,23 @@ def load_baseline(path: Path) -> dict[str, BaselineEntry]:
     return entries
 
 
+def _row_path(path: str) -> str:
+    row_path = Path(path)
+    if not row_path.is_absolute():
+        return path
+    try:
+        return row_path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return row_path.resolve().as_posix()
+
+
 def validate(*, root: Path, baseline_path: Path) -> tuple[list[str], dict[str, int]]:
     rows = scan(root)
     baseline = load_baseline(baseline_path)
     seen: set[str] = set()
     findings: list[str] = []
     for row in rows:
-        row_path = Path(row.path)
-        if row_path.is_absolute():
-            try:
-                rel = row_path.resolve().relative_to(REPO_ROOT).as_posix()
-            except ValueError:
-                rel = row_path.resolve().as_posix()
-        else:
-            rel = row.path
+        rel = _row_path(row.path)
         entry = baseline.get(rel)
         if entry is None:
             findings.append(
@@ -82,6 +87,10 @@ def validate(*, root: Path, baseline_path: Path) -> tuple[list[str], dict[str, i
         if row.silent_pass > entry.silent_pass:
             findings.append(
                 f"silent_pass_count_grew: {rel} has {row.silent_pass} > baseline {entry.silent_pass}"
+            )
+        if row.total < entry.total or row.silent_pass < entry.silent_pass:
+            findings.append(
+                f"stale_broad_exception_headroom: {rel} has {row.total}/{row.silent_pass} < baseline {entry.total}/{entry.silent_pass}; run --emit-baseline"
             )
         if row.total == 0:
             findings.append(
@@ -98,11 +107,62 @@ def validate(*, root: Path, baseline_path: Path) -> tuple[list[str], dict[str, i
     return findings, metrics
 
 
+def emit_baseline(*, root: Path, baseline_path: Path) -> tuple[bool, list[str]]:
+    rows = {_row_path(row.path): row for row in scan(root)}
+    baseline = load_baseline(baseline_path)
+    blocked = [
+        f"new_broad_exception_file: {path}" for path in rows if path not in baseline
+    ]
+    blocked.extend(
+        f"broad_exception_count_grew: {path}"
+        for path, row in rows.items()
+        if path in baseline
+        and (
+            row.total > baseline[path].total
+            or row.silent_pass > baseline[path].silent_pass
+        )
+    )
+    if blocked:
+        return False, blocked
+    changed = set(rows) != set(baseline) or any(
+        row.total < baseline[path].total or row.silent_pass < baseline[path].silent_pass
+        for path, row in rows.items()
+    )
+    if not changed:
+        return False, ["unchanged_broad_exception_baseline"]
+    lines = ["# path\ttotal\tsilent_pass\treason"]
+    for path, row in sorted(rows.items()):
+        entry = baseline[path]
+        lines.append(f"{path}\t{row.total}\t{row.silent_pass}\t{entry.reason}")
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=baseline_path.parent, delete=False
+    ) as handle:
+        temp_path = Path(handle.name)
+        handle.write("\n".join(lines) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, baseline_path)
+    return True, []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    parser.add_argument("--emit-baseline", action="store_true")
     args = parser.parse_args(argv)
+    if args.emit_baseline:
+        written, findings = emit_baseline(
+            root=args.root,
+            baseline_path=args.baseline,
+        )
+        if not written:
+            for finding in findings:
+                print(finding, file=sys.stderr)
+            return 1
+        print(f"broad-exception baseline written: {args.baseline}")
+        return 0
     findings, metrics = validate(root=args.root, baseline_path=args.baseline)
     payload = {
         "validator": "broad_exception",

@@ -138,8 +138,8 @@ def test_read_only_report_includes_floor_and_debt(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     result = budget._print_report(
-        current={"modules": 4},
-        total=4,
+        current={"modules": 5},
+        total=5,
         baseline={
             "package_errors": {"modules": 5},
             "historical_floor": {"total_errors": 4019},
@@ -152,6 +152,37 @@ def test_read_only_report_includes_floor_and_debt(
     out = capsys.readouterr().out
     assert "historical floor total: 4019" in out
     assert "reset debt total: 100" in out
+
+
+def test_read_only_report_rejects_stale_headroom(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = budget._print_report(
+        current={"modules": 4},
+        total=4,
+        baseline={"package_errors": {"modules": 5}},
+        lines=[],
+    )
+
+    assert result == 1
+    assert "--emit-baseline" in capsys.readouterr().err
+
+
+def test_emit_baseline_rejects_unchanged_counts(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    before = baseline.read_text(encoding="utf-8")
+
+    result = budget._emit_monotonic_baseline(
+        repo_root=repo,
+        baseline_path=baseline,
+        current={"modules": 5},
+        total=5,
+    )
+
+    assert result == 1
+    assert baseline.read_text(encoding="utf-8") == before
 
 
 def test_reset_debt_total_keeps_total_floor_separate_from_package_debt(

@@ -117,7 +117,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 
-.PHONY: help venv dev-install hooks-install hooks-run fix format format-check lint lint-advisory validate-patterns typecheck typecheck-strict test bench check release-check eval $(_VP_TARGETS)
+.PHONY: help venv dev-install hooks-install hooks-run fix format format-check lint lint-advisory validate-patterns typecheck typecheck-strict test test-ci ci-check bench check release-check eval $(_VP_TARGETS)
 
 help:
 	@printf '%s\n' \
@@ -137,6 +137,8 @@ help:
 		'  make eval          G-06: run the 5 starter EvalCases via openminion-eval' \
 		'                     Override category: make eval ARGS="--category coding"' \
 		'  make test          Run the OpenMinion pytest suite (excluding benchmarks)' \
+		'  make test-ci       Run the provider-free Python 3.11 pull-request suite' \
+		'  make ci-check      Run format-check, lint, and test-ci' \
 		'  make bench         Run storage benchmark regression harness' \
 		'  make check         Run format-check, lint, and test' \
 		'  make release-check Build distribution artifacts and validate package metadata'
@@ -223,6 +225,12 @@ validate-patterns: $(_VP_TARGETS)
 test: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
 	$(PYTEST) -q -m "not benchmark" "$(REPO_ROOT)/tests"
+
+test-ci: $(DEV_STAMP)
+	PYTHONPATH="$(REPO_ROOT)/src" \
+	$(PYTEST) -q -m "not benchmark and not e2e and not postgres and not memory_eval_benchmark and not mcp_live and not package_integration and not telegram_live and not slack_live and not slow" "$(REPO_ROOT)/tests"
+
+ci-check: format-check lint test-ci
 
 bench: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \

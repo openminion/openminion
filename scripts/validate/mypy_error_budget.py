@@ -222,6 +222,11 @@ def _emit_monotonic_baseline(
         for item in regressions:
             print(f"  {item}", file=sys.stderr)
         return 1
+    if allowed and not any(
+        current.get(pkg, 0) < count for pkg, count in allowed.items()
+    ):
+        print("[tcr] refusing unchanged mypy baseline update", file=sys.stderr)
+        return 1
     payload = _metadata(repo_root, counts=current, total=total)
     prior_floor = prior.get("historical_floor")
     if isinstance(prior_floor, dict):
@@ -432,8 +437,22 @@ def _print_report(
             f"[tcr] {pkg}: {now} / {was} | monthly quota {quota} | next target <= {target} | headroom {headroom}"
         )
     regressions = _increases(current=current, allowed=allowed, current_total=total)
-    if not regressions:
+    improvements = [
+        f"{pkg}: {current.get(pkg, 0)} < baseline {count}"
+        for pkg, count in sorted(allowed.items())
+        if current.get(pkg, 0) < count
+    ]
+    if not regressions and not improvements:
         return 0
+    if improvements and not regressions:
+        print("[tcr] stale positive headroom detected:", file=sys.stderr)
+        for item in improvements:
+            print(f"  {item}", file=sys.stderr)
+        print(
+            "[tcr] run: python -m scripts.validate.mypy_error_budget --emit-baseline",
+            file=sys.stderr,
+        )
+        return 1
     print("[tcr] regressions detected:", file=sys.stderr)
     for item in regressions:
         print(f"  {item}", file=sys.stderr)

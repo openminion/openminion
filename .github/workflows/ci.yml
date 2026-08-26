@@ -17,12 +17,21 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    env:
-      OPENMINION_HOME: ${{ github.workspace }}
-      OPENMINION_DATA_ROOT: ${{ github.workspace }}/.openminion
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare isolated runtime roots
+        run: |
+          {
+            echo "OPENMINION_HOME=$RUNNER_TEMP/openminion-home"
+            echo "OPENMINION_DATA_ROOT=$RUNNER_TEMP/openminion-data"
+            echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/openminion-pycache"
+          } >> "$GITHUB_ENV"
+          mkdir -p \
+            "$RUNNER_TEMP/openminion-home" \
+            "$RUNNER_TEMP/openminion-data" \
+            "$RUNNER_TEMP/openminion-pycache"
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -52,7 +61,9 @@ jobs:
           .venv/bin/python3.11 -m pip install -e ".[dev]"
 
       - name: Run blocking lint gate
-        run: make lint
+        run: |
+          make format-check
+          make lint
 
   test:
     runs-on: ubuntu-latest
@@ -60,12 +71,21 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
       fail-fast: false
-    env:
-      OPENMINION_HOME: ${{ github.workspace }}
-      OPENMINION_DATA_ROOT: ${{ github.workspace }}/.openminion
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Prepare isolated runtime roots
+        run: |
+          {
+            echo "OPENMINION_HOME=$RUNNER_TEMP/openminion-home"
+            echo "OPENMINION_DATA_ROOT=$RUNNER_TEMP/openminion-data"
+            echo "PYTHONPYCACHEPREFIX=$RUNNER_TEMP/openminion-pycache"
+          } >> "$GITHUB_ENV"
+          mkdir -p \
+            "$RUNNER_TEMP/openminion-home" \
+            "$RUNNER_TEMP/openminion-data" \
+            "$RUNNER_TEMP/openminion-pycache"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -112,16 +132,9 @@ jobs:
         run: |
           .venv/bin/python3.11 -m compileall examples
 
-      - name: Run focused package regression suite (3.11)
+      - name: Run package-owned regression suite (3.11)
         if: matrix.python-version == '3.11'
-        run: |
-          PYTHONPATH=src .venv/bin/python3.11 -m pytest -q \
-            tests/test_verify_command.py \
-            tests/test_config_command.py \
-            tests/test_public_first_run_cli.py \
-            tests/test_package_layout.py \
-            tests/test_package_init_imports.py \
-            tests/test_package_metadata.py
+        run: make test-ci
 
       - name: Run standalone CLI smoke (3.12)
         if: matrix.python-version == '3.12'

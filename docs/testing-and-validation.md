@@ -60,6 +60,17 @@ Run from the package root:
 make lint
 ```
 
+Run the provider-free pull-request sequence with:
+
+```bash
+make ci-check
+```
+
+This composes `format-check`, `lint`, and `test-ci`. `test-ci` excludes live,
+external-service, Postgres, package-integration, benchmark, E2E, and slow
+markers. `make test` and `make check` remain broader local commands and are not
+interchangeable with the pull-request selection.
+
 ## Focused regression tests
 
 The public first-user path is protected by targeted CLI regression tests under
