@@ -97,12 +97,12 @@ jobs:
         if: matrix.python-version == '3.11'
         shell: bash
         run: |
-          dep_branch="${OPENMINION_CI_DEP_BRANCH:-main}"
-          if [[ "${GITHUB_REF_NAME:-}" == "dev" || "${GITHUB_BASE_REF:-}" == "main" ]]; then
-            dep_branch="${OPENMINION_CI_DEP_BRANCH:-dev}"
-          fi
+          sophiagraph_sha="4533d19c81ddabde51fe1393e69c2c76358238bb"
           mkdir -p .deps
-          git clone --depth 1 --branch "$dep_branch" https://github.com/openminion/sophiagraph .deps/sophiagraph
+          git init .deps/sophiagraph
+          git -C .deps/sophiagraph remote add origin https://github.com/openminion/sophiagraph
+          git -C .deps/sophiagraph fetch --depth 1 origin "$sophiagraph_sha"
+          git -C .deps/sophiagraph checkout --detach FETCH_HEAD
 
       - name: Bootstrap repo venv (3.11 package suite)
         if: matrix.python-version == '3.11'

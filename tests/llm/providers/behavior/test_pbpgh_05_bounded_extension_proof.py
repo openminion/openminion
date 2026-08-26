@@ -7,9 +7,6 @@ from openminion.modules.llm.providers.behavior import (
     resolve_behavior_profile,
 )
 
-pytestmark = pytest.mark.package_integration
-
-
 def test_typed_identity_construction_is_a_bounded_per_lane_surface():
     acmecloud_identity = ProviderIdentity(
         transport_adapter="openai_chat",
@@ -77,6 +74,7 @@ def test_new_lane_does_not_accidentally_inherit_minimax_compat_settings():
     assert profile.request_dialect != "minimax_openai_compat"
 
 
+@pytest.mark.package_integration
 def test_bounded_extension_proof_artifact_exists():
     import os.path
 

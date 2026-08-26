@@ -4,7 +4,6 @@ import re
 import tempfile
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from openminion.modules.memory.cli import _build_app
@@ -14,9 +13,6 @@ from openminion.modules.memory.models import (
     MemoryNamespace,
     MemoryRecord,
 )
-
-pytestmark = pytest.mark.package_integration
-
 
 class TestCLIReadCommands(unittest.TestCase):
     def setUp(self):
