@@ -93,13 +93,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
+      - name: Prepare package test workspace (3.11)
+        if: matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          dep_branch="${OPENMINION_CI_DEP_BRANCH:-main}"
+          if [[ "${GITHUB_REF_NAME:-}" == "dev" || "${GITHUB_BASE_REF:-}" == "main" ]]; then
+            dep_branch="${OPENMINION_CI_DEP_BRANCH:-dev}"
+          fi
+          mkdir -p .deps
+          git clone --depth 1 --branch "$dep_branch" https://github.com/openminion/sophiagraph .deps/sophiagraph
+
       - name: Bootstrap repo venv (3.11 package suite)
         if: matrix.python-version == '3.11'
         shell: bash
         run: |
           python -m venv .venv
           .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
-          .venv/bin/python3.11 -m pip install -e ".[dev]"
+          .venv/bin/python3.11 -m pip install -e .deps/sophiagraph
+          .venv/bin/python3.11 -m pip install -e ".[dev,viewer,otel]"
 
       - name: Install dependencies (3.12 smoke)
         if: matrix.python-version == '3.12'

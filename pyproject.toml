@@ -247,6 +247,9 @@ ignore_missing_imports = true
 # Per-file `# type: ignore[<code>]` discipline is enforced by the
 # `validate/type_ignore_hygiene.py` repo validator.
 warn_unused_ignores = true
+# Optional Slack SDK methods are not fully typed. Keep their call boundary from
+# changing the package-owned error budget when the `slack` extra is installed.
+untyped_calls_exclude = ["slack_sdk"]
 
 # The former bootstrap error-suppression overrides for `base.*` and
 # `modules.*.{interfaces,contracts,schemas}` are retired. `make typecheck` now
