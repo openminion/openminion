@@ -140,13 +140,11 @@ def _debit_parent_budget_for_subtask(
     )
     budget.tool_calls = max(
         0,
-        budget.tool_calls
-        - max(0, child_budget["tool_calls"] - remaining.tool_calls),
+        budget.tool_calls - max(0, child_budget["tool_calls"] - remaining.tool_calls),
     )
     budget.a2a_calls = max(
         0,
-        budget.a2a_calls
-        - max(0, child_budget["a2a_calls"] - remaining.a2a_calls),
+        budget.a2a_calls - max(0, child_budget["a2a_calls"] - remaining.a2a_calls),
     )
     budget.tokens = max(
         0,

@@ -5346,7 +5346,9 @@ class TestFinalizeIterationCapExit:
             for message in runtime.calls[1]["messages"]
             if message.role == "system"
         ]
-        assert any("Call submit_output once" in message for message in retry_system_messages)
+        assert any(
+            "Call submit_output once" in message for message in retry_system_messages
+        )
         assert all(
             "large transcript" not in str(message.content)
             for message in runtime.calls[1]["messages"]
@@ -5384,9 +5386,7 @@ class TestFinalizeIterationCapExit:
                     provider="fake",
                     model="m",
                     output_text="",
-                    tool_calls=[
-                        ToolCall(id="call-1", name="file.read", arguments={})
-                    ],
+                    tool_calls=[ToolCall(id="call-1", name="file.read", arguments={})],
                     finish_reason="tool_calls",
                 ),
                 LLMResponse(

@@ -133,9 +133,7 @@ def _retry_answer_only_completion_if_needed(
             public_mode_tag=public_mode_tag,
             reason="answer_only_finalization_retry_failed",
         )
-    retried_response = _normalize_submit_output_final_answer_response(
-        retried_response
-    )
+    retried_response = _normalize_submit_output_final_answer_response(retried_response)
     return _normalize_finalization_status_response(retried_response), None
 
 
