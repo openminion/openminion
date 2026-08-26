@@ -80,6 +80,8 @@ def test_default_policy_allows_core_runtime_prefixes():
     policy.ensure_tool_allowed("git.status")
     policy.ensure_tool_allowed("plan.list")
     policy.ensure_tool_allowed("memory.write")
+    policy.ensure_tool_allowed("agent.list")
+    policy.ensure_tool_allowed("agent.get")
 
 
 def test_exact_tool_allow_does_not_admit_neighboring_names() -> None:

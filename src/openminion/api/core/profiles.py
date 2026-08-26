@@ -53,6 +53,8 @@ from .lifecycle import RuntimeFinalizer
 class AgentDiscoveryRecord:
     agent_id: str
     display_name: str = ""
+    role: str = ""
+    skills: tuple[str, ...] = ()
     configured: bool = False
     registry_present: bool = False
     hot: bool = False
@@ -95,6 +97,8 @@ class AgentDiscoveryRecord:
         return {
             "agent_id": self.agent_id,
             "display_name": self.display_name,
+            "role": self.role,
+            "skills": list(self.skills),
             "configured": self.configured,
             "registry_present": self.registry_present,
             "hot": self.hot,
@@ -154,9 +158,24 @@ def _build_agent_discovery_record(
         if configured_profile is not None or registry_record is not None
         else ()
     )
+    selected_skills = getattr(configured_profile, "skill", None) or []
+    if isinstance(selected_skills, str):
+        selected_skills = [selected_skills]
+    skills = tuple(
+        dict.fromkeys(
+            str(item).strip()
+            for item in [
+                *selected_skills,
+                *list(getattr(configured_profile, "skill_catalog", []) or []),
+            ]
+            if str(item).strip()
+        )
+    )
     return AgentDiscoveryRecord(
         agent_id=agent_id,
         display_name=display_name,
+        role=str(getattr(configured_profile, "role", "") or "").strip(),
+        skills=skills,
         configured=configured_profile is not None,
         registry_present=registry_record is not None,
         hot=hot,

@@ -10,6 +10,7 @@ from ..constants import (
     TOOL_EXEC_SECURITY_DENY,
     TOOL_REDACTION_MODE_NORMAL,
 )
+from ..contracts.model_ids import MODEL_AGENT_GET, MODEL_AGENT_LIST
 from .command_patterns import COMMAND_ALLOW_PATTERNS, DISCOVERY_KNOWN_TOOLS
 
 
@@ -33,7 +34,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny": [],
     },
     "tools": {
-        "allow_exact": [],
+        "allow_exact": [MODEL_AGENT_LIST, MODEL_AGENT_GET],
         "allow_prefix": [
             "file.",
             "code.",

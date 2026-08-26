@@ -6,9 +6,12 @@ from typing import Any, cast
 
 import pytest
 
+from openminion.api.core.profiles import _build_agent_discovery_record
+from openminion.base.config import AgentProfileConfig
 from openminion.modules.brain.adapters.tool.permission_mode import (
     is_tool_blocked_by_readonly,
 )
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_AGENT_GET,
@@ -216,6 +219,56 @@ def test_agent_list_prefers_runtime_discovery_snapshot() -> None:
     assert out["count"] == 1
     assert out["agents"][0]["agent_id"] == "heartbeat-active"
     assert out["agents"][0]["heartbeat_active"] is True
+
+
+def test_agent_discovery_exposes_configured_role_and_skills() -> None:
+    record = _build_agent_discovery_record(
+        agent_id="researcher",
+        configured_profile=AgentProfileConfig(
+            name="Researcher",
+            role="evidence auditor",
+            skill=["web-research", "source-review"],
+            skill_catalog=["source-review", "security-scan"],
+        ),
+        registry_record=None,
+        heartbeat_record=None,
+        hot=False,
+    )
+
+    payload = record.as_payload()
+    assert payload["role"] == "evidence auditor"
+    assert payload["skills"] == [
+        "web-research",
+        "source-review",
+        "security-scan",
+    ]
+    assert payload["capabilities"] == ["delegate.sync"]
+
+
+def test_brain_tool_adapter_threads_runtime_agent_discovery(tmp_path: Path) -> None:
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        agent_query=lambda: [
+            {
+                "agent_id": "researcher",
+                "display_name": "Researcher",
+                "role": "evidence researcher",
+                "skills": ["source-review"],
+                "state": "configured",
+                "configured": True,
+            }
+        ],
+    )
+
+    result = adapter.execute(
+        command={"tool_name": "agent.list", "args": {}},
+        session_id="session-agent-discovery",
+        trace_id="trace-agent-discovery",
+    )
+
+    assert result["status"] == "success"
+    assert result["outputs"]["agents"][0]["role"] == "evidence researcher"
+    assert result["outputs"]["agents"][0]["skills"] == ["source-review"]
 
 
 def test_agent_get_prefers_runtime_discovery_snapshot() -> None:

@@ -148,6 +148,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         a2a_delegate_api: Any | None = None,
+        agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
         agent_profile: Any | None = None,
     ) -> None:
@@ -163,6 +164,7 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.a2a_delegate_api = a2a_delegate_api
+        self.agent_query = agent_query
         self.agent_profile = agent_profile
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
@@ -641,6 +643,7 @@ class ToolAdapter:
             skill_api=self.skill_api,
             artifactctl=self.artifactctl,
             a2a_delegate_api=self.a2a_delegate_api,
+            agent_query=self.agent_query,
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
             tool_registry=self.registry,

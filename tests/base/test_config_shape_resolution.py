@@ -21,6 +21,22 @@ def test_single_agent_resolves_without_default_agent() -> None:
     assert resolve_default_agent_id(config) == "lone"
 
 
+def test_agent_role_round_trips_as_explicit_profile_metadata() -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "agents": {
+                "researcher": {
+                    "name": "Researcher",
+                    "role": "evidence auditor",
+                }
+            }
+        }
+    )
+
+    assert config.agents["researcher"].role == "evidence auditor"
+    assert config.to_dict()["agents"]["researcher"]["role"] == "evidence auditor"
+
+
 def test_empty_agents_catalog_raises_config_validation_error() -> None:
     config = OpenMinionConfig()
     assert not config.agents
