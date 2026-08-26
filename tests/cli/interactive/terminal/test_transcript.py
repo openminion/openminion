@@ -74,7 +74,8 @@ def test_push_tool_message_renders_block() -> None:
         ChatMessage(kind=MessageKind.TOOL, sender="bash", body="", tool_event=event)
     )
     output = buf.getvalue()
-    assert "bash" in output
+    assert "Finished using a tool." in output
+    assert "bash" not in output.lower()
     assert "file1" in output
 
 

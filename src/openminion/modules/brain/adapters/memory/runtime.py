@@ -25,8 +25,17 @@ class MemctlAdapter:
 
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
-    def __init__(self, store: Any, *, agent_id: str | None = None) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        agent_id: str | None = None,
+        owns_backend: bool = False,
+        owned_artifactctl: Any | None = None,
+    ) -> None:
         self._backend = store
+        self._owns_backend = owns_backend
+        self._owned_artifactctl = owned_artifactctl
         self.store = getattr(store, "_store", store)
         self._agent_id = str(agent_id or "").strip() or "openminion"
         self._list_api = getattr(store, "list", None)
@@ -44,6 +53,14 @@ class MemctlAdapter:
         self._reinforce_candidate_api = getattr(store, "reinforce_candidate", None)
         self._procedure_api = getattr(store, "get_procedure", None)
         self._generation = 0
+
+    def close(self) -> None:
+        if self._owns_backend:
+            self._owns_backend = False
+            self._backend.close()
+        if self._owned_artifactctl is not None:
+            artifactctl, self._owned_artifactctl = self._owned_artifactctl, None
+            artifactctl.close()
 
     def set_telemetry_context(
         self,

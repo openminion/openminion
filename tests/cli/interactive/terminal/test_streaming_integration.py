@@ -53,6 +53,7 @@ class _ProgressRuntime:
                     "trace_id": "focus-terminal-progress",
                     "status_key": "analyzing",
                     "label": "Loading session history...",
+                    "detail_code": "loading_session_history",
                 }
             )
         yield "progress ok"
@@ -345,8 +346,8 @@ def test_progress_callback_updates_live_turn_status_label() -> None:
     )
 
     assert labels
-    assert labels[0] == "Working..."
-    assert any("Loading session history" in label for label in labels)
+    assert labels[0] == "Working on it..."
+    assert any("Reviewing this conversation" in label for label in labels)
 
 
 def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn() -> (
@@ -379,7 +380,7 @@ def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn
     )
 
     assert any("Working" in label for label in turn_status_history)
-    assert any("Loading session history" in label for label in turn_status_history)
+    assert any("Reviewing this conversation" in label for label in turn_status_history)
     assert "analyzing" in activity_history
     assert invalidations
     assert status_line.state == "idle"

@@ -23,6 +23,33 @@ from openminion.modules.brain.storage.missions import SQLiteMissionStateStore
 from openminion.modules.brain.loop.tools.task_ops import stable_task_id_for_plan_id
 
 
+def test_goal_runtime_closes_only_owned_stores() -> None:
+    close_calls: list[str] = []
+
+    class Store:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def close(self) -> None:
+            close_calls.append(self.name)
+
+    borrowed = LongRunningGoalRuntime(
+        goal_store=Store("borrowed-goal"),  # type: ignore[arg-type]
+        mission_store=Store("borrowed-mission"),  # type: ignore[arg-type]
+    )
+    borrowed.close()
+    assert close_calls == []
+
+    owned = LongRunningGoalRuntime(
+        goal_store=Store("goal"),  # type: ignore[arg-type]
+        mission_store=Store("mission"),  # type: ignore[arg-type]
+        owns_stores=True,
+    )
+    owned.close()
+    owned.close()
+    assert close_calls == ["goal", "mission"]
+
+
 class _FakeTaskService:
     def __init__(self) -> None:
         self.checkpoints: dict[str, tuple[str, dict[str, object]]] = {}

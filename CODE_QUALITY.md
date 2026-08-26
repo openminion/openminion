@@ -109,6 +109,16 @@ make lint
 
 If your change touches behavior, also run the smallest focused tests that actually prove the change.
 
+Committed numeric debt baselines are ceilings, not quality scores. Their
+normal checks are read-only. When an existing owner improves, use that
+validator's explicit `--emit-baseline` command to record only the lower value;
+normal update commands reject increases, mixed increases, and new debt owners.
+
+Use `make ci-check` for the provider-free pull-request sequence. It runs
+`format-check`, `lint`, and `test-ci`. Keep live providers, external services,
+Postgres, package integrations, benchmarks, and slow suites in their existing
+integration or release lanes.
+
 Public validator catalog:
 
 1. `docs/testing-and-validation.md`

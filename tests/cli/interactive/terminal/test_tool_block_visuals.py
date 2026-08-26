@@ -106,7 +106,8 @@ def test_verb_form_title_for_bash_picks_cmd_arg() -> None:
         exit_code=0,
     )
     output = _capture(_render_tool_block(event))
-    assert "Bash(ls -la)" in output
+    assert "Finished using a tool." in output
+    assert "ls -la" not in output
     assert "cmd=ls -la" not in output
 
 
@@ -118,7 +119,8 @@ def test_verb_form_title_for_read_picks_path_arg() -> None:
         exit_code=0,
     )
     output = _capture(_render_tool_block(event))
-    assert "Read(src/main.py)" in output
+    assert "Finished using a tool." in output
+    assert "src/main.py" not in output
 
 
 def test_verb_form_title_for_grep_picks_query_arg() -> None:
@@ -129,7 +131,8 @@ def test_verb_form_title_for_grep_picks_query_arg() -> None:
         exit_code=0,
     )
     output = _capture(_render_tool_block(event))
-    assert "Grep(TODO)" in output
+    assert "Finished using a tool." in output
+    assert "TODO" not in output
 
 
 def test_verb_form_title_long_arg_is_ellipsized() -> None:
@@ -141,7 +144,7 @@ def test_verb_form_title_long_arg_is_ellipsized() -> None:
         exit_code=0,
     )
     output = _capture(_render_tool_block(event))
-    assert "..." in output
+    assert "Finished using a tool." in output
 
 
 def test_verb_form_title_no_args_just_verb() -> None:
@@ -152,8 +155,8 @@ def test_verb_form_title_no_args_just_verb() -> None:
         exit_code=0,
     )
     output = _capture(_render_tool_block(event))
-    assert "ListAgents" in output
-    assert "ListAgents()" not in output
+    assert "Finished using a tool." in output
+    assert "ListAgents" not in output
 
 
 def test_empty_body_renders_no_output_placeholder() -> None:

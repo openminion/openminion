@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 import datetime
 import json
@@ -99,6 +101,7 @@ class SQLiteMemoryStore(MemoryStore):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout = busy_timeout
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         self._write_lock = threading.RLock()
 
         with self._connect() as conn:
@@ -113,11 +116,15 @@ class SQLiteMemoryStore(MemoryStore):
                 migrations=list_migrations(),
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = connect_database(self.db_path)
-        conn.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout))}")
-        conn.isolation_level = None
-        return conn
+        try:
+            conn.execute(f"PRAGMA busy_timeout={max(0, int(self.busy_timeout))}")
+            conn.isolation_level = None
+            yield conn
+        finally:
+            conn.close()
 
     def backup_to(self, path: str | Path) -> Path:
         """Write a consistent SQLite backup for reviewed import rollback."""
@@ -147,6 +154,14 @@ class SQLiteMemoryStore(MemoryStore):
         if self._artifactctl is _ARTIFACTCTL_UNSET:
             self._artifactctl = create_default_artifactctl()
         return self._artifactctl
+
+    def close(self) -> None:
+        if not self._owns_artifactctl or self._artifactctl is _ARTIFACTCTL_UNSET:
+            return
+        self._owns_artifactctl = False
+        artifactctl = self._artifactctl
+        self._artifactctl = None
+        artifactctl.close()
 
     def _add_artifact_refs(self, *, owner_id: str, ref_values: Any) -> None:
         targets = normalize_artifact_ref_targets(ref_values)

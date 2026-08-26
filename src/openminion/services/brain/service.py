@@ -10,7 +10,6 @@ from openminion.base.config import (
     bootstrap_home_paths,
     resolve_module_storage_path,
 )
-from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.agent import AgentService
@@ -22,6 +21,7 @@ from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.modules.tool import ToolRegistry
 
 from openminion.modules.brain.runner import BrainRunner
+from openminion.modules.brain.runner.lifecycle import close_owned_runner_bundle
 from openminion.modules.brain.interfaces import (
     ensure_adapter_compatibility,
     ensure_runner_compatibility,
@@ -44,9 +44,9 @@ from openminion.services.brain.post_execution import BrainBridgeTurnMixin
 from openminion.services.brain.factory.retrieve import init_retrieve_adapter  # noqa: F401  (re-export for test patches + bootstrap helper)
 from openminion.services.brain.factory.rlm import init_rlm_adapter
 from openminion.services.config import resolve_services_env
-from openminion.modules.brain.schemas.agent import ModeProfileConfig
 from openminion.modules.brain.config import (
     from_base_config as derive_brain_runtime_config,
+    runtime_mode_config_from_agent as _runtime_mode_config_from_agent,  # noqa: F401  (compatibility import for runtime bootstrap and tests)
 )
 
 if TYPE_CHECKING:
@@ -98,41 +98,6 @@ create_safety_adapter = create_safety_api
 create_skill_adapter = create_skill_api
 create_rlm_adapter = init_rlm_adapter  # kept distinct source name by intent
 create_compress_adapter = create_compress_api
-
-
-def _runtime_mode_config_from_agent(
-    config: OpenMinionConfig,
-) -> dict[str, ModeProfileConfig]:
-    default_agent_id = resolve_default_agent_id(config)
-    profile = config.agents.get(default_agent_id)
-    if profile is None:
-        return {}
-    mode_config: dict[str, ModeProfileConfig] = {}
-    for mode_name, entry in profile.modes.items():
-        normalized_name = mode_name.strip().lower()
-        if not normalized_name:
-            continue
-        mode_config[normalized_name] = ModeProfileConfig(
-            enabled=entry.enabled,
-            parallel_enabled=entry.parallel_enabled,
-            parallel_writes_enabled=entry.parallel_writes_enabled,
-            max_parallel_workers=entry.max_parallel_workers,
-            checkpoint_interval=entry.checkpoint_interval,
-            max_resume_count=entry.max_resume_count,
-            max_depth=entry.max_depth,
-            priority_hint=entry.priority_hint,
-            max_commands_per_turn=entry.max_commands_per_turn,
-            max_adaptive_iterations=entry.max_adaptive_iterations,
-            max_adaptive_tool_calls_per_loop=entry.max_adaptive_tool_calls_per_loop,
-            max_adaptive_llm_calls_per_loop=entry.max_adaptive_llm_calls_per_loop,
-            adaptive_include_reflect=entry.adaptive_include_reflect,
-            max_self_corrections=entry.max_self_corrections,
-            max_subtasks=entry.max_subtasks,
-            max_decompose_depth=entry.max_decompose_depth,
-            max_research_iterations=entry.max_research_iterations,
-            tool_schema_shortlisting_enabled=entry.tool_schema_shortlisting_enabled,
-        )
-    return mode_config
 
 
 def _bootstrap_bridge_home_paths(
@@ -369,6 +334,22 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runner: BrainRunner | None = None
         self._runtime_handle: Any | None = None
         self._llm_wrapper: Any | None = None
+        self._vector_sync: Any | None = None
+        self._closed = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._runner is not None:
+            close_owned_runner_bundle(
+                self._runner,
+                vector_sync=self._vector_sync,
+                close_policy=self._action_policy_service is None,
+                close_retrieve=self._retrieve_service is None,
+            )
+        self._vector_sync = self._runner = None
+        super().close()
 
     def _init_bridge_telemetry(
         self,

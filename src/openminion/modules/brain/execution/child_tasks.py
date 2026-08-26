@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 
@@ -15,6 +15,21 @@ if TYPE_CHECKING:
     )
 
 
+def _normalize_dependency_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("depends_on must be a list of subtask ids")
+    normalized: list[str] = []
+    for item in value:
+        dependency = str(item or "").strip()
+        if not dependency or len(dependency) > 64:
+            raise ValueError("dependency ids must contain 1 to 64 characters")
+        if dependency not in normalized:
+            normalized.append(dependency)
+    return normalized
+
+
 class FailureAction(str, Enum):
     ABORT = "abort"
     CONTINUE = "continue"
@@ -23,7 +38,7 @@ class FailureAction(str, Enum):
 class SubtaskSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    subtask_id: str = ""
+    subtask_id: str = Field(default="", max_length=64)
     goal: str = Field(..., min_length=1)
     inputs: dict[str, Any] = Field(default_factory=dict)
     constraints: str = ""
@@ -31,16 +46,26 @@ class SubtaskSpec(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     priority: int = 0
 
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _normalize_depends_on(cls, value: Any) -> list[str]:
+        return _normalize_dependency_ids(value)
+
 
 class DecomposeControlSubtask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(..., min_length=1)
+    id: str = Field(..., min_length=1, max_length=64)
     description: str = Field(..., min_length=1)
     inputs: dict[str, Any] = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
     suggested_mode: str | None = None
     priority: int = 0
+
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _normalize_depends_on(cls, value: Any) -> list[str]:
+        return _normalize_dependency_ids(value)
 
 
 class DecomposeControlPayload(BaseModel):
@@ -93,7 +118,10 @@ class ChildContext:
     delegation_context: Any | None = None
 
 
-SubtaskExecutor = Callable[[SubtaskSpec, BudgetCounters, int, int], ChildTaskResult]
+SubtaskExecutor = Callable[
+    [SubtaskSpec, BudgetCounters, int, int, list[ChildTaskResult]],
+    ChildTaskResult,
+]
 
 
 @runtime_checkable
@@ -185,6 +213,7 @@ class ContextInheritancePolicy(Protocol):
         *,
         parent_state: WorkingState,
         subtask: SubtaskSpec,
+        dependency_results: list[SubtaskResult] | None = None,
     ) -> ChildContext: ...
 
 

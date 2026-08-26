@@ -227,6 +227,7 @@ def test_build_knowledge_graph_source_service_wires_graphify(tmp_path) -> None:
     assert [source.name for source in service.list_sources()] == ["repo_graph"]
 
 
+@pytest.mark.package_integration
 def test_build_knowledge_graph_source_service_wires_pragmagraph(tmp_path) -> None:
     _clear_pragmagraph_modules()
     from pragmagraph.adapters import index_path

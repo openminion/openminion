@@ -806,6 +806,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
         a2a_delegate_api=a2a_delegate_api,
+        agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
     )
 
@@ -822,7 +823,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         retrieve_api=retrieve_api,
     )
 
-    # route runner-metadata derivation through the canonical
     llm_profiles = resolve_llm_profiles(
         config,
         override_value=service._resolve_override_value,
@@ -932,6 +932,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         goal_store=goal_store,
         mission_store=mission_store,
         checkpoint_manager=CheckpointManager(task_service=runner.task_manager),
+        owns_stores=True,
     )
     runner._self_improvement_engine = service._self_improvement  # noqa: SLF001
     runner._configured_agent_ids = configured_agent_ids(config)  # noqa: SLF001

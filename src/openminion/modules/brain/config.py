@@ -19,6 +19,7 @@ from .schemas.agent import (
     AutoFactExtractionConfig,
     BudgetTelemetryConfig,
     LLMProfiles,
+    ModeProfileConfig,
     OutcomeAttributionConfig,
     ProactiveAutonomousEntrypointConfig,
     SuccessMemoryConfig,
@@ -583,6 +584,42 @@ class BrainConfig(BaseModel):
             adaptive_budget=self.adaptive_budget.model_copy(deep=True),
             budget_telemetry=self.budget_telemetry.model_copy(deep=True),
         )
+
+
+def runtime_mode_config_from_agent(
+    config: OpenMinionConfig,
+) -> dict[str, ModeProfileConfig]:
+    """Map canonical agent-mode policy into the runner profile contract."""
+    default_agent_id = resolve_default_agent_id(config)
+    profile = config.agents.get(default_agent_id)
+    if profile is None:
+        return {}
+    mode_config: dict[str, ModeProfileConfig] = {}
+    for mode_name, entry in profile.modes.items():
+        normalized_name = mode_name.strip().lower()
+        if not normalized_name:
+            continue
+        mode_config[normalized_name] = ModeProfileConfig(
+            enabled=entry.enabled,
+            parallel_enabled=entry.parallel_enabled,
+            parallel_writes_enabled=entry.parallel_writes_enabled,
+            max_parallel_workers=entry.max_parallel_workers,
+            checkpoint_interval=entry.checkpoint_interval,
+            max_resume_count=entry.max_resume_count,
+            max_depth=entry.max_depth,
+            priority_hint=entry.priority_hint,
+            max_commands_per_turn=entry.max_commands_per_turn,
+            max_adaptive_iterations=entry.max_adaptive_iterations,
+            max_adaptive_tool_calls_per_loop=entry.max_adaptive_tool_calls_per_loop,
+            max_adaptive_llm_calls_per_loop=entry.max_adaptive_llm_calls_per_loop,
+            adaptive_include_reflect=entry.adaptive_include_reflect,
+            max_self_corrections=entry.max_self_corrections,
+            max_subtasks=entry.max_subtasks,
+            max_decompose_depth=entry.max_decompose_depth,
+            max_research_iterations=entry.max_research_iterations,
+            tool_schema_shortlisting_enabled=entry.tool_schema_shortlisting_enabled,
+        )
+    return mode_config
 
 
 StateMachineConfig = BrainConfig

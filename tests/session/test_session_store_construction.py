@@ -25,6 +25,32 @@ def test_sqlite_session_store_default_construction_sets_pragmas(tmp_path: Path) 
         store.close()
 
 
+def test_sqlite_session_store_closes_only_its_default_artifactctl(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    close_calls: list[str] = []
+
+    class ArtifactCtl:
+        def close(self) -> None:
+            close_calls.append("close")
+
+    monkeypatch.setattr(
+        "openminion.modules.session.storage.store.create_default_artifactctl",
+        ArtifactCtl,
+    )
+    store = SQLiteSessionStore(tmp_path / "default.db")
+    store._resolve_artifactctl()
+    store.close()
+    store.close()
+    assert close_calls == ["close"]
+
+    injected = ArtifactCtl()
+    store = SQLiteSessionStore(tmp_path / "injected.db", artifactctl=injected)
+    store.close()
+    assert close_calls == ["close"]
+
+
 def test_sqlite_session_store_uses_injected_record_store_for_all_substores(
     tmp_path: Path,
 ) -> None:

@@ -34,7 +34,7 @@ from openminion.modules.telemetry.schemas import (
     normalize_telemetry_event,
 )
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.timeout(300)]
 
 
 ROWS_PER_MODULE = 1000
@@ -51,7 +51,6 @@ BASELINE_PATH = (
 )
 MODULES = ("secret", "session", "telemetry", "memory")
 OPERATIONS = ("create", "read", "update", "delete")
-pytestmark = pytest.mark.timeout(300)
 BASELINE_SAMPLE_RUNS = 3
 BENCHMARK_VALIDATION_ATTEMPTS = 3
 

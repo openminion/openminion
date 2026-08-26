@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from openminion.modules.memory.cli import _build_app, _get_service
@@ -237,4 +238,10 @@ def test_review_cli_reject_and_markdown_fail_closed(tmp_path, monkeypatch) -> No
         ],
     )
     assert missing.exit_code != 0
-    assert "--receipt" in missing.output
+    review_command = get_command(app).commands["review"]
+    apply_command = review_command.commands["apply"]
+    receipt = next(
+        param for param in apply_command.params if param.name == "receipt_path"
+    )
+    assert receipt.required
+    assert "--receipt" in receipt.opts

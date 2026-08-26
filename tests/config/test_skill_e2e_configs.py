@@ -27,6 +27,8 @@ from tests.helpers.live_skill_targets import (
     validate_skill_live_target,
 )
 
+pytestmark = pytest.mark.package_integration
+
 
 FRAMEWORK_ROOT = Path(__file__).resolve().parents[3]
 TEST_CONFIG_ROOT = FRAMEWORK_ROOT / "test-configs"

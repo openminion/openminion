@@ -76,6 +76,7 @@ def test_mime_detection_edge_cases(tmp_path: Path) -> None:
         == "application/json"
     )
     assert _determine_mime(provided=None, path=src, sample=src.read_bytes()) in {
+        "application/yaml",
         "text/yaml",
         "application/x-yaml",
     }

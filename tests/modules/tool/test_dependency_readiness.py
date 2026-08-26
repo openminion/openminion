@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -120,7 +121,9 @@ def test_binary_dependency_reports_missing_failure_timeout_and_redaction(
         "failed",
         "printf 'token=top-secret and more output\\n' >&2; exit 2",
     )
-    slow = _executable(tmp_path, "slow", "sleep 1")
+    sleep = shutil.which("sleep")
+    assert sleep is not None
+    slow = _executable(tmp_path, "slow", f"{sleep} 1")
 
     def _invalid_executable(_context: ToolDependencyProbeContext) -> str:
         raise ValueError("invalid")

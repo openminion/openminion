@@ -70,9 +70,9 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
                 f"Flatten to 'agents.{agent_id}.*'. "
                 "See docs/reference/config-shape-migration-2026.md."
             )
-
         kwargs: dict[str, Any] = dict(
             name=agent_config.get("name", agent_id),
+            role=agent_config.get("role", ""),
             default_channel=agent_config.get("default_channel", ""),
             thinking=agent_config.get("thinking", ""),
             provider=agent_config.get("provider", ""),

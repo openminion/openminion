@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from typing import get_args
 from pydantic import ValidationError
@@ -571,14 +573,31 @@ def test_factory_create_tool_adapter_forwards_agent_profile() -> None:
 
     params = inspect.signature(create_tool_adapter).parameters
     assert "agent_profile" in params
+    assert "agent_query" in params
 
 
-def test_service_create_tool_api_forwards_agent_profile() -> None:
-    import inspect
-    from openminion.services.brain.factory.adapter import create_tool_api
+def test_service_create_tool_api_forwards_agent_profile(monkeypatch) -> None:
+    from openminion.services.brain.factory import adapter as factory
 
-    params = inspect.signature(create_tool_api).parameters
-    assert "agent_profile" in params
+    captured = {}
+    agent_query = object()
+    agent_profile = object()
+    monkeypatch.setattr(
+        factory,
+        "create_tool_adapter",
+        lambda **kwargs: captured.update(kwargs),
+    )
+
+    factory.create_tool_api(
+        mode="local",
+        workspace_root=".",
+        runtime_config=SimpleNamespace(reactions_enabled=True),
+        agent_query=agent_query,
+        agent_profile=agent_profile,
+    )
+
+    assert captured["agent_query"] is agent_query
+    assert captured["agent_profile"] is agent_profile
 
 
 def test_bootstrap_passes_default_profile_into_create_tool_api() -> None:
@@ -598,6 +617,8 @@ def test_bootstrap_passes_default_profile_into_create_tool_api() -> None:
         "create_tool_api (AGFAG-04). Without this the runner's "
         "profile never reaches tool-execution context."
     )
+    assert "agent_query=getattr(" in text
+    assert 'service._runtime_handle, "agent_discovery_snapshot", None' in text
 
 
 def test_brain_cli_passes_profile_into_create_tool_adapter() -> None:

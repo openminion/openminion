@@ -54,6 +54,7 @@ class MemoryService(MemoryServiceQueryMixin, MemoryServiceMutationMixin):
         telemetryctl: Any | None = None,
         telemetry_session_id: str | None = None,
         telemetry_turn_id: str | None = None,
+        owns_store: bool = False,
     ) -> None:
         if store is not None and backend is not None:
             raise InvalidArgumentError(
@@ -67,6 +68,7 @@ class MemoryService(MemoryServiceQueryMixin, MemoryServiceMutationMixin):
             )
         self._backend = backend
         self._store = store
+        self._owns_store = owns_store
         self._vector_adapter = vector_adapter
         defaults = build_default_policy_engine_bundle(policy_config)
         self._promotion_policy = self._coerce_promotion_policy(
@@ -86,6 +88,12 @@ class MemoryService(MemoryServiceQueryMixin, MemoryServiceMutationMixin):
         self._telemetry_turn_id = str(telemetry_turn_id or "").strip() or None
         self._bundle_ops = MemoryBundleServiceOps(self)
         self._candidate_lifecycle = MemoryCandidateLifecycle(self)
+
+    def close(self) -> None:
+        if not self._owns_store:
+            return
+        self._owns_store = False
+        self._store.close()
 
     def _bundle_helper(self) -> MemoryBundleServiceOps:
         helper = getattr(self, "_bundle_ops", None)

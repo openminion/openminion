@@ -38,10 +38,22 @@ class ContextCtlAdapter(ContextAPI):
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(
-        self, service: Any, *, runtime_token_budget: int | None = None
+        self,
+        service: Any,
+        *,
+        runtime_token_budget: int | None = None,
+        owned_identity_client: Any | None = None,
+        owned_memory_client: Any | None = None,
+        owned_artifact_client: Any | None = None,
+        owned_skill_client: Any | None = None,
     ) -> None:
         self.service = service
         self._runtime_token_budget = runtime_token_budget
+        self._owned_identity_client = owned_identity_client
+        self._owned_memory_client = owned_memory_client
+        self._owned_artifact_client = owned_artifact_client
+        self._owned_skill_client = owned_skill_client
+        self._closed = False
 
     def build(
         self,
@@ -152,3 +164,21 @@ class ContextCtlAdapter(ContextAPI):
         agent_id: str,
     ) -> bool:
         return bool(self.service.maybe_compact(session_id=session_id))
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.service.close()
+        if self._owned_identity_client is not None:
+            self._owned_identity_client.close()
+            self._owned_identity_client = None
+        if self._owned_memory_client is not None:
+            self._owned_memory_client.close()
+            self._owned_memory_client = None
+        if self._owned_artifact_client is not None:
+            self._owned_artifact_client.close()
+            self._owned_artifact_client = None
+        if self._owned_skill_client is not None:
+            self._owned_skill_client.close()
+            self._owned_skill_client = None

@@ -14,6 +14,7 @@ from openminion.cli.status import (
     format_primary_status_text,
     status_from_payload,
 )
+from openminion.cli.status.public_messages import format_public_status_text
 from openminion.modules.brain.diagnostics.status import PhaseStatus
 
 
@@ -63,6 +64,7 @@ def test_signature_fields_match_historical_chat_cli_signature() -> None:
         status.token_usage_estimated,
         status.tool_name,
         status.progress_phase,
+        status.detail_code,
         status.detail_text,
         status.terminal,
     )
@@ -140,7 +142,7 @@ def test_controller_drops_hidden_progress_payloads_without_consuming_dedup() -> 
 
     assert hidden is None
     assert visible is not None
-    assert visible.primary_text == "Working..."
+    assert visible.primary_text == "Working on it..."
 
 
 def test_controller_elapsed_seconds_tracks_clock() -> None:
@@ -193,7 +195,7 @@ def test_controller_view_model_contains_primary_text_from_shared_formatter() -> 
         mode_label="step 1",
     )
     view = controller.update(status)
-    expected = format_primary_status_text(status, fallback_label="thinking…")
+    expected = format_public_status_text(status)
     assert view is not None
     assert view.primary_text == expected
 
@@ -335,10 +337,41 @@ def test_view_model_matches_shared_formatter_across_all_shells(
     controller.start_turn()
     view = controller.update(status)
     assert isinstance(view, PhaseStatusViewModel)
-    expected_primary = format_primary_status_text(status)
+    expected_primary = format_public_status_text(status)
     assert view.primary_text == expected_primary
     # Terminal status keys must set terminal=True
     if status.status_key in {"completed", "error"} or status.terminal:
         assert view.terminal is True
     else:
         assert view.terminal is False
+
+
+@pytest.mark.parametrize("status", _PARITY_FIXTURES, ids=lambda s: s.trace_id)
+def test_verbose_view_model_preserves_shared_technical_formatter(
+    status: PhaseStatus,
+) -> None:
+    controller = PhaseStatusController()
+    view = controller.view_model_for(status, verbosity="verbose")
+    assert view.primary_text == format_primary_status_text(status)
+
+
+def test_same_payload_repaints_when_verbosity_changes() -> None:
+    controller = PhaseStatusController()
+    status = PhaseStatus(
+        trace_id="verbosity",
+        status_key="planning",
+        label="Planning...",
+        llm_call_count=2,
+        llm_call_limit=4,
+    )
+
+    normal = controller.update(status, verbosity="normal")
+    verbose = controller.update(status, verbosity="verbose")
+    normal_again = controller.update(status, verbosity="normal")
+
+    assert normal is not None
+    assert verbose is not None
+    assert normal_again is not None
+    assert normal.primary_text == "Planning the next steps..."
+    assert "LLM 2/4" in verbose.primary_text
+    assert normal_again.primary_text == normal.primary_text

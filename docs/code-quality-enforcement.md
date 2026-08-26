@@ -40,6 +40,28 @@ make check
 Use narrower task-scoped pytest commands during iteration, then record the
 commands you actually ran in the PR description.
 
+The provider-free pull-request sequence is:
+
+```bash
+make ci-check
+```
+
+`ci-check` composes `format-check`, `lint`, and `test-ci`. The broader `test`
+and `check` targets remain available for integration owners.
+
+## Numeric debt baselines
+
+Mypy errors, over-ceiling method LOC, and broad/silent exception counts are
+exact debt ceilings. Their normal validators fail on both regression and stale
+positive headroom. Each validator owns its native baseline and explicit
+decrease-only `--emit-baseline` command. CI never writes baselines, and normal
+updates cannot admit a new debt owner or raise one dimension while another
+falls.
+
+Other checks remain zero-tolerance invariants, threshold/inventory guards, or
+environment-dependent evidence. They do not become numeric debt ratchets merely
+because they have a baseline file.
+
 ## What the gates protect
 
 The active checks are designed to catch drift in areas such as:

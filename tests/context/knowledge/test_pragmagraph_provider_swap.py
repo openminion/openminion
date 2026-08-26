@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from openminion.base.types import Message
 from openminion.modules.context.knowledge import (
     CAPABILITY_CITATIONS,
@@ -37,6 +39,8 @@ from tests.context.knowledge.fixtures import (
     write_graphify_payload as _write_shared_graphify_payload,
     write_pragmagraph_snapshot as _write_shared_pragmagraph_snapshot,
 )
+
+pytestmark = pytest.mark.package_integration
 
 
 def _write_graphify(path: Path) -> None:

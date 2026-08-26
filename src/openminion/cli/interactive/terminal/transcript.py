@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal, cast
 
 from rich.console import Console
 from rich.text import Text
@@ -11,12 +11,15 @@ from rich.text import Text
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.models import ChatMessage, MessageKind
+from openminion.cli.presentation.tool.progress import build_tool_event_from_progress
+from openminion.cli.status.tool_calls import format_public_tool_activity
 from openminion.cli.presentation.messages import (
     render_body,
     render_error_text,
     render_system_text,
     render_user_text,
 )
+from openminion.cli.ux.verbosity import VerbosityLevel
 
 from .streaming import (
     TerminalTurnHandle,
@@ -69,8 +72,9 @@ class TerminalTranscript:
         self._selected_message_id: str | None = None
         self._plain_spinner = bool(plain_spinner)
         self._show_response_time = bool(show_response_time)
-        self._verbosity: str = (
-            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity: VerbosityLevel = cast(
+            VerbosityLevel,
+            verbosity if verbosity in ("quiet", "normal", "verbose") else "normal",
         )
         self._hidden_tool_count: int = 0
         self._hidden_failed_count: int = 0
@@ -314,7 +318,14 @@ class TerminalTranscript:
         self._console.print(Text(message.body or ""))
 
     def set_verbosity(self, level: str) -> None:
-        self._verbosity = level if level in ("quiet", "normal", "verbose") else "normal"
+        self._verbosity = cast(
+            VerbosityLevel,
+            level if level in ("quiet", "normal", "verbose") else "normal",
+        )
+
+    @property
+    def verbosity(self) -> VerbosityLevel:
+        return self._verbosity
 
     def handle_tool_started(self, payload: dict[str, Any]) -> None:
         import time as _time
@@ -326,6 +337,9 @@ class TerminalTranscript:
         args = payload.get("args") or payload.get("arguments") or {}
         if not isinstance(args, dict):
             args = {}
+        event = build_tool_event_from_progress(
+            {**payload, "call_id": call_id, "tool_name": tool_name, "args": args}
+        )
         if call_id and call_id in self._live_narrated_call_ids:
             return
         if self._verbosity == "quiet":
@@ -338,13 +352,22 @@ class TerminalTranscript:
             if self._verbosity == "verbose"
             else self._remember_tool_start(tool_name, args)
         )
-        renderable = _render_in_progress_tool_block(tool_name, args)
+        rendered_tool_name = (
+            tool_name
+            if self._verbosity == "verbose"
+            else event.model_tool_name or tool_name
+        )
+        renderable = _render_in_progress_tool_block(
+            rendered_tool_name,
+            args,
+            public_title=self._verbosity != "verbose",
+        )
         handle = self._active_handle
         if handle is not None and hasattr(handle, "set_active_tool"):
             try:
                 handle.set_active_tool(
                     call_id=call_id or tool_name or "tool",
-                    tool_name=tool_name,
+                    tool_name=rendered_tool_name,
                     args=args,
                     started_at=_time.monotonic(),
                 )
@@ -361,8 +384,6 @@ class TerminalTranscript:
             self._live_narrated_call_ids.add(call_id)
 
     def handle_tool_completed(self, payload: dict[str, Any]) -> None:
-        from openminion.cli.presentation.models import ToolEvent
-
         call_id = str(payload.get("call_id") or payload.get("id") or "").strip()
         tool_name = str(
             payload.get("tool_name") or payload.get("name") or payload.get("tool") or ""
@@ -384,14 +405,16 @@ class TerminalTranscript:
         except (TypeError, ValueError):
             duration_ms = None
 
-        event = ToolEvent(
-            tool_name=tool_name,
-            args=args,
-            content=content,
-            full_content=content,
-            exit_code=exit_code,
-            duration_ms=duration_ms,
-            call_id=call_id,
+        event = build_tool_event_from_progress(
+            {
+                **payload,
+                "call_id": call_id,
+                "tool_name": tool_name,
+                "args": args,
+                "content": content,
+                "exit_code": exit_code,
+                "duration_ms": duration_ms,
+            }
         )
 
         handle = self._active_handle
@@ -454,8 +477,11 @@ class TerminalTranscript:
             self._completed_tool_signatures.add(signature)
             return False
         label = _tool_summary_label(
-            str(getattr(event, "tool_name", "") or "tool"),
-            dict(getattr(event, "args", {}) or {}),
+            str(
+                getattr(event, "model_tool_name", "")
+                or getattr(event, "tool_name", "")
+                or "tool"
+            ),
             getattr(event, "exit_code", None),
         )
         self._collapsed_tool_results[label] += 1
@@ -565,30 +591,11 @@ def _json_safe(value: Any) -> Any:
 
 def _tool_summary_label(
     tool_name: str,
-    args: dict[str, Any],
     exit_code: int | None,
 ) -> str:
-    name = (tool_name or "tool").strip() or "tool"
-    arg_preview = _tool_arg_preview(args)
+    name = format_public_tool_activity(tool_name, pending=False).rstrip(".")
     status = "failed" if exit_code not in (None, 0) else ""
-    label = f"{name}({arg_preview})" if arg_preview else name
-    return f"{label} {status}".strip()
-
-
-def _tool_arg_preview(args: dict[str, Any]) -> str:
-    for key in ("cmd", "command", "path", "file", "query", "pattern", "url"):
-        if key in args:
-            return _short_preview(args[key])
-    if not args:
-        return ""
-    return _short_preview(next(iter(args.values())))
-
-
-def _short_preview(value: Any, *, limit: int = 48) -> str:
-    text = str(value or "").strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
+    return f"{name} {status}".strip()
 
 
 def _copyable_text(message: ChatMessage) -> str | None:

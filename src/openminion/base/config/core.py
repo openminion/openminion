@@ -119,6 +119,7 @@ class AgentProfileConfig:
     """Per-agent profile configuration layered by `resolve_agent_config`."""
 
     name: str = ""
+    role: str = ""
     default_channel: str = ""
     thinking: str = ""
     provider: str = ""
@@ -170,6 +171,7 @@ class AgentProfileConfig:
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": self.name,
+            "role": self.role,
             "default_channel": self.default_channel,
             "thinking": self.thinking,
             "provider": self.provider,

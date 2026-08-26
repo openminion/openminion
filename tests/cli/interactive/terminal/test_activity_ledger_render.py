@@ -176,5 +176,6 @@ def test_push_activity_event_does_not_break_existing_tool_lifecycle() -> None:
         {"call_id": "c1", "tool_name": "bash", "args": {"command": "ls"}}
     )
     out = buf.getvalue()
-    # Just confirm something was rendered (running marker / verb).
-    assert "bash" in out.lower() or "ls" in out
+    assert "Using a tool..." in out
+    assert "bash" not in out.lower()
+    assert "ls" not in out

@@ -2472,6 +2472,102 @@ def test_brain_bridge_consumes_canonical_bootstrap_handles() -> None:
     assert service._config is config
 
 
+def test_brain_bridge_close_closes_owned_runtime_graph_before_provider() -> None:
+    close_order: list[str] = []
+
+    def closer(name: str) -> SimpleNamespace:
+        return SimpleNamespace(close=lambda: close_order.append(name))
+
+    service = object.__new__(BrainBridgeService)
+    service._runner = SimpleNamespace(
+        a2a_api=closer("a2a.close"),
+        context_api=closer("context.close"),
+        tool_api=closer("tool.close"),
+        memory_api=closer("memory.close"),
+        skill_api=closer("skill.close"),
+        policy_api=closer("policy.close"),
+        retrieve_api=closer("retrieve.close"),
+        goal_runtime=closer("goal.close"),
+        task_manager=closer("task.close"),
+        cron_api=closer("cron.close"),
+        session_api=closer("session.close"),
+    )
+    service._vector_sync = SimpleNamespace(
+        stop=lambda: close_order.append("vector.stop")
+    )
+    service._retrieve_service = None
+    service._action_policy_service = None
+    service._closed = False
+    service._llm_runtime = None
+    service._provider = SimpleNamespace(
+        close=lambda: close_order.append("provider.close")
+    )
+
+    service.close()
+    service.close()
+
+    assert close_order == [
+        "vector.stop",
+        "a2a.close",
+        "context.close",
+        "tool.close",
+        "memory.close",
+        "skill.close",
+        "policy.close",
+        "retrieve.close",
+        "goal.close",
+        "task.close",
+        "cron.close",
+        "session.close",
+        "provider.close",
+    ]
+
+
+def test_brain_bridge_close_does_not_construct_runner() -> None:
+    service = object.__new__(BrainBridgeService)
+    service._runner = None
+    service._closed = False
+    service._llm_runtime = None
+    service._provider = SimpleNamespace(close=lambda: None)
+
+    with patch.object(service, "_get_runner") as get_runner:
+        service.close()
+
+    get_runner.assert_not_called()
+
+
+def test_brain_bridge_close_preserves_injected_policy_and_retrieve() -> None:
+    close_order: list[str] = []
+    policy_api = SimpleNamespace(close=lambda: close_order.append("policy.close"))
+    retrieve_api = SimpleNamespace(close=lambda: close_order.append("retrieve.close"))
+    service = object.__new__(BrainBridgeService)
+    service._runner = SimpleNamespace(
+        a2a_api=None,
+        context_api=None,
+        tool_api=None,
+        memory_api=None,
+        skill_api=None,
+        policy_api=policy_api,
+        retrieve_api=retrieve_api,
+        goal_runtime=None,
+        task_manager=None,
+        cron_api=None,
+        session_api=SimpleNamespace(close=lambda: close_order.append("session.close")),
+    )
+    service._vector_sync = None
+    service._retrieve_service = object()
+    service._action_policy_service = object()
+    service._closed = False
+    service._llm_runtime = None
+    service._provider = SimpleNamespace(
+        close=lambda: close_order.append("provider.close")
+    )
+
+    service.close()
+
+    assert close_order == ["session.close", "provider.close"]
+
+
 def test_brain_bridge_source_has_no_runner_monkey_patches() -> None:
     from pathlib import Path
     import openminion.services.brain.service as bridge_module

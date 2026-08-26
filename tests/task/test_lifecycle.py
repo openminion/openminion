@@ -15,6 +15,53 @@ def _manager(tmp_path: Path) -> TaskManager:
     return TaskManager.from_cron_repository(repo)
 
 
+def test_task_manager_closes_only_owned_lifecycle_repository() -> None:
+    close_calls: list[str] = []
+
+    class LifecycleRepository:
+        def close(self) -> None:
+            close_calls.append("close")
+
+    borrowed = TaskManager(
+        cron_repository=object(),  # type: ignore[arg-type]
+        lifecycle_repository=LifecycleRepository(),  # type: ignore[arg-type]
+    )
+    borrowed.close()
+    assert close_calls == []
+
+    owned = TaskManager(
+        cron_repository=object(),  # type: ignore[arg-type]
+        lifecycle_repository=LifecycleRepository(),  # type: ignore[arg-type]
+        owns_lifecycle_repository=True,
+    )
+    owned.close()
+    owned.close()
+    assert close_calls == ["close"]
+
+
+def test_sqlite_cron_repository_closes_private_store_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    close_calls: list[str] = []
+
+    class Store:
+        def __init__(self, db_path: Path) -> None:
+            self.db_path = db_path
+
+        def close(self) -> None:
+            close_calls.append("close")
+
+    monkeypatch.setattr(
+        "openminion.modules.session.storage.repository.SQLiteSessionStore",
+        Store,
+    )
+    repository = create_sqlite_cron_repository(db_path=tmp_path / "cron.db")
+    repository.close()
+
+    assert close_calls == ["close"]
+
+
 def test_schedule_creates_lifecycle_record_and_schema(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     record = manager.schedule_task(

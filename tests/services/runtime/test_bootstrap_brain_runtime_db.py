@@ -79,10 +79,13 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         captured["mission_db_path"] = Path(path)
         return SimpleNamespace()
 
-    def _capture_goal_runtime(*, goal_store, mission_store, checkpoint_manager):
+    def _capture_goal_runtime(
+        *, goal_store, mission_store, checkpoint_manager, owns_stores
+    ):
         captured["goal_store"] = goal_store
         captured["mission_store"] = mission_store
         captured["checkpoint_manager"] = checkpoint_manager
+        captured["owns_stores"] = owns_stores
         return SimpleNamespace(goal_store=goal_store, mission_store=mission_store)
 
     with ExitStack() as stack:
@@ -229,4 +232,5 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     assert runner is fake_runner
     assert captured["goal_db_path"] == expected_runtime_db_path
     assert captured["mission_db_path"] == expected_runtime_db_path
+    assert captured["owns_stores"] is True
     assert captured["goal_db_path"] != session_db_path

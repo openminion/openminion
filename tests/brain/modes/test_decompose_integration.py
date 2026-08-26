@@ -20,6 +20,7 @@ from openminion.modules.brain.execution.orchestrate.handler import (
     ORCHESTRATE_MODE,
     OrchestrateMode,
 )
+from openminion.modules.brain.execution.orchestrate.strategies import LLMSynthesizer
 from openminion.modules.brain.execution.worktree_children import (
     accept_child_worktree_artifact,
     allocate_child_worktree,
@@ -28,9 +29,11 @@ from openminion.modules.brain.execution.worktree_children import (
 )
 from openminion.modules.brain.execution.child_tasks import (
     DecomposePayload,
+    SubtaskResult,
     SubtaskSpec,
 )
 from openminion.modules.brain.schemas import (
+    ActionMetrics,
     ActionResult,
     ActDecision,
     AdaptiveRevisionCheckpoint,
@@ -437,12 +440,17 @@ def _ctx(
 
 
 def _mode_result(
-    state: WorkingState, message: str, *, failed: bool = False
+    state: WorkingState,
+    message: str,
+    *,
+    failed: bool = False,
+    tokens_used: int = 0,
 ) -> ExecutionResult:
     action_result = ActionResult(
         command_id=f"cmd-{message}",
         status="failed" if failed else "success",
         summary=message,
+        metrics=ActionMetrics(tokens_used=tokens_used),
     )
     return ExecutionResult(
         status="error" if failed else "done",
@@ -450,6 +458,38 @@ def _mode_result(
         message=message,
         action_result=action_result,
     )
+
+
+def test_decompose_debits_child_a2a_and_token_usage(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "a", "goal": "A", "suggested_mode": "act"},
+            {"subtask_id": "b", "goal": "B", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code=label.lower(),
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=[label.lower()],
+            )
+            for label in ("A", "B")
+        ],
+    )
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, user_input, logger, depth
+        state.budgets_remaining.a2a_calls -= 1
+        return _mode_result(state, "child", tokens_used=781)
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert ctx.state.budgets_remaining.a2a_calls == 4
+    assert ctx.state.budgets_remaining.tokens == 4_438
+    assert result.action_result.metrics.tokens_used == 1_562
 
 
 def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None:
@@ -529,6 +569,47 @@ def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None
     assert aggregation["completed_required"] is True
 
 
+def test_decompose_synthesis_receives_child_artifact() -> None:
+    ctx, runner, _services = _ctx(subtasks=[])
+
+    LLMSynthesizer().synthesize(
+        ctx=ctx,
+        results=[
+            SubtaskResult(
+                subtask_id="implement",
+                goal="Implement the approved change",
+                status="completed",
+                mode_used="act",
+                output="Implementation ready",
+                child_artifact={
+                    "status": "completed",
+                    "integration_status": "pending_parent_review",
+                    "workspace": "/private/child-worktree",
+                    "diff": "secret diff" * 1_000,
+                    "touched_paths": ["src/change.py"],
+                    "artifact": {
+                        "status": "stored",
+                        "manifest_ref": "artifact://manifest-781",
+                        "bundle_sha256": "abc781",
+                    },
+                },
+            )
+        ],
+    )
+
+    synthesized_child = runner.llm_api.calls[-1]["context"]["subtasks"][0]
+    assert synthesized_child["child_artifact"] == {
+        "status": "completed",
+        "integration_status": "pending_parent_review",
+        "touched_paths": ["src/change.py"],
+        "artifact": {
+            "status": "stored",
+            "manifest_ref": "artifact://manifest-781",
+            "bundle_sha256": "abc781",
+        },
+    }
+
+
 def test_orchestrate_validation_does_not_fail_before_execution() -> None:
     ctx, _runner, _services = _ctx(
         subtasks=[
@@ -596,7 +677,10 @@ def test_decompose_child_state_does_not_inherit_parent_adaptive_plan_state() -> 
     child_state = mode._build_child_state(
         parent_state=ctx.state,
         child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
-        subtask=ctx.decision.subtasks[0],
+        child_context=mode._inheritance.build_child_context(
+            parent_state=ctx.state,
+            subtask=ctx.decision.subtasks[0],
+        ),
     )
 
     assert child_state.adaptive_satisfied_intent_ids == []
@@ -617,7 +701,10 @@ def test_decompose_child_state_resets_llm_call_usage() -> None:
     child_state = mode._build_child_state(
         parent_state=ctx.state,
         child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
-        subtask=ctx.decision.subtasks[0],
+        child_context=mode._inheritance.build_child_context(
+            parent_state=ctx.state,
+            subtask=ctx.decision.subtasks[0],
+        ),
     )
 
     assert child_state.llm_calls_used == 0
@@ -1200,6 +1287,31 @@ def test_decompose_prepare_rejects_subtask_count_over_limit() -> None:
 
     assert preparation.mode_result is not None
     assert "at most 5 subtasks" in str(preparation.mode_result.message)
+
+
+def test_decompose_prepare_rejects_unrepresentable_dependency_fan_in() -> None:
+    predecessors = [
+        {"subtask_id": f"dependency-{index}", "goal": f"Task {index}"}
+        for index in range(19)
+    ]
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            *predecessors,
+            {
+                "subtask_id": "final",
+                "goal": "Combine dependencies",
+                "depends_on": [item["subtask_id"] for item in predecessors],
+            },
+        ]
+    )
+    mode = OrchestrateMode()
+    mode._max_subtasks = 20
+
+    preparation = mode.prepare(ctx)
+
+    assert preparation.mode_result is not None
+    assert "dependency identifiers exceed" in str(preparation.mode_result.message)
+    assert ctx.state.child_task_order == []
 
 
 def test_decompose_prepare_falls_back_from_decompose_suggested_mode() -> None:

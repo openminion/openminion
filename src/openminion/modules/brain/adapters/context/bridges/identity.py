@@ -22,6 +22,7 @@ class BridgeIdentityClient:
         self._backing_store = backing_store
         self._system_prompt = str(system_prompt or "").strip()
         self._identity_ctl: Any | None = None
+        self._skill_client: Any | None = None
 
     def _compose_identity_text(
         self, *, base_text: str, agent_id: str, purpose: str
@@ -51,10 +52,21 @@ class BridgeIdentityClient:
             if parent.name == "state":
                 identity_db = parent.parent / DEFAULT_IDENTITY_DB_SUBPATH
                 break
+        self._skill_client = BridgeSkillClient(self._backing_store)
         return identity_ctl_cls(
             store=sqlite_identity_store_cls(identity_db),
-            skillctl=BridgeSkillClient(self._backing_store),
+            skillctl=self._skill_client,
         )
+
+    def close(self) -> None:
+        identity_ctl = self._identity_ctl
+        self._identity_ctl = None
+        if identity_ctl is not None:
+            identity_ctl.close()
+        skill_client = self._skill_client
+        self._skill_client = None
+        if skill_client is not None:
+            skill_client.close()
 
     def render(
         self,

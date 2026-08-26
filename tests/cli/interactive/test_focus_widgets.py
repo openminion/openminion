@@ -97,7 +97,7 @@ async def test_tool_block_widget_renders_exec_output_and_toggles_collapsed() -> 
         duration_ms=300,
         exit_code=0,
     )
-    widget = ToolBlockWidget(event)
+    widget = ToolBlockWidget(event, verbosity="verbose")
     app = _ToolBlockHarness(widget)
 
     async with app.run_test() as pilot:
@@ -116,7 +116,7 @@ async def test_tool_block_widget_renders_exec_output_and_toggles_collapsed() -> 
         await pilot.pause()
         assert widget.collapsed is False
         assert body.display is True
-        assert "copy keeps full output" in str(body.render())
+        assert "line 11" in str(body.render())
 
         await pilot.press("enter")
         await pilot.pause()
@@ -132,7 +132,7 @@ async def test_tool_block_widget_renders_diff_and_relative_path_hints() -> None:
         content="@@ -1 +1 @@\n-old\n+new",
         content_type="diff",
     )
-    widget = ToolBlockWidget(event)
+    widget = ToolBlockWidget(event, verbosity="verbose")
     app = _ToolBlockHarness(widget)
 
     async with app.run_test() as pilot:

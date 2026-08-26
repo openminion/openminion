@@ -14,6 +14,7 @@ from rich.text import Text
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.messages import looks_like_markdown
 from openminion.cli.status.tool_calls import (
+    format_public_tool_activity,
     format_tool_fallback_marker,
     format_tool_provenance_marker,
 )
@@ -399,12 +400,13 @@ def _render_tool_block(event: ToolEvent) -> Group:
     if event.tool_name in _DIFF_RENDER_TOOL_NAMES and _looks_like_unified_diff(
         body_for_detection
     ):
-        return _render_diff_block(event)
+        return _render_diff_block(event, public_title=True)
     return _render_plain_tool_block(
         event,
         cap=_TOOL_BLOCK_TRUNCATE_LINES,
         include_event_markers=True,
         hint_style="dim italic",
+        public_title=True,
     )
 
 
@@ -413,12 +415,13 @@ def _render_full_tool_block(event: ToolEvent, *, cap: int | None = None) -> Grou
     if event.tool_name in _DIFF_RENDER_TOOL_NAMES and _looks_like_unified_diff(
         body_for_detection
     ):
-        return _render_diff_block(event, cap=cap)
+        return _render_diff_block(event, cap=cap, public_title=False)
     return _render_plain_tool_block(
         event,
         cap=cap,
         include_event_markers=False,
         hint_style="dim",
+        public_title=False,
     )
 
 
@@ -428,10 +431,15 @@ def _render_plain_tool_block(
     cap: int | None,
     include_event_markers: bool,
     hint_style: str,
+    public_title: bool,
 ) -> Group:
     body_text = event.full_content or event.content or ""
     return Group(
-        _tool_title_row(event, include_event_markers=include_event_markers),
+        _tool_title_row(
+            event,
+            include_event_markers=include_event_markers,
+            public_title=public_title,
+        ),
         _collapsed_body_row(body_text, cap=cap, hint_style=hint_style),
     )
 
@@ -451,9 +459,16 @@ def _diff_line_style(line: str) -> str:
 
 
 def _render_diff_block(
-    event: ToolEvent, *, cap: int | None = _TOOL_BLOCK_TRUNCATE_LINES
+    event: ToolEvent,
+    *,
+    cap: int | None = _TOOL_BLOCK_TRUNCATE_LINES,
+    public_title: bool = True,
 ) -> Group:
-    title_row = _tool_title_row(event, include_event_markers=False)
+    title_row = _tool_title_row(
+        event,
+        include_event_markers=False,
+        public_title=public_title,
+    )
     body_text = (event.full_content or event.content or "").rstrip()
     if not body_text:
         body_text = "(no output)"
@@ -477,7 +492,12 @@ def _render_diff_block(
     return Group(title_row, body_row)
 
 
-def _tool_title_row(event: ToolEvent, *, include_event_markers: bool) -> Text:
+def _tool_title_row(
+    event: ToolEvent,
+    *,
+    include_event_markers: bool,
+    public_title: bool,
+) -> Text:
     exit_code = event.exit_code
     is_ok = exit_code in (None, 0)
     title_row = Text()
@@ -485,7 +505,15 @@ def _tool_title_row(event: ToolEvent, *, include_event_markers: bool) -> Text:
         marker_text(MARKER_TOOL_OK if is_ok else MARKER_TOOL_FAIL, bold=True)
     )
     title_row.append(" ")
-    title_row.append(_verb_form_title(event), style="bold")
+    title = (
+        format_public_tool_activity(
+            event.model_tool_name or event.tool_name,
+            pending=False,
+        )
+        if public_title
+        else _verb_form_title(event)
+    )
+    title_row.append(title, style="bold")
     if include_event_markers:
         title_row.append(_tool_event_markers(event))
     if exit_code is not None and exit_code != 0:
@@ -566,6 +594,8 @@ def _render_in_progress_tool_block(
     tool_name: str,
     args: dict[str, Any] | None = None,
     elapsed_seconds: float = 0.0,
+    *,
+    public_title: bool = True,
 ) -> Group:
     synthetic = ToolEvent(
         tool_name=tool_name,
@@ -573,13 +603,16 @@ def _render_in_progress_tool_block(
         content="",
         full_content="",
     )
-    verb = _verb_form_title(synthetic)
+    title = (
+        format_public_tool_activity(tool_name, pending=True)
+        if public_title
+        else f"Running {_verb_form_title(synthetic)}"
+    )
 
     title_row = Text()
     title_row.append_text(marker_text(MARKER_TOOL_RUNNING, bold=True))
     title_row.append(" ")
-    title_row.append("Running ", style="bold")
-    title_row.append(verb, style="bold")
+    title_row.append(title, style="bold")
     if int(max(0.0, elapsed_seconds)) > 0:
         title_row.append(
             f" · {_format_elapsed_seconds(elapsed_seconds)}",

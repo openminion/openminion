@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.package_integration
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RECONCILER_PATH = REPO_ROOT / "docs" / "scripts" / "reconcile_tracker_metadata.py"

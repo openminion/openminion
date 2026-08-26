@@ -6,7 +6,6 @@ from openminion.modules.memory.runtime.remote_transport import (
     RemoteMemoryStore,
     RemoteMemoryTransport,
 )
-from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.modules.memory.storage.capabilities import BackendCapabilities
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
@@ -92,15 +91,6 @@ def _resolve_postgres_url(config: Any) -> str:
     return ""
 
 
-def _resolve_artifactctl(artifactctl: Any | None) -> Any | None:
-    if artifactctl is not None:
-        return artifactctl
-    try:
-        return create_default_artifactctl()
-    except Exception:
-        return None
-
-
 def _sqlite_path_from_config(config: Any, *, default: Path) -> Path:
     if config is None:
         return default
@@ -184,17 +174,23 @@ def resolve_memory_backend(
                 "sqlalchemy is required for memory.postgres; install openminion[postgres]",
             ) from exc
         engine = sa.create_engine(postgres_url, future=True, pool_pre_ping=True)
+        postgres_kwargs: dict[str, Any] = {}
+        if artifactctl is not None:
+            postgres_kwargs["artifactctl"] = artifactctl
         store = PostgresMemoryStore(
             engine,
             database_path=db_path,
-            artifactctl=_resolve_artifactctl(artifactctl),
             owns_engine=True,
+            **postgres_kwargs,
         )
         return _resolved_backend("postgres", store)
 
+    sqlite_kwargs: dict[str, Any] = {}
+    if artifactctl is not None:
+        sqlite_kwargs["artifactctl"] = artifactctl
     store = SQLiteMemoryStore(
         _sqlite_path_from_config(config, default=db_path),
-        artifactctl=_resolve_artifactctl(artifactctl),
+        **sqlite_kwargs,
     )
     return _resolved_backend("sqlite", store)
 

@@ -181,6 +181,61 @@ def test_parallel_execution_strategy_respects_dependency_levels(monkeypatch) -> 
     ]
 
 
+def test_parallel_dependency_context_uses_declared_order(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "a", "goal": "A", "suggested_mode": "act"},
+            {"subtask_id": "b", "goal": "B", "suggested_mode": "act"},
+            {
+                "subtask_id": "c",
+                "goal": "C",
+                "suggested_mode": "act",
+                "depends_on": [" a ", "a", " b "],
+            },
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code=label.lower(),
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=[label.lower()],
+            )
+            for label in ("A", "B", "C")
+        ],
+    )
+    child_c_input = ""
+
+    def _fake_invoke(*, state, decision, user_input, logger, depth=0):
+        nonlocal child_c_input
+        del state, decision, logger, depth
+        label = user_input.rsplit("Subtask goal: ", 1)[1].strip()
+        if label == "A":
+            time.sleep(0.05)
+        if label == "C":
+            child_c_input = user_input
+        return _mode_result(ctx.state, f"output-{label}")
+
+    monkeypatch.setattr(
+        "openminion.modules.brain.execution.orchestrate.handler.invoke_decision_direct",
+        lambda runner, **kwargs: _fake_invoke(**kwargs),
+    )
+
+    OrchestrateMode(
+        strategy=ParallelExecutionStrategy(
+            side_effect_policy=ConservativeSideEffectPolicy(
+                parallel_writes_enabled=True
+            )
+        ),
+        allocator=EvenSplitBudgetAllocator(),
+    ).execute(ctx)
+
+    assert child_c_input.index('"subtask_id": "a"') < child_c_input.index(
+        '"subtask_id": "b"'
+    )
+    assert child_c_input.count('"subtask_id": "a"') == 1
+
+
 def test_parallel_execution_strategy_falls_back_to_sequential_when_unsafe(
     monkeypatch,
 ) -> None:

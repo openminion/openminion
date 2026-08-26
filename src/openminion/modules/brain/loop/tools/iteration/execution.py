@@ -82,10 +82,7 @@ def _apply_tool_failure_recovery(
     scratchpad = loop_state.scratchpad
     tool_name = tool_call.name.strip()
     pending = scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY)
-    if (
-        action_result.status == BRAIN_ACTION_STATUS_SUCCESS
-        and pending == tool_name
-    ):
+    if action_result.status == BRAIN_ACTION_STATUS_SUCCESS and pending == tool_name:
         scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY, None)
         scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, None)
         return

@@ -20,15 +20,27 @@ class SessctlAdapter:
         *,
         artifactctl: Any | None = None,
         telemetryctl: Any | None = None,
+        owned_artifactctl: Any | None = None,
     ) -> None:
         from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
         if isinstance(target, (str, Path)):
+            self._owns_store = True
             self.store = SQLiteSessionStore(target, artifactctl=artifactctl)
         else:
+            self._owns_store = False
             self.store = target
         self._telemetryctl = telemetryctl
+        self._owned_artifactctl = owned_artifactctl
         self._telemetry_turn_id: str | None = None
+
+    def close(self) -> None:
+        if self._owns_store:
+            self._owns_store = False
+            self.store.close()
+        if self._owned_artifactctl is not None:
+            artifactctl, self._owned_artifactctl = self._owned_artifactctl, None
+            artifactctl.close()
 
     def set_telemetry_context(
         self,

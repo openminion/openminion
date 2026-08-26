@@ -15,6 +15,7 @@ from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.diagnostics.status import (
     PhaseStatus,
+    StatusDetailCode,
     normalize_phase_status,
 )
 from openminion.services.security.policy import (
@@ -38,6 +39,7 @@ def _emit_prep_status(
     *,
     trace_id: str,
     detail_text: str,
+    detail_code: StatusDetailCode = "preparing_turn",
 ) -> None:
     if callback is None:
         return
@@ -45,6 +47,7 @@ def _emit_prep_status(
         status = normalize_phase_status(
             trace_id=trace_id,
             source_phase="DECIDE",
+            payload={"detail_code": detail_code},
             detail_text=detail_text,
         )
         callback(status)
@@ -116,6 +119,7 @@ class BrainBridgeTurnMixin:
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,
+            detail_code="preparing_turn",
             detail_text="Preparing turn...",
         )
         self._refresh_prep_identity_state()
@@ -125,6 +129,7 @@ class BrainBridgeTurnMixin:
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,
+            detail_code="loading_memory_context",
             detail_text="Loading memory context...",
         )
         runtime_system_prompt, gateway_system_context = self._prepare_runtime_contexts(
@@ -146,6 +151,7 @@ class BrainBridgeTurnMixin:
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,
+            detail_code="loading_session_history",
             detail_text="Loading session history...",
         )
         self._hydrate_runner_session_context(

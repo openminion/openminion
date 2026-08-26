@@ -419,8 +419,8 @@ def test_footer_owns_turn_state_without_taking_tool_event_ownership() -> None:
         )
     )
     assert "tool" not in state_history, state_history
-    assert any(label.startswith("Running Bash") for label in turn_status_history)
-    assert any(label.startswith("Ran Bash") for label in turn_status_history)
+    assert any(label == "Using a tool..." for label in turn_status_history)
+    assert any(label == "Finished using a tool." for label in turn_status_history)
     assert status_line.state == "idle"
 
 

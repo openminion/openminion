@@ -48,7 +48,7 @@ def test_title_row_starts_with_success_glyph() -> None:
         content="hi",
         exit_code=0,
     )
-    title = ToolBlockWidget(event)._header_text()
+    title = ToolBlockWidget(event, verbosity="verbose")._header_text()
     assert title.startswith(ToolBlockWidget.EXIT_GLYPH_OK + " ")
     assert "Ran" in title
     assert "echo hi" in title
@@ -61,7 +61,7 @@ def test_title_row_starts_with_failure_glyph() -> None:
         content="",
         exit_code=2,
     )
-    title = ToolBlockWidget(event)._header_text()
+    title = ToolBlockWidget(event, verbosity="verbose")._header_text()
     assert title.startswith(ToolBlockWidget.EXIT_GLYPH_FAIL + " ")
 
 
@@ -110,7 +110,7 @@ def test_long_args_summary_truncates_to_60_chars() -> None:
         content="",
         exit_code=0,
     )
-    title = ToolBlockWidget(event)._header_text()
+    title = ToolBlockWidget(event, verbosity="verbose")._header_text()
     assert "…" in title
     truncated = ToolBlockWidget._truncate_hint(long_command)
     assert len(truncated) <= 60
@@ -124,6 +124,6 @@ def test_short_args_summary_not_truncated() -> None:
         content="",
         exit_code=0,
     )
-    title = ToolBlockWidget(event)._header_text()
+    title = ToolBlockWidget(event, verbosity="verbose")._header_text()
     assert short_command in title
     assert "…" not in title

@@ -16,6 +16,7 @@ from openminion.cli.interactive.terminal.prompt_output import (
     write_terminal_control_via_prompt_output,
 )
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
 from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -43,8 +44,9 @@ def test_started_prints_yellow_narration() -> None:
     t, buf = _make("normal")
     t.handle_tool_started({"call_id": "c1", "tool_name": "Bash", "args": {"cmd": "ls"}})
     out = buf.getvalue()
-    assert "Running" in out
-    assert "Bash(ls)" in out
+    assert "Using a tool..." in out
+    assert "Bash" not in out
+    assert "ls" not in out
 
 
 def test_started_records_call_id_in_dedup_set() -> None:
@@ -61,10 +63,34 @@ def test_started_idempotent_on_duplicate_call_id() -> None:
     assert len(buf.getvalue()) == pre_len
 
 
+def test_started_tool_live_state_preserves_public_model_name() -> None:
+    t, buf = _make("normal")
+    handle = TerminalTurnHandle(t._console)
+    t._active_handle = handle
+
+    t.handle_tool_started(
+        {
+            "call_id": "search-1",
+            "tool_name": "search.serper.search",
+            "model_tool_name": "web.search",
+            "args": {"query": "private query"},
+        }
+    )
+
+    assert handle._active_tool is not None
+    assert handle._active_tool["tool_name"] == "web.search"
+    t._console.print(handle._render())
+    rendered = buf.getvalue()
+    assert "Searching the web..." in rendered
+    assert "Using a tool..." not in rendered
+    assert "search.serper.search" not in rendered
+    assert "private query" not in rendered
+
+
 def test_started_handles_empty_call_id() -> None:
     t, buf = _make("normal")
     t.handle_tool_started({"tool_name": "Bash", "args": {"cmd": "ls"}})
-    assert "Running" in buf.getvalue()
+    assert "Using a tool..." in buf.getvalue()
     assert "" not in t._live_narrated_call_ids
 
 
@@ -78,7 +104,7 @@ def test_started_falls_back_when_live_mount_rejects_block() -> None:
     t._active_handle = _BrokenHandle()
     t.handle_tool_started({"call_id": "c1", "tool_name": "Bash", "args": {"cmd": "ls"}})
 
-    assert "Running" in buf.getvalue()
+    assert "Using a tool..." in buf.getvalue()
     assert "c1" in t._live_narrated_call_ids
 
 
@@ -103,7 +129,8 @@ def test_completed_prints_final_block_normal_mode() -> None:
         }
     )
     out = buf.getvalue()
-    assert "Running" in out
+    assert "Using a tool..." in out
+    assert "Finished using a tool." in out
     assert "file1" in out
     assert "file2" in out
 
@@ -216,7 +243,7 @@ def test_repeated_tool_start_is_collapsed_by_signature() -> None:
     t.handle_tool_started({"call_id": "c2", **payload})
 
     out = buf.getvalue()
-    assert out.count("Running web.search(MSFT stock)") == 1
+    assert out.count("Searching the web...") == 1
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
 
@@ -237,9 +264,32 @@ def test_repeated_tool_failure_result_is_collapsed_by_signature() -> None:
     out = buf.getvalue()
     assert out.count("tool_budget_calls_exceeded") == 1
     assert "1 repeated tool result collapsed" in out
-    assert "web.search(MSFT stock) failed ×1" in out
+    assert "Searched the web failed ×1" in out
+    assert "MSFT stock" not in out
     assert "c1" in t._live_narrated_call_ids
     assert "c2" in t._live_narrated_call_ids
+
+
+def test_completed_tool_preserves_model_tool_name_for_public_title() -> None:
+    t, buf = _make("normal")
+
+    t.handle_tool_completed(
+        {
+            "call_id": "search-1",
+            "tool_name": "search.serper.search",
+            "model_tool_name": "web.search",
+            "runtime_tool_name": "search.serper.search",
+            "runtime_binding_id": "runtime.search.serper",
+            "args": {"query": "private query"},
+            "content": "one result",
+            "exit_code": 0,
+        }
+    )
+
+    out = buf.getvalue()
+    assert "Searched the web." in out
+    assert "search.serper.search" not in out
+    assert "private query" not in out
 
 
 def test_same_tool_args_with_different_result_still_renders() -> None:
@@ -359,8 +409,8 @@ def test_started_during_live_turn_appends_running_block_via_handle() -> None:
     console = Console(file=rendered, force_terminal=False, width=160)
     console.print(handle.renderables[0])
     out = rendered.getvalue()
-    assert "Running" in out
-    assert "file.list_dir(.)" in out
+    assert "List Directory in progress..." in out
+    assert "file.list_dir" not in out
     assert "0s" not in out
 
 
@@ -788,7 +838,8 @@ def test_e2e_normal_mode_renders_in_progress_and_final_blocks() -> None:
     runtime = _ScriptedLifecycleRuntime(content="file1\nfile2\n")
     _run_e2e(transcript, runtime)
     out = buf.getvalue()
-    assert "Bash(ls)" in out  # verb-form title on the final block
+    assert "Finished using a tool." in out
+    assert "Bash" not in out
     assert "file1" in out  # final block body
     assert "file2" in out
     assert "done." in out  # agent reply streamed

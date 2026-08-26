@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from openminion.modules.brain.adapters.llm import _extract_structured_output
 from openminion.modules.brain.interfaces import (
@@ -625,6 +625,33 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(len(res_art["artifact_refs"]), 1)
         self.assertEqual(res_art["artifact_refs"][0]["ref"], "art_123")
 
+    def test_tool_adapter_closes_only_its_default_artifactctl(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+        default_artifactctl = MagicMock()
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch(
+                "openminion.modules.brain.adapters.tool.runtime.create_default_artifactctl",
+                return_value=default_artifactctl,
+            ),
+        ):
+            adapter = ToolAdapter(workspace_root=Path(tmp))
+            adapter.close()
+            adapter.close()
+
+        default_artifactctl.close.assert_called_once_with()
+
+        injected_artifactctl = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                artifactctl=injected_artifactctl,
+            )
+            adapter.close()
+
+        injected_artifactctl.close.assert_not_called()
+
     def test_tool_adapter_uses_policy_workspace_root(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.modules.tool import Policy
@@ -1086,6 +1113,36 @@ class MemoryAdapterTests(unittest.TestCase):
 
 
 class SessctlAdapterTests(unittest.TestCase):
+    def test_owned_artifactctl_closes_with_borrowed_store(self) -> None:
+        from openminion.modules.brain.adapters.session import SessctlAdapter
+
+        close_calls: list[str] = []
+        artifactctl = SimpleNamespace(close=lambda: close_calls.append("artifact"))
+        adapter = SessctlAdapter(
+            SimpleNamespace(),
+            owned_artifactctl=artifactctl,
+        )
+
+        adapter.close()
+        adapter.close()
+
+        self.assertEqual(close_calls, ["artifact"])
+
+    def test_owned_artifactctl_closes_with_adapter(self) -> None:
+        from openminion.modules.brain.adapters.session import SessctlAdapter
+
+        close_calls: list[str] = []
+        artifactctl = SimpleNamespace(close=lambda: close_calls.append("artifact"))
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = SessctlAdapter(
+                Path(tmp) / "sessions.db",
+                artifactctl=artifactctl,
+                owned_artifactctl=artifactctl,
+            )
+            adapter.close()
+            adapter.close()
+        self.assertEqual(close_calls, ["artifact"])
+
     def test_real_session_adapter(self) -> None:
         try:
             importlib.import_module("openminion.modules.session")
@@ -1295,6 +1352,67 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         res = adapter.build(session_id="s1", agent_id="a1", purpose="decide", budget={})
         self.assertEqual(res, {"pack_version": "123"})
         mock_svc.build_pack.assert_called_once()
+
+    def test_context_adapter_close_delegates_to_service(self) -> None:
+        from openminion.modules.brain.adapters.context import ContextCtlAdapter
+
+        mock_svc = fake_context_service(pack=fake_context_pack({"pack_version": "1"}))
+        owned_clients = [MagicMock() for _ in range(4)]
+        adapter = ContextCtlAdapter(
+            mock_svc,
+            owned_identity_client=owned_clients[0],
+            owned_memory_client=owned_clients[1],
+            owned_artifact_client=owned_clients[2],
+            owned_skill_client=owned_clients[3],
+        )
+
+        adapter.close()
+        adapter.close()
+
+        mock_svc.close.assert_called_once_with()
+        for client in owned_clients:
+            client.close.assert_called_once_with()
+
+    def test_context_bridge_close_uses_only_realized_resources(self) -> None:
+        from openminion.modules.brain.adapters.context.bridges import (
+            BridgeArtifactClient,
+            BridgeIdentityClient,
+            BridgeMemoryClient,
+            BridgeSkillClient,
+        )
+
+        identity = BridgeIdentityClient(backing_store=object())
+        identity._identity_ctl = MagicMock()
+        identity._skill_client = MagicMock()
+        identity_ctl = identity._identity_ctl
+        nested_skill = identity._skill_client
+
+        memory = BridgeMemoryClient(backing_store=object())
+        memory._memory_ctl = MagicMock()
+        memory_ctl = memory._memory_ctl
+
+        artifact = BridgeArtifactClient(backing_store=object())
+        artifact._artifact_ctl = MagicMock()
+        artifact_ctl = artifact._artifact_ctl
+
+        skill = BridgeSkillClient(backing_store=object())
+        skill._skill_svc = MagicMock()
+        skill_svc = skill._skill_svc
+
+        for client in (identity, memory, artifact, skill):
+            client.close()
+            client.close()
+
+        identity_ctl.close.assert_called_once_with()
+        nested_skill.close.assert_called_once_with()
+        memory_ctl.close.assert_called_once_with()
+        artifact_ctl.close.assert_called_once_with()
+        skill_svc.close.assert_called_once_with()
+
+        unrealized = BridgeIdentityClient(backing_store=object())
+        unrealized.close()
+        self.assertIsNone(unrealized._identity_ctl)
+        self.assertIsNone(unrealized._skill_client)
 
     def test_context_adapter_derives_prompt_and_runtime_tools_from_single_bundle(
         self,

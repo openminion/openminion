@@ -11,6 +11,7 @@ from textual.widgets import Label, Static
 
 from openminion.cli.presentation.animation import AnimationSpec
 from openminion.cli.status.tool_calls import (
+    format_public_tool_activity,
     format_tool_fallback_marker,
     format_tool_provenance_marker,
 )
@@ -189,17 +190,27 @@ class ToolBlockWidget(Widget):
 
     def _header_text(self) -> str:
         glyph = self._exit_glyph()
-        present, past = verbs_for_tool(self._tool_event.tool_name)
-        verb = present if self._pending else past
-        raw_hint = tool_context_hint(self._tool_event.tool_name, self._tool_event.args)
-        hint = self._truncate_hint(raw_hint)
-        head = f"{glyph} {verb} {hint or self._tool_event.tool_name}"
-        provenance_suffix = self._provenance_suffix()
-        fallback_suffix = format_tool_fallback_marker(
-            runtime_fallback_used=self._tool_event.runtime_fallback_used,
-            runtime_fallback_chain=self._tool_event.runtime_fallback_chain,
-        )
-        head = f"{head}{provenance_suffix}{fallback_suffix}"
+        if self.verbosity != "verbose":
+            title = format_public_tool_activity(
+                self._tool_event.model_tool_name or self._tool_event.tool_name,
+                pending=self._pending,
+            )
+            head = f"{glyph} {title}"
+        else:
+            present, past = verbs_for_tool(self._tool_event.tool_name)
+            verb = present if self._pending else past
+            raw_hint = tool_context_hint(
+                self._tool_event.tool_name,
+                self._tool_event.args,
+            )
+            hint = self._truncate_hint(raw_hint)
+            head = f"{glyph} {verb} {hint or self._tool_event.tool_name}"
+            provenance_suffix = self._provenance_suffix()
+            fallback_suffix = format_tool_fallback_marker(
+                runtime_fallback_used=self._tool_event.runtime_fallback_used,
+                runtime_fallback_chain=self._tool_event.runtime_fallback_chain,
+            )
+            head = f"{head}{provenance_suffix}{fallback_suffix}"
         duration = self._duration_suffix()
         if duration:
             return f"{head} · {duration}"

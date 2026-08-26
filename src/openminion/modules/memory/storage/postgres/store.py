@@ -90,6 +90,7 @@ class PostgresMemoryStore(MemoryStore):
     ) -> None:
         self._engine = pool
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         self._owns_engine = owns_engine
         self._lock = threading.RLock()
         placeholder_path = (
@@ -100,7 +101,13 @@ class PostgresMemoryStore(MemoryStore):
         self._bootstrap_schema(placeholder_path)
 
     def close(self) -> None:
+        if self._owns_artifactctl and self._artifactctl is not _ARTIFACTCTL_UNSET:
+            self._owns_artifactctl = False
+            artifactctl = self._artifactctl
+            self._artifactctl = None
+            artifactctl.close()
         if self._owns_engine:
+            self._owns_engine = False
             self._engine.dispose()
 
     @contextmanager

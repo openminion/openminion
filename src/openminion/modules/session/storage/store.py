@@ -294,6 +294,7 @@ class SQLiteSessionStore(SessionStore):
     ) -> bool:
         self._env = resolve_environment_config_with_explicit_env(env)
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         raw_db_path = str(database_path).strip()
         is_memory = raw_db_path == ":memory:"
         self._path = Path(":memory:") if is_memory else _resolve_db_path(database_path)
@@ -449,6 +450,11 @@ class SQLiteSessionStore(SessionStore):
             close_fn = getattr(self._record_store, "close", None)
             if callable(close_fn):
                 close_fn()
+            if self._owns_artifactctl and self._artifactctl is not _ARTIFACTCTL_UNSET:
+                self._owns_artifactctl = False
+                artifactctl = self._artifactctl
+                self._artifactctl = None
+                artifactctl.close()
 
     def _configure_connection(self) -> None:
         if self._conn is None:

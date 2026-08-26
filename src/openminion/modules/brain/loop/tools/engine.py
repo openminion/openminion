@@ -469,16 +469,16 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 if tool_calls
                 else ""
             )
-            if selected_tool_name:
-                profile = self.profile
-                loop_state = self.loop_state
-                _set_turn_progress(
-                    loop_state,
-                    llm_call_count=self.loop_state.llm_calls,
-                    llm_call_limit=_effective_cap(profile, loop_state),
-                    progress_phase="thinking...",
-                    tool_name=selected_tool_name,
-                )
+            profile = self.profile
+            loop_state = self.loop_state
+            _set_turn_progress(
+                loop_state,
+                llm_call_count=self.loop_state.llm_calls,
+                llm_call_limit=_effective_cap(profile, loop_state),
+                progress_phase="thinking...",
+                tool_name=selected_tool_name,
+                detail_code="" if selected_tool_name else "composing_answer",
+            )
             emit_adaptive_status(
                 self.loop_ctx,
                 profile=self.profile,

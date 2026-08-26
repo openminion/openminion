@@ -37,6 +37,17 @@ StatusKey = Literal[
     "working",
 ]
 
+StatusDetailCode = Literal[
+    "plan_checkpoint",
+    "request_readiness",
+    "closure_gate",
+    "preparing_turn",
+    "loading_memory_context",
+    "loading_session_history",
+    "thinking",
+    "composing_answer",
+]
+
 _STATUS_LABELS: dict[StatusKey, str] = {
     "clarifying": "Clarifying request...",
     "analyzing": "Analyzing request...",
@@ -407,6 +418,8 @@ def _step_progress_for_event(
     detail_code = (
         "closure_gate" if normalized_event.startswith("brain.closure_gate.") else None
     )
+    if detail_code is None:
+        detail_code = str(payload.get("detail_code", "") or "").strip() or None
     return (
         _coerce_int(payload.get("step_index")),
         _coerce_int(payload.get("step_total")),
@@ -603,6 +616,7 @@ def phase_status_from_runtime(
 
 __all__ = [
     "PhaseStatus",
+    "StatusDetailCode",
     "StatusKey",
     "coerce_phase_status",
     "format_phase_status_text",

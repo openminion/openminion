@@ -88,20 +88,18 @@ class PrecisionRecallOptions:
 
 
 class SophiagraphRecallAdapter:
-    """Run supported Sophiagraph stages against the selected memory backend."""
+    """Run supported Sophiagraph retrieval stages."""
 
-    def __init__(self, *, backend: Any, provider: str) -> None:
+    def __init__(self, *, backend: Any) -> None:
         self._backend = backend
-        self._provider = str(provider or "").strip().lower()
 
     @property
     def capabilities(self) -> RecallCapabilities:
-        available = self._provider == "sophiagraph"
         return RecallCapabilities(
-            keyword=available,
-            graph=available,
-            recency=available,
-            trust=available,
+            keyword=True,
+            graph=True,
+            recency=True,
+            trust=True,
         )
 
     def retrieve(
@@ -114,14 +112,6 @@ class SophiagraphRecallAdapter:
         minimum_score: float,
         graph_depth: int,
     ) -> RecallOutcome:
-        if self._provider == "none":
-            return RecallOutcome(status="disabled", reason="backend_none")
-        if self._provider != "sophiagraph":
-            return RecallOutcome(
-                status="unsupported",
-                reason="precision_recall_unsupported",
-            )
-
         normalized_query = str(query or "").strip()
         normalized_scopes = [
             str(scope or "").strip() for scope in scopes if str(scope or "").strip()

@@ -457,7 +457,9 @@ def execute_action_dispatch(
             {
                 "target_agent_id": command.target_agent_id,
                 "method": command.method,
-                "params": command.params,
+                "has_delegation_context": bool(
+                    command.params.get("delegation_context")
+                ),
                 **lineage,
             },
             trace_id=state.trace_id,
@@ -515,7 +517,11 @@ def execute_action_dispatch(
         if job is None:
             logger.emit(
                 "a2a.completed",
-                {"status": normalized.status, "summary": normalized.summary, **lineage},
+                {
+                    "status": normalized.status,
+                    "has_summary": bool(normalized.summary),
+                    **lineage,
+                },
                 trace_id=state.trace_id,
                 artifact_refs=[a.ref for a in normalized.artifact_refs],
                 memory_refs=normalized.memory_refs,

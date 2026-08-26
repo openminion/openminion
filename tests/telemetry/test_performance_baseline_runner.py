@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
+import types
 from pathlib import Path
 
 
@@ -23,6 +25,40 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _bound_identity(module, **kwargs):
+    identity = module._measurement_identity(**kwargs)
+    runtime_config = dict(identity["runtime_config"])
+    runtime_config.update(
+        {
+            "python_executable": sys.executable,
+            "workspace_root": str(_SCRIPT_PATH.parents[2].parent),
+        }
+    )
+    identity.update(
+        {
+            "git_head": "a" * 40,
+            "dirty_tree_fingerprint": "b" * 64,
+            "runner_source_sha256": "c" * 64,
+            "config_hash": module._stable_json_hash(runtime_config),
+            "runtime_config": runtime_config,
+        }
+    )
+    return identity
+
+
+def _omfla_options(module, output_root: Path):
+    return module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=output_root,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=60,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
 
 
 def test_runner_script_importable() -> None:
@@ -157,7 +193,8 @@ def test_canonical_help_command_uses_root_help_and_explicit_data_root(
 
 def test_comparison_rejects_identity_mismatch() -> None:
     module = _load_module()
-    current_identity = module._measurement_identity(
+    current_identity = _bound_identity(
+        module,
         scenario_id="cold_focus_startup",
         command="python -m openminion --data-root /tmp/a --help",
         measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
@@ -189,9 +226,49 @@ def test_comparison_rejects_identity_mismatch() -> None:
     assert "command" in result["identity_errors"]
 
 
+def test_comparison_rejects_v2_artifact_for_v3_thresholds() -> None:
+    module = _load_module()
+    current_identity = _bound_identity(
+        module,
+        scenario_id="simple_turn",
+        command="replay_fixture:simple_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="fixture-v1",
+    )
+    baseline_identity = dict(current_identity)
+    baseline_identity["artifact_schema_version"] = "pomv2.performance.v2"
+
+    result = module._threshold_result(
+        current={
+            "count": 5,
+            "ok_count": 5,
+            "wall_time_ms": {"p95": 10, "coefficient_of_variation": 0.0},
+            "measurement_identity": current_identity,
+        },
+        baseline={
+            "scenarios": {
+                "simple_turn": {
+                    "wall_time_ms": {
+                        "p95": 10,
+                        "coefficient_of_variation": 0.0,
+                    },
+                    "measurement_identity": baseline_identity,
+                }
+            }
+        },
+        scenario_id="simple_turn",
+        threshold_mode="hard",
+    )
+
+    assert result["status"] == "ineligible"
+    assert result["reason"] == "artifact schema version mismatch"
+    assert result["identity_errors"] == ["artifact_schema_version"]
+
+
 def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
     module = _load_module()
-    identity = module._measurement_identity(
+    identity = _bound_identity(
+        module,
         scenario_id="simple_turn",
         command="replay_fixture:simple_turn",
         measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
@@ -225,7 +302,8 @@ def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
 
 def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
     module = _load_module()
-    identity = module._measurement_identity(
+    identity = _bound_identity(
+        module,
         scenario_id="simple_turn",
         command="replay_fixture:simple_turn",
         measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
@@ -263,6 +341,39 @@ def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
     assert "variance" in result["reason"]
 
 
+def test_summary_rejects_mixed_sample_identities() -> None:
+    module = _load_module()
+    first_identity = _bound_identity(
+        module,
+        scenario_id="simple_turn",
+        command="replay_fixture:simple_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="fixture-v1",
+    )
+    second_identity = dict(first_identity)
+    second_identity["git_head"] = "d" * 40
+    runs = [
+        {
+            "scenario_id": "simple_turn",
+            "sample_index": sample_index,
+            "ok": True,
+            "provider_variance_class": module.LOCAL_VARIANCE,
+            "measurement_identity": identity,
+            "metrics": {"wall_time_ms": 10},
+        }
+        for sample_index, identity in enumerate((first_identity, second_identity))
+    ]
+
+    summary = module.summarize_runs(runs, threshold_mode="off")
+
+    scenario = summary["scenarios"]["simple_turn"]
+    assert scenario["identity_incompatibilities"] == [
+        {"sample_index": 1, "identity_errors": ["git_head"]}
+    ]
+    assert scenario["threshold_result"]["reason"] == "mixed sample identities"
+    assert module._invalid_sample_failures(summary) == ["simple_turn"]
+
+
 def test_hard_gate_failures_only_return_failed_scenarios_in_hard_mode() -> None:
     module = _load_module()
     summary = {
@@ -278,6 +389,79 @@ def test_hard_gate_failures_only_return_failed_scenarios_in_hard_mode() -> None:
     assert module._hard_gate_failures(summary) == ["local_regression"]
     summary["threshold_mode"] = "warn"
     assert module._hard_gate_failures(summary) == []
+
+
+def test_main_rejects_invalid_samples_when_thresholds_are_off(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "run_baseline",
+        lambda _options, _scenarios: {
+            "scenario_count": 1,
+            "run_count": 1,
+            "threshold_mode": "off",
+            "scenarios": {
+                "repeated_local_turns": {
+                    "count": 1,
+                    "ok_count": 0,
+                    "threshold_result": {"status": "not_applicable"},
+                }
+            },
+        },
+    )
+
+    exit_code = module.main(
+        [
+            "--scenarios",
+            "repeated_local_turns",
+            "--threshold-mode",
+            "off",
+            "--output-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_main_preserves_selected_virtualenv_python(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    selected_python = tmp_path / "python"
+    selected_python.symlink_to(Path(sys.executable))
+    captured: dict[str, Path] = {}
+
+    def run_baseline(options, _scenarios):
+        captured["python"] = options.python
+        return {
+            "scenario_count": 0,
+            "run_count": 0,
+            "threshold_mode": "off",
+            "scenarios": {},
+        }
+
+    monkeypatch.setattr(module, "run_baseline", run_baseline)
+
+    exit_code = module.main(
+        [
+            "--scenarios",
+            "simple_turn",
+            "--threshold-mode",
+            "off",
+            "--output-root",
+            str(tmp_path / "artifacts"),
+            "--python",
+            str(selected_python),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["python"] == selected_python.absolute()
 
 
 def test_local_status_scenario_records_required_metric_keys() -> None:
@@ -306,6 +490,28 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
         "rss_delta_bytes",
         "tracemalloc_current_bytes",
         "tracemalloc_peak_bytes",
+        "tracemalloc_overhead_bytes",
+        "current_rss_bytes",
+        "max_rss_bytes",
+        "process_tree_current_rss_bytes",
+        "thread_count",
+        "async_task_count",
+        "child_process_count",
+        "file_descriptor_count",
+        "open_file_count",
+        "network_connection_count",
+        "queue_depths",
+        "cache_cardinalities",
+        "phase",
+        "sample_index",
+        "elapsed_ms",
+        "completed_turn_count",
+        "terminal_fact",
+        "measured_process_id",
+        "children_included",
+        "external_services_included",
+        "process_tree_members",
+        "availability_reasons",
         "tool_call_count",
     ):
         assert key in run.metrics
@@ -313,6 +519,195 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     assert run.metrics["wall_time_ns"] >= 0
     assert run.metrics["measurement_resolution"] == "perf_counter_ns"
     assert "local_status_collect_ns" in run.metrics["phase_timings_ns"]
+    assert run.metrics["rss_end_bytes"] == run.metrics["current_rss_bytes"]
+    assert run.metrics["measured_process_id"] == os.getpid()
+    assert run.metrics["terminal_fact"] is None
+    assert run.metrics["availability_reasons"]["terminal_fact"] == "not_applicable"
+    assert run.measurement_identity["artifact_schema_version"] == (
+        "pomv2.performance.v3"
+    )
+    for key in (
+        "git_head",
+        "dirty_tree_fingerprint",
+        "runner_source_sha256",
+        "config_hash",
+        "provider_posture",
+        "model_posture",
+    ):
+        assert key in run.measurement_identity
+
+
+def test_process_tree_bounds_members_without_publishing_partial_rss(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+
+    class FakePsutilError(Exception):
+        pass
+
+    class FakeChild:
+        def __init__(self, pid: int, *, readable: bool = True) -> None:
+            self.pid = pid
+            self._readable = readable
+
+        def memory_info(self):
+            if not self._readable:
+                raise FakePsutilError
+            return types.SimpleNamespace(rss=10)
+
+    class FakeProcess:
+        def __init__(self, _pid: int) -> None:
+            self.pid = _pid
+
+        def memory_info(self):
+            return types.SimpleNamespace(rss=100)
+
+        def children(self, *, recursive: bool):
+            assert recursive is True
+            return [FakeChild(index + 2) for index in range(65)] + [
+                FakeChild(67, readable=False)
+            ]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        types.SimpleNamespace(Process=FakeProcess, Error=FakePsutilError),
+    )
+
+    metrics = module._process_rss_metrics(1)
+
+    assert metrics["child_process_count"] == 66
+    assert len(metrics["process_tree_members"]) == module.PROCESS_TREE_MEMBER_LIMIT
+    assert metrics["process_tree_current_rss_bytes"] is None
+    assert metrics["availability_reasons"]["process_tree_members"] == (
+        "member_limit_reached"
+    )
+    assert metrics["availability_reasons"]["process_tree_current_rss_bytes"] == (
+        "descendant_rss_unavailable"
+    )
+
+
+def test_finish_inventory_does_not_inflate_in_process_tracemalloc_peak(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    original_process_metrics = module._process_metrics
+    process_metric_calls = 0
+    retained_finish_allocation: list[bytearray] = []
+
+    def allocating_finish_inventory(process_id=None):
+        nonlocal process_metric_calls
+        process_metric_calls += 1
+        if process_metric_calls == 2:
+            retained_finish_allocation.append(bytearray(2_000_000))
+        return original_process_metrics(process_id)
+
+    monkeypatch.setattr(module, "_process_metrics", allocating_finish_inventory)
+
+    run = module.run_scenario(
+        "local_status_tool_turn",
+        module.RunOptions(
+            workspace_root=Path(__file__).resolve().parents[3],
+            output_root=tmp_path,
+            python=Path(sys.executable),
+            runs=1,
+            timeout_seconds=5,
+            include_importtime=False,
+            profile=False,
+        ),
+    )
+
+    assert process_metric_calls == 2
+    assert retained_finish_allocation
+    assert run.metrics["tracemalloc_peak_bytes"] < 1_000_000
+
+
+def test_focus_startup_samples_the_subprocess(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module.run_scenario(
+        "warm_focus_startup",
+        module.RunOptions(
+            workspace_root=Path(__file__).resolve().parents[3],
+            output_root=tmp_path,
+            python=Path(sys.executable),
+            runs=1,
+            timeout_seconds=15,
+            include_importtime=False,
+            profile=False,
+        ),
+    )
+
+    assert run.ok is True, run.error
+    assert run.metrics["phase"] == "startup"
+    assert run.metrics["measured_process_id"] != os.getpid()
+    assert run.metrics["process_sample_count"] > 0
+    assert run.metrics["current_rss_bytes"] > 0
+    assert (
+        run.metrics["sampled_peak_current_rss_bytes"]
+        >= (run.metrics["current_rss_bytes"])
+    )
+    assert run.metrics["max_rss_bytes"] is None
+    assert run.metrics["availability_reasons"]["max_rss_bytes"] == "not_supported"
+    assert run.metrics["tracemalloc_current_bytes"] is None
+    assert run.metrics["harness_tracemalloc_current_bytes"] > 0
+    assert run.metrics["availability_reasons"]["tracemalloc_current_bytes"] == (
+        "not_supported_for_subprocess"
+    )
+
+
+def test_startup_loop_uses_one_full_resource_inventory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+    full_calls = 0
+    tree_calls = 0
+    current_calls = 0
+    full_metrics = module._process_metrics
+    tree_metrics = module._process_rss_metrics
+    current_rss = module._current_rss_bytes
+
+    def count_full(process_id=None):
+        nonlocal full_calls
+        full_calls += 1
+        return full_metrics(process_id)
+
+    def count_tree(process_id=None):
+        nonlocal tree_calls
+        tree_calls += 1
+        return tree_metrics(process_id)
+
+    def count_current(process_id=None):
+        nonlocal current_calls
+        current_calls += 1
+        return current_rss(process_id)
+
+    monkeypatch.setattr(module, "_process_metrics", count_full)
+    monkeypatch.setattr(module, "_process_rss_metrics", count_tree)
+    monkeypatch.setattr(module, "_current_rss_bytes", count_current)
+
+    completed, metrics = module._run_subprocess_measured(
+        [sys.executable, "-c", "import time; time.sleep(0.03)"],
+        options=options,
+        data_root=tmp_path,
+    )
+
+    assert completed.returncode == 0
+    assert metrics["process_sample_count"] > 0
+    assert full_calls == 1
+    assert tree_calls == 1
+    assert current_calls > 1
 
 
 def test_deterministic_full_turn_records_complete_turn_metrics(tmp_path: Path) -> None:
@@ -504,6 +899,7 @@ def test_telemetry_export_queue_flushes_noncritical_events() -> None:
     assert run.metrics["telemetry_events_enqueued"] == 100
     assert run.metrics["telemetry_events_exported"] == 100
     assert run.metrics["telemetry_queue_depth"] == 0
+    assert run.metrics["queue_depths"] == {"telemetry.noncritical_export": 0}
     assert run.metrics["telemetry_queue_drops"] == 0
     assert run.metrics["telemetry_queue_flush_failures"] == 0
 
@@ -528,6 +924,34 @@ def test_transcript_retention_growth_caps_working_set() -> None:
     assert run.metrics["retained_messages"] == run.metrics["retention_limit"]
     assert run.metrics["transcript_messages_seen"] > run.metrics["retained_messages"]
     assert run.metrics["copy_last_ok"] is True
+
+
+def test_rss_growth_metrics_remain_available_when_current_rss_is_not(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_current_rss_bytes", lambda process_id=None: None)
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    repeated = module.run_scenario("repeated_local_turns", options)
+    transcript = module.run_scenario("transcript_retention_growth", options)
+
+    assert repeated.ok is True
+    assert repeated.metrics["rss_growth_bytes"] is None
+    assert repeated.metrics["availability_reasons"]["rss_growth_bytes"] == (
+        "current_rss_unavailable"
+    )
+    assert transcript.ok is True
+    assert transcript.metrics["rss_growth_per_message_bytes"] is None
 
 
 def test_remaining_performance_rows_record_decision_evidence(tmp_path: Path) -> None:
@@ -606,6 +1030,16 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     assert payload["measurement_identity"]["measured_boundary"] == (
         module.SUT_BOUNDARY_IN_PROCESS
     )
+    assert payload["measurement_identity"]["git_head"] not in {
+        "",
+        "unknown",
+        "unavailable",
+    }
+    assert payload["measurement_identity"]["dirty_tree_fingerprint"] != ("unavailable")
+    assert payload["measurement_identity"]["runner_source_sha256"] != ("unavailable")
+    assert payload["measurement_identity"]["config_hash"] == module._stable_json_hash(
+        payload["measurement_identity"]["runtime_config"]
+    )
     assert isinstance(payload["wall_ns"], int)
     assert payload["phase_timings_ns"]["local_status_collect_ns"] >= 0
     for artifact_name in (
@@ -639,6 +1073,78 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     assert "Missing TCPL-00 Coverage" in (tmp_path / "decision.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_run_baseline_records_metric_sample_indices(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=3,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
+
+    summary = module.run_baseline(options, ["repeated_local_turns"])
+
+    assert (
+        summary["scenarios"]["repeated_local_turns"]["identity_incompatibilities"] == []
+    )
+    payloads = sorted(
+        (
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (tmp_path / "runs").glob("*.json")
+        ),
+        key=lambda payload: payload["sample_index"],
+    )
+    assert [payload["sample_index"] for payload in payloads] == [0, 1, 2]
+    assert [payload["metrics"]["sample_index"] for payload in payloads] == [0, 1, 2]
+
+
+def test_run_baseline_rejects_source_drift_at_campaign_close(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+        threshold_mode="off",
+    )
+    identities = iter(
+        (
+            {
+                "git_head": "a" * 40,
+                "dirty_tree_fingerprint": "b" * 64,
+                "dirty_worktree_summary": {"available": True},
+                "runner_source_sha256": "c" * 64,
+            },
+            {
+                "git_head": "d" * 40,
+                "dirty_tree_fingerprint": "b" * 64,
+                "dirty_worktree_summary": {"available": True},
+                "runner_source_sha256": "c" * 64,
+            },
+        )
+    )
+    monkeypatch.setattr(
+        module, "_campaign_source_identity", lambda _options: next(identities)
+    )
+
+    try:
+        module.run_baseline(options, ["repeated_local_turns"])
+    except RuntimeError as exc:
+        assert "campaign source identity changed: git_head" in str(exc)
+    else:
+        raise AssertionError("source drift should fail the campaign")
 
 
 def test_tcpl02_skill_entry_candidate_records_parity_and_rollback(
@@ -971,3 +1477,223 @@ def test_tcpl_shadow_decisions_are_observation_only() -> None:
     assert decisions["session_compaction"]["candidate_decision"] == (
         "derived_projection_candidate"
     )
+
+
+def test_omfla_persistent_api_turns_records_typed_windows(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_persistent_api_turns(
+        _omfla_options(module, tmp_path),
+        warmup_turns=1,
+        measured_turns=5,
+        window_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["completed_turn_count"] == 6
+    assert len(run.metrics["steady_state_windows"]) == 5
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+    assert run.metrics["post_warmup_pre_close_tracemalloc_diff"]
+    assert run.metrics["post_warmup_post_close_tracemalloc_diff"]
+    assert run.metrics["diagnostic_gc_collected_objects"] >= 0
+    assert run.metrics["post_warmup_post_gc_tracemalloc_diff"]
+    assert run.metrics["phase"] == "post_diagnostic_gc"
+    for key in (
+        "post_warmup_post_close_event_loop_diff",
+        "post_warmup_post_gc_event_loop_diff",
+    ):
+        assert set(run.metrics[key]) == {"size_diff_bytes", "count_diff"}
+        assert isinstance(run.metrics[key]["size_diff_bytes"], int)
+        assert isinstance(run.metrics[key]["count_diff"], int)
+    for window in run.metrics["steady_state_windows"]:
+        cardinalities = window["cache_cardinalities"]
+        assert (
+            cardinalities["contextctl_pack_cache"]
+            <= cardinalities["contextctl_manifest_index"]
+            <= cardinalities["contextctl_pack_cache"] + 1
+        )
+        assert cardinalities["contextctl_latest_sessions"] == 1
+    assert run.metrics["close_sample"]["cache_cardinalities"] == {
+        "contextctl_pack_cache": 0,
+        "contextctl_manifest_index": 0,
+        "contextctl_latest_sessions": 0,
+    }
+    assert run.metrics["close_sample"]["phase"] == "normal_close"
+    assert run.metrics["post_gc_sample"]["cache_cardinalities"] == {
+        "contextctl_pack_cache": 0,
+        "contextctl_manifest_index": 0,
+        "contextctl_latest_sessions": 0,
+    }
+    assert run.metrics["post_gc_sample"]["phase"] == "post_diagnostic_gc"
+
+
+def test_omfla_persistent_focus_turns_uses_persisted_completion(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    from tests.e2e.cli.focus.harness import FocusProbe
+
+    def reject_screen_owned_completion(*_args, **_kwargs):
+        raise AssertionError("FocusProbe.run_turn must not own OMFLA completion")
+
+    monkeypatch.setattr(FocusProbe, "run_turn", reject_screen_owned_completion)
+
+    run = module._measure_persistent_focus_turns(
+        _omfla_options(module, tmp_path),
+        warmup_turns=1,
+        measured_turns=1,
+        window_count=1,
+    )
+
+    assert run.ok is True
+    assert run.metrics["completed_turn_count"] == 2
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+    assert run.metrics["focus_child_alive_after_close"] is False
+    assert run.metrics["measured_process_id"] != os.getpid()
+
+
+def test_omfla_session_churn_records_owner_cardinality(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_session_cache_churn(
+        _omfla_options(module, tmp_path),
+        warmup_turns=1,
+        session_count=5,
+        window_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["distinct_session_count"] == 5
+    assert len(run.metrics["owner_cardinality_facts"]) == 7
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+    for expected_sessions, window in enumerate(
+        run.metrics["steady_state_windows"],
+        start=2,
+    ):
+        cardinalities = window["cache_cardinalities"]
+        assert cardinalities["contextctl_pack_cache"] == 0
+        assert cardinalities["contextctl_manifest_index"] == expected_sessions
+        assert cardinalities["contextctl_latest_sessions"] == expected_sessions
+    assert run.metrics["close_sample"]["cache_cardinalities"] == {
+        "contextctl_pack_cache": 0,
+        "contextctl_manifest_index": 0,
+        "contextctl_latest_sessions": 0,
+    }
+    owner_facts = {
+        fact["owner"]: fact for fact in run.metrics["owner_cardinality_facts"]
+    }
+    assert owner_facts["ContextCtlService pack and manifest caches"] == {
+        "owner": "ContextCtlService pack and manifest caches",
+        "lifetime": "Brain/context-service runtime lifetime",
+        "observed_cardinality": {
+            "pack_cache": 0,
+            "manifest_index": 6,
+            "latest_sessions": 6,
+        },
+        "natural_invalidation": (
+            "ContextCtl close delegated through Brain/runtime close"
+        ),
+        "disposition": "defer:session-lifecycle-contract-required",
+    }
+    for owner in (
+        "repo-map cache",
+        "file backend cache",
+        "control-plane submission audit/dedup",
+    ):
+        assert owner_facts[owner]["observed_cardinality"] is None
+
+
+def test_omfla_provider_lifecycle_closes_and_recreates(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_provider_lifecycle_loopback(
+        _omfla_options(module, tmp_path),
+        warmup_calls=1,
+        measured_calls=2,
+    )
+
+    assert run.ok is True
+    assert run.metrics["http_client_closed"] is True
+    assert run.metrics["mcp_session_closed"] is True
+    assert (
+        run.metrics["close_sample"]["thread_count"]
+        <= run.metrics["ready_sample"]["thread_count"]
+    )
+    assert run.metrics["terminal_fact"] == {
+        "http": "completed",
+        "mcp": "completed",
+        "recreate": "completed",
+    }
+
+
+def test_omfla_agent_cache_honors_bound_and_ttl(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_agent_cache_churn(
+        _omfla_options(module, tmp_path),
+        agent_count=3,
+        max_agents_hot=2,
+        convergence_wait_seconds=3,
+    )
+
+    assert run.ok is True
+    assert run.metrics["max_observed_hot_agents"] <= 2
+    assert run.metrics["remaining_agents_after_convergence"] == 0
+
+
+def test_omfla_runtime_restart_closes_each_owner_twice(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    from tests.e2e.cli.focus.harness import FocusProbe
+
+    def reject_screen_owned_completion(*_args, **_kwargs):
+        raise AssertionError("FocusProbe.run_turn must not own OMFLA completion")
+
+    monkeypatch.setattr(FocusProbe, "run_turn", reject_screen_owned_completion)
+
+    run = module._measure_runtime_restart(
+        _omfla_options(module, tmp_path),
+        cycle_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["completed_turn_count"] == 15
+    assert run.metrics["second_close_idempotency_checked"] is True
+    assert run.metrics["descriptor_counts_converged"] is True
+    ready = run.metrics["ready_sample"]
+    for window in run.metrics["steady_state_windows"]:
+        assert window["file_descriptor_count"] == ready["file_descriptor_count"]
+        assert window["open_file_count"] == ready["open_file_count"]
+    assert (
+        run.metrics["close_sample"]["file_descriptor_count"]
+        == ready["file_descriptor_count"]
+    )
+    assert run.metrics["close_sample"]["open_file_count"] == ready["open_file_count"]
+    assert run.metrics["terminal_fact"]["terminal_event_state"] == "completed"
+
+
+def test_omfla_queue_pressure_drains_and_reports_overflow(tmp_path: Path) -> None:
+    module = _load_module()
+
+    run = module._measure_queue_pressure(
+        _omfla_options(module, tmp_path),
+        cycle_count=1,
+        finite_capacity=3,
+        unbounded_count=5,
+    )
+
+    assert run.ok is True
+    assert run.metrics["queue_depths"] == {
+        "controlplane_inbox": 0,
+        "controlplane_outbox": 0,
+        "memory_followup": 0,
+        "runtime_chunks": 0,
+        "telemetry_noncritical_export": 0,
+        "turn_input": 0,
+    }
+    assert run.metrics["overflow_counts"] == {"telemetry": 1, "turn_input": 1}
+    assert run.metrics["cache_cardinalities"]["turn_input_terminal_audit"] == 3
+    assert run.metrics["cache_cardinalities"]["turn_input_idempotency"] == 3

@@ -49,6 +49,10 @@ class TaskLifecycleRepository(
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._ensure_schema()
 
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
     def update_metadata(
         self, *, task_id: str, metadata: Mapping[str, Any]
     ) -> TaskLifecycleRecord:

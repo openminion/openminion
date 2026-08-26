@@ -14,6 +14,7 @@ def create_tool_adapter(
     reactions_enabled: bool = True,
     skill_api: Any | None = None,
     a2a_delegate_api: Any | None = None,
+    agent_query: Any | None = None,
     agent_id: str | None = None,
     agent_profile: Any | None = None,
 ) -> Any:
@@ -33,6 +34,7 @@ def create_tool_adapter(
             reactions_enabled=reactions_enabled,
             skill_api=skill_api,
             a2a_delegate_api=a2a_delegate_api,
+            agent_query=agent_query,
             agent_id=agent_id,
             agent_profile=agent_profile,
         )

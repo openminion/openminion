@@ -114,6 +114,7 @@ def recover_child_failure(
             index=index + 1,
             total=len(subtasks),
             parent_task_id=parent_task_id,
+            completed_results=recovered,
         )
         recovered[failed_index] = retry_result
         fact["outcome"] = retry_result.result.status
@@ -136,6 +137,7 @@ def recover_child_failure(
                     index=index,
                     total=len(subtasks),
                     parent_task_id=parent_task_id,
+                    completed_results=recovered,
                 )
             )
     fact.setdefault("outcome", "continued")

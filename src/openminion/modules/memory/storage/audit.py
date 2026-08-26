@@ -87,6 +87,13 @@ class SQLiteMemoryAuditSink:
             )
             conn.commit()
 
+    def close(self) -> None:
+        with self._lock:
+            if self._conn is None:
+                return
+            self._conn.close()
+            self._conn = None
+
     def list_events(self) -> list[dict[str, Any]]:
         conn = self._connect()
         rows = conn.execute(
@@ -124,9 +131,18 @@ def default_memory_audit_db_path(db_path: str | Path) -> Path:
 class AuditedMemoryStore:
     """MemoryStore wrapper that emits append-only audit events on mutation."""
 
-    def __init__(self, store: Any, sink: MemoryAuditSink | None = None) -> None:
+    def __init__(
+        self,
+        store: Any,
+        sink: MemoryAuditSink | None = None,
+        *,
+        owns_store: bool = False,
+        owns_sink: bool = False,
+    ) -> None:
         self._store = store
         self._sink = sink
+        self._owns_store = owns_store
+        self._owns_sink = owns_sink
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
@@ -143,6 +159,14 @@ class AuditedMemoryStore:
         """Append a domain-owned audit fact without exposing the sink."""
 
         self._append(event)
+
+    def close(self) -> None:
+        if self._owns_sink and self._sink is not None:
+            self._owns_sink = False
+            self._sink.close()
+        if self._owns_store:
+            self._owns_store = False
+            self._store.close()
 
     def put(self, record: Any) -> str:
         record_id = self._store.put(record)

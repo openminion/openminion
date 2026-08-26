@@ -148,6 +148,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         a2a_delegate_api: Any | None = None,
+        agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
         agent_profile: Any | None = None,
     ) -> None:
@@ -163,10 +164,12 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.a2a_delegate_api = a2a_delegate_api
+        self.agent_query = agent_query
         self.agent_profile = agent_profile
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
         )
+        self._owns_artifactctl = artifactctl is None
         if artifactctl is not None:
             self.artifactctl = artifactctl
         else:
@@ -225,6 +228,14 @@ class ToolAdapter:
             and self.reactions_enabled
         ):
             openminion_tools_reaction_plugin.register(self.registry)
+
+    def close(self) -> None:
+        if not self._owns_artifactctl or self.artifactctl is None:
+            return
+        self._owns_artifactctl = False
+        artifactctl = self.artifactctl
+        self.artifactctl = None
+        artifactctl.close()
 
     @staticmethod
     def _coerce_policy(policy: Any) -> Policy:
@@ -632,6 +643,7 @@ class ToolAdapter:
             skill_api=self.skill_api,
             artifactctl=self.artifactctl,
             a2a_delegate_api=self.a2a_delegate_api,
+            agent_query=self.agent_query,
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
             tool_registry=self.registry,

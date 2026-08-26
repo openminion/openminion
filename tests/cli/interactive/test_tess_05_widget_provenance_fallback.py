@@ -21,7 +21,11 @@ def test_widget_header_provenance_suffix_when_runtime_differs() -> None:
         model_tool_name="web.search",
         runtime_tool_name="search.serper.search",
     )
-    title = ToolBlockWidget(event, pending=False)._header_text()
+    title = ToolBlockWidget(
+        event,
+        pending=False,
+        verbosity="verbose",
+    )._header_text()
     assert "→ serper" in title
 
 
@@ -30,7 +34,11 @@ def test_widget_header_provenance_suffix_absent_when_runtime_matches() -> None:
         model_tool_name="web.search",
         runtime_tool_name="web.search",
     )
-    title = ToolBlockWidget(event, pending=False)._header_text()
+    title = ToolBlockWidget(
+        event,
+        pending=False,
+        verbosity="verbose",
+    )._header_text()
     assert "→" not in title
 
 
@@ -41,13 +49,21 @@ def test_widget_header_fallback_marker_with_chain() -> None:
         runtime_fallback_used=True,
         runtime_fallback_chain=["search.tavily.search"],
     )
-    title = ToolBlockWidget(event, pending=False)._header_text()
+    title = ToolBlockWidget(
+        event,
+        pending=False,
+        verbosity="verbose",
+    )._header_text()
     assert "fallback after tavily" in title
 
 
 def test_widget_header_fallback_marker_bare_when_chain_empty() -> None:
     event = _event(runtime_fallback_used=True, runtime_fallback_chain=None)
-    title = ToolBlockWidget(event, pending=False)._header_text()
+    title = ToolBlockWidget(
+        event,
+        pending=False,
+        verbosity="verbose",
+    )._header_text()
     assert "(fallback)" in title
 
 
@@ -71,6 +87,10 @@ def test_widget_header_pending_state_still_appends_markers() -> None:
         runtime_fallback_used=True,
         runtime_fallback_chain=["search.tavily.search"],
     )
-    title = ToolBlockWidget(event, pending=True)._header_text()
+    title = ToolBlockWidget(
+        event,
+        pending=True,
+        verbosity="verbose",
+    )._header_text()
     assert "→ serper" in title
     assert "fallback after tavily" in title

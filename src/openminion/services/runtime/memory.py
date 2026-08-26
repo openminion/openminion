@@ -157,9 +157,10 @@ def _build_memory_v2_gateway_adapter(
         retrieve_ctl=retrieve_ctl,
         ranking_config=ranking_config,
         candidate_learning_config=candidate_learning_config,
-        recall_adapter=SophiagraphRecallAdapter(
-            backend=backend,
-            provider=backend_config.provider,
+        recall_adapter=(
+            SophiagraphRecallAdapter(backend=backend)
+            if backend_config.provider == "sophiagraph"
+            else None
         ),
         brain_sessions_db_path=(
             resolve_brain_sessions_db_path(storage_path=storage_path)

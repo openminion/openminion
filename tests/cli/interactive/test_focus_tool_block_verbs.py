@@ -51,7 +51,7 @@ def test_pending_exec_run_uses_running() -> None:
     )
     title = ToolBlockWidget(event, pending=True)._header_text()
     assert "Running" in title
-    assert "pytest -x" in title
+    assert "pytest -x" not in title
     assert "·" not in title  # no duration separator while pending
 
 
@@ -65,7 +65,7 @@ def test_completed_exec_run_uses_ran_with_duration() -> None:
     )
     title = ToolBlockWidget(event, pending=False)._header_text()
     assert "Ran" in title
-    assert "ls" in title
+    assert "ls" not in title
     assert "1s" in title
     assert "·" in title
 
@@ -90,7 +90,7 @@ def test_pending_file_edit_uses_editing() -> None:
     )
     title = ToolBlockWidget(event, pending=True)._header_text()
     assert "Editing" in title
-    assert "src/foo.py" in title
+    assert "src/foo.py" not in title
 
 
 def test_completed_file_edit_uses_edited() -> None:
@@ -103,7 +103,7 @@ def test_completed_file_edit_uses_edited() -> None:
     )
     title = ToolBlockWidget(event, pending=False)._header_text()
     assert "Edited" in title
-    assert "src/foo.py" in title
+    assert "src/foo.py" not in title
 
 
 def test_pending_fetch_uses_fetching() -> None:
@@ -113,8 +113,8 @@ def test_pending_fetch_uses_fetching() -> None:
         content="",
     )
     title = ToolBlockWidget(event, pending=True)._header_text()
-    assert "Fetching" in title
-    assert "https://example.com" in title
+    assert "Using a tool" in title
+    assert "https://example.com" not in title
 
 
 def test_completed_search_uses_searched() -> None:
@@ -126,7 +126,21 @@ def test_completed_search_uses_searched() -> None:
         exit_code=0,
     )
     title = ToolBlockWidget(event, pending=False)._header_text()
-    assert "Searched" in title
+    assert "Finished using a tool" in title
+
+
+def test_verbose_header_preserves_raw_tool_argument() -> None:
+    event = ToolEvent(
+        tool_name="exec.run",
+        args={"command": "pytest -x"},
+        content="",
+    )
+    title = ToolBlockWidget(
+        event,
+        pending=True,
+        verbosity="verbose",
+    )._header_text()
+    assert "Running pytest -x" in title
 
 
 def test_failed_tool_shows_exit_code_when_no_duration() -> None:

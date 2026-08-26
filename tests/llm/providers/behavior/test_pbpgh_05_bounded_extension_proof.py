@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from openminion.modules.llm.providers.behavior import (
     ProviderIdentity,
     resolve_behavior_profile,
@@ -73,6 +75,7 @@ def test_new_lane_does_not_accidentally_inherit_minimax_compat_settings():
     assert profile.request_dialect != "minimax_openai_compat"
 
 
+@pytest.mark.package_integration
 def test_bounded_extension_proof_artifact_exists():
     import os.path
 
