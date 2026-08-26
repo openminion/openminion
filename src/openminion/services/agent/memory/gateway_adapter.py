@@ -31,6 +31,7 @@ from openminion.modules.memory.diagnostics.operability import (
 from openminion.modules.memory.diagnostics.export import export_memory_debug
 from openminion.modules.memory.service.agent_gateway import (
     LearningMixin,
+    PrecisionRecallOptions,
     RetrievalPipeline,
     SessionLifecycleMixin,
     TurnRecordingMixin,
@@ -74,6 +75,7 @@ class MemoryServiceGatewayAdapter(
         retrieve_ctl: Any | None = None,
         ranking_config: RankingConfig | None = None,
         candidate_learning_config: CandidateLearningConfig | None = None,
+        recall_adapter: Any | None = None,
         working_state_getter: Callable[[str], dict[str, Any] | None] | None = None,
         brain_sessions_db_path: str | Path | None = None,
         session_summary_structurer: Callable[[str, int], dict[str, Any] | None]
@@ -103,6 +105,7 @@ class MemoryServiceGatewayAdapter(
             session_summary_structurer=session_summary_structurer,
             session_summary_structurer_timeout_seconds=session_summary_structurer_timeout_seconds,
         )
+        self._recall_adapter = recall_adapter
         self._init_trace_state(trace_enabled=trace_enabled)
         self._generation = 0
         self._pipeline = RetrievalPipeline(
@@ -162,6 +165,7 @@ class MemoryServiceGatewayAdapter(
             config_value(retrieval_cfg, "min_confidence_default", 0.6),
             0.6,
         )
+        self._precision_options = PrecisionRecallOptions.from_config(retrieval_cfg)
         self._feedback_demote_on_correction = coerce_float(
             config_value(retrieval_cfg, "feedback_demote_on_correction", 0.3),
             0.3,
@@ -364,6 +368,7 @@ class MemoryServiceGatewayAdapter(
         self._max_preference_boosts_per_run = 3
         self._reboost_cooldown_multiplier = 2.0
         self._retrieval_min_confidence = 0.6
+        self._precision_options = PrecisionRecallOptions()
 
     def _init_trace_state(self, *, trace_enabled: bool | None) -> None:
         self._trace_file_path = configured_trace_file_path(
@@ -525,7 +530,7 @@ class MemoryServiceGatewayAdapter(
 
 
 class DisabledMemoryGatewayAdapter:
-    """V2 no-op adapter for disabled memory mode."""
+    disabled_reason = "memory_disabled"
 
     def __init__(self, *, agent_id: str, logger: logging.Logger | None = None) -> None:
         self._agent_id = str(agent_id or "").strip() or "openminion"

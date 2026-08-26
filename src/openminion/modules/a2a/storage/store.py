@@ -51,6 +51,7 @@ def _create_state_schema(record_store: RecordStore) -> None:
             result_inline_json TEXT,
             result_ref TEXT,
             error_json TEXT,
+            owner_agent_id TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             heartbeat_at TEXT NOT NULL
@@ -182,8 +183,8 @@ class _StateStoreMixin(StateStore):
             """
             INSERT INTO jobs(
                 task_id, trace_id, idempotency_key, agent_id, method, state, current_step, progress,
-                result_inline_json, result_ref, error_json, created_at, updated_at, heartbeat_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                result_inline_json, result_ref, error_json, owner_agent_id, created_at, updated_at, heartbeat_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.task_id,
@@ -197,6 +198,7 @@ class _StateStoreMixin(StateStore):
                 _json(job.result_inline),
                 job.result_ref,
                 _json(job.error),
+                job.owner_agent_id,
                 job.created_at,
                 job.updated_at,
                 job.heartbeat_at,
@@ -254,7 +256,7 @@ class _StateStoreMixin(StateStore):
         rows = self._record_store.query_dicts(
             """
             SELECT task_id, trace_id, idempotency_key, agent_id, method, state, current_step, progress,
-                   result_inline_json, result_ref, error_json, created_at, updated_at, heartbeat_at
+                   result_inline_json, result_ref, error_json, owner_agent_id, created_at, updated_at, heartbeat_at
             FROM jobs
             WHERE task_id = ?
             """,
@@ -291,7 +293,7 @@ class _StateStoreMixin(StateStore):
 
         sql = (
             "SELECT task_id, trace_id, idempotency_key, agent_id, method, state, current_step, progress, "
-            "result_inline_json, result_ref, error_json, created_at, updated_at, heartbeat_at "
+            "result_inline_json, result_ref, error_json, owner_agent_id, created_at, updated_at, heartbeat_at "
             "FROM jobs"
         )
         if where:
@@ -379,6 +381,7 @@ def _job_from_row(row: Mapping[str, Any]) -> JobRecord:
         result_inline=_json_load(row["result_inline_json"], None),
         result_ref=(None if row["result_ref"] is None else str(row["result_ref"])),
         error=_json_load(row["error_json"], None),
+        owner_agent_id=str(row["owner_agent_id"] or ""),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
         heartbeat_at=str(row["heartbeat_at"]),

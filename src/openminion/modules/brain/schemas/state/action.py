@@ -18,6 +18,15 @@ class ActionMetrics(BaseModel):
     cost_estimate: float | None = Field(default=None, ge=0)
 
 
+class MemoryUseRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record_id: str = Field(..., min_length=1)
+    use_kind: Literal["used", "cited"]
+    producer_kind: Literal["model", "tool", "action"]
+    producer_id: str = Field(..., min_length=1)
+
+
 class ActionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -27,6 +36,7 @@ class ActionResult(BaseModel):
     outputs: dict[str, Any] = Field(default_factory=dict)
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
     memory_refs: list[str] = Field(default_factory=list)
+    memory_use_refs: list[MemoryUseRef] = Field(default_factory=list)
     error: ActionError | None = None
     metrics: ActionMetrics | None = None
 

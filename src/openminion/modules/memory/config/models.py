@@ -196,6 +196,12 @@ class RetrievalConfig:
     type_boost_user_preference: float
     type_boost_pin: float
     type_boost_project_convention: float
+    precision_mode: str = "legacy"
+    precision_candidate_multiplier: int = 3
+    precision_min_score: float = 0.048
+    precision_max_items: int = 5
+    precision_max_tokens: int = 500
+    precision_graph_depth: int = 1
 
 
 @dataclass(frozen=True)

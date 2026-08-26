@@ -13,8 +13,10 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.loop.constants import (
     PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+    RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY,
+    RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY,
 )
-from openminion.modules.llm.schemas import ToolCall
+from openminion.modules.llm.schemas import Message, ToolCall
 
 from ..contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
@@ -54,7 +56,47 @@ class LoopExecutionResult(NamedTuple):
 
 
 def _error_code(action_result: ActionResult) -> str:
-    return str(action_result.error.code if action_result.error else "").strip().upper()
+    if action_result.error is not None:
+        return str(action_result.error.code or "").strip().upper()
+    outputs = getattr(action_result, "outputs", None)
+    nested_error = outputs.get("error") if isinstance(outputs, dict) else None
+    if isinstance(nested_error, dict):
+        return str(nested_error.get("code", "") or "").strip().upper()
+    return ""
+
+
+def _apply_tool_failure_recovery(
+    loop_state: AdaptiveToolLoopState,
+    *,
+    tool_call: ToolCall,
+    action_result: ActionResult,
+    recovery_enabled: bool,
+    build_recovery_message: Any,
+) -> None:
+    recovery_message: Message | None = build_recovery_message(
+        tool_name=tool_call.name.strip(),
+        action_result=action_result,
+    )
+    if not recovery_enabled:
+        return
+    scratchpad = loop_state.scratchpad
+    tool_name = tool_call.name.strip()
+    pending = scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY)
+    if (
+        action_result.status == BRAIN_ACTION_STATUS_SUCCESS
+        and pending == tool_name
+    ):
+        scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY, None)
+        scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, None)
+        return
+    if recovery_message is not None:
+        loop_state.messages.append(recovery_message)
+        if _error_code(action_result) in {
+            "INVALID_ARGUMENT",
+            "TOOL_ARG_VALIDATION_FAILED",
+        }:
+            scratchpad[RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY] = tool_name
+            scratchpad.pop(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, None)
 
 
 def _is_structured_policy_recoverable(action_result: ActionResult) -> bool:
@@ -311,15 +353,13 @@ def execute_iteration_results(
                 ),
             )
 
-        recovery_message = build_tool_failure_recovery_message(
-            tool_name=tool_name,
+        _apply_tool_failure_recovery(
+            loop_state,
+            tool_call=tool_call,
             action_result=action_result,
+            recovery_enabled=profile.allow_llm_recovery_after_tool_failure,
+            build_recovery_message=build_tool_failure_recovery_message,
         )
-        if (
-            recovery_message is not None
-            and profile.allow_llm_recovery_after_tool_failure
-        ):
-            loop_state.messages.append(recovery_message)
         batch_had_progress = True
         if on_tool_result is not None:
             on_tool_result(loop_state)

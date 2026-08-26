@@ -554,7 +554,6 @@ class _TerminalFocusLoop:
                         overlay=self.overlay,
                         session_grants=self.approval_grants,
                         pause_prompt=self.cancel_read_task,
-                        resume_prompt=self.start_read_task,
                     ),
                 )
                 if should_exit:
@@ -721,7 +720,6 @@ async def _run_terminal_focus_async(
     )
     overlay = TerminalOverlayPresenter(
         console=console,
-        prompt_session=composer.prompt_session,
     )
     approval_grants: set[str] = set()
     _push_greeter(console, runtime=runtime, working_dir=working_dir)

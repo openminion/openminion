@@ -91,8 +91,8 @@ class PtySession:
         if os.name != "posix":
             raise RuntimeError("PTY focus E2E tests require a POSIX platform")
         env = os.environ.copy()
+        env["TERM"] = "xterm-256color"
         env.update(self.env)
-        env.setdefault("TERM", "xterm-256color")
         pid, master_fd = pty.fork()
         if pid == 0:
             try:

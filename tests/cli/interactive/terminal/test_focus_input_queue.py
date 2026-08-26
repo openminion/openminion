@@ -50,6 +50,14 @@ class _CapturedTranscript(_BaseTranscript):
         type(self).last_instance = self
 
 
+class _StubOverlay:
+    last_kwargs: dict[str, object] = {}
+
+    def __init__(self, *args, **kwargs) -> None:
+        del args
+        type(self).last_kwargs = dict(kwargs)
+
+
 class _ScriptedComposer:
     runtime: _QueueRuntime
 
@@ -336,6 +344,7 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _ScriptedComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -363,6 +372,7 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
     )
 
     assert result == 0
+    assert "prompt_session" not in _StubOverlay.last_kwargs
     assert runtime.sent_texts == ["first", "second"]
 
     transcript = _CapturedTranscript.last_instance
@@ -391,6 +401,7 @@ async def test_terminal_focus_drains_multiple_queued_inputs_fifo(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _MultiQueueComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -456,6 +467,7 @@ async def test_terminal_focus_runs_safe_busy_commands_and_blocks_shell_escape(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _BusyCommandComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -512,6 +524,7 @@ async def test_terminal_focus_queue_commands_work_while_turn_streams(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _QueueCommandComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -660,6 +673,7 @@ async def test_terminal_focus_ignores_immediate_prompt_replay_duplicate(
     output = io.StringIO()
 
     monkeypatch.setattr(terminal_shell, "TerminalComposer", _ReplayComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalOverlayPresenter", _StubOverlay)
     monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
     monkeypatch.setattr(
         terminal_shell,
@@ -721,6 +735,44 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert len(events) == 3
     assert events[1].startswith("prompt:Approval required: file.write(")
     assert "scratch.txt" in events[1]
+
+
+@pytest.mark.asyncio
+async def test_terminal_slash_approval_resumes_after_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _build_callback(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    async def _handle_slash_input(*_args: object, **kwargs: object) -> bool:
+        captured["approval_callback"] = kwargs["approval_callback"]
+        return False
+
+    monkeypatch.setattr(terminal_shell, "_build_approval_callback", _build_callback)
+    monkeypatch.setattr(terminal_shell, "_handle_slash_input", _handle_slash_input)
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=_QueueCommandRuntime(),
+        console=console,
+        transcript=terminal_shell.TerminalTranscript(console, plain_spinner=True),
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-slash-approval",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.handle_idle_input("/delegate worker write file")
+
+    assert captured["pause_prompt"] == loop.cancel_read_task
+    assert "resume_prompt" not in captured
+    assert captured["approval_callback"] is not None
+    await loop.cancel_read_task()
 
 
 @pytest.mark.asyncio

@@ -86,7 +86,6 @@ def test_focus_startup_notice_preserves_single_composer(
         part for part in focus_probe.command() if part != "--no-update-check"
     )
     environment = focus_probe.environment()
-    environment["TERM"] = "xterm-256color"
 
     with PtySession(
         argv=command,

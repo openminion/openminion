@@ -43,9 +43,12 @@ Check deployment status on production.
 
 
 def _skill_cfg(tmp_path: Path) -> dict:
+    data_root = tmp_path / ".openminion"
     return {
         "skill": {
-            "sqlite_path": str(tmp_path / "skill-test.db"),
+            "sqlite_path": str(data_root / "skill-test.db"),
+            "blob_root": str(data_root / "blobs"),
+            "fallback_root": str(data_root / "fallback"),
             "wal": False,
             "default_status_filter": ["draft", "verified", "blessed"],
             "high_risk_status_filter": ["blessed", "verified", "draft"],

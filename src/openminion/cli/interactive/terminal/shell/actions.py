@@ -20,7 +20,7 @@ from openminion.cli.presentation.models import (
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.detail_modes import resolve_details_mode
-from .delegation import handle_slash_delegate
+from .delegation import run_slash_delegate
 from .labels import _runtime_label
 from openminion.cli.presentation.slash_commands import (
     slash_help_rows,
@@ -503,7 +503,6 @@ def _handle_visible_parity_slash(
     console: Console,
     status_line: TerminalStatusLine,
     working_dir: str,
-    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     arg = _slash_arg(text)
     if cmd == "/context":
@@ -545,13 +544,6 @@ def _handle_visible_parity_slash(
             runtime=runtime,
             console=console,
             status_line=status_line,
-        )
-    elif cmd == "/delegate":
-        handle_slash_delegate(
-            text,
-            runtime=runtime,
-            console=console,
-            approval_callback=approval_callback,
         )
 
 
@@ -661,6 +653,9 @@ async def _handle_slash(
         working_dir=working_dir,
     ):
         return False
+    if cmd == "/delegate":
+        await run_slash_delegate(text, runtime, console, approval_callback)
+        return False
     if cmd in (
         "/context",
         "/memory",
@@ -672,7 +667,6 @@ async def _handle_slash(
         "/statusline",
         "/undo",
         "/goal",
-        "/delegate",
     ):
         _handle_visible_parity_slash(
             cmd,
@@ -681,20 +675,10 @@ async def _handle_slash(
             console=console,
             status_line=status_line,
             working_dir=working_dir,
-            approval_callback=approval_callback if cmd == "/delegate" else None,
         )
         return False
-    if cmd == "/tools":
-        _render_tools_command(runtime, console, text)
-        return False
-    if cmd == "/mcp":
-        _render_mcp_status(runtime=runtime, console=console)
-        return False
-    if cmd == "/theme":
-        _handle_slash_theme(text, console=console)
-        return False
-    if cmd == "/model":
-        _handle_slash_model(text, runtime=runtime, console=console)
+    if cmd in ("/tools", "/mcp", "/theme", "/model"):
+        _handle_tool_view_slash(cmd, text, runtime=runtime, console=console)
         return False
     if handle_debug_output_slash(
         cmd, text, runtime=runtime, console=console, cost_renderer=_render_cost_snapshot
@@ -732,6 +716,26 @@ async def _handle_slash(
         return False
     _print_unknown_slash_notice(cmd, console)
     return False
+
+
+def _handle_tool_view_slash(
+    cmd: str,
+    text: str,
+    *,
+    runtime: Any,
+    console: Console,
+) -> bool:
+    if cmd == "/tools":
+        _render_tools_command(runtime, console, text)
+    elif cmd == "/mcp":
+        _render_mcp_status(runtime=runtime, console=console)
+    elif cmd == "/theme":
+        _handle_slash_theme(text, console=console)
+    elif cmd == "/model":
+        _handle_slash_model(text, runtime=runtime, console=console)
+    else:
+        return False
+    return True
 
 
 def _handle_shell_preference_slash(

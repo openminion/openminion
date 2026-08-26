@@ -122,7 +122,6 @@ def test_accept_or_fail_resolver_accepts_registered_agent_and_rejects_unknown() 
     assert (
         resolver.resolve(
             target_agent_id="agent.weather",
-            target_capability=None,
             registry={"agent.weather": {"state": "healthy"}},
         )
         == "agent.weather"
@@ -130,7 +129,6 @@ def test_accept_or_fail_resolver_accepts_registered_agent_and_rejects_unknown() 
     with pytest.raises(ValueError, match="Unknown delegate target agent"):
         resolver.resolve(
             target_agent_id="agent.unknown",
-            target_capability=None,
             registry={"agent.weather": {"state": "healthy"}},
         )
 
@@ -141,7 +139,6 @@ def test_accept_or_fail_resolver_rejects_unavailable_agent() -> None:
     with pytest.raises(ValueError, match="unavailable"):
         resolver.resolve(
             target_agent_id="agent.weather",
-            target_capability=None,
             registry={"agent.weather": {"state": "offline"}},
         )
 

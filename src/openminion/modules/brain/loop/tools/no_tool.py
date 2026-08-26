@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
+from openminion.modules.brain.loop.constants import (
+    RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY,
+    RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY,
+)
 from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.schemas import Message
 from openminion.modules.llm import ProviderError
@@ -127,6 +131,34 @@ def _retry_empty_typed_finalization_after_tool_results(
         "answer now, then append finalization_status status=final_answer, "
         "status=incomplete, or status=blocked. Preserve any exact final-answer "
         "format, headings, section titles, and ordering the user requested.",
+        discard_assistant_text=normalized_final_text,
+    )
+
+
+def _retry_recoverable_tool_argument_failure(
+    runner: Any,
+    *,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    scratchpad = runner.loop_state.scratchpad
+    pending = scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY)
+    if not isinstance(pending, str) or not pending.strip():
+        return None
+    if isinstance(finalization_status, dict) and finalization_status.get("status") == (
+        "blocked"
+    ):
+        return None
+    if bool(scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY, False)):
+        return None
+    scratchpad[RECOVERABLE_TOOL_ARGUMENT_RETRY_USED_KEY] = True
+    tool_name = pending.strip()
+    return runner._retry_with_system_message(
+        f"The prior {tool_name} call failed because its structured arguments were "
+        "invalid, and the correction guidance is already in context. Make one "
+        "corrected tool call now. Do not repeat the same arguments and do not "
+        "guess or rewrite paths in prose. If no valid correction is possible, "
+        "return a truthful finalization_status with status=blocked.",
         discard_assistant_text=normalized_final_text,
     )
 
@@ -327,6 +359,13 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "Provider returned no usable response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
+        recoverable_argument_retry = _retry_recoverable_tool_argument_failure(
+            self,
+            finalization_status=finalization_status,
+            normalized_final_text=normalized_final_text,
+        )
+        if recoverable_argument_retry is not None:
+            return recoverable_argument_retry
         raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
         )

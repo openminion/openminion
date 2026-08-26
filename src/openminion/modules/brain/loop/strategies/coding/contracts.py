@@ -13,6 +13,8 @@ from openminion.modules.brain.loop.strategies.coding.constants import (
     CODING_TERM_VERIFY_CAP_EXCEEDED as CODING_TERM_VERIFY_CAP_EXCEEDED,
 )
 from openminion.modules.tool.contracts.model_ids import (
+    MODEL_AGENT_GET,
+    MODEL_AGENT_LIST,
     MODEL_CODE_GREP,
     MODEL_CODE_PATCH,
     MODEL_CODE_REPO_INDEX,
@@ -48,6 +50,8 @@ CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
         MODEL_EXEC_POLL,
         MODEL_EXEC_LIST,
         MODEL_EXEC_KILL,
+        MODEL_AGENT_LIST,
+        MODEL_AGENT_GET,
         MODEL_TASK_DELEGATE,
     )
 )

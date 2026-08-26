@@ -1,7 +1,9 @@
 """Handoff records and transfer tools for developer-facing agents."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from datetime import datetime, timezone
+from math import ceil
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
@@ -22,15 +24,9 @@ class SubagentRunContext:
     child_run_id: str
     trace_parent_id: str
     tool_allowlist: tuple[str, ...] = ()
-    permission_scope: str = "inherit_bounded"
-    repository_baseline: str = "shared"
-    task_context: str = "isolated_child"
     memory_posture: str = "none"
     memory_grant_id: str | None = None
-    memory_evidence_refs: tuple[str, ...] = ()
-    deadline_iso: str = ""
     timeout_seconds: int | None = None
-    cancel_policy: str = "cascade_from_parent"
     typed_result_handback: bool = True
     parent_transcript_inherited: bool = False
     hidden_reasoning_inherited: bool = False
@@ -38,8 +34,28 @@ class SubagentRunContext:
     cancelled: bool = False
 
     def __post_init__(self) -> None:
+        for field_name in (
+            "context_id",
+            "parent_agent_id",
+            "child_agent_id",
+            "parent_run_id",
+            "child_run_id",
+            "trace_parent_id",
+        ):
+            if not str(getattr(self, field_name) or "").strip():
+                raise ValueError(f"{field_name} is required")
         if self.memory_posture not in {"none", "read_only_bounded"}:
             raise ValueError(f"unsupported memory_posture: {self.memory_posture!r}")
+        if self.memory_posture == "read_only_bounded" and not self.memory_grant_id:
+            raise ValueError("read_only_bounded requires memory_grant_id")
+        if self.memory_posture == "none" and self.memory_grant_id:
+            raise ValueError("memory_grant_id requires read_only_bounded")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be greater than zero")
+        if not self.typed_result_handback:
+            raise ValueError("developer subagents require typed result handback")
+        if self.parent_transcript_inherited or self.hidden_reasoning_inherited:
+            raise ValueError("developer subagents require isolated context")
         if self.implicit_memory_write:
             raise ValueError("delegated memory writes are not supported in v1")
 
@@ -52,15 +68,9 @@ class SubagentRunContext:
             "child_run_id": self.child_run_id,
             "trace_parent_id": self.trace_parent_id,
             "tool_allowlist": list(self.tool_allowlist),
-            "permission_scope": self.permission_scope,
-            "repository_baseline": self.repository_baseline,
-            "task_context": self.task_context,
             "memory_posture": self.memory_posture,
             "memory_grant_id": self.memory_grant_id,
-            "memory_evidence_refs": list(self.memory_evidence_refs),
-            "deadline_iso": self.deadline_iso,
             "timeout_seconds": self.timeout_seconds,
-            "cancel_policy": self.cancel_policy,
             "typed_result_handback": self.typed_result_handback,
             "parent_transcript_inherited": self.parent_transcript_inherited,
             "hidden_reasoning_inherited": self.hidden_reasoning_inherited,
@@ -77,17 +87,11 @@ class SubagentRunContext:
             "subagent_child_run_id": self.child_run_id,
             "subagent_trace_parent_id": self.trace_parent_id,
             "subagent_tool_allowlist": ",".join(self.tool_allowlist),
-            "subagent_permission_scope": self.permission_scope,
-            "subagent_repository_baseline": self.repository_baseline,
-            "subagent_task_context": self.task_context,
             "subagent_memory_posture": self.memory_posture,
             "subagent_memory_grant_id": self.memory_grant_id or "",
-            "subagent_memory_evidence_refs": ",".join(self.memory_evidence_refs),
-            "subagent_deadline_iso": self.deadline_iso,
             "subagent_timeout_seconds": (
                 "" if self.timeout_seconds is None else str(self.timeout_seconds)
             ),
-            "subagent_cancel_policy": self.cancel_policy,
             "subagent_typed_result_handback": str(self.typed_result_handback).lower(),
             "subagent_parent_transcript_inherited": str(
                 self.parent_transcript_inherited
@@ -128,8 +132,14 @@ def build_delegate_tool(handoff: Handoff) -> ToolDecl:
     name = handoff.resolved_name()
     description = handoff.resolved_description()
 
-    def _handler_fn(message: str) -> str:
-        return cast(str, handoff.target.run(message).text)
+    def _handler_fn(message: str) -> dict[str, Any]:
+        result = handoff.target.run(message)
+        data = {"output": result.output}
+        if result.run_id:
+            data["run_id"] = result.run_id
+        if result.run_state:
+            data["run_state"] = result.run_state
+        return {"ok": True, "content": result.text, "data": data}
 
     args_model = _build_args_model(_handler_fn, f"{name.replace('.', '_')}Args")
 
@@ -179,7 +189,6 @@ def subagent(
     deadline_iso: str = "",
     memory_posture: str = "none",
     memory_grant_id: str | None = None,
-    cancel_policy: str = "cascade_from_parent",
 ) -> "Agent[Any, Any]":
     """Construct a child agent with an explicit bounded run context.
 
@@ -193,7 +202,6 @@ def subagent(
 
     from openminion.api.agent import Agent
 
-    runtime = parent._ensure_runtime()  # noqa: SLF001 — same-package helper
     parent_context = parent.subagent_context
     if (
         parent_context is not None
@@ -201,6 +209,7 @@ def subagent(
         and memory_posture != "none"
     ):
         raise ValueError("delegated memory grants cannot be re-shared in v1")
+    runtime = parent._ensure_runtime()  # noqa: SLF001 — same-package helper
     parent_id = str(getattr(parent, "name", "") or "parent").strip() or "parent"
     child_id = str(name or "subagent").strip() or "subagent"
     context_id = f"subagent-{uuid4().hex[:12]}"
@@ -212,11 +221,9 @@ def subagent(
         child_run_id=f"{context_id}:{child_id}",
         trace_parent_id=f"agent:{parent_id}",
         tool_allowlist=tuple(tools or ()),
-        deadline_iso=str(deadline_iso or ""),
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=_bounded_timeout_seconds(timeout_seconds, deadline_iso),
         memory_posture=str(memory_posture or "none"),
         memory_grant_id=memory_grant_id,
-        cancel_policy=str(cancel_policy or "cascade_from_parent"),
     )
     return Agent(
         instructions=instructions,
@@ -227,3 +234,24 @@ def subagent(
         name=name,
         subagent_context=context,
     )
+
+
+def _bounded_timeout_seconds(
+    timeout_seconds: int | None,
+    deadline_iso: str,
+) -> int | None:
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be greater than zero")
+    deadline = str(deadline_iso or "").strip()
+    if not deadline:
+        return timeout_seconds
+    try:
+        parsed = datetime.fromisoformat(deadline.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("deadline_iso must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("deadline_iso must include a timezone")
+    remaining = ceil((parsed - datetime.now(timezone.utc)).total_seconds())
+    if remaining <= 0:
+        raise ValueError("deadline_iso has elapsed")
+    return remaining if timeout_seconds is None else min(timeout_seconds, remaining)

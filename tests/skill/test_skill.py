@@ -175,6 +175,23 @@ def test_match_does_not_use_generic_procedure_token_overlap(tmp_path: Path) -> N
         ctl.close()
 
 
+def test_match_tie_break_carries_identity_overlap_score(tmp_path: Path) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl,
+            name="Restart Docker Services Safely",
+            markdown=DOCKER_SKILL,
+        )
+        package = ctl.get_skill(skill_id, version_hash)
+
+        _, _, tie_break = ctl._score_match(package, "restart docker", {})
+
+        assert tie_break.identity_score > 0
+    finally:
+        ctl.close()
+
+
 def test_render_snippet_is_budgeted(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:

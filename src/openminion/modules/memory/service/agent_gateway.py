@@ -13,11 +13,13 @@ from openminion.modules.memory.runtime.retrieval_pipeline import (
     RetrievalPipeline,
     build_empty_meta,
 )
+from openminion.modules.memory.runtime.recall import PrecisionRecallOptions
 from openminion.modules.memory.runtime.session_lifecycle import SessionLifecycleMixin
 from openminion.modules.memory.runtime.turn_recording import TurnRecordingMixin
 
 __all__ = [
     "LearningMixin",
+    "PrecisionRecallOptions",
     "RetrievalPipeline",
     "SessionLifecycleMixin",
     "TurnRecordingMixin",

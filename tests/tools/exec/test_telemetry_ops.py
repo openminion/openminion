@@ -224,6 +224,7 @@ def test_tool_exec_module_emits_run_errors_and_timeout(temp_db: str, tmp_path) -
         bad_workdir = _h_exec_run({"command": "pwd", "workdir": "missing"}, ctx)
         assert bad_workdir["status"] == "error"
         assert bad_workdir["error"]["code"] == "INVALID_ARGUMENT"
+        assert bad_workdir["error"]["details"] == {"workdir": "missing"}
 
         timed_out = _h_exec_run(
             {"command": "sleep 1.2", "timeout_s": 1, "yield_ms": 2000},

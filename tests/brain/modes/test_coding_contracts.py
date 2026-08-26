@@ -54,6 +54,8 @@ def test_v1_allowlist_contains_expected_tools() -> None:
         "exec.poll",
         "exec.list",
         "exec.kill",
+        "agent.list",
+        "agent.get",
         "task.delegate",
     }
     assert expected == CODING_ALLOWED_TOOLS
@@ -161,6 +163,7 @@ def test_coding_tool_specs_describe_delegate_artifact_disposition() -> None:
 
     specs = {spec.name: spec for spec in _build_tool_specs(CODING_ALLOWED_TOOLS)}
 
+    assert {"agent.list", "agent.get", "task.delegate"} <= specs.keys()
     description = specs["task.delegate"].description
     assert "exact named agent" in description
     assert "child artifact" in description

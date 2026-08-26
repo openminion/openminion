@@ -304,6 +304,7 @@ class JobRecord:
     result_inline: dict[str, Any] | None = None
     result_ref: str | None = None
     error: dict[str, Any] | None = None
+    owner_agent_id: str = ""
     created_at: str = field(default_factory=iso_now)
     updated_at: str = field(default_factory=iso_now)
     heartbeat_at: str = field(default_factory=iso_now)
@@ -324,6 +325,7 @@ class JobRecord:
             "result_inline": self.result_inline,
             "result_ref": self.result_ref,
             "error": self.error,
+            "owner_agent_id": self.owner_agent_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "heartbeat_at": self.heartbeat_at,

@@ -290,10 +290,29 @@ class RuntimeControlsMixin:
 
     def memory_report(self) -> str:
         from openminion.cli.presentation.visible_parity import format_memory_report
+        from openminion.modules.memory.runtime.capture_status import (
+            project_capture_processing,
+            summarize_capture_processing,
+        )
 
         records = self.list_memory_records()
         candidates = self.list_memory_candidates()
-        return format_memory_report(records, candidates, session_id=self.session_id)
+        events = (
+            self._rt.sessions.list_events(
+                session_id=self.session_id,
+                limit=1000,
+                event_type_prefix="memory.write.",
+            )
+            if self.is_bound
+            else []
+        )
+        capture = summarize_capture_processing(project_capture_processing(events))
+        return format_memory_report(
+            records,
+            candidates,
+            session_id=self.session_id,
+            capture=capture,
+        )
 
     def _memory_query_provider(self) -> Any:
         provider = getattr(self, "_memory_provider", None)

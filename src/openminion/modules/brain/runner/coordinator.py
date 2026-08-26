@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
+from openminion.base.time import utc_now_iso
 from openminion.tools.exec.command_parser import is_read_only_exec_command
 from openminion.tools.exec.process import resolve_shell_family
 
@@ -129,6 +130,27 @@ class BrainRunner:
     def get_last_meta_application(self) -> MetaApplication | None:
         return self._last_meta_application
 
+    def _apply_typed_memory_outcome(self, result: StepOutput) -> None:
+        action = result.action_result
+        if action is None or self.memory_api is None or not action.memory_use_refs:
+            return
+        outcome = {
+            "success": "success",
+            "failed": "failed",
+            "timeout": "timeout",
+        }.get(action.status)
+        if outcome is None:
+            return
+        self.memory_api.apply_outcome_feedback(
+            record_ids=list(
+                dict.fromkeys(ref.record_id for ref in action.memory_use_refs)
+            ),
+            outcome=outcome,
+            command_id=action.command_id,
+            observed_at=utc_now_iso(),
+            feedback_delta=0.1 if outcome == "success" else -0.1,
+        )
+
     def _emit_turn_outcome(
         self,
         *,
@@ -174,6 +196,14 @@ class BrainRunner:
             "a2a_request_count": _count("a2a.request"),
             "a2a_completed_count": _count("a2a.completed"),
             "step_output_count": len(state.step_outputs),
+            "memory_use_refs": [
+                ref.model_dump(mode="json")
+                for ref in (
+                    result.action_result.memory_use_refs
+                    if result.action_result is not None
+                    else []
+                )
+            ],
         }
         payload.update(
             {
@@ -201,6 +231,7 @@ class BrainRunner:
                 if str(result.status).strip().lower() not in {"error", "failed"}
                 else "error",
             )
+            self._apply_typed_memory_outcome(result)
         except Exception:
             return
 

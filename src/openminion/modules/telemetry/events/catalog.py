@@ -102,6 +102,7 @@ MEMORY_TURN_RECORDED = "memory.turn.recorded"
 MEMORY_TURN_RECORD_FAILED = "memory.turn.record_failed"
 MEMORY_WRITE_COMPLETED = "memory.write.completed"
 MEMORY_WRITE_FAILED = "memory.write.failed"
+MEMORY_WRITE_REJECTED = "memory.write.rejected"
 MEMORY_WRITE_STARTED = "memory.write.started"
 
 MEMORY_PROMOTION_EVALUATED = "memory.promotion.evaluated"
@@ -324,6 +325,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_TURN_RECORD_FAILED,
         MEMORY_WRITE_COMPLETED,
         MEMORY_WRITE_FAILED,
+        MEMORY_WRITE_REJECTED,
         MEMORY_WRITE_STARTED,
         MEMORY_PROMOTION_EVALUATED,
         MEMORY_TIER_TRANSITION_APPLIED,
@@ -571,6 +573,7 @@ __all__ = [
     "MEMORY_TURN_RECORD_FAILED",
     "MEMORY_WRITE_COMPLETED",
     "MEMORY_WRITE_FAILED",
+    "MEMORY_WRITE_REJECTED",
     "MEMORY_WRITE_STARTED",
     "MEMORY_PROMOTION_EVALUATED",
     "MEMORY_TIER_TRANSITION_APPLIED",

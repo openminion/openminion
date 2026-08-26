@@ -161,7 +161,7 @@ class FileWriteArgs(BaseModel):
         validation_alias=AliasChoices("path", "filename", "file_path", "destination"),
     )
     content: str = Field(
-        default="",
+        ...,
         description="Content to write",
         validation_alias=AliasChoices("content", "text", "body"),
     )

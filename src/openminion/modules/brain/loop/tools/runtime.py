@@ -320,6 +320,8 @@ def _normalize_finalization_status_response(response: LLMResponse) -> LLMRespons
 def _submit_output_close_requested(arguments: dict[str, Any]) -> bool:
     if arguments.get("satisfied") is True:
         return True
+    if str(arguments.get("status", "") or "").strip() == "final_answer":
+        return True
     next_action = str(arguments.get("next_action", "") or "").strip().lower()
     return next_action in {"close", "complete", "done", "final", "final_answer"}
 
@@ -341,15 +343,28 @@ def _normalize_submit_output_final_answer_response(
     if not isinstance(arguments, dict):
         return response
     final_answer = str(arguments.get("final_answer", "") or "").strip()
-    if not final_answer or not _submit_output_close_requested(arguments):
+    if not final_answer:
         return response
-    finalization_status = FinalizationStatus(
-        status="final_answer",
-        reasoning=str(
-            arguments.get("reasoning", arguments.get("reason", ""))
-            or "submit_output final_answer"
-        ),
-    ).model_dump(mode="json")
+    typed_status = str(arguments.get("status", "") or "").strip()
+    if typed_status in {"final_answer", "incomplete", "blocked"}:
+        finalization_status = FinalizationStatus(
+            status=typed_status,
+            reasoning=str(
+                arguments.get("reasoning", arguments.get("reason", "")) or ""
+            ),
+            remaining_work=str(arguments.get("remaining_work", "") or ""),
+            blocking_reason=str(arguments.get("blocking_reason", "") or ""),
+        ).model_dump(mode="json")
+    elif _submit_output_close_requested(arguments):
+        finalization_status = FinalizationStatus(
+            status="final_answer",
+            reasoning=str(
+                arguments.get("reasoning", arguments.get("reason", ""))
+                or "submit_output final_answer"
+            ),
+        ).model_dump(mode="json")
+    else:
+        return response
     return _with_typed_signal_source(
         response,
         field_name=STATE_KEY_FINALIZATION_STATUS,

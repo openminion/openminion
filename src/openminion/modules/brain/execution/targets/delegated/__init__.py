@@ -16,8 +16,6 @@ def build_delegated_decision(*, decision: Any, goal: str) -> Any:
         sub_intents=list(getattr(decision, "sub_intents", []) or []),
         rationale=str(getattr(decision, "rationale", "") or "").strip(),
         target_agent_id=target_agent_id,
-        target_capability=str(getattr(target, "target_capability", "") or "").strip()
-        or None,
         goal=str(goal or "").strip(),
         constraints="",
         synthesize_result=False,

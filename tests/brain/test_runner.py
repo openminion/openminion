@@ -225,6 +225,7 @@ class RunnerTests(unittest.TestCase):
         output = SimpleNamespace(
             status="done",
             response="ok",
+            action_result=None,
             working_state=WorkingState(
                 session_id="sess-lgmh",
                 agent_id="router-agent",

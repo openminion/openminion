@@ -185,6 +185,7 @@ def test_delegation_typed_decision_fields_remain_available_to_downstream_handler
             "act_profile": "general",
             "execution_target": {
                 "kind": "delegated",
+                "target_agent_id": "hotel-research-agent",
                 "target_capability": "hotel_research",
             },
             "delegation_context": {

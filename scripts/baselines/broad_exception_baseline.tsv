@@ -268,7 +268,6 @@ src/openminion/modules/session/storage/migrations/versions/0001_baseline.py	1	0	
 src/openminion/modules/session/storage/replay.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/session/storage/store.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/session/storage/summaries.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/skill/authoring.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/skill/proposal/promotion.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/skill/proposal/review.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/skill/runtime/parser.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

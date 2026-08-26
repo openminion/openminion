@@ -112,14 +112,9 @@ class _ActPayload(BaseModel):
         if (
             self.execution_target is not None
             and self.execution_target.kind == "delegated"
-            and not (
-                str(self.execution_target.target_agent_id or "").strip()
-                or str(self.execution_target.target_capability or "").strip()
-            )
+            and not str(self.execution_target.target_agent_id or "").strip()
         ):
-            raise ValueError(
-                "target_agent_id or target_capability is required when delegated"
-            )
+            raise ValueError("target_agent_id is required when delegated")
         return self
 
 

@@ -1,6 +1,7 @@
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .constants import FETCH_BACKEND_AUTO
 
@@ -29,6 +30,17 @@ class FetchGetArgs(BaseModel):
     extract: FetchExtractArgs = Field(default_factory=FetchExtractArgs)
     provider_options: dict[str, Any] = Field(default_factory=dict)
     max_response_chars: int = Field(default=1200, ge=200, le=500_000)
+
+    @field_validator("extract", mode="before")
+    @classmethod
+    def _decode_json_extract(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return decoded if isinstance(decoded, dict) else value
 
 
 class FetchHeadArgs(BaseModel):

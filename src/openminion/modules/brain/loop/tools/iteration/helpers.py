@@ -412,8 +412,9 @@ def _build_tool_failure_recovery_message(
         ).strip()
     if is_invalid_workdir:
         recovery_suffix = (
-            f"{recovery_suffix} Retry with an existing absolute workdir, or inspect "
-            "the workspace with structured file tools before running verification."
+            f"{recovery_suffix} exec.run already runs from the current workspace "
+            "root. Retry without workdir when the command targets that root, or "
+            "use an existing subdirectory relative to it."
         ).strip()
     if is_invalid_working_dir_argument:
         recovery_suffix = (

@@ -576,6 +576,9 @@ def _force_budget_answer_only_finalization(
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | None:
     has_tool_evidence = _has_tool_evidence_for_answer_only(loop_ctx, loop_state)
+    has_successful_tool_evidence = bool(
+        _successful_substantive_tool_results(loop_state)
+    )
     contract_requested = _answer_only_finalization_contract_requested(
         loop_ctx, loop_state, profile
     )
@@ -761,6 +764,7 @@ def _force_budget_answer_only_finalization(
         final_text=final_text,
         finalization_status=finalization_status,
         has_tool_evidence=has_tool_evidence,
+        has_successful_tool_evidence=has_successful_tool_evidence,
         contract_requested=contract_requested,
     )
     if outcome.final_text == final_text:

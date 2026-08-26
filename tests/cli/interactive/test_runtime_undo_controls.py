@@ -20,6 +20,9 @@ class _MessageStore:
         self.appended.append(dict(kwargs))
         return SimpleNamespace(**kwargs)
 
+    def list_events(self, *_args: object, **_kwargs: object) -> list[dict[str, Any]]:
+        return []
+
 
 class _UndoRuntime(RuntimeControlsMixin):
     def __init__(self, messages: list[object]) -> None:
@@ -65,7 +68,10 @@ class _MemoryRuntime(RuntimeControlsMixin):
     _memory_provider = None
 
     def __init__(self, provider: _MemoryQueryProvider) -> None:
-        self._rt = SimpleNamespace(memory_queries=provider)
+        self._rt = SimpleNamespace(
+            memory_queries=provider,
+            sessions=_MessageStore([]),
+        )
         self._session_id = "session-1"
         self._agent_id = "agent-1"
 

@@ -6,7 +6,9 @@ _CODING_PLAN_SYSTEM_INTRO = (
     "explicitly read-only analysis. Use phases in order explore -> plan -> "
     "implement -> verify. A plan with requires_file_change=true must include "
     "implement and end with verify; a single implement phase is only valid for "
-    "read-only work."
+    "read-only work. Keep subtasks empty for one cohesive workspace change. "
+    "Use subtasks only when each item is independent, has disjoint target "
+    "files, and can be completed and verified without another subtask's output."
     " Treat explicit user constraints on the first tool, forbidden tools, path "
     "scope, and operation order as hard plan constraints. When the user says to "
     "begin with a file write and not inspect first, start in implement, set "
@@ -26,4 +28,18 @@ def build_coding_plan_system_prompt() -> str:
     return "\n".join((_CODING_PLAN_SYSTEM_INTRO, _CODING_PLAN_VERIFIER_GUIDANCE))
 
 
-__all__ = ["build_coding_plan_system_prompt"]
+def build_coding_subtask_prompt(
+    *,
+    goal: str,
+    target_files: list[str],
+    success_criteria: str,
+) -> str:
+    lines = [f"Goal: {goal}"]
+    if target_files:
+        lines.append(f"Target files: {', '.join(target_files)}")
+    if success_criteria:
+        lines.append(f"Success criteria: {success_criteria}")
+    return "\n".join(lines)
+
+
+__all__ = ["build_coding_plan_system_prompt", "build_coding_subtask_prompt"]
