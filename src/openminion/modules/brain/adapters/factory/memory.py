@@ -71,15 +71,19 @@ def create_memory_adapter(
             db_path=sqlite_path,
             artifactctl=runtime_artifactctl,
         )
+        audit_sink = SQLiteMemoryAuditSink(default_memory_audit_db_path(sqlite_path))
         audited_store = AuditedMemoryStore(
             resolved_backend.store,
-            sink=SQLiteMemoryAuditSink(default_memory_audit_db_path(sqlite_path)),
+            sink=audit_sink,
+            owns_store=True,
+            owns_sink=True,
         )
         memory_service = MemoryService(
             store=audited_store,
             vector_adapter=vector_adapter,
             policy_config=config,
             telemetryctl=telemetryctl,
+            owns_store=True,
         )
         learning_cfg = _config_value(config, "candidate_learning")
         if learning_cfg is not None:
@@ -87,7 +91,12 @@ def create_memory_adapter(
         retention_cfg = _config_value(config, "retention")
         if retention_cfg is not None:
             memory_service.set_tiering_config(retention_cfg)
-        return MemctlAdapter(memory_service, agent_id=agent_id)
+        return MemctlAdapter(
+            memory_service,
+            agent_id=agent_id,
+            owns_backend=True,
+            owned_artifactctl=(runtime_artifactctl if artifactctl is None else None),
+        )
     except ImportError:
         raise_if_strict(mode)
         return LocalMemoryAdapter(base_dir)

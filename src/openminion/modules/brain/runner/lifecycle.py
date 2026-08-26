@@ -32,6 +32,35 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..schemas import StepOutput
 
 
+def close_owned_runner_bundle(
+    runner: "BrainRunner",
+    *,
+    vector_sync,
+    close_policy: bool,
+    close_retrieve: bool,
+) -> None:
+    """Close the resources assembled for the canonical bridge runner."""
+    if vector_sync is not None:
+        vector_sync.stop()
+    for resource in (
+        runner.a2a_api,
+        runner.context_api,
+        runner.tool_api,
+        runner.memory_api,
+        runner.skill_api,
+    ):
+        if resource is not None:
+            resource.close()
+    if runner.policy_api is not None and close_policy:
+        runner.policy_api.close()
+    if runner.retrieve_api is not None and close_retrieve:
+        runner.retrieve_api.close()
+    for resource in (runner.goal_runtime, runner.task_manager, runner.cron_api):
+        if resource is not None:
+            resource.close()
+    runner.session_api.close()
+
+
 def configure_runtime_controls(
     runner: "BrainRunner",
     *,

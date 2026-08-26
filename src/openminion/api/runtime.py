@@ -172,6 +172,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             runtime_storage=getattr(self, "runtime_storage", None),
             sandbox_runner=getattr(self, "sandbox_runner", None),
             authored_tools=getattr(self, "authored_tools", None),
+            ops_service=getattr(self, "ops_service", None),
             telemetry_service=getattr(self, "telemetry_service", None),
             agent_services=getattr(self, "_agent_services", None),
         )

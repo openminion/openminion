@@ -33,10 +33,13 @@ def create_session_adapter(
         return LocalSessionStore(local_root)
     runtime_artifactctl = resolve_artifactctl(artifactctl=artifactctl)
     try:
+        if runtime_artifactctl is None:
+            return SessctlAdapter(resolved_path, telemetryctl=telemetryctl)
         return SessctlAdapter(
             resolved_path,
             artifactctl=runtime_artifactctl,
             telemetryctl=telemetryctl,
+            owned_artifactctl=(runtime_artifactctl if artifactctl is None else None),
         )
     except ImportError:
         raise_if_strict(mode)

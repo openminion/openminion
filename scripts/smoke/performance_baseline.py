@@ -6,6 +6,7 @@ import argparse
 import cProfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+import gc
 import hashlib
 import io
 import json
@@ -29,7 +30,7 @@ from openminion.modules.context.budget import (
     assemble_budgeted_context,
 )
 
-ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v2"
+ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v3"
 TCPL_ARTIFACT_SCHEMA_VERSION = "tcpl.performance.v1"
 STARTUP_FIXTURE_REVISION = "focus-help-v2"
 SUT_BOUNDARY_SUBPROCESS = "sut_subprocess_only"
@@ -76,6 +77,13 @@ DEFAULT_SCENARIOS = (
     "coding_turn",
     "research_turn",
     "repeated_local_turns",
+    "persistent_api_turns",
+    "persistent_focus_turns",
+    "session_cache_churn",
+    "provider_lifecycle_loopback",
+    "agent_cache_churn",
+    "runtime_restart",
+    "queue_pressure",
 )
 LOCAL_VARIANCE = "local_deterministic"
 REPLAY_VARIANCE = "replay_fixture"
@@ -84,6 +92,8 @@ DEFAULT_THRESHOLD_MODE = "warn"
 PROFILE_TOP_LIMIT = 20
 IMPORTTIME_TOP_LIMIT = 20
 TRACEMALLOC_TOP_LIMIT = 10
+PROCESS_TREE_MEMBER_LIMIT = 64
+OMFLA_PROCESS_TREE_RSS_ABORT_BYTES = 2 * 1024 * 1024 * 1024
 TCPL_SKILL_ENTRY_TOKEN_BUDGET = 1200
 TCPL_SKILL_ENTRY_CANDIDATE_BUDGET = 6
 TCPL_COMPACTION_DEFER_MS_THRESHOLD = 10
@@ -158,21 +168,152 @@ def _utc_timestamp() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
-def _current_rss_bytes() -> int:
+def _current_rss_bytes(process_id: int | None = None) -> int | None:
     try:
         import psutil  # type: ignore[import-not-found]
 
-        return int(psutil.Process(os.getpid()).memory_info().rss)
+        return int(psutil.Process(process_id or os.getpid()).memory_info().rss)
     except Exception:
-        try:
-            import resource
+        return None
 
-            rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-            if sys.platform == "darwin":
-                return rss
-            return rss * 1024
-        except Exception:
-            return 0
+
+def _max_rss_bytes() -> int | None:
+    try:
+        import resource
+
+        rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except Exception:
+        return None
+    return rss if sys.platform == "darwin" else rss * 1024
+
+
+def _process_rss_metrics(process_id: int | None = None) -> dict[str, Any]:
+    measured_process_id = int(process_id or os.getpid())
+    unavailable: dict[str, str] = {}
+    metrics: dict[str, Any] = {
+        "current_rss_bytes": None,
+        "process_tree_current_rss_bytes": None,
+        "child_process_count": None,
+        "measured_process_id": measured_process_id,
+        "children_included": False,
+        "external_services_included": False,
+        "process_tree_members": [],
+    }
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except ImportError:
+        for key in (
+            "current_rss_bytes",
+            "process_tree_current_rss_bytes",
+            "child_process_count",
+        ):
+            unavailable[key] = "psutil_unavailable"
+        metrics["availability_reasons"] = unavailable
+        return metrics
+
+    try:
+        process = psutil.Process(measured_process_id)
+        current_rss = int(process.memory_info().rss)
+        metrics["current_rss_bytes"] = current_rss
+        children = process.children(recursive=True)
+        metrics["child_process_count"] = len(children)
+        metrics["children_included"] = True
+        process_tree_rss = current_rss
+        aggregate_complete = True
+        members: list[dict[str, Any]] = []
+        for child in children:
+            try:
+                child_rss = int(child.memory_info().rss)
+            except psutil.Error:
+                child_rss = None
+            if child_rss is not None:
+                process_tree_rss += child_rss
+            else:
+                aggregate_complete = False
+            if len(members) < PROCESS_TREE_MEMBER_LIMIT:
+                members.append(
+                    {
+                        "pid": int(child.pid),
+                        "role": "child_process",
+                        "current_rss_bytes": child_rss,
+                        "availability_reason": (
+                            None if child_rss is not None else "process_unavailable"
+                        ),
+                    }
+                )
+        metrics["process_tree_current_rss_bytes"] = (
+            process_tree_rss if aggregate_complete else None
+        )
+        metrics["process_tree_members"] = members
+        if not aggregate_complete:
+            unavailable["process_tree_current_rss_bytes"] = "descendant_rss_unavailable"
+        if len(children) > PROCESS_TREE_MEMBER_LIMIT:
+            unavailable["process_tree_members"] = "member_limit_reached"
+    except psutil.Error:
+        for key in (
+            "current_rss_bytes",
+            "process_tree_current_rss_bytes",
+            "child_process_count",
+        ):
+            unavailable[key] = "process_unavailable"
+    metrics["availability_reasons"] = unavailable
+    return metrics
+
+
+def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
+    metrics = _process_rss_metrics(process_id)
+    unavailable = dict(metrics.get("availability_reasons") or {})
+    metrics.update(
+        {
+            "max_rss_bytes": _max_rss_bytes() if process_id is None else None,
+            "thread_count": None,
+            "async_task_count": None,
+            "file_descriptor_count": None,
+            "open_file_count": None,
+            "network_connection_count": None,
+        }
+    )
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        process = psutil.Process(int(process_id or os.getpid()))
+        metrics["thread_count"] = int(process.num_threads())
+        try:
+            metrics["file_descriptor_count"] = int(process.num_fds())
+        except (AttributeError, psutil.Error):
+            unavailable["file_descriptor_count"] = "not_supported"
+        try:
+            metrics["open_file_count"] = len(process.open_files())
+        except psutil.Error:
+            unavailable["open_file_count"] = "process_unavailable"
+        try:
+            metrics["network_connection_count"] = len(process.net_connections())
+        except (AttributeError, psutil.Error):
+            unavailable["network_connection_count"] = "not_supported"
+    except ImportError:
+        for key in (
+            "thread_count",
+            "file_descriptor_count",
+            "open_file_count",
+            "network_connection_count",
+        ):
+            unavailable[key] = "psutil_unavailable"
+    except psutil.Error:
+        for key in (
+            "thread_count",
+            "file_descriptor_count",
+            "open_file_count",
+            "network_connection_count",
+        ):
+            unavailable[key] = "process_unavailable"
+
+    if metrics["max_rss_bytes"] is None:
+        unavailable["max_rss_bytes"] = (
+            "resource_unavailable" if process_id is None else "not_supported"
+        )
+    unavailable["async_task_count"] = "not_applicable"
+    metrics["availability_reasons"] = unavailable
+    return metrics
 
 
 def _dirty_worktree_summary(workspace_root: Path) -> dict[str, Any]:
@@ -278,6 +419,8 @@ def _estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
 
 
 def _base_metrics() -> dict[str, Any]:
+    process_metrics = _process_metrics()
+    current_rss = process_metrics.get("current_rss_bytes")
     return {
         "wall_time_ms": None,
         "wall_time_ns": None,
@@ -292,11 +435,23 @@ def _base_metrics() -> dict[str, Any]:
         "tool_schema_bytes": None,
         "tool_call_count": 0,
         "duplicate_call_count": 0,
-        "rss_start_bytes": _current_rss_bytes(),
+        "rss_start_bytes": current_rss,
         "rss_end_bytes": None,
         "rss_delta_bytes": None,
+        **process_metrics,
+        "harness_process_id": os.getpid(),
+        "harness_current_rss_bytes": current_rss,
+        "harness_max_rss_bytes": process_metrics.get("max_rss_bytes"),
         "tracemalloc_current_bytes": None,
         "tracemalloc_peak_bytes": None,
+        "tracemalloc_overhead_bytes": None,
+        "queue_depths": {},
+        "cache_cardinalities": {},
+        "phase": "steady_state",
+        "sample_index": 0,
+        "elapsed_ms": 0,
+        "completed_turn_count": 0,
+        "terminal_fact": None,
         "import_self_us": None,
         "import_cumulative_us": None,
         "importtime_artifact": None,
@@ -315,6 +470,8 @@ def _measurement_identity(
     fixture_revision: str,
     options: RunOptions | None = None,
     data_root: Path | None = None,
+    provider_posture: str = "none",
+    model_posture: str = "unavailable",
 ) -> dict[str, Any]:
     runtime_config = {
         "python_executable": str(options.python) if options is not None else "",
@@ -326,28 +483,103 @@ def _measurement_identity(
     }
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "git_head": "unavailable",
+        "dirty_tree_fingerprint": "unavailable",
+        "runner_source_sha256": "unavailable",
+        "config_hash": _stable_json_hash(runtime_config),
         "scenario_id": scenario_id,
         "command": command,
         "fixture_revision": fixture_revision,
         "measured_boundary": measured_boundary,
         "python_version": platform.python_version(),
         "platform": platform.platform(),
+        "provider_posture": provider_posture,
+        "model_posture": model_posture,
         "runtime_config": runtime_config,
     }
 
 
+def _campaign_source_identity(options: RunOptions) -> dict[str, Any]:
+    return {
+        "git_head": _git_head(options.workspace_root),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
+        "runner_source_sha256": _file_sha256(Path(__file__)),
+    }
+
+
+def _campaign_source_identity_errors(
+    expected: dict[str, Any], actual: dict[str, Any]
+) -> list[str]:
+    return [
+        key
+        for key in ("git_head", "dirty_tree_fingerprint", "runner_source_sha256")
+        if str(expected.get(key) or "") in {"", "unknown", "unavailable"}
+        or expected.get(key) != actual.get(key)
+    ]
+
+
 def _finish_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
-    rss_end = _current_rss_bytes()
+    process_override = metrics.pop("_process_metrics_override", None)
+    harness_metrics = _process_metrics()
+    metrics["harness_current_rss_bytes"] = harness_metrics.get("current_rss_bytes")
+    metrics["harness_max_rss_bytes"] = harness_metrics.get("max_rss_bytes")
+    process_metrics = (
+        process_override if isinstance(process_override, dict) else harness_metrics
+    )
+    availability_reasons = dict(metrics.get("availability_reasons") or {})
+    availability_reasons.update(process_metrics.get("availability_reasons") or {})
+    metrics.update(process_metrics)
+    metrics["availability_reasons"] = availability_reasons
+    rss_end = metrics.get("current_rss_bytes")
     metrics["rss_end_bytes"] = rss_end
     start = metrics.get("rss_start_bytes")
     metrics["rss_delta_bytes"] = (
-        rss_end - int(start) if isinstance(start, int) else None
+        int(rss_end) - int(start)
+        if isinstance(start, int) and isinstance(rss_end, int)
+        else None
     )
-    if tracemalloc.is_tracing():
-        current, peak = tracemalloc.get_traced_memory()
-        metrics["tracemalloc_current_bytes"] = int(current)
-        metrics["tracemalloc_peak_bytes"] = int(peak)
+    metrics["elapsed_ms"] = max(0, int(metrics.get("wall_time_ms") or 0))
+    if metrics.get("terminal_fact") is None:
+        metrics["availability_reasons"].setdefault("terminal_fact", "not_applicable")
     return metrics
+
+
+def _capture_tracemalloc_metrics(
+    metrics: dict[str, Any],
+    before_snapshot: tracemalloc.Snapshot,
+    *,
+    subprocess_boundary: bool,
+) -> None:
+    try:
+        current, peak = tracemalloc.get_traced_memory()
+        overhead = int(tracemalloc.get_tracemalloc_memory())
+        snapshot_diff = _tracemalloc_diff_summary(
+            before_snapshot,
+            tracemalloc.take_snapshot(),
+        )
+    finally:
+        tracemalloc.stop()
+    metrics["harness_tracemalloc_current_bytes"] = int(current)
+    metrics["harness_tracemalloc_peak_bytes"] = int(peak)
+    metrics["harness_tracemalloc_overhead_bytes"] = overhead
+    if subprocess_boundary:
+        for key in (
+            "tracemalloc_current_bytes",
+            "tracemalloc_peak_bytes",
+            "tracemalloc_overhead_bytes",
+            "tracemalloc_snapshot_diff",
+        ):
+            metrics[key] = [] if key == "tracemalloc_snapshot_diff" else None
+            metrics.setdefault("availability_reasons", {})[key] = (
+                "not_supported_for_subprocess"
+            )
+        metrics["harness_tracemalloc_snapshot_diff"] = snapshot_diff
+        return
+    metrics["tracemalloc_current_bytes"] = int(current)
+    metrics["tracemalloc_peak_bytes"] = int(peak)
+    metrics["tracemalloc_overhead_bytes"] = overhead
+    metrics["tracemalloc_snapshot_diff"] = snapshot_diff
 
 
 def _tracemalloc_diff_summary(
@@ -370,6 +602,27 @@ def _tracemalloc_diff_summary(
     return entries
 
 
+def _tracemalloc_line_diff(
+    before: tracemalloc.Snapshot,
+    after: tracemalloc.Snapshot,
+    *,
+    filename_suffix: str,
+    lineno: int,
+) -> dict[str, int]:
+    for stat in after.compare_to(before, "lineno"):
+        frame = stat.traceback[0] if stat.traceback else None
+        if (
+            frame is not None
+            and str(frame.filename).endswith(filename_suffix)
+            and int(frame.lineno) == lineno
+        ):
+            return {
+                "size_diff_bytes": int(stat.size_diff),
+                "count_diff": int(stat.count_diff),
+            }
+    return {"size_diff_bytes": 0, "count_diff": 0}
+
+
 def _run_with_metrics(
     *,
     scenario_id: str,
@@ -379,82 +632,58 @@ def _run_with_metrics(
     measurement_identity: dict[str, Any] | None = None,
     action: Callable[[dict[str, Any]], list[str]],
 ) -> ScenarioRun:
+    metrics = _base_metrics()
     tracemalloc.start()
     before_snapshot = tracemalloc.take_snapshot()
-    metrics = _base_metrics()
     started_ns = time.perf_counter_ns()
     notes: list[str] = []
+    error: str | None = None
     try:
         notes.extend(action(metrics))
-        command_value = str(metrics.pop("_command_override", command))
-        identity_value = metrics.pop("_measurement_identity_override", None)
-        harness_wall_ns = _elapsed_ns(started_ns)
-        override_wall_ns = metrics.pop("_wall_time_ns_override", None)
-        metrics["wall_time_ns"] = (
-            int(override_wall_ns)
-            if isinstance(override_wall_ns, int)
-            else harness_wall_ns
-        )
-        metrics["harness_wall_time_ns"] = harness_wall_ns
-        metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
-        return ScenarioRun(
-            scenario_id=scenario_id,
-            command=command_value,
-            provider_profile=provider_profile,
-            provider_variance_class=provider_variance_class,
-            metrics=_finish_metrics(metrics),
-            notes=notes,
-            measurement_identity=identity_value
-            if isinstance(identity_value, dict)
-            else measurement_identity
-            or _measurement_identity(
-                scenario_id=scenario_id,
-                command=command_value,
-                measured_boundary=SUT_BOUNDARY_IN_PROCESS,
-                fixture_revision="adhoc",
-            ),
-        )
     except Exception as exc:  # noqa: BLE001 - baseline artifacts must record failure
-        command_value = str(metrics.pop("_command_override", command))
-        identity_value = metrics.pop("_measurement_identity_override", None)
-        harness_wall_ns = _elapsed_ns(started_ns)
-        override_wall_ns = metrics.pop("_wall_time_ns_override", None)
-        metrics["wall_time_ns"] = (
-            int(override_wall_ns)
-            if isinstance(override_wall_ns, int)
-            else harness_wall_ns
-        )
-        metrics["harness_wall_time_ns"] = harness_wall_ns
-        metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
-        return ScenarioRun(
+        error = f"{type(exc).__name__}: {exc}"
+    command_value = str(metrics.pop("_command_override", command))
+    identity_value = metrics.pop("_measurement_identity_override", None)
+    harness_wall_ns = _elapsed_ns(started_ns)
+    override_wall_ns = metrics.pop("_wall_time_ns_override", None)
+    metrics["wall_time_ns"] = (
+        int(override_wall_ns) if isinstance(override_wall_ns, int) else harness_wall_ns
+    )
+    metrics["harness_wall_time_ns"] = harness_wall_ns
+    metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
+    _capture_tracemalloc_metrics(
+        metrics,
+        before_snapshot,
+        subprocess_boundary=isinstance(metrics.get("_process_metrics_override"), dict),
+    )
+    resolved_identity = dict(
+        identity_value
+        if isinstance(identity_value, dict)
+        else measurement_identity
+        or _measurement_identity(
             scenario_id=scenario_id,
             command=command_value,
-            provider_profile=provider_profile,
-            provider_variance_class=provider_variance_class,
-            metrics=_finish_metrics(metrics),
-            notes=notes,
-            measurement_identity=identity_value
-            if isinstance(identity_value, dict)
-            else measurement_identity
-            or _measurement_identity(
-                scenario_id=scenario_id,
-                command=command_value,
-                measured_boundary=SUT_BOUNDARY_IN_PROCESS,
-                fixture_revision="adhoc",
-            ),
-            ok=False,
-            error=f"{type(exc).__name__}: {exc}",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="adhoc",
         )
-    finally:
-        if tracemalloc.is_tracing():
-            try:
-                metrics["tracemalloc_snapshot_diff"] = _tracemalloc_diff_summary(
-                    before_snapshot,
-                    tracemalloc.take_snapshot(),
-                )
-            except Exception:
-                metrics["tracemalloc_snapshot_diff"] = []
+    )
+    resolved_identity["provider_posture"] = provider_profile
+    resolved_identity["model_posture"] = str(
+        metrics.get("model_posture") or "unavailable"
+    )
+    if tracemalloc.is_tracing():
         tracemalloc.stop()
+    return ScenarioRun(
+        scenario_id=scenario_id,
+        command=command_value,
+        provider_profile=provider_profile,
+        provider_variance_class=provider_variance_class,
+        metrics=_finish_metrics(metrics),
+        notes=notes,
+        measurement_identity=resolved_identity,
+        ok=error is None,
+        error=error,
+    )
 
 
 def _canonical_help_command(options: RunOptions, *, data_root: Path) -> list[str]:
@@ -499,6 +728,65 @@ def _run_subprocess(
         capture_output=True,
         timeout=options.timeout_seconds,
         check=False,
+    )
+
+
+def _run_subprocess_measured(
+    command: list[str], *, options: RunOptions, data_root: Path
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    process = subprocess.Popen(
+        command,
+        cwd=options.workspace_root / "openminion",
+        env=_command_env(options, data_root=data_root),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + options.timeout_seconds
+    sample_count = 0
+    first_current_rss: int | None = None
+    sampled_peak_current_rss: int | None = None
+    resource_metrics = _process_metrics(process.pid)
+    current_rss = resource_metrics.get("current_rss_bytes")
+    if isinstance(current_rss, int):
+        first_current_rss = current_rss
+        sampled_peak_current_rss = current_rss
+        sample_count = 1
+    while True:
+        current_rss = _current_rss_bytes(process.pid)
+        if isinstance(current_rss, int):
+            first_current_rss = (
+                current_rss if first_current_rss is None else first_current_rss
+            )
+            sampled_peak_current_rss = max(
+                current_rss,
+                sampled_peak_current_rss or current_rss,
+            )
+            sample_count += 1
+        if process.poll() is not None:
+            break
+        if time.monotonic() >= deadline:
+            process.kill()
+            stdout, stderr = process.communicate()
+            raise subprocess.TimeoutExpired(
+                command,
+                options.timeout_seconds,
+                output=stdout,
+                stderr=stderr,
+            )
+        time.sleep(0.005)
+    stdout, stderr = process.communicate()
+    resource_metrics["sampled_start_current_rss_bytes"] = first_current_rss
+    resource_metrics["sampled_peak_current_rss_bytes"] = sampled_peak_current_rss
+    resource_metrics["process_sample_count"] = sample_count
+    return (
+        subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        ),
+        resource_metrics,
     )
 
 
@@ -645,8 +933,15 @@ def _measure_focus_startup(
         metrics["explicit_data_root"] = str(data_root)
         metrics["measured_boundary"] = SUT_BOUNDARY_SUBPROCESS
         sut_started_ns = time.perf_counter_ns()
-        completed = _run_subprocess(command, options=options, data_root=data_root)
+        completed, sut_metrics = _run_subprocess_measured(
+            command,
+            options=options,
+            data_root=data_root,
+        )
         metrics["_wall_time_ns_override"] = _elapsed_ns(sut_started_ns)
+        metrics["_process_metrics_override"] = sut_metrics
+        metrics["rss_start_bytes"] = sut_metrics.get("sampled_start_current_rss_bytes")
+        metrics["phase"] = "startup"
         metrics["phase_timings_ms"] = {"subprocess_exit_code": completed.returncode}
         prompt_ready = "start the default terminal renderer" in completed.stdout.lower()
         metrics["prompt_ready_marker"] = prompt_ready
@@ -667,7 +962,7 @@ def _measure_focus_startup(
         notes = [
             "Startup command uses canonical `openminion --help` with a scenario-specific explicit data root.",
             "Artifact wall time measures only the normal subprocess; import-time diagnostics are separate artifacts.",
-            "RSS fields measure the harness process; child process max RSS is not portable in this runner.",
+            "RSS and process-tree fields sample the startup subprocess; sampled peak current RSS remains distinct from unavailable child high-water RSS.",
         ]
         if import_report["raw_artifact"]:
             notes.append(
@@ -1779,7 +2074,7 @@ def _measure_tcpl02_skill_entry_scenario(
 
 def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
     def action(metrics: dict[str, Any]) -> list[str]:
-        iteration_metrics: list[dict[str, int]] = []
+        iteration_metrics: list[dict[str, Any]] = []
         start_rss = _current_rss_bytes()
         for index in range(1):
             iteration_started_ns = time.perf_counter_ns()
@@ -1806,8 +2101,18 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
         metrics["phase_timings_ms"] = {"iterations": 1}
         metrics["tool_call_count"] = 1
         metrics["iterations"] = iteration_metrics
-        metrics["rss_growth_bytes"] = end_rss - start_rss
-        metrics["rss_growth_per_iteration_bytes"] = end_rss - start_rss
+        if isinstance(start_rss, int) and isinstance(end_rss, int):
+            metrics["rss_growth_bytes"] = end_rss - start_rss
+            metrics["rss_growth_per_iteration_bytes"] = end_rss - start_rss
+        else:
+            metrics["rss_growth_bytes"] = None
+            metrics["rss_growth_per_iteration_bytes"] = None
+            metrics["availability_reasons"]["rss_growth_bytes"] = (
+                "current_rss_unavailable"
+            )
+            metrics["availability_reasons"]["rss_growth_per_iteration_bytes"] = (
+                "current_rss_unavailable"
+            )
         if iteration_metrics:
             first_peak = iteration_metrics[0]["tracemalloc_peak_bytes"]
             last_peak = iteration_metrics[-1]["tracemalloc_peak_bytes"]
@@ -1823,6 +2128,1549 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
         scenario_id="repeated_local_turns",
         command="repeated_local_fixture:single_iteration_sample",
         provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _omfla_echo_config(root: Path) -> Path:
+    from openminion.base.config import (
+        AgentProfileConfig,
+        OpenMinionConfig,
+        save_config,
+    )
+
+    root.mkdir(parents=True, exist_ok=True)
+    config = OpenMinionConfig()
+    config.agents = {
+        "openminion": AgentProfileConfig(
+            name="openminion",
+            provider="echo",
+            default_channel="console",
+        )
+    }
+    config.default_agent = "openminion"
+    config.runtime.log_level = "ERROR"
+    config.runtime.memory_enabled = False
+    config.storage.path = str(root / "state.db")
+    config_path = root / "config.json"
+    save_config(config, str(config_path))
+    return config_path
+
+
+def _omfla_process_sample(
+    *,
+    completed_turn_count: int,
+    process_id: int | None = None,
+    cache_cardinalities: dict[str, int] | None = None,
+    queue_depths: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    sample = _process_metrics(process_id)
+    tree_rss = sample.get("process_tree_current_rss_bytes")
+    if isinstance(tree_rss, int) and tree_rss >= OMFLA_PROCESS_TREE_RSS_ABORT_BYTES:
+        raise RuntimeError(
+            "OMFLA process-tree RSS operational abort: "
+            f"{tree_rss} >= {OMFLA_PROCESS_TREE_RSS_ABORT_BYTES}"
+        )
+    if process_id is None and tracemalloc.is_tracing():
+        current, peak = tracemalloc.get_traced_memory()
+        sample["tracemalloc_current_bytes"] = int(current)
+        sample["tracemalloc_peak_bytes"] = int(peak)
+    else:
+        sample["tracemalloc_current_bytes"] = None
+        sample["tracemalloc_peak_bytes"] = None
+        reasons = dict(sample.get("availability_reasons") or {})
+        reasons["tracemalloc_current_bytes"] = "not_supported_for_subprocess"
+        reasons["tracemalloc_peak_bytes"] = "not_supported_for_subprocess"
+        sample["availability_reasons"] = reasons
+    sample["completed_turn_count"] = completed_turn_count
+    sample["cache_cardinalities"] = dict(cache_cardinalities or {})
+    sample["queue_depths"] = dict(queue_depths or {})
+    return sample
+
+
+def _omfla_window_sample(
+    *,
+    index: int,
+    completed_turn_count: int,
+    rss_readings: list[int],
+    process_id: int | None = None,
+    cache_cardinalities: dict[str, int] | None = None,
+    queue_depths: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    sample = _omfla_process_sample(
+        completed_turn_count=completed_turn_count,
+        process_id=process_id,
+        cache_cardinalities=cache_cardinalities,
+        queue_depths=queue_depths,
+    )
+    sample["window_index"] = index
+    sample["rss_median_bytes"] = (
+        int(statistics.median(rss_readings)) if rss_readings else None
+    )
+    if not rss_readings:
+        sample.setdefault("availability_reasons", {})["rss_median_bytes"] = (
+            "current_rss_unavailable"
+        )
+    return sample
+
+
+def _omfla_completed_api_turn(
+    runtime: Any,
+    *,
+    session_id: str,
+    turn_index: int,
+) -> dict[str, Any]:
+    result = runtime.run_turn(
+        payload={
+            "message": f"OMFLA deterministic turn {turn_index}",
+            "session_id": session_id,
+            "conversation_id": session_id,
+        },
+        request_id=f"omfla-{session_id}-{turn_index}",
+    )
+    run_id = str(result.get("run_id") or "").strip()
+    if (
+        not str(result.get("body") or "").strip()
+        or result.get("session_id") != session_id
+        or result.get("run_state") != "completed"
+        or not run_id
+    ):
+        raise RuntimeError(f"typed API completion missing for turn {turn_index}")
+    events = runtime.sessions.list_events(
+        session_id=session_id,
+        limit=50,
+        newest_first=True,
+        event_type_prefix="run.",
+    )
+    terminal = next(
+        (
+            event
+            for event in events
+            if event.event_type == "run.completed"
+            and str(event.payload.get("run_id") or "") == run_id
+            and event.payload.get("state") == "completed"
+        ),
+        None,
+    )
+    if terminal is None:
+        raise RuntimeError(f"persisted API terminal event missing for run {run_id}")
+    return {
+        "session_id": session_id,
+        "run_id": run_id,
+        "run_record_status": "completed",
+        "terminal_event_type": terminal.event_type,
+        "terminal_event_state": terminal.payload.get("state"),
+    }
+
+
+def _measure_persistent_api_turns(
+    options: RunOptions,
+    *,
+    warmup_turns: int = 10,
+    measured_turns: int = 100,
+    window_count: int = 5,
+) -> ScenarioRun:
+    scenario_id = "persistent_api_turns"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from contextlib import redirect_stdout
+
+        from openminion.api.runtime import APIRuntime
+
+        root = options.output_root / "api-runtime"
+        config_path = _omfla_echo_config(root)
+        runtime = APIRuntime.from_config_path(str(config_path))
+        completed = 0
+        terminal_fact: dict[str, Any] | None = None
+        windows: list[dict[str, Any]] = []
+        post_warmup_snapshot: Any | None = None
+        pre_close_diff: list[dict[str, Any]] = []
+        try:
+            ready = _omfla_process_sample(completed_turn_count=completed)
+            with redirect_stdout(io.StringIO()):
+                for turn_index in range(warmup_turns):
+                    terminal_fact = _omfla_completed_api_turn(
+                        runtime,
+                        session_id="omfla-api",
+                        turn_index=turn_index,
+                    )
+                    completed += 1
+            context_service = runtime.agent._runner.context_api.service  # noqa: SLF001
+
+            def context_cache_cardinalities() -> dict[str, int]:
+                return {
+                    "contextctl_pack_cache": len(context_service._cache),  # noqa: SLF001
+                    "contextctl_manifest_index": len(  # noqa: SLF001
+                        context_service._manifest_index
+                    ),
+                    "contextctl_latest_sessions": len(  # noqa: SLF001
+                        context_service._latest_manifest_by_session
+                    ),
+                }
+
+            post_warmup = _omfla_process_sample(
+                completed_turn_count=completed,
+                cache_cardinalities=context_cache_cardinalities(),
+            )
+            if tracemalloc.is_tracing():
+                post_warmup_snapshot = tracemalloc.take_snapshot()
+            if measured_turns % window_count:
+                raise ValueError("measured API turns must divide into equal windows")
+            turns_per_window = measured_turns // window_count
+            for window_index in range(window_count):
+                readings: list[int] = []
+                with redirect_stdout(io.StringIO()):
+                    for _ in range(turns_per_window):
+                        terminal_fact = _omfla_completed_api_turn(
+                            runtime,
+                            session_id="omfla-api",
+                            turn_index=completed,
+                        )
+                        completed += 1
+                        if isinstance(current_rss := _current_rss_bytes(), int):
+                            readings.append(current_rss)
+                windows.append(
+                    _omfla_window_sample(
+                        index=window_index + 1,
+                        completed_turn_count=completed,
+                        rss_readings=readings,
+                        cache_cardinalities={
+                            **context_cache_cardinalities(),
+                            "gateway_memory_capsules": len(
+                                runtime.gateway._memory_capsule_cache  # noqa: SLF001
+                            ),
+                            "runtime_gateways": len(runtime._gateways),  # noqa: SLF001
+                            "runtime_agent_services": len(  # noqa: SLF001
+                                runtime._agent_services
+                            ),
+                        },
+                    )
+                )
+            if post_warmup_snapshot is not None:
+                pre_close_diff = _tracemalloc_diff_summary(
+                    post_warmup_snapshot,
+                    tracemalloc.take_snapshot(),
+                )
+        finally:
+            runtime.close()
+        close_sample = _omfla_process_sample(
+            completed_turn_count=completed,
+            cache_cardinalities=context_cache_cardinalities(),
+        )
+        close_sample["phase"] = "normal_close"
+        post_close_snapshot = (
+            tracemalloc.take_snapshot() if post_warmup_snapshot is not None else None
+        )
+        post_close_diff = (
+            _tracemalloc_diff_summary(post_warmup_snapshot, post_close_snapshot)
+            if post_warmup_snapshot is not None and post_close_snapshot is not None
+            else []
+        )
+        post_close_event_loop_diff = (
+            _tracemalloc_line_diff(
+                post_warmup_snapshot,
+                post_close_snapshot,
+                filename_suffix="asyncio/base_events.py",
+                lineno=401,
+            )
+            if post_warmup_snapshot is not None and post_close_snapshot is not None
+            else {"size_diff_bytes": 0, "count_diff": 0}
+        )
+        collected_objects = gc.collect()
+        post_gc_sample = _omfla_process_sample(
+            completed_turn_count=completed,
+            cache_cardinalities=context_cache_cardinalities(),
+        )
+        post_gc_sample["phase"] = "post_diagnostic_gc"
+        post_gc_snapshot = (
+            tracemalloc.take_snapshot() if post_warmup_snapshot is not None else None
+        )
+        post_gc_diff = (
+            _tracemalloc_diff_summary(post_warmup_snapshot, post_gc_snapshot)
+            if post_warmup_snapshot is not None and post_gc_snapshot is not None
+            else []
+        )
+        post_gc_event_loop_diff = (
+            _tracemalloc_line_diff(
+                post_warmup_snapshot,
+                post_gc_snapshot,
+                filename_suffix="asyncio/base_events.py",
+                lineno=401,
+            )
+            if post_warmup_snapshot is not None and post_gc_snapshot is not None
+            else {"size_diff_bytes": 0, "count_diff": 0}
+        )
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": post_warmup,
+                "steady_state_windows": windows,
+                "close_sample": close_sample,
+                "completed_turn_count": completed,
+                "warmup_turn_count": warmup_turns,
+                "measured_turn_count": measured_turns,
+                "terminal_fact": terminal_fact,
+                "cache_cardinalities": windows[-1]["cache_cardinalities"],
+                "post_warmup_pre_close_tracemalloc_diff": pre_close_diff,
+                "post_warmup_post_close_tracemalloc_diff": post_close_diff,
+                "post_warmup_post_close_event_loop_diff": (post_close_event_loop_diff),
+                "diagnostic_gc_collected_objects": collected_objects,
+                "post_warmup_post_gc_tracemalloc_diff": post_gc_diff,
+                "post_warmup_post_gc_event_loop_diff": post_gc_event_loop_diff,
+                "post_gc_sample": post_gc_sample,
+                "phase": "post_diagnostic_gc",
+                "model_posture": "test_owned_echo",
+            }
+        )
+        return [
+            "One API runtime and one session own all warmup and measured turns.",
+            "Completion requires the typed result plus its matching persisted run.completed event.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:api-repeated-turns",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="test_owned_echo",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:api-repeated-turns",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="omfla-api-repeated-turns-v4",
+            options=options,
+            data_root=options.output_root / "api-runtime",
+            provider_posture="test_owned_echo",
+            model_posture="test_owned_echo",
+        ),
+        action=action,
+    )
+
+
+def _persisted_focus_terminal_fact(
+    database_path: Path,
+    *,
+    session_id: str,
+    after_event_id: int,
+    missing_ok: bool = False,
+) -> dict[str, Any] | None:
+    from contextlib import closing
+    import sqlite3
+
+    with closing(
+        sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+    ) as connection:
+        row = connection.execute(
+            """
+            SELECT id, payload_json
+            FROM events
+            WHERE session_id = ? AND event_type = 'run.completed' AND id > ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (session_id, after_event_id),
+        ).fetchone()
+        if row is None:
+            if missing_ok:
+                return None
+            raise RuntimeError("persisted Focus run.completed event missing")
+        message_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0]
+        )
+    payload = json.loads(str(row[1]))
+    run_id = str(payload.get("run_id") or "").strip()
+    state = str(payload.get("state") or "").strip()
+    if not run_id or state != "completed":
+        raise RuntimeError("persisted Focus terminal fact is not completed")
+    return {
+        "event_id": int(row[0]),
+        "session_id": session_id,
+        "run_id": run_id,
+        "run_record_status": state,
+        "terminal_event_type": "run.completed",
+        "terminal_event_state": state,
+        "persisted_message_count": message_count,
+    }
+
+
+def _measure_persistent_focus_turns(
+    options: RunOptions,
+    *,
+    warmup_turns: int = 10,
+    measured_turns: int = 50,
+    window_count: int = 5,
+) -> ScenarioRun:
+    scenario_id = "persistent_focus_turns"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from tests.e2e.cli.focus.harness import FocusProbe
+
+        root = options.output_root / "focus-runtime"
+        config_path = _omfla_echo_config(root)
+        session_id = "omfla-focus"
+        probe = FocusProbe(
+            python_bin=options.python,
+            openminion_root=options.workspace_root / "openminion",
+            framework_root=options.workspace_root,
+            data_root=root / "data",
+            config_path=config_path,
+            agent_id="openminion",
+            workdir=options.workspace_root / "openminion",
+            session_id=session_id,
+            include_project_context=False,
+        )
+        completed = 0
+        terminal_fact: dict[str, Any] | None = None
+        terminal_event_id = 0
+        windows: list[dict[str, Any]] = []
+        child_pid = 0
+        session = probe.session()
+        session.start()
+        try:
+            probe.wait_ready(session)
+            process = session._process  # noqa: SLF001
+            if process is None:
+                raise RuntimeError("Focus PTY process is unavailable")
+            child_pid = process.pid
+            ready = _omfla_process_sample(
+                completed_turn_count=completed,
+                process_id=child_pid,
+            )
+
+            def run_turn() -> None:
+                nonlocal completed, terminal_event_id, terminal_fact
+                probe._submit_composer_line(  # noqa: SLF001
+                    session,
+                    f"OMFLA deterministic Focus turn {completed}",
+                )
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    terminal_fact = _persisted_focus_terminal_fact(
+                        root / "state.db",
+                        session_id=session_id,
+                        after_event_id=terminal_event_id,
+                        missing_ok=True,
+                    )
+                    if terminal_fact is not None:
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise RuntimeError("persisted Focus terminal event timed out")
+                terminal_event_id = int(terminal_fact["event_id"])
+                completed += 1
+
+            for _ in range(warmup_turns):
+                run_turn()
+            post_warmup = _omfla_process_sample(
+                completed_turn_count=completed,
+                process_id=child_pid,
+            )
+            if measured_turns % window_count:
+                raise ValueError("measured Focus turns must divide into equal windows")
+            turns_per_window = measured_turns // window_count
+            for window_index in range(window_count):
+                readings: list[int] = []
+                for _ in range(turns_per_window):
+                    run_turn()
+                    if isinstance(current_rss := _current_rss_bytes(child_pid), int):
+                        readings.append(current_rss)
+                windows.append(
+                    _omfla_window_sample(
+                        index=window_index + 1,
+                        completed_turn_count=completed,
+                        rss_readings=readings,
+                        process_id=child_pid,
+                    )
+                )
+            metrics["_process_metrics_override"] = _process_metrics(child_pid)
+        finally:
+            session.terminate()
+        child_alive_after_close = False
+        if child_pid:
+            try:
+                import psutil  # type: ignore[import-not-found]
+
+                child_alive_after_close = psutil.pid_exists(child_pid)
+            except ImportError:
+                child_alive_after_close = False
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": post_warmup,
+                "steady_state_windows": windows,
+                "close_sample": _omfla_process_sample(completed_turn_count=completed),
+                "completed_turn_count": completed,
+                "warmup_turn_count": warmup_turns,
+                "measured_turn_count": measured_turns,
+                "terminal_fact": terminal_fact,
+                "focus_child_pid": child_pid,
+                "focus_child_alive_after_close": child_alive_after_close,
+                "focus_transcript_retention_limit": 1000,
+                "focus_transcript_retention_limit_crossed": completed * 2 > 1000,
+                "durable_history_message_count": (
+                    int(terminal_fact["persisted_message_count"])
+                    if terminal_fact is not None
+                    else 0
+                ),
+                "model_posture": "test_owned_echo",
+            }
+        )
+        if child_alive_after_close:
+            raise RuntimeError("Focus child process remained alive after close")
+        return [
+            "Composer screen text is readiness evidence only.",
+            "Each completed turn is matched to a new persisted run.completed event for the same session.",
+            "The default 1000-message transcript retention limit is recorded; this campaign does not cross it.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:focus-repeated-turns",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="test_owned_echo",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:focus-repeated-turns",
+            measured_boundary=SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision="omfla-focus-repeated-turns-v1",
+            options=options,
+            data_root=options.output_root / "focus-runtime",
+            provider_posture="test_owned_echo",
+            model_posture="test_owned_echo",
+        ),
+        action=action,
+    )
+
+
+def _measure_session_cache_churn(
+    options: RunOptions,
+    *,
+    warmup_turns: int = 10,
+    session_count: int = 100,
+    window_count: int = 5,
+) -> ScenarioRun:
+    scenario_id = "session_cache_churn"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from contextlib import redirect_stdout
+
+        from openminion.api.runtime import APIRuntime
+
+        root = options.output_root / "session-runtime"
+        runtime = APIRuntime.from_config_path(str(_omfla_echo_config(root)))
+        completed = 0
+        terminal_fact: dict[str, Any] | None = None
+        windows: list[dict[str, Any]] = []
+        try:
+            ready = _omfla_process_sample(completed_turn_count=completed)
+            with redirect_stdout(io.StringIO()):
+                for turn_index in range(warmup_turns):
+                    terminal_fact = _omfla_completed_api_turn(
+                        runtime,
+                        session_id="omfla-session-warmup",
+                        turn_index=turn_index,
+                    )
+                    completed += 1
+            context_service = runtime.agent._runner.context_api.service  # noqa: SLF001
+
+            def context_cardinalities() -> dict[str, int]:
+                return {
+                    "contextctl_pack_cache": len(context_service._cache),  # noqa: SLF001
+                    "contextctl_manifest_index": len(  # noqa: SLF001
+                        context_service._manifest_index
+                    ),
+                    "contextctl_latest_sessions": len(  # noqa: SLF001
+                        context_service._latest_manifest_by_session
+                    ),
+                }
+
+            post_warmup = _omfla_process_sample(completed_turn_count=completed)
+            if session_count % window_count:
+                raise ValueError("session count must divide into equal windows")
+            sessions_per_window = session_count // window_count
+            for window_index in range(window_count):
+                readings: list[int] = []
+                with redirect_stdout(io.StringIO()):
+                    for _ in range(sessions_per_window):
+                        session_index = completed - warmup_turns
+                        terminal_fact = _omfla_completed_api_turn(
+                            runtime,
+                            session_id=f"omfla-session-{session_index:03d}",
+                            turn_index=0,
+                        )
+                        completed += 1
+                        if isinstance(current_rss := _current_rss_bytes(), int):
+                            readings.append(current_rss)
+                followups = runtime.gateway._turn_runner._memory_followup_queue  # noqa: SLF001
+                windows.append(
+                    _omfla_window_sample(
+                        index=window_index + 1,
+                        completed_turn_count=completed,
+                        rss_readings=readings,
+                        cache_cardinalities={
+                            **context_cardinalities(),
+                            "runtime_sessions": runtime.sessions.count_sessions(),
+                            "gateway_memory_capsules": len(
+                                runtime.gateway._memory_capsule_cache  # noqa: SLF001
+                            ),
+                            "runtime_gateways": len(runtime._gateways),  # noqa: SLF001
+                            "runtime_agent_services": len(  # noqa: SLF001
+                                runtime._agent_services
+                            ),
+                        },
+                        queue_depths={
+                            "memory_followup": followups.pending_count(),
+                        },
+                    )
+                )
+        finally:
+            runtime.close()
+        close_cardinalities = context_cardinalities()
+        last_cache = windows[-1]["cache_cardinalities"]
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": post_warmup,
+                "steady_state_windows": windows,
+                "close_sample": _omfla_process_sample(
+                    completed_turn_count=completed,
+                    cache_cardinalities=close_cardinalities,
+                ),
+                "completed_turn_count": completed,
+                "warmup_turn_count": warmup_turns,
+                "distinct_session_count": session_count,
+                "terminal_fact": terminal_fact,
+                "cache_cardinalities": last_cache,
+                "queue_depths": windows[-1]["queue_depths"],
+                "owner_cardinality_facts": [
+                    {
+                        "owner": "runtime SessionStore",
+                        "lifetime": "runtime/durable store",
+                        "observed_cardinality": last_cache["runtime_sessions"],
+                        "natural_invalidation": "session retention policy",
+                        "disposition": "keep",
+                    },
+                    {
+                        "owner": "GatewayService memory capsule cache",
+                        "lifetime": "gateway",
+                        "observed_cardinality": last_cache["gateway_memory_capsules"],
+                        "natural_invalidation": "gateway/runtime close",
+                        "disposition": "keep",
+                    },
+                    {
+                        "owner": "ContextCtlService pack and manifest caches",
+                        "lifetime": "Brain/context-service runtime lifetime",
+                        "observed_cardinality": {
+                            "pack_cache": last_cache["contextctl_pack_cache"],
+                            "manifest_index": last_cache["contextctl_manifest_index"],
+                            "latest_sessions": last_cache["contextctl_latest_sessions"],
+                        },
+                        "natural_invalidation": (
+                            "ContextCtl close delegated through Brain/runtime close"
+                        ),
+                        "disposition": "defer:session-lifecycle-contract-required",
+                    },
+                    {
+                        "owner": "repo-map cache",
+                        "lifetime": "context owner with 60-second entry TTL",
+                        "observed_cardinality": None,
+                        "natural_invalidation": "matching lookup after TTL",
+                        "disposition": "defer:not_reached_by_provider_free_turn",
+                    },
+                    {
+                        "owner": "file backend cache",
+                        "lifetime": "process",
+                        "observed_cardinality": None,
+                        "natural_invalidation": "test reset/process close",
+                        "disposition": "defer:not_reached_by_provider_free_turn",
+                    },
+                    {
+                        "owner": "memory follow-up queue",
+                        "lifetime": "gateway turn runner",
+                        "observed_cardinality": windows[-1]["queue_depths"][
+                            "memory_followup"
+                        ],
+                        "natural_invalidation": "flush/worker drain",
+                        "disposition": "keep",
+                    },
+                    {
+                        "owner": "control-plane submission audit/dedup",
+                        "lifetime": "control-plane store",
+                        "observed_cardinality": None,
+                        "natural_invalidation": "store retention owner",
+                        "disposition": "defer:measured_by_queue_pressure",
+                    },
+                ],
+                "model_posture": "test_owned_echo",
+            }
+        )
+        return [
+            "One warmup session is followed by distinct provider-free sessions in the same runtime.",
+            "Unconnected cache owners are reported as deferred facts rather than assigned synthetic zeroes.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:session-churn",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="test_owned_echo",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:session-churn",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="omfla-session-churn-v1",
+            options=options,
+            data_root=options.output_root / "session-runtime",
+            provider_posture="test_owned_echo",
+            model_posture="test_owned_echo",
+        ),
+        action=action,
+    )
+
+
+def _measure_provider_lifecycle_loopback(
+    options: RunOptions,
+    *,
+    warmup_calls: int = 5,
+    measured_calls: int = 50,
+) -> ScenarioRun:
+    scenario_id = "provider_lifecycle_loopback"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        from unittest.mock import patch
+
+        from openminion.modules.llm import LLMRequest
+        from openminion.modules.llm.providers.openai.adapter import OpenAIProvider
+        from openminion.tools.mcp.manager import MCPFleetManager
+
+        request_count = 0
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self) -> None:  # noqa: N802
+                nonlocal request_count
+                request_count += 1
+                length = int(self.headers.get("Content-Length", "0") or 0)
+                self.rfile.read(length)
+                body = json.dumps(
+                    {
+                        "id": f"loopback-{request_count}",
+                        "model": "fixture-model",
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"content": "loopback ok"},
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 1,
+                            "completion_tokens": 1,
+                            "total_tokens": 2,
+                        },
+                    }
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format: str, *_args: Any) -> None:
+                return None
+
+        class InProcessMCPSession:
+            server_name = "fixture"
+            restart_total = 0
+
+            def __init__(self) -> None:
+                self.closed = False
+
+            def call_tool(
+                self,
+                *,
+                remote_name: str,
+                arguments: dict[str, Any],
+                progress_token: str,
+            ) -> dict[str, Any]:
+                if self.closed:
+                    raise RuntimeError("in-process MCP session is closed")
+                return {
+                    "content": [{"type": "text", "text": remote_name}],
+                    "arguments": dict(arguments),
+                    "progress_token": progress_token,
+                }
+
+            def close(self, *, reset_initialized: bool) -> None:
+                del reset_initialized
+                self.closed = True
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(
+            target=server.serve_forever,
+            name="omfla-loopback-http",
+            daemon=True,
+        )
+        server_thread.start()
+        base_url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        request = LLMRequest.model_validate(
+            {
+                "model": "fixture-model",
+                "messages": [{"role": "user", "content": "loopback"}],
+            }
+        )
+        provider_config = {
+            "api_key": "fixture-key",
+            "base_url": base_url,
+            "http_connection_reuse_enabled": True,
+            "allow_curl_fallback": False,
+        }
+        ready = _omfla_process_sample(completed_turn_count=0)
+        provider = OpenAIProvider()
+        with patch.dict(
+            os.environ,
+            {"NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"},
+        ):
+            provider._http_client._get_client()  # noqa: SLF001
+        mcp_manager = MCPFleetManager([])
+        mcp_session = InProcessMCPSession()
+        mcp_manager._sessions = {"fixture": mcp_session}  # noqa: SLF001
+        post_warmup: dict[str, Any] | None = None
+        try:
+            for call_index in range(warmup_calls + measured_calls):
+                response = provider.complete(request, provider_config)
+                if not response.ok or response.output_text != "loopback ok":
+                    raise RuntimeError("loopback HTTP adapter completion failed")
+                result = mcp_manager.call_tool(
+                    server_name="fixture",
+                    remote_name="echo",
+                    arguments={"value": "fixture"},
+                )
+                if not result.get("content"):
+                    raise RuntimeError("in-process MCP session call failed")
+                if call_index + 1 == warmup_calls:
+                    post_warmup = _omfla_process_sample(completed_turn_count=0)
+            post_calls = _omfla_process_sample(
+                completed_turn_count=measured_calls * 2,
+                cache_cardinalities={
+                    "mcp_discovery_cache": len(mcp_manager.discovery_cache_snapshot()),
+                },
+            )
+        finally:
+            provider.close()
+            mcp_manager.close()
+
+        recreated_provider = OpenAIProvider()
+        with patch.dict(
+            os.environ,
+            {"NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"},
+        ):
+            recreated_provider._http_client._get_client()  # noqa: SLF001
+        recreated_manager = MCPFleetManager([])
+        recreated_session = InProcessMCPSession()
+        recreated_manager._sessions = {"fixture": recreated_session}  # noqa: SLF001
+        try:
+            recreated_response = recreated_provider.complete(request, provider_config)
+            recreated_result = recreated_manager.call_tool(
+                server_name="fixture",
+                remote_name="echo",
+                arguments={"value": "recreated"},
+            )
+            if not recreated_response.ok or not recreated_result.get("content"):
+                raise RuntimeError("provider/MCP recreate proof failed")
+        finally:
+            recreated_provider.close()
+            recreated_manager.close()
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=5)
+        http_client_closed = provider._http_client._client is None  # noqa: SLF001
+        close_sample = _omfla_process_sample(completed_turn_count=measured_calls * 2)
+        if post_warmup is None:
+            raise RuntimeError("provider lifecycle warmup baseline missing")
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": post_warmup,
+                "steady_state_windows": [post_calls],
+                "close_sample": close_sample,
+                "completed_turn_count": measured_calls * 2,
+                "http_warmup_call_count": warmup_calls,
+                "http_measured_call_count": measured_calls,
+                "mcp_warmup_call_count": warmup_calls,
+                "mcp_measured_call_count": measured_calls,
+                "loopback_http_request_count": request_count,
+                "http_client_closed": http_client_closed,
+                "mcp_session_closed": mcp_session.closed,
+                "http_recreate_call_completed": recreated_response.ok,
+                "mcp_recreate_call_completed": bool(recreated_result.get("content")),
+                "terminal_fact": {
+                    "http": "completed",
+                    "mcp": "completed",
+                    "recreate": "completed",
+                },
+                "model_posture": "test_owned_loopback",
+            }
+        )
+        if not http_client_closed or not mcp_session.closed:
+            raise RuntimeError("provider or MCP owner did not close")
+        if close_sample["thread_count"] > ready["thread_count"]:
+            raise RuntimeError("provider lifecycle threads did not converge")
+        return [
+            "HTTP traffic is bound to a test-owned 127.0.0.1 server only.",
+            "MCP calls use an in-process session injected into the existing fleet manager; no MCP transport or server is started.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:provider-churn",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="test_owned_loopback",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:provider-churn",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="omfla-provider-churn-v2",
+            options=options,
+            data_root=options.output_root / "provider-runtime",
+            provider_posture="test_owned_loopback",
+            model_posture="test_owned_loopback",
+        ),
+        action=action,
+    )
+
+
+def _measure_agent_cache_churn(
+    options: RunOptions,
+    *,
+    agent_count: int = 10,
+    max_agents_hot: int = 8,
+    convergence_wait_seconds: float = 3.0,
+) -> ScenarioRun:
+    scenario_id = "agent_cache_churn"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.services.runtime import (
+            AgentRuntimeManager,
+            TurnRequest,
+            TurnResponse,
+        )
+
+        def execute(request: Any, emit_chunk: Any, cancel_event: Any) -> Any:
+            del emit_chunk, cancel_event
+            return TurnResponse(final_text=f"completed:{request.agent_id}")
+
+        manager = AgentRuntimeManager(
+            turn_executor=execute,
+            max_agents_hot=max_agents_hot,
+            max_global_concurrency=1,
+            agent_ttl_seconds=1,
+            sweep_interval_seconds=1,
+        )
+        manager.start()
+        completed = 0
+        hot_counts: list[int] = []
+        windows: list[dict[str, Any]] = []
+        ready = _omfla_process_sample(completed_turn_count=0)
+        try:
+            for index in range(agent_count):
+                handle = manager.submit_turn(
+                    TurnRequest(
+                        trace_id=f"omfla-agent-trace-{index}",
+                        agent_id=f"omfla-agent-{index}",
+                        session_id=f"omfla-agent-session-{index}",
+                        input_text="complete deterministically",
+                    )
+                )
+                response = handle.result(timeout_s=5)
+                if (
+                    response.errors
+                    or response.final_text != f"completed:omfla-agent-{index}"
+                ):
+                    raise RuntimeError(f"agent churn turn {index} did not complete")
+                completed += 1
+                hot_counts.append(len(manager.list_agents()))
+                if completed % max(1, agent_count // 5) == 0:
+                    windows.append(
+                        _omfla_window_sample(
+                            index=len(windows) + 1,
+                            completed_turn_count=completed,
+                            rss_readings=[
+                                value
+                                for value in [_current_rss_bytes()]
+                                if isinstance(value, int)
+                            ],
+                            cache_cardinalities={
+                                "runtime_hot_agents": len(manager.list_agents())
+                            },
+                        )
+                    )
+            deadline = time.monotonic() + convergence_wait_seconds
+            while manager.list_agents() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            remaining_agents = len(manager.list_agents())
+        finally:
+            manager.shutdown()
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": windows[0],
+                "steady_state_windows": windows,
+                "close_sample": _omfla_process_sample(completed_turn_count=completed),
+                "completed_turn_count": completed,
+                "configured_max_agents_hot": max_agents_hot,
+                "agent_ttl_seconds": 1,
+                "sweep_interval_seconds": 1,
+                "max_observed_hot_agents": max(hot_counts, default=0),
+                "remaining_agents_after_convergence": remaining_agents,
+                "terminal_fact": {
+                    "completed_agents": completed,
+                    "remaining_after_ttl": remaining_agents,
+                },
+            }
+        )
+        if max(hot_counts, default=0) > max_agents_hot or remaining_agents:
+            raise RuntimeError("agent cache did not respect its bound and TTL")
+        return [
+            "The existing runtime manager owns LRU and TTL behavior.",
+            "Ten distinct agents each complete one turn before the bounded convergence wait.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:agent-churn",
+        provider_variance_class=LOCAL_VARIANCE,
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:agent-churn",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="omfla-agent-churn-v1",
+            options=options,
+        ),
+        action=action,
+    )
+
+
+def _omfla_focus_restart_cycle(
+    options: RunOptions,
+    *,
+    root: Path,
+    cycle_index: int,
+) -> dict[str, Any]:
+    from tests.e2e.cli.focus.harness import FocusProbe
+
+    config_path = _omfla_echo_config(root)
+    session_id = f"omfla-focus-restart-{cycle_index}"
+    probe = FocusProbe(
+        python_bin=options.python,
+        openminion_root=options.workspace_root / "openminion",
+        framework_root=options.workspace_root,
+        data_root=root / "data",
+        config_path=config_path,
+        agent_id="openminion",
+        workdir=options.workspace_root / "openminion",
+        session_id=session_id,
+        include_project_context=False,
+    )
+    session = probe.session()
+    session.start()
+    child_pid = 0
+    try:
+        probe.wait_ready(session)
+        process = session._process  # noqa: SLF001
+        if process is None:
+            raise RuntimeError("Focus restart process is unavailable")
+        child_pid = process.pid
+        probe._submit_composer_line(  # noqa: SLF001
+            session,
+            f"OMFLA Focus restart cycle {cycle_index}",
+        )
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            terminal = _persisted_focus_terminal_fact(
+                root / "state.db",
+                session_id=session_id,
+                after_event_id=0,
+                missing_ok=True,
+            )
+            if terminal is not None:
+                break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError("persisted Focus restart event timed out")
+    finally:
+        session.terminate()
+        session.terminate()
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        child_alive = psutil.pid_exists(child_pid)
+    except ImportError:
+        child_alive = False
+    if child_alive:
+        raise RuntimeError(f"Focus restart child {child_pid} remained alive")
+    return terminal
+
+
+def _measure_runtime_restart(
+    options: RunOptions,
+    *,
+    cycle_count: int = 5,
+) -> ScenarioRun:
+    scenario_id = "runtime_restart"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from contextlib import redirect_stdout
+
+        from openminion.api.runtime import APIRuntime
+        from openminion.services.runtime import (
+            AgentRuntimeManager,
+            TurnRequest,
+            TurnResponse,
+        )
+
+        windows: list[dict[str, Any]] = []
+        terminal_fact: dict[str, Any] | None = None
+        completed = 0
+        ready = _omfla_process_sample(completed_turn_count=0)
+        for cycle_index in range(cycle_count):
+            api_root = options.output_root / f"api-cycle-{cycle_index + 1:02d}"
+            api_runtime = APIRuntime.from_config_path(str(_omfla_echo_config(api_root)))
+            try:
+                with redirect_stdout(io.StringIO()):
+                    terminal_fact = _omfla_completed_api_turn(
+                        api_runtime,
+                        session_id=f"omfla-api-restart-{cycle_index}",
+                        turn_index=0,
+                    )
+                completed += 1
+            finally:
+                api_runtime.close()
+                api_runtime.close()
+
+            terminal_fact = _omfla_focus_restart_cycle(
+                options,
+                root=options.output_root / f"focus-cycle-{cycle_index + 1:02d}",
+                cycle_index=cycle_index,
+            )
+            completed += 1
+
+            def execute(request: Any, emit_chunk: Any, cancel_event: Any) -> Any:
+                del emit_chunk, cancel_event
+                return TurnResponse(final_text=f"daemon:{request.trace_id}")
+
+            daemon_manager = AgentRuntimeManager(
+                turn_executor=execute,
+                max_agents_hot=8,
+                max_global_concurrency=1,
+            )
+            daemon_manager.start()
+            try:
+                handle = daemon_manager.submit_turn(
+                    TurnRequest(
+                        trace_id=f"omfla-daemon-{cycle_index}",
+                        agent_id="omfla-daemon-agent",
+                        session_id=f"omfla-daemon-session-{cycle_index}",
+                        input_text="restart proof",
+                    )
+                )
+                response = handle.result(timeout_s=5)
+                if response.errors or not response.final_text.startswith("daemon:"):
+                    raise RuntimeError("daemon-manager restart turn failed")
+                completed += 1
+            finally:
+                daemon_manager.shutdown()
+                daemon_manager.shutdown()
+            windows.append(
+                _omfla_window_sample(
+                    index=cycle_index + 1,
+                    completed_turn_count=completed,
+                    rss_readings=[
+                        value
+                        for value in [_current_rss_bytes()]
+                        if isinstance(value, int)
+                    ],
+                )
+            )
+        close_sample = _omfla_process_sample(completed_turn_count=completed)
+        descriptor_counts_converged = all(
+            window["file_descriptor_count"] == ready["file_descriptor_count"]
+            and window["open_file_count"] == ready["open_file_count"]
+            for window in windows
+        ) and (
+            close_sample["file_descriptor_count"] == ready["file_descriptor_count"]
+            and close_sample["open_file_count"] == ready["open_file_count"]
+        )
+        if not descriptor_counts_converged:
+            raise RuntimeError("runtime restart descriptors did not return to baseline")
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": windows[0],
+                "steady_state_windows": windows,
+                "close_sample": close_sample,
+                "completed_turn_count": completed,
+                "api_restart_cycle_count": cycle_count,
+                "focus_restart_cycle_count": cycle_count,
+                "daemon_restart_cycle_count": cycle_count,
+                "second_close_idempotency_checked": True,
+                "descriptor_counts_converged": descriptor_counts_converged,
+                "terminal_fact": terminal_fact,
+                "model_posture": "test_owned_echo",
+            }
+        )
+        return [
+            "Each cycle constructs, uses, and closes API, Focus, and runtime-manager owners.",
+            "Second close/shutdown calls verify idempotency after owned resources are released.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:shutdown-restart",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="test_owned_echo",
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:shutdown-restart",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="omfla-shutdown-restart-v1",
+            options=options,
+            data_root=options.output_root,
+            provider_posture="test_owned_echo",
+            model_posture="test_owned_echo",
+        ),
+        action=action,
+    )
+
+
+def _measure_queue_pressure(
+    options: RunOptions,
+    *,
+    cycle_count: int = 5,
+    finite_capacity: int = 20,
+    unbounded_count: int = 100,
+) -> ScenarioRun:
+    scenario_id = "queue_pressure"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        import logging
+        import threading
+
+        from openminion.modules.controlplane.runtime.store import (
+            InMemoryControlPlaneStore,
+        )
+        from openminion.modules.telemetry.export.queueing import (
+            NoncriticalExportQueue,
+        )
+        from openminion.modules.telemetry.schemas import TelemetryEvent
+        from openminion.services.gateway.memory import (
+            MemoryFollowupJob,
+            MemoryFollowupQueue,
+        )
+        from openminion.services.runtime import (
+            AgentRuntimeManager,
+            TurnChunk,
+            TurnRequest,
+            TurnResponse,
+        )
+        from openminion.services.runtime.turn_input.queue import (
+            TurnInputQueue,
+            TurnInputQueueError,
+            TurnInputQueueStatus,
+        )
+
+        turn_queue = TurnInputQueue(max_pending_per_session=finite_capacity)
+        controlplane_store = InMemoryControlPlaneStore()
+        overflow_counts = {"turn_input": 0, "telemetry": 0}
+        drained_counts = {
+            "turn_input": 0,
+            "runtime_chunks": 0,
+            "memory_followup": 0,
+            "telemetry": 0,
+            "controlplane_inbox": 0,
+            "controlplane_outbox": 0,
+        }
+        windows: list[dict[str, Any]] = []
+        ready = _omfla_process_sample(completed_turn_count=0)
+
+        def discard_event(**_kwargs: Any) -> None:
+            return None
+
+        class MemoryFixture:
+            pass
+
+        for cycle_index in range(cycle_count):
+            session_id = f"omfla-queue-{cycle_index}"
+            for item_index in range(finite_capacity):
+                turn_queue.enqueue(
+                    session_id=session_id,
+                    agent_id="omfla-agent",
+                    text=f"turn-{item_index}",
+                    idempotency_key=f"{cycle_index}-{item_index}",
+                )
+            try:
+                turn_queue.enqueue(
+                    session_id=session_id,
+                    agent_id="omfla-agent",
+                    text="overflow",
+                )
+            except TurnInputQueueError as exc:
+                if exc.code != "QUEUE_FULL":
+                    raise
+                overflow_counts["turn_input"] += 1
+            else:
+                raise RuntimeError("turn-input overflow probe was accepted")
+            while entry := turn_queue.reserve_next(
+                session_id=session_id,
+                agent_id="omfla-agent",
+            ):
+                turn_queue.mark_running(queue_id=entry.queue_id)
+                turn_queue.mark_terminal(
+                    queue_id=entry.queue_id,
+                    status=TurnInputQueueStatus.COMPLETED,
+                )
+                drained_counts["turn_input"] += 1
+
+            def execute(request: Any, emit_chunk: Any, cancel_event: Any) -> Any:
+                del cancel_event
+                for chunk_index in range(unbounded_count):
+                    emit_chunk(
+                        TurnChunk(
+                            trace_id=request.trace_id,
+                            kind="text",
+                            data={"index": chunk_index},
+                        )
+                    )
+                return TurnResponse(final_text="chunk drain complete")
+
+            runtime_manager = AgentRuntimeManager(
+                turn_executor=execute,
+                max_agents_hot=1,
+                max_global_concurrency=1,
+            )
+            runtime_manager.start()
+            try:
+                handle = runtime_manager.submit_turn(
+                    TurnRequest(
+                        trace_id=f"omfla-chunks-{cycle_index}",
+                        agent_id="omfla-chunk-agent",
+                        session_id=session_id,
+                        input_text="emit chunks",
+                        stream=True,
+                    )
+                )
+                chunks = list(handle.stream(timeout_s=5))
+                response = handle.result(timeout_s=5)
+                emitted_chunks = [chunk for chunk in chunks if chunk.kind == "text"]
+                if len(emitted_chunks) != unbounded_count or response.errors:
+                    raise RuntimeError("runtime chunk queue did not drain")
+                drained_counts["runtime_chunks"] += len(emitted_chunks)
+            finally:
+                runtime_manager.shutdown()
+
+            memory_queue = MemoryFollowupQueue(auto_start=False)
+            for item_index in range(unbounded_count):
+                memory_queue.enqueue(
+                    MemoryFollowupJob(
+                        agent_memory=MemoryFixture(),
+                        logger=logging.getLogger("omfla.memory-followup"),
+                        agent_id="omfla-agent",
+                        memory_capsule_strategy="dynamic_turn",
+                        memory_capsule_cache={},
+                        session_id=session_id,
+                        run_id=f"run-{item_index}",
+                        request_id=f"request-{item_index}",
+                        conversation_id="",
+                        thread_id="",
+                        attach_id="",
+                        emit_memory_event=discard_event,
+                        emit_followup_event=discard_event,
+                        outbound_metadata={},
+                        patch_changed=False,
+                    )
+                )
+            if memory_queue.pending_count() != unbounded_count:
+                raise RuntimeError("memory follow-up queue fill count mismatch")
+            memory_queue.flush()
+            if memory_queue.pending_count():
+                raise RuntimeError("memory follow-up queue did not drain")
+            drained_counts["memory_followup"] += unbounded_count
+
+            release_export = threading.Event()
+            export_started = threading.Event()
+            exported = 0
+
+            def export_now(_event: TelemetryEvent) -> bool:
+                nonlocal exported
+                export_started.set()
+                release_export.wait(timeout=5)
+                exported += 1
+                return True
+
+            telemetry_queue = NoncriticalExportQueue(
+                capacity=finite_capacity,
+                flush_timeout_seconds=5,
+                export_now=export_now,
+            )
+            first_event = TelemetryEvent(
+                session_id=session_id,
+                turn_id="turn-0",
+                event_type="omfla.fixture",
+                data={"criticality": "noncritical"},
+            )
+            if not telemetry_queue.enqueue(first_event):
+                raise RuntimeError("telemetry queue rejected its first event")
+            if not export_started.wait(timeout=5):
+                raise RuntimeError("telemetry export worker did not start")
+            for item_index in range(finite_capacity):
+                accepted = telemetry_queue.enqueue(
+                    TelemetryEvent(
+                        session_id=session_id,
+                        turn_id=f"turn-{item_index + 1}",
+                        event_type="omfla.fixture",
+                        data={"criticality": "noncritical"},
+                    )
+                )
+                if not accepted:
+                    raise RuntimeError("telemetry queue rejected before capacity")
+            overflow_event = TelemetryEvent(
+                session_id=session_id,
+                turn_id="overflow",
+                event_type="omfla.fixture",
+                data={"criticality": "noncritical"},
+            )
+            if telemetry_queue.enqueue(overflow_event):
+                raise RuntimeError("telemetry overflow probe was accepted")
+            overflow_counts["telemetry"] += 1
+            release_export.set()
+            deadline = time.monotonic() + 5
+            while (
+                telemetry_queue.stats()["queue_depth"] and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            telemetry_stats = telemetry_queue.stats()
+            telemetry_queue.close()
+            if telemetry_stats["queue_depth"]:
+                raise RuntimeError("telemetry queue did not drain")
+            drained_counts["telemetry"] += exported
+
+            for item_index in range(unbounded_count):
+                message_id = f"{cycle_index}-{item_index}"
+                controlplane_store.enqueue_inbox(
+                    channel="fixture",
+                    chat_id="fixture-chat",
+                    channel_message_id=message_id,
+                    user_id="fixture-user",
+                    payload={"index": item_index},
+                )
+                controlplane_store.enqueue_outbox(
+                    channel="fixture",
+                    chat_id="fixture-chat",
+                    payload={"index": item_index},
+                )
+            for _ in range(unbounded_count):
+                inbox = controlplane_store.claim_inbox(lock_owner="omfla")
+                outbox = controlplane_store.claim_outbox(lock_owner="omfla")
+                if inbox is None or outbox is None:
+                    raise RuntimeError("control-plane storage queue claim failed")
+                controlplane_store.ack_inbox(str(inbox["inbox_id"]))
+                controlplane_store.mark_outbox_sent(str(outbox["outbox_id"]))
+                drained_counts["controlplane_inbox"] += 1
+                drained_counts["controlplane_outbox"] += 1
+            active_inbox = sum(
+                1
+                for row in controlplane_store._inbox.values()  # noqa: SLF001
+                if row["status"] != "done"
+            )
+            active_outbox = sum(
+                1
+                for row in controlplane_store._outbox.values()  # noqa: SLF001
+                if row["status"] != "sent"
+            )
+            windows.append(
+                _omfla_window_sample(
+                    index=cycle_index + 1,
+                    completed_turn_count=(cycle_index + 1) * 4,
+                    rss_readings=[
+                        value
+                        for value in [_current_rss_bytes()]
+                        if isinstance(value, int)
+                    ],
+                    cache_cardinalities={
+                        "turn_input_terminal_audit": len(
+                            turn_queue._entries  # noqa: SLF001
+                        ),
+                        "turn_input_idempotency": len(
+                            turn_queue._idempotency  # noqa: SLF001
+                        ),
+                        "controlplane_inbox_records": len(
+                            controlplane_store._inbox  # noqa: SLF001
+                        ),
+                        "controlplane_outbox_records": len(
+                            controlplane_store._outbox  # noqa: SLF001
+                        ),
+                        "controlplane_inbox_dedup": len(
+                            controlplane_store._inbox_dedupe  # noqa: SLF001
+                        ),
+                        "controlplane_audit_events": len(
+                            controlplane_store._audit_events  # noqa: SLF001
+                        ),
+                    },
+                    queue_depths={
+                        "turn_input": turn_queue.pending_count(session_id=session_id),
+                        "runtime_chunks": 0,
+                        "memory_followup": memory_queue.pending_count(),
+                        "telemetry_noncritical_export": telemetry_stats["queue_depth"],
+                        "controlplane_inbox": active_inbox,
+                        "controlplane_outbox": active_outbox,
+                    },
+                )
+            )
+
+        if any(windows[-1]["queue_depths"].values()):
+            raise RuntimeError("one or more queue owners did not drain")
+        metrics.update(
+            {
+                "ready_sample": ready,
+                "post_warmup_sample": windows[0],
+                "steady_state_windows": windows,
+                "close_sample": _omfla_process_sample(
+                    completed_turn_count=cycle_count * 4
+                ),
+                "completed_turn_count": cycle_count * 4,
+                "queue_pressure_cycle_count": cycle_count,
+                "finite_queue_capacity": finite_capacity,
+                "unbounded_queue_fill_count": unbounded_count,
+                "overflow_counts": overflow_counts,
+                "drained_counts": drained_counts,
+                "queue_depths": windows[-1]["queue_depths"],
+                "cache_cardinalities": windows[-1]["cache_cardinalities"],
+                "terminal_fact": {
+                    "cycles": cycle_count,
+                    "all_active_depths": 0,
+                },
+            }
+        )
+        return [
+            "Queue pressure calls current in-memory and durable store owners directly; no control-plane ingress is started.",
+            "Terminal audit and dedup cardinalities are retained and reported separately from active queue depth.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command="omfla_fixture:queue-pressure",
+        provider_variance_class=LOCAL_VARIANCE,
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command="omfla_fixture:queue-pressure",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="omfla-queue-pressure-v1",
+            options=options,
+        ),
         action=action,
     )
 
@@ -2378,6 +4226,9 @@ def _measure_telemetry_export_queue() -> ScenarioRun:
         metrics["telemetry_events_enqueued"] = accepted
         metrics["telemetry_events_exported"] = len(sink.records)
         metrics["telemetry_queue_depth"] = stats["queue_depth"]
+        metrics["queue_depths"] = {
+            "telemetry.noncritical_export": int(stats["queue_depth"])
+        }
         metrics["telemetry_queue_drops"] = stats["drops"]
         metrics["telemetry_queue_flush_failures"] = stats["flush_failures"]
         return [
@@ -2429,10 +4280,20 @@ def _measure_transcript_retention_growth() -> ScenarioRun:
         metrics["copy_last_ok"] = transcript.copy_last_copyable_message() == (
             f"retained message {message_count - 1}"
         )
-        metrics["rss_growth_bytes"] = end_rss - start_rss
-        metrics["rss_growth_per_message_bytes"] = int(
-            (end_rss - start_rss) / message_count
-        )
+        if isinstance(start_rss, int) and isinstance(end_rss, int):
+            metrics["rss_growth_bytes"] = end_rss - start_rss
+            metrics["rss_growth_per_message_bytes"] = int(
+                (end_rss - start_rss) / message_count
+            )
+        else:
+            metrics["rss_growth_bytes"] = None
+            metrics["rss_growth_per_message_bytes"] = None
+            metrics["availability_reasons"]["rss_growth_bytes"] = (
+                "current_rss_unavailable"
+            )
+            metrics["availability_reasons"]["rss_growth_per_message_bytes"] = (
+                "current_rss_unavailable"
+            )
         metrics["prompt_bytes"] = message_count * len("retained message 0000")
         metrics["prompt_tokens_estimated"] = _estimate_tokens(
             "retained message" * message_count
@@ -2511,6 +4372,20 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         )
     if scenario_id == "repeated_local_turns":
         return _measure_repeated_local_turns(options)
+    if scenario_id == "persistent_api_turns":
+        return _measure_persistent_api_turns(options)
+    if scenario_id == "persistent_focus_turns":
+        return _measure_persistent_focus_turns(options)
+    if scenario_id == "session_cache_churn":
+        return _measure_session_cache_churn(options)
+    if scenario_id == "provider_lifecycle_loopback":
+        return _measure_provider_lifecycle_loopback(options)
+    if scenario_id == "agent_cache_churn":
+        return _measure_agent_cache_churn(options)
+    if scenario_id == "runtime_restart":
+        return _measure_runtime_restart(options)
+    if scenario_id == "queue_pressure":
+        return _measure_queue_pressure(options)
     raise ValueError(f"unknown scenario: {scenario_id}")
 
 
@@ -2617,10 +4492,15 @@ def _threshold_result(
         baseline_scenario.get("measurement_identity"),
     )
     if identity_errors:
+        version_mismatch = "artifact_schema_version" in identity_errors
         return {
             "mode": threshold_mode,
             "status": "ineligible",
-            "reason": "measurement identity mismatch",
+            "reason": (
+                "artifact schema version mismatch"
+                if version_mismatch
+                else "measurement identity mismatch"
+            ),
             "identity_errors": identity_errors,
         }
     current_count = int(current.get("count", 0) or 0)
@@ -2689,15 +4569,33 @@ def _comparison_identity_errors(
     ):
         return ["missing measurement identity"]
     errors: list[str] = []
+    required_source_keys = {
+        "git_head",
+        "dirty_tree_fingerprint",
+        "runner_source_sha256",
+        "config_hash",
+    }
     for key in (
         "artifact_schema_version",
+        "git_head",
+        "dirty_tree_fingerprint",
+        "runner_source_sha256",
+        "config_hash",
         "scenario_id",
         "command",
         "fixture_revision",
         "measured_boundary",
         "python_version",
         "platform",
+        "provider_posture",
+        "model_posture",
     ):
+        if key in required_source_keys and any(
+            str(identity.get(key) or "").strip() in {"", "unknown", "unavailable"}
+            for identity in (current_identity, baseline_identity)
+        ):
+            errors.append(key)
+            continue
         if current_identity.get(key) != baseline_identity.get(key):
             errors.append(key)
     current_config = current_identity.get("runtime_config")
@@ -2713,6 +4611,12 @@ def _comparison_identity_errors(
             "profile",
             "warmup_runs",
         ):
+            if key in {"python_executable", "workspace_root"} and any(
+                not str(config.get(key) or "").strip()
+                for config in (current_config, baseline_config)
+            ):
+                errors.append(f"runtime_config.{key}")
+                continue
             if current_config.get(key) != baseline_config.get(key):
                 errors.append(f"runtime_config.{key}")
     return errors
@@ -2731,6 +4635,22 @@ def summarize_runs(
     scenarios: dict[str, Any] = {}
     for scenario_id, scenario_runs in sorted(by_scenario.items()):
         metrics = [dict(run.get("metrics") or {}) for run in scenario_runs]
+        first_identity = dict(scenario_runs[0].get("measurement_identity") or {})
+        identity_incompatibilities: list[dict[str, Any]] = []
+        for sample_offset, scenario_run in enumerate(scenario_runs[1:], start=1):
+            errors = _comparison_identity_errors(
+                first_identity,
+                scenario_run.get("measurement_identity"),
+            )
+            if errors:
+                identity_incompatibilities.append(
+                    {
+                        "sample_index": int(
+                            scenario_run.get("sample_index", sample_offset)
+                        ),
+                        "identity_errors": errors,
+                    }
+                )
         sample_artifacts = [
             str(run.get("artifact_path") or "")
             for run in scenario_runs
@@ -2739,9 +4659,8 @@ def summarize_runs(
         scenarios[scenario_id] = {
             "count": len(scenario_runs),
             "ok_count": sum(1 for run in scenario_runs if run.get("ok")),
-            "measurement_identity": dict(
-                scenario_runs[0].get("measurement_identity") or {}
-            ),
+            "measurement_identity": first_identity,
+            "identity_incompatibilities": identity_incompatibilities,
             "sample_artifacts": sample_artifacts,
             "provider_variance_class": scenario_runs[0].get(
                 "provider_variance_class", ""
@@ -2780,6 +4699,13 @@ def summarize_runs(
             scenario_id=scenario_id,
             threshold_mode=threshold_mode,
         )
+        if identity_incompatibilities:
+            scenarios[scenario_id]["threshold_result"] = {
+                "mode": threshold_mode,
+                "status": "ineligible",
+                "reason": "mixed sample identities",
+                "identity_incompatibilities": identity_incompatibilities,
+            }
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "generated_at_utc": _utc_timestamp(),
@@ -2800,18 +4726,51 @@ def _run_to_artifact(
     *,
     run_index: int,
     options: RunOptions,
+    campaign_source_identity: dict[str, Any],
     profile_artifact: str | None = None,
     profile_pstats_artifact: str | None = None,
 ) -> dict[str, Any]:
     metrics = dict(run.metrics)
+    metrics["sample_index"] = int(run_index)
+    measurement_identity = dict(run.measurement_identity)
+    runtime_config = dict(measurement_identity.get("runtime_config") or {})
+    runtime_config.update(
+        {
+            "python_executable": str(options.python),
+            "workspace_root": str(options.workspace_root),
+            "include_importtime": bool(options.include_importtime),
+            "profile": bool(options.profile),
+            "warmup_runs": int(options.warmup_runs),
+        }
+    )
+    provider_attempts = metrics.get("provider_attempts")
+    model_posture = str(measurement_identity.get("model_posture") or "unavailable")
+    if isinstance(provider_attempts, list):
+        for attempt in provider_attempts:
+            if isinstance(attempt, dict) and str(attempt.get("model") or "").strip():
+                model_posture = str(attempt["model"])
+                break
+    measurement_identity.update(
+        {
+            "git_head": campaign_source_identity["git_head"],
+            "dirty_tree_fingerprint": campaign_source_identity[
+                "dirty_tree_fingerprint"
+            ],
+            "runner_source_sha256": campaign_source_identity["runner_source_sha256"],
+            "config_hash": _stable_json_hash(runtime_config),
+            "provider_posture": run.provider_profile,
+            "model_posture": model_posture,
+            "runtime_config": runtime_config,
+        }
+    )
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "run_started_at": _utc_timestamp(),
         "scenario_id": run.scenario_id,
         "run_id": f"{_utc_timestamp()}-{run.scenario_id}-{run_index}-{uuid4().hex[:8]}",
         "timestamp_utc": _utc_timestamp(),
-        "git_head": _git_head(options.workspace_root),
-        "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
+        "git_head": campaign_source_identity["git_head"],
+        "dirty_worktree_summary": campaign_source_identity["dirty_worktree_summary"],
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "runs_requested": int(options.runs),
@@ -2821,7 +4780,7 @@ def _run_to_artifact(
         "command": run.command,
         "provider_profile": run.provider_profile,
         "provider_variance_class": run.provider_variance_class,
-        "measurement_identity": run.measurement_identity,
+        "measurement_identity": measurement_identity,
         "wall_ms": metrics.get("wall_time_ms"),
         "wall_ns": metrics.get("wall_time_ns"),
         "time_to_first_visible_text_ms": metrics.get("time_to_first_visible_text_ms"),
@@ -2833,7 +4792,9 @@ def _run_to_artifact(
         "prompt_tokens_estimated": metrics.get("prompt_tokens_estimated"),
         "tool_schema_bytes": metrics.get("tool_schema_bytes"),
         "tool_call_count": metrics.get("tool_call_count"),
-        "process_rss_bytes": metrics.get("rss_end_bytes"),
+        "process_rss_bytes": metrics.get("current_rss_bytes"),
+        "process_max_rss_bytes": metrics.get("max_rss_bytes"),
+        "process_tree_current_rss_bytes": metrics.get("process_tree_current_rss_bytes"),
         "tracemalloc_current_bytes": metrics.get("tracemalloc_current_bytes"),
         "tracemalloc_peak_bytes": metrics.get("tracemalloc_peak_bytes"),
         "tracemalloc_snapshot_diff": metrics.get("tracemalloc_snapshot_diff", []),
@@ -3477,6 +5438,15 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
     options.output_root.mkdir(parents=True, exist_ok=True)
     (options.output_root / "profiles").mkdir(exist_ok=True)
     _copy_baseline_plan(options)
+    campaign_source_identity = _campaign_source_identity(options)
+    source_identity_errors = _campaign_source_identity_errors(
+        campaign_source_identity,
+        campaign_source_identity,
+    )
+    if source_identity_errors:
+        raise RuntimeError(
+            "campaign source identity unavailable: " + ", ".join(source_identity_errors)
+        )
 
     artifacts: list[dict[str, Any]] = []
     for scenario_id in scenarios:
@@ -3500,6 +5470,7 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
                 run,
                 run_index=run_index,
                 options=options,
+                campaign_source_identity=campaign_source_identity,
                 profile_artifact=profile_artifact,
                 profile_pstats_artifact=profile_pstats_artifact,
             )
@@ -3507,6 +5478,16 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
             artifacts.append(artifact)
             if not run.ok:
                 print(f"  error: {run.error}")
+
+    closing_source_identity = _campaign_source_identity(options)
+    source_identity_errors = _campaign_source_identity_errors(
+        campaign_source_identity,
+        closing_source_identity,
+    )
+    if source_identity_errors:
+        raise RuntimeError(
+            "campaign source identity changed: " + ", ".join(source_identity_errors)
+        )
 
     comparison_baseline = _load_comparison_baseline(options.compare_baseline)
     if comparison_baseline is not None and options.compare_baseline is not None:
@@ -3606,6 +5587,22 @@ def _hard_gate_failures(summary: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _invalid_sample_failures(summary: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    scenarios = summary.get("scenarios")
+    if not isinstance(scenarios, dict):
+        return failures
+    for scenario_id, payload in scenarios.items():
+        if not isinstance(payload, dict):
+            continue
+        samples_invalid = int(payload.get("ok_count", 0) or 0) < int(
+            payload.get("count", 0) or 0
+        )
+        if samples_invalid or payload.get("identity_incompatibilities"):
+            failures.append(str(scenario_id))
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -3627,7 +5624,7 @@ def main(argv: list[str] | None = None) -> int:
         options = RunOptions(
             workspace_root=workspace_root,
             output_root=output_root,
-            python=Path(args.python).expanduser().resolve(),
+            python=Path(args.python).expanduser().absolute(),
             runs=max(1, int(args.runs)),
             timeout_seconds=max(1, int(args.timeout_seconds)),
             include_importtime=not bool(args.no_importtime),
@@ -3651,6 +5648,13 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"[performance-baseline] scenarios={summary['scenario_count']} runs={summary['run_count']}"
     )
+    invalid_samples = _invalid_sample_failures(summary)
+    if invalid_samples:
+        print(
+            "[performance-baseline] invalid samples: " + ", ".join(invalid_samples),
+            file=sys.stderr,
+        )
+        return 1
     hard_failures = _hard_gate_failures(summary)
     if hard_failures:
         print(

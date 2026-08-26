@@ -194,6 +194,9 @@ class SQLiteCronRepository:
             now_iso=now_iso,
         )
 
+    def close(self) -> None:
+        self._store.close()
+
 
 def create_sqlite_cron_repository(*, db_path: str | Path) -> SQLiteCronRepository:
     repo = SQLiteCronRepository(db_path=db_path)

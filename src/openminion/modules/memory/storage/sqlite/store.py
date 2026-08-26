@@ -99,6 +99,7 @@ class SQLiteMemoryStore(MemoryStore):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout = busy_timeout
         self._artifactctl = artifactctl
+        self._owns_artifactctl = artifactctl is _ARTIFACTCTL_UNSET
         self._write_lock = threading.RLock()
 
         with self._connect() as conn:
@@ -147,6 +148,14 @@ class SQLiteMemoryStore(MemoryStore):
         if self._artifactctl is _ARTIFACTCTL_UNSET:
             self._artifactctl = create_default_artifactctl()
         return self._artifactctl
+
+    def close(self) -> None:
+        if not self._owns_artifactctl or self._artifactctl is _ARTIFACTCTL_UNSET:
+            return
+        self._owns_artifactctl = False
+        artifactctl = self._artifactctl
+        self._artifactctl = None
+        artifactctl.close()
 
     def _add_artifact_refs(self, *, owner_id: str, ref_values: Any) -> None:
         targets = normalize_artifact_ref_targets(ref_values)

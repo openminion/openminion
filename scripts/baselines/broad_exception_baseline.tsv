@@ -244,7 +244,6 @@ src/openminion/modules/memory/runtime/staging.py	4	1	current broad-handler basel
 src/openminion/modules/memory/runtime/turn_recording.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/service/queries.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/storage/audit.py	3	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/memory/storage/factory.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/storage/sqlite/store.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/storage/sqlite/write.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/submissions/sdk_path.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

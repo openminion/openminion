@@ -38,6 +38,12 @@ class BridgeArtifactClient:
         config.index.sqlite_path = str(db_path.parent / "artifact.db")
         return artifact_ctl_cls(config)
 
+    def close(self) -> None:
+        artifact_ctl = self._artifact_ctl
+        self._artifact_ctl = None
+        if artifact_ctl is not None:
+            artifact_ctl.close()
+
     def query_digests(
         self,
         *,

@@ -89,6 +89,22 @@ class APIRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
 
+    def test_runtime_close_closes_owned_ops_service(self) -> None:
+        runtime = object.__new__(APIRuntime)
+        close_calls: list[str] = []
+
+        class FakeOpsService:
+            def close(self) -> None:
+                close_calls.append("ops_service.close")
+
+        runtime._closed = False
+        runtime.ops_service = FakeOpsService()
+
+        runtime.close()
+        runtime.close()
+
+        self.assertEqual(close_calls, ["ops_service.close"])
+
     def test_runtime_close_shuts_down_manager_before_lifecycle_bridge(self) -> None:
         runtime = object.__new__(APIRuntime)
         order: list[str] = []

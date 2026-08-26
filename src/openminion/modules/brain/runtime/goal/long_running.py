@@ -61,10 +61,19 @@ class LongRunningGoalRuntime:
         goal_store: GoalStore,
         mission_store: MissionStateStore,
         checkpoint_manager: CheckpointManager | None = None,
+        owns_stores: bool = False,
     ) -> None:
         self.goal_store = goal_store
         self.mission_store = mission_store
         self.checkpoint_manager = checkpoint_manager
+        self._owns_stores = owns_stores
+
+    def close(self) -> None:
+        if not self._owns_stores:
+            return
+        self._owns_stores = False
+        self.goal_store.close()
+        self.mission_store.close()
 
     def bind_goal_to_session(self, *, goal_id: str, session_id: str) -> Goal:
         """Make ``goal_id`` the current durable goal for ``session_id``."""

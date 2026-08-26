@@ -167,6 +167,7 @@ class ToolAdapter:
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
         )
+        self._owns_artifactctl = artifactctl is None
         if artifactctl is not None:
             self.artifactctl = artifactctl
         else:
@@ -225,6 +226,14 @@ class ToolAdapter:
             and self.reactions_enabled
         ):
             openminion_tools_reaction_plugin.register(self.registry)
+
+    def close(self) -> None:
+        if not self._owns_artifactctl or self.artifactctl is None:
+            return
+        self._owns_artifactctl = False
+        artifactctl = self.artifactctl
+        self.artifactctl = None
+        artifactctl.close()
 
     @staticmethod
     def _coerce_policy(policy: Any) -> Policy:

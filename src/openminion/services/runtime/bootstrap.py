@@ -932,6 +932,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         goal_store=goal_store,
         mission_store=mission_store,
         checkpoint_manager=CheckpointManager(task_service=runner.task_manager),
+        owns_stores=True,
     )
     runner._self_improvement_engine = service._self_improvement  # noqa: SLF001
     runner._configured_agent_ids = configured_agent_ids(config)  # noqa: SLF001

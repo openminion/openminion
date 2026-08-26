@@ -1160,9 +1160,11 @@ class CacheBehaviorTests(unittest.TestCase):
             query="q",
             provider_pref="anthropic",
         )
-        service.build_pack(req1)
-        service.build_pack(req2)
+        pack1 = service.build_pack(req1)
+        pack2 = service.build_pack(req2)
         self.assertEqual(len(service._cache), 2)
+        self.assertIsNotNone(service.explain_pack(pack1.pack_version))
+        self.assertIsNotNone(service.explain_pack(pack2.pack_version))
 
     def test_cache_miss_on_phase_hints_change(self) -> None:
         service = _make_service()
@@ -1183,6 +1185,132 @@ class CacheBehaviorTests(unittest.TestCase):
         service.build_pack(req1)
         service.build_pack(req2)
         self.assertEqual(len(service._cache), 2)
+
+    def test_new_session_event_replaces_prior_cache_state(self) -> None:
+        service = _make_service(
+            session=_SequenceSession(
+                [
+                    SessionSlice(
+                        session_id="s",
+                        slice_version="slice:v1",
+                        last_event_id="evt-001",
+                        summary_short="",
+                    ),
+                    SessionSlice(
+                        session_id="s",
+                        slice_version="slice:v2",
+                        last_event_id="evt-002",
+                        summary_short="",
+                    ),
+                ]
+            )
+        )
+
+        first_pack = service.build_pack(_make_request(session_id="s", query="first"))
+        second_pack = service.build_pack(_make_request(session_id="s", query="second"))
+
+        self.assertEqual(len(service._cache), 1)
+        self.assertIsNone(service.explain_pack(first_pack.pack_version))
+        self.assertIsNotNone(service.explain_pack(second_pack.pack_version))
+
+    def test_unavailable_event_id_preserves_known_cache_state(self) -> None:
+        service = _make_service(
+            session=_SequenceSession(
+                [
+                    SessionSlice(
+                        session_id="s",
+                        slice_version="slice:v1",
+                        last_event_id="evt-001",
+                        summary_short="",
+                    ),
+                    SessionSlice(
+                        session_id="s",
+                        slice_version="slice:v2",
+                        last_event_id=None,
+                        summary_short="",
+                    ),
+                ]
+            )
+        )
+
+        known_pack = service.build_pack(_make_request(session_id="s", query="known"))
+        service.build_pack(_make_request(session_id="s", query="unknown"))
+
+        self.assertEqual(len(service._cache), 2)
+        self.assertIsNotNone(service.explain_pack(known_pack.pack_version))
+
+    def test_new_overlay_event_supersedes_cached_state(self) -> None:
+        service = _make_service(
+            session=_SequenceSession(
+                [
+                    SessionSlice(
+                        session_id="s",
+                        slice_version="slice:v1",
+                        last_event_id="evt-001",
+                        summary_short="",
+                    ),
+                    SessionSlice(
+                        session_id="s",
+                        slice_version="slice:v2",
+                        last_event_id="evt-002",
+                        summary_short="",
+                    ),
+                ]
+            )
+        )
+        cached_pack = service.build_pack(_make_request(session_id="s"))
+        overlay_pack = service.build_pack(
+            BuildPackRequest(
+                session_id="s",
+                agent_id="agent-test",
+                purpose="act",
+                query="hello",
+                live_state_overlay={"status": "active"},
+            )
+        )
+
+        self.assertEqual(service._cache, {})
+        self.assertIsNone(service.explain_pack(cached_pack.pack_version))
+        self.assertIsNotNone(service.explain_pack(overlay_pack.pack_version))
+
+    def test_overlay_and_cache_hit_keep_only_live_manifests(self) -> None:
+        service = _make_service()
+        cached_pack = service.build_pack(_make_request())
+        first_overlay = service.build_pack(
+            BuildPackRequest(
+                session_id="sess-test",
+                agent_id="agent-test",
+                purpose="act",
+                query="hello",
+                live_state_overlay={"status": "active"},
+            )
+        )
+        service.build_pack(_make_request())
+        second_overlay = service.build_pack(
+            BuildPackRequest(
+                session_id="sess-test",
+                agent_id="agent-test",
+                purpose="act",
+                query="hello",
+                live_state_overlay={"status": "done"},
+            )
+        )
+
+        self.assertEqual(len(service._manifest_index), 2)
+        self.assertIsNone(service.explain_pack(first_overlay.pack_version))
+        self.assertIsNotNone(service.explain_pack(cached_pack.pack_version))
+        self.assertIsNotNone(service.explain_pack(second_overlay.pack_version))
+
+    def test_close_clears_pack_and_manifest_indexes(self) -> None:
+        service = _make_service()
+        service.build_pack(_make_request())
+
+        service.close()
+        service.close()
+
+        self.assertEqual(service._cache, {})
+        self.assertEqual(service._manifest_index, {})
+        self.assertEqual(service._latest_manifest_by_session, {})
 
     def test_live_state_overlay_bypasses_cache_and_updates_active_state(self) -> None:
         service = _make_service(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from dataclasses import replace
+from types import SimpleNamespace
 
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.memory.config import from_base_config
@@ -14,6 +15,7 @@ from openminion.modules.memory.storage import (
 )
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.brain.adapters.memory import MemctlAdapter
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 from openminion.services.runtime.bootstrap import build_agent_memory_service
 from tests._csc_fixtures import _csc_install_default_agent
@@ -41,6 +43,63 @@ def _candidate(candidate_id: str) -> MemoryCandidate:
         content={"text": f"candidate-{candidate_id}"},
         status="approved",
     )
+
+
+def test_factory_owned_memory_chain_closes_once() -> None:
+    close_calls: list[str] = []
+
+    class Store(InMemoryMemoryStore):
+        def close(self) -> None:
+            close_calls.append("store")
+
+    class Sink(InMemoryMemoryAuditSink):
+        def close(self) -> None:
+            close_calls.append("sink")
+
+    audited = AuditedMemoryStore(
+        Store(),
+        sink=Sink(),
+        owns_store=True,
+        owns_sink=True,
+    )
+    service = MemoryService(store=audited, owns_store=True)
+    adapter = MemctlAdapter(service, owns_backend=True)
+
+    adapter.close()
+    adapter.close()
+
+    assert close_calls == ["sink", "store"]
+
+
+def test_factory_owned_memory_chain_closes_artifactctl_once() -> None:
+    close_calls: list[str] = []
+    artifactctl = SimpleNamespace(close=lambda: close_calls.append("artifact"))
+    store = SimpleNamespace(close=lambda: close_calls.append("store"))
+    service = MemoryService(store=store, owns_store=True)
+    adapter = MemctlAdapter(
+        service,
+        owns_backend=True,
+        owned_artifactctl=artifactctl,
+    )
+
+    adapter.close()
+    adapter.close()
+
+    assert close_calls == ["store", "artifact"]
+
+
+def test_owned_artifactctl_closes_with_borrowed_memory_backend() -> None:
+    close_calls: list[str] = []
+    artifactctl = SimpleNamespace(close=lambda: close_calls.append("artifact"))
+    adapter = MemctlAdapter(
+        SimpleNamespace(),
+        owned_artifactctl=artifactctl,
+    )
+
+    adapter.close()
+    adapter.close()
+
+    assert close_calls == ["artifact"]
 
 
 def _build_config() -> OpenMinionConfig:
