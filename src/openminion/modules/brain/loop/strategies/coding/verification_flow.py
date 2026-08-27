@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from openminion.modules.brain.constants import (
+    BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_ACT_PROFILE_CODING,
     BRAIN_DECISION_ROUTE_ACT,
     CODING_PUBLIC_TAG as _CODING_PUBLIC_TAG,
@@ -54,6 +55,12 @@ class CodingVerificationMixin:
         )
 
     def _latest_tool_failure_summary(self: Any) -> str:
+        unresolved = load_verifier_candidate(
+            self._loop_state.scratchpad.get("coding.unresolved_verifier_failure")
+        )
+        if unresolved is not None:
+            _command, action_result = unresolved
+            return str(action_result.summary or "Verification failed.").strip()
         for message in reversed(self._loop_state.messages):
             if message.role != "tool":
                 continue
@@ -107,6 +114,45 @@ class CodingVerificationMixin:
             command=command,
             action_result=action_result,
         )
+        correction_generation = int(
+            self._loop_state.scratchpad.get("coding.self_corrections", 0) or 0
+        )
+        if action_result.status != BRAIN_ACTION_STATUS_SUCCESS:
+            raw_failure_generation = self._loop_state.scratchpad.get(
+                "coding.unresolved_verifier_failure_generation"
+            )
+            failure_generation = (
+                int(raw_failure_generation)
+                if raw_failure_generation is not None
+                else -1
+            )
+            if (
+                "coding.unresolved_verifier_failure" not in self._loop_state.scratchpad
+                or correction_generation > failure_generation
+            ):
+                self._loop_state.scratchpad["coding.unresolved_verifier_failure"] = (
+                    payload
+                )
+                self._loop_state.scratchpad[
+                    "coding.unresolved_verifier_failure_generation"
+                ] = correction_generation
+        else:
+            failure_generation = int(
+                self._loop_state.scratchpad.get(
+                    "coding.unresolved_verifier_failure_generation",
+                    correction_generation,
+                )
+                or 0
+            )
+            if correction_generation > failure_generation:
+                self._loop_state.scratchpad.pop(
+                    "coding.unresolved_verifier_failure",
+                    None,
+                )
+                self._loop_state.scratchpad.pop(
+                    "coding.unresolved_verifier_failure_generation",
+                    None,
+                )
         self._loop_state.scratchpad["coding.last_verifier_candidate"] = payload
         self._last_verifier_candidate_payload = dict(payload)
 
@@ -249,6 +295,8 @@ class CodingVerificationMixin:
             return None
 
         candidate = load_verifier_candidate(
+            self._loop_state.scratchpad.get("coding.unresolved_verifier_failure")
+        ) or load_verifier_candidate(
             self._loop_state.scratchpad.get("coding.last_verifier_candidate")
         )
         if candidate is None:

@@ -14,6 +14,7 @@ from openminion.cli.interactive.terminal.shell.approval import (
 from openminion.cli.interactive.terminal.transcript import (
     TerminalTranscript as _BaseTranscript,
 )
+from openminion.modules.llm import ProviderError
 
 
 class _QueueRuntime:
@@ -263,6 +264,26 @@ class _SingleTurnRuntime:
     async def send_message(self, text: str, **kwargs):
         del text, kwargs
         yield "answer"
+
+
+class _TypedFailureThenResumeRuntime:
+    agent_id = "alpha"
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    permission_mode = "default"
+
+    def __init__(self) -> None:
+        self.sent_texts: list[str] = []
+
+    async def send_message(self, text: str, **kwargs):
+        del kwargs
+        self.sent_texts.append(text)
+        if len(self.sent_texts) == 1:
+            raise ProviderError(
+                "empty after recovery",
+                code="EMPTY_PROVIDER_RESPONSE",
+            )
+        yield "resumed answer"
 
 
 class _PromptGapComposer:
@@ -662,6 +683,47 @@ async def test_terminal_focus_adds_one_gap_after_idle_answer() -> None:
     rendered = output.getvalue()
     assert rendered.startswith("⏺ answer")
     assert rendered.endswith("\n\n")
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_releases_prompt_after_typed_failure_and_resumes() -> None:
+    runtime = _TypedFailureThenResumeRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    composer = _LoopComposer()
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=composer,
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-provider-recovery",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.start_turn("continue")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert loop.active_turn_task is None
+    assert composer.busy_events[-1] is False
+    assert any(
+        message.kind == MessageKind.ERROR
+        and message.body == "EMPTY_PROVIDER_RESPONSE: empty after recovery"
+        for message in transcript._messages
+    )
+
+    await loop.start_turn("resume")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert runtime.sent_texts == ["continue", "resume"]
+    assert loop.active_turn_task is None
+    assert composer.busy_events[-1] is False
+    assert "resumed answer" in output.getvalue()
 
 
 @pytest.mark.asyncio

@@ -374,6 +374,11 @@ def test_parallel_execution_strategy_fail_fast_aborts_after_failure(
         item["subtask_id"] == "b" and item["status"] == "failed"
         for item in subtask_results
     )
+    assert not any(
+        item.get("error") == "Cancelled after sibling parallel failure."
+        for item in subtask_results
+        if item["subtask_id"] in {"a", "c"}
+    )
 
 
 def test_parallel_execution_strategy_continue_on_error_keeps_all_results(
@@ -441,6 +446,10 @@ def test_parallel_execution_strategy_continue_on_error_keeps_all_results(
     assert len(subtask_results) == 3
     assert [item["subtask_id"] for item in subtask_results] == ["a", "b", "c"]
     assert len([item for item in subtask_results if item["status"] == "failed"]) == 1
+    validation = mode.validate(ctx)
+    assert validation is not None
+    assert validation.passed is False
+    assert validation.code == "orchestrate_subtask_failed"
 
 
 def test_parallel_execution_strategy_rejects_cyclic_dependencies() -> None:

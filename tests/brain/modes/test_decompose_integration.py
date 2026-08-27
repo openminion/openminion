@@ -21,6 +21,7 @@ from openminion.modules.brain.execution.orchestrate.handler import (
     OrchestrateMode,
 )
 from openminion.modules.brain.execution.orchestrate.strategies import LLMSynthesizer
+from openminion.modules.brain.execution.orchestrate.strategies import build_child_state
 from openminion.modules.brain.execution.worktree_children import (
     accept_child_worktree_artifact,
     allocate_child_worktree,
@@ -674,7 +675,7 @@ def test_decompose_child_state_does_not_inherit_parent_adaptive_plan_state() -> 
 
     mode = OrchestrateMode()
     ctx.decision.subtasks = [SubtaskSpec.model_validate(ctx.decision.subtasks[0])]
-    child_state = mode._build_child_state(
+    child_state = build_child_state(
         parent_state=ctx.state,
         child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
         child_context=mode._inheritance.build_child_context(
@@ -698,7 +699,7 @@ def test_decompose_child_state_resets_llm_call_usage() -> None:
 
     mode = OrchestrateMode()
     ctx.decision.subtasks = [SubtaskSpec.model_validate(ctx.decision.subtasks[0])]
-    child_state = mode._build_child_state(
+    child_state = build_child_state(
         parent_state=ctx.state,
         child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
         child_context=mode._inheritance.build_child_context(
@@ -708,6 +709,35 @@ def test_decompose_child_state_resets_llm_call_usage() -> None:
     )
 
     assert child_state.llm_calls_used == 0
+
+
+def test_decompose_children_receive_distinct_turn_scopes() -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[{"goal": "Research AWS pricing", "suggested_mode": "act"}]
+    )
+    parent_trace_id = ctx.state.trace_id
+    mode = OrchestrateMode()
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    child_context = mode._inheritance.build_child_context(
+        parent_state=ctx.state,
+        subtask=subtask,
+    )
+
+    first = build_child_state(
+        parent_state=ctx.state,
+        child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
+        child_context=child_context,
+    )
+    second = build_child_state(
+        parent_state=ctx.state,
+        child_budget=ctx.state.budgets_remaining.model_copy(deep=True),
+        child_context=child_context,
+    )
+
+    assert first.trace_id != parent_trace_id
+    assert second.trace_id != parent_trace_id
+    assert first.trace_id != second.trace_id
+    assert ctx.state.trace_id == parent_trace_id
 
 
 def test_orchestrate_rejects_recursive_child_decision() -> None:
@@ -828,6 +858,49 @@ def test_decompose_handler_fails_fast_and_preserves_partial_results(
     assert aggregation["success_count"] == 1
     assert aggregation["failure_count"] == 1
     assert aggregation["completed_required"] is False
+
+
+def test_orchestrate_final_child_cancellation_is_not_success(monkeypatch) -> None:
+    ctx, _runner, services = _ctx(
+        subtasks=[
+            {"subtask_id": "first", "goal": "First", "suggested_mode": "act"},
+            {"subtask_id": "second", "goal": "Second", "suggested_mode": "act"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="first",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["first"],
+            )
+        ],
+    )
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, user_input, logger, depth
+        return _mode_result(state, "first complete")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+    mode = OrchestrateMode(
+        cancellation_policy=SimpleNamespace(
+            should_cancel=lambda *, ctx, results, attempts: attempts == 2
+        )
+    )
+
+    result = mode.execute(ctx)
+    validation = mode.validate(ctx)
+
+    assert result.status == "failed"
+    assert result.action_result.status == "failed"
+    assert [
+        item["status"] for item in result.action_result.outputs["subtask_results"]
+    ] == ["completed", "cancelled"]
+    assert validation is not None
+    assert validation.passed is False
+    assert validation.code == "orchestrate_subtask_failed"
+    assert services.statuses[-1]["mode_state"] == "failed"
+    assert "failed: 1/2" in services.statuses[-1]["mode_label"]
 
 
 @pytest.mark.parametrize(
@@ -1001,6 +1074,7 @@ def test_orchestrate_unknown_delegate_assignment_fails_structurally() -> None:
 
     result = OrchestrateMode().execute(ctx)
 
+    assert result.status == "failed"
     assert result.action_result.status == "failed"
     assert services.command_calls == []
     subtask_results = result.action_result.outputs["subtask_results"]
@@ -1015,6 +1089,9 @@ def test_orchestrate_unknown_delegate_assignment_fails_structurally() -> None:
             "tokens_used": 0,
         }
     ]
+    validation = OrchestrateMode().validate(ctx)
+    assert validation is not None
+    assert validation.passed is False
 
 
 def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(

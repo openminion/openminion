@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from pydantic import ValidationError
+
 from openminion.modules.brain.execution.child_tasks import (
     DecomposeControlPayload,
 )
@@ -26,6 +28,7 @@ from ..decompose import (
     _decompose_decline_result,
     _decompose_invalid_outcome,
     _decompose_tool_calls,
+    _handle_invalid_decompose_payload,
     _subtasks_from_decompose_control,
 )
 from ..events import IterationToolCallRecord
@@ -273,31 +276,24 @@ def _handle_decompose_calls(
         payload = DecomposeControlPayload.model_validate(
             getattr(decompose_calls[0], "arguments", {}) or {}
         )
-    except Exception as exc:  # noqa: BLE001
-        persist_blocked_tool_calls(
+    except ValidationError as exc:
+        outcome = _handle_invalid_decompose_payload(
             loop_ctx,
+            profile=profile,
             loop_state=loop_state,
-            turn_scope_id=str(getattr(loop_ctx.state, "trace_id", "") or ""),
-            tool_calls=decompose_calls,
-            code="INVALID_DECOMPOSE_PAYLOAD",
-            message=str(exc),
+            decompose_calls=decompose_calls,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            error_message=str(exc),
         )
         return LoopDispatchResult(
-            tool_calls=tool_calls,
+            tool_calls=decompose_calls,
             ordered_tool_results=[],
             cached_indices=frozenset(),
             iter_batch_parallel_count=0,
             batch_had_progress=False,
-            continue_loop=False,
-            outcome=_decompose_invalid_outcome(
-                loop_ctx=loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                allowed_tools=allowed_tools,
-                public_mode_tag=public_mode_tag,
-                reason="invalid_payload",
-                message=str(exc),
-            ),
+            continue_loop=outcome is None,
+            outcome=outcome,
         )
     decompose_subtasks = _subtasks_from_decompose_control(payload)
     if decompose_subtasks:

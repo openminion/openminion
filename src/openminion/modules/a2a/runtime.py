@@ -208,6 +208,7 @@ class A2ARuntime:
             current_step="queued",
             progress=0.0,
             owner_agent_id=envelope.from_agent,
+            idempotency_scope=scope,
             created_at=now,
             updated_at=now,
             heartbeat_at=now,
@@ -275,7 +276,9 @@ class A2ARuntime:
             ),
         )
 
-        scope = f"job.start:{updated.agent_id}:{updated.method}"
+        scope = updated.idempotency_scope or (
+            f"job.start:{updated.agent_id}:{updated.method}"
+        )
         self.state_store.set_idempotency_result(
             updated.idempotency_key,
             scope,
@@ -322,7 +325,7 @@ class A2ARuntime:
                     error=error,
                 ),
             )
-            scope = f"job.start:{row.agent_id}:{row.method}"
+            scope = row.idempotency_scope or f"job.start:{row.agent_id}:{row.method}"
             self.state_store.set_idempotency_result(
                 row.idempotency_key,
                 scope,
@@ -613,7 +616,9 @@ class A2ARuntime:
             )
 
     def _idempotency_scope(self, envelope: Envelope, resolved_agent: str) -> str:
-        return f"{envelope.type}:{resolved_agent}:{envelope.method}"
+        base_scope = f"{envelope.type}:{resolved_agent}:{envelope.method}"
+        session_id = str(envelope.meta.get("session_id", "") or "").strip()
+        return f"{base_scope}:{session_id}" if session_id else base_scope
 
     def _result_from_idempotency(
         self, *, existing: Any, request: Envelope, resolved_agent: str

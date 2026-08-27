@@ -269,7 +269,10 @@ def _shortlist_messages(
         'Return strict JSON only: {"tool_ids": ["tool.name", "..."]}.',
         (
             "Choose the smallest useful subset of exact tool names from "
-            "CANDIDATE_TOOLS, up to 8 tools. Do not include local file, shell, "
+            "CANDIDATE_TOOLS for the complete requested workflow, not only its "
+            "first action, up to 8 tools. When the request requires configured "
+            "subagents and gives no exact agent ids, include both agent.list and "
+            "task.delegate. Do not include local file, shell, "
             "or write tools unless the user request actually needs them. Do not "
             "invent tool names. Inactive tools can be requested later with "
             "tool.request."

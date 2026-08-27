@@ -305,3 +305,26 @@ def test_async_delegate_cancel_updates_job_and_task_state() -> None:
         assert a2a_api.cancel_calls == ["job-1"]
         assert record is not None
         assert record.state == TaskLifecycleState.CANCELLED
+
+
+def test_async_delegate_resume_cascades_parent_cancellation() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        task_manager = TaskManager.for_lifecycle_db(
+            db_path=Path(tmp) / "task" / "tasks.db"
+        )
+        a2a_api = _FakeA2AAPI()
+        ctx, _services = _ctx(task_manager, a2a_api)
+        mode = DelegateMode(strategy=AsyncJobStrategy())
+
+        initial = mode.execute(ctx)
+        assert initial.status == "job_pending"
+        ctx.options.decompose_cancel_requested = True
+
+        cancelled = mode.resume(ctx)
+
+        record = task_manager.get_task(str(ctx.state.delegation_task_id))
+        assert cancelled.status == "stopped"
+        assert a2a_api.poll_calls == []
+        assert a2a_api.cancel_calls == ["job-1"]
+        assert record is not None
+        assert record.state == TaskLifecycleState.CANCELLED

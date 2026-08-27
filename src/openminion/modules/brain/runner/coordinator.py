@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
+from openminion.base.errors import error_dict_from_exception
+from openminion.base.redaction import redact_mapping
 from openminion.base.time import utc_now_iso
+from openminion.modules.llm import ProviderError
 from openminion.tools.exec.command_parser import is_read_only_exec_command
 from openminion.tools.exec.process import resolve_shell_family
 
@@ -151,6 +154,33 @@ class BrainRunner:
             feedback_delta=0.1 if outcome == "success" else -0.1,
         )
 
+    def _append_turn_outcome_event(
+        self,
+        *,
+        session_id: str,
+        payload: dict[str, Any],
+        trace_id: str,
+        status: str,
+        redaction: str = "none",
+        result: StepOutput | None = None,
+    ) -> None:
+        try:
+            self.session_api.append_event(
+                session_id,
+                "turn.outcome",
+                payload,
+                actor_type="agent",
+                actor_id=self.profile.agent_id,
+                trace={"trace_id": trace_id} if trace_id else None,
+                importance=3,
+                redaction=redaction,
+                status=status,
+            )
+            if result is not None:
+                self._apply_typed_memory_outcome(result)
+        except Exception:
+            return
+
     def _emit_turn_outcome(
         self,
         *,
@@ -217,23 +247,42 @@ class BrainRunner:
             for key, value in payload.items()
             if value is not None or key in {"workflow_name", "workflow_kind"}
         }
-        try:
-            self.session_api.append_event(
-                session_id,
-                "turn.outcome",
-                payload,
-                actor_type="agent",
-                actor_id=self.profile.agent_id,
-                trace={"trace_id": trace_id} if trace_id else None,
-                importance=3,
-                redaction="none",
-                status="ok"
-                if str(result.status).strip().lower() not in {"error", "failed"}
-                else "error",
-            )
-            self._apply_typed_memory_outcome(result)
-        except Exception:
-            return
+        self._append_turn_outcome_event(
+            session_id=session_id,
+            payload=payload,
+            trace_id=trace_id,
+            redaction="none",
+            status="ok"
+            if str(result.status).strip().lower() not in {"error", "failed"}
+            else "error",
+            result=result,
+        )
+
+    def _emit_failed_turn_outcome(
+        self,
+        *,
+        session_id: str,
+        entrypoint: str,
+        trace_id: str,
+        error: BaseException,
+    ) -> None:
+        payload, redacted_count = redact_mapping(
+            {
+                "entrypoint": entrypoint,
+                "status": "error",
+                "error": error_dict_from_exception(
+                    error,
+                    include_namespace=False,
+                ),
+            }
+        )
+        self._append_turn_outcome_event(
+            session_id=session_id,
+            payload=payload,
+            trace_id=trace_id,
+            redaction="bounded" if redacted_count else "none",
+            status="error",
+        )
 
     def run(
         self,
@@ -309,6 +358,21 @@ class BrainRunner:
                 entrypoint="run",
             )
             return result
+        except ProviderError as exc:
+            self._emit_brain_operation(
+                session_id=session_id,
+                turn_id=effective_trace_id,
+                operation="turn_finish",
+                status="error",
+                extra={"entrypoint": "run", "brain_status": "error"},
+            )
+            self._emit_failed_turn_outcome(
+                session_id=session_id,
+                entrypoint="run",
+                trace_id=effective_trace_id,
+                error=exc,
+            )
+            raise
         finally:
             self._telemetry_turn_active = False
             if progress_callback is not None:
@@ -373,6 +437,22 @@ class BrainRunner:
                     entrypoint="step",
                 )
             return result
+        except ProviderError as exc:
+            if not self._telemetry_turn_active:
+                self._emit_brain_operation(
+                    session_id=session_id,
+                    turn_id=effective_trace_id,
+                    operation="turn_finish",
+                    status="error",
+                    extra={"entrypoint": "step", "brain_status": "error"},
+                )
+                self._emit_failed_turn_outcome(
+                    session_id=session_id,
+                    entrypoint="step",
+                    trace_id=effective_trace_id,
+                    error=exc,
+                )
+            raise
         finally:
             if progress_callback is not None:
                 self._progress_callback = previous_callback

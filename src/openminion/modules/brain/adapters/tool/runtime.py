@@ -263,6 +263,9 @@ class ToolAdapter:
     ) -> Callable[[str, dict[str, Any], str], bool] | None:
         previous = self._approval_callback
         self._approval_callback = callback if callable(callback) else None
+        delegate_setter = getattr(self.a2a_delegate_api, "set_approval_callback", None)
+        if callable(delegate_setter):
+            delegate_setter(self._approval_callback)
         return previous
 
     def _replay_inline_approval(
@@ -644,14 +647,14 @@ class ToolAdapter:
             artifactctl=self.artifactctl,
             a2a_delegate_api=self.a2a_delegate_api,
             agent_query=self.agent_query,
+            telemetry_session_id=session_id,
+            telemetry_turn_id=trace_id,
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
         )
-        ctx.session_id = session_id
-        ctx.trace_id = trace_id
-        ctx.agent_id = self.agent_id
-        ctx.run_id = run_id
+        ctx.session_id, ctx.trace_id = session_id, trace_id
+        ctx.agent_id, ctx.run_id = self.agent_id, run_id
         ctx.tool_name = tool_name
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)

@@ -25,14 +25,14 @@ src/openminion/modules/brain/loop/tools/direct_tool.py	_force_direct_tool_answer
 src/openminion/modules/brain/loop/tools/duplicate_batch.py	_force_duplicate_batch_answer_only_closure	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/engine.py	_AdaptiveLoopRunner.run	240	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/engine_closure.py	AdaptiveLoopRunnerClosureMixin._handle_duplicate_signature	121	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/tools/iteration/dispatch.py	_handle_decompose_calls	179	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/tools/iteration/dispatch.py	_handle_decompose_calls	172	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/dispatch.py	_process_tool_request_calls	120	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/dispatch.py	prepare_iteration_dispatch	129	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/execution.py	execute_iteration_results	412	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/helpers.py	_build_tool_failure_recovery_message	134	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/setup.py	prepare_loop_frame	202	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/termination.py	build_no_tool_outcome	105	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/tools/no_tool.py	AdaptiveLoopRunnerNoToolMixin._handle_no_tool_calls	274	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/tools/no_tool.py	AdaptiveLoopRunnerNoToolMixin._handle_no_tool_calls	273	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/postprocess/engine.py	AdaptiveLoopRunnerPostprocessMixin._prepare_llm_response	134	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/seeded.py	_run_seeded_command_step	222	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/meta/metrics.py	build_meta_metrics	149	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

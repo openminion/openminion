@@ -8,10 +8,7 @@ from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE,
     BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
 )
-from openminion.modules.brain.diagnostics.transitions import (
-    set_status_unchecked,
-    transition,
-)
+from openminion.modules.brain.diagnostics.transitions import transition
 from openminion.modules.brain.loop.orchestration import decide as decide_phase
 from openminion.modules.brain.schemas import (
     ActionError,
@@ -27,7 +24,6 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.execution.delegation_policy import (
-    clear_policy_facts,
     merge_child_policy_facts,
     record_child_policy_projection,
     record_result_aggregation,
@@ -48,7 +44,6 @@ from openminion.modules.brain.runtime.budget.strategy import (
 from openminion.modules.brain.execution.child_tasks import (
     BudgetAllocator,
     CancellationPolicy,
-    ChildContext,
     ChildResultCollector,
     ChildTaskPromoter,
     ChildTaskResult,
@@ -68,6 +63,7 @@ from .strategies import (
     AcceptOrPlanResolver,
     AllInlinePromoter,
     BlockingWait,
+    build_child_state,
     bounded_child_budget,
     CompletionRatioMonitor,
     decision_mode_name,
@@ -345,6 +341,11 @@ class OrchestrateMode:
         emit_status_updates: bool = False,
     ) -> ModePreparation:
         subtasks = _normalize_subtasks(getattr(ctx.decision, "subtasks", []) or [])
+        if len(subtasks) < 2:
+            return self._reject_prepare(
+                ctx,
+                message="orchestrate requires at least two validated subtasks.",
+            )
         payload = DecomposePayload(subtasks=subtasks)
         if len(payload.subtasks) > self._max_subtasks:
             return self._reject_prepare(
@@ -382,49 +383,6 @@ class OrchestrateMode:
         ctx.state.child_task_order = [item.subtask_id for item in normalized]
         ctx.decision.subtasks = normalized
         return ModePreparation()
-
-    def _build_child_state(
-        self,
-        *,
-        parent_state: WorkingState,
-        child_budget: BudgetCounters,
-        child_context: ChildContext,
-    ) -> WorkingState:
-        child_state = parent_state.model_copy(deep=True)
-        child_state.goal = child_context.goal
-        child_state.last_user_input = child_context.prompt
-        child_state.active_skill_id = child_context.active_skill_id
-        child_state.constraints = list(child_context.constraints or [])
-        child_state.plan = None
-        child_state.cursor = 0
-        set_status_unchecked(child_state, "active", reason="bootstrap")
-        child_state.budgets_remaining = child_budget.model_copy(deep=True)
-        child_state.last_command_id = None
-        child_state.last_result = None
-        child_state.step_outputs = []
-        child_state.adaptive_satisfied_intent_ids = []
-        child_state.last_adaptive_revision_checkpoint = None
-        child_state.pending_jobs = []
-        child_state.memory_candidates = []
-        child_state.idempotency_cache = {}
-        child_state.child_tasks = {}
-        child_state.child_task_order = []
-        child_state.pending_clarify_items = []
-        child_state.unresolved_clarify_items = []
-        child_state.clarify_responses = {}
-        child_state.open_questions = []
-        child_state.active_mode_name = None
-        child_state.llm_calls_used = 0
-        child_state.decision_sub_intents = []
-        child_state.decision_sub_intent_refs = []
-        child_state.decision_feasibility_state = {}
-        child_state.decision_feasibility_report = None
-        child_state.intent_execution_states = []
-        child_state.task_backed_task_id = None
-        child_state.task_backed_checkpoint_id = None
-        child_state.task_backed_resume_state = {}
-        clear_policy_facts(child_state)
-        return child_state
 
     def _decide_subtask(
         self,
@@ -556,7 +514,7 @@ class OrchestrateMode:
             subtask=subtask,
             dependency_results=dependency_results,
         )
-        child_state = self._build_child_state(
+        child_state = build_child_state(
             parent_state=ctx.state,
             child_budget=budget,
             child_context=child_context,
@@ -672,7 +630,7 @@ class OrchestrateMode:
             subtask=subtask,
             dependency_results=dependency_results,
         )
-        child_state = self._build_child_state(
+        child_state = build_child_state(
             parent_state=ctx.state,
             child_budget=budget,
             child_context=child_context,
@@ -763,7 +721,8 @@ class OrchestrateMode:
         recovery: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         completed = sum(1 for item in results if item.status == "completed")
-        failed = any(item.status == "failed" for item in results)
+        incomplete = [item for item in results if item.status != "completed"]
+        failed = bool(incomplete)
         action_result = ActionResult(
             command_id=new_uuid(),
             status="failed" if failed else "success",
@@ -782,7 +741,7 @@ class OrchestrateMode:
             error=(
                 ActionError(
                     code="orchestrate_partial_failure",
-                    message="One or more subtasks failed.",
+                    message="One or more required subtasks did not complete.",
                 )
                 if failed
                 else None
@@ -793,9 +752,13 @@ class OrchestrateMode:
         )
         ctx.state.last_result = action_result
         ctx.state.active_mode_name = ORCHESTRATE_MODE
-        transition(ctx.state, "task_completed", logger=ctx.logger)
+        transition(
+            ctx.state,
+            "task_failed" if failed else "task_completed",
+            logger=ctx.logger,
+        )
         return ExecutionResult(
-            status="done",
+            status="failed" if failed else "done",
             working_state=ctx.state,
             message=str(getattr(synthesized, "message", "") or "").strip(),
             action_result=action_result,
@@ -936,10 +899,11 @@ class OrchestrateMode:
         completed = sum(1 for item in results if item.status == "completed")
         self._emit_status(
             ctx,
-            mode_state="done",
+            mode_state="failed" if final.status == "failed" else "done",
             label=(
-                f"{_ORCHESTRATE_PUBLIC_TAG} done: {completed}/{len(subtasks)} "
-                "subtasks completed"
+                f"{_ORCHESTRATE_PUBLIC_TAG} "
+                f"{'failed' if final.status == 'failed' else 'done'}: "
+                f"{completed}/{len(subtasks)} subtasks completed"
             ),
             index=completed,
             total=len(subtasks),
@@ -985,6 +949,17 @@ class OrchestrateMode:
                 feedback="Orchestrate result goals do not match the requested subtasks.",
                 should_retry=True,
                 code="subtask_goal_mismatch",
+            )
+        failed_results = [item for item in results if item.status != "completed"]
+        if failed_results:
+            return ValidationResult(
+                passed=False,
+                feedback="One or more required orchestrated subtasks did not complete.",
+                should_retry=False,
+                code="orchestrate_subtask_failed",
+                details={
+                    "failed_subtasks": [item.subtask_id for item in failed_results]
+                },
             )
         if not str(getattr(action_result, "summary", "") or "").strip():
             return ValidationResult(

@@ -92,6 +92,31 @@ class LocalSessionStoreTests(unittest.TestCase):
             self.assertEqual(reloaded_state.status, "waiting_user")
             self.assertEqual(reloaded_state.budgets_remaining.tokens, 1000)
 
+    def test_tool_adapter_forwards_turn_approval_to_delegation_seam(self) -> None:
+        callbacks: list[object | None] = []
+
+        class _DelegateSeam:
+            def set_approval_callback(self, callback: object | None) -> None:
+                callbacks.append(callback)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                a2a_delegate_api=_DelegateSeam(),
+            )
+
+            def callback(*_args: object) -> bool:
+                return True
+
+            previous = adapter.set_approval_callback(callback)
+            restored = adapter.set_approval_callback(previous)
+
+        self.assertIsNone(previous)
+        self.assertIs(restored, callback)
+        self.assertEqual(callbacks, [callback, None])
+
     def test_extract_structured_output_accepts_fallback_submit_output_tool_calls(
         self,
     ) -> None:
@@ -771,8 +796,12 @@ class ToolAdapterTests(unittest.TestCase):
         from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
         calls = []
+        observability = []
 
         class _DelegateSeam:
+            def bind_observability(self, **kwargs):
+                observability.append(dict(kwargs))
+
             def delegate(
                 self,
                 *,
@@ -827,6 +856,8 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(
             result["outputs"]["outputs"]["artifact"], {"status": "read_only"}
         )
+        self.assertEqual(observability[0]["session_id"], "s1")
+        self.assertEqual(observability[0]["turn_id"], "t1")
         self.assertEqual(
             calls,
             [

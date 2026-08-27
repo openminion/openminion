@@ -2160,6 +2160,7 @@ def test_loop_decompose_with_subtasks_returns_handoff() -> None:
                         arguments={
                             "subtasks": [
                                 {"id": "a", "description": "do alpha"},
+                                {"id": "b", "description": "do beta"},
                             ]
                         },
                     )
@@ -2186,7 +2187,15 @@ def test_loop_decompose_with_subtasks_returns_handoff() -> None:
             "depends_on": [],
             "suggested_mode": None,
             "priority": 0,
-        }
+        },
+        {
+            "subtask_id": "b",
+            "goal": "do beta",
+            "inputs": {},
+            "depends_on": [],
+            "suggested_mode": None,
+            "priority": 0,
+        },
     ]
 
 
@@ -2240,7 +2249,21 @@ def test_loop_decompose_malformed_invalid_outcome() -> None:
                     )
                 ],
                 finish_reason="tool_calls",
-            )
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="d2",
+                        name="decompose",
+                        arguments={"subtasks": [{"id": "no-description"}]},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
         ]
     )
     loop_ctx = _LoopContext(state=_state(), outcomes=[])
@@ -3914,7 +3937,7 @@ def test_tool_choice_none_second_retry_salvages_from_compact_tool_evidence() -> 
         "user",
     ]
     assert any(
-        "Successful tool evidence already gathered" in str(message.content)
+        "Tool evidence already gathered" in str(message.content)
         for message in runtime.calls[2]["messages"]
         if message.role == "user"
     )
@@ -4576,10 +4599,16 @@ class TestForceBudgetAnswerOnlyFinalization:
                 "adaptive.tool_results": [
                     {
                         "tool_name": "web.search",
+                        "ok": False,
+                        "summary": "Primary evidence check failed",
+                        "error": {"code": "check_failed"},
+                    },
+                    {
+                        "tool_name": "web.search",
                         "ok": True,
                         "content": "Useful search result",
                         "data": {"results": ["source one"]},
-                    }
+                    },
                 ]
             },
             total_tool_calls=1,
@@ -4620,6 +4649,7 @@ class TestForceBudgetAnswerOnlyFinalization:
         )
         assert result is not None
         assert result.final_text == "A final answer."
+        assert "Primary evidence check failed" in sent_text
         assert "Useful search result" in sent_text
         assert large_transcript_marker not in sent_text
 

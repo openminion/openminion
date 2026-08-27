@@ -649,6 +649,13 @@ class DelegateMode:
                 message="No async delegation job is available to resume.",
                 code="DELEGATE_RESUME_MISSING_JOB",
             )
+        task_id = str(getattr(ctx.state, "delegation_task_id", "") or "").strip()
+        if self._cancellation.should_cancel(ctx=ctx, results=[], attempts=0):
+            return self._cancellation.cancel_async(
+                ctx=ctx,
+                job_id=job_id,
+                task_id=task_id or None,
+            )
         self._observer.emit(
             ctx=ctx,
             mode_state="polling",
@@ -662,7 +669,6 @@ class DelegateMode:
             job_id=job_id,
         )
         if mapped_result.status == "pending":
-            task_id = str(getattr(ctx.state, "delegation_task_id", "") or "").strip()
             if task_id:
                 ctx.transition_task(task_id=task_id, to_state="paused")
                 if not self._schedule_async_resume_poll(
@@ -694,7 +700,6 @@ class DelegateMode:
             )
             synthesized.action_result = mapped_result.action_result
             mapped_result = synthesized
-        task_id = str(getattr(ctx.state, "delegation_task_id", "") or "").strip()
         if mapped_result.status == "done":
             self._task_tracker.mark_done(task_id=task_id)
         elif mapped_result.status == "stopped":

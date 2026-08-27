@@ -20,13 +20,17 @@ from .budget_finalization import (
 from .contracts import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
+    ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     AdaptiveToolLoopOutcome,
 )
 from .direct_tool import (
     _direct_tool_turn_active,
     _remaining_direct_tool_name_sequence,
 )
-from .evidence import _successful_substantive_tool_results
+from .evidence import (
+    _has_unresolved_tool_failure,
+    _successful_substantive_tool_results,
+)
 from .postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
     _looks_like_unexecutable_tool_payload_text,
@@ -135,9 +139,8 @@ def _retry_empty_typed_finalization_after_tool_results(
     )
 
 
-def _retry_recoverable_tool_argument_failure(
+def _argument_retry(
     runner: Any,
-    *,
     finalization_status: Any,
     normalized_final_text: str,
 ) -> tuple[bool, None] | None:
@@ -160,6 +163,55 @@ def _retry_recoverable_tool_argument_failure(
         "guess or rewrite paths in prose. If no valid correction is possible, "
         "return a truthful finalization_status with status=blocked.",
         discard_assistant_text=normalized_final_text,
+    )
+
+
+def _failed_exec_retry(
+    runner: Any,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
+    if str(getattr(runner.profile, "profile_name", "") or "").strip() != (
+        "general_adaptive_v1"
+    ):
+        return None
+    if not _has_unresolved_tool_failure(runner.loop_state, tool_name="exec.run"):
+        return None
+    status = str(getattr(finalization_status, "status", "") or "").strip()
+    if isinstance(finalization_status, dict):
+        status = str(finalization_status.get("status", "") or "").strip()
+    if status in {"blocked", "incomplete"}:
+        return None
+    scratchpad = runner.loop_state.scratchpad
+    retry_key = "unresolved_exec_failure_retry_used"
+    if not bool(scratchpad.get(retry_key, False)):
+        scratchpad[retry_key] = True
+        return runner._retry_with_system_message(
+            "A prior exec.run call failed and no later exec.run call has succeeded. "
+            "Use the failure facts already in context, make any needed correction, "
+            "and rerun the verifier. Do not return finalization_status "
+            "status=final_answer while that failure remains unresolved. If the work "
+            "cannot continue, return status=incomplete or status=blocked instead.",
+            discard_assistant_text=normalized_final_text,
+        )
+    runner.loop_state.termination_reason = ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+    emit_adaptive_status(
+        runner.loop_ctx,
+        profile=runner.profile,
+        loop_state=runner.loop_state,
+        detail_text=f"{runner.public_mode_tag} unresolved exec failure",
+        mode_state="tool_failure_no_recovery",
+        termination_reason=ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
+    )
+    return False, AdaptiveToolLoopOutcome(
+        profile_name=runner.profile.profile_name,
+        mode_name=runner.profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
+        state=runner.loop_state,
+        allowed_tools=runner.allowed_tools,
+        error_message=(
+            "General act work ended while the latest exec.run result was still failed."
+        ),
     )
 
 
@@ -339,9 +391,9 @@ class AdaptiveLoopRunnerNoToolMixin:
             loop_state=self.loop_state,
         )
         finalization_status = payloads[STATE_KEY_FINALIZATION_STATUS]
-        final_text = payloads["final_text"]
         salvage_text = payloads["salvage_text"]
         confident_complete = payloads["confident_complete"]
+        final_text = payloads["final_text"]
         normalized_final_text = str(final_text or "").strip()
         if getattr(prepared.response, "empty_payload_recovered", False) is True:
             retry_key = "empty_payload_recovery_retry_count"
@@ -359,13 +411,12 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "Provider returned no usable response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
-        recoverable_argument_retry = _retry_recoverable_tool_argument_failure(
-            self,
-            finalization_status=finalization_status,
-            normalized_final_text=normalized_final_text,
-        )
-        if recoverable_argument_retry is not None:
-            return recoverable_argument_retry
+        retry = _argument_retry(self, finalization_status, normalized_final_text)
+        if retry is not None:
+            return retry
+        failed = _failed_exec_retry(self, finalization_status, normalized_final_text)
+        if failed is not None:
+            return failed
         raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
         )

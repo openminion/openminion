@@ -1,5 +1,7 @@
 from typing import Any
 
+from pydantic import ValidationError
+
 from openminion.modules.brain.config import fixed_act_profile_from_profile
 from openminion.modules.brain.constants import (
     BRAIN_ACT_PROFILE_CODING,
@@ -203,7 +205,7 @@ def _entry_decompose_decision(
         payload = DecomposeControlPayload.model_validate(
             getattr(decompose_calls[0], "arguments", {}) or {}
         )
-    except Exception as exc:  # noqa: BLE001
+    except ValidationError as exc:
         logger.emit(
             "brain.entry.decompose_invalid",
             {

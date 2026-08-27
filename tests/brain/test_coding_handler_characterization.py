@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
+from openminion.modules.brain.constants import (
+    BRAIN_ACTION_STATUS_FAILED,
+    BRAIN_ACTION_STATUS_SUCCESS,
+)
 from openminion.modules.brain.loop.strategies.coding import handler
 from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
 from openminion.modules.brain.loop.strategies.coding.handler import (
@@ -335,6 +338,60 @@ class TestCodingVerificationReserve:
         payload = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
         assert payload["command"]["tool_name"] == "file.read"
         assert runner._has_verifier_candidate() is True
+
+    def test_failed_verifier_is_not_erased_by_later_success(self) -> None:
+        runner = CodingProfileRunner()
+        failed_command = ToolCommand(
+            title="primary verifier",
+            tool_name="exec.run",
+            args={"argv": ["verify-primary"]},
+        )
+        failed_result = ActionResult(
+            command_id=failed_command.command_id,
+            status=BRAIN_ACTION_STATUS_FAILED,
+            summary="primary verification failed",
+            outputs={"exit_code": 1},
+        )
+        successful_command = ToolCommand(
+            title="diagnostic",
+            tool_name="exec.run",
+            args={"argv": ["inspect-one-value"]},
+        )
+        successful_result = ActionResult(
+            command_id=successful_command.command_id,
+            status=BRAIN_ACTION_STATUS_SUCCESS,
+            summary="diagnostic completed",
+            outputs={"exit_code": 0},
+        )
+
+        runner._record_verifier_candidate(failed_command, failed_result)
+        runner._record_verifier_candidate(successful_command, successful_result)
+
+        unresolved = runner._loop_state.scratchpad["coding.unresolved_verifier_failure"]
+        assert unresolved["command"]["args"] == {"argv": ["verify-primary"]}
+        assert runner._latest_tool_failure_summary() == "primary verification failed"
+        assert runner._loop_state.scratchpad["coding.last_verifier_candidate"][
+            "command"
+        ]["args"] == {"argv": ["inspect-one-value"]}
+
+        restored = CodingProfileRunner()
+        restored.restore_state(runner.snapshot_state())
+        assert restored._latest_tool_failure_summary() == "primary verification failed"
+
+        runner._record_autonomous_correction(
+            SimpleNamespace(
+                state=SimpleNamespace(task_backed_checkpoint_id=None),
+                emit_status=lambda **kwargs: None,
+            ),
+            failure_summary="primary verification failed",
+        )
+
+        assert "coding.unresolved_verifier_failure" in runner._loop_state.scratchpad
+        assert runner._loop_state.scratchpad["coding.self_corrections"] == 1
+
+        runner._record_verifier_candidate(successful_command, successful_result)
+
+        assert "coding.unresolved_verifier_failure" not in runner._loop_state.scratchpad
 
     def test_running_exec_requires_terminal_poll_before_verification(self) -> None:
         runner = CodingProfileRunner()

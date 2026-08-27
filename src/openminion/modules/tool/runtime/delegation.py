@@ -53,7 +53,7 @@ class A2ADelegateApi(Protocol):
 _SUCCESS_STATUS = "success"
 _RUNNING_STATUSES = frozenset({"pending", "running"})
 _TERMINAL_LIFECYCLE_STATUSES = frozenset(
-    {"done", "failed", "success", "canceled", "cancelled"}
+    {"done", "completed", "failed", "success", "canceled", "cancelled"}
 )
 
 
@@ -116,7 +116,7 @@ def map_a2a_delegate_result(
 
 def map_a2a_job_result(raw: Any, *, trace_id: str, task_id: str) -> A2ADelegateResult:
     payload = raw if isinstance(raw, dict) else {}
-    status = str(payload.get("status") or payload.get("state") or "").strip()
+    status = str(payload.get("status") or payload.get("state") or "").strip().lower()
     summary = str(payload.get("summary", "") or "").strip()
     error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
     outputs = payload.get("outputs")
@@ -155,6 +155,7 @@ def run_a2a_job_lifecycle(
     operation: str,
     task_id: str,
     parent_agent_id: str,
+    parent_session_id: str = "",
 ) -> A2ADelegateResult:
     normalized_task_id = str(task_id or "").strip()
     if not normalized_task_id:
@@ -177,7 +178,7 @@ def run_a2a_job_lifecycle(
         )
 
     trace_id = f"task-delegate:{operation}:{normalized_task_id}"
-    session_id = f"task-delegate::{parent_agent_id or 'agent'}"
+    session_id = f"task-delegate::{parent_session_id or parent_agent_id or 'agent'}"
     raw = caller(task_id=normalized_task_id, session_id=session_id, trace_id=trace_id)
     return map_a2a_job_result(raw, trace_id=trace_id, task_id=normalized_task_id)
 
@@ -216,6 +217,11 @@ class A2aRuntimeDelegateAdapter:
             "tracestate": str(tracestate),
         }
 
+    def set_approval_callback(self, callback: Any | None) -> Any | None:
+        owner = getattr(self._a2a_call, "__self__", None)
+        setter = getattr(owner, "set_approval_callback", None)
+        return setter(callback) if callable(setter) else None
+
     def _idempotency_key(
         self,
         *,
@@ -224,12 +230,21 @@ class A2aRuntimeDelegateAdapter:
         workspace_root: str,
         cwd: str,
     ) -> str:
+        invocation_scope = (
+            self._observability.get("invocation_id")
+            or self._observability.get("session_id")
+            or self._parent_agent_id
+        )
         digest = hashlib.sha256(
             (
-                f"{self._parent_agent_id}|{target}|{instruction}|{workspace_root}|{cwd}"
+                f"{invocation_scope}|{target}|{instruction}|{workspace_root}|{cwd}"
             ).encode("utf-8")
         ).hexdigest()[:32]
         return f"task-delegate:{digest}"
+
+    def _delegation_session_id(self) -> str:
+        parent_session_id = self._observability.get("session_id", "")
+        return f"task-delegate::{parent_session_id or self._parent_agent_id or 'agent'}"
 
     def _handoff_context(
         self, target: str
@@ -294,6 +309,7 @@ class A2aRuntimeDelegateAdapter:
         cwd: str,
         idempotency_key: str,
         observability: dict | None,
+        session_id: str,
     ) -> Any:
         return self._a2a_call(
             command={
@@ -314,7 +330,7 @@ class A2aRuntimeDelegateAdapter:
                 "idempotency_key": idempotency_key,
                 "observability": observability,
             },
-            session_id=f"task-delegate::{self._parent_agent_id or 'agent'}",
+            session_id=session_id,
             trace_id=idempotency_key,
         )
 
@@ -377,6 +393,7 @@ class A2aRuntimeDelegateAdapter:
                 cwd=normalized_cwd,
                 idempotency_key=idem,
                 observability=observability,
+                session_id=self._delegation_session_id(),
             )
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
             self._emit_handoff(
@@ -433,6 +450,7 @@ class A2aRuntimeDelegateAdapter:
                 operation=operation,
                 task_id=task_id,
                 parent_agent_id=self._parent_agent_id,
+                parent_session_id=self._observability.get("session_id", ""),
             )
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
             _LOG.warning("task.delegate A2A %s failed: %s", operation, exc)
