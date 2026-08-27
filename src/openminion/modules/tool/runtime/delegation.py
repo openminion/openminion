@@ -53,7 +53,7 @@ class A2ADelegateApi(Protocol):
 _SUCCESS_STATUS = "success"
 _RUNNING_STATUSES = frozenset({"pending", "running"})
 _TERMINAL_LIFECYCLE_STATUSES = frozenset(
-    {"done", "failed", "success", "canceled", "cancelled"}
+    {"done", "completed", "failed", "success", "canceled", "cancelled"}
 )
 
 
@@ -116,7 +116,7 @@ def map_a2a_delegate_result(
 
 def map_a2a_job_result(raw: Any, *, trace_id: str, task_id: str) -> A2ADelegateResult:
     payload = raw if isinstance(raw, dict) else {}
-    status = str(payload.get("status") or payload.get("state") or "").strip()
+    status = str(payload.get("status") or payload.get("state") or "").strip().lower()
     summary = str(payload.get("summary", "") or "").strip()
     error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
     outputs = payload.get("outputs")

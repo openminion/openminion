@@ -276,7 +276,7 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
         def poll_task(self, *, task_id, session_id, trace_id):
             self.polled.append(task_id)
             return {
-                "status": "running",
+                "status": "RUNNING",
                 "task_id": task_id,
                 "trace_id": trace_id,
                 "summary": "still running",
@@ -285,7 +285,7 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
         def cancel_task(self, *, task_id, session_id, trace_id):
             self.cancelled.append(task_id)
             return {
-                "status": "canceled",
+                "status": "CANCELED",
                 "task_id": task_id,
                 "trace_id": trace_id,
                 "summary": "cancelled",
@@ -305,6 +305,31 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
     assert cancelled.ok is True
     assert cancelled.status == "canceled"
     assert call.cancelled == ["job-1"]
+
+
+def test_async_resume_normalizes_durable_completion_status() -> None:
+    class _LifecycleCall(_RecordingCall):
+        def poll_task(self, *, task_id, session_id, trace_id):
+            del session_id
+            return {
+                "status": "COMPLETED",
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "summary": "delegated work completed",
+                "result_inline": {"body": "result text"},
+            }
+
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=_LifecycleCall({}),
+        parent_agent_id="parent",
+    )
+
+    result = adapter.resume(task_id="job-1")
+
+    assert result.ok is True
+    assert result.status == "completed"
+    assert result.content == "delegated work completed"
+    assert result.outputs["outputs"] == {"body": "result text"}
 
 
 def test_lifecycle_methods_resolve_from_bound_call_owner() -> None:

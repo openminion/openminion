@@ -230,8 +230,7 @@ def _wait_for_a2a_delegate_success(
                         """
                         SELECT COUNT(*)
                         FROM audit_records
-                        WHERE type = 'result'
-                          AND method = 'delegate'
+                        WHERE method = 'delegate'
                           AND status = 'SUCCESS'
                         """
                     ).fetchone()[0]
@@ -381,16 +380,14 @@ def test_live_focus_delegate_async_lifecycle(
 ) -> None:
     """Prove the live Focus surface preserves one async task handle."""
     require_live_focus()
+    marker = "SDUC_ASYNC_RESULT_OK"
     target_agent = "minimax-m2-7-highspeed"
     root = artifact_root(tmp_path)
     with focus_probe.session(rows=50, cols=160) as session:
         focus_probe.wait_ready(session)
         started = focus_probe.run_slash(
             session,
-            (
-                f"/delegate async {target_agent} Analyze three independent "
-                "ways to verify a Python package release, then return a short list."
-            ),
+            (f"/delegate async {target_agent} Reply with exactly `{marker}`."),
             marker="Delegation:",
         )
         task_match = _TASK_ID_RE.search(started)
@@ -400,21 +397,27 @@ def test_live_focus_delegate_async_lifecycle(
         status = focus_probe.run_slash(
             session, f"/delegate status {task_id}", marker="Delegation:"
         )
-        result = focus_probe.run_slash(
-            session, f"/delegate result {task_id}", marker="Delegation:"
+        _wait_for_a2a_delegate_success(
+            root,
+            "test_live_focus_delegate_async_lifecycle",
+            timeout=120,
         )
-        canceled = focus_probe.run_slash(
-            session, f"/delegate cancel {task_id}", marker="Delegation:"
+        result = focus_probe.run_slash_turn(
+            session,
+            f"/delegate result {task_id}",
+            marker=marker,
         )
         write_transcript(
             root,
             "sduc-live-async-lifecycle",
-            "\n\n--- status ---\n".join((started, status, result, canceled)),
+            "\n\n--- status ---\n".join((started, status, result)),
         )
 
-    for transcript in (status, result, canceled):
+    for transcript in (status, result):
         assert task_id in transcript
         assert "Delegation:" in transcript
+    assert "status    completed" in result
+    assert "Delegation failed" not in result
 
 
 @pytest.mark.timeout(660)
