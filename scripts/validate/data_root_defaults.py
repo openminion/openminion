@@ -47,6 +47,9 @@ PYTHON_RUNNER_ROOT_EXEMPTIONS = {
     "tests/e2e/runners/run_memory_identity_e2e_smoke.py": (
         "uses TemporaryDirectory for its runtime root"
     ),
+    "tests/e2e/runners/run_provider_session_resilience.py": (
+        "writes through the operator-selected generated root; nested probes isolate targets"
+    ),
     "tests/e2e/runners/run_tokencensus_pipe_e2e.py": (
         "requires an explicit root or creates one with tempfile.mkdtemp"
     ),

@@ -103,6 +103,8 @@ class ProviderMatrix:
 @dataclass(frozen=True)
 class ProviderSessionTarget:
     provider_class: str
+    provider_name: str
+    service_vendor: str
     adapter: str
     api_protocol: str
     endpoint_authority: str
@@ -219,13 +221,11 @@ def write_provider_session_resilience_report(
     manifest: ProviderSessionResilienceManifest,
     *,
     manifest_path: Path,
-    root: Path | None = None,
     validation_only: bool = True,
     rows: list[dict[str, object]] | None = None,
 ) -> tuple[Path, Path]:
-    repo_root = root or Path(__file__).resolve().parents[6]
     output_root = (
-        resolve_generated_root(repo_root)
+        resolve_generated_root()
         / CERTIFICATION_REPORT_DIRNAME
         / _safe_segment(manifest.run_id)
     )
@@ -372,18 +372,20 @@ def _parse_provider_session_target(
     provider_config = getattr(runtime_config.providers, runtime_profile.provider, None)
     if provider_config is None:
         raise ValueError("effective provider config is unavailable")
-    identity = getattr(provider_config, "provider_identity", None)
-    if not isinstance(identity, dict):
-        raise ValueError("effective provider identity must be explicit")
-    adapter = str(identity.get("transport_adapter") or "").strip()
-    api_protocol = str(identity.get("wire_protocol_family") or "").strip()
-    if not adapter or not api_protocol:
-        raise ValueError("effective provider identity is incomplete")
+    provider_name = str(runtime_profile.provider or "").strip()
     model = str(getattr(provider_config, "model", "") or "").strip()
     base_url = str(getattr(provider_config, "base_url", "") or "").strip()
     endpoint_authority = str(urlparse(base_url).netloc or "").strip().lower()
     if not model or not endpoint_authority:
         raise ValueError("effective provider model or endpoint is unavailable")
+    identity = getattr(provider_config, "provider_identity", None)
+    if not isinstance(identity, dict):
+        raise ValueError("effective provider identity must be explicit")
+    adapter = str(identity.get("transport_adapter") or "").strip()
+    api_protocol = str(identity.get("wire_protocol_family") or "").strip()
+    service_vendor = str(identity.get("service_vendor") or "").strip()
+    if not adapter or not api_protocol or not provider_name or not service_vendor:
+        raise ValueError("effective provider identity is incomplete")
 
     profile_id = _required_str(payload, "profile_id")
     catalog = load_catalog_config(catalog_path)
@@ -425,6 +427,8 @@ def _parse_provider_session_target(
 
     return ProviderSessionTarget(
         provider_class=resolved_key,
+        provider_name=provider_name,
+        service_vendor=service_vendor,
         adapter=adapter,
         api_protocol=api_protocol,
         endpoint_authority=endpoint_authority,
@@ -558,7 +562,7 @@ def _required_str(payload: dict[str, Any], key: str) -> str:
 
 
 def _required_sha256(payload: dict[str, Any], key: str) -> str:
-    value = _required_str(payload, key).lower()
+    value = _required_str(payload, key)
     if len(value) != 64 or any(
         character not in "0123456789abcdef" for character in value
     ):

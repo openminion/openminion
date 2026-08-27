@@ -39,6 +39,7 @@ def _write_config(path: Path, *, model: str, base_url: str) -> None:
                         "provider_identity": {
                             "transport_adapter": "openai_chat",
                             "wire_protocol_family": "openai_compatible",
+                            "service_vendor": "openai",
                         },
                     }
                 },
@@ -145,6 +146,62 @@ def test_provider_session_manifest_accepts_two_classes(tmp_path: Path) -> None:
     assert len(manifest.injected_failures) == 1
 
 
+def _completed_attempts(target: object) -> list[dict[str, object]]:
+    return [
+        {
+            "event_type": "llm.call.completed",
+            "status": "completed",
+            "turn_id": turn_id,
+            "agent_id": target.agent_id,
+            "provider_name": target.provider_name,
+            "service_vendor": target.service_vendor,
+            "model": target.expected_model,
+        }
+        for turn_id in ("turn-1", "turn-2")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "failure_code"),
+    (
+        ("missing", "provider_attempts_missing"),
+        ("malformed", "completed_provider_attempts_missing"),
+        ("single_turn", "distinct_completed_turns_missing"),
+        ("wrong_agent", "completed_attempt_agent_id_mismatch"),
+        ("wrong_provider", "completed_attempt_provider_name_mismatch"),
+        ("wrong_service", "completed_attempt_service_vendor_mismatch"),
+        ("wrong_model", "completed_attempt_model_mismatch"),
+    ),
+)
+def test_completed_provider_attempts_fail_closed(
+    tmp_path: Path,
+    mutation: str,
+    failure_code: str,
+) -> None:
+    manifest = load_provider_session_resilience_manifest(
+        _write_manifest(tmp_path, _manifest(tmp_path)),
+        root=ROOT,
+    )
+    target = manifest.targets[0]
+    attempts: object = _completed_attempts(target)
+    if mutation == "missing":
+        attempts = None
+    elif mutation == "malformed":
+        attempts = ["not-an-attempt"]
+    elif mutation == "single_turn":
+        attempts = list(attempts)[:1]
+    else:
+        field = {
+            "wrong_agent": "agent_id",
+            "wrong_provider": "provider_name",
+            "wrong_service": "service_vendor",
+            "wrong_model": "model",
+        }[mutation]
+        list(attempts)[0][field] = "wrong"
+
+    assert runner._completed_attempt_failure(target, attempts) == failure_code
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
@@ -161,6 +218,7 @@ def test_provider_session_manifest_accepts_two_classes(tmp_path: Path) -> None:
         "three_messages",
         "three_targets",
         "secret",
+        "uppercase_config_hash",
     ),
 )
 def test_provider_session_manifest_rejects_invalid_cases(
@@ -196,6 +254,8 @@ def test_provider_session_manifest_rejects_invalid_cases(
         targets.append(dict(targets[1]))
     elif mutation == "secret":
         payload["api_key"] = "sk-test"
+    elif mutation == "uppercase_config_hash":
+        targets[0]["config_sha256"] = str(targets[0]["config_sha256"]).upper()
     path = _write_manifest(tmp_path, payload)
 
     with pytest.raises(ValueError):
@@ -215,7 +275,6 @@ def test_provider_session_report_writes_generated_root(
     json_path, markdown_path = write_provider_session_resilience_report(
         manifest,
         manifest_path=path,
-        root=tmp_path,
         validation_only=True,
     )
     payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -270,7 +329,6 @@ def test_provider_session_runner_collects_two_live_turns_per_target(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
-    monkeypatch.setattr(runner, "isolate_runtime_roots", lambda **_kwargs: tmp_path)
     manifest_path = _write_manifest(tmp_path, _manifest(tmp_path))
     commands: list[list[str]] = []
     outer_timeouts: list[float] = []
@@ -280,6 +338,36 @@ def test_provider_session_runner_collects_two_live_turns_per_target(
     ) -> subprocess.CompletedProcess[str]:
         commands.append(command)
         outer_timeouts.append(float(_kwargs["timeout"]))
+        summary_path = Path(command[command.index("--summary-output") + 1])
+        agent_id = command[command.index("--agent") + 1]
+        model = f"model-{('one' if len(commands) == 1 else 'two')}"
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "provider_attempts": [
+                        {
+                            "event_type": "llm.call.completed",
+                            "status": "completed",
+                            "turn_id": "turn-1",
+                            "agent_id": agent_id,
+                            "provider_name": "openai",
+                            "service_vendor": "openai",
+                            "model": model,
+                        },
+                        {
+                            "event_type": "llm.call.completed",
+                            "status": "completed",
+                            "turn_id": "turn-2",
+                            "agent_id": agent_id,
+                            "provider_name": "openai",
+                            "service_vendor": "openai",
+                            "model": model,
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
         return subprocess.CompletedProcess(command, 0, stdout="done\n", stderr="")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
@@ -307,7 +395,6 @@ def test_provider_session_runner_sanitizes_failed_probe_output(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
-    monkeypatch.setattr(runner, "isolate_runtime_roots", lambda **_kwargs: tmp_path)
     manifest_path = _write_manifest(tmp_path, _manifest(tmp_path))
     results = iter(
         (
@@ -358,7 +445,6 @@ def test_provider_session_runner_classifies_probe_requirement_failure(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
-    monkeypatch.setattr(runner, "isolate_runtime_roots", lambda **_kwargs: tmp_path)
     manifest_path = _write_manifest(tmp_path, _manifest(tmp_path))
     results = iter(
         (

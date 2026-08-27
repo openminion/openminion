@@ -22,7 +22,6 @@ from tests.e2e.cli.focus.harness.provider_matrix import (  # noqa: E402
     provider_session_probe_args,
     write_provider_session_resilience_report,
 )
-from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 _PROBE_STATUS_RE = re.compile(
@@ -31,6 +30,39 @@ _PROBE_STATUS_RE = re.compile(
 )
 _BLOCKED_PHASES = frozenset({"config_missing", "config_env_missing", "python_missing"})
 _PROVIDER_RESIDUAL_PHASES = frozenset({"turn_timeout"})
+
+
+def _completed_attempt_failure(
+    target: ProviderSessionTarget,
+    provider_attempts: object,
+) -> str:
+    if not isinstance(provider_attempts, list):
+        return "provider_attempts_missing"
+    completed = [
+        attempt
+        for attempt in provider_attempts
+        if isinstance(attempt, dict)
+        and str(attempt.get("event_type") or "") == "llm.call.completed"
+        and str(attempt.get("status") or "") == "completed"
+    ]
+    if not completed:
+        return "completed_provider_attempts_missing"
+    expected = {
+        "agent_id": target.agent_id,
+        "provider_name": target.provider_name,
+        "service_vendor": target.service_vendor,
+        "model": target.expected_model,
+    }
+    for attempt in completed:
+        for name, value in expected.items():
+            if str(attempt.get(name) or "").strip() != value:
+                return f"completed_attempt_{name}_mismatch"
+        if not str(attempt.get("turn_id") or "").strip():
+            return "completed_attempt_turn_id_missing"
+    turn_ids = {str(attempt["turn_id"]).strip() for attempt in completed}
+    if len(turn_ids) < 2:
+        return "distinct_completed_turns_missing"
+    return ""
 
 
 def _live_row(
@@ -81,9 +113,10 @@ def _live_row(
     status = _PROBE_STATUS_RE.findall(result.stdout)
     phase = status[-1] if status else ""
     failure_code = phase or f"probe_exit_{result.returncode}"
+    provider_attempts = summary.get("provider_attempts")
     if result.returncode == 0:
-        classification = "pass"
-        failure_code = ""
+        failure_code = _completed_attempt_failure(target, provider_attempts)
+        classification = "runtime_regression" if failure_code else "pass"
     elif phase in _BLOCKED_PHASES:
         classification = "blocked_external"
     elif phase in _PROVIDER_RESIDUAL_PHASES:
@@ -102,12 +135,13 @@ def _live_row(
         classification=classification,
         failure_code=failure_code,
         latency_ms=latency_ms,
-        provider_attempts=list(summary.get("provider_attempts") or []),
+        provider_attempts=(
+            list(provider_attempts) if isinstance(provider_attempts, list) else []
+        ),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    isolate_runtime_roots(prefix="openminion-provider-session-")
     parser = argparse.ArgumentParser(
         prog="run_provider_session_resilience.py",
         description="Validate provider/session resilience manifests.",
@@ -136,7 +170,6 @@ def main(argv: list[str] | None = None) -> int:
         json_path, markdown_path = write_provider_session_resilience_report(
             manifest,
             manifest_path=manifest_path,
-            root=_ROOT,
             validation_only=args.validate_only,
             rows=rows,
         )
