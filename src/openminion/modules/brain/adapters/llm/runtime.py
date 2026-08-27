@@ -315,6 +315,21 @@ class LlmctlAdapter(LLMAPI):
     def get_last_trace_context(self) -> dict[str, Any] | None:
         return dict(self._last_trace_context) if self._last_trace_context else None
 
+    def get_provider_identity(self) -> dict[str, str]:
+        provider = getattr(self.client, "provider", None)
+        provider_name = str(
+            getattr(self.client, "name", "")
+            or getattr(provider, "name", "")
+            or ""
+        ).strip()
+        service_vendor = str(
+            getattr(provider, "service_vendor", "") or provider_name
+        ).strip()
+        return {
+            "provider_name": provider_name,
+            "service_vendor": service_vendor,
+        }
+
     def estimate_tokens(self, *, model: str, context: dict[str, Any]) -> int:
         del model
         return max(1, len(str(context or "")) // 4)

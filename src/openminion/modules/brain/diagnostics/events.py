@@ -76,12 +76,17 @@ class CanonicalEventLogger:
         session_api: Any,
         session_id: str,
         agent_id: str,
+        llm_api: Any | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._session_api = session_api
         self._session_id = session_id
         self._agent_id = agent_id
         self._log = logger or _log
+        identity_getter = getattr(llm_api, "get_provider_identity", None)
+        identity = identity_getter() if callable(identity_getter) else {}
+        self._provider_name = str(identity.get("provider_name") or "").strip()
+        self._service_vendor = str(identity.get("service_vendor") or "").strip()
 
     def emit(
         self,
@@ -99,6 +104,13 @@ class CanonicalEventLogger:
         importance: int | None = None,
         redaction: str | None = None,
     ) -> str:
+        if event_type.startswith("llm.call.") and self._provider_name:
+            payload = dict(payload)
+            payload.setdefault("provider", self._provider_name)
+            payload.setdefault("provider_name", self._provider_name)
+            payload.setdefault(
+                "service_vendor", self._service_vendor or self._provider_name
+            )
         safe_payload, redacted_count = redact_mapping(payload)
         return self._session_api.append_event(
             self._session_id,

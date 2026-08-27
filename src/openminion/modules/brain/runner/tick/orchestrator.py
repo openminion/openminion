@@ -234,6 +234,7 @@ def run_step(
         session_api=runner.session_api,
         session_id=session_id,
         agent_id=runner.profile.agent_id,
+        llm_api=runner.llm_api,
     )
     tick_ctx = build_tick_run_context(
         session_id=session_id,

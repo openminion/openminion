@@ -175,11 +175,7 @@ def run_until_idle(
                         last.working_state.mission.latest_route_action or ""
                     ),
                 )
-                CanonicalEventLogger(
-                    session_api=runner.session_api,
-                    session_id=session_id,
-                    agent_id=runner.profile.agent_id,
-                ).emit(
+                _event_logger(runner, session_id).emit(
                     "brain.mission.paused",
                     {
                         "mission_id": last.working_state.mission.mission_id,
@@ -237,11 +233,9 @@ def _emit_run_trigger_started(
     trigger: str,
 ) -> None:
     try:
-        CanonicalEventLogger(
-            session_api=runner.session_api,
-            session_id=session_id,
-            agent_id=runner.profile.agent_id,
-        ).emit(event, {"trigger": trigger}, trace_id=trace_id)
+        _event_logger(runner, session_id).emit(
+            event, {"trigger": trigger}, trace_id=trace_id
+        )
     except Exception:  # noqa: BLE001 — telemetry is best-effort
         return
 
@@ -255,11 +249,7 @@ def _terminate_loop(
     details: dict[str, int] | None = None,
 ) -> "StepOutput":
     state = last.working_state
-    logger = CanonicalEventLogger(
-        session_api=runner.session_api,
-        session_id=state.session_id,
-        agent_id=runner.profile.agent_id,
-    )
+    logger = _event_logger(runner, state.session_id)
     payload: dict[str, int | str] = {
         "status_before": str(last.status),
         "cursor": state.cursor,
@@ -274,4 +264,13 @@ def _terminate_loop(
         message=message,
         status=BRAIN_STATE_WAITING_USER,
         action_result=last.action_result,
+    )
+
+
+def _event_logger(runner: "BrainRunner", session_id: str) -> CanonicalEventLogger:
+    return CanonicalEventLogger(
+        session_api=runner.session_api,
+        session_id=session_id,
+        agent_id=runner.profile.agent_id,
+        llm_api=runner.llm_api,
     )

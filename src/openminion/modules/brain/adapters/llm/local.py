@@ -18,6 +18,9 @@ from ...interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
 class LocalLLMAdapter:
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
+    def get_provider_identity(self) -> dict[str, str]:
+        return {"provider_name": "local", "service_vendor": "local"}
+
     def estimate_tokens(self, *, model: str, context: dict[str, Any]) -> int:
         del model, context
         return 50

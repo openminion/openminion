@@ -38,7 +38,7 @@ src/openminion/modules/brain/loop/tools/seeded.py	_run_seeded_command_step	222	c
 src/openminion/modules/brain/meta/metrics.py	build_meta_metrics	149	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/retry.py	build_structured_retry_message	186	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/retry.py	call_structured_with_retry	145	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/runner/lifecycle.py	run_until_idle	141	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/runner/lifecycle.py	run_until_idle	137	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/confirmation.py	_process_adaptive_budget_extension_reply	115	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/confirmation.py	process	274	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/input_processing.py	handle_pending_replay	181	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
