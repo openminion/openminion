@@ -253,7 +253,7 @@ def test_failed_provider_turn_persists_typed_outcome() -> None:
         failure = ProviderError(
             "empty after recovery",
             code="EMPTY_PROVIDER_RESPONSE",
-            details={"retry_eligible": False},
+            details={"api_key": "secret-provider-key", "retry_eligible": False},
         )
 
         with (
@@ -282,8 +282,35 @@ def test_failed_provider_turn_persists_typed_outcome() -> None:
         assert outcomes[0]["payload"]["error"] == {
             "code": "EMPTY_PROVIDER_RESPONSE",
             "message": "empty after recovery",
-            "details": {"retry_eligible": False},
+            "details": {"api_key": "[REDACTED]", "retry_eligible": False},
         }
+        assert outcomes[0]["redaction"] == "bounded"
+
+
+def test_failed_turn_evidence_failure_does_not_mask_provider_error() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp))
+        failure = ProviderError("provider failed", code="PROVIDER_ERROR")
+
+        with (
+            patch(
+                "openminion.modules.brain.runner.coordinator."
+                "run_until_idle_runner_lifecycle",
+                side_effect=failure,
+            ),
+            patch.object(
+                session,
+                "append_event",
+                side_effect=OSError("storage unavailable"),
+            ),
+            pytest.raises(ProviderError) as raised,
+        ):
+            runner.run(
+                session_id="s-provider-storage-failure",
+                user_input="continue",
+            )
+
+        assert raised.value is failure
 
 
 def test_failed_standalone_step_uses_its_trace() -> None:
