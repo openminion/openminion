@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -143,7 +144,23 @@ def _live_manifest(tmp_path: Path) -> dict[str, object]:
     payload = _manifest(tmp_path)
     workspace = Path(str(payload["workspace_path"]))
     provider_config = workspace / "provider.json"
-    provider_config.write_text("{}\n", encoding="utf-8")
+    provider_config.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "default_agent": "fixture-agent",
+                "agents": {
+                    "fixture-agent": {
+                        "name": "fixture-profile",
+                        "provider": "openai",
+                    }
+                },
+                "providers": {"openai": {"model": "fixture-model"}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     goal = workspace / "goal.md"
     goal.write_text("complete the approved project\n", encoding="utf-8")
     payload.pop("source_revision")
@@ -345,6 +362,55 @@ def test_live_manifest_binds_canonical_runtime_inputs(tmp_path: Path) -> None:
     assert manifest.cycle_interval_seconds == 5
 
 
+def test_live_manifest_rejects_effective_profile_mismatch(tmp_path: Path) -> None:
+    payload = _live_manifest(tmp_path)
+    payload["provider"]["profile"] = "caller-label"
+
+    with pytest.raises(ValueError, match="SAC_PROVIDER_IDENTITY_MISMATCH"):
+        validate_certification_manifest(
+            _write_manifest(tmp_path, payload),
+            now=datetime(2026, 8, 7, tzinfo=UTC),
+            for_live_run=True,
+        )
+
+
+def test_usage_identity_accepts_matching_and_blank_wrapper_records() -> None:
+    identity = certification.ProviderIdentity(
+        profile="fixture-profile",
+        provider="openai",
+        model="fixture-model",
+    )
+
+    certification._validate_usage_identity(
+        (
+            SimpleNamespace(provider="", model=""),
+            SimpleNamespace(provider="openai", model="fixture-model"),
+        ),
+        identity,
+    )
+
+
+@pytest.mark.parametrize(
+    "records",
+    (
+        (SimpleNamespace(provider="", model=""),),
+        (SimpleNamespace(provider="other", model="fixture-model"),),
+        (SimpleNamespace(provider="openai", model="other"),),
+    ),
+)
+def test_usage_identity_rejects_missing_or_conflicting_identity(
+    records: tuple[SimpleNamespace, ...],
+) -> None:
+    identity = certification.ProviderIdentity(
+        profile="fixture-profile",
+        provider="openai",
+        model="fixture-model",
+    )
+
+    with pytest.raises(ValueError, match="SAC_PROVIDER_IDENTITY"):
+        certification._validate_usage_identity(records, identity)
+
+
 def test_certification_report_writes_generated_root_without_secrets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -371,6 +437,69 @@ def test_certification_report_writes_generated_root_without_secrets(
     assert payload["certification_level"] == "full_certification"
     assert "test-configs/redacted-provider.json" in markdown_path.read_text()
     assert "api_key" not in json_path.read_text(encoding="utf-8").lower()
+
+
+def test_live_report_uses_manifest_root_and_retains_lineage(tmp_path: Path) -> None:
+    payload = _live_manifest(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+    manifest = validate_certification_manifest(
+        manifest_path,
+        now=datetime(2026, 8, 7, tzinfo=UTC),
+        for_live_run=True,
+    )
+    observation = certification.CertificationObservation(
+        metrics={"token": 3, "iteration": 2},
+        autonomy_run_id="awrk_1",
+        project_run_id="prun_1",
+        task_id="task_1",
+        session_id=manifest.session_id,
+        checkpoint_ids=("cp_1", "cp_2"),
+        gateway_run_ids=("run_1", "run_2"),
+        linked_cron_id="cron_1",
+        provider="openai",
+        model="fixture-model",
+        evidence_refs={"evidence_ledger_ref": "artifact:evidence"},
+    )
+
+    _, json_path, _ = certification._write_live_result(
+        manifest,
+        manifest_path=manifest_path,
+        root=tmp_path / "ambient",
+        outcome="pass",
+        started=datetime.now(UTC),
+        metrics=observation.metrics,
+        recovery_events=[],
+        verifier_passed=True,
+        observation=observation,
+    )
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert json_path.is_relative_to(Path(manifest.generated_root))
+    assert report["evidence"]["lineage"]["checkpoint_ids"] == ["cp_1", "cp_2"]
+    assert report["evidence"]["active_seconds"] is None
+    assert report["evidence"]["idle_seconds"] is None
+
+
+def test_live_certification_rejects_existing_report_before_daemon(
+    tmp_path: Path,
+) -> None:
+    payload = _live_manifest(tmp_path)
+    manifest_path = _write_manifest(tmp_path, payload)
+    manifest = validate_certification_manifest(
+        manifest_path,
+        now=datetime(2026, 8, 7, tzinfo=UTC),
+        for_live_run=True,
+    )
+    report_root = (
+        Path(manifest.generated_root)
+        / certification.REPORT_DIRNAME
+        / manifest.run_id
+    )
+    report_root.mkdir(parents=True)
+    (report_root / "certification-report.md").write_text("existing\n")
+
+    with pytest.raises(ValueError, match="SAC_REPORT_ALREADY_EXISTS"):
+        run_certification(manifest, manifest_path=manifest_path, root=tmp_path)
 
 
 def test_interim_two_hour_report_is_not_full_certification(
