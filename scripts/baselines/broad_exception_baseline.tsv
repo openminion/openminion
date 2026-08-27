@@ -111,7 +111,6 @@ src/openminion/modules/brain/loop/adaptive/events.py	3	0	current broad-handler b
 src/openminion/modules/brain/loop/adaptive/finalization.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/adaptive/seeded.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/continuation.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/loop/entry_routing.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/orchestration.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/proactive_entrypoint.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/recursive/llm.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -130,7 +129,6 @@ src/openminion/modules/brain/loop/tools/confirmation.py	1	0	current broad-handle
 src/openminion/modules/brain/loop/tools/correction.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/tools/direct_tool.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/tools/duplicate_batch.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/loop/tools/iteration/dispatch.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/tools/phases/child_execution.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/tools/phases/eval.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/tools/phases/refine.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

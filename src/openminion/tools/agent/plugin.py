@@ -66,7 +66,11 @@ class TaskDelegateArgs(BaseModel):
     )
     agent_id: str = Field(
         default="",
-        description="Exact target sub-agent identifier for sync/async delegation.",
+        description=(
+            "Exact target sub-agent identifier for sync/async delegation. Call "
+            "agent.list first unless an exact visible agent_id was already supplied; "
+            "never invent a role name or alias."
+        ),
     )
     instruction: str = Field(
         default="",
@@ -311,6 +315,36 @@ def _task_delegate_error_code(result_error_code: str, *, status: str) -> ErrorCo
     return "UPSTREAM_ERROR"
 
 
+def _validate_delegate_target(args: TaskDelegateArgs, ctx: RuntimeContext) -> None:
+    if args.mode not in {"sync", "async"}:
+        return
+    runtime_agents = _agents_from_runtime_query(ctx)
+    if runtime_agents is None:
+        return
+    available_agent_ids = sorted(
+        {
+            str(agent.get("agent_id", "") or "").strip()
+            for agent in runtime_agents
+            if str(agent.get("agent_id", "") or "").strip()
+        }
+    )
+    if args.agent_id in available_agent_ids:
+        return
+    raise ToolRuntimeError(
+        "NOT_FOUND",
+        (
+            f"Target agent {args.agent_id!r} is not visible. "
+            "Call agent.list and retry with one exact agent_id. "
+            f"Available agent_ids: {available_agent_ids}"
+        ),
+        {
+            "reason_code": "agent_not_found",
+            "agent_id": args.agent_id,
+            "available_agent_ids": available_agent_ids,
+        },
+    )
+
+
 def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = TaskDelegateArgs.model_validate(args)
     if validated.mode in {"accept", "reject"}:
@@ -330,6 +364,8 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
                 "agent_id": validated.agent_id,
             },
         )
+
+    _validate_delegate_target(validated, ctx)
 
     if validated.mode == "status":
         result = seam.status(task_id=validated.task_id)

@@ -56,3 +56,16 @@ def _loop_has_non_success_tool_result(loop_state: AdaptiveToolLoopState) -> bool
     return any(
         not bool(item.get("ok")) for item in _loop_tool_result_payloads(loop_state)
     )
+
+
+def _has_unresolved_tool_failure(
+    loop_state: AdaptiveToolLoopState,
+    *,
+    tool_name: str,
+) -> bool:
+    unresolved = False
+    for item in _loop_tool_result_payloads(loop_state):
+        if _normalized_tool_name(item.get("tool_name")) != tool_name:
+            continue
+        unresolved = not bool(item.get("ok"))
+    return unresolved

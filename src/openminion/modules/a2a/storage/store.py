@@ -20,6 +20,37 @@ from openminion.modules.storage.runtime.module_store import (
 from .migrations import list_migrations
 
 
+def _table_columns(record_store: RecordStore, table_name: str) -> set[str]:
+    if bool(record_store.capabilities().get("raw_sql")):
+        rows = record_store.query_dicts(f"PRAGMA table_info({table_name})")
+    else:
+        rows = record_store.query_dicts(
+            """
+            SELECT column_name AS name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = ?
+            """,
+            (table_name,),
+        )
+    return {str(row["name"]) for row in rows}
+
+
+def _ensure_store_column(
+    record_store: RecordStore,
+    *,
+    table_name: str,
+    column_name: str,
+    ddl_tail: str,
+) -> None:
+    columns = _table_columns(record_store, table_name)
+    if not columns or column_name in columns:
+        return
+    record_store.execute_count(
+        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_tail}"
+    )
+
+
 def _create_state_schema(record_store: RecordStore) -> None:
     record_store.execute_count(
         """
@@ -43,6 +74,7 @@ def _create_state_schema(record_store: RecordStore) -> None:
             task_id TEXT PRIMARY KEY,
             trace_id TEXT NOT NULL,
             idempotency_key TEXT NOT NULL,
+            idempotency_scope TEXT NOT NULL DEFAULT '',
             agent_id TEXT NOT NULL,
             method TEXT NOT NULL,
             state TEXT NOT NULL,
@@ -75,6 +107,18 @@ def _create_state_schema(record_store: RecordStore) -> None:
     )
     record_store.execute_count(
         "CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at)"
+    )
+    _ensure_store_column(
+        record_store,
+        table_name="jobs",
+        column_name="owner_agent_id",
+        ddl_tail="TEXT NOT NULL DEFAULT ''",
+    )
+    _ensure_store_column(
+        record_store,
+        table_name="jobs",
+        column_name="idempotency_scope",
+        ddl_tail="TEXT NOT NULL DEFAULT ''",
     )
 
 
@@ -182,14 +226,15 @@ class _StateStoreMixin(StateStore):
         self._record_store.execute_count(
             """
             INSERT INTO jobs(
-                task_id, trace_id, idempotency_key, agent_id, method, state, current_step, progress,
+                task_id, trace_id, idempotency_key, idempotency_scope, agent_id, method, state, current_step, progress,
                 result_inline_json, result_ref, error_json, owner_agent_id, created_at, updated_at, heartbeat_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job.task_id,
                 job.trace_id,
                 job.idempotency_key,
+                job.idempotency_scope,
                 job.agent_id,
                 job.method,
                 job.state,
@@ -255,7 +300,7 @@ class _StateStoreMixin(StateStore):
     def get_job(self, task_id: str) -> JobRecord | None:
         rows = self._record_store.query_dicts(
             """
-            SELECT task_id, trace_id, idempotency_key, agent_id, method, state, current_step, progress,
+            SELECT task_id, trace_id, idempotency_key, idempotency_scope, agent_id, method, state, current_step, progress,
                    result_inline_json, result_ref, error_json, owner_agent_id, created_at, updated_at, heartbeat_at
             FROM jobs
             WHERE task_id = ?
@@ -292,7 +337,7 @@ class _StateStoreMixin(StateStore):
             values.append(str(filter_by["method"]))
 
         sql = (
-            "SELECT task_id, trace_id, idempotency_key, agent_id, method, state, current_step, progress, "
+            "SELECT task_id, trace_id, idempotency_key, idempotency_scope, agent_id, method, state, current_step, progress, "
             "result_inline_json, result_ref, error_json, owner_agent_id, created_at, updated_at, heartbeat_at "
             "FROM jobs"
         )
@@ -373,6 +418,7 @@ def _job_from_row(row: Mapping[str, Any]) -> JobRecord:
         task_id=str(row["task_id"]),
         trace_id=str(row["trace_id"]),
         idempotency_key=str(row["idempotency_key"]),
+        idempotency_scope=str(row["idempotency_scope"] or ""),
         agent_id=str(row["agent_id"]),
         method=str(row["method"]),
         state=str(row["state"]),

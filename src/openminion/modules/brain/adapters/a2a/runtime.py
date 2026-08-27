@@ -22,6 +22,7 @@ from openminion.modules.a2a.constants import (
     A2A_JOB_STATE_RUNNING,
     A2A_JOB_STATE_SUCCESS,
 )
+from openminion.modules.a2a.errors import A2AError, ERROR_CODE_FAILED
 from openminion.base.config import resolve_data_root
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.brain.schemas import DelegationContext, DelegationResultSummary
@@ -131,6 +132,11 @@ class A2actlAdapter:
     ) -> None:
         runtime = self._ensure_runtime()
         runtime.register_agent(agent_id, capabilities, handler, tags=tags)
+
+    def set_approval_callback(self, callback: Any | None) -> Any | None:
+        previous = self._approval_callback
+        self._approval_callback = callback if callable(callback) else None
+        return previous
 
     def call(
         self, *, command: dict[str, Any], session_id: str, trace_id: str
@@ -482,6 +488,38 @@ class A2actlAdapter:
             metadata = result.get("metadata")
             normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
             body = str(result.get("body", "") or "").strip()
+            brain_status = str(
+                normalized_metadata.get("brain_status", "") or ""
+            ).strip()
+            if brain_status and brain_status not in {"done", "completed"}:
+                reason = str(
+                    normalized_metadata.get("error_message", "") or body
+                ).strip()
+                raise A2AError(
+                    ERROR_CODE_FAILED,
+                    reason or "Child work did not complete.",
+                    {
+                        "brain_status": brain_status,
+                        "error_code": str(
+                            normalized_metadata.get("error_code", "") or ""
+                        ).strip(),
+                    },
+                )
+            projected_metadata = {
+                key: normalized_metadata[key]
+                for key in (
+                    "session_id",
+                    "run_id",
+                    "brain_status",
+                    "error_code",
+                    "error_message",
+                    "tool_loop_termination_reason",
+                    "adaptive.finalization_status",
+                    "delegation_result_summary",
+                    "total_tokens_used",
+                )
+                if key in normalized_metadata
+            }
             response_payload = {
                 "summary": body or "Delegated turn completed.",
                 "message": body,
@@ -494,7 +532,7 @@ class A2actlAdapter:
                 "run_id": str(
                     result.get("run_id", "") or normalized_metadata.get("run_id", "")
                 ).strip(),
-                "metadata": normalized_metadata,
+                "metadata": projected_metadata,
             }
             result_summary = _typed_delegation_result_summary(
                 normalized_metadata.get("delegation_result_summary")

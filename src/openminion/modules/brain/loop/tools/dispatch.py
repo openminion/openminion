@@ -50,16 +50,23 @@ def _tool_request_result(
         )
     requested_spec = requestable_specs_by_name.get(requested_name)
     if requested_spec is None:
+        requestable_names = sorted(requestable_specs_by_name)
         return (
             ActionResult(
                 command_id=new_uuid(),
                 status=BRAIN_ACTION_STATUS_FAILED,
-                summary=f"Tool schema is not requestable in this loop: {requested_name}",
+                summary=(
+                    f"Tool schema is not requestable in this loop: {requested_name}. "
+                    f"Use one exact name from: {requestable_names}"
+                ),
                 outputs={"tool_name": requested_name, "activated": False},
                 error=ActionError(
                     code="TOOL_REQUEST_UNAVAILABLE",
                     message="Requested tool is not available in this loop.",
-                    details={"tool_name": requested_name},
+                    details={
+                        "tool_name": requested_name,
+                        "requestable_tool_names": requestable_names,
+                    },
                 ),
             ),
             False,

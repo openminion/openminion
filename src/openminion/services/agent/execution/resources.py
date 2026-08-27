@@ -52,11 +52,10 @@ class ExecutionResources:
 
         runtime_env = getattr(runtime_cfg, "env", None)
         env_payload = dict(runtime_env) if isinstance(runtime_env, Mapping) else {}
-        home_root_raw = getattr(self._service_port, "home_root", None)
         home_root = (
-            Path(home_root_raw).expanduser().resolve(strict=False)
-            if home_root_raw is not None
-            else Path.cwd().resolve(strict=False)
+            Path(self._service_port.home_root or Path.cwd())
+            .expanduser()
+            .resolve(strict=False)
         )
         data_root = resolve_data_root(
             home_root,
@@ -105,8 +104,7 @@ class ExecutionResources:
             return self._a2a_delegate_api
         self._a2a_delegate_api_resolved = True
 
-        config = getattr(self._service_port, "config", None)
-        if config is None:
+        if (config := getattr(self._service_port, "config", None)) is None:
             return None
         runtime_env = getattr(getattr(config, "runtime", None), "env", None)
         env_payload = dict(runtime_env) if isinstance(runtime_env, Mapping) else {}
@@ -122,6 +120,8 @@ class ExecutionResources:
                 home_root=home_root,
                 agent_id=self._service_port.identity_agent_id,
                 env=env_payload or None,
+                runtime_resolver=lambda: self._runtime.runtime_handle,
+                approval_callback=self._runtime.approval_callback,
                 telemetryctl=_service_port_telemetryctl(self._service_port),
             )
         except Exception:

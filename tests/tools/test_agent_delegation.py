@@ -98,6 +98,9 @@ def test_task_delegate_schema_makes_lifecycle_order_explicit() -> None:
     assert "Use sync or async to start child work" in mode_description
     assert "There is no create mode" in mode_description
     assert "required for accept/reject" in artifact_description
+    agent_description = TaskDelegateArgs.model_fields["agent_id"].description or ""
+    assert "Call agent.list first" in agent_description
+    assert "never invent" in agent_description
 
 
 def test_readonly_blocks_task_delegate() -> None:
@@ -641,6 +644,31 @@ def test_task_delegate_unknown_target_maps_not_found() -> None:
     assert details["reason_code"] == "task_delegate_failed"
     assert details["delegate_error_code"] == "AGENT_NOT_FOUND"
     assert details["target_agent_id"] == "ghost"
+
+
+def test_task_delegate_rejects_invented_agent_with_visible_exact_ids() -> None:
+    class _Seam:
+        def delegate(self, **_kwargs):
+            raise AssertionError("invalid target must fail before delegation")
+
+    ctx = _ctx_with_seam(_Seam())
+    ctx.agent_query = lambda: [
+        {"agent_id": "minimax-reviewer", "state": "configured"},
+        {"agent_id": "minimax-validator", "state": "configured"},
+    ]
+
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_task_delegate(
+            {"agent_id": "spec-reviewer", "instruction": "review"},
+            ctx,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == "NOT_FOUND"
+    assert exc_info.value.details["reason_code"] == "agent_not_found"
+    assert exc_info.value.details["available_agent_ids"] == [
+        "minimax-reviewer",
+        "minimax-validator",
+    ]
 
 
 def test_task_delegate_failure_maps_upstream_error() -> None:

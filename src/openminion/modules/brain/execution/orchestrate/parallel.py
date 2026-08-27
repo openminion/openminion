@@ -400,14 +400,18 @@ class ParallelExecutionStrategy(ExecutionStrategy):
                     if action == FailureAction.ABORT:
                         abort = True
                         for pending_future, pending_subtask in list(pending.items()):
-                            pending_future.cancel()
-                            results[pending_subtask.subtask_id] = _error_child_result(
-                                subtask=pending_subtask,
-                                error="Cancelled after sibling parallel failure.",
-                            )
-                        pending.clear()
+                            if pending_future.cancel():
+                                results[pending_subtask.subtask_id] = (
+                                    _error_child_result(
+                                        subtask=pending_subtask,
+                                        error=(
+                                            "Cancelled after sibling parallel failure."
+                                        ),
+                                    )
+                                )
+                                pending.pop(pending_future)
                         break
-                if abort:
+                if abort and not pending:
                     break
         return abort
 

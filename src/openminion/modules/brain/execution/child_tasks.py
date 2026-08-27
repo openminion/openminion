@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 
@@ -78,6 +78,12 @@ class DecomposeControlPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subtasks: list[DecomposeControlSubtask] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_subtask_count(self) -> "DecomposeControlPayload":
+        if len(self.subtasks) == 1:
+            raise ValueError("decompose requires either zero or at least two subtasks")
+        return self
 
 
 class DecomposePayload(BaseModel):

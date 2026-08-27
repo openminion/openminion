@@ -53,6 +53,7 @@ def _build_runtime_context(
         untrusted_events=context_result.untrusted_events,
         progress_callback=progress_callback,
         approval_callback=approval_callback,
+        runtime_handle=getattr(service, "_runtime_handle", None),
     )
     return runtime
 

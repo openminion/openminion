@@ -662,7 +662,7 @@ def _force_budget_answer_only_finalization(
     finalization_messages = _answer_only_finalization_messages(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
-        tool_results=_successful_substantive_tool_results(loop_state),
+        tool_results=_substantive_tool_results(loop_state),
         reason=(
             "The tool budget or a per-tool limit has been reached. Do not call "
             "more tools. This must be the final answer for the current turn."
@@ -839,8 +839,12 @@ def _compact_answer_only_tool_results(
                 "tool_name": _truncate_answer_only_text(
                     item.get("tool_name"), limit=BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT
                 ),
-                "summary": _truncate_answer_only_text(item.get("content")),
+                "ok": bool(item.get("ok")),
+                "summary": _truncate_answer_only_text(
+                    item.get("content") or item.get("summary")
+                ),
                 "data": _compact_answer_only_value(item.get("data", {})),
+                "error": _compact_answer_only_value(item.get("error")),
             }
         )
     return compacted
@@ -865,7 +869,7 @@ def _answer_only_finalization_messages(
         Message(
             role="system",
             content=(
-                f"{reason} Use only the successful tool evidence below and write "
+                f"{reason} Use only the tool evidence below and write "
                 "the best user-facing final answer now. Do not narrate future "
                 "steps, do not say you will continue, and preserve any explicit "
                 "output format, headings, citation requirements, and exact-date "
@@ -879,7 +883,7 @@ def _answer_only_finalization_messages(
                 "Original user request for this turn:\n"
                 f"{original_request or '<unknown>'}\n\n"
                 "Do not infer or substitute a different task.\n\n"
-                "Successful tool evidence already gathered:\n"
+                "Tool evidence already gathered:\n"
                 f"{evidence_json}"
             ),
         ),

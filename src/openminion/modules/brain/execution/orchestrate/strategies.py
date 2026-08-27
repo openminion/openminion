@@ -13,8 +13,15 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.public_taxonomy import (
     public_mode_name_for_mode_name,
 )
+from openminion.modules.brain.diagnostics.transitions import set_status_unchecked
+from openminion.modules.brain.execution.delegation_policy import clear_policy_facts
 from openminion.modules.brain.retry import call_structured_with_retry
-from openminion.modules.brain.schemas import BudgetCounters, DelegationContext
+from openminion.modules.brain.schemas import (
+    BudgetCounters,
+    DelegationContext,
+    WorkingState,
+    new_uuid,
+)
 from openminion.modules.brain.execution.loop_contracts import ExecutionResult
 from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.execution.child_tasks import (
@@ -368,6 +375,50 @@ def debit_parent_budget(
             ctx.state.llm_calls_max,
             ctx.state.llm_calls_used + child_state.llm_calls_used,
         )
+
+
+def build_child_state(
+    *,
+    parent_state: WorkingState,
+    child_budget: BudgetCounters,
+    child_context: ChildContext,
+) -> WorkingState:
+    child_state = parent_state.model_copy(deep=True)
+    child_state.trace_id = new_uuid()
+    child_state.goal = child_context.goal
+    child_state.last_user_input = child_context.prompt
+    child_state.active_skill_id = child_context.active_skill_id
+    child_state.constraints = list(child_context.constraints or [])
+    child_state.plan = None
+    child_state.cursor = 0
+    set_status_unchecked(child_state, "active", reason="bootstrap")
+    child_state.budgets_remaining = child_budget.model_copy(deep=True)
+    child_state.last_command_id = None
+    child_state.last_result = None
+    child_state.step_outputs = []
+    child_state.adaptive_satisfied_intent_ids = []
+    child_state.last_adaptive_revision_checkpoint = None
+    child_state.pending_jobs = []
+    child_state.memory_candidates = []
+    child_state.idempotency_cache = {}
+    child_state.child_tasks = {}
+    child_state.child_task_order = []
+    child_state.pending_clarify_items = []
+    child_state.unresolved_clarify_items = []
+    child_state.clarify_responses = {}
+    child_state.open_questions = []
+    child_state.active_mode_name = None
+    child_state.llm_calls_used = 0
+    child_state.decision_sub_intents = []
+    child_state.decision_sub_intent_refs = []
+    child_state.decision_feasibility_state = {}
+    child_state.decision_feasibility_report = None
+    child_state.intent_execution_states = []
+    child_state.task_backed_task_id = None
+    child_state.task_backed_checkpoint_id = None
+    child_state.task_backed_resume_state = {}
+    clear_policy_facts(child_state)
+    return child_state
 
 
 class LLMSynthesizer(ResultSynthesizer):

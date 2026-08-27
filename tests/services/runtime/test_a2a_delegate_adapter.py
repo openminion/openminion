@@ -43,6 +43,35 @@ class _RecordingTelemetry:
         self.events.append((event_type, dict(payload)))
 
 
+def test_current_turn_approval_callback_reaches_bound_a2a_adapter() -> None:
+    initial_callback = object()
+    current_callback = object()
+
+    class _CallOwner:
+        def __init__(self) -> None:
+            self.callback: Any = initial_callback
+
+        def set_approval_callback(self, callback: Any) -> Any:
+            previous = self.callback
+            self.callback = callback
+            return previous
+
+        def call(self, *, command, session_id, trace_id) -> dict[str, Any]:
+            del command, session_id, trace_id
+            return {"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"}
+
+    owner = _CallOwner()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=owner.call,
+        parent_agent_id="parent",
+    )
+
+    previous = adapter.set_approval_callback(current_callback)
+
+    assert previous is initial_callback
+    assert owner.callback is current_callback
+
+
 def test_success_status_maps_to_ok_result() -> None:
     call = _RecordingCall(
         {
@@ -130,6 +159,59 @@ def test_idempotency_key_is_stable_for_same_inputs() -> None:
     adapter.delegate(agent_id="a", instruction="do x", timeout_seconds=10)
     key2 = call.command["idempotency_key"]
     assert key1 == key2
+
+
+def test_delegate_isolates_identical_inputs_between_parent_sessions() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
+    adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="do x", timeout_seconds=10)
+    first_key = call.command["idempotency_key"]
+    first_session = call.session_id
+
+    adapter.bind_observability(
+        session_id="session-2",
+        turn_id="turn-1",
+        invocation_id="31111111-1111-4111-8111-111111111111",
+        execution_id="41111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="do x", timeout_seconds=10)
+
+    assert call.command["idempotency_key"] != first_key
+    assert call.session_id != first_session
+    assert call.session_id == "task-delegate::session-2"
+
+
+def test_followup_turn_reuses_child_session_without_replaying_prior_result() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
+    adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="draft", timeout_seconds=10)
+    first_key = call.command["idempotency_key"]
+    first_session = call.session_id
+
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-2",
+        invocation_id="31111111-1111-4111-8111-111111111111",
+        execution_id="41111111-1111-4111-8111-111111111111",
+    )
+    adapter.delegate(agent_id="a", instruction="revise", timeout_seconds=10)
+
+    assert call.session_id == first_session == "task-delegate::session-1"
+    assert call.command["idempotency_key"] != first_key
 
 
 def test_failed_status_maps_to_typed_failure() -> None:

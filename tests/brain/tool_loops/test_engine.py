@@ -1814,7 +1814,25 @@ def test_engine_mid_loop_decompose_malformed_fails_closed() -> None:
                     )
                 ],
                 finish_reason="tool_calls",
-            )
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="decompose-call-2",
+                        name="decompose",
+                        arguments={
+                            "subtasks": [
+                                {"id": "different", "description": "Still one"}
+                            ]
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
         ]
     )
     loop_ctx = _LoopContext(
@@ -1845,8 +1863,70 @@ def test_engine_mid_loop_decompose_malformed_fails_closed() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_DECOMPOSE_INVALID
-    assert "description" in str(outcome.error_message)
+    assert "at least two" in str(outcome.error_message)
     assert loop_ctx.commands == []
+
+
+def test_engine_mid_loop_decompose_invalid_payload_retries_once() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="decompose-call",
+                        name="decompose",
+                        arguments={
+                            "subtasks": [{"id": "only", "description": "Only one"}]
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="decompose-call-2",
+                        name="decompose",
+                        arguments={
+                            "subtasks": [
+                                {"id": "first", "description": "First"},
+                                {"id": "second", "description": "Second"},
+                            ]
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(tool_calls=4))
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"decompose"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="continue")],
+        tool_specs=[decompose_tool_spec()],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_DECOMPOSE_REQUESTED
+    assert [item["subtask_id"] for item in outcome.decompose_subtasks or []] == [
+        "first",
+        "second",
+    ]
+    assert any(
+        message.role == "tool" and message.tool_call_id == "decompose-call"
+        for message in runtime.calls[1]["messages"]
+    )
 
 
 def test_engine_mid_loop_decompose_mixed_tool_calls_retries_once_then_executes_regular_tools() -> (
@@ -6481,8 +6561,7 @@ def test_engine_allows_one_duplicate_tool_batch_retry_before_stopping() -> None:
         if getattr(message, "role", "") == "system"
     )
     assert any(
-        "Successful tool evidence already gathered"
-        in str(getattr(message, "content", "") or "")
+        "Tool evidence already gathered" in str(getattr(message, "content", "") or "")
         for message in third_call_messages
         if getattr(message, "role", "") == "user"
     )
@@ -7502,6 +7581,218 @@ def test_failed_tool_result_appends_recovery_hint() -> None:
         "Do not repeat the same invalid call" in m.content and "weather" in m.content
         for m in system_messages
     )
+
+
+def test_general_loop_requires_success_after_failed_exec_before_final_answer() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="verify-failed",
+                        name="exec.run",
+                        arguments={"command": "pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Tests passed.",
+                finalization_status={"status": "final_answer"},
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-fix",
+                        name="file.write",
+                        arguments={"path": "app.py", "content": "fixed"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="verify-passed",
+                        name="exec.run",
+                        arguments={"command": "pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Tests passed after the correction.",
+                finalization_status={"status": "final_answer"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=5),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="pytest failed",
+                    error=ActionError(
+                        code="EXEC_ERROR",
+                        message="command exited with code 1",
+                    ),
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="file updated",
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="pytest passed",
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"exec.run", "file.write"}),
+            max_iterations=6,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="fix the failing tests")],
+        tool_specs=_tool_specs("exec.run", "file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Tests passed after the correction."
+    assert any(
+        "no later exec.run call has succeeded" in message.content
+        for message in runtime.calls[2]["messages"]
+        if message.role == "system"
+    )
+
+
+def test_general_loop_does_not_clear_failed_exec_with_successful_read() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="verify-failed",
+                        name="exec.run",
+                        arguments={"command": "pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Tests passed.",
+                finalization_status={"status": "final_answer"},
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="read-source",
+                        name="file.read",
+                        arguments={"path": "app.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Everything is fixed.",
+                finalization_status={"status": "final_answer"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="pytest failed",
+                    error=ActionError(
+                        code="EXEC_ERROR",
+                        message="command exited with code 1",
+                    ),
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="source read",
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"exec.run", "file.read"}),
+            max_iterations=5,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="fix the failing tests")],
+        tool_specs=_tool_specs("exec.run", "file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+    assert outcome.error_message is not None
+    assert "latest exec.run result was still failed" in outcome.error_message
 
 
 def test_normal_result_no_enrichment() -> None:
