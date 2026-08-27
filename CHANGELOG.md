@@ -9,7 +9,7 @@ This file tracks package-facing release notes for `openminion`.
 
 - No unreleased package-facing changes yet.
 
-## 0.0.12 - 2026-08-27
+## Current package line - 2026-08-27
 
 - Hardened agent-loop recovery with durable failed-turn outcomes, bounded tool
   and finalization recovery, and clearer terminal evidence.
@@ -24,7 +24,7 @@ This file tracks package-facing release notes for `openminion`.
   runtime continuity, control-plane polling, release gates, and regression
   coverage.
 
-## Current package line - 2026-07-12
+## Earlier package line - 2026-07-12
 
 - Added typed SophiaGraph namespace filters to existing `memctl` list/search
   commands and local memory-record HTTP routes.
