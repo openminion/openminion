@@ -19,6 +19,7 @@ from openminion.modules.task import (
     save_project_run_checkpoint,
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.base.errors import ErrorInfo
 from openminion.modules.task.autonomy import now_ms
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
@@ -145,6 +146,37 @@ def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:
     assert result.project_run.committed_cycle_count == 2
     assert result.run.status == AutonomyRunStatus.BLOCKED
     assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
+
+
+def test_project_error_dominates_passing_verifier(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(
+            summary="provider timed out",
+            condition=AutonomyLoopConditionKind.RETRYABLE_FAILURE,
+            error=ErrorInfo(
+                code="provider_timeout",
+                message="provider timed out",
+                details={"request_id": "req-1"},
+            ),
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-1",
+    )
+
+    result = worker.run(run.run_id, max_cycles=3)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+
+    assert result.decision == ProjectCycleDecision.BLOCKED
+    assert result.run.status == AutonomyRunStatus.BLOCKED
+    assert checkpoint is not None
+    assert checkpoint.payload["error"] == {
+        "code": "provider_timeout",
+        "message": "provider timed out",
+        "details": {"request_id": "req-1"},
+    }
 
 
 def test_project_worker_continues_while_typed_progress_is_new(tmp_path) -> None:

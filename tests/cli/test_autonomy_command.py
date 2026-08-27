@@ -191,6 +191,43 @@ def test_project_turn_maps_waiting_brain_status_to_project_condition(
     assert result.condition == AutonomyLoopConditionKind.WAITING
 
 
+def test_project_turn_preserves_cli_error_payload(monkeypatch) -> None:
+    run = build_autonomy_run(
+        goal_text="finish the project",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace#commit=abc;dirty=clean",
+        max_iterations=3,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.run_turn",
+        lambda **_kwargs: {
+            "error": {"code": "context_overflow", "message": "budget exceeded"},
+            "body": "budget exceeded",
+            "metadata": {"project_condition": "retryable_failure"},
+        },
+    )
+
+    result = run_project_turn(
+        run,
+        ProjectTurnRequest(
+            run_id=run.run_id,
+            project_run_id="project-1",
+            task_id="task-1",
+            goal_id="goal-1",
+            session_id="session-1",
+            cycle_id="cycle-1",
+            milestone="finish the project",
+            prompt="work",
+        ),
+    )
+
+    assert result.error is not None
+    assert result.error.code == "context_overflow"
+    assert result.error.message == "budget exceeded"
+    assert result.condition == AutonomyLoopConditionKind.RETRYABLE_FAILURE
+
+
 def _seed_project_task(db_path: Path) -> None:
     manager = TaskManager.for_lifecycle_db(db_path=db_path)
     manager.create_task(

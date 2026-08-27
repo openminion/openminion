@@ -18,6 +18,7 @@ class AutonomyLoopConditionKind(StrEnum):
     DEADLINE_EXHAUSTED = "deadline_exhausted"
     STRATEGY_FAILURE = "strategy_failure"
     TERMINAL_INABILITY = "terminal_inability"
+    CANCELLED = "cancelled"
 
 
 class AutonomyLoopJudgment(BaseModel):
@@ -119,6 +120,14 @@ def classify_autonomy_loop_condition(
             run_status=AutonomyRunStatus.RUNNING,
             requires_model_replan=True,
             reason_code="strategy_failure_replan_required",
+            evidence_refs=evidence_refs,
+        )
+    if condition == AutonomyLoopConditionKind.CANCELLED:
+        return AutonomyLoopJudgment(
+            condition=condition,
+            run_status=AutonomyRunStatus.CANCELLED,
+            terminal=True,
+            reason_code="cancelled",
             evidence_refs=evidence_refs,
         )
     return AutonomyLoopJudgment(

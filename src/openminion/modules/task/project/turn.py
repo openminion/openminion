@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from openminion.base.errors import ErrorInfo, error_info_from_mapping
+from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.controlplane.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
@@ -35,6 +38,71 @@ class ProjectTurnResult:
     evidence_kinds: tuple[str, ...] = ()
     effect_refs: tuple[str, ...] = ()
     tool_call_count: int = 0
+    error: ErrorInfo | None = None
+
+
+_PROJECT_ERROR_DETAIL_KEYS = frozenset(
+    {
+        "error",
+        "request_id",
+        "response_bytes",
+        "status_code",
+        "timeout_seconds",
+        "token_budget",
+        "token_count",
+    }
+)
+_PROJECT_ERROR_DETAIL_VALUE_CHARS = 256
+_PROJECT_ERROR_DETAIL_TOTAL_CHARS = 1024
+
+
+def project_error_from_payload(
+    payload: Mapping[str, object],
+    *,
+    metadata: Mapping[str, object],
+    default_message: str,
+) -> ErrorInfo:
+    raw_error = payload.get("error")
+    error_payload = dict(raw_error) if isinstance(raw_error, Mapping) else {}
+    if not error_payload:
+        error_payload = {
+            "code": metadata.get("error_code"),
+            "message": metadata.get("error_message") or default_message,
+            "details": _project_error_details(metadata.get("error_details")),
+        }
+    else:
+        error_payload["details"] = _project_error_details(
+            error_payload.get("details")
+        )
+    return error_info_from_mapping(
+        error_payload,
+        default_code="project_turn_failed",
+        default_message=default_message,
+        namespace="task.project",
+    )
+
+
+def _project_error_details(value: object) -> dict[str, object]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {"error": "malformed_details"}
+    if not isinstance(value, Mapping):
+        return {} if value is None else {"error": "non_object_details"}
+    details: dict[str, object] = {}
+    size = 0
+    for key, raw in value.items():
+        name = str(key).strip()
+        if name not in _PROJECT_ERROR_DETAIL_KEYS:
+            continue
+        redacted, _ = redact_sensitive_text(str(raw))
+        bounded = redacted[:_PROJECT_ERROR_DETAIL_VALUE_CHARS]
+        size += len(name) + len(bounded)
+        if size > _PROJECT_ERROR_DETAIL_TOTAL_CHARS:
+            return {**details, "error": "details_too_large"}
+        details[name] = bounded
+    return details
 
 
 def project_metadata_refs(
@@ -100,14 +168,25 @@ def project_turn_from_payload(
         base=inbound_metadata if isinstance(inbound_metadata, Mapping) else None,
     )
     turn_result = execute(turn_payload)
-    if bool(turn_result.get("error")):
-        raise RuntimeError(str(turn_result.get("summary") or "project turn failed"))
     raw_metadata = turn_result.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+    error = (
+        project_error_from_payload(
+            turn_result,
+            metadata=metadata,
+            default_message=str(turn_result.get("summary") or "project turn failed"),
+        )
+        if bool(turn_result.get("error"))
+        else None
+    )
     return ProjectTurnResult(
         summary=str(turn_result.get("summary") or "Project cycle completed."),
         gateway_run_id=str(metadata.get("run_id") or "").strip(),
-        condition=project_condition_from_metadata(metadata),
+        condition=(
+            _project_error_condition(error)
+            if error is not None and not metadata.get("project_condition")
+            else project_condition_from_metadata(metadata)
+        ),
         evidence_refs=project_metadata_refs(
             metadata,
             "evidence_refs",
@@ -120,7 +199,14 @@ def project_turn_from_payload(
             if isinstance(metadata.get("tool_call_count"), int)
             else 0
         ),
+        error=error,
     )
+
+
+def _project_error_condition(error: ErrorInfo) -> AutonomyLoopConditionKind:
+    if error.code == "cancelled":
+        return AutonomyLoopConditionKind.CANCELLED
+    return AutonomyLoopConditionKind.RETRYABLE_FAILURE
 
 
 def project_workspace(workspace_ref: str | None) -> Path:
@@ -156,6 +242,7 @@ __all__ = [
     "ProjectTurnRequest",
     "ProjectTurnResult",
     "project_condition_from_metadata",
+    "project_error_from_payload",
     "project_metadata_refs",
     "project_runtime_payload",
     "project_turn_from_payload",

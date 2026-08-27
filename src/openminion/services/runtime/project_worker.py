@@ -229,6 +229,7 @@ class ProjectWorker:
                     "condition": evaluation.turn.condition.value,
                     "decision_reason": evaluation.reason,
                     "replan_count": evaluation.replan_count,
+                    **({"error": evaluation.turn.error.to_dict()} if evaluation.turn.error else {}),
                 },
             )
             return self._finalize_cycle(
@@ -352,6 +353,7 @@ class ProjectWorker:
             run,
             cycle_number=cycle_number,
             condition=turn_result.condition,
+            has_error=turn_result.error is not None,
             condition_evidence_refs=turn_result.evidence_refs,
             closure_status=closure.status,
             previous_replans=previous_replans,
@@ -618,6 +620,7 @@ class ProjectWorker:
         *,
         cycle_number: int,
         condition: AutonomyLoopConditionKind,
+        has_error: bool,
         condition_evidence_refs: tuple[str, ...],
         closure_status: ProjectDomainVerificationStatus,
         previous_replans: int,
@@ -631,7 +634,7 @@ class ProjectWorker:
         int,
         str,
     ]:
-        if closure_status == ProjectDomainVerificationStatus.VERIFIED:
+        if closure_status == ProjectDomainVerificationStatus.VERIFIED and not has_error:
             return ProjectWorker._productive_disposition(
                 run,
                 cycle_number=cycle_number,
