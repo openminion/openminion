@@ -124,6 +124,7 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert result.project_run.committed_cycle_count == 2
     assert len(turns) == 2
     assert "Prior verifier refs:" in turns[1].prompt
+    assert "Prior verifier outcome:\nverification failed" in turns[1].prompt
     assert checkpoint is not None
     assert checkpoint.payload["gateway_run_id"].endswith(":cycle:2")
     assert checkpoint.expected_checkpoint_id.endswith(":cycle:1")
