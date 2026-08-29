@@ -25,6 +25,7 @@ from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
     ProjectWorker,
+    project_cycle_claim_ttl_seconds,
 )
 
 
@@ -87,6 +88,21 @@ def _project(tmp_path, *, max_iterations: int = 3):
         payload={"decision": "continue", "replan_count": 0},
     )
     return store, manager, run
+
+
+def test_project_cycle_claim_covers_turn_and_verification_windows() -> None:
+    run = build_autonomy_run(
+        goal_text="Finish the fixture",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace",
+        max_iterations=1,
+        verification_commands=("verify-a", "verify-b"),
+        turn_timeout_seconds=1_800,
+        verification_timeout_seconds=900,
+    )
+
+    assert project_cycle_claim_ttl_seconds(run) == 3_600
 
 
 def test_project_worker_replans_once_then_commits_verified_completion(

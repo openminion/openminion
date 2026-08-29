@@ -64,6 +64,14 @@ class ProjectWorkerResult:
     reconciled_only: bool = False
 
 
+def project_cycle_claim_ttl_seconds(run: AutonomyRun) -> int:
+    selectors = run.execution_selectors
+    verifier_window = int(selectors.verification_timeout_seconds) * len(
+        selectors.verification_commands
+    )
+    return int(selectors.turn_timeout_seconds) + verifier_window
+
+
 def build_cron_project_worker(
     *,
     runtime: Any,
@@ -110,6 +118,7 @@ def build_cron_project_worker(
             workspace=workspace,
             timeout_seconds=autonomy_run.execution_selectors.verification_timeout_seconds,
         ),
+        claim_ttl_seconds=project_cycle_claim_ttl_seconds(autonomy_run),
         owner_id=owner_id,
     )
     return worker, task_manager
@@ -880,6 +889,7 @@ __all__ = [
     "ProjectWorker",
     "ProjectWorkerResult",
     "build_cron_project_worker",
+    "project_cycle_claim_ttl_seconds",
     "project_condition_from_metadata",
     "project_metadata_refs",
     "project_turn_inbound_metadata",

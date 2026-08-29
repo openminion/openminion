@@ -16,7 +16,7 @@ scope	max_python_files	max_loc
 # lifecycle emission, and owner-emitted policy, safety, tool, and telemetry facts.
 # LRTE (2026-08-19) adds one concrete project worker and the bounded cron
 # composition that invokes the same worker for one fenced cycle per wake.
-services	206	40059
+services	206	40068
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
