@@ -153,6 +153,54 @@ def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:
     assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
 
 
+def test_project_worker_keeps_resumed_run_active_during_next_turn(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=1)
+    first = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: ProjectTurnResult(summary=request.milestone),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+        owner_id="worker-1",
+    ).run(run.run_id, max_cycles=1)
+    assert first.run.status == AutonomyRunStatus.BLOCKED
+
+    store.save(
+        first.run.model_copy(
+            update={
+                "continuation_policy": first.run.continuation_policy.model_copy(
+                    update={"max_iterations": 2}
+                )
+            }
+        )
+    )
+    resumed = store.transition(
+        run.run_id,
+        status=AutonomyRunStatus.RUNNING,
+        phase=AutonomyRunPhase.EXECUTE,
+    )
+    manager.transition_task(
+        task_id="task-1",
+        to_state=TaskLifecycleState.ACTIVE,
+    )
+
+    def interrupted_turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        assert store.require(resumed.run_id).status == AutonomyRunStatus.RUNNING
+        raise RuntimeError("provider interrupted")
+
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=interrupted_turn,
+        verify=lambda: (),
+        owner_id="worker-2",
+    )
+
+    with pytest.raises(RuntimeError, match="provider interrupted"):
+        worker.run(resumed.run_id, max_cycles=1)
+
+    assert store.require(resumed.run_id).status == AutonomyRunStatus.RUNNING
+
+
 def test_project_error_dominates_passing_verifier(tmp_path) -> None:
     store, manager, run = _project(tmp_path)
     worker = ProjectWorker(

@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from openminion.base.errors import error_info_from_exception
 from openminion.base.types import Message
 from openminion.cli.commands.autonomy_project import (
     apply_resume_overrides,
@@ -359,6 +360,7 @@ def _execute_project(
     try:
         result = worker.run(run.run_id, max_cycles=remaining)
     except Exception as exc:
+        error_info = error_info_from_exception(exc, default_code=type(exc).__name__)
         failed = store.transition(
             run.run_id,
             status=AutonomyRunStatus.FAILED,
@@ -366,8 +368,8 @@ def _execute_project(
             operator_summary="Autonomy project failed.",
             next_action_hint="Inspect the proof packet before resuming.",
             error=AutonomyRunError(
-                code=type(exc).__name__,
-                message=str(exc) or type(exc).__name__,
+                code=error_info.code,
+                message=error_info.message,
             ),
         )
         _write_terminal_proof(

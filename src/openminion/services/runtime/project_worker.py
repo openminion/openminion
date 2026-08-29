@@ -513,16 +513,15 @@ class ProjectWorker:
         run: AutonomyRun,
         project_run: ProjectRun,
     ) -> AutonomyRun:
-        if (
-            run.checkpoint_id == project_run.last_checkpoint_id
-            and run.status == project_run.status
-        ):
+        checkpoint_matches = run.checkpoint_id == project_run.last_checkpoint_id
+        if checkpoint_matches and run.status == project_run.status:
             return run
+        resumed = run.status == AutonomyRunStatus.RUNNING
         reconciled = run.model_copy(
             update={
                 "checkpoint_id": project_run.last_checkpoint_id,
-                "status": project_run.status,
-                "phase": project_run.phase,
+                "status": run.status if resumed else project_run.status,
+                "phase": run.phase if resumed else project_run.phase,
                 "updated_at_ms": project_run.updated_at_ms,
             }
         )

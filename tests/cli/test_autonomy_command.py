@@ -20,6 +20,7 @@ from openminion.modules.task import (
     ProjectCycleDecision,
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.modules.llm.providers.contracts import ProviderError
 from openminion.services.runtime.project_worker import ProjectTurnRequest
 
 
@@ -685,6 +686,59 @@ def test_autonomy_resume_blocked_run_completes_with_replay(tmp_path: Path) -> No
     assert code == 0
     assert run["status"] == "completed"
     assert run["operator_summary"] == "resumed successfully"
+
+
+def test_autonomy_resume_preserves_provider_error_after_blocked_checkpoint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "resume after provider interruption",
+            "--replay-response",
+            "first cycle",
+            "--verify-command",
+            verify_command,
+            "--json",
+        ]
+    )
+    run_id = json.loads(output)["run"]["run_id"]
+
+    def fail_turn(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise ProviderError(
+            "empty after retries",
+            code="EMPTY_PROVIDER_RESPONSE",
+        )
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        fail_turn,
+    )
+    code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            run_id,
+            "--max-iterations",
+            "2",
+            "--json",
+        ]
+    )
+
+    resumed = json.loads(resume_output)["run"]
+    assert code == 0
+    assert resumed["status"] == "failed"
+    assert resumed["last_error"] == {
+        "code": "EMPTY_PROVIDER_RESPONSE",
+        "detail": None,
+        "message": "empty after retries",
+    }
 
 
 def test_autonomy_cancel_writes_cancelled_proof(tmp_path: Path) -> None:
