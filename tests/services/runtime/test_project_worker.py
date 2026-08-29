@@ -96,7 +96,10 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     turns: list[ProjectTurnRequest] = []
     verification = iter(
         (
-            (_evidence(_TestEvidenceStatus.FAILED),),
+            (
+                _evidence(_TestEvidenceStatus.FAILED),
+                _evidence(_TestEvidenceStatus.PASSED),
+            ),
             (_evidence(_TestEvidenceStatus.PASSED),),
         )
     )
@@ -125,6 +128,7 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert len(turns) == 2
     assert "Prior verifier refs:" in turns[1].prompt
     assert "Prior verifier outcome:\nverification failed" in turns[1].prompt
+    assert "Prior verifier outcome:\nverification passed" not in turns[1].prompt
     assert checkpoint is not None
     assert checkpoint.payload["gateway_run_id"].endswith(":cycle:2")
     assert checkpoint.expected_checkpoint_id.endswith(":cycle:1")

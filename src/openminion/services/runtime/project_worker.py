@@ -820,7 +820,13 @@ class ProjectWorker:
                 "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
             )
         if verification := checkpoint_payload.get("verification"):
-            lines.extend(("Prior verifier outcome:", verification[-1]["summary"]))
+            failed = [
+                item
+                for item in verification
+                if item["status"] == TestEvidenceStatus.FAILED.value
+            ]
+            outcome = (failed or verification)[-1]
+            lines.extend(("Prior verifier outcome:", outcome["summary"]))
         if project_run.progress_refs:
             lines.append(
                 "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
