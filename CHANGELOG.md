@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-07-12
+Last updated: 2026-08-29
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -9,7 +9,21 @@ This file tracks package-facing release notes for `openminion`.
 
 - No unreleased package-facing changes yet.
 
-## Current package line - 2026-08-27
+## Current package line - 2026-08-29
+
+- Preserved typed project-turn and provider failures across CLI, runtime, cron,
+  checkpoint, and resume boundaries so verification cannot mask failed work.
+- Carried failed verifier output into later project cycles and resumed processes
+  so repair uses the durable failure evidence.
+- Preserved active plan-step progress when a running plan is redeclared and
+  aligned project-cycle claim windows with configured turn and verifier limits.
+- Preserved provider, service, and model identity in canonical LLM lifecycle
+  events, including native Ollama profiles.
+- Strengthened provider-session and sustained-autonomy certification harnesses
+  with effective identity, durable lineage, bounded redacted reports, and
+  restart evidence without claiming unfinished long-duration certification.
+
+## Prior package line - 2026-08-27
 
 - Hardened agent-loop recovery with durable failed-turn outcomes, bounded tool
   and finalization recovery, and clearer terminal evidence.

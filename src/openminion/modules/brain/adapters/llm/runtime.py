@@ -318,9 +318,7 @@ class LlmctlAdapter(LLMAPI):
     def get_provider_identity(self) -> dict[str, str]:
         provider = getattr(self.client, "provider", None)
         provider_name = str(
-            getattr(self.client, "name", "")
-            or getattr(provider, "name", "")
-            or ""
+            getattr(self.client, "name", "") or getattr(provider, "name", "") or ""
         ).strip()
         service_vendor = str(
             getattr(provider, "service_vendor", "") or provider_name

@@ -71,9 +71,7 @@ def project_error_from_payload(
             "details": _project_error_details(metadata.get("error_details")),
         }
     else:
-        error_payload["details"] = _project_error_details(
-            error_payload.get("details")
-        )
+        error_payload["details"] = _project_error_details(error_payload.get("details"))
     return error_info_from_mapping(
         error_payload,
         default_code="project_turn_failed",

@@ -160,10 +160,7 @@ def _resolve_provider_identity(manifest: CertificationManifest) -> ProviderIdent
     )
     if not all((identity.profile, identity.provider, identity.model)):
         raise ValueError("SAC_PROVIDER_IDENTITY_MISSING")
-    if (
-        identity.profile != manifest.profile
-        or identity.model != manifest.model
-    ):
+    if identity.profile != manifest.profile or identity.model != manifest.model:
         raise ValueError("SAC_PROVIDER_IDENTITY_MISMATCH")
     return identity
 
@@ -639,9 +636,7 @@ def _checkpoint_metrics(
         for checkpoint_id in checkpoint_ids
     )
     checkpoints = tuple(
-        ProjectCheckpoint.model_validate(state)
-        for state in checkpoint_states
-        if state
+        ProjectCheckpoint.model_validate(state) for state in checkpoint_states if state
     )
     if not checkpoints or len(checkpoints) != len(checkpoint_ids):
         raise ValueError("SAC_EVIDENCE_MISSING")
@@ -661,8 +656,7 @@ def _checkpoint_metrics(
     ):
         raise ValueError("SAC_LINEAGE_CONFLICT")
     gateway_run_ids = tuple(
-        str(item.payload.get("gateway_run_id") or "").strip()
-        for item in checkpoints
+        str(item.payload.get("gateway_run_id") or "").strip() for item in checkpoints
     )
     if not all(gateway_run_ids):
         raise ValueError("SAC_METRIC_MISSING")
@@ -934,12 +928,12 @@ def run_certification(
         manifest.provider_config_ref,
         Path(manifest.workspace_path),
     )
-    _require_file_hash(provider_path, manifest.provider_config_sha256, "provider config")
+    _require_file_hash(
+        provider_path, manifest.provider_config_sha256, "provider config"
+    )
     identity = _resolve_provider_identity(manifest)
     report_root = (
-        Path(manifest.generated_root)
-        / REPORT_DIRNAME
-        / _safe_segment(manifest.run_id)
+        Path(manifest.generated_root) / REPORT_DIRNAME / _safe_segment(manifest.run_id)
     )
     if any(
         (report_root / name).exists()

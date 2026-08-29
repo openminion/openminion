@@ -491,9 +491,7 @@ def test_live_certification_rejects_existing_report_before_daemon(
         for_live_run=True,
     )
     report_root = (
-        Path(manifest.generated_root)
-        / certification.REPORT_DIRNAME
-        / manifest.run_id
+        Path(manifest.generated_root) / certification.REPORT_DIRNAME / manifest.run_id
     )
     report_root.mkdir(parents=True)
     (report_root / "certification-report.md").write_text("existing\n")
