@@ -37,6 +37,20 @@ def test_agent_role_round_trips_as_explicit_profile_metadata() -> None:
     assert config.to_dict()["agents"]["researcher"]["role"] == "evidence auditor"
 
 
+def test_ollama_provider_identity_round_trips() -> None:
+    identity = {
+        "transport_adapter": "ollama",
+        "wire_protocol_family": "ollama-local-chat",
+        "service_vendor": "ollama",
+    }
+    config = OpenMinionConfig.from_dict(
+        {"providers": {"ollama": {"provider_identity": identity}}}
+    )
+
+    assert config.providers.ollama.provider_identity == identity
+    assert config.to_dict()["providers"]["ollama"]["provider_identity"] == identity
+
+
 def test_empty_agents_catalog_raises_config_validation_error() -> None:
     config = OpenMinionConfig()
     assert not config.agents
