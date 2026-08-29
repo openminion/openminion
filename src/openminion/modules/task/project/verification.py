@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.task.autonomy import (
     TestEvidence,
     TestEvidenceStatus,
@@ -15,6 +16,7 @@ from openminion.modules.task.autonomy import (
 )
 from openminion.modules.task.constants import (
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+    PROJECT_VERIFICATION_OUTPUT_SUMMARY_MAX_CHARS,
 )
 
 
@@ -204,10 +206,9 @@ def _run_project_verification(
             status=TestEvidenceStatus.FAILED,
             summary=f"verification command failed to run: {type(exc).__name__}",
         )
-    output = str(completed.stdout or "").strip()
-    first_line = next(
-        (line.strip() for line in output.splitlines() if line.strip()), ""
-    )
+    output, _ = redact_sensitive_text(str(completed.stdout or "").strip())
+    if len(output) > PROJECT_VERIFICATION_OUTPUT_SUMMARY_MAX_CHARS:
+        output = output[-PROJECT_VERIFICATION_OUTPUT_SUMMARY_MAX_CHARS:].lstrip()
     passed = completed.returncode == 0
     return TestEvidence(
         command=argv,
@@ -218,7 +219,7 @@ def _run_project_verification(
         passed=1 if passed else 0,
         failed=0 if passed else 1,
         status=TestEvidenceStatus.PASSED if passed else TestEvidenceStatus.FAILED,
-        summary=first_line
+        summary=output
         or (
             "verification command passed"
             if passed

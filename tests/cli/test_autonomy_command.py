@@ -20,6 +20,7 @@ from openminion.modules.task import (
     ProjectCycleDecision,
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.modules.llm.providers.contracts import ProviderError
 from openminion.services.runtime.project_worker import ProjectTurnRequest
 
 
@@ -189,6 +190,43 @@ def test_project_turn_maps_waiting_brain_status_to_project_condition(
     )
 
     assert result.condition == AutonomyLoopConditionKind.WAITING
+
+
+def test_project_turn_preserves_cli_error_payload(monkeypatch) -> None:
+    run = build_autonomy_run(
+        goal_text="finish the project",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace#commit=abc;dirty=clean",
+        max_iterations=3,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy_project.run_turn",
+        lambda **_kwargs: {
+            "error": {"code": "context_overflow", "message": "budget exceeded"},
+            "body": "budget exceeded",
+            "metadata": {"project_condition": "retryable_failure"},
+        },
+    )
+
+    result = run_project_turn(
+        run,
+        ProjectTurnRequest(
+            run_id=run.run_id,
+            project_run_id="project-1",
+            task_id="task-1",
+            goal_id="goal-1",
+            session_id="session-1",
+            cycle_id="cycle-1",
+            milestone="finish the project",
+            prompt="work",
+        ),
+    )
+
+    assert result.error is not None
+    assert result.error.code == "context_overflow"
+    assert result.error.message == "budget exceeded"
+    assert result.condition == AutonomyLoopConditionKind.RETRYABLE_FAILURE
 
 
 def _seed_project_task(db_path: Path) -> None:
@@ -648,6 +686,59 @@ def test_autonomy_resume_blocked_run_completes_with_replay(tmp_path: Path) -> No
     assert code == 0
     assert run["status"] == "completed"
     assert run["operator_summary"] == "resumed successfully"
+
+
+def test_autonomy_resume_preserves_provider_error_after_blocked_checkpoint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "resume after provider interruption",
+            "--replay-response",
+            "first cycle",
+            "--verify-command",
+            verify_command,
+            "--json",
+        ]
+    )
+    run_id = json.loads(output)["run"]["run_id"]
+
+    def fail_turn(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise ProviderError(
+            "empty after retries",
+            code="EMPTY_PROVIDER_RESPONSE",
+        )
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        fail_turn,
+    )
+    code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            run_id,
+            "--max-iterations",
+            "2",
+            "--json",
+        ]
+    )
+
+    resumed = json.loads(resume_output)["run"]
+    assert code == 0
+    assert resumed["status"] == "failed"
+    assert resumed["last_error"] == {
+        "code": "EMPTY_PROVIDER_RESPONSE",
+        "detail": None,
+        "message": "empty after retries",
+    }
 
 
 def test_autonomy_cancel_writes_cancelled_proof(tmp_path: Path) -> None:

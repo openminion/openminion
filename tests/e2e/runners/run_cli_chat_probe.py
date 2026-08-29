@@ -30,6 +30,9 @@ if __name__ == "__main__":
 from openminion.modules.brain.paths import (  # noqa: E402
     resolve_brain_sessions_db_path,
 )
+from openminion.modules.telemetry.service import (  # noqa: E402
+    resolve_telemetry_db_path,
+)
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
@@ -339,7 +342,7 @@ def _query_session_events(
     try:
         rows = conn.execute(
             """
-            select event_type, payload_json
+            select event_type, payload_json, actor_id, trace_id
             from session_events
             where session_id = ?
             order by seq
@@ -350,14 +353,117 @@ def _query_session_events(
         conn.close()
 
     events: list[dict[str, Any]] = []
-    for event_type, payload_json in rows:
+    for event_type, payload_json, actor_id, trace_id in rows:
         try:
             raw_payload = json.loads(payload_json or "{}")
         except json.JSONDecodeError:
             raw_payload = {}
         payload = raw_payload if isinstance(raw_payload, dict) else {}
-        events.append({"type": str(event_type), "payload": payload})
+        events.append(
+            {
+                "type": str(event_type),
+                "payload": payload,
+                "session_id": conversation_session_id,
+                "turn_id": str(trace_id or ""),
+                "agent_id": str(actor_id or ""),
+            }
+        )
     return events
+
+
+def _query_provider_telemetry_events(
+    *,
+    home_root: Path,
+    data_root: Path,
+    session_id: str,
+) -> list[dict[str, Any]]:
+    path_info = resolve_telemetry_db_path(
+        home_root=home_root,
+        env={
+            "OPENMINION_HOME": str(home_root),
+            "OPENMINION_DATA_ROOT": str(data_root),
+        },
+    )
+    db_path = Path(path_info.db_path)
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            """
+            select event_type, data, session_id, turn_id, invocation_id,
+                   execution_id, agent_id, trace_key
+            from events
+            where session_id = ?
+              and event_type in (
+                'llm.call.started', 'llm.call.completed', 'llm.call.failed'
+              )
+            order by timestamp, id
+            """,
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    events: list[dict[str, Any]] = []
+    for (
+        event_type,
+        data_json,
+        event_session_id,
+        turn_id,
+        invocation_id,
+        execution_id,
+        agent_id,
+        trace_key,
+    ) in rows:
+        try:
+            raw_payload = json.loads(data_json or "{}")
+        except json.JSONDecodeError:
+            raw_payload = {}
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        events.append(
+            {
+                "type": str(event_type),
+                "payload": payload,
+                "session_id": str(event_session_id or ""),
+                "turn_id": str(turn_id or ""),
+                "invocation_id": str(invocation_id or ""),
+                "execution_id": str(execution_id or ""),
+                "agent_id": str(agent_id or ""),
+                "trace_key": str(trace_key or ""),
+            }
+        )
+    return events
+
+
+def _replace_provider_events(
+    session_events: list[dict[str, Any]],
+    provider_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not provider_events:
+        return session_events
+    event_types = {"llm.call.started", "llm.call.completed", "llm.call.failed"}
+    agents_by_turn = {
+        str(event.get("turn_id") or "").strip(): str(
+            event.get("agent_id") or ""
+        ).strip()
+        for event in session_events
+        if str(event.get("turn_id") or "").strip()
+        and str(event.get("agent_id") or "").strip()
+    }
+    enriched = [
+        {
+            **event,
+            "agent_id": str(event.get("agent_id") or "").strip()
+            or agents_by_turn.get(str(event.get("turn_id") or "").strip(), ""),
+        }
+        for event in provider_events
+    ]
+    return [
+        event
+        for event in session_events
+        if str(event.get("type") or "") not in event_types
+    ] + enriched
 
 
 def _collect_tool_audit_rows(
@@ -714,7 +820,9 @@ def _provider_attempts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         attempt: dict[str, Any] = {
             "event_type": event_type,
             "llm_call_id": str(payload.get("llm_call_id") or ""),
-            "provider_name": str(payload.get("provider_name") or ""),
+            "provider_name": str(
+                payload.get("provider_name") or payload.get("provider") or ""
+            ),
             "service_vendor": str(payload.get("service_vendor") or ""),
             "model": str(payload.get("response_model") or payload.get("model") or ""),
             "status": str(payload.get("status") or event_type.rsplit(".", 1)[-1]),
@@ -735,7 +843,7 @@ def _provider_attempts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if cost:
             attempt["cost"] = cost
         for name in allowed_correlations:
-            value = str(payload.get(name) or "").strip()
+            value = str(event.get(name) or payload.get(name) or "").strip()
             if value:
                 attempt[name] = value
         attempts.append(attempt)
@@ -1538,6 +1646,16 @@ def main() -> int:
         if event_session_id
         else []
     )
+    provider_events = (
+        _query_provider_telemetry_events(
+            home_root=home_root,
+            data_root=data_root,
+            session_id=event_session_id,
+        )
+        if event_session_id
+        else []
+    )
+    events = _replace_provider_events(events, provider_events)
     audit_paths, audit_rows = _collect_tool_audit_rows(data_root=data_root)
     summary = _write_probe_artifacts(
         transcript_path=transcript_path,

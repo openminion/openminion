@@ -64,6 +64,28 @@ class CertificationManifest:
     slo: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ProviderIdentity:
+    profile: str
+    provider: str
+    model: str
+
+
+@dataclass(frozen=True)
+class CertificationObservation:
+    metrics: dict[str, int | float]
+    autonomy_run_id: str
+    project_run_id: str
+    task_id: str
+    session_id: str
+    checkpoint_ids: tuple[str, ...]
+    gateway_run_ids: tuple[str, ...]
+    linked_cron_id: str
+    provider: str
+    model: str
+    evidence_refs: dict[str, str]
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -117,6 +139,30 @@ def _require_runtime_import(
     imported = Path(result.stdout.strip()).resolve(strict=False)
     if result.returncode != 0 or not imported.is_relative_to(expected_root):
         raise ValueError("runtime_python does not import the approved source root")
+
+
+def _resolve_provider_identity(manifest: CertificationManifest) -> ProviderIdentity:
+    from openminion.base.config import load_config, resolve_runtime_profile
+
+    config_path = _resolve_file(
+        manifest.provider_config_ref,
+        Path(manifest.workspace_path),
+    )
+    config = load_config(str(config_path), home_root=Path(manifest.home_root))
+    profile = resolve_runtime_profile(config, agent_id=manifest.agent_id)
+    provider = str(profile.provider or "").strip()
+    provider_config = getattr(config.providers, provider, None)
+    model = str(getattr(provider_config, "model", "") or "").strip()
+    identity = ProviderIdentity(
+        profile=str(profile.name or "").strip(),
+        provider=provider,
+        model=model,
+    )
+    if not all((identity.profile, identity.provider, identity.model)):
+        raise ValueError("SAC_PROVIDER_IDENTITY_MISSING")
+    if identity.profile != manifest.profile or identity.model != manifest.model:
+        raise ValueError("SAC_PROVIDER_IDENTITY_MISMATCH")
+    return identity
 
 
 def _validate_live_slo(slo: dict[str, Any]) -> None:
@@ -375,7 +421,7 @@ def validate_certification_manifest(
     if _has_secret_bearing_field(payload):
         raise ValueError("manifest contains a secret-bearing field")
 
-    return CertificationManifest(
+    manifest = CertificationManifest(
         run_id=_required_str(payload, "run_id"),
         pilot_kind=cast(PilotKind, pilot_kind),
         approved_start_utc=_utc_text(start),
@@ -407,6 +453,9 @@ def validate_certification_manifest(
         daemon_restart_offset_seconds=daemon_restart_offset_seconds,
         slo=slo,
     )
+    if for_live_run:
+        _resolve_provider_identity(manifest)
+    return manifest
 
 
 def write_certification_report(
@@ -417,9 +466,12 @@ def write_certification_report(
     validation_only: bool,
     evidence: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
-    output_root = (
-        resolve_generated_root(root) / REPORT_DIRNAME / _safe_segment(manifest.run_id)
+    generated_root = (
+        resolve_generated_root(root)
+        if validation_only
+        else Path(manifest.generated_root)
     )
+    output_root = generated_root / REPORT_DIRNAME / _safe_segment(manifest.run_id)
     output_root.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -533,18 +585,36 @@ def _measure_storage(*roots: str) -> int:
     return total
 
 
+def _validate_usage_identity(
+    records: tuple[Any, ...],
+    identity: ProviderIdentity,
+) -> None:
+    matching_identity = False
+    for record in records:
+        if record.provider and record.provider != identity.provider:
+            raise ValueError("SAC_PROVIDER_IDENTITY_CONFLICT")
+        if record.model and record.model != identity.model:
+            raise ValueError("SAC_PROVIDER_IDENTITY_CONFLICT")
+        matching_identity = matching_identity or (
+            record.provider == identity.provider and record.model == identity.model
+        )
+    if not matching_identity:
+        raise ValueError("SAC_PROVIDER_IDENTITY_MISSING")
+
+
 def _checkpoint_metrics(
     manifest: CertificationManifest,
     *,
     autonomy_run: dict[str, Any],
-) -> tuple[dict[str, int | float], str, str]:
+    identity: ProviderIdentity,
+) -> CertificationObservation:
     from argparse import Namespace
 
     from openminion.cli.commands.autonomy_project import (
         configured_cron_store,
         project_task_manager,
     )
-    from openminion.modules.task import load_latest_project_checkpoint
+    from openminion.modules.task import ProjectCheckpoint
     from openminion.modules.telemetry.usage import StatsService
 
     task_id = str(autonomy_run.get("task_id") or "").strip()
@@ -560,12 +630,44 @@ def _checkpoint_metrics(
         task_db="",
     )
     manager = project_task_manager(args)
-    checkpoint = load_latest_project_checkpoint(manager, task_id=task_id)
-    if checkpoint is None:
+    checkpoint_ids = tuple(manager.list_checkpoints(task_id))
+    checkpoint_states = tuple(
+        manager.get_checkpoint(task_id, checkpoint_id)
+        for checkpoint_id in checkpoint_ids
+    )
+    checkpoints = tuple(
+        ProjectCheckpoint.model_validate(state) for state in checkpoint_states if state
+    )
+    if not checkpoints or len(checkpoints) != len(checkpoint_ids):
         raise ValueError("SAC_EVIDENCE_MISSING")
-    gateway_run_id = str(checkpoint.payload.get("gateway_run_id") or "").strip()
-    if not gateway_run_id:
+    autonomy_run_id = str(autonomy_run.get("run_id") or "").strip()
+    session_id = str(autonomy_run.get("session_id") or "").strip()
+    project_run_ids = {item.project_run.project_run_id for item in checkpoints}
+    if (
+        not autonomy_run_id
+        or session_id != manifest.session_id
+        or len(project_run_ids) != 1
+        or any(
+            item.project_run.autonomy_run_id != autonomy_run_id
+            or item.project_run.task_id != task_id
+            or item.project_run.session_id != session_id
+            for item in checkpoints
+        )
+    ):
+        raise ValueError("SAC_LINEAGE_CONFLICT")
+    gateway_run_ids = tuple(
+        str(item.payload.get("gateway_run_id") or "").strip() for item in checkpoints
+    )
+    if not all(gateway_run_ids):
         raise ValueError("SAC_METRIC_MISSING")
+    checkpoint = checkpoints[-1]
+    gateway_run_id = gateway_run_ids[-1]
+    task = manager.get_task(task_id)
+    linked_cron_id = str(
+        (task.metadata if task else {}).get("linked_cron_job_id") or ""
+    ).strip()
+    if not linked_cron_id:
+        raise ValueError("SAC_EVIDENCE_MISSING")
     store = configured_cron_store(args, config_ref=args.config)
     try:
         stats = StatsService(store)
@@ -582,6 +684,7 @@ def _checkpoint_metrics(
     provenance = manifest.slo["observed_limits"]["cost_provenance"]
     if usage is None or usage.records_emitted <= 0:
         raise ValueError("SAC_METRIC_MISSING")
+    _validate_usage_identity(usage.records, identity)
     if provenance == "provider_only":
         if not usage.has_provider_cost:
             raise ValueError("SAC_METRIC_MISSING")
@@ -603,7 +706,27 @@ def _checkpoint_metrics(
             manifest.generated_root,
         ),
     }
-    return metrics, checkpoint.checkpoint_id, gateway_run_id
+    project_run = checkpoint.project_run
+    return CertificationObservation(
+        metrics=metrics,
+        autonomy_run_id=autonomy_run_id,
+        project_run_id=project_run.project_run_id,
+        task_id=task_id,
+        session_id=session_id,
+        checkpoint_ids=checkpoint_ids,
+        gateway_run_ids=gateway_run_ids,
+        linked_cron_id=linked_cron_id,
+        provider=identity.provider,
+        model=identity.model,
+        evidence_refs={
+            "objective_ledger_ref": project_run.objective_ledger_ref,
+            "evidence_ledger_ref": project_run.evidence_ledger_ref,
+            "resume_packet_ref": project_run.resume_packet_ref,
+            "operator_decision_log_ref": project_run.operator_decision_log_ref,
+            "capability_plan_ref": project_run.capability_plan_ref,
+            "metrics_summary_ref": project_run.metrics_summary_ref,
+        },
+    )
 
 
 def _observed_limit_reached(
@@ -712,6 +835,7 @@ def _write_live_result(
     recovery_events: list[dict[str, str]],
     error_code: str | None = None,
     verifier_passed: bool = False,
+    observation: CertificationObservation | None = None,
 ) -> tuple[int, Path, Path]:
     ended = datetime.now(UTC)
     evidence = {
@@ -725,6 +849,41 @@ def _write_live_result(
         },
         "recovery_events": recovery_events,
         "verifier_passed": verifier_passed,
+        "activity_measurement": "not_supported",
+        "active_seconds": None,
+        "idle_seconds": None,
+        "lineage": (
+            {
+                "autonomy_run_id": observation.autonomy_run_id,
+                "project_run_id": observation.project_run_id,
+                "task_id": observation.task_id,
+                "session_id": observation.session_id,
+                "checkpoint_ids": list(observation.checkpoint_ids),
+                "gateway_run_ids": list(observation.gateway_run_ids),
+                "linked_cron_id": observation.linked_cron_id,
+            }
+            if observation
+            else None
+        ),
+        "provider_identity": (
+            {
+                "profile": manifest.profile,
+                "provider": observation.provider,
+                "model": observation.model,
+            }
+            if observation
+            else None
+        ),
+        "evidence_refs": observation.evidence_refs if observation else None,
+        "metric_sources": {
+            "token": "StatsService.get_run_token_usage",
+            "cost": "StatsService.get_run_token_usage",
+            "retry": "StatsService.get_run_turn_cost",
+            "tool_call": "StatsService.get_run_turn_cost",
+            "iteration": "ProjectCheckpoint.project_run.committed_cycle_count",
+            "storage": "approved workspace and generated roots",
+            "elapsed_seconds": "certification harness wall clock",
+        },
         "memory_help": "not_applicable:no memory-help claim made",
         "side_effect_measurement": "not_supported",
         "side_effect_limit": None,
@@ -765,6 +924,22 @@ def run_certification(
         Path(manifest.runtime_source_root),
         manifest.runtime_source_revision,
     )
+    provider_path = _resolve_file(
+        manifest.provider_config_ref,
+        Path(manifest.workspace_path),
+    )
+    _require_file_hash(
+        provider_path, manifest.provider_config_sha256, "provider config"
+    )
+    identity = _resolve_provider_identity(manifest)
+    report_root = (
+        Path(manifest.generated_root) / REPORT_DIRNAME / _safe_segment(manifest.run_id)
+    )
+    if any(
+        (report_root / name).exists()
+        for name in ("certification-report.json", "certification-report.md")
+    ):
+        raise ValueError("SAC_REPORT_ALREADY_EXISTS")
     current = datetime.now(UTC)
     start = _parse_utc(manifest.approved_start_utc)
     end = _parse_utc(manifest.approved_end_utc)
@@ -842,6 +1017,7 @@ def run_certification(
 
     started = datetime.now(UTC)
     metrics: dict[str, int | float] = {}
+    observation: CertificationObservation | None = None
     recovery_events: list[dict[str, str]] = []
     restarted = False
     restart_checkpoint = ""
@@ -903,10 +1079,13 @@ def run_certification(
                 error_code="SAC_EARLY_COMPLETION",
             )
         try:
-            metrics, checkpoint_id, _gateway_run_id = _checkpoint_metrics(
+            observation = _checkpoint_metrics(
                 manifest,
                 autonomy_run=shown_run,
+                identity=identity,
             )
+            metrics = observation.metrics
+            checkpoint_id = observation.checkpoint_ids[-1]
         except ValueError as exc:
             if str(exc) == "SAC_EVIDENCE_MISSING":
                 if (
@@ -995,13 +1174,13 @@ def run_certification(
             and len(recovery_events) == 1
         ):
             occurred = _utc_text(datetime.now(UTC))
-            recovery_events.extend(
+            recovery_events.append(
                 {
-                    "kind": kind,
+                    "kind": "scheduled_checkpoint",
                     "run_id": durable_run_id,
+                    "checkpoint_id": checkpoint_id,
                     "occurred_at_utc": occurred,
                 }
-                for kind in ("reconnect", "interruption", "scheduled_wake")
             )
             restart_deadline = None
         elif restart_deadline is not None and datetime.now(UTC) >= restart_deadline:
@@ -1061,12 +1240,52 @@ def run_certification(
             recovery_events=recovery_events,
             error_code="SAC_WINDOW_TIMEOUT",
         )
+    try:
+        final_observation = _checkpoint_metrics(
+            manifest,
+            autonomy_run=shown_run,
+            identity=identity,
+        )
+    except ValueError as exc:
+        return _fail_live_run(
+            manifest,
+            run_id=durable_run_id,
+            manifest_path=manifest_path,
+            root=root,
+            started=started,
+            metrics=metrics,
+            recovery_events=recovery_events,
+            error_code=str(exc),
+        )
+    if (
+        observation is None
+        or final_observation.autonomy_run_id != observation.autonomy_run_id
+        or final_observation.project_run_id != observation.project_run_id
+        or final_observation.task_id != observation.task_id
+        or final_observation.session_id != observation.session_id
+        or final_observation.checkpoint_ids[: len(observation.checkpoint_ids)]
+        != observation.checkpoint_ids
+    ):
+        return _fail_live_run(
+            manifest,
+            run_id=durable_run_id,
+            manifest_path=manifest_path,
+            root=root,
+            started=started,
+            metrics=metrics,
+            recovery_events=recovery_events,
+            error_code="SAC_LINEAGE_CONFLICT",
+        )
+    observation = final_observation
+    metrics = observation.metrics
     cancel_error = _cancel_run(manifest, durable_run_id)
     passed = (
         verifier.returncode == 0
         and cancel_error is None
         and bool(metrics)
-        and FULL_RECOVERY_CHECKS.issubset({item["kind"] for item in recovery_events})
+        and {"restart", "scheduled_checkpoint"}.issubset(
+            {item["kind"] for item in recovery_events}
+        )
     )
     return _write_live_result(
         manifest,
@@ -1085,6 +1304,7 @@ def run_certification(
             )
         ),
         verifier_passed=verifier.returncode == 0,
+        observation=observation,
     )
 
 
@@ -1110,8 +1330,9 @@ def _render_report_markdown(payload: dict[str, Any]) -> str:
                 f"- Started: `{evidence.get('started_at_utc', '-')}`",
                 f"- Ended: `{evidence.get('ended_at_utc', '-')}`",
                 f"- Elapsed seconds: `{metrics.get('elapsed_seconds', 0)}`",
-                f"- Active seconds: `{metrics.get('active_seconds', 0)}`",
-                f"- Idle seconds: `{metrics.get('idle_seconds', 0)}`",
+                f"- Activity measurement: `{evidence.get('activity_measurement')}`",
+                f"- Active seconds: `{evidence.get('active_seconds')}`",
+                f"- Idle seconds: `{evidence.get('idle_seconds')}`",
                 f"- Iterations: `{metrics.get('iteration', 0)}`",
                 f"- Tokens: `{metrics.get('token', 0)}`",
                 f"- Estimated cost USD: `{metrics.get('cost', 0)}`",

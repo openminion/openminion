@@ -324,7 +324,11 @@ def _merge_redeclared_active_plan(
         step = dict(raw_step) if isinstance(raw_step, dict) else {}
         step_id = str(step.get("step_id") or "").strip()
         existing = existing_steps.get(step_id)
-        if existing and str(existing.get("status") or "") in {"completed", "blocked"}:
+        if existing and str(existing.get("status") or "") in {
+            "in_progress",
+            "completed",
+            "blocked",
+        }:
             for key in (
                 "status",
                 "output_summary",

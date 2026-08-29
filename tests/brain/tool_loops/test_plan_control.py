@@ -346,6 +346,30 @@ def test_plan_control_declare_replaces_prior_active_plan() -> None:
     assert session_api.events[0]["payload"]["plan_id"] == "old-plan"
 
 
+def test_plan_control_redeclare_preserves_in_progress_step() -> None:
+    active_plan = _active_plan()
+    active_plan["steps"][0].update(
+        status="in_progress",
+        output_summary="Inspection underway.",
+    )
+    session_api = _FakeSessionAPI(active_plan=active_plan)
+
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "declare",
+            "plan_id": "plan-1",
+            "objective": "Research and summarize",
+            "steps": _active_plan()["steps"],
+        },
+    )
+
+    assert result.status == "success"
+    entry = session_api.events[0]["payload"]["plan"]["steps"][0]
+    assert entry["status"] == "in_progress"
+    assert entry["output_summary"] == "Inspection underway."
+
+
 def test_plan_control_step_completed_records_active_step() -> None:
     session_api = _FakeSessionAPI(active_plan=_active_plan())
     result = handle_plan_tool_call(

@@ -40,6 +40,7 @@ class _FakeRunner:
     options: SimpleNamespace
     profile: SimpleNamespace
     session_api: MagicMock
+    llm_api: MagicMock
     _index: int = 0
 
     def step(self, **kwargs) -> StepOutput:
@@ -69,6 +70,7 @@ def test_run_until_idle_re_dispatches_continue_status() -> None:
         options=SimpleNamespace(plan_max_iterations=4),
         profile=SimpleNamespace(agent_id="router-agent"),
         session_api=MagicMock(),
+        llm_api=MagicMock(),
     )
 
     result = run_until_idle(
@@ -90,6 +92,7 @@ def test_run_until_idle_budget_checks_continue_tick() -> None:
         options=SimpleNamespace(plan_max_iterations=4),
         profile=SimpleNamespace(agent_id="router-agent"),
         session_api=MagicMock(),
+        llm_api=MagicMock(),
     )
 
     result = run_until_idle(

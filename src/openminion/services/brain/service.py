@@ -220,6 +220,11 @@ class _RuntimeProviderAdapter:
     def __init__(self, service: "BrainBridgeService") -> None:
         self._service = service
         self.name = str(getattr(service, "_provider_name", lambda: "provider")())
+        self.service_vendor = str(
+            getattr(getattr(service, "_llm_runtime", None), "service_vendor", "")
+            or getattr(getattr(service, "_provider", None), "service_vendor", "")
+            or self.name
+        )
         self.tool_call_strategy = str(
             getattr(getattr(service, "_provider", object()), "tool_call_strategy", "")
             or getattr(

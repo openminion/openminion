@@ -71,6 +71,7 @@ class GroqProviderConfig:
 class OllamaProviderConfig:
     model: str = "llama3.1"
     base_url: str = "http://127.0.0.1:11434"
+    provider_identity: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 60
     http_connection_reuse_enabled: bool = True
     temperature: float = 0.2

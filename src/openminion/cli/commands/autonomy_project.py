@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from openminion.api.turns import run_turn
+from openminion.api.turns import TurnRequestError, TurnTimeoutError
+from openminion.base.errors import ErrorInfo
 from openminion.modules.cli_common import resolve_module_cli_db_path
 from openminion.modules.task import (
     AutonomyRun,
@@ -24,10 +26,12 @@ from openminion.modules.task.autonomy import (
 )
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import (
+    AutonomyLoopConditionKind,
     build_project_run_projection,
     save_project_run_checkpoint,
     validate_project_verifier,
 )
+from openminion.modules.task.project.turn import project_error_from_payload
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
@@ -52,40 +56,13 @@ def run_project_turn(
 ) -> ProjectTurnResult:
     metadata: dict[str, object] = {}
     summary = replay_response
+    response: dict[str, object] = {}
     if not summary:
         workspace = workspace_path_from_ref(run.workspace_ref)
-        response = run_turn(
-            config_path=run.execution_selectors.config_ref,
-            payload={
-                "message": request.prompt,
-                "agent_id": run.execution_selectors.agent_id,
-                "session_id": request.session_id,
-                "channel": "console",
-                "target": "autonomy",
-                "deliver": False,
-                "timeout_seconds": run.execution_selectors.turn_timeout_seconds,
-                "inbound_metadata": project_turn_inbound_metadata(
-                    request,
-                    base={
-                        "source": "openminion.autonomy.project",
-                        "autonomy_run_id": request.run_id,
-                        "project_run_id": request.project_run_id,
-                        "task_id": request.task_id,
-                        "goal_id": request.goal_id,
-                        "cycle_id": request.cycle_id,
-                        "turn_timeout_seconds": str(
-                            run.execution_selectors.turn_timeout_seconds
-                        ),
-                        **autonomy_permission_metadata(run.permission_profile_id),
-                        **(
-                            {"workspace_root": str(workspace)}
-                            if workspace is not None
-                            else {}
-                        ),
-                    },
-                ),
-            },
-        )
+        api_result = _request_project_turn(run, request, workspace=workspace)
+        if isinstance(api_result, ProjectTurnResult):
+            return api_result
+        response = api_result
         summary = (
             str(response.get("final_text", "") or response.get("body", "")).strip()
             or "Project cycle completed without visible final text."
@@ -94,6 +71,11 @@ def run_project_turn(
         if isinstance(raw_metadata, dict):
             metadata = raw_metadata
 
+    error = (
+        project_error_from_payload(response, metadata=metadata, default_message=summary)
+        if not replay_response and bool(response.get("error"))
+        else None
+    )
     evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
     evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
     tool_results = _project_tool_results(metadata)
@@ -111,7 +93,13 @@ def run_project_turn(
     return ProjectTurnResult(
         summary=summary,
         gateway_run_id=str(metadata.get("run_id") or "").strip(),
-        condition=project_condition_from_metadata(metadata),
+        condition=(
+            AutonomyLoopConditionKind.CANCELLED
+            if error is not None and error.code == "cancelled"
+            else AutonomyLoopConditionKind.RETRYABLE_FAILURE
+            if error is not None and not metadata.get("project_condition")
+            else project_condition_from_metadata(metadata)
+        ),
         evidence_refs=tuple(dict.fromkeys((*evidence_refs, *tool_result_refs))),
         evidence_kinds=tuple(
             dict.fromkeys(
@@ -120,6 +108,69 @@ def run_project_turn(
         ),
         effect_refs=project_metadata_refs(metadata, "effect_refs"),
         tool_call_count=int(tool_call_count) if isinstance(tool_call_count, int) else 0,
+        error=error,
+    )
+
+
+def _request_project_turn(
+    run: AutonomyRun,
+    request: ProjectTurnRequest,
+    *,
+    workspace: Path | None,
+) -> dict[str, object] | ProjectTurnResult:
+    payload = {
+        "message": request.prompt,
+        "agent_id": run.execution_selectors.agent_id,
+        "session_id": request.session_id,
+        "channel": "console",
+        "target": "autonomy",
+        "deliver": False,
+        "timeout_seconds": run.execution_selectors.turn_timeout_seconds,
+        "inbound_metadata": project_turn_inbound_metadata(
+            request,
+            base={
+                "source": "openminion.autonomy.project",
+                "autonomy_run_id": request.run_id,
+                "project_run_id": request.project_run_id,
+                "task_id": request.task_id,
+                "goal_id": request.goal_id,
+                "cycle_id": request.cycle_id,
+                "turn_timeout_seconds": str(
+                    run.execution_selectors.turn_timeout_seconds
+                ),
+                **autonomy_permission_metadata(run.permission_profile_id),
+                **({"workspace_root": str(workspace)} if workspace else {}),
+            },
+        ),
+    }
+    try:
+        return run_turn(config_path=run.execution_selectors.config_ref, payload=payload)
+    except TurnTimeoutError as exc:
+        return _project_exception_result(
+            "provider_timeout", AutonomyLoopConditionKind.RETRYABLE_FAILURE, exc
+        )
+    except TurnRequestError as exc:
+        return _project_exception_result(
+            "project_turn_request_error",
+            AutonomyLoopConditionKind.TERMINAL_INABILITY,
+            exc,
+        )
+
+
+def _project_exception_result(
+    code: str,
+    condition: AutonomyLoopConditionKind,
+    error: Exception,
+) -> ProjectTurnResult:
+    message = str(error) or "project turn failed"
+    return ProjectTurnResult(
+        summary=message,
+        condition=condition,
+        error=ErrorInfo(
+            code=code,
+            message=message,
+            namespace="task.project",
+        ),
     )
 
 

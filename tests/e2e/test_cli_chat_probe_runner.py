@@ -13,6 +13,7 @@ from tests.e2e.runners.run_cli_chat_probe import (
     main,
     _parse_probe_status,
     _probe_requirement_failure,
+    _replace_provider_events,
     _shutdown_timeout_can_count_as_success,
     _turn_response_boundary_detected,
 )
@@ -474,6 +475,9 @@ def test_summary_selects_content_free_provider_attempts() -> None:
         events=[
             {
                 "type": "llm.call.failed",
+                "session_id": "provider-probe::conv:abc",
+                "turn_id": "turn-1",
+                "agent_id": "agent-1",
                 "payload": {
                     "llm_call_id": "call-1",
                     "provider_name": "openai",
@@ -511,5 +515,38 @@ def test_summary_selects_content_free_provider_attempts() -> None:
             "usage": {"input_tokens": 10, "output_tokens": 2},
             "cost": {"total": 0.01},
             "invocation_id": "inv-1",
+            "session_id": "provider-probe::conv:abc",
+            "turn_id": "turn-1",
+            "agent_id": "agent-1",
+        }
+    ]
+
+
+def test_provider_telemetry_reuses_canonical_session_agent_by_turn() -> None:
+    events = _replace_provider_events(
+        [
+            {
+                "type": "llm.call.completed",
+                "turn_id": "turn-1",
+                "agent_id": "agent-1",
+                "payload": {},
+            }
+        ],
+        [
+            {
+                "type": "llm.call.completed",
+                "turn_id": "turn-1",
+                "agent_id": "",
+                "payload": {"provider_name": "provider-1"},
+            }
+        ],
+    )
+
+    assert events == [
+        {
+            "type": "llm.call.completed",
+            "turn_id": "turn-1",
+            "agent_id": "agent-1",
+            "payload": {"provider_name": "provider-1"},
         }
     ]

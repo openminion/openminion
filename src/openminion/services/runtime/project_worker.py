@@ -64,6 +64,14 @@ class ProjectWorkerResult:
     reconciled_only: bool = False
 
 
+def project_cycle_claim_ttl_seconds(run: AutonomyRun) -> int:
+    selectors = run.execution_selectors
+    verifier_window = int(selectors.verification_timeout_seconds) * len(
+        selectors.verification_commands
+    )
+    return int(selectors.turn_timeout_seconds) + verifier_window
+
+
 def build_cron_project_worker(
     *,
     runtime: Any,
@@ -110,6 +118,7 @@ def build_cron_project_worker(
             workspace=workspace,
             timeout_seconds=autonomy_run.execution_selectors.verification_timeout_seconds,
         ),
+        claim_ttl_seconds=project_cycle_claim_ttl_seconds(autonomy_run),
         owner_id=owner_id,
     )
     return worker, task_manager
@@ -211,6 +220,7 @@ class ProjectWorker:
                 evaluation,
                 triggering_cron_job_id=triggering_cron_job_id,
             )
+            turn_error = evaluation.turn.error
             committed = commit_project_run_checkpoint(
                 self._task_manager,
                 updated_project,
@@ -229,6 +239,7 @@ class ProjectWorker:
                     "condition": evaluation.turn.condition.value,
                     "decision_reason": evaluation.reason,
                     "replan_count": evaluation.replan_count,
+                    **({"error": turn_error.to_dict()} if turn_error else {}),
                 },
             )
             return self._finalize_cycle(
@@ -328,7 +339,7 @@ class ProjectWorker:
             session_id=run.session_id,
             cycle_id=cycle_id,
             milestone=milestone,
-            prompt=self._cycle_prompt(run, project_run, milestone=milestone),
+            prompt=self._cycle_prompt(run, project_run, checkpoint.payload, milestone),
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)
         turn_result = self._turn(request)
@@ -340,10 +351,7 @@ class ProjectWorker:
         )
         raw_replan_count = checkpoint.payload.get("replan_count", 0)
         previous_replans = raw_replan_count if isinstance(raw_replan_count, int) else 0
-        existing_progress_refs = {
-            *project_run.progress_refs,
-            *project_run.effect_refs,
-        }
+        existing_progress_refs = {*project_run.progress_refs, *project_run.effect_refs}
         has_new_progress = any(
             ref not in existing_progress_refs
             for ref in (*turn_result.evidence_refs, *turn_result.effect_refs)
@@ -352,6 +360,7 @@ class ProjectWorker:
             run,
             cycle_number=cycle_number,
             condition=turn_result.condition,
+            has_error=turn_result.error is not None,
             condition_evidence_refs=turn_result.evidence_refs,
             closure_status=closure.status,
             previous_replans=previous_replans,
@@ -384,21 +393,20 @@ class ProjectWorker:
             if evaluation.decision == ProjectCycleDecision.CONTINUE
             else None
         )
+        verification = evaluation.verification
         validation_refs = tuple(
             f"verification:{evaluation.cycle_id}:{index}:{item.status.value}"
-            for index, item in enumerate(evaluation.verification, start=1)
+            for index, item in enumerate(verification, start=1)
+        )
+        latest_verification_ms = max(
+            (item.ended_at_ms for item in verification), default=0
         )
         return project_run.model_copy(
             update={
                 "status": evaluation.status,
                 "phase": evaluation.phase,
                 "updated_at_ms": max(
-                    project_run.updated_at_ms,
-                    max(
-                        (item.ended_at_ms for item in evaluation.verification),
-                        default=0,
-                    ),
-                    now_ms(),
+                    project_run.updated_at_ms, latest_verification_ms, now_ms()
                 ),
                 "last_checkpoint_id": evaluation.cycle_id,
                 "blocked_reason": (
@@ -514,16 +522,15 @@ class ProjectWorker:
         run: AutonomyRun,
         project_run: ProjectRun,
     ) -> AutonomyRun:
-        if (
-            run.checkpoint_id == project_run.last_checkpoint_id
-            and run.status == project_run.status
-        ):
+        checkpoint_matches = run.checkpoint_id == project_run.last_checkpoint_id
+        if checkpoint_matches and run.status == project_run.status:
             return run
+        resumed = run.status == AutonomyRunStatus.RUNNING
         reconciled = run.model_copy(
             update={
                 "checkpoint_id": project_run.last_checkpoint_id,
-                "status": project_run.status,
-                "phase": project_run.phase,
+                "status": run.status if resumed else project_run.status,
+                "phase": run.phase if resumed else project_run.phase,
                 "updated_at_ms": project_run.updated_at_ms,
             }
         )
@@ -618,6 +625,7 @@ class ProjectWorker:
         *,
         cycle_number: int,
         condition: AutonomyLoopConditionKind,
+        has_error: bool,
         condition_evidence_refs: tuple[str, ...],
         closure_status: ProjectDomainVerificationStatus,
         previous_replans: int,
@@ -631,7 +639,7 @@ class ProjectWorker:
         int,
         str,
     ]:
-        if closure_status == ProjectDomainVerificationStatus.VERIFIED:
+        if closure_status == ProjectDomainVerificationStatus.VERIFIED and not has_error:
             return ProjectWorker._productive_disposition(
                 run,
                 cycle_number=cycle_number,
@@ -804,7 +812,7 @@ class ProjectWorker:
     def _cycle_prompt(
         run: AutonomyRun,
         project_run: ProjectRun,
-        *,
+        checkpoint_payload: Mapping[str, Any],
         milestone: str,
     ) -> str:
         lines = [
@@ -819,6 +827,14 @@ class ProjectWorker:
             lines.append(
                 "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
             )
+        if verification := checkpoint_payload.get("verification"):
+            failed = [
+                item
+                for item in verification
+                if item["status"] == TestEvidenceStatus.FAILED.value
+            ]
+            outcome = (failed or verification)[-1]
+            lines.extend(("Prior verifier outcome:", outcome["summary"]))
         if project_run.progress_refs:
             lines.append(
                 "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
@@ -873,6 +889,7 @@ __all__ = [
     "ProjectWorker",
     "ProjectWorkerResult",
     "build_cron_project_worker",
+    "project_cycle_claim_ttl_seconds",
     "project_condition_from_metadata",
     "project_metadata_refs",
     "project_turn_inbound_metadata",

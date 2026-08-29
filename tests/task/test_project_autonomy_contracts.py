@@ -91,7 +91,7 @@ def _project_run(
         ("context_overflow", "active context exceeded its budget"),
     ),
 )
-def test_project_turn_error_payloads_collapse_to_runtime_error(
+def test_project_turn_error_payloads_preserve_typed_error(
     error_code: str,
     summary: str,
 ) -> None:
@@ -106,16 +106,66 @@ def test_project_turn_error_payloads_collapse_to_runtime_error(
         prompt="continue",
     )
 
-    with pytest.raises(RuntimeError, match=summary):
-        project_turn_from_payload(
-            request,
-            payload={},
-            execute=lambda _: {
-                "error": True,
-                "summary": summary,
-                "metadata": {"error_code": error_code},
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "error": True,
+            "summary": summary,
+            "metadata": {
+                "error_code": error_code,
+                "error_message": summary,
+                "error_details": '{"request_id":"req-1"}',
             },
-        )
+        },
+    )
+
+    assert result.error is not None
+    assert result.error.code == error_code
+    assert result.error.message == summary
+    assert result.error.details == {"request_id": "req-1"}
+    assert result.condition == (
+        AutonomyLoopConditionKind.CANCELLED
+        if error_code == "cancelled"
+        else AutonomyLoopConditionKind.RETRYABLE_FAILURE
+    )
+
+
+@pytest.mark.parametrize(
+    ("details", "expected"),
+    (
+        ("not-json", {"error": "malformed_details"}),
+        ("[]", {"error": "non_object_details"}),
+        ('{"api_key":"secret","status_code":429}', {"status_code": "429"}),
+    ),
+)
+def test_project_turn_error_details_are_bounded(details: str, expected: dict) -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "error": True,
+            "summary": "failed",
+            "metadata": {
+                "error_code": "provider_timeout",
+                "error_details": details,
+            },
+        },
+    )
+
+    assert result.error is not None
+    assert result.error.details == expected
 
 
 def test_operator_inbox_projects_all_local_states_with_resume_actions() -> None:

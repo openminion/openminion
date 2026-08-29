@@ -96,6 +96,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
         {
             "model": (_KIND_STR, "llama3.1"),
             "base_url": (_KIND_STR, "http://127.0.0.1:11434"),
+            "provider_identity": (_KIND_DICT_STR, {}),
             "timeout_seconds": (_KIND_INT, 60),
             "http_connection_reuse_enabled": (_KIND_BOOL, True),
             "temperature": (_KIND_FLOAT, 0.2),

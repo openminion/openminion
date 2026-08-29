@@ -19,11 +19,13 @@ from openminion.modules.task import (
     save_project_run_checkpoint,
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.base.errors import ErrorInfo
 from openminion.modules.task.autonomy import now_ms
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
     ProjectWorker,
+    project_cycle_claim_ttl_seconds,
 )
 
 
@@ -88,6 +90,21 @@ def _project(tmp_path, *, max_iterations: int = 3):
     return store, manager, run
 
 
+def test_project_cycle_claim_covers_turn_and_verification_windows() -> None:
+    run = build_autonomy_run(
+        goal_text="Finish the fixture",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace",
+        max_iterations=1,
+        verification_commands=("verify-a", "verify-b"),
+        turn_timeout_seconds=1_800,
+        verification_timeout_seconds=900,
+    )
+
+    assert project_cycle_claim_ttl_seconds(run) == 3_600
+
+
 def test_project_worker_replans_once_then_commits_verified_completion(
     tmp_path,
 ) -> None:
@@ -95,7 +112,10 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     turns: list[ProjectTurnRequest] = []
     verification = iter(
         (
-            (_evidence(_TestEvidenceStatus.FAILED),),
+            (
+                _evidence(_TestEvidenceStatus.FAILED),
+                _evidence(_TestEvidenceStatus.PASSED),
+            ),
             (_evidence(_TestEvidenceStatus.PASSED),),
         )
     )
@@ -123,6 +143,8 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert result.project_run.committed_cycle_count == 2
     assert len(turns) == 2
     assert "Prior verifier refs:" in turns[1].prompt
+    assert "Prior verifier outcome:\nverification failed" in turns[1].prompt
+    assert "Prior verifier outcome:\nverification passed" not in turns[1].prompt
     assert checkpoint is not None
     assert checkpoint.payload["gateway_run_id"].endswith(":cycle:2")
     assert checkpoint.expected_checkpoint_id.endswith(":cycle:1")
@@ -145,6 +167,85 @@ def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:
     assert result.project_run.committed_cycle_count == 2
     assert result.run.status == AutonomyRunStatus.BLOCKED
     assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
+
+
+def test_project_worker_keeps_resumed_run_active_during_next_turn(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, max_iterations=1)
+    first = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: ProjectTurnResult(summary=request.milestone),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+        owner_id="worker-1",
+    ).run(run.run_id, max_cycles=1)
+    assert first.run.status == AutonomyRunStatus.BLOCKED
+
+    store.save(
+        first.run.model_copy(
+            update={
+                "continuation_policy": first.run.continuation_policy.model_copy(
+                    update={"max_iterations": 2}
+                )
+            }
+        )
+    )
+    resumed = store.transition(
+        run.run_id,
+        status=AutonomyRunStatus.RUNNING,
+        phase=AutonomyRunPhase.EXECUTE,
+    )
+    manager.transition_task(
+        task_id="task-1",
+        to_state=TaskLifecycleState.ACTIVE,
+    )
+
+    def interrupted_turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        assert store.require(resumed.run_id).status == AutonomyRunStatus.RUNNING
+        raise RuntimeError("provider interrupted")
+
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=interrupted_turn,
+        verify=lambda: (),
+        owner_id="worker-2",
+    )
+
+    with pytest.raises(RuntimeError, match="provider interrupted"):
+        worker.run(resumed.run_id, max_cycles=1)
+
+    assert store.require(resumed.run_id).status == AutonomyRunStatus.RUNNING
+
+
+def test_project_error_dominates_passing_verifier(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: ProjectTurnResult(
+            summary="provider timed out",
+            condition=AutonomyLoopConditionKind.RETRYABLE_FAILURE,
+            error=ErrorInfo(
+                code="provider_timeout",
+                message="provider timed out",
+                details={"request_id": "req-1"},
+            ),
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-1",
+    )
+
+    result = worker.run(run.run_id, max_cycles=3)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+
+    assert result.decision == ProjectCycleDecision.BLOCKED
+    assert result.run.status == AutonomyRunStatus.BLOCKED
+    assert checkpoint is not None
+    assert checkpoint.payload["error"] == {
+        "code": "provider_timeout",
+        "message": "provider timed out",
+        "details": {"request_id": "req-1"},
+    }
 
 
 def test_project_worker_continues_while_typed_progress_is_new(tmp_path) -> None:
