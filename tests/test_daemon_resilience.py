@@ -161,6 +161,7 @@ def test_daemon_stream_request_parses_status_chunks(
             yield b"event: meta\n"
             yield b'data: {"trace_id":"trace-1","session_id":"sess-1"}\n'
             yield b"\n"
+            yield b"id: trace-1:2\n"
             yield b"event: chunk\n"
             yield b'data: {"trace_id":"trace-1","kind":"status","data":{"trace_id":"trace-1","status_key":"analyzing","label":"Analyzing request..."}}\n'
             yield b"\n"
@@ -172,10 +173,13 @@ def test_daemon_stream_request_parses_status_chunks(
             yield b"\n"
             raise AssertionError("stream parser read past terminal done event")
 
-    monkeypatch.setattr(
-        "openminion.cli.transport.daemon_client.urlopen",
-        lambda *_args, **_kwargs: _FakeResponse(),
-    )
+    requests = []
+
+    def _open(request, **_kwargs):  # noqa: ANN001
+        requests.append(request)
+        return _FakeResponse()
+
+    monkeypatch.setattr("openminion.cli.transport.daemon_client.urlopen", _open)
 
     status, payload = daemon_stream_request(
         endpoint=endpoint,
@@ -183,6 +187,7 @@ def test_daemon_stream_request_parses_status_chunks(
         path="/v1/turn/stream",
         payload={"message": "hello"},
         on_event=events.append,
+        last_event_id="trace-1:1",
     )
 
     assert status == 200
@@ -191,7 +196,9 @@ def test_daemon_stream_request_parses_status_chunks(
     assert payload["chunks"][0]["kind"] == "status"
     assert len(events) == 4
     assert events[1].event == "chunk"
+    assert events[1].event_id == "trace-1:2"
     assert events[1].data["kind"] == "status"
+    assert requests[0].get_header("Last-event-id") == "trace-1:1"
 
 
 def test_daemon_stream_request_falls_back_to_json_payload(

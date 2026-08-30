@@ -10,14 +10,18 @@ from urllib.parse import urlparse
 from openminion.api.core.validation import parse_json_request_body
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
+from openminion.api.server.auth import authorize_ipc_request
 from openminion.api.server.dispatch import dispatch_request
 from openminion.api.server.observability import (
     finalize_api_response as _finalize_api_response,
     get_api_metrics_consistency_stamp,
     get_api_metrics_snapshot,
-    log_request_done as _log_request_done,
-    observe_request_metrics as _observe_request_metrics,
     reset_api_metrics,
+)
+from openminion.api.server.streaming import (
+    handle_http_turn_stream_request,
+    try_handle_turn_stream_attach,
+    write_sse_event,
 )
 
 
@@ -29,6 +33,17 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
         request_id = self.headers.get("X-Request-ID")
+        started_at = perf_counter()
+        if not authorize_ipc_request(
+            self,
+            method="GET",
+            path=parsed.path,
+            request_id=request_id,
+            started_at=started_at,
+        ):
+            return
+        if try_handle_turn_stream_attach(self, parsed=parsed, request_id=request_id):
+            return
         status, payload = dispatch_request(
             "GET",
             parsed.path,
@@ -45,6 +60,14 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
+        if not authorize_ipc_request(
+            self,
+            method="POST",
+            path=path,
+            request_id=request_id,
+            started_at=started_at,
+        ):
+            return
         try:
             payload = self._read_optional_json_body()
         except ValueError as exc:
@@ -53,7 +76,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
 
         accept_header = (self.headers.get("Accept") or "").lower()
         if path == "/v1/turn/stream" and "text/event-stream" in accept_header:
-            self._handle_turn_stream(body=payload, request_id=request_id)
+            handle_http_turn_stream_request(self, body=payload, request_id=request_id)
             return
 
         status, response_payload = dispatch_request(
@@ -72,6 +95,14 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
+        if not authorize_ipc_request(
+            self,
+            method="DELETE",
+            path=parsed.path,
+            request_id=request_id,
+            started_at=started_at,
+        ):
+            return
         try:
             payload = self._read_optional_json_body()
         except ValueError as exc:
@@ -104,24 +135,6 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             raw_body=raw_body,
         )
 
-    def _handle_turn_stream(
-        self, *, body: dict[str, Any], request_id: str | None
-    ) -> None:
-        from openminion.api.server.streaming import handle_turn_stream_request
-
-        handle_turn_stream_request(
-            body=body,
-            request_id=request_id,
-            config_path=self.config_path,
-            runtime=self.runtime,
-            start_sse_response=lambda: _start_sse_stream_response(self, request_id),
-            write_sse_event=self._write_sse_event,
-            write_json=self._write_json,
-            observe_request_metrics=_observe_request_metrics,
-            log_request_done=_log_request_done,
-            perf_counter=perf_counter,
-        )
-
     def _write_invalid_json(
         self,
         method: str,
@@ -148,11 +161,19 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         )
         self._write_json(status, response)
 
-    def _write_sse_event(self, *, event: str, data: object) -> None:
-        self.wfile.write(
-            f"event: {event}\ndata: {_json_dumps(data)}\n\n".encode("utf-8")
+    def _write_sse_event(
+        self,
+        *,
+        event: str,
+        data: object,
+        event_id: str | None = None,
+    ) -> None:
+        write_sse_event(
+            self.wfile,
+            event=event,
+            data=data,
+            event_id=event_id,
         )
-        self.wfile.flush()
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         self.send_response(int(status))
@@ -200,17 +221,6 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
                 self._runtime.close()
         finally:
             super().server_close()
-
-
-def _start_sse_stream_response(
-    handler: _OpenMinionAPIHandler, request_id: str | None
-) -> None:
-    handler.send_response(int(HTTPStatus.OK))
-    handler.send_header("Content-Type", "text/event-stream")
-    handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("Connection", "keep-alive")
-    handler.send_header("X-Request-ID", normalize_request_id(request_id))
-    handler.end_headers()
 
 
 __all__ = [

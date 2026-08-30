@@ -27,6 +27,7 @@ class DaemonEndpoint:
 class DaemonStreamEvent:
     event: str
     data: object
+    event_id: str | None = None
 
 
 _DEFAULT_DAEMON_PROBE_TIMEOUT_S = 1.5
@@ -133,6 +134,7 @@ def daemon_stream_request(
     payload: dict[str, Any] | None = None,
     timeout_s: float = 30.0,
     on_event: Callable[[DaemonStreamEvent], None] | None = None,
+    last_event_id: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     request = _build_daemon_request(
         endpoint=endpoint,
@@ -140,6 +142,7 @@ def daemon_stream_request(
         path=path,
         payload=payload,
         accept="text/event-stream",
+        last_event_id=last_event_id,
     )
     try:
         with urlopen(request, timeout=timeout_s) as response:  # noqa: S310
@@ -166,6 +169,7 @@ def _build_daemon_request(
     path: str,
     payload: dict[str, Any] | None,
     accept: str,
+    last_event_id: str | None = None,
 ) -> Request:
     normalized_method = method.upper().strip() or "GET"
     normalized_path = path if path.startswith("/") else f"/{path}"
@@ -176,6 +180,8 @@ def _build_daemon_request(
         headers["Content-Type"] = "application/json"
     if endpoint.token:
         headers["X-IPC-Token"] = endpoint.token
+    if last_event_id:
+        headers["Last-Event-ID"] = last_event_id
     return Request(
         url=f"{endpoint.base_url}{normalized_path}",
         method=normalized_method,
@@ -262,15 +268,16 @@ def _parse_sse_response(
     chunks: list[dict[str, Any]] = []
     done_received = False
     event_name: str | None = None
+    event_id: str | None = None
     data_lines: list[str] = []
 
     def _dispatch() -> None:
-        nonlocal event_name, data_lines, meta, turn, error, done_received
+        nonlocal event_name, event_id, data_lines, meta, turn, error, done_received
         if event_name is None and not data_lines:
             return
         name = str(event_name or "message").strip() or "message"
         payload = _decode_sse_event_payload(data_lines)
-        stream_event = DaemonStreamEvent(event=name, data=payload)
+        stream_event = DaemonStreamEvent(event=name, data=payload, event_id=event_id)
         if callable(on_event):
             try:
                 on_event(stream_event)
@@ -287,6 +294,7 @@ def _parse_sse_response(
         elif name == "done":
             done_received = True
         event_name = None
+        event_id = None
         data_lines = []
 
     for raw_line in response:
@@ -300,6 +308,9 @@ def _parse_sse_response(
             continue
         if line.startswith("event:"):
             event_name = line.partition(":")[2].strip()
+            continue
+        if line.startswith("id:"):
+            event_id = line.partition(":")[2].strip() or None
             continue
         if line.startswith("data:"):
             data_lines.append(line.partition(":")[2].strip())

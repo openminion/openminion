@@ -14,6 +14,7 @@ from openminion.services.runtime.manager import (
     TurnResponse,
     TurnTelemetry,
 )
+from openminion.modules.brain.diagnostics.status import phase_status_payload
 from openminion.modules.telemetry.lifecycle import (
     lifecycle_event_from_payload,
     map_cron_event_to_lifecycle_event,
@@ -463,6 +464,8 @@ def _emit_turn_phase_status(
     candidate_kind = str(status_payload.get("kind", "") or "").strip()
     if candidate_kind in {"tool_started", "tool_completed", "budget_event"}:
         chunk_kind = candidate_kind
+    else:
+        status_payload = phase_status_payload(status_payload)
     emit_chunk(
         TurnChunk(
             trace_id=request.trace_id,
