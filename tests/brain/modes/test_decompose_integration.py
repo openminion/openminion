@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -1011,6 +1012,14 @@ def test_orchestrate_reassigns_failed_child_to_one_exact_target(monkeypatch) -> 
         "target_agent_id": "agent.research",
         "outcome": "completed",
     }
+    recovery_call = next(
+        call
+        for call in runner.llm_api.calls
+        if call["schema"] == "ChildFailureDecision"
+    )
+    recovery_facts = json.loads(recovery_call["context"]["messages"][1]["content"])
+    assert recovery_facts["available_agent_ids"] == ["agent.research"]
+    assert recovery_facts["failed_subtask"]["subtask_id"] == "x"
 
 
 def test_orchestrate_exact_delegate_assignment_runs_existing_delegate_path() -> None:

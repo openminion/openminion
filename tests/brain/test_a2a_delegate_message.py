@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from threading import Event
 
 import pytest
 
@@ -100,6 +101,69 @@ def test_configured_agent_handler_forwards_child_turn_controls() -> None:
     assert len(calls) == 1
     assert calls[0]["approval_callback"] is approval_callback
     assert calls[0]["payload"]["timeout_seconds"] == 137
+    assert calls[0]["payload"]["session_id"] == (
+        "parent-session::delegate::worker::msg-1"
+    )
+
+
+def test_configured_agent_handler_isolates_child_sessions() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _RuntimeHandle:
+        def run_turn(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"body": "done", "metadata": {}}
+
+    handler = A2actlAdapter(
+        agent_id="parent",
+        runtime_resolver=lambda: _RuntimeHandle(),
+    )._configured_agent_handler(agent_id="worker")
+
+    for message_id in ("msg-child-1", "msg-child-2"):
+        handler(
+            SimpleNamespace(
+                params={"goal": "write a file"},
+                meta={"session_id": "parent-session"},
+                msg_id=message_id,
+                trace_id="shared-trace",
+                from_agent="parent",
+                timeout_ms=30_000,
+            )
+        )
+
+    assert [call["payload"]["session_id"] for call in calls] == [
+        "parent-session::delegate::worker::msg-child-1",
+        "parent-session::delegate::worker::msg-child-2",
+    ]
+
+
+def test_configured_agent_job_handler_forwards_cancellation() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _RuntimeHandle:
+        def run_turn(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            return {"body": "child stopped", "metadata": {}}
+
+    cancel_event = Event()
+    handler = A2actlAdapter(
+        agent_id="parent",
+        runtime_resolver=lambda: _RuntimeHandle(),
+    )._configured_agent_handler(agent_id="worker")
+
+    handler(
+        SimpleNamespace(
+            params={"goal": "wait"},
+            meta={"session_id": "parent-session"},
+            msg_id="msg-cancel",
+            trace_id="trace-cancel",
+            from_agent="parent",
+            timeout_ms=30_000,
+        ),
+        cancel_event,
+    )
+
+    assert calls[0]["cancel_event"] is cancel_event
 
 
 def test_configured_agent_handler_uses_current_turn_approval_callback() -> None:

@@ -194,6 +194,8 @@ async def test_slash_delegate_routes_to_runtime_delegate_task() -> None:
         "instruction": "find release notes",
         "task_id": "",
         "timeout_seconds": 120,
+        "child_artifact": None,
+        "workspace_root": "",
     }
     assert "Delegation:" in body
     assert "status    success" in body
@@ -239,6 +241,8 @@ async def test_slash_delegate_result_alias_uses_task_id() -> None:
             "instruction": "",
             "task_id": "task-42",
             "timeout_seconds": 120,
+            "child_artifact": None,
+            "workspace_root": "",
         }
     ]
     assert "task      task-42" in body
@@ -295,11 +299,52 @@ async def test_slash_delegate_lifecycle_actions_use_task_id(
             "instruction": "",
             "task_id": "task-42",
             "timeout_seconds": 120,
+            "child_artifact": None,
+            "workspace_root": "",
         }
     ]
     assert f"status    {expected_status}" in body
     assert "task      task-42" in body
     assert f"{action} result" in body
+
+
+@pytest.mark.asyncio
+async def test_slash_delegate_reject_parses_child_artifact_json() -> None:
+    class _DelegateRuntime(_DemoFocusRuntime):
+        def __init__(self, *, working_dir: str) -> None:
+            super().__init__(working_dir=working_dir)
+            self.delegate_calls: list[dict[str, object]] = []
+
+        def delegate_task(self, **kwargs: object) -> dict[str, object]:
+            self.delegate_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "mode": "reject",
+                "status": "rejected",
+            }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DelegateRuntime(working_dir=tmp)
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command(
+                "/delegate reject "
+                '\'{"subtask_id": "child-1", "artifact": '
+                '{"status": "stored"}}\''
+            )
+            await pilot.pause()
+
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+    assert runtime.delegate_calls[0]["child_artifact"] == {
+        "subtask_id": "child-1",
+        "artifact": {"status": "stored"},
+    }
+    assert "status    rejected" in body
 
 
 @pytest.mark.asyncio

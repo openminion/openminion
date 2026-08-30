@@ -381,15 +381,13 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
 
     def _resolve_telemetry_db_path(self, config: OpenMinionConfig) -> str | None:
         explicit_path = str(config.runtime.telemetry_db_path).strip()
+        if explicit_path and Path(explicit_path).is_absolute():
+            return explicit_path
         if explicit_path:
-            if Path(explicit_path).is_absolute():
-                return explicit_path
             return str(self._home_paths.home_root / explicit_path)
         return str(
             resolve_module_storage_path(
-                self._home_paths.home_root,
-                "telemetry",
-                filename="telemetry.db",
+                self._home_paths.home_root, "telemetry", filename="telemetry.db"
             )
         )
 
@@ -399,11 +397,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         try:
             return self._context.config_manager.get(name)
         except Exception as exc:  # noqa: BLE001
-            self._logger.warning(
-                "ConfigManager lookup failed for %s; falling back: %s",
-                name,
-                exc,
-            )
+            self._logger.warning("ConfigManager lookup failed for %s: %s", name, exc)
             return None
 
     def bind_runtime_handle(self, runtime_handle: Any) -> None:
@@ -420,14 +414,16 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             "mode": self.mode,
         }
 
+    @property
+    def artifactctl(self) -> Any | None:
+        return getattr(self._get_runner().tool_api, "artifactctl", None)
+
     def _resolve_llm_wrapper(self, llm_api: Any) -> Any | None:
         direct = getattr(llm_api, "llm", None)
         if direct is not None:
             return direct
         client = getattr(llm_api, "client", None)
-        if client is not None and hasattr(client, "_set_context"):
-            return client
-        return None
+        return client if hasattr(client, "_set_context") else None
 
     def _runtime_env_value(self, key: str) -> str:
         runtime_env = getattr(getattr(self, "_config", object()), "runtime", object())

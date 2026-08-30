@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable
 
 from openminion.base.config import RunProfileOverrides
 from openminion.modules.telemetry.usage import RunStats
+from openminion.modules.runtime.sync import await_with_cancel
 from openminion.services.runtime.turn_router import TurnRouter
 
 from .gateway_call import _run_coro_sync
@@ -28,13 +29,12 @@ def execute_runtime_turn(
     run_gateway_once: RunGatewayOnce,
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
+    cancel_event: Any | None = None,
 ) -> RuntimeTurnResult:
     context = _build_turn_context(
         message=request.message,
         forced_tools=list(request.forced_tools),
-        inbound_metadata=dict(request.inbound_metadata)
-        if request.inbound_metadata
-        else None,
+        inbound_metadata=dict(request.inbound_metadata or {}) or None,
     )
     routed_agents, routing_mode = _routed_agents(runtime=runtime, request=request)
     if len(routed_agents) == 1:
@@ -54,6 +54,7 @@ def execute_runtime_turn(
             run_gateway_once=run_gateway_once,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            cancel_event=cancel_event,
         )
     else:
         result = _execute_routed_turns(
@@ -65,6 +66,7 @@ def execute_runtime_turn(
             run_gateway_once=run_gateway_once,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            cancel_event=cancel_event,
         )
     metadata = dict(getattr(result, "metadata", {}) or {})
     response_agent_id = (
@@ -84,16 +86,14 @@ def execute_runtime_turn(
 def _routed_agents(
     *, runtime: Any, request: RuntimeTurnRequest
 ) -> tuple[tuple[str, ...], str]:
-    session = None
-    participants = []
+    session, participants = None, []
     if request.session_id:
         try:
             session = runtime.sessions.get_session(request.session_id)
             if session is not None:
                 participants = runtime.sessions.list_participants(request.session_id)
         except Exception:
-            session = None
-            participants = []
+            session, participants = None, []
     decision = TurnRouter().route(
         session=session,
         message=request.message,
@@ -114,12 +114,11 @@ def _execute_routed_turns(
     run_gateway_once: RunGatewayOnce,
     progress_callback: Callable[[object], None] | None,
     approval_callback: Any | None,
+    cancel_event: Any | None,
 ) -> Any:
     routed_results = []
     for index, agent_name in enumerate(routed_agents):
-        inbound_metadata = (
-            dict(request.inbound_metadata) if request.inbound_metadata else {}
-        )
+        inbound_metadata = dict(request.inbound_metadata or {})
         if index > 0:
             inbound_metadata["room_router_skip_inbound_persist"] = "true"
         routed_idempotency_key = (
@@ -150,6 +149,7 @@ def _execute_routed_turns(
                     run_gateway_once=run_gateway_once,
                     progress_callback=progress_callback,
                     approval_callback=approval_callback,
+                    cancel_event=cancel_event,
                 ),
             )
         )
@@ -257,10 +257,11 @@ def execute_gateway_turn_impl(
     run_gateway_once: RunGatewayOnce,
     progress_callback: Callable[[object], None] | None,
     approval_callback: Any | None = None,
+    cancel_event: Any | None = None,
 ) -> Any:
     try:
         return _run_coro_sync(
-            lambda: asyncio.wait_for(
+            lambda: await_with_cancel(
                 run_gateway_once(
                     gateway=runtime.resolve_gateway(
                         agent_name,
@@ -281,7 +282,8 @@ def execute_gateway_turn_impl(
                     progress_callback=progress_callback,
                     approval_callback=approval_callback,
                 ),
-                timeout=float(timeout_seconds),
+                timeout_s=float(timeout_seconds),
+                cancel_event=cancel_event,
             ),
             timeout=float(timeout_seconds),
         )
