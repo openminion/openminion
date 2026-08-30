@@ -83,6 +83,9 @@ def test_unknown_slash_command_message_suggests_nearest_command() -> None:
 
 
 def test_unknown_slash_command_message_omits_weak_suggestion() -> None:
-    assert unknown_slash_command_message(
-        "/xyzzy", available_commands=("/skills", "/status")
-    ) == "Unknown command: /xyzzy\nType / to view available commands."
+    assert (
+        unknown_slash_command_message(
+            "/xyzzy", available_commands=("/skills", "/status")
+        )
+        == "Unknown command: /xyzzy\nType / to view available commands."
+    )

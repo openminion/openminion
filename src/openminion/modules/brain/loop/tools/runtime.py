@@ -104,9 +104,7 @@ def _exec_run_description(runner: Any | None = None) -> str:
         shell_family = "unknown"
     grants = _agent_command_grants(runner)
     grant_note = (
-        f" Agent-profile executable grants: {', '.join(grants)}."
-        if grants
-        else ""
+        f" Agent-profile executable grants: {', '.join(grants)}." if grants else ""
     )
     return (
         "Run one allowlisted direct command for verification or existing-file "

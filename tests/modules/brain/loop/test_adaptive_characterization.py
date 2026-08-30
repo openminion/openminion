@@ -1152,9 +1152,7 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
 def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> None:
     runner = SimpleNamespace(
         tool_api=SimpleNamespace(
-            agent_profile=SimpleNamespace(
-                command_policy={"allow": ["docker", "open"]}
-            ),
+            agent_profile=SimpleNamespace(command_policy={"allow": ["docker", "open"]}),
             policy=SimpleNamespace(raw={"commands": {"allow": ["docker"]}}),
         )
     )

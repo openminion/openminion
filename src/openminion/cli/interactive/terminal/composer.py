@@ -202,6 +202,7 @@ class TerminalComposer:
         self._on_escape = on_escape
         try:
             from prompt_toolkit.completion import PathCompleter
+
             path = PathCompleter(only_directories=False)
         except ImportError:
             path = None
