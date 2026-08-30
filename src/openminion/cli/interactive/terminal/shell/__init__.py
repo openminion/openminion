@@ -91,11 +91,7 @@ _TYPEAHEAD_PROMPT_GAP_LINES = 1
 
 def _build_terminal_console() -> Console:
     if is_color_enabled():
-        return Console(
-            force_terminal=True,
-            color_system="standard",
-            no_color=False,
-        )
+        return Console(force_terminal=True, color_system="standard", no_color=False)
     console = Console()
     console.no_color = True
     return console
@@ -721,7 +717,6 @@ async def _run_terminal_focus_async(
         working_dir=working_dir,
         animation=animation,
         progress=progress,
-        color=is_color_enabled(),
     )
     if callable(invalidate := getattr(composer, "invalidate", None)):
         status_line.set_refresh_callback(invalidate)

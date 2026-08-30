@@ -21,6 +21,7 @@ from openminion.cli.presentation.animation.models import (
     AnimationResolution,
     AnimationSpec,
 )
+from openminion.cli.presentation.styles import is_color_enabled
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
 
 
@@ -196,7 +197,7 @@ class TerminalComposer:
         working_dir: str | None = None,
         animation: AnimationResolution | None = None,
         progress: str = "full",
-        color: bool = True,
+        color: bool | None = None,
     ) -> None:
         self._on_escape = on_escape
         try:
@@ -220,7 +221,7 @@ class TerminalComposer:
         self._activity_animation = ""
         self._set_animation(animation.spec)
         self._progress = progress
-        self._color = bool(color)
+        self._color = is_color_enabled() if color is None else color
         self._multiline = False
         self._bottom_toolbar = bottom_toolbar
         self._active_status = active_status
@@ -245,7 +246,6 @@ class TerminalComposer:
         kb.add("backspace")(self._delete_before_cursor)
         kb.add("<bracketed-paste>")(self._handle_bracketed_paste)
 
-        # optional Ctrl+L / Ctrl+O bindings.
         if callable(on_ctrl_l):
 
             @kb.add("c-l")
