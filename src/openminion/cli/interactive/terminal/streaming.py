@@ -167,7 +167,9 @@ class TerminalTurnHandle:
         # Focus mode owns live status through the prompt toolbar. Other terminal
         # flows use Rich Live; avoid the old raw-ANSI inline writer because it
         # leaks escape bytes into prompt/PTY buffers.
-        if not self._prompt_safe_mode:
+        if self._prompt_safe_mode:
+            self._write_render(self._console.print)
+        else:
             self._live = Live(
                 self._render(),
                 console=self._console,

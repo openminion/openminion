@@ -86,7 +86,6 @@ _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
-_TYPEAHEAD_PROMPT_GAP_LINES = 1
 
 
 def _build_terminal_console() -> Console:
@@ -356,28 +355,16 @@ class _TerminalFocusLoop:
         self,
         *,
         delay_seconds: float = 0.0,
-        leading_blank_lines: int = 0,
     ) -> None:
         if self.read_task is not None and not self.read_task.done():
             return
         if delay_seconds <= 0:
-            self.read_task = asyncio.create_task(
-                self._read_line_with_prompt_gap(leading_blank_lines)
-            )
+            self.read_task = asyncio.create_task(self.composer.read_line())
             return
-        self.read_task = asyncio.create_task(
-            self._read_line_after_delay(delay_seconds, leading_blank_lines)
-        )
+        self.read_task = asyncio.create_task(self._read_line_after_delay(delay_seconds))
 
-    async def _read_line_after_delay(
-        self, delay_seconds: float, leading_blank_lines: int
-    ) -> str:
+    async def _read_line_after_delay(self, delay_seconds: float) -> str:
         await asyncio.sleep(delay_seconds)
-        return await self._read_line_with_prompt_gap(leading_blank_lines)
-
-    async def _read_line_with_prompt_gap(self, leading_blank_lines: int) -> str:
-        for _ in range(max(0, int(leading_blank_lines))):
-            self.console.print()
         return await self.composer.read_line()
 
     async def cancel_read_task(self) -> None:
@@ -452,10 +439,7 @@ class _TerminalFocusLoop:
         if callable(getattr(self.composer, "set_busy", None)):
             self.composer.set_busy(True)
         self.refresh_status_line(state="responding")
-        self.start_read_task(
-            delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS,
-            leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES,
-        )
+        self.start_read_task(delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS)
 
     async def handle_busy_input(self, text: str) -> None:
         if (
@@ -618,15 +602,11 @@ class _TerminalFocusLoop:
             return None
         text = (text or "").strip()
         if not text:
-            self.start_read_task(
-                leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES
-                if self.active_turn_task is not None
-                else 0
-            )
+            self.start_read_task()
             return None
         if self.active_turn_task is not None:
             await self.handle_busy_input(text)
-            self.start_read_task(leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES)
+            self.start_read_task()
             return None
         return await self.handle_idle_input(text)
 
