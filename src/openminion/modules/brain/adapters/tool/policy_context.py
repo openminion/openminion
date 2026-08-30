@@ -44,7 +44,6 @@ def _normalize_reactions_default_policy(runtime_config: Any | None) -> str:
 
 
 def _apply_reactions_default_policy(
-    *,
     policy: Policy,
     runtime_config: Any | None,
 ) -> None:
@@ -66,6 +65,33 @@ def _apply_reactions_default_policy(
     confirm_cfg = _ensure_mutable_mapping(policy_raw, "confirm")
     required_tools = _ensure_mutable_str_list(confirm_cfg, "required_tools")
     _append_unique_tool_token(required_tools, _REACTIONS_SET_TOOL_NAME)
+
+
+def _apply_agent_command_policy(policy: Policy, agent_profile: Any | None) -> None:
+    command_policy = getattr(agent_profile, "command_policy", {})
+    allowed = [
+        str(item).strip()
+        for item in command_policy.get("allow", ())
+        if str(item).strip()
+    ]
+    allow_host = command_policy.get("allow_host") is True
+    if not allowed and not allow_host:
+        return
+
+    policy_raw = policy.raw
+    commands_cfg = _ensure_mutable_mapping(policy_raw, "commands")
+    command_allowlist = _ensure_mutable_str_list(commands_cfg, "allow")
+    for command in allowed:
+        if command not in command_allowlist:
+            command_allowlist.append(command)
+
+    if allow_host:
+        exec_cfg = _ensure_mutable_mapping(policy_raw, "exec")
+        exec_cfg["host_enabled"] = True
+        host_allowlist = _ensure_mutable_str_list(exec_cfg, "allowlist")
+        for command in allowed:
+            if command not in host_allowlist:
+                host_allowlist.append(command)
 
 
 def _runtime_env_from_policy(policy: Policy | None) -> dict[str, str]:
@@ -120,6 +146,7 @@ def _watch_write_authorization_requested(
 
 __all__ = [
     "_agent_id_from_policy",
+    "_apply_agent_command_policy",
     "_apply_reactions_default_policy",
     "_runtime_background_write_authorization_enabled",
     "_runtime_env_from_policy",

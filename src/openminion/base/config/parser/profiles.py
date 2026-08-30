@@ -31,7 +31,7 @@ def _parse_model_capability_overrides(value: Any) -> dict[str, dict[str, Any]]:
     }
 
 
-def _parse_provider_config_overrides(value: Any) -> dict[str, Any]:
+def _parse_dict(value: Any) -> dict[str, Any]:
     return deepcopy(value) if isinstance(value, dict) else {}
 
 
@@ -70,6 +70,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
                 f"Flatten to 'agents.{agent_id}.*'. "
                 "See docs/reference/config-shape-migration-2026.md."
             )
+        get = agent_config.get
         kwargs: dict[str, Any] = dict(
             name=agent_config.get("name", agent_id),
             role=agent_config.get("role", ""),
@@ -82,9 +83,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
             skill_explicit="skill" in agent_config,
             skill_catalog_explicit="skill_catalog" in agent_config,
             system_prompt=agent_config.get("system_prompt", ""),
-            provider_config_overrides=_parse_provider_config_overrides(
-                agent_config.get("provider_config_overrides")
-            ),
+            provider_config_overrides=_parse_dict(get("provider_config_overrides")),
             model_capability_overrides=_parse_model_capability_overrides(
                 agent_config.get("model_capability_overrides")
             ),
@@ -93,6 +92,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
                 if isinstance(agent_config.get("action_policy"), dict)
                 else None
             ),
+            command_policy=_parse_dict(agent_config.get("command_policy")),
             thinking_policy=coerce_thinking_runtime_policy_config(
                 agent_config.get("thinking_policy"),
                 field_path=f"agents.{agent_id}.thinking_policy",
@@ -132,6 +132,6 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
 
 __all__ = [
     "_parse_agent_profiles",
+    "_parse_trailer_guidance_variant_map",
     "_parse_model_capability_overrides",
-    "_parse_provider_config_overrides",
 ]

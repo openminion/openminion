@@ -78,6 +78,31 @@ def test_resolve_runtime_profile_applies_provider_and_prompt_after_selection() -
     assert profile.system_prompt == "Overridden planner prompt."
 
 
+def test_agent_profile_command_policy_is_explicit_and_round_trips() -> None:
+    config = OpenMinionConfig.from_dict(
+        {
+            "agents": {
+                "docker-agent": {
+                    "provider": "echo",
+                    "command_policy": {"allow": ["docker"], "allow_host": True},
+                },
+                "default-agent": {"provider": "echo"},
+            },
+            "default_agent": "default-agent",
+        }
+    )
+
+    enabled = config.agents["docker-agent"]
+    disabled = config.agents["default-agent"]
+    assert enabled.command_policy == {"allow": ["docker"], "allow_host": True}
+    assert enabled.to_dict()["command_policy"] == {
+        "allow": ["docker"],
+        "allow_host": True,
+    }
+    assert disabled.command_policy == {}
+    assert "command_policy" not in disabled.to_dict()
+
+
 def _build_effective_profile(config, agent_id):
     effective = build_runtime_config(
         config,

@@ -126,6 +126,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "ask": TOOL_EXEC_ASK_ON_MISS,
         "askFallback": TOOL_EXEC_SECURITY_DENY,
         "allowlist": [],
+        "host_enabled": False,
     },
     "dangerous": {
         "enabled": True,
