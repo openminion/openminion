@@ -52,6 +52,7 @@ from .command_metadata import (
 )
 from .policy_context import (
     _agent_id_from_policy,
+    _apply_agent_command_policy,
     _apply_reactions_default_policy,
     _runtime_background_write_authorization_enabled,
     _runtime_env_from_policy,
@@ -196,10 +197,8 @@ class ToolAdapter:
                 "allow_background_write_authorization",
                 str(self.allow_background_write_authorization).lower(),
             )
-        _apply_reactions_default_policy(
-            policy=self.policy,
-            runtime_config=runtime_config,
-        )
+        _apply_reactions_default_policy(self.policy, runtime_config)
+        _apply_agent_command_policy(self.policy, agent_profile)
         registry_prepopulated = runtime_registry is not None
         if runtime_registry is not None:
             self.registry = runtime_registry
@@ -843,10 +842,12 @@ class ToolAdapter:
         if status != BRAIN_ACTION_STATUS_SUCCESS:
             raw_error = data.get("error") if isinstance(data, Mapping) else None
             if isinstance(raw_error, Mapping):
-                error = {
+                error: dict[str, Any] = {
                     "code": str(raw_error.get("code", "") or "EXEC_ERROR"),
                     "message": str(raw_error.get("message", "") or summary).strip(),
                 }
+                if isinstance(raw_error.get("details"), Mapping):
+                    error["details"] = dict(raw_error["details"])
             elif raw_error:
                 error = {"code": "EXEC_ERROR", "message": str(raw_error).strip()}
             else:

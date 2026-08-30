@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 
 from rich.console import Console
+from rich.text import Text
 
 from openminion.cli.interactive.terminal.streaming import (
     _format_elapsed_seconds,
@@ -52,6 +53,20 @@ def test_render_in_progress_renders_yellow_in_color_mode() -> None:
     out = _render(_render_in_progress_tool_block("Bash", {"cmd": "ls"}), color=True)
     assert "\x1b[" in out
     assert "●" in out
+
+
+def test_render_in_progress_colors_the_full_status_heading(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.presentation.markers.is_color_enabled", lambda: True
+    )
+    block = _render_in_progress_tool_block("Bash", {"cmd": "ls"})
+    title = block.renderables[0]
+
+    assert isinstance(title, Text)
+    assert any(
+        span.start == 2 and span.end == len(title.plain) and span.style == "bold yellow"
+        for span in title.spans
+    )
 
 
 def test_render_in_progress_contains_verb_form_title() -> None:

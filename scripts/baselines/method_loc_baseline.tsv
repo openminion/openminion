@@ -102,7 +102,7 @@ src/openminion/services/gateway/turn/__init__.py	GatewayTurnRunner.run	201	curre
 src/openminion/services/health/observability.py	_build_brain_llm_mode_observability_check	167	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/service.py	collect_health_snapshot	199	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/runtime/bootstrap.py	build_brain_runner_bundle	302	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/runtime/manager.py	AgentRuntimeManager._worker_loop	158	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/services/runtime/manager.py	AgentRuntimeManager._worker_loop	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/supervision/service.py	SupervisionService.evaluate	119	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/browser/providers/playwright/config.py	provider_config_from_mapping	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/exec/command_parser.py	_parse_command_posix	123	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

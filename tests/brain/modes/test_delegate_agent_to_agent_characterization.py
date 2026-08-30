@@ -333,4 +333,4 @@ def test_runtime_backed_registration_serves_configured_delegate_target(
     assert "focus on active branch changes" in payload["message"]
     assert "keep it brief" in payload["message"]
     assert "mention tests" in payload["message"]
-    assert payload["session_id"] == "s-configured-01::delegate::planner-safe"
+    assert payload["session_id"].startswith("s-configured-01::delegate::planner-safe::")

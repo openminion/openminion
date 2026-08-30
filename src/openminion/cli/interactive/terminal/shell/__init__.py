@@ -68,7 +68,7 @@ from .renderers import (
     _render_status_block as _render_status_block,
     _render_tools_list as _render_tools_list,
 )
-from openminion.cli.presentation.styles import StyleToken
+from openminion.cli.presentation.styles import StyleToken, is_color_enabled
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import (
     slash_command_runs_while_busy,
@@ -86,7 +86,14 @@ _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
-_TYPEAHEAD_PROMPT_GAP_LINES = 1
+
+
+def _build_terminal_console() -> Console:
+    if is_color_enabled():
+        return Console(force_terminal=True, color_system="standard", no_color=False)
+    console = Console()
+    console.no_color = True
+    return console
 
 
 @dataclass(frozen=True)
@@ -287,8 +294,9 @@ async def _handle_slash_input(
             ),
         )
         return False
-    return await _handle_slash(
+    return await handle_prompt_safe_output_slash(
         text,
+        slash_handler=_handle_slash,
         runtime=runtime,
         console=console,
         transcript=transcript,
@@ -347,28 +355,16 @@ class _TerminalFocusLoop:
         self,
         *,
         delay_seconds: float = 0.0,
-        leading_blank_lines: int = 0,
     ) -> None:
         if self.read_task is not None and not self.read_task.done():
             return
         if delay_seconds <= 0:
-            self.read_task = asyncio.create_task(
-                self._read_line_with_prompt_gap(leading_blank_lines)
-            )
+            self.read_task = asyncio.create_task(self.composer.read_line())
             return
-        self.read_task = asyncio.create_task(
-            self._read_line_after_delay(delay_seconds, leading_blank_lines)
-        )
+        self.read_task = asyncio.create_task(self._read_line_after_delay(delay_seconds))
 
-    async def _read_line_after_delay(
-        self, delay_seconds: float, leading_blank_lines: int
-    ) -> str:
+    async def _read_line_after_delay(self, delay_seconds: float) -> str:
         await asyncio.sleep(delay_seconds)
-        return await self._read_line_with_prompt_gap(leading_blank_lines)
-
-    async def _read_line_with_prompt_gap(self, leading_blank_lines: int) -> str:
-        for _ in range(max(0, int(leading_blank_lines))):
-            self.console.print()
         return await self.composer.read_line()
 
     async def cancel_read_task(self) -> None:
@@ -443,10 +439,7 @@ class _TerminalFocusLoop:
         if callable(getattr(self.composer, "set_busy", None)):
             self.composer.set_busy(True)
         self.refresh_status_line(state="responding")
-        self.start_read_task(
-            delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS,
-            leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES,
-        )
+        self.start_read_task(delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS)
 
     async def handle_busy_input(self, text: str) -> None:
         if (
@@ -609,15 +602,11 @@ class _TerminalFocusLoop:
             return None
         text = (text or "").strip()
         if not text:
-            self.start_read_task(
-                leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES
-                if self.active_turn_task is not None
-                else 0
-            )
+            self.start_read_task()
             return None
         if self.active_turn_task is not None:
             await self.handle_busy_input(text)
-            self.start_read_task(leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES)
+            self.start_read_task()
             return None
         return await self.handle_idle_input(text)
 
@@ -659,7 +648,7 @@ async def _run_terminal_focus_async(
     animation: AnimationResolution | None = None,
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
-    console = Console()
+    console = _build_terminal_console()
     transcript = TerminalTranscript(
         console,
         plain_spinner=plain_spinner,

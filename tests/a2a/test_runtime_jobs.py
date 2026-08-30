@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -103,6 +104,54 @@ def test_cancel_updates_session_scoped_idempotency_record(root: Path) -> None:
             ("job-session-cancel",),
         ).fetchall()
     assert rows == [("job.start:worker:job.run:parent-session", "CANCELED")]
+
+
+def test_cancel_signals_registered_job_handler(root: Path) -> None:
+    runtime = A2ARuntime(
+        state_store=SQLiteStateStore(root / "state-job-handler-cancel.db"),
+        audit_store=MemoryAuditStore(),
+        recovery_stale_heartbeat_sec=60,
+    )
+    started = threading.Event()
+    stopped = threading.Event()
+    side_effect = threading.Event()
+
+    def job_handler(envelope: Envelope, cancel_event: threading.Event) -> dict:
+        del envelope
+        started.set()
+        if cancel_event.wait(2.0):
+            stopped.set()
+            return {"cancelled": True}
+        side_effect.set()
+        return {"cancelled": False}
+
+    runtime.register_agent(
+        "worker",
+        ["job."],
+        lambda envelope: {"sync": envelope.method},
+        job_handler=job_handler,
+    )
+    request = Envelope.new(
+        from_agent="parent",
+        to_agent="worker",
+        to_capability=None,
+        type="job.start",
+        method="job.run",
+        params={},
+        idempotency_key="job-handler-cancel",
+        timeout_ms=5000,
+    )
+    try:
+        task_id = runtime.job_start(request)
+        assert started.wait(1.0)
+
+        canceled = runtime.job_cancel(task_id)
+
+        assert canceled.state == "CANCELED"
+        assert stopped.wait(1.0)
+        assert not side_effect.is_set()
+    finally:
+        runtime.close(wait=True)
 
 
 def test_startup_recovery_marks_stale_jobs_failed(root: Path) -> None:

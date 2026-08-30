@@ -35,6 +35,7 @@ RUNTIME_WEATHER_CURRENT = "runtime.weather.current"
 RUNTIME_TIME_NOW = "runtime.time.now"
 RUNTIME_LOCATION = "runtime.location"
 RUNTIME_HOST_METRICS = "runtime.host.metrics"
+RUNTIME_HOST_INVENTORY_REPORT = "runtime.host.inventory_report"
 RUNTIME_IP_PUBLIC = "runtime.ip.public"
 RUNTIME_IP_LOCAL = "runtime.ip.local"
 RUNTIME_BROWSER = "runtime.browser"
@@ -178,6 +179,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_TIME_NOW,
     RUNTIME_LOCATION,
     RUNTIME_HOST_METRICS,
+    RUNTIME_HOST_INVENTORY_REPORT,
     RUNTIME_IP_PUBLIC,
     RUNTIME_IP_LOCAL,
     RUNTIME_BROWSER,

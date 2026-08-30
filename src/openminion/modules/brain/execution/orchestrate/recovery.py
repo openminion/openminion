@@ -1,6 +1,7 @@
 """One bounded, model-authored recovery after an orchestration child fails."""
 
 from collections.abc import Callable
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -13,6 +14,10 @@ from openminion.modules.brain.execution.child_tasks import (
     SubtaskSpec,
 )
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
+from openminion.modules.brain.execution.targets.delegated.strategies import (
+    RegistryDiscoveryProvider,
+    list_available_agent_ids,
+)
 from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.schemas import BudgetCounters
 
@@ -36,26 +41,45 @@ class ChildFailureDecision(BaseModel):
 def _failure_decision(
     ctx: ExecutionContext,
     failed: ChildTaskResult,
+    failed_subtask: SubtaskSpec,
 ) -> ChildFailureDecision:
     runner = runner_from_context(ctx)
     llm_api = getattr(runner, "llm_api", None) if runner is not None else None
     if llm_api is None or not callable(getattr(llm_api, "call_structured", None)):
         raise RuntimeError("Orchestration child recovery requires an LLM service")
     profiles = getattr(getattr(runner, "profile", None), "llm_profiles", None)
+    available_agent_ids = list_available_agent_ids(
+        RegistryDiscoveryProvider().get_registry(ctx=ctx)
+    )
+    recovery_facts = {
+        "failed_child": failed.result.model_dump(mode="python", exclude_none=True),
+        "failed_subtask": failed_subtask.model_dump(mode="python", exclude_none=True),
+        "available_agent_ids": available_agent_ids,
+        "allowed_dispositions": [
+            "continue",
+            "retry_once",
+            "reassign_exact",
+            "stop",
+        ],
+    }
     raw = llm_api.call_structured(
         model=str(getattr(profiles, "act_model", "") or "act-default"),
         purpose="act",
         context={
-            "instruction": (
-                "Choose exactly one disposition for the failed child. Use "
-                "reassign_exact only with a known exact agent ID."
-            ),
-            "failed_child": failed.result.model_dump(mode="python", exclude_none=True),
-            "allowed_dispositions": [
-                "continue",
-                "retry_once",
-                "reassign_exact",
-                "stop",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Choose exactly one disposition for the failed child. If "
+                        "the failed subtask names a replacement target that appears "
+                        "in available_agent_ids, choose reassign_exact with that "
+                        "exact ID. Otherwise do not invent an agent ID."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(recovery_facts, sort_keys=True),
+                },
             ],
         },
         schema=ChildFailureDecision,
@@ -81,7 +105,10 @@ def recover_child_failure(
         return child_results, None
 
     failed = child_results[failed_index]
-    decision = _failure_decision(ctx, failed)
+    failed_subtask = next(
+        item for item in subtasks if item.subtask_id == failed.subtask_id
+    )
+    decision = _failure_decision(ctx, failed, failed_subtask)
     fact: dict[str, Any] = {
         "disposition": decision.disposition,
         "failed_subtask_id": failed.subtask_id,
@@ -92,9 +119,7 @@ def recover_child_failure(
 
     recovered = list(child_results)
     if decision.disposition in {"retry_once", "reassign_exact"}:
-        original = next(
-            item for item in subtasks if item.subtask_id == failed.subtask_id
-        )
+        original = failed_subtask
         retry_subtask = original
         if decision.disposition == "reassign_exact":
             retry_subtask = original.model_copy(

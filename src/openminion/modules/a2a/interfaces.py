@@ -47,6 +47,7 @@ class A2ARuntimeInterface(Protocol):
         handler: Any,
         *,
         tags: list[str] | None = None,
+        job_handler: Any | None = None,
     ) -> None: ...
 
     def list_agents(self) -> list[dict[str, Any]]: ...

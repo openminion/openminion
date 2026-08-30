@@ -7,7 +7,13 @@ from openminion.cli.status.public_messages import (
     STATUS_MESSAGES_EN,
     format_public_status_text,
 )
-from openminion.modules.brain.diagnostics.status import PhaseStatus, StatusKey
+from openminion.modules.brain.diagnostics.status import (
+    PHASE_STATUS_SCHEMA_VERSION,
+    PhaseStatus,
+    StatusKey,
+    coerce_phase_status,
+    phase_status_client_facts,
+)
 
 
 def test_primary_catalog_covers_every_status_key() -> None:
@@ -103,3 +109,48 @@ def test_detail_catalog_is_the_bounded_v1_set() -> None:
         "thinking",
         "composing_answer",
     }
+
+
+def test_client_facts_are_language_neutral_and_versioned() -> None:
+    facts = phase_status_client_facts(
+        PhaseStatus(
+            trace_id="client-facts",
+            status_key="executing",
+            label="Executing step 2 of 4...",
+            mode_label="Coding mode",
+            detail_text="private diagnostic text",
+            detail_code="plan_checkpoint",
+            step_index=2,
+            step_total=4,
+            tool_name="exec.run",
+        )
+    )
+
+    assert facts["schema_version"] == PHASE_STATUS_SCHEMA_VERSION
+    assert facts["status_key"] == "executing"
+    assert facts["detail_code"] == "plan_checkpoint"
+    assert facts["step_index"] == 2
+    assert facts["tool_name"] == "exec.run"
+    assert "label" not in facts
+    assert "mode_label" not in facts
+    assert "detail_text" not in facts
+
+
+def test_unknown_status_key_preserves_structured_facts() -> None:
+    status = coerce_phase_status(
+        {
+            "trace_id": "future-status",
+            "status_key": "future_state",
+            "label": "Future state",
+            "step_index": 2,
+            "step_total": 4,
+            "tool_name": "exec.run",
+            "detail_code": "plan_checkpoint",
+        }
+    )
+
+    assert status.status_key == "working"
+    assert status.step_index == 2
+    assert status.step_total == 4
+    assert status.tool_name == "exec.run"
+    assert status.detail_code == "plan_checkpoint"

@@ -13,6 +13,7 @@ from openminion.api.core.turn_execution import (
 from openminion.api.core.deps import resolve_runtime_manager
 from openminion.api.queries.sessions import append_session_event
 from openminion.api.turns import TurnRequestError, TurnTimeoutError, run_turn
+from .turn_status import handle_turn_status
 from .turn_inputs import handle_request as handle_turn_inputs_request
 
 from .contracts import (
@@ -26,6 +27,7 @@ from .contracts import (
 
 
 _CANCEL_RE = re.compile(r"/v1/turn/([^/]+)/cancel")
+_STATUS_RE = re.compile(r"/v1/turn/([^/]+)/status")
 
 
 def _handle_cancel_turn(
@@ -145,6 +147,16 @@ def handle_request(
     if method_name == "POST" and path == "/v1/turn/stream":
         return _handle_v1_turn(ctx=ctx, path=path, body=body, include_chunks=True)
 
+    if (
+        method_name == "GET"
+        and (status_route := _STATUS_RE.fullmatch(path)) is not None
+    ):
+        return handle_turn_status(
+            ctx,
+            path=path,
+            trace_id=unquote(status_route.group(1)),
+        )
+
     turn_input_result = handle_turn_inputs_request(
         ctx,
         method_name=method_name,
@@ -194,6 +206,24 @@ def _handle_v1_turn(
             include_chunks=include_chunks,
             chunk_timeout_s=0.1,
         )
+        turn = result_payload.get("turn")
+        errors = turn.get("errors") if isinstance(turn, dict) else None
+        if isinstance(errors, list) and errors:
+            raw_error = errors[0]
+            first_error = dict(raw_error) if isinstance(raw_error, dict) else {}
+            error_result = error_route_result(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                error=first_error,
+                retryable=bool(first_error.get("retryable", False)),
+                session_id=submission.session_id,
+                run_id=submission.run_id,
+            )
+            return RouteResult(
+                status=error_result.status,
+                payload={**error_result.payload, **result_payload},
+                session_id=submission.session_id,
+                run_id=submission.run_id,
+            )
         payload = {"ok": True, **result_payload}
         return RouteResult(
             status=HTTPStatus.OK,

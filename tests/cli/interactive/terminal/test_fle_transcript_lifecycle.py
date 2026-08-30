@@ -529,7 +529,7 @@ def test_prompt_safe_mode_keeps_inflight_status_out_of_prompt_output() -> None:
     handle = t.begin_turn(role="assistant")
     handle.set_status_label("Working...")
 
-    assert rendered == []
+    assert rendered == ["\n"]
 
 
 def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:

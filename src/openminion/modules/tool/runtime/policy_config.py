@@ -119,6 +119,9 @@ class PolicyConfigMixin:
             return []
         return [str(item) for item in raw if str(item).strip()]
 
+    def exec_host_enabled(self) -> bool:
+        return bool(self.exec_config().get("host_enabled", False))
+
     def dangerous_enabled(self) -> bool:
         return bool(self.dangerous_config().get("enabled", True))
 

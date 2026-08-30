@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,10 @@ from openminion.modules.task import (
     save_project_run_checkpoint,
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
+from openminion.modules.task.project.reports import (
+    build_project_report_from_task,
+    render_project_report,
+)
 from openminion.base.errors import ErrorInfo
 from openminion.modules.task.autonomy import now_ms
 from openminion.services.runtime.project_worker import (
@@ -149,6 +154,11 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert checkpoint.payload["gateway_run_id"].endswith(":cycle:2")
     assert checkpoint.expected_checkpoint_id.endswith(":cycle:1")
     assert manager.get_task("task-1").state == TaskLifecycleState.DONE
+    report = build_project_report_from_task(manager, task_id="task-1")
+    assert report.cycle_summaries == ("worked", "worked")
+    assert "cycle_summaries:\n  1: worked\n  2: worked" in render_project_report(report)
+    proof = json.loads(Path(result.run.proof_packet_ref or "").read_text())
+    assert proof["cycle_summaries"] == ["worked", "worked"]
 
 
 def test_project_worker_blocks_after_one_failed_replan(tmp_path) -> None:

@@ -31,9 +31,24 @@ from openminion.cli.presentation.animation import (
 from openminion.cli.presentation.contracts import Composer
 
 
+@pytest.fixture(autouse=True)
+def _enable_composer_color() -> None:
+    from openminion.cli.presentation.styles import set_color_mode
+
+    set_color_mode("always")
+    yield
+    set_color_mode(None)
+
+
 def test_composer_satisfies_protocol() -> None:
     c = TerminalComposer()
     assert isinstance(c, Composer)
+
+
+def test_composer_can_disable_prompt_color() -> None:
+    composer = TerminalComposer(color=False)
+
+    assert composer._formatted_prompt() == [("", "❯ ")]
 
 
 def test_set_resumed_flips_prompt_prefix() -> None:

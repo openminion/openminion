@@ -114,6 +114,33 @@ def _is_available_state(state: str) -> bool:
     return normalized in {"available", "healthy", "online", "ready", "unknown"}
 
 
+def list_available_agent_ids(registry: Any) -> list[str]:
+    if isinstance(registry, dict):
+        agent_ids = {_normalized_text(agent_id) for agent_id in registry}
+    else:
+        list_agents = getattr(registry, "list_agents", None)
+        candidates = (
+            list(list_agents()) if callable(list_agents) else list(registry or [])
+        )
+        agent_ids = {
+            _normalized_text(
+                getattr(item, "agent_id", None)
+                or getattr(item, "name", None)
+                or (item.get("agent_id") if isinstance(item, dict) else None)
+                or (item.get("name") if isinstance(item, dict) else None)
+            )
+            for item in candidates
+        }
+    return sorted(
+        agent_id
+        for agent_id in agent_ids
+        if agent_id
+        and _is_available_state(
+            _describe_registry_state(registry, agent_id=agent_id)[1]
+        )
+    )
+
+
 def _normalized_error_details(raw: Any) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
@@ -747,6 +774,7 @@ __all__ = [
     "FailFastPolicy",
     "FailOnClarificationPolicy",
     "HashKeyGenerator",
+    "list_available_agent_ids",
     "PassThroughSynthesizer",
     "PollingResumeStrategy",
     "RegistryDiscoveryProvider",

@@ -128,6 +128,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         request_id: str | None = None,
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Any | None = None,
+        cancel_event: Any | None = None,
     ) -> dict[str, object]:
         from openminion.services.runtime.ingress import run_turn_payload
 
@@ -137,6 +138,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
             request_id=request_id,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            cancel_event=cancel_event,
         )
 
     def submit_turn(self, *, payload: dict[str, object]) -> Any:

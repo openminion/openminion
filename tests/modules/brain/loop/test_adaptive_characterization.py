@@ -1149,6 +1149,24 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
     assert [spec.name for spec in dynamic_specs] == ["mcp.fixture.echo_text"]
 
 
+def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> None:
+    runner = SimpleNamespace(
+        tool_api=SimpleNamespace(
+            agent_profile=SimpleNamespace(command_policy={"allow": ["docker", "open"]}),
+            policy=SimpleNamespace(raw={"commands": {"allow": ["docker"]}}),
+        )
+    )
+
+    specs = adaptive_modes.build_runtime_tool_specs(
+        runner,
+        allowed_tools=frozenset({"exec.run"}),
+    )
+
+    assert len(specs) == 1
+    assert "Agent-profile executable grants: docker." in specs[0].description
+    assert "open" not in specs[0].description
+
+
 @pytest.mark.parametrize(
     ("reason", "expected_status"),
     [

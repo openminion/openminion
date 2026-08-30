@@ -215,6 +215,7 @@ def test_readonly_blocked_tools_are_owned_by_tool_specs() -> None:
         "git.checkout",
         "git.reset",
         "git.stash",
+        "host.inventory_report",
         "memory.write",
         "memory.forget",
         "task.schedule",

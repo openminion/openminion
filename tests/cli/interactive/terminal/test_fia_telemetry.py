@@ -167,6 +167,6 @@ def test_terminal_telemetry_usage_and_missing_store_do_not_fall_through(
     assert set(tmp_path.iterdir()) == before
 
 
-def test_terminal_debug_remains_unavailable(tmp_path: Path) -> None:
+def test_terminal_debug_is_not_available(tmp_path: Path) -> None:
     output = _run_slash("/debug telemetry", _Runtime(tmp_path), tmp_path)
-    assert "not yet implemented" in output
+    assert output == "Unknown command: /debug\nType / to view available commands.\n"

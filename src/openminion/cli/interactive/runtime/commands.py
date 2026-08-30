@@ -165,6 +165,8 @@ class RuntimeCommandMixin:
             instruction=request.instruction,
             task_id=request.task_id,
             timeout_seconds=request.timeout_seconds,
+            child_artifact=request.child_artifact,
+            workspace_root=request.workspace_root,
             approval_callback=getattr(self, "_approval_callback", None),
         )
         self._push_runtime_message(render_agent_delegate_result(dict(result or {})))

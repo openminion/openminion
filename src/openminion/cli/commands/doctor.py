@@ -887,12 +887,10 @@ def _run_requested_connection_check(
 
 def _run_provider_connection_check(app: APIRuntime, message: str) -> DoctorCheck:
     started = perf_counter()
-    identity = app.config.providers.openai.provider_identity or {}
-    portal = identity.get("service_vendor") == "cortensor"
     try:
         response = app.llm.client.complete(
             [{"role": "user", "content": message}],
-            max_output_tokens=128 if portal else 16,
+            max_output_tokens=128,
             temperature=0,
         )
         if not response.ok:

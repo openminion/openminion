@@ -799,6 +799,37 @@ def test_unsandboxed_exec_denied_by_default_uses_typed_error(tmp_path):
     assert "Unsandboxed execution is disabled" in result["summary"]
 
 
+def test_profile_policy_can_enable_host_exec_without_process_flag(tmp_path):
+    ctx = _ctx(tmp_path)
+    ctx.policy.raw["exec"] = {
+        "host_enabled": True,
+        "allowlist": ["echo"],
+    }
+
+    result = _h_exec_run(
+        {"command": "echo hi", "host": "gateway", "security": "full", "ask": "off"},
+        ctx,
+    )
+
+    assert result["status"] == "ok"
+    assert result["exit_code"] == 0
+
+
+def test_host_allowlist_accepts_profile_policy_binary(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)
+    ctx.policy.raw["exec"] = {"allowlist": ["custom-tool"]}
+    monkeypatch.setattr(
+        "openminion.tools.exec.policy.shutil.which",
+        lambda _command: "/usr/local/bin/custom-tool",
+    )
+
+    allowed, message, details = _validate_host_allowlist("custom-tool", ctx)
+
+    assert allowed is True
+    assert message == ""
+    assert details["checked"][0]["exec"] == "custom-tool"
+
+
 def test_host_security_allowlist(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC", "1")
     monkeypatch.setenv("OPENMINION_TOOL_EXEC_SAFE_BINS", "echo,sleep")

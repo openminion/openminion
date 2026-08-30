@@ -501,12 +501,16 @@ class TerminalTranscript:
     def push_activity_event(self, event: Any) -> None:
         from openminion.cli.status.activity_ledger import (
             KIND_APPROVAL,
+            KIND_BACKGROUND,
             KIND_BUDGET,
             KIND_ERROR,
+            KIND_PLAN,
             KIND_SEARCH,
             KIND_TOOL,
+            STATE_BLOCKED,
             STATE_COMPLETED,
             STATE_DENIED,
+            STATE_FAILED,
             format_activity_line,
         )
 
@@ -518,10 +522,10 @@ class TerminalTranscript:
         line = format_activity_line(event)
         if not line:
             return
-        if kind == KIND_ERROR:
+        state = getattr(event, "state", "")
+        if kind == KIND_ERROR or state == STATE_FAILED:
             style = token_rich_style(StyleToken.ERROR)
         elif kind == KIND_APPROVAL:
-            state = getattr(event, "state", "")
             if state == STATE_DENIED:
                 style = token_rich_style(StyleToken.ERROR)
             elif state == STATE_COMPLETED:
@@ -530,6 +534,12 @@ class TerminalTranscript:
                 style = token_rich_style(StyleToken.WARNING)
         elif kind == KIND_BUDGET:
             style = token_rich_style(StyleToken.MUTED)
+        elif state == STATE_BLOCKED:
+            style = token_rich_style(StyleToken.WARNING)
+        elif state == STATE_COMPLETED:
+            style = token_rich_style(StyleToken.SUCCESS)
+        elif kind in {KIND_PLAN, KIND_BACKGROUND}:
+            style = token_rich_style(StyleToken.INFO)
         else:
             style = token_rich_style(StyleToken.SYSTEM)
         renderable = Text(line, style=style or "")

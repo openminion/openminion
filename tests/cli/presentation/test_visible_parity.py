@@ -155,6 +155,15 @@ def test_render_skills_report_uses_runtime_rows() -> None:
     assert "reviewer" in body
     assert "config" in body
     assert "120 tokens" in body
+    assert "Use /skills <skill_id> to view details." in body
+
+
+def test_render_skills_report_passes_exact_skill_id_to_runtime() -> None:
+    class _SkillRuntime:
+        def skills_report(self, skill_id: str = "") -> str:
+            return f"detail:{skill_id}"
+
+    assert render_skills_report(_SkillRuntime(), "demo-skill") == "detail:demo-skill"
 
 
 def test_render_tasks_report_includes_operator_state_and_resume_action(

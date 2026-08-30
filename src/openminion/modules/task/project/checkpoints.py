@@ -203,6 +203,22 @@ def load_latest_project_checkpoint(
     return ProjectCheckpoint.model_validate(state)
 
 
+def project_cycle_summaries(
+    task_manager: TaskManager,
+    *,
+    task_id: str,
+) -> tuple[str, ...]:
+    summaries: list[str] = []
+    for checkpoint_id in task_manager.list_checkpoints(task_id):
+        state = task_manager.get_checkpoint(task_id, checkpoint_id)
+        if not state or state.get("kind") != "project_run":
+            continue
+        summary = ProjectCheckpoint.model_validate(state).payload.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            summaries.append(summary.strip())
+    return tuple(summaries)
+
+
 def resume_project_run_from_latest_checkpoint(
     task_manager: TaskManager,
     *,
@@ -291,6 +307,7 @@ __all__ = [
     "find_open_project_worker",
     "link_project_run_to_task",
     "load_latest_project_checkpoint",
+    "project_cycle_summaries",
     "record_project_cycle",
     "replay_project_cycles",
     "resume_project_run_from_latest_checkpoint",

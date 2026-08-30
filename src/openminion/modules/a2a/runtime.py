@@ -52,7 +52,7 @@ from openminion.modules.a2a.models import (
     new_uuid,
 )
 from openminion.modules.a2a.policy import PolicyEngine
-from openminion.modules.a2a.registry import AgentHandler, AgentRegistry
+from openminion.modules.a2a.registry import AgentHandler, AgentRegistry, JobHandler
 from openminion.modules.a2a.storage.base import AuditStore, StateStore
 from openminion.modules.a2a.interfaces import A2A_INTERFACE_VERSION
 
@@ -95,11 +95,12 @@ class A2ARuntime:
         handler: AgentHandler,
         *,
         tags: list[str] | None = None,
+        job_handler: JobHandler | None = None,
     ) -> None:
         descriptor = self._build_descriptor(
             agent_id=agent_id, capabilities=capabilities, tags=tags
         )
-        self.registry.register(descriptor, handler)
+        self.registry.register(descriptor, handler, job_handler=job_handler)
 
     def list_agents(self) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.registry.list_agents()]
@@ -235,6 +236,7 @@ class A2ARuntime:
             envelope,
             route.descriptor.agent_id,
             route.handler,
+            route.job_handler,
             task_id,
             scope,
             cancel_event,
@@ -405,6 +407,7 @@ class A2ARuntime:
         envelope: Envelope,
         resolved_agent: str,
         handler: AgentHandler,
+        job_handler: JobHandler | None,
         task_id: str,
         scope: str,
         cancel_event: threading.Event,
@@ -415,7 +418,11 @@ class A2ARuntime:
             )
             if cancel_event.is_set():
                 return
-            result = handler(envelope)
+            result = (
+                job_handler(envelope, cancel_event)
+                if job_handler is not None
+                else handler(envelope)
+            )
             if cancel_event.is_set():
                 return
             current = self.state_store.get_job(task_id)
@@ -429,6 +436,8 @@ class A2ARuntime:
                 result=result,
             )
         except Exception as exc:  # noqa: BLE001
+            if cancel_event.is_set():
+                return
             self._mark_job_failed(
                 envelope=envelope,
                 resolved_agent=resolved_agent,

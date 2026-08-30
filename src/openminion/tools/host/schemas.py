@@ -19,3 +19,17 @@ class HostMetricsArgs(BaseModel):
         default=True,
         description="Include host memory totals and available memory when available.",
     )
+
+
+class HostInventoryReportArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    output_dir: str = Field(
+        default="system-inventory-output",
+        min_length=1,
+        description="Workspace-relative directory for the JSON and Markdown reports.",
+    )
+    overwrite: bool = Field(
+        default=False,
+        description="Replace existing inventory report files when true.",
+    )

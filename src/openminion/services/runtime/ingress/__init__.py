@@ -68,6 +68,7 @@ def run_turn_payload(
     request_id: str | None = None,
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
+    cancel_event: Any | None = None,
 ) -> dict[str, Any]:
     from openminion.modules.telemetry.trace.phase_timing import (
         ChatPhaseTimer,
@@ -77,13 +78,12 @@ def run_turn_payload(
 
     cold_start = bool(payload.get("__crtl_cold_start__", False))
     timer = ChatPhaseTimer(cold_start=cold_start)
-    with use_chat_phase_timer(timer):
-        with active_chat_phase("provider_request_build"):
-            request = runtime_turn_request_from_payload(
-                runtime=runtime,
-                payload=payload,
-                request_id=request_id,
-            )
+    with use_chat_phase_timer(timer), active_chat_phase("provider_request_build"):
+        request = runtime_turn_request_from_payload(
+            runtime=runtime,
+            payload=payload,
+            request_id=request_id,
+        )
     try:
         with use_chat_phase_timer(timer):
             result = execute_runtime_turn(
@@ -91,6 +91,7 @@ def run_turn_payload(
                 request=request,
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
+                cancel_event=cancel_event,
             )
             with active_chat_phase("response_normalization"):
                 return result.as_payload()
@@ -121,9 +122,7 @@ def submit_turn_payload(
         ),
     )
     return RuntimeTurnHandle(
-        request=request,
-        handle=manager.submit_turn(request),
-        timeout_s=timeout_s,
+        request=request, handle=manager.submit_turn(request), timeout_s=timeout_s
     )
 
 
@@ -133,6 +132,7 @@ def execute_runtime_turn(
     request: RuntimeTurnRequest,
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
+    cancel_event: Any | None = None,
 ) -> RuntimeTurnResult:
     return _execute_runtime_turn_impl(
         runtime=runtime,
@@ -140,6 +140,7 @@ def execute_runtime_turn(
         run_gateway_once=_run_gateway_once,
         progress_callback=progress_callback,
         approval_callback=approval_callback,
+        cancel_event=cancel_event,
     )
 
 

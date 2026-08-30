@@ -204,6 +204,29 @@ openminion setup \
   --no-focus
 ```
 
+## Per-agent command access
+
+Unsandboxed host execution remains disabled by default. A trusted local agent
+profile can allow specific executables and opt into host execution without
+changing other profiles:
+
+```json
+{
+  "agents": {
+    "local-docker": {
+      "provider": "minimax",
+      "command_policy": {
+        "allow": ["docker"],
+        "allow_host": true
+      }
+    }
+  }
+}
+```
+
+The executable must resolve from a trusted host directory. Existing dangerous
+command approval rules still apply; this profile setting does not bypass them.
+
 ## Read first
 
 Before substantial code changes, read:

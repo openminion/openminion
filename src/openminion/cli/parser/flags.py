@@ -54,6 +54,15 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default=None,
+        help=(
+            "Color policy for the default interactive terminal: auto, always, "
+            "or never. Overrides color environment variables."
+        ),
+    )
+    parser.add_argument(
         "--demo",
         action="store_true",
         help="Use the built-in demo provider without external credentials",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from threading import Event, Thread
 from types import SimpleNamespace
 import warnings
 
@@ -136,6 +137,46 @@ def test_execute_runtime_turn_inside_running_loop_avoids_unawaited_coroutine_war
 
     assert result.body == "gateway ok"
     assert not [item for item in caught if issubclass(item.category, RuntimeWarning)]
+
+
+def test_execute_runtime_turn_cancels_active_gateway_coroutine() -> None:
+    runtime = _RuntimeStub()
+    started = Event()
+    stopped = Event()
+
+    class _SlowGateway:
+        async def run_once(self, **kwargs):
+            del kwargs
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+    runtime.gateway = _SlowGateway()
+    request = runtime_turn_request_from_payload(
+        runtime=runtime,
+        payload={
+            "message": "wait",
+            "agent_id": "main",
+            "session_id": "session-cancel",
+        },
+    )
+    cancel_event = Event()
+
+    def cancel() -> None:
+        assert started.wait(1.0)
+        cancel_event.set()
+
+    Thread(target=cancel, daemon=True).start()
+
+    with pytest.raises(RuntimeError, match="Turn cancelled"):
+        execute_runtime_turn(
+            runtime=runtime,
+            request=request,
+            cancel_event=cancel_event,
+        )
+    assert stopped.wait(1.0)
 
 
 def test_runtime_turn_request_from_payload_rejects_empty_message() -> None:

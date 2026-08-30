@@ -150,6 +150,42 @@ def test_push_activity_event_renders_error() -> None:
     assert "Error: RuntimeError — boom" in buf.getvalue()
 
 
+def test_push_activity_event_colors_completed_and_blocked_states(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.presentation.markers.is_color_enabled", lambda: True
+    )
+    completed_buf = io.StringIO()
+    completed = TerminalTranscript(
+        Console(
+            file=completed_buf,
+            force_terminal=True,
+            color_system="standard",
+            no_color=False,
+            width=120,
+        )
+    )
+    completed.push_activity_event(
+        TurnActivityEvent(kind=KIND_BACKGROUND, state=STATE_COMPLETED, title="sync")
+    )
+
+    blocked_buf = io.StringIO()
+    blocked = TerminalTranscript(
+        Console(
+            file=blocked_buf,
+            force_terminal=True,
+            color_system="standard",
+            no_color=False,
+            width=120,
+        )
+    )
+    blocked.push_activity_event(
+        TurnActivityEvent(kind=KIND_PLAN, state=STATE_BLOCKED, title="deploy")
+    )
+
+    assert "\x1b[32m" in completed_buf.getvalue()
+    assert "\x1b[33m" in blocked_buf.getvalue()
+
+
 def test_push_activity_event_skips_tool_events_to_preserve_fle() -> None:
     t, buf = _make_transcript()
     t.push_activity_event(

@@ -129,9 +129,16 @@ class A2actlAdapter:
         handler: Any,
         *,
         tags: list[str] | None = None,
+        job_handler: Any | None = None,
     ) -> None:
         runtime = self._ensure_runtime()
-        runtime.register_agent(agent_id, capabilities, handler, tags=tags)
+        runtime.register_agent(
+            agent_id,
+            capabilities,
+            handler,
+            tags=tags,
+            job_handler=job_handler,
+        )
 
     def set_approval_callback(self, callback: Any | None) -> Any | None:
         previous = self._approval_callback
@@ -438,18 +445,20 @@ class A2actlAdapter:
             agent_id = str(raw_agent_id or "").strip()
             if not agent_id or agent_id in self._configured_agents_registered:
                 continue
+            handler = self._configured_agent_handler(agent_id=agent_id)
             runtime.register_agent(
                 agent_id,
                 ["delegate", "run", "task", "assist", "chat", "plan", "act"],
-                self._configured_agent_handler(agent_id=agent_id),
+                handler,
                 tags=["configured", "profile"],
+                job_handler=handler,
             )
             self._configured_agents_registered.add(agent_id)
 
     def _configured_agent_handler(
         self, *, agent_id: str
     ) -> Callable[[Any], dict[str, Any]]:
-        def _handler(envelope: Any) -> dict[str, Any]:
+        def _handler(envelope: Any, cancel_event: Any | None = None) -> dict[str, Any]:
             runtime_handle = self._resolve_runtime_handle()
             if runtime_handle is None:
                 raise RuntimeError("Configured runtime handle unavailable")
@@ -461,7 +470,7 @@ class A2actlAdapter:
                 "session_id": _delegated_session_id(
                     parent_session_id=str(meta.get("session_id", "") or "").strip(),
                     target_agent_id=agent_id,
-                    trace_id=str(getattr(envelope, "trace_id", "") or "").strip(),
+                    message_id=str(getattr(envelope, "msg_id", "") or "").strip(),
                 ),
                 "channel": "console",
                 "target": str(getattr(envelope, "from_agent", "") or "a2a").strip()
@@ -482,8 +491,12 @@ class A2actlAdapter:
                 "request_id": str(getattr(envelope, "msg_id", "") or "").strip()
                 or None,
             }
-            if self._run_turn_accepts_approval_callback(run_turn):
+            if self._run_turn_accepts(run_turn, "approval_callback"):
                 run_turn_kwargs["approval_callback"] = self._approval_callback
+            if cancel_event is not None and self._run_turn_accepts(
+                run_turn, "cancel_event"
+            ):
+                run_turn_kwargs["cancel_event"] = cancel_event
             result = run_turn(**run_turn_kwargs)
             metadata = result.get("metadata")
             normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
@@ -544,12 +557,12 @@ class A2actlAdapter:
         return _handler
 
     @staticmethod
-    def _run_turn_accepts_approval_callback(run_turn: Any) -> bool:
+    def _run_turn_accepts(run_turn: Any, argument: str) -> bool:
         try:
             parameters = inspect.signature(run_turn).parameters
         except (TypeError, ValueError):
             return False
-        return "approval_callback" in parameters or any(
+        return argument in parameters or any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in parameters.values()
         )
@@ -637,10 +650,10 @@ def _delegated_session_id(
     *,
     parent_session_id: str,
     target_agent_id: str,
-    trace_id: str,
+    message_id: str,
 ) -> str:
-    base = parent_session_id or f"a2a-{trace_id or 'delegated'}"
-    return f"{base}::delegate::{target_agent_id}"
+    base = parent_session_id or "a2a"
+    return f"{base}::delegate::{target_agent_id}::{message_id}"
 
 
 def _delegated_inbound_metadata(

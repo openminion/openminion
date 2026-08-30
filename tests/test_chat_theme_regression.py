@@ -86,6 +86,20 @@ def test_color_mode_detection_precedence(monkeypatch: pytest.MonkeyPatch) -> Non
     assert styles.get_color_mode() == "off"
 
 
+def test_cli_color_mode_override_beats_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openminion.cli.presentation import styles
+
+    monkeypatch.setenv("NO_COLOR", "1")
+    styles.set_color_mode("always")
+    try:
+        assert styles.get_color_mode() == "on"
+        assert styles.is_color_enabled() is True
+    finally:
+        styles.set_color_mode(None)
+
+
 def test_non_tty_disables_colors(monkeypatch: pytest.MonkeyPatch) -> None:
     from openminion.cli.presentation import styles
 

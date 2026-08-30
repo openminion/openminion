@@ -29,6 +29,21 @@ The default terminal leaves mouse-wheel input with the terminal for native
 scrollback. It captures the mouse only while a clickable completion menu is
 open, then returns control to the terminal when the menu closes.
 
+## Terminal color
+
+The default interactive terminal detects color support automatically. Use the
+CLI flag when an inherited shell or test runner reports the wrong capability:
+
+```bash
+openminion --color auto
+openminion --color always
+openminion --color never
+```
+
+The CLI flag takes precedence over `NO_COLOR` and `OPENMINION_COLOR`. When the
+flag is omitted, those environment variables remain supported for automation
+and backward compatibility.
+
 ## Read-only operations overview
 
 The optional Textual renderer provides a compact local overview:

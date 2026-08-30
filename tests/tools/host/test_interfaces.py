@@ -4,6 +4,7 @@ import openminion.tools.host as host_pkg
 
 from openminion.tools.host.interfaces import (
     HOST_PLUGIN_INTERFACE_VERSION,
+    TOOL_HOST_INVENTORY_REPORT,
     TOOL_HOST_METRICS,
 )
 
@@ -14,6 +15,7 @@ def test_host_interface_version_is_v1() -> None:
 
 def test_host_tool_name_constant() -> None:
     assert TOOL_HOST_METRICS == "host.metrics"
+    assert TOOL_HOST_INVENTORY_REPORT == "host.inventory_report"
 
 
 def test_host_package_exports_register() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 
 from rich.console import Console
+from rich.text import Text
 
 from openminion.cli.interactive.terminal.streaming import (
     _render_full_tool_block,
@@ -161,3 +162,23 @@ def test_marker_still_green_on_success() -> None:
     out = buf.getvalue()
     assert "●" in out
     assert "✗" not in out
+
+
+def test_tool_heading_uses_success_color(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.presentation.markers.is_color_enabled", lambda: True
+    )
+    title = _render_tool_block(_event(exit_code=0)).renderables[0]
+
+    assert isinstance(title, Text)
+    assert any(span.style == "bold green" for span in title.spans)
+
+
+def test_tool_heading_uses_error_color(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.cli.presentation.markers.is_color_enabled", lambda: True
+    )
+    title = _render_tool_block(_event(exit_code=1)).renderables[0]
+
+    assert isinstance(title, Text)
+    assert any(span.style == "bold red" for span in title.spans)

@@ -143,17 +143,28 @@ def test_prompt_safe_status_does_not_print_phase_rows_into_prompt() -> None:
     assert "ready" in output
 
 
-def test_prompt_safe_completion_leaves_one_prompt_gap() -> None:
+def test_prompt_safe_turn_has_one_leading_and_trailing_gap() -> None:
     console, buffer = _make_console()
-    handle = TerminalTurnHandle(console)
+    handle = TerminalTurnHandle(console, show_response_time=False)
     handle.set_terminal_writer(lambda render: render())
     handle.start()
 
     handle.complete(final_text="ready")
 
-    output = buffer.getvalue()
-    assert output.count("ready") == 1
-    assert output.endswith("\n\n")
+    assert buffer.getvalue() == "\n⏺ ready\n\n"
+
+
+def test_prompt_safe_turn_spacing_is_consistent_across_interactions() -> None:
+    console, buffer = _make_console()
+
+    for prompt, reply in (("first", "one"), ("second", "two")):
+        console.print(f"❯ {prompt}")
+        handle = TerminalTurnHandle(console, show_response_time=False)
+        handle.set_terminal_writer(lambda render: render())
+        handle.start()
+        handle.complete(final_text=reply)
+
+    assert buffer.getvalue() == ("❯ first\n\n⏺ one\n\n❯ second\n\n⏺ two\n\n")
 
 
 def test_prompt_safe_mode_keeps_elapsed_status_out_of_prompt_output() -> None:

@@ -137,7 +137,9 @@ def _env_value(ctx: RuntimeContext, key: str, default: str = "") -> str:
 
 
 def _host_execution_enabled(ctx: RuntimeContext) -> bool:
-    return _normalize_bool_env(_env_value(ctx, EXEC_ENABLE_HOST_EXEC_ENV, "0"))
+    return ctx.policy.exec_host_enabled() or _normalize_bool_env(
+        _env_value(ctx, EXEC_ENABLE_HOST_EXEC_ENV, "0")
+    )
 
 
 def _agent_id(ctx: RuntimeContext) -> str:
@@ -357,6 +359,7 @@ def _validate_host_allowlist(
     allowed_paths = _parse_allowlist_paths_from_env(ctx)
     safe_bins = _parse_safe_bins_from_env(ctx)
     trusted_dirs = _parse_safe_bin_trusted_dirs_from_env(ctx)
+    policy_bins = set(ctx.policy.exec_allowlist())
     checked: list[dict[str, str]] = []
 
     for segment in parsed.segments:
@@ -376,6 +379,10 @@ def _validate_host_allowlist(
         )
 
         if resolved_path in allowed_paths:
+            continue
+        if exec_name in policy_bins and _is_under_trusted_dir(
+            resolved_path, trusted_dirs
+        ):
             continue
         if exec_name in safe_bins and _is_under_trusted_dir(
             resolved_path, trusted_dirs

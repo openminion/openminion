@@ -109,6 +109,8 @@ def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> No
                 "/tmp/demo-workspace",
                 "--theme",
                 "light",
+                "--color",
+                "always",
                 "--no-context",
                 "--no-update-check",
                 "--verbosity",
@@ -122,6 +124,7 @@ def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> No
     assert interactive_args.session == "demo-session"
     assert interactive_args.dir == "/tmp/demo-workspace"
     assert interactive_args.theme == "light"
+    assert interactive_args.color == "always"
     assert interactive_args.no_context is True
     assert interactive_args.no_update_check is True
     assert interactive_args.verbosity == "quiet"

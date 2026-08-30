@@ -3698,6 +3698,26 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
 
 class RealToolAndArtifactAdapterTests(unittest.TestCase):
+    def test_agent_profile_extends_command_policy_without_changing_defaults(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.tool import ToolAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            default_adapter = ToolAdapter(workspace_root=Path(tmp))
+            enabled_adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                agent_profile=SimpleNamespace(
+                    command_policy={"allow": ["docker"], "allow_host": True},
+                ),
+            )
+
+        self.assertNotIn("docker", default_adapter.policy.raw["commands"]["allow"])
+        self.assertFalse(default_adapter.policy.exec_host_enabled())
+        self.assertIn("docker", enabled_adapter.policy.raw["commands"]["allow"])
+        self.assertIn("docker", enabled_adapter.policy.exec_allowlist())
+        self.assertTrue(enabled_adapter.policy.exec_host_enabled())
+
     def test_os_adapter_rejects_incompatible_policy_objects(self) -> None:
         try:
             from openminion.modules.brain.adapters.tool import ToolAdapter
@@ -4090,6 +4110,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                     "error": {
                         "code": "DEPENDENCY_MISSING",
                         "message": "Playwright browser runtime is not ready",
+                        "details": {"dependency": "playwright"},
                     },
                 }
 
@@ -4109,6 +4130,9 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
             self.assertIn("not ready", str(res.get("summary", "")).lower())
             self.assertEqual(
                 str(res.get("error", {}).get("code", "")), "DEPENDENCY_MISSING"
+            )
+            self.assertEqual(
+                res.get("error", {}).get("details"), {"dependency": "playwright"}
             )
 
     def test_tool_adapter_success_summary_uses_content_when_summary_missing(

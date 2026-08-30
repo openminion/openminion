@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import platform
 import re
+from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -79,18 +80,39 @@ _DELEGATION_RESULT_SUMMARY_RE = re.compile(
 )
 
 
-def _exec_run_description() -> str:
+def _agent_command_grants(runner: Any | None) -> tuple[str, ...]:
+    tool_api = getattr(runner, "tool_api", None)
+    profile = getattr(tool_api, "agent_profile", None)
+    command_policy = getattr(profile, "command_policy", {})
+    policy_raw = getattr(getattr(tool_api, "policy", None), "raw", {})
+    if not isinstance(command_policy, Mapping) or not isinstance(policy_raw, Mapping):
+        return ()
+    commands = policy_raw.get("commands", {})
+    effective = commands.get("allow", ()) if isinstance(commands, Mapping) else ()
+    return tuple(
+        command
+        for item in command_policy.get("allow", ())
+        if (command := str(item).strip()) and command in effective
+    )
+
+
+def _exec_run_description(runner: Any | None = None) -> str:
     system = platform.system() or "unknown"
     try:
         shell_family = resolve_shell_family().value
     except Exception:
         shell_family = "unknown"
+    grants = _agent_command_grants(runner)
+    grant_note = (
+        f" Agent-profile executable grants: {', '.join(grants)}." if grants else ""
+    )
     return (
         "Run one allowlisted direct command for verification or existing-file "
         f"workflows on platform={system}, shell_family={shell_family}. Do not use "
         "pipes, redirections, shell chaining, fallback operators, or multi-command "
         "snippets. Prefer host.metrics for disk, memory, and OS status; prefer "
         "structured file/web tools for discovery, reads, scaffolding, or web fetches."
+        f"{grant_note}"
     )
 
 
@@ -98,9 +120,10 @@ def _tool_spec_description(
     tool_name: str,
     raw: dict[str, Any],
     descriptions: dict[str, str],
+    runner: Any | None,
 ) -> str:
     if tool_name == "exec.run":
-        return _exec_run_description()
+        return _exec_run_description(runner)
     return str(raw.get("description", "") or "").strip() or descriptions.get(
         tool_name, tool_name
     )
@@ -673,7 +696,9 @@ def build_runtime_tool_specs(
         specs.append(
             ToolSpec(
                 name=tool_name,
-                description=_tool_spec_description(tool_name, raw, descriptions),
+                description=_tool_spec_description(
+                    tool_name, raw, descriptions, runner
+                ),
                 input_schema=dict(raw.get("parameters", {}) or {})
                 or {
                     "type": "object",

@@ -18,6 +18,7 @@ from openminion.modules.memory.interfaces import (
     RecordOrder,
 )
 from openminion.modules.llm.config import resolve_provider_identity_translation
+from openminion.modules.skill import Skill
 
 _PROVIDER_CONFIG_ALIASES = {
     "claude": "anthropic",
@@ -330,12 +331,11 @@ class RuntimeControlsMixin:
         scopes.append("global:system")
         return scopes
 
-    def list_skill_rows(self) -> list[dict[str, Any]]:
+    def _configured_skill_ids(self) -> list[str]:
         config = getattr(self._rt, "config", None)
         agents = getattr(config, "agents", {}) if config is not None else {}
         profile = agents.get(self.agent_id) if isinstance(agents, Mapping) else None
-        rows: list[dict[str, Any]] = []
-        configured = []
+        configured: list[str] = []
         if profile is not None:
             raw_skill = getattr(profile, "skill", None)
             if isinstance(raw_skill, str) and raw_skill.strip():
@@ -349,17 +349,72 @@ class RuntimeControlsMixin:
                 for item in list(getattr(profile, "skill_catalog", []) or [])
                 if str(item).strip()
             )
-        for skill_id in dict.fromkeys(configured):
-            rows.append({"id": skill_id, "source": "config"})
+        return list(dict.fromkeys(configured))
+
+    def _catalog_skill_rows(self) -> list[dict[str, Any]]:
+        runtime = self._rt
+        config_path = getattr(runtime, "config_path", None)
+        skill = Skill(
+            config_path or {},
+            home_root=Path(getattr(runtime, "home_root")),
+        )
+        try:
+            summaries = skill.catalog_summaries(agent_id=self.agent_id)
+        finally:
+            skill.close()
+        return [
+            {**summary, "source": "catalog"}
+            for summary in summaries
+            if str(summary.get("id", "")).strip()
+        ]
+
+    def list_skill_rows(self) -> list[dict[str, Any]]:
+        rows = self._catalog_skill_rows()
+        catalog_ids = {str(row["id"]) for row in rows}
+        rows.extend(
+            {"id": skill_id, "source": "config"}
+            for skill_id in self._configured_skill_ids()
+            if skill_id not in catalog_ids
+        )
         return rows
 
-    def skills_report(self) -> str:
+    def skills_report(self, skill_id: str = "") -> str:
+        requested_id = str(skill_id or "").strip()
+        if requested_id:
+            runtime = self._rt
+            skill = Skill(
+                getattr(runtime, "config_path", None) or {},
+                home_root=Path(getattr(runtime, "home_root")),
+            )
+            try:
+                package = skill.get_skill(requested_id)
+            finally:
+                skill.close()
+            lines = [
+                f"Skill: {package.display_name or package.name}",
+                f"  id       {package.skill_id}",
+                f"  status   {package.status}",
+                f"  scope    {package.scope}",
+                f"  risk     {package.risk_class}",
+                f"  version  {package.version_hash}",
+            ]
+            if package.tools:
+                lines.append(f"  tools    {', '.join(package.tools)}")
+            if package.tags:
+                lines.append(f"  tags     {', '.join(package.tags)}")
+            for key, value in package.sections.items():
+                text = str(value or "").strip()
+                if text:
+                    lines.extend(("", f"{key.replace('_', ' ').title()}:", text))
+            return "\n".join(lines)
+
         rows = self.list_skill_rows()
         if not rows:
             return "(no skills)"
         lines = ["Skills:"]
         for row in rows[:20]:
             lines.append(f"  - {row.get('id')} · {row.get('source', 'config')}")
+        lines.append("Use /skills <skill_id> to view details.")
         return "\n".join(lines)
 
     def undo_last_turn(self) -> dict[str, Any]:
