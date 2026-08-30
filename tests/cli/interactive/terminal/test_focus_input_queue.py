@@ -286,6 +286,13 @@ class _TypedFailureThenResumeRuntime:
         yield "resumed answer"
 
 
+class _PromptGapComposer:
+    prompt_session = object()
+
+    async def read_line(self) -> str:
+        raise EOFError
+
+
 class _TTYInput:
     def isatty(self) -> bool:
         return True
@@ -625,7 +632,7 @@ async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None
 
 
 @pytest.mark.asyncio
-async def test_terminal_focus_typeahead_prompt_does_not_add_turn_spacing() -> None:
+async def test_terminal_focus_adds_one_gap_before_typeahead_prompt() -> None:
     runtime = _QueueCommandRuntime()
     output = io.StringIO()
     console = Console(file=output, force_terminal=False, width=120)
@@ -635,24 +642,24 @@ async def test_terminal_focus_typeahead_prompt_does_not_add_turn_spacing() -> No
         console=console,
         transcript=transcript,
         status_line=terminal_shell.TerminalStatusLine(),
-        composer=_LoopComposer(),
+        composer=_PromptGapComposer(),
         overlay=object(),
         working_dir="/tmp/focus-terminal-prompt-gap",
         custom_commands={},
         approval_grants=set(),
     )
 
-    loop.start_read_task(delay_seconds=0.001)
+    loop.start_read_task(leading_blank_lines=1)
 
     assert loop.read_task is not None
     with pytest.raises(EOFError):
         await loop.read_task
 
-    assert output.getvalue() == ""
+    assert output.getvalue() == "\n"
 
 
 @pytest.mark.asyncio
-async def test_terminal_focus_frames_idle_answer_with_one_gap() -> None:
+async def test_terminal_focus_adds_one_gap_after_idle_answer() -> None:
     output = io.StringIO()
     console = Console(file=output, force_terminal=False, width=120)
     transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
@@ -674,7 +681,7 @@ async def test_terminal_focus_frames_idle_answer_with_one_gap() -> None:
     await loop.cancel_read_task()
 
     rendered = output.getvalue()
-    assert rendered.startswith("\n⏺ answer")
+    assert rendered.startswith("⏺ answer")
     assert rendered.endswith("\n\n")
 
 
