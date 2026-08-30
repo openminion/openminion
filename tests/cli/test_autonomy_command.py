@@ -13,6 +13,7 @@ from openminion.cli.main import main
 from openminion.cli.commands.autonomy_project import run_project_turn
 from openminion.cli.parser.base import build_parser
 from openminion.modules.task import (
+    AutonomyRunError,
     TaskManager,
     build_project_run_projection,
     build_autonomy_run,
@@ -21,7 +22,10 @@ from openminion.modules.task import (
 )
 from openminion.modules.task.project import AutonomyLoopConditionKind
 from openminion.modules.llm.providers.contracts import ProviderError
-from openminion.services.runtime.project_worker import ProjectTurnRequest
+from openminion.services.runtime.project_worker import (
+    ProjectTurnRequest,
+    ProjectTurnResult,
+)
 
 
 def _run_cli(args: list[str]) -> tuple[int, str]:
@@ -688,6 +692,86 @@ def test_autonomy_resume_blocked_run_completes_with_replay(tmp_path: Path) -> No
     assert run["operator_summary"] == "resumed successfully"
 
 
+def test_autonomy_resume_preserves_cycle_summaries(tmp_path: Path) -> None:
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "summarize every cycle",
+            "--replay-response",
+            "first cycle",
+            "--verify-command",
+            verify_command,
+            "--json",
+        ]
+    )
+    run_id = json.loads(output)["run"]["run_id"]
+
+    code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            run_id,
+            "--replay-response",
+            "second cycle",
+            "--max-iterations",
+            "2",
+            "--verification-waiver",
+            "local cumulative-summary fixture",
+            "--json",
+        ]
+    )
+
+    run = json.loads(resume_output)["run"]
+    proof = json.loads(Path(run["proof_packet_ref"]).read_text())
+    assert code == 0
+    assert run["status"] == "completed"
+    assert proof["cycle_summaries"] == ["first cycle", "second cycle"]
+
+
+def test_autonomy_resume_preflight_preserves_cycle_summaries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "preserve summary through blocked resume",
+            "--replay-response",
+            "first cycle",
+            "--verify-command",
+            verify_command,
+            "--json",
+        ]
+    )
+    run_id = json.loads(output)["run"]["run_id"]
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.verifier_preflight_error",
+        lambda *_args, **_kwargs: AutonomyRunError(
+            code="VERIFIER_UNAVAILABLE",
+            message="verifier unavailable",
+        ),
+    )
+
+    code, resume_output = _run_cli(
+        [*_root_args(tmp_path), "autonomy", "resume", run_id, "--json"]
+    )
+
+    run = json.loads(resume_output)["run"]
+    proof = json.loads(Path(run["proof_packet_ref"]).read_text(encoding="utf-8"))
+    assert code == 0
+    assert run["status"] == "blocked"
+    assert proof["cycle_summaries"] == ["first cycle"]
+
+
 def test_autonomy_resume_preserves_provider_error_after_blocked_checkpoint(
     tmp_path: Path,
     monkeypatch,
@@ -741,6 +825,149 @@ def test_autonomy_resume_preserves_provider_error_after_blocked_checkpoint(
     }
 
 
+def test_autonomy_start_interrupts_to_resumable_blocked_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def interrupt_turn(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        interrupt_turn,
+    )
+    code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "resume after operator interruption",
+            "--verification-waiver",
+            "local interruption fixture",
+            "--json",
+        ]
+    )
+
+    run = json.loads(output)["run"]
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "data/task/task.db")
+    task = manager.get_task(run["task_id"])
+
+    assert code == 130
+    assert run["status"] == "blocked"
+    assert run["phase"] == "closed"
+    assert run["last_error"]["code"] == "OPERATOR_INTERRUPTED"
+    assert run["next_action_hint"].endswith(f"autonomy resume {run['run_id']}`.")
+    assert task is not None
+    assert task.state.value == "paused"
+    released_claim = manager.lifecycle_repository.acquire_project_cycle_claim(
+        task_id=task.task_id,
+        owner_id="replacement-worker",
+        expected_checkpoint_id=run["checkpoint_id"],
+    )
+    manager.lifecycle_repository.release_project_cycle_claim(released_claim)
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        lambda *_args, **_kwargs: ProjectTurnResult(summary="resumed successfully"),
+    )
+    resume_code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            run["run_id"],
+            "--verification-waiver",
+            "local interruption fixture",
+            "--json",
+        ]
+    )
+
+    resumed = json.loads(resume_output)["run"]
+    assert resume_code == 0
+    assert resumed["run_id"] == run["run_id"]
+    assert resumed["status"] == "completed"
+
+
+def test_autonomy_resume_interrupts_to_resumable_blocked_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "interrupt a resumed run",
+            "--max-iterations",
+            "0",
+            "--json",
+        ]
+    )
+    run_id = json.loads(output)["run"]["run_id"]
+
+    def interrupt_turn(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy.run_project_turn",
+        interrupt_turn,
+    )
+    code, resume_output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "resume",
+            run_id,
+            "--max-iterations",
+            "1",
+            "--verification-waiver",
+            "local interruption fixture",
+            "--json",
+        ]
+    )
+
+    resumed = json.loads(resume_output)["run"]
+    assert code == 130
+    assert resumed["run_id"] == run_id
+    assert resumed["status"] == "blocked"
+    assert resumed["last_error"]["code"] == "OPERATOR_INTERRUPTED"
+
+
+def test_autonomy_interrupt_after_completion_preserves_terminal_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def interrupt_proof(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.autonomy._write_terminal_proof",
+        interrupt_proof,
+    )
+    code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "preserve completed state",
+            "--replay-response",
+            "completed before interruption",
+            "--verification-waiver",
+            "local terminal fixture",
+            "--json",
+        ]
+    )
+
+    run = json.loads(output)["run"]
+    assert code == 130
+    assert run["status"] == "completed"
+    assert run["operator_summary"] == "completed before interruption"
+    assert run["last_error"] is None
+
+
 def test_autonomy_cancel_writes_cancelled_proof(tmp_path: Path) -> None:
     _code, output = _run_cli(
         [
@@ -765,6 +992,35 @@ def test_autonomy_cancel_writes_cancelled_proof(tmp_path: Path) -> None:
     assert code == 0
     assert run["status"] == "cancelled"
     assert proof["status"] == "cancelled"
+
+
+def test_autonomy_cancel_preserves_cycle_summaries(tmp_path: Path) -> None:
+    verify_command = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(1)'"
+    _code, output = _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "start",
+            "--goal",
+            "cancel after one cycle",
+            "--replay-response",
+            "first cycle",
+            "--verify-command",
+            verify_command,
+            "--json",
+        ]
+    )
+    run_id = json.loads(output)["run"]["run_id"]
+
+    code, cancel_output = _run_cli(
+        [*_root_args(tmp_path), "autonomy", "cancel", run_id, "--json"]
+    )
+
+    run = json.loads(cancel_output)["run"]
+    proof = json.loads(Path(run["proof_packet_ref"]).read_text(encoding="utf-8"))
+    assert code == 0
+    assert run["status"] == "cancelled"
+    assert proof["cycle_summaries"] == ["first cycle"]
 
 
 def test_unattended_autonomy_schedules_one_cycle_and_cancel_removes_it(

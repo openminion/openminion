@@ -10,6 +10,7 @@ from openminion.modules.task.project import (
     ProjectVerificationState,
     load_latest_project_checkpoint,
 )
+from openminion.modules.task.project.checkpoints import project_cycle_summaries
 from openminion.modules.task.project.capabilities import ProjectCapabilityMatrix
 from openminion.modules.task.runtime.lifecycle import ProjectCycleClaim, TaskManager
 
@@ -68,6 +69,7 @@ class ProjectReport(_StrictReportModel):
     baseline_comparisons: tuple[ProjectMetricComparison, ...] = ()
     capability_matrix: ProjectCapabilityMatrix | None = None
     proof_refs: tuple[str, ...] = ()
+    cycle_summaries: tuple[str, ...] = ()
     cycle_claim: ProjectCycleClaim | None = None
     safety_notes: tuple[str, ...] = ()
     ux_notes: tuple[str, ...] = ()
@@ -82,6 +84,7 @@ def build_project_report(
     capability_matrix: ProjectCapabilityMatrix | None = None,
     outcome: ProjectOutcomeClassification | None = None,
     proof_refs: tuple[str, ...] = (),
+    cycle_summaries: tuple[str, ...] = (),
     safety_notes: tuple[str, ...] = (),
     ux_notes: tuple[str, ...] = (),
     cycle_claim: ProjectCycleClaim | None = None,
@@ -97,6 +100,7 @@ def build_project_report(
         ),
         capability_matrix=capability_matrix,
         proof_refs=proof_refs,
+        cycle_summaries=cycle_summaries,
         cycle_claim=cycle_claim,
         safety_notes=safety_notes,
         ux_notes=ux_notes,
@@ -133,6 +137,7 @@ def build_project_report_from_task(
         checkpoint.project_run,
         metrics=metrics,
         proof_refs=proof_refs,
+        cycle_summaries=project_cycle_summaries(task_manager, task_id=task_id),
         cycle_claim=task_manager.lifecycle_repository.get_project_cycle_claim(task_id),
     )
 
@@ -191,6 +196,12 @@ def render_project_report(report: ProjectReport) -> str:
     if report.proof_refs:
         lines.append("proof_refs:")
         lines.extend(f"  - {ref}" for ref in report.proof_refs)
+    if report.cycle_summaries:
+        lines.append("cycle_summaries:")
+        lines.extend(
+            f"  {index}: {summary}"
+            for index, summary in enumerate(report.cycle_summaries, start=1)
+        )
     if report.cycle_claim is not None:
         lines.append(
             "cycle_claim: "

@@ -212,6 +212,7 @@ class AutonomyProofPacket(_StrictAutonomyModel):
     tests_run: tuple[TestEvidence, ...] = ()
     validation_summary: str
     final_operator_summary: str
+    cycle_summaries: tuple[str, ...] = ()
     next_resume_action: str | None = None
     failure_or_blocker: AutonomyRunError | None = None
     verification_waiver: VerificationWaiver | None = None
@@ -421,6 +422,7 @@ def build_terminal_proof_packet(
     *,
     validation_summary: str,
     final_operator_summary: str,
+    cycle_summaries: tuple[str, ...] = (),
     commands_run: tuple[CommandEvidence, ...] = (),
     tests_run: tuple[TestEvidence, ...] = (),
     artifact_refs: tuple[str, ...] = (),
@@ -443,6 +445,7 @@ def build_terminal_proof_packet(
         tests_run=tests_run,
         validation_summary=validation_summary,
         final_operator_summary=final_operator_summary,
+        cycle_summaries=cycle_summaries,
         next_resume_action=run.next_action_hint,
         failure_or_blocker=run.last_error,
         verification_waiver=verification_waiver,

@@ -51,6 +51,7 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
+from openminion.modules.task.project.checkpoints import project_cycle_summaries
 
 _LOGGER = get_logger("project_worker")
 
@@ -66,9 +67,8 @@ class ProjectWorkerResult:
 
 def project_cycle_claim_ttl_seconds(run: AutonomyRun) -> int:
     selectors = run.execution_selectors
-    verifier_window = int(selectors.verification_timeout_seconds) * len(
-        selectors.verification_commands
-    )
+    verifier_timeout = int(selectors.verification_timeout_seconds)
+    verifier_window = verifier_timeout * len(selectors.verification_commands)
     return int(selectors.turn_timeout_seconds) + verifier_window
 
 
@@ -558,12 +558,9 @@ class ProjectWorker:
             verification_refs = ()
         if passed and "verification" not in evidence_kinds:
             evidence_kinds = (*evidence_kinds, "verification")
-        verification_refs = (
-            *verification_refs,
-            *(
-                f"command:{index}:{item.status.value}"
-                for index, item in enumerate(verification, start=1)
-            ),
+        verification_refs += tuple(
+            f"command:{index}:{item.status.value}"
+            for index, item in enumerate(verification, start=1)
         )
         selectors = run.execution_selectors
         return evaluate_project_verification_closure(
@@ -614,6 +611,9 @@ class ProjectWorker:
             run,
             validation_summary=validation_summary,
             final_operator_summary=run.operator_summary or "Autonomy project closed.",
+            cycle_summaries=project_cycle_summaries(
+                self._task_manager, task_id=run.task_id or ""
+            ),
             tests_run=verification,
             verification_waiver=waiver,
         )
