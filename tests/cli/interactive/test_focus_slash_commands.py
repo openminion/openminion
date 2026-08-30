@@ -637,6 +637,41 @@ async def test_unknown_slash_command_still_returns_unknown_message() -> None:
             await pilot.pause()
             body = _last_system_body(chat)
             assert "Unknown command" in body, body
+            assert "Type / to view available commands." in body, body
+
+
+@pytest.mark.asyncio
+async def test_unknown_slash_command_suggests_nearest_command() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            chat = screen.query_one(FocusTranscript)
+
+            screen._handle_command("/skill")
+            await pilot.pause()
+            body = _last_system_body(chat)
+            assert "Unknown command: /skill" in body, body
+            assert "Did you mean /skills?" in body, body
+
+
+@pytest.mark.asyncio
+async def test_skills_command_passes_skill_id_to_detail_report() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            chat = screen.query_one(FocusTranscript)
+            screen._runtime.skills_report = (  # type: ignore[attr-defined]
+                lambda skill_id="": f"Skill detail: {skill_id}"
+            )
+
+            screen._handle_command("/skills demo_skill")
+            await pilot.pause()
+
+            assert _last_system_body(chat) == "Skill detail: demo_skill"
 
 
 @pytest.mark.asyncio

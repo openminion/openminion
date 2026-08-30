@@ -148,6 +148,7 @@ def _run_default_interactive(
                 session=getattr(args, "session", None),
                 dir=getattr(args, "dir", None),
                 theme=getattr(args, "theme", None),
+                color=getattr(args, "color", None),
                 demo=bool(getattr(args, "demo", False)),
                 no_context=bool(getattr(args, "no_context", False)),
                 no_update_check=bool(getattr(args, "no_update_check", False)),

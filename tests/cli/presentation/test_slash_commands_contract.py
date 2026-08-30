@@ -5,6 +5,7 @@ from openminion.cli.presentation.slash_commands import (
     rich_slash_command_registry,
     slash_command_runs_while_busy,
     terminal_slash_commands,
+    unknown_slash_command_message,
 )
 
 
@@ -69,3 +70,19 @@ def test_overview_is_registered_for_rich_only() -> None:
 
     assert "/overview" not in terminal
     assert rich["/overview"] == "_slash_overview"
+
+
+def test_unknown_slash_command_message_suggests_nearest_command() -> None:
+    assert unknown_slash_command_message(
+        "/skill", available_commands=("/skills", "/status")
+    ) == (
+        "Unknown command: /skill\n"
+        "Did you mean /skills?\n"
+        "Type / to view available commands."
+    )
+
+
+def test_unknown_slash_command_message_omits_weak_suggestion() -> None:
+    assert unknown_slash_command_message(
+        "/xyzzy", available_commands=("/skills", "/status")
+    ) == "Unknown command: /xyzzy\nType / to view available commands."

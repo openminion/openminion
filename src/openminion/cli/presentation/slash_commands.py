@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from difflib import get_close_matches
 
 
 @dataclass(frozen=True)
@@ -128,7 +130,10 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/tasks", "Show task inventory", "_slash_tasks", "_slash_tasks", ("/task",)
     ),
     SlashCommandMetadata(
-        "/skills", "Show skill inventory", "_slash_skills", "_slash_skills"
+        "/skills",
+        "List skills or view one with /skills <skill_id>",
+        "_slash_skills",
+        "_slash_skills",
     ),
     SlashCommandMetadata(
         "/statusline",
@@ -302,6 +307,21 @@ def slash_help_rows(*, terminal_only: bool = False) -> tuple[tuple[str, str], ..
     return tuple(rows)
 
 
+def unknown_slash_command_message(
+    command: str,
+    *,
+    available_commands: Iterable[str],
+) -> str:
+    normalized = str(command or "").strip().split(maxsplit=1)[0]
+    candidates = tuple(dict.fromkeys(str(item).strip() for item in available_commands))
+    matches = get_close_matches(normalized, candidates, n=1, cutoff=0.75)
+    lines = [f"Unknown command: {normalized}"]
+    if matches:
+        lines.append(f"Did you mean {matches[0]}?")
+    lines.append("Type / to view available commands.")
+    return "\n".join(lines)
+
+
 __all__ = [
     "SLASH_COMMANDS",
     "SlashCommandMetadata",
@@ -309,4 +329,5 @@ __all__ = [
     "slash_command_runs_while_busy",
     "slash_help_rows",
     "terminal_slash_commands",
+    "unknown_slash_command_message",
 ]

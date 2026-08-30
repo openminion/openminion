@@ -36,6 +36,12 @@ def test_composer_satisfies_protocol() -> None:
     assert isinstance(c, Composer)
 
 
+def test_composer_can_disable_prompt_color() -> None:
+    composer = TerminalComposer(color=False)
+
+    assert composer._formatted_prompt() == [("", "❯ ")]
+
+
 def test_set_resumed_flips_prompt_prefix() -> None:
     c = TerminalComposer()
     assert c._prompt_text() == "❯ "

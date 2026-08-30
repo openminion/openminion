@@ -201,9 +201,17 @@ def _memory_scope_label(scope: str) -> str:
     return str(scope or "unknown").partition(":")[0] or "unknown"
 
 
-def render_skills_report(runtime: Any) -> str:
-    if report := _runtime_report(runtime, "skills_report", "/skills"):
+def render_skills_report(runtime: Any, arg: str = "") -> str:
+    skill_id = str(arg or "").strip()
+    report = (
+        _runtime_report(runtime, "skills_report", f"/skills {skill_id}", skill_id)
+        if skill_id
+        else _runtime_report(runtime, "skills_report", "/skills")
+    )
+    if report:
         return report
+    if skill_id:
+        return f"/skills {skill_id}: skill details unavailable"
     rows = _safe_call(getattr(runtime, "list_skill_rows", None)) or []
     if not rows:
         return "(no skills)"
@@ -222,6 +230,7 @@ def render_skills_report(runtime: Any) -> str:
         if tokens:
             suffix += f" · {tokens} tokens"
         lines.append(f"  - {skill_id}{suffix}")
+    lines.append("Use /skills <skill_id> to view details.")
     return "\n".join(lines)
 
 
@@ -363,12 +372,17 @@ def _safe_call(callback: Any) -> Any:
         return None
 
 
-def _runtime_report(runtime: Any, attribute: str, command: str) -> str | None:
+def _runtime_report(
+    runtime: Any,
+    attribute: str,
+    command: str,
+    *args: Any,
+) -> str | None:
     reporter = getattr(runtime, attribute, None)
     if not callable(reporter):
         return None
     try:
-        return str(reporter() or "").strip() or None
+        return str(reporter(*args) or "").strip() or None
     except Exception as exc:
         return f"{command}: {exc}"
 

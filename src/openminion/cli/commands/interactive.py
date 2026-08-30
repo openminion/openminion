@@ -282,11 +282,16 @@ def run_interactive(args: argparse.Namespace) -> int:
     from openminion.api.runtime import APIRuntime
     from openminion.cli.status.surface import record_surface_event
 
+    backend = _resolve_interactive_backend(args)
+    if backend == "terminal":
+        from openminion.cli.presentation.styles import set_color_mode
+
+        set_color_mode(getattr(args, "color", None))
+
     gate_exit, args = _handle_focus_onboarding_gate(args)
     if gate_exit is not None:
         return gate_exit
 
-    backend = _resolve_interactive_backend(args)
     _silence_logging_for_interactive(args)
     if backend == "textual":
         tty_exit = _enforce_textual_tty_requirement()

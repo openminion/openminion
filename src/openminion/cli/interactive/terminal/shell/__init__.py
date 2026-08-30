@@ -68,7 +68,7 @@ from .renderers import (
     _render_status_block as _render_status_block,
     _render_tools_list as _render_tools_list,
 )
-from openminion.cli.presentation.styles import StyleToken
+from openminion.cli.presentation.styles import StyleToken, is_color_enabled
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import (
     slash_command_runs_while_busy,
@@ -87,6 +87,18 @@ _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
 _TYPEAHEAD_PROMPT_GAP_LINES = 1
+
+
+def _build_terminal_console() -> Console:
+    if is_color_enabled():
+        return Console(
+            force_terminal=True,
+            color_system="standard",
+            no_color=False,
+        )
+    console = Console()
+    console.no_color = True
+    return console
 
 
 @dataclass(frozen=True)
@@ -287,8 +299,9 @@ async def _handle_slash_input(
             ),
         )
         return False
-    return await _handle_slash(
+    return await handle_prompt_safe_output_slash(
         text,
+        slash_handler=_handle_slash,
         runtime=runtime,
         console=console,
         transcript=transcript,
@@ -659,7 +672,7 @@ async def _run_terminal_focus_async(
     animation: AnimationResolution | None = None,
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
-    console = Console()
+    console = _build_terminal_console()
     transcript = TerminalTranscript(
         console,
         plain_spinner=plain_spinner,
@@ -708,6 +721,7 @@ async def _run_terminal_focus_async(
         working_dir=working_dir,
         animation=animation,
         progress=progress,
+        color=is_color_enabled(),
     )
     if callable(invalidate := getattr(composer, "invalidate", None)):
         status_line.set_refresh_callback(invalidate)

@@ -789,14 +789,16 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
         resume_prompt=_resume_prompt,
     )
 
-    approved = await callback("file.write", {"path": "scratch.txt"}, "call-1")
+    approved = await callback(
+        "exec.run", {"command": "docker desktop start"}, "call-1"
+    )
 
     assert approved is True
     assert events[0] == "pause"
     assert events[-1] == "resume"
     assert len(events) == 3
-    assert events[1].startswith("prompt:Approval required: file.write(")
-    assert "scratch.txt" in events[1]
+    assert events[1].startswith("prompt:Approval required: exec.run(")
+    assert "docker desktop start" in events[1]
 
 
 @pytest.mark.asyncio

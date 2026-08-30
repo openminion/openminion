@@ -25,6 +25,7 @@ from .labels import _runtime_label
 from openminion.cli.presentation.slash_commands import (
     slash_help_rows,
     terminal_slash_commands,
+    unknown_slash_command_message,
 )
 from openminion.cli.presentation.visible_parity import (
     handle_effort_command,
@@ -487,10 +488,11 @@ def _print_slash_help(console: Console) -> None:
 def _print_unknown_slash_notice(cmd: str, console: Console) -> None:
     console.print(
         Text(
-            f"(slash {cmd} is not yet implemented in the terminal renderer; "
-            "use `openminion --rich` for the Textual shell with "
-            "full slash support)",
-            style=_MUTED_ITALIC_STYLE,
+            unknown_slash_command_message(
+                cmd,
+                available_commands=_SLASH_COMMANDS,
+            ),
+            style=_ERR_STYLE,
         )
     )
 
@@ -512,7 +514,7 @@ def _handle_visible_parity_slash(
     elif cmd == "/graph":
         console.print(Text(render_graph_command(arg), style=_SYSTEM_STYLE))
     elif cmd == "/skills":
-        console.print(Text(render_skills_report(runtime), style=_SYSTEM_STYLE))
+        console.print(Text(render_skills_report(runtime, arg), style=_SYSTEM_STYLE))
     elif cmd == "/browser":
         console.print(
             Text(

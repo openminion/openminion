@@ -500,6 +500,7 @@ def _tool_title_row(
 ) -> Text:
     exit_code = event.exit_code
     is_ok = exit_code in (None, 0)
+    state_token = StyleToken.SUCCESS if is_ok else StyleToken.ERROR
     title_row = Text()
     title_row.append_text(
         marker_text(MARKER_TOOL_OK if is_ok else MARKER_TOOL_FAIL, bold=True)
@@ -513,9 +514,12 @@ def _tool_title_row(
         if public_title
         else _verb_form_title(event)
     )
-    title_row.append(title, style="bold")
+    title_row.append(title, style=token_rich_style(state_token, bold=True))
     if include_event_markers:
-        title_row.append(_tool_event_markers(event))
+        title_row.append(
+            _tool_event_markers(event),
+            style=token_rich_style(StyleToken.MUTED),
+        )
     if exit_code is not None and exit_code != 0:
         title_row.append(
             f" ✗ (exit {exit_code})",
@@ -532,9 +536,10 @@ def _collapsed_body_row(body_text: str, *, cap: int | None, hint_style: str) -> 
         max_lines=cap if cap is not None else 10**9,
     )
     body_row = Text()
+    body_style = token_rich_style(StyleToken.MUTED)
     for index, line in enumerate(collapsed.visible_lines):
         prefix = "  └ " if index == 0 else "    "
-        body_row.append(f"{prefix}{line}\n")
+        body_row.append(f"{prefix}{line}\n", style=body_style)
     if collapsed.truncated:
         body_row.append(f"    {collapsed.expand_hint}\n", style=hint_style)
     return body_row
@@ -612,7 +617,10 @@ def _render_in_progress_tool_block(
     title_row = Text()
     title_row.append_text(marker_text(MARKER_TOOL_RUNNING, bold=True))
     title_row.append(" ")
-    title_row.append(title, style="bold")
+    title_row.append(
+        title,
+        style=token_rich_style(StyleToken.WARNING, bold=True),
+    )
     if int(max(0.0, elapsed_seconds)) > 0:
         title_row.append(
             f" · {_format_elapsed_seconds(elapsed_seconds)}",

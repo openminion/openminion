@@ -36,7 +36,10 @@ from openminion.cli.presentation.queue import (
     queue_drop_usage_notice,
     queue_listing,
 )
-from openminion.cli.presentation.slash_commands import rich_slash_command_registry
+from openminion.cli.presentation.slash_commands import (
+    rich_slash_command_registry,
+    unknown_slash_command_message,
+)
 from openminion.cli.presentation.telemetry import (
     render_telemetry_slash,
     render_trace_slash,
@@ -70,7 +73,14 @@ class SlashCommandMixin:
                 if callable(handler):
                     handler(args)
                 return
-        self._push_system_body(f"Unknown command: {normalized}")
+        available = (
+            alias
+            for aliases, _description, _handler_name in self._slash_command_registry
+            for alias in aliases
+        )
+        self._push_system_body(
+            unknown_slash_command_message(cmd, available_commands=available)
+        )
 
     def _slash_new(self, _args: str) -> None:
         self.action_new_session()
@@ -357,10 +367,10 @@ class SlashCommandMixin:
 
         self._push_system_body(render_tasks_report(self._runtime, args))
 
-    def _slash_skills(self, _args: str) -> None:
+    def _slash_skills(self, args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_skills_report
 
-        self._push_system_body(render_skills_report(self._runtime))
+        self._push_system_body(render_skills_report(self._runtime, args))
 
     def _slash_effort(self, args: str) -> None:
         from openminion.cli.presentation.visible_parity import handle_effort_command

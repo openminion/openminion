@@ -126,6 +126,7 @@ _ROOT_OPTIONS_WITH_VALUES = frozenset(
         "--data-root",
         "--generated-root",
         "--config",
+        "--color",
     }
 )
 

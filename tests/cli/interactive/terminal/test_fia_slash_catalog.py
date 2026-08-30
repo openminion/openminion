@@ -337,6 +337,58 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
     assert transcript._messages[-1].kind.value == "system"
 
 
+def test_prompt_loop_routes_unknown_slash_with_suggestion_through_transcript(
+    tmp_path: Path,
+) -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/skill",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+        )
+    )
+
+    assert transcript._messages[-1].body == (
+        "Unknown command: /skill\n"
+        "Did you mean /skills?\n"
+        "Type / to view available commands."
+    )
+
+
+def test_prompt_loop_passes_skill_id_to_skill_detail_report(tmp_path: Path) -> None:
+    class _SkillDetailRuntime(_VisibleRuntime):
+        def skills_report(self, skill_id: str = "") -> str:
+            return f"Skill detail: {skill_id}"
+
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/skills demo_skill",
+            runtime=_SkillDetailRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+        )
+    )
+
+    assert transcript._messages[-1].body == "Skill detail: demo_skill"
+
+
 def test_resume_session_accepts_dict_session_message_count() -> None:
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)

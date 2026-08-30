@@ -14,7 +14,7 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.styles import Style
+from prompt_toolkit.styles import DummyStyle, Style
 
 from openminion.cli.presentation.animation import default_animation_registry
 from openminion.cli.presentation.animation.models import (
@@ -196,11 +196,11 @@ class TerminalComposer:
         working_dir: str | None = None,
         animation: AnimationResolution | None = None,
         progress: str = "full",
+        color: bool = True,
     ) -> None:
         self._on_escape = on_escape
         try:
             from prompt_toolkit.completion import PathCompleter
-
             path = PathCompleter(only_directories=False)
         except ImportError:
             path = None
@@ -220,6 +220,7 @@ class TerminalComposer:
         self._activity_animation = ""
         self._set_animation(animation.spec)
         self._progress = progress
+        self._color = bool(color)
         self._multiline = False
         self._bottom_toolbar = bottom_toolbar
         self._active_status = active_status
@@ -278,7 +279,7 @@ class TerminalComposer:
             enable_history_search=True,
             mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
-            style=_FOCUS_PROMPT_STYLE,
+            style=_FOCUS_PROMPT_STYLE if self._color else DummyStyle(),
         )
         _install_clickable_completion_menu(self._session)
 
@@ -447,7 +448,7 @@ class TerminalComposer:
             prompt.append(("class:busy-indicator", f" {frame}"))
         if status or frame:
             prompt.append(("", "\n\n"))
-        prompt.append(("ansicyan", self._prompt_text()))
+        prompt.append(("ansicyan" if self._color else "", self._prompt_text()))
         return FormattedText(prompt)
 
     def _busy_frame(self, now: float) -> str:

@@ -12,8 +12,10 @@ from openminion.cli.presentation.contracts import OverlayPresenter
 class _StubSession:
     def __init__(self, replies: list[str | Exception]) -> None:
         self._replies = list(replies)
+        self.prompts: list[str] = []
 
     async def prompt_async(self, *args, **kwargs):
+        self.prompts.append(str(args[0]) if args else "")
         if not self._replies:
             raise EOFError()
         next_reply = self._replies.pop(0)
@@ -73,10 +75,10 @@ def test_resume_picker_no_sessions_returns_none() -> None:
 
 def test_approval_yes_returns_allow() -> None:
     console, _ = _make_console()
-    overlay = TerminalOverlayPresenter(
-        console=console, prompt_session=_StubSession(["y"])
-    )
+    session = _StubSession(["y"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     assert overlay.present_approval("Run dangerous command?") == "allow"
+    assert session.prompts == ["Run dangerous command?\n[y]es / [N]o / [a]lways: "]
 
 
 def test_approval_always_returns_always() -> None:

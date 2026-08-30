@@ -32,6 +32,7 @@ def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
     monkeypatch,
 ) -> None:
     from openminion.cli.commands import interactive as interactive_cmd
+    from openminion.cli.presentation import styles
 
     monkeypatch.setattr(
         interactive_cmd,
@@ -73,9 +74,14 @@ def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
         no_context=False,
         no_update_check=True,
         theme=None,
+        color="always",
     )
-    assert interactive_cmd.run_interactive(args) == 0
-    assert len(launched) == 1
+    try:
+        assert interactive_cmd.run_interactive(args) == 0
+        assert styles.get_color_mode() == "on"
+        assert len(launched) == 1
+    finally:
+        styles.set_color_mode(None)
 
 
 def test_terminal_focus_starts_fresh_unless_session_is_requested(monkeypatch) -> None:
