@@ -737,6 +737,31 @@ class DoctorCommandTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(complete.call_args.kwargs["max_output_tokens"], 128)
 
+    def test_provider_check_keeps_enough_budget_for_reasoning_models(self) -> None:
+        config = OpenMinionConfig()
+        config.providers.openai.provider_identity = {
+            "transport_adapter": "openai_chat",
+            "wire_protocol_family": "openai_chat_completions",
+            "service_vendor": "minimax",
+            "model_family": "minimax",
+        }
+        complete = mock.Mock(
+            return_value=Namespace(
+                ok=True,
+                output_text="minimax text ok",
+                provider="openai",
+                model="MiniMax-M2.7",
+            )
+        )
+        app = Namespace(
+            config=config, llm=Namespace(client=Namespace(complete=complete))
+        )
+
+        result = _run_provider_connection_check(app, "Reply with exactly: ok")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(complete.call_args.kwargs["max_output_tokens"], 128)
+
     def test_doctor_openrouter_without_key_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
