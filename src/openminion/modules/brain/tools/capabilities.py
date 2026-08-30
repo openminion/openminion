@@ -3,6 +3,7 @@ from typing import Iterable
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_BROWSER,
     MODEL_HOST_METRICS,
+    MODEL_HOST_INVENTORY_REPORT,
     MODEL_LOCATION,
     MODEL_TIME,
     MODEL_WEATHER,
@@ -78,6 +79,7 @@ HOST_TOOL_CAPABILITIES: dict[str, tuple[str, ...]] = {
         "system_status",
         "resource_usage",
     ),
+    MODEL_HOST_INVENTORY_REPORT: ("create_host_inventory", "write_host_inventory"),
 }
 
 KNOWN_CAPABILITY_SIGNALS: frozenset[str] = frozenset(
