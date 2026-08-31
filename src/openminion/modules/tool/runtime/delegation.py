@@ -222,6 +222,37 @@ class A2aRuntimeDelegateAdapter:
         setter = getattr(owner, "set_approval_callback", None)
         return setter(callback) if callable(setter) else None
 
+    def review_readonly(
+        self,
+        *,
+        reviewer_agent_id: str,
+        objective: str,
+        criteria: list[str],
+        worktree: str,
+        diff: str,
+        verifier_refs: list[str],
+        repository_instructions: str,
+        timeout_seconds: int,
+    ) -> A2ADelegateResult:
+        instruction = "\n".join(
+            (
+                f"Review objective: {objective}",
+                f"Criteria: {', '.join(criteria)}",
+                f"Worktree: {worktree}",
+                f"Diff: {diff}",
+                f"Verifier refs: {', '.join(verifier_refs)}",
+                f"Repository instructions: {repository_instructions}",
+            )
+        )
+        return self.delegate(
+            agent_id=reviewer_agent_id,
+            instruction=instruction,
+            timeout_seconds=timeout_seconds,
+            permission_mode="readonly",
+            workspace_root=worktree,
+            cwd=worktree,
+        )
+
     def _idempotency_key(
         self,
         *,
