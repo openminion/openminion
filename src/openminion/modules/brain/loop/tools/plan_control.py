@@ -178,6 +178,11 @@ def build_plan_tool_spec() -> ToolSpec:
                         "this task plan."
                     ),
                 },
+                "criterion_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Stable verification criterion ids.",
+                },
                 "steps": {
                     "type": "array",
                     "items": step_schema,
@@ -189,6 +194,13 @@ def build_plan_tool_spec() -> ToolSpec:
                 "blocker_type": {"type": "string"},
                 "blocker_details": {"type": "string"},
                 "reason": {"type": "string"},
+                "revision_id": {"type": "string"},
+                "predecessor_revision_id": {"type": "string"},
+                "verifier_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Verifier evidence refs that prompted revision.",
+                },
                 "revised_steps": {
                     "type": "array",
                     "items": step_schema,
@@ -341,6 +353,7 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
             "workflow_id": arguments.get("workflow_id"),
             "workflow_version_hash": arguments.get("workflow_version_hash"),
             "root_goal_id": arguments.get("root_goal_id"),
+            "criterion_ids": list(arguments.get("criterion_ids") or []),
             "status": "active",
             "steps": list(arguments.get("steps") or []),
             "continue_plan_autonomously": bool(
@@ -384,6 +397,7 @@ def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult
     outputs: dict[str, Any] = {
         "action": PLAN_ACTION_DECLARE,
         "plan_id": plan.plan_id,
+        "task_plan": plan.model_dump(mode="json"),
         **_task_ops_outputs(loop_ctx, task_ops),
     }
     if plan.continue_plan_autonomously:
@@ -511,6 +525,7 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
         fallback_objective=str((active_plan or {}).get("objective") or ""),
         fallback_workflow_id=_active_plan_workflow_id(active_plan),
         fallback_workflow_version_hash=_active_plan_workflow_version_hash(active_plan),
+        fallback_criterion_ids=list((active_plan or {}).get("criterion_ids") or []),
     )
     workflow_failure = _validate_workflow_id(
         loop_ctx,
@@ -528,6 +543,7 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
     outputs: dict[str, Any] = {
         "action": PLAN_ACTION_REVISE,
         "plan_id": revision.plan_id,
+        "task_plan.revision": revision.model_dump(mode="json"),
     }
     if revision.continue_plan_autonomously:
         outputs[PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY] = True

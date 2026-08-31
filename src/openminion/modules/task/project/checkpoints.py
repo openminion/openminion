@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from openminion.modules.task.autonomy import AutonomyRun, now_ms
+from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
 from openminion.modules.task.runtime.lifecycle import (
     ProjectCycleClaim,
     TaskLifecycleRecord,
@@ -21,6 +24,64 @@ _OPEN_PROJECT_TASK_STATES = {
     TaskLifecycleState.ACTIVE,
     TaskLifecycleState.PAUSED,
 }
+
+
+def plan_checkpoint_payload(
+    checkpoint: ProjectCheckpoint,
+    turn: Any,
+) -> dict[str, object]:
+    raw_plan = checkpoint.payload.get("task_plan")
+    plan = TaskPlan.model_validate(raw_plan) if isinstance(raw_plan, dict) else None
+    raw_revision = checkpoint.payload.get("task_plan_revision")
+    revision = (
+        TaskPlanRevision.model_validate(raw_revision)
+        if isinstance(raw_revision, dict)
+        else None
+    )
+    raw_count = checkpoint.payload.get("plan_revision_count", 0)
+    revision_count = raw_count if isinstance(raw_count, int) else 0
+
+    incoming_plan = getattr(turn, "task_plan", None)
+    if incoming_plan is not None:
+        if (
+            plan is not None
+            and incoming_plan.plan_id == plan.plan_id
+            and incoming_plan.criterion_ids != plan.criterion_ids
+        ):
+            raise ValueError("task plan criterion_ids are immutable")
+        plan = incoming_plan
+        if revision is not None and revision.plan_id != plan.plan_id:
+            revision = None
+
+    incoming = getattr(turn, "task_plan_revision", None)
+    if incoming is not None:
+        if plan is None or incoming.plan_id != plan.plan_id:
+            raise ValueError("plan revision must match the checkpoint task plan")
+        if not incoming.revision_id:
+            raise ValueError("plan revision requires revision_id")
+        if not incoming.verifier_refs:
+            raise ValueError("plan revision requires verifier_refs")
+        if incoming.criterion_ids and incoming.criterion_ids != plan.criterion_ids:
+            raise ValueError("plan revision cannot change criterion_ids")
+        if revision is None and incoming.predecessor_revision_id:
+            raise ValueError("first plan revision cannot name a predecessor")
+        if revision is not None:
+            if incoming.revision_id == revision.revision_id:
+                raise ValueError("duplicate plan revision_id")
+            if incoming.predecessor_revision_id != revision.revision_id:
+                raise ValueError("plan revision predecessor is stale or missing")
+        revision = incoming.model_copy(
+            update={"criterion_ids": incoming.criterion_ids or plan.criterion_ids}
+        )
+        revision_count += 1
+
+    return {
+        "plan_revision_count": revision_count,
+        **({"task_plan": plan.model_dump(mode="json")} if plan else {}),
+        **(
+            {"task_plan_revision": revision.model_dump(mode="json")} if revision else {}
+        ),
+    }
 
 
 def build_project_run_projection(

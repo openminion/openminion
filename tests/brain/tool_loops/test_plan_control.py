@@ -124,6 +124,10 @@ def test_plan_tool_spec_advertises_bounded_step_schema() -> None:
     assert tool_family_enum == sorted(tool_family_enum)
     assert spec.input_schema["properties"]["revised_steps"]["items"] == step_schema
     assert "workflow_id" in spec.input_schema["properties"]
+    assert "criterion_ids" in spec.input_schema["properties"]
+    assert "revision_id" in spec.input_schema["properties"]
+    assert "predecessor_revision_id" in spec.input_schema["properties"]
+    assert "verifier_refs" in spec.input_schema["properties"]
 
 
 def test_plan_control_declare_records_task_plan_event() -> None:
@@ -138,6 +142,7 @@ def test_plan_control_declare_records_task_plan_event() -> None:
             "plan_id": "plan-1",
             "objective": "Research and summarize",
             "workflow_id": "workflow.skill.research",
+            "criterion_ids": ["criterion-source", "criterion-summary"],
             "steps": _active_plan()["steps"],
         },
     )
@@ -152,6 +157,10 @@ def test_plan_control_declare_records_task_plan_event() -> None:
         == "workflow.skill.research"
     )
     assert session_api.events[0]["kwargs"]["actor_type"] == "agent"
+    assert result.outputs["task_plan"]["criterion_ids"] == [
+        "criterion-source",
+        "criterion-summary",
+    ]
 
 
 def test_plan_control_declare_rejects_stringified_steps() -> None:
@@ -459,6 +468,9 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
             "action": "revise",
             "plan_id": "plan-1",
             "reason": "Transport is no longer needed.",
+            "revision_id": "revision-1",
+            "criterion_ids": ["criterion-source"],
+            "verifier_refs": ["verify:failed-1"],
             "revised_steps": revised_steps,
         },
     )
@@ -466,6 +478,8 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
     assert result.status == "success"
     assert session_api.events[0]["event_type"] == "task_plan.revised"
     assert session_api.events[0]["payload"]["plan"]["steps"][0]["step_id"] == "entry"
+    assert result.outputs["task_plan.revision"]["revision_id"] == "revision-1"
+    assert result.outputs["task_plan.revision"]["verifier_refs"] == ["verify:failed-1"]
 
 
 def test_plan_control_terminal_actions_record_canonical_events() -> None:

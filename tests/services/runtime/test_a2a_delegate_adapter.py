@@ -91,6 +91,88 @@ def test_success_status_maps_to_ok_result() -> None:
     assert result.target_agent_id == "researcher"
 
 
+def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> None:
+    instruction = (
+        "Review objective: preserve project plan lineage.\n"
+        "Criteria: no P0 or P1 findings.\n"
+        "Worktree: /repo\n"
+        "Diff: git diff -- src tests\n"
+        "Verifier refs: pytest:plan-lineage\n"
+        "Repository instructions: AGENTS.md"
+    )
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+            "outputs": {
+                "child_agent_id": "readonly-reviewer",
+                "findings": [
+                    {
+                        "priority": "P1",
+                        "owner": "project plan lineage",
+                        "message": "Add a stale predecessor test.",
+                    }
+                ],
+                "verifier_refs": ["pytest:plan-lineage"],
+            },
+        }
+    )
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).delegate(
+        agent_id="readonly-reviewer",
+        instruction=instruction,
+        timeout_seconds=30,
+        permission_mode="ask",
+        workspace_root="/repo",
+        cwd="/repo",
+    )
+
+    assert result.ok is True
+    assert result.target_agent_id == "readonly-reviewer"
+    assert result.outputs["child_agent_id"] == "readonly-reviewer"
+    assert result.outputs["findings"][0]["priority"] == "P1"
+    assert call.command is not None
+    assert call.command["params"] == {
+        "goal": instruction,
+        "instruction": instruction,
+        "timeout_seconds": 30,
+        "mode": "sync",
+        "permission_mode": "ask",
+        "workspace_root": "/repo",
+        "cwd": "/repo",
+    }
+
+
+def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_FAILED,
+            "summary": "reviewer mutation denied",
+            "error": {
+                "code": "POLICY_DENIED",
+                "message": "readonly reviewer cannot write files",
+            },
+        }
+    )
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).delegate(
+        agent_id="readonly-reviewer",
+        instruction="Edit /repo/app.py after review.",
+        timeout_seconds=30,
+        permission_mode="ask",
+        workspace_root="/repo",
+        cwd="/repo",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "POLICY_DENIED"
+    assert result.error_message == "readonly reviewer cannot write files"
+
+
 def test_command_shape_carries_model_named_target_and_instruction() -> None:
     call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
     adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")

@@ -2828,6 +2828,21 @@ def test_postprocess_turn_attaches_structured_action_output_metadata() -> None:
                     "response_preferences": {},
                 },
                 "session_work_summary": "Compared uv and pipx using official docs.",
+                "task_plan": {
+                    "plan_id": "plan-1",
+                    "objective": "Compare tools",
+                    "criterion_ids": ["criterion-table"],
+                    "steps": [{"step_id": "compare", "description": "Compare"}],
+                },
+                "task_plan.revision": {
+                    "plan_id": "plan-1",
+                    "revision_id": "revision-1",
+                    "criterion_ids": ["criterion-table"],
+                    "verifier_refs": ["verify:failed-1"],
+                    "revised_steps": [
+                        {"step_id": "compare", "description": "Recompare"}
+                    ],
+                },
                 "memory_consolidation.target_scope": "agent:agent-a",
                 "memory_consolidation.candidate_ids": ["cand-1"],
                 "memory_consolidation.state_hash": "hash-123",
@@ -2870,6 +2885,8 @@ def test_postprocess_turn_attaches_structured_action_output_metadata() -> None:
     assert response.metadata["memory_consolidation.target_scope"] == "agent:agent-a"
     assert response.metadata["memory_consolidation.candidate_ids"] == '["cand-1"]'
     assert response.metadata["memory_consolidation.state_hash"] == "hash-123"
+    assert '"criterion_ids": ["criterion-table"]' in response.metadata["task_plan"]
+    assert '"revision_id": "revision-1"' in response.metadata["task_plan.revision"]
 
 
 def test_postprocess_turn_salvages_finalization_status_trailer_from_message() -> None:

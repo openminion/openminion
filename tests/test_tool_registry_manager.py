@@ -63,6 +63,31 @@ def test_schema_for_file_read_includes_path_property() -> None:
     assert "path" in properties
 
 
+@pytest.mark.parametrize(
+    ("model_tool_id", "runtime_binding_id"),
+    (
+        ("file.list_dir", "runtime.file.list_dir"),
+        ("file.read", "runtime.file.read"),
+        ("file.write", "runtime.file.write"),
+    ),
+)
+def test_file_tool_schema_binding_and_dispatch_are_canonical(
+    model_tool_id: str,
+    runtime_binding_id: str,
+) -> None:
+    manager = _get_bootstrap_manager()
+
+    assert manager.normalize_raw_name(model_tool_id) == model_tool_id
+    assert manager.resolve_binding(model_tool_id) == runtime_binding_id
+    assert manager.runtime_candidates(runtime_binding_id) == (model_tool_id,)
+    assert manager.schema_for(model_tool_id)["type"] == "object"
+    assert manager.model_runtime_dispatch_map({model_tool_id})[model_tool_id] == {
+        "runtime_binding_id": runtime_binding_id,
+        "runtime_tool_name": model_tool_id,
+        "runtime_candidates": [model_tool_id],
+    }
+
+
 def test_model_provider_specs_expose_time_location_and_timezone_contract() -> None:
     manager = _get_bootstrap_manager()
 

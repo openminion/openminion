@@ -2157,6 +2157,7 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
                             "action": "declare",
                             "plan_id": "apd-proof",
                             "objective": "Research Japan trip requirements",
+                            "criterion_ids": ["criterion-entry"],
                             "steps": [
                                 {
                                     "step_id": "entry",
@@ -2208,6 +2209,9 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
         for event in session_api.events
         if event["event_type"].startswith("task_plan.")
     ] == ["task_plan.declared"]
+    assert outcome.telemetry_payload()["task_plan"]["criterion_ids"] == [
+        "criterion-entry"
+    ]
 
 
 def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
@@ -2663,6 +2667,97 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
         "activated": True,
     }
     assert loop_ctx.state.budgets_remaining.tool_calls == 4
+    assert outcome.final_text == "done"
+
+
+def test_generic_file_request_recovers_with_exact_active_file_tool() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="request-file",
+                        name=TOOL_REQUEST_TOOL_NAME,
+                        arguments={"name": "file"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="list-files",
+                        name="file.list_dir",
+                        arguments={"path": "."},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The directory was listed.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=5, llm_calls_max=10),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="listed",
+                    outputs={"entries": []},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.list_dir", "file.read", "file.write"}),
+            max_iterations=4,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="list the workspace")],
+        tool_specs=_tool_specs("file.list_dir"),
+        requestable_tool_specs=_tool_specs(
+            "file.list_dir",
+            "file.read",
+            "file.write",
+        ),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.list_dir"]
+    first_tools = [spec.name for spec in runtime.calls[0]["tools"]]
+    second_tools = [spec.name for spec in runtime.calls[1]["tools"]]
+    assert first_tools == second_tools
+    assert "file.list_dir" in second_tools
+    request_result = next(
+        message for message in runtime.calls[1]["messages"] if message.role == "tool"
+    )
+    assert json.loads(request_result.content)["error"]["code"] == (
+        "TOOL_REQUEST_UNAVAILABLE"
+    )
     assert outcome.final_text == "done"
 
 

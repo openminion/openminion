@@ -1571,6 +1571,34 @@ class TestToolRequestResult:
         assert ar.error.code == "TOOL_REQUEST_UNAVAILABLE"
         assert mutated is False
 
+    def test_generic_file_name_returns_exact_available_names_without_mutation(
+        self,
+    ) -> None:
+        specs = _tool_specs("file.list_dir", "file.read", "file.write")
+        active_specs = list(_tool_specs("web.search"))
+        active_names = {"web.search"}
+
+        ar, mutated = _tool_request_result(
+            requested_name="file",
+            active_tool_names=active_names,
+            requestable_specs_by_name={spec.name: spec for spec in specs},
+            active_tool_specs=active_specs,
+        )
+
+        assert ar.status == "failed"
+        assert ar.error.code == "TOOL_REQUEST_UNAVAILABLE"
+        assert ar.error.details == {
+            "tool_name": "file",
+            "requestable_tool_names": [
+                "file.list_dir",
+                "file.read",
+                "file.write",
+            ],
+        }
+        assert mutated is False
+        assert active_names == {"web.search"}
+        assert [spec.name for spec in active_specs] == ["web.search"]
+
     def test_activates_requested_tool(self) -> None:
         specs = _tool_specs("new.tool")
         active_specs = list(_tool_specs("file.read"))
@@ -2438,6 +2466,36 @@ def test_loop_seed_response_skips_first_llm_call() -> None:
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "from seed"
     assert len(runtime.calls) == 0  # seed used first
+
+
+def test_loop_seed_response_does_not_debit_accounted_entry_usage() -> None:
+    seed = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="from accounted seed",
+        finish_reason="stop",
+        usage=UsageInfo(input_tokens=6000, output_tokens=877),
+    )
+    runtime = _FakeRuntime(responses=[])
+    state = _state(tokens=1123)
+    state.llm_calls_used = 2
+    loop_ctx = _LoopContext(state=state, outcomes=[])
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="seed me")],
+        tool_specs=_tool_specs("file.read"),
+        seed_response=seed,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert runtime.calls == []
+    assert state.llm_calls_used == 2
+    assert state.budgets_remaining.tokens == 1123
 
 
 def test_loop_with_initial_state_skips_message_initialization() -> None:
