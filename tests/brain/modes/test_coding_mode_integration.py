@@ -3033,7 +3033,7 @@ def test_coding_loop_stops_on_job_pending() -> None:
 # Budget exhausted (token budget)
 
 
-def test_coding_loop_closes_with_evidence_on_token_budget_exhausted() -> None:
+def test_coding_loop_does_not_redebit_accounted_entry_response() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             LLMResponse(
@@ -3054,11 +3054,9 @@ def test_coding_loop_closes_with_evidence_on_token_budget_exhausted() -> None:
     ctx = _ctx(llm_client, executor, state=state)
     result = handler.execute(ctx)
 
-    # Budget exhaustion after a successful tool call closes with preserved evidence.
     assert result.status == "done"
     assert result.action_result is not None
-    assert "budget" in (result.message or "").lower()
-    assert "tool evidence" in (result.message or "").lower()
+    assert result.message == "done"
     assert result.action_result.error is None
     assert result.action_result.outputs["coding.tool_calls"] == ["file.read"]
 

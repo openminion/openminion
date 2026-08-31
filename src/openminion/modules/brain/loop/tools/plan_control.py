@@ -181,7 +181,6 @@ def build_plan_tool_spec() -> ToolSpec:
                 "criterion_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Stable verification criterion ids.",
                 },
                 "steps": {
                     "type": "array",
@@ -199,7 +198,6 @@ def build_plan_tool_spec() -> ToolSpec:
                 "verifier_refs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Verifier evidence refs that prompted revision.",
                 },
                 "revised_steps": {
                     "type": "array",
@@ -209,13 +207,8 @@ def build_plan_tool_spec() -> ToolSpec:
                 "continue_plan_autonomously": {
                     "type": "boolean",
                     "description": (
-                        "Optional opt-in signal. Set true on a non-terminal "
-                        "action (declare, step_completed, revise) when the "
-                        "runtime should schedule a follow-up autonomous turn "
-                        "to continue this plan without waiting for user "
-                        "input. Runtime enforces per-plan and per-session "
-                        "caps regardless of this flag. Ignored on terminal "
-                        "actions (step_blocked, abandon, complete)."
+                        "Request a capped follow-up turn after declare, "
+                        "step_completed, or revise. Ignored for terminal actions."
                     ),
                 },
             },
