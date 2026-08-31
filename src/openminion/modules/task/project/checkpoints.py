@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 from openminion.modules.task.autonomy import AutonomyRun, now_ms
 from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
@@ -18,6 +18,7 @@ from .models import (
     ProjectRun,
     ProjectVerificationState,
 )
+from .turn import ProjectTurnResult
 
 
 _OPEN_PROJECT_TASK_STATES = {
@@ -28,7 +29,7 @@ _OPEN_PROJECT_TASK_STATES = {
 
 def plan_checkpoint_payload(
     checkpoint: ProjectCheckpoint,
-    turn: Any,
+    turn: ProjectTurnResult,
 ) -> dict[str, object]:
     raw_plan = checkpoint.payload.get("task_plan")
     plan = TaskPlan.model_validate(raw_plan) if isinstance(raw_plan, dict) else None
@@ -38,10 +39,9 @@ def plan_checkpoint_payload(
         if isinstance(raw_revision, dict)
         else None
     )
-    raw_count = checkpoint.payload.get("plan_revision_count", 0)
-    revision_count = raw_count if isinstance(raw_count, int) else 0
+    revision_count = cast(int, checkpoint.payload.get("plan_revision_count", 0))
 
-    incoming_plan = getattr(turn, "task_plan", None)
+    incoming_plan = turn.task_plan
     if incoming_plan is not None:
         if (
             plan is not None
@@ -53,7 +53,7 @@ def plan_checkpoint_payload(
         if revision is not None and revision.plan_id != plan.plan_id:
             revision = None
 
-    incoming = getattr(turn, "task_plan_revision", None)
+    incoming = turn.task_plan_revision
     if incoming is not None:
         if plan is None or incoming.plan_id != plan.plan_id:
             raise ValueError("plan revision must match the checkpoint task plan")
