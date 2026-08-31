@@ -12,7 +12,7 @@ from openminion.modules.brain.loop.constants import (
 )
 from openminion.modules.llm.schemas import Message
 
-from ..budget_control import _effective_cap
+from ..budget import _effective_cap
 from ..contracts import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_FINAL_TEXT,

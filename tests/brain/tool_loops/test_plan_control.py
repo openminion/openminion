@@ -484,7 +484,7 @@ def test_plan_control_terminal_actions_record_canonical_events() -> None:
         assert session_api.events[0]["event_type"] == event_type
 
 
-def test_plan_control_complete_materializes_remaining_steps() -> None:
+def test_plan_control_complete_rejects_unresolved_steps() -> None:
     session_api = _FakeSessionAPI(active_plan=_active_plan())
     result = handle_plan_tool_call(
         loop_ctx=_Ctx(session_api=session_api),
@@ -495,22 +495,14 @@ def test_plan_control_complete_materializes_remaining_steps() -> None:
         },
     )
 
-    assert result.status == "success"
-    assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.step_completed",
-        "task_plan.step_completed",
-        "task_plan.completed",
-    ]
-    assert [
-        event["payload"].get("step_id")
-        for event in session_api.events
-        if event["event_type"] == "task_plan.step_completed"
-    ] == ["entry", "transport"]
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.code == "PLAN_STEPS_UNRESOLVED"
+    assert result.error.details["step_ids"] == ["entry", "transport"]
+    assert session_api.events == []
 
 
-def test_plan_control_same_turn_declare_then_complete_uses_active_plan_override() -> (
-    None
-):
+def test_plan_control_same_turn_declare_then_complete_preserves_active_plan() -> None:
     session_api = _FakeSessionAPI()
     loop_ctx = _Ctx(session_api=session_api)
 
@@ -533,13 +525,13 @@ def test_plan_control_same_turn_declare_then_complete_uses_active_plan_override(
     )
 
     assert declared.status == "success"
-    assert completed.status == "success"
+    assert completed.status == "failed"
+    assert completed.error is not None
+    assert completed.error.code == "PLAN_STEPS_UNRESOLVED"
     assert [event["event_type"] for event in session_api.events] == [
-        "task_plan.declared",
-        "task_plan.step_completed",
-        "task_plan.step_completed",
-        "task_plan.completed",
+        "task_plan.declared"
     ]
+    assert loop_ctx._plan_tool_active_plan_override is not None
 
 
 def test_plan_control_rejects_unknown_step_with_invalid_event() -> None:

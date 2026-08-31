@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
+import sqlite3
 import sys
 
 import pytest
@@ -187,3 +189,155 @@ def test_live_focus_security_terminal_recovery(
         transcript=transcript,
         python_bin=focus_probe.python_bin,
     )
+
+
+@pytest.mark.timeout(4260)
+def test_live_focus_complex_workflow_closeout(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    require_complex_focus()
+    root = artifact_root(tmp_path)
+    scratch_dir = root / "scratch" / "complex-workflow-closeout"
+    scratch_dir.mkdir(parents=True)
+    initial_files = {
+        "normalize.py": (
+            "def normalize(value: str) -> str:\n"
+            "    result = value.strip()\n"
+            "    return result\n"
+        ),
+        "labels.py": ('def label(value: str) -> str:\n    return f"[{value}]"\n'),
+        "test_helpers.py": (
+            "from labels import label\n"
+            "from normalize import normalize\n\n"
+            "def test_helpers() -> None:\n"
+            "    assert normalize(' value ') == 'value'\n"
+            "    assert label('ok') == '[ok]'\n"
+        ),
+    }
+    for relative_path, content in initial_files.items():
+        (scratch_dir / relative_path).write_text(content, encoding="utf-8")
+
+    scenario = FocusScenario(
+        scenario_id="complex-workflow-closeout",
+        prompt=(
+            "Work only in the current directory. First declare a typed task plan "
+            "with exactly five steps: (1) inspect all three source files, "
+            "(2) write inventory and ledger, (3) make the one minimal edit, "
+            "(4) run both validations, and (5) write the final summary. Use only "
+            "file.read, file.write, exec.run, and the plan control tool; do not "
+            "request or activate another tool. Review exactly `normalize.py`, "
+            "`labels.py`, and `test_helpers.py`. Simplify only real readability "
+            "overhead; `normalize.py` has one unnecessary local variable and the "
+            "other two files should remain unchanged. Create `inventory.txt` with "
+            "exactly those three sorted file names, one per line. Create "
+            "`ledger.tsv` with the header `file\\tdisposition` and one row per "
+            "inventoried file; use disposition `trim` for normalize.py and `keep` "
+            "for the other two. Use file.write to make the smallest source edit, "
+            "then use exec.run "
+            "to run both `python -m py_compile normalize.py labels.py "
+            "test_helpers.py` and `python -m pytest -q`. Do not claim success until "
+            "both pass. After they pass, create `summary.md` containing these exact "
+            "four nonblank lines: `changed: normalize.py`, `unchanged: labels.py, "
+            "test_helpers.py`, `py_compile: pass`, and `pytest: pass`. Explicitly "
+            "complete every task-plan step, then complete the plan. Your entire "
+            "final answer must be exactly `CWCR_CLOSEOUT_OK`."
+        ),
+        expected_markers=("CWCR_CLOSEOUT_OK",),
+        timeout=1200,
+        requires_approval=True,
+        max_auto_approvals=12,
+        approval_reply="session",
+        use_scratch_workspace=True,
+        include_project_context=False,
+        min_generated_files=6,
+        expected_file_patterns=(
+            "normalize.py",
+            "labels.py",
+            "test_helpers.py",
+            "inventory.txt",
+            "ledger.tsv",
+            "summary.md",
+        ),
+        validation_commands=(
+            (
+                "{python}",
+                "-m",
+                "py_compile",
+                "normalize.py",
+                "labels.py",
+                "test_helpers.py",
+            ),
+            ("{python}", "-m", "pytest", "-q"),
+        ),
+        max_auto_continuations=4,
+    )
+    active_probe = focus_probe.for_workdir(
+        scratch_dir,
+        include_project_context=False,
+    )
+
+    with active_probe.session(rows=50, cols=160) as session:
+        active_probe.wait_ready(session)
+        try:
+            transcript = active_probe.run_turn(session, scenario)
+        except BaseException:
+            write_transcript(root, scenario.scenario_id, session.transcript)
+            raise
+        write_transcript(root, scenario.scenario_id, transcript)
+
+    assert_scenario_contract(
+        scenario,
+        scratch_dir=scratch_dir,
+        transcript=transcript,
+        python_bin=focus_probe.python_bin,
+    )
+    assert (scratch_dir / "inventory.txt").read_text(encoding="utf-8").splitlines() == [
+        "labels.py",
+        "normalize.py",
+        "test_helpers.py",
+    ]
+    assert (scratch_dir / "ledger.tsv").read_text(encoding="utf-8").splitlines() == [
+        "file\tdisposition",
+        "labels.py\tkeep",
+        "normalize.py\ttrim",
+        "test_helpers.py\tkeep",
+    ]
+    assert (scratch_dir / "summary.md").read_text(encoding="utf-8").splitlines() == [
+        "changed: normalize.py",
+        "unchanged: labels.py, test_helpers.py",
+        "py_compile: pass",
+        "pytest: pass",
+    ]
+    assert (scratch_dir / "labels.py").read_text(encoding="utf-8") == initial_files[
+        "labels.py"
+    ]
+    assert (scratch_dir / "test_helpers.py").read_text(
+        encoding="utf-8"
+    ) == initial_files["test_helpers.py"]
+    assert "result = value.strip()" not in (scratch_dir / "normalize.py").read_text(
+        encoding="utf-8"
+    )
+    with sqlite3.connect(
+        focus_probe.data_root / "state" / "brain" / "sessions.db"
+    ) as db:
+        plan_events = [
+            (event_type, json.loads(payload_json))
+            for event_type, payload_json in db.execute(
+                "SELECT event_type, payload_json FROM session_events "
+                "WHERE event_type LIKE 'task_plan.%' ORDER BY seq"
+            )
+        ]
+    declared_steps = {
+        step["step_id"]
+        for event_type, payload in plan_events
+        if event_type == "task_plan.declared"
+        for step in payload["plan"]["steps"]
+    }
+    completed_steps = {
+        payload["step_id"]
+        for event_type, payload in plan_events
+        if event_type == "task_plan.step_completed"
+    }
+    assert declared_steps == completed_steps
+    assert any(event_type == "task_plan.completed" for event_type, _ in plan_events)

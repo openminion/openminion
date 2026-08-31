@@ -87,9 +87,7 @@ from .response_payloads import (  # noqa: F401
 )
 from .budget_control import (  # noqa: F401
     _active_work_summary_from_state,
-    _adaptive_budget_config,
     _budget_stop_outcome,
-    _effective_cap,
     _emit_budget_event,
     _emit_budget_progress,
     _emit_high_watermark_if_needed,
@@ -104,6 +102,7 @@ from .budget_control import (  # noqa: F401
     _step_summaries_from_state,
     _tool_budget_exhausted_for_answer_only,
 )
+from .budget import _effective_cap
 
 from .iteration.setup import (  # noqa: F401
     _delegated_child_context,

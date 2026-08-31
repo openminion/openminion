@@ -72,6 +72,10 @@ from openminion.modules.brain.loop.tools.contracts import (
     PreparedToolDispatch,
     RawToolResult,
 )
+from openminion.modules.brain.runtime.reconciliation import (
+    apply_plan_reconciliation_to_judgment,
+    evaluate_plan_reconciliation,
+)
 from openminion.modules.brain.schemas import (
     ActionError,
     ActionResult,
@@ -87,7 +91,7 @@ from openminion.modules.brain.trailers import EXPECTED_TRAILERS_METADATA_KEY
 from openminion.modules.context.compress.eligibility import (
     DefaultCompactionEligibility,
 )
-from openminion.modules.llm.schemas import LLMResponse, ToolCall
+from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall
 
 
 @dataclass
@@ -1247,6 +1251,93 @@ def test_result_from_outcome_maps_terminal_reasons(
     result = mode._result_from_outcome(ctx, outcome=outcome)
     assert result.status == expected_status
     assert result.action_result is not None
+
+
+def test_budget_exhaustion_with_unresolved_plan_waits_without_closing() -> None:
+    class _PlanAwareServices(_FakeServices):
+        closure_judgments: list[ClosureJudgment]
+
+        def __init__(self) -> None:
+            super().__init__(disposition="continue")
+            self.closure_judgments = []
+
+        def evaluate_turn_closure(self, **kwargs: Any) -> ClosureJudgment:
+            del kwargs
+            judgment = ClosureJudgment(
+                satisfied=True,
+                reason="model proposed close",
+                next_action="close",
+                final_answer="done",
+            )
+            plan = self.runner.session_api.active_plan
+            apply_plan_reconciliation_to_judgment(
+                judgment,
+                evaluate_plan_reconciliation(plan),
+                state=_state(
+                    budgets_remaining=BudgetCounters(
+                        ticks=0,
+                        tool_calls=0,
+                        a2a_calls=0,
+                        tokens=0,
+                        time_ms=0,
+                    )
+                ),
+            )
+            self.closure_judgments.append(judgment)
+            return judgment
+
+    services = _PlanAwareServices()
+    services.runner = SimpleNamespace(
+        session_api=_FakeSessionAPI(
+            active_plan={
+                "plan_id": "plan-1",
+                "objective": "Validate the change",
+                "steps": [
+                    {
+                        "step_id": "validate",
+                        "description": "Run validation",
+                        "status": "in_progress",
+                    }
+                ],
+            }
+        ),
+        memory_api=None,
+        profile=SimpleNamespace(goal_execution_policy=None),
+        tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        options=SimpleNamespace(failure_strategy="halt"),
+    )
+    ctx = _ctx(services=services)
+    outcome = _outcome(
+        ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+        final_text="partial",
+        finalization_status={"status": "blocked", "reasoning": "validation pending"},
+        state=AdaptiveToolLoopState(
+            messages=[Message(role="user", content="continue")],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "content": "wrote partial.txt",
+                        "data": {"path": "partial.txt"},
+                    }
+                ]
+            },
+        ),
+    )
+
+    result = ActLoopMode()._result_from_outcome(ctx, outcome=outcome)
+
+    assert result.status == BRAIN_STATE_WAITING_USER
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "act_adaptive_budget_exhausted"
+    assert "Continue in a new turn to resume." in str(result.message)
+    assert services.closure_judgments[0].satisfied is False
+    assert services.closure_judgments[0].final_answer is None
+    assert services.runner.session_api.active_plan["steps"][0]["status"] == (
+        "in_progress"
+    )
 
 
 def test_result_from_outcome_decompose_handoff_and_missing_subtasks(

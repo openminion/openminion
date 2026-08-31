@@ -31,7 +31,11 @@ from .runtime import (
     _normalize_finalization_status_response,
 )
 
-from .budget import _debit_llm_usage
+from .budget import (
+    _debit_llm_usage,
+    _effective_cap,
+    _ensure_effective_cap_initialized,
+)
 from .budget_finalization import (
     _budget_finalization_original_request,
     _finalization_status_from_response,
@@ -67,6 +71,7 @@ from .evidence import (
     _successful_substantive_tool_results,
 )
 from .postprocess.evidence_closeout import tool_evidence_closeout_outcome
+from .plan_control import unresolved_active_plan_step_ids
 from .status import emit_adaptive_status
 
 
@@ -77,22 +82,6 @@ _INTERNAL_FAILURE_FINAL_TEXT = (
 
 def _is_internal_failure_final_text(text: str) -> bool:
     return _INTERNAL_FAILURE_FINAL_TEXT in str(text or "").strip().lower()
-
-
-def _effective_cap(
-    profile: AdaptiveToolLoopProfile, loop_state: AdaptiveToolLoopState
-) -> int:
-    """AIB-06: read the dynamic iteration cap."""
-    dynamic = int(getattr(loop_state, "effective_max_iterations", 0) or 0)
-    if dynamic > 0:
-        return dynamic
-    return int(profile.max_iterations)
-
-
-def _adaptive_budget_config(
-    profile: AdaptiveToolLoopProfile,
-) -> AdaptiveBudgetConfig | None:
-    return profile.adaptive_budget_config
 
 
 def _emit_budget_event(
@@ -188,7 +177,8 @@ def _budget_stop_outcome(
     public_mode_tag: str,
     reason: str,
 ) -> AdaptiveToolLoopOutcome:
-    if reason not in {STOP_USER_DECLINED, STOP_USER_TIMEOUT}:
+    unresolved_plan = unresolved_active_plan_step_ids(loop_ctx)
+    if not unresolved_plan and reason not in {STOP_USER_DECLINED, STOP_USER_TIMEOUT}:
         fallback_outcome = tool_evidence_closeout_outcome(
             profile=profile,
             loop_state=loop_state,
@@ -225,6 +215,25 @@ def _budget_stop_outcome(
         termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
         state=loop_state,
         allowed_tools=allowed_tools,
+    )
+
+
+def _unresolved_plan_budget_outcome(
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+) -> AdaptiveToolLoopOutcome | None:
+    if not unresolved_active_plan_step_ids(loop_ctx):
+        return None
+    return _budget_stop_outcome(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        allowed_tools=allowed_tools,
+        public_mode_tag=public_mode_tag,
+        reason="active_plan_unresolved",
     )
 
 
@@ -281,15 +290,6 @@ def _answer_only_finalization_contract_requested(
     )
 
 
-def _ensure_effective_cap_initialized(
-    *,
-    profile: AdaptiveToolLoopProfile,
-    loop_state: AdaptiveToolLoopState,
-) -> None:
-    if int(getattr(loop_state, "effective_max_iterations", 0) or 0) <= 0:
-        loop_state.effective_max_iterations = int(profile.max_iterations)
-
-
 def _budget_stop_reason(
     *,
     config: AdaptiveBudgetConfig,
@@ -297,9 +297,7 @@ def _budget_stop_reason(
     loop_state: AdaptiveToolLoopState,
 ) -> str | None:
     state = getattr(loop_ctx, "state", None)
-    session_extensions_used = (
-        get_session_extensions_used(state=state) if state is not None else 0
-    )
+    session_extensions_used = get_session_extensions_used(state=state) if state else 0
     return check_safety_rails(
         config=config,
         loop_state=loop_state,
@@ -425,10 +423,10 @@ def _maybe_extend_iteration_budget(
     allowed_tools: frozenset[str],
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | bool:
-    config = _adaptive_budget_config(profile)
+    config = profile.adaptive_budget_config
     if config is None:
         return False
-    _ensure_effective_cap_initialized(profile=profile, loop_state=loop_state)
+    _ensure_effective_cap_initialized(profile=profile, state=loop_state)
 
     stop_reason = _budget_stop_reason(
         config=config,
@@ -575,6 +573,10 @@ def _force_budget_answer_only_finalization(
     allowed_tools: frozenset[str],
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | None:
+    if outcome := _unresolved_plan_budget_outcome(
+        loop_ctx, profile, loop_state, allowed_tools, public_mode_tag
+    ):
+        return outcome
     has_tool_evidence = _has_tool_evidence_for_answer_only(loop_ctx, loop_state)
     has_successful_tool_evidence = bool(
         _successful_substantive_tool_results(loop_state)
@@ -670,10 +672,7 @@ def _force_budget_answer_only_finalization(
         ),
     )
     try:
-        response = runtime.complete(
-            messages=finalization_messages,
-            **complete_kwargs,
-        )
+        response = runtime.complete(messages=finalization_messages, **complete_kwargs)
     except Exception as exc:  # noqa: BLE001
         loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
         loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
@@ -768,9 +767,7 @@ def _force_budget_answer_only_finalization(
         contract_requested=contract_requested,
     )
     if outcome.final_text == final_text:
-        loop_state.messages.extend(
-            list(getattr(response, "assistant_messages", []) or [])
-        )
+        loop_state.messages += list(getattr(response, "assistant_messages", []) or [])
     return outcome
 
 

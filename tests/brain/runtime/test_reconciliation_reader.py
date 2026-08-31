@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from openminion.modules.brain.execution.closure import _active_plan_at_closure
+from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
 
 @dataclass
@@ -182,3 +184,64 @@ def test_returns_none_when_lookup_raises() -> None:
     runner = _Runner(session_api=_BareSessionApi(store=_FaultyStore()))
     state = _State()
     assert _active_plan_at_closure(runner, state) is None
+
+
+def test_closure_reads_persisted_unresolved_plan_after_tool_failure(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "closure-plan.db")
+    try:
+        session_id = store.create_session(
+            initial_agent_id="agent.main", profile_version="pv1"
+        )
+        store.append_event(
+            session_id,
+            event_type="task_plan.declared",
+            payload={
+                "plan": {
+                    "plan_id": "plan-1",
+                    "objective": "Validate the change",
+                    "steps": [
+                        {
+                            "step_id": "validate",
+                            "description": "Run validation",
+                            "status": "in_progress",
+                        }
+                    ],
+                }
+            },
+        )
+        request_event_id = store.append_event(
+            session_id,
+            event_type="tool.call.requested",
+            payload={
+                "schema_version": 1,
+                "turn_scope_id": "turn-1",
+                "call_id": "call-1",
+                "canonical_name": "exec.run",
+                "sanitized_normalized_arguments": {"command": "pytest"},
+                "batch_index": 0,
+                "depends_on": [],
+            },
+        )
+        store.append_event(
+            session_id,
+            event_type="tool.call.blocked",
+            parent_event_id=request_event_id,
+            payload={
+                "schema_version": 1,
+                "turn_scope_id": "turn-1",
+                "call_id": "call-1",
+                "status": "error",
+                "error": {"code": "EXEC_ERROR", "message": "failed", "details": {}},
+            },
+        )
+
+        runner = _Runner(session_api=_BareSessionApi(store=store))
+        plan = _active_plan_at_closure(runner, _State(session_id=session_id))
+
+        assert plan is not None
+        assert plan["steps"][0]["step_id"] == "validate"
+        assert plan["steps"][0]["status"] == "in_progress"
+    finally:
+        store.close()

@@ -655,8 +655,8 @@ def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -
                 model="fake-model",
                 output_text="SOURCES\n- wrote app.py\n\nCHANGES\n- created app\n\nTESTS\n- not run",
                 finalization_status={
-                    "status": "final_answer",
-                    "reasoning": "The requested project file was written.",
+                    "status": "incomplete",
+                    "reasoning": "The file was written but the active plan remains.",
                 },
                 finish_reason="stop",
             ),
@@ -690,7 +690,7 @@ def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -
         tool_specs=_tool_specs("file.write"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
     assert outcome.state.scratchpad["plan_control.noop_retries"] == 1
     assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
@@ -792,8 +792,8 @@ def test_engine_redirects_repeated_plan_only_calls_to_substantive_work() -> None
                 model="fake-model",
                 output_text="Wrote app.py and validated the loop.",
                 finalization_status={
-                    "status": "final_answer",
-                    "reasoning": "The requested file was written.",
+                    "status": "incomplete",
+                    "reasoning": "The file was written but the active plan remains.",
                 },
                 finish_reason="stop",
             ),
@@ -828,7 +828,7 @@ def test_engine_redirects_repeated_plan_only_calls_to_substantive_work() -> None
         tool_specs=_tool_specs("file.write"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
     assert outcome.state.scratchpad["plan_control.noop_retries"] == 2
     assert outcome.state.scratchpad["plan_control.tool_suppressed"] is True
@@ -1306,7 +1306,7 @@ def test_engine_retries_when_model_stops_after_recoverable_argument_failure() ->
     ]
     assert len(runtime.calls) == 4
     assert any(
-        "Make one corrected tool call now" in message.content
+        "Use the tool schema and these structured error facts" in message.content
         for message in runtime.calls[2]["messages"]
         if message.role == "system"
     )
@@ -1522,7 +1522,7 @@ def test_engine_recovers_blocked_policy_denial_with_suggested_tool() -> None:
         "file.find",
     ]
     assert any(
-        "Retry the task using file.find" in message.content
+        '"suggested_tool": "file.find"' in message.content
         for message in runtime.calls[1]["messages"]
         if message.role == "system"
     )
@@ -2176,6 +2176,10 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
                 provider="fake",
                 model="fake-model",
                 output_text="planned",
+                finalization_status={
+                    "status": "incomplete",
+                    "reasoning": "The plan is recorded and its work remains.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -2195,7 +2199,7 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
         tool_specs=[],
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert outcome.state.total_tool_calls == 0
     assert loop_ctx.state.budgets_remaining.tool_calls == 2
     assert PLAN_TOOL_NAME in {spec.name for spec in runtime.calls[0]["tools"]}
@@ -2383,8 +2387,8 @@ def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
                 model="fake-model",
                 output_text="I completed the missing step.",
                 finalization_status={
-                    "status": "final_answer",
-                    "reasoning": "The invalid plan event was surfaced.",
+                    "status": "incomplete",
+                    "reasoning": "The invalid plan event left the plan unresolved.",
                 },
                 finish_reason="stop",
             ),
@@ -2421,7 +2425,7 @@ def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
         tool_specs=[],
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
     assert [
         event["event_type"]
@@ -2438,6 +2442,10 @@ def test_engine_does_not_complete_plan_step_from_prose_only() -> None:
                 provider="fake",
                 model="fake-model",
                 output_text="The entry step is done.",
+                finalization_status={
+                    "status": "incomplete",
+                    "reasoning": "No typed step completion was recorded.",
+                },
                 finish_reason="stop",
             )
         ]
@@ -2473,7 +2481,7 @@ def test_engine_does_not_complete_plan_step_from_prose_only() -> None:
         tool_specs=[],
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert session_api.events == []
 
 
@@ -7578,7 +7586,7 @@ def test_failed_tool_result_appends_recovery_hint() -> None:
     second_call_messages = runtime.calls[1]["messages"]
     system_messages = [m for m in second_call_messages if m.role == "system"]
     assert any(
-        "Do not repeat the same invalid call" in m.content and "weather" in m.content
+        "Use the tool schema" in m.content and "weather" in m.content
         for m in system_messages
     )
 

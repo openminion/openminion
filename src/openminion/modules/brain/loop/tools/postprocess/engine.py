@@ -9,6 +9,7 @@ from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message, ToolCall
 from ..budget import (
     _debit_llm_usage,
+    _effective_cap,
     _profile_budget_exhausted,
     _remaining_budget_fraction,
     _tool_call_budget_exhausted,
@@ -16,7 +17,6 @@ from ..budget import (
 )
 from ..budget_control import (
     _answer_only_finalization_messages,
-    _effective_cap,
     _force_budget_answer_only_finalization,
     _maybe_extend_iteration_budget,
     _is_internal_failure_final_text,
@@ -571,6 +571,8 @@ class AdaptiveLoopRunnerPostprocessMixin(
         tool_calls: list[Any],
         response_was_tool_suppressed: bool,
     ) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
+        if tool_calls:
+            self.loop_state.scratchpad.pop("empty_payload_recovery_retry_count", None)
         if not response_was_tool_suppressed or not tool_calls:
             return False, None
         if _reopen_terminal_tool_request(self.loop_state):

@@ -245,8 +245,10 @@ def plan_tool_call_advances_active_plan(
     plan_id = str(arguments.get("plan_id", "") or "").strip()
     if _active_plan_id(active_plan) != plan_id:
         return False
-    if action in {PLAN_ACTION_ABANDON, PLAN_ACTION_COMPLETE}:
+    if action == PLAN_ACTION_ABANDON:
         return True
+    if action == PLAN_ACTION_COMPLETE:
+        return not _unresolved_step_ids(active_plan)
     step_id = str(arguments.get("step_id", "") or "").strip()
     for step in list((active_plan or {}).get("steps") or []):
         if not isinstance(step, dict):
@@ -258,6 +260,10 @@ def plan_tool_call_advances_active_plan(
             "completed",
         }
     return False
+
+
+def unresolved_active_plan_step_ids(loop_ctx: Any) -> tuple[str, ...]:
+    return tuple(_unresolved_step_ids(_current_active_plan(loop_ctx)))
 
 
 def with_enabled_plan_tool_spec(
@@ -551,7 +557,13 @@ def _handle_terminal(
         )
     payload = signal.model_dump(mode="json")
     if event_type == "task_plan.completed":
-        _materialize_remaining_completed_steps(loop_ctx=loop_ctx, signal=signal)
+        unresolved_step_ids = _unresolved_step_ids(_current_active_plan(loop_ctx))
+        if unresolved_step_ids:
+            return _failed_result(
+                code="PLAN_STEPS_UNRESOLVED",
+                summary="Task plan still has unresolved steps.",
+                details={"plan_id": signal.plan_id, "step_ids": unresolved_step_ids},
+            )
         _sync_goal_plan_step(
             loop_ctx,
             plan_id=signal.plan_id,
@@ -570,42 +582,10 @@ def _handle_terminal(
     )
 
 
-def _materialize_remaining_completed_steps(
-    *, loop_ctx: Any, signal: TaskPlanTerminalSignal
-) -> None:
-    active_plan = _current_active_plan(loop_ctx)
-    if _active_plan_id(active_plan) != signal.plan_id:
-        return
-    for raw_step in list((active_plan or {}).get("steps") or []):
-        if not isinstance(raw_step, dict):
-            continue
-        status = str(raw_step.get("status") or "pending").strip()
-        if status in {"completed", "blocked"}:
-            continue
-        completed = TaskPlanStepCompleted.model_validate(
-            {
-                "plan_id": signal.plan_id,
-                "step_id": raw_step.get("step_id"),
-                "outcome": "success",
-                "output_summary": signal.reason or "Completed by terminal plan signal.",
-            }
-        )
-        payload = completed.model_dump(mode="json")
-        _append_task_plan_event(
-            loop_ctx,
-            event_type="task_plan.step_completed",
-            payload=payload,
-        )
-        _update_active_plan_step_status(
-            loop_ctx,
-            plan_id=completed.plan_id,
-            step_id=completed.step_id,
-            status="completed",
-            output_summary=completed.output_summary,
-        )
-        _sync_goal_plan_step(
-            loop_ctx,
-            plan_id=completed.plan_id,
-            terminal_status="completed",
-        )
-        _task_ops_outputs(loop_ctx, task_ops_for_step_completed(completed))
+def _unresolved_step_ids(active_plan: dict[str, Any] | None) -> list[str]:
+    return [
+        str(step.get("step_id") or "<unknown>").strip()
+        for step in list((active_plan or {}).get("steps") or [])
+        if isinstance(step, dict)
+        and str(step.get("status") or "pending").strip().lower() != "completed"
+    ]
