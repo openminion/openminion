@@ -47,19 +47,13 @@ class TestRenderPipeline:
                 f"{name} verify render too short: {len(text)} chars"
             )
 
-    def test_get_recipe_returns_non_none(self, skill, example_skills):
-        recipe_count = 0
+    def test_procedure_only_examples_do_not_create_executable_recipes(
+        self, skill, example_skills
+    ):
         for path in example_skills:
             name = os.path.basename(os.path.dirname(path))
             sid, vh, issues = skill.ingest_file(path, name=name)
-            recipe = skill.get_recipe(sid, vh)
-            if recipe is not None:
-                recipe_count += 1
-
-        assert recipe_count >= 5, (
-            f"Only {recipe_count}/9 skills have recipes (expected >= 5)"
-        )
-        print(f"\n{recipe_count}/9 skills have recipes")
+            assert skill.get_recipe(sid, vh) is None, name
 
     def test_render_respects_max_tokens(self, skill, example_skills):
         path = example_skills[0]

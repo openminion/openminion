@@ -165,6 +165,68 @@ def test_short_description_precedence_uses_markdown_metadata(tmp_path: Path) -> 
         ctl.close()
 
 
+def test_openai_bundle_preserves_companion_and_progressive_resource(
+    tmp_path: Path,
+) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl,
+            _fixture_path("openai", "swiftui-performance-audit", "SKILL.md"),
+        )
+
+        assert "parse.warning:companion_metadata_unavailable" not in warnings
+        package = ctl.get_skill(skill_id, version_hash)
+        assert package.display_name == "SwiftUI Performance Audit"
+        assert package.bundle_metadata["source"] == "openai"
+        assert package.recipe is None
+        assert [item["path"] for item in package.resources] == [
+            "references/ContentView.swift"
+        ]
+
+        resource = ctl.read_skill_resource(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            resource_path="references/ContentView.swift",
+        )
+        assert "struct ContentView" in resource["content"]
+        assert resource["truncated"] is False
+    finally:
+        ctl.close()
+
+
+def test_hermes_bundle_keeps_supported_resources_and_reports_unknown_metadata(
+    tmp_path: Path,
+) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            ctl,
+            _fixture_path("hermes", "system-inventory", "SKILL.md"),
+        )
+
+        assert "parse.warning:companion_metadata_unavailable" in warnings
+        assert {
+            warning
+            for warning in warnings
+            if warning.startswith("parse.warning:unknown_front_matter_key:")
+        } == {
+            "parse.warning:unknown_front_matter_key:author",
+            "parse.warning:unknown_front_matter_key:platforms",
+            "parse.warning:unknown_front_matter_key:prerequisites",
+        }
+        package = ctl.get_skill(skill_id, version_hash)
+        assert package.bundle_metadata["source"] == "none"
+        assert package.recipe is None
+        assert [item["path"] for item in package.resources] == [
+            "references/collection-guide.md"
+        ]
+        assert all("specifications/" not in item["path"] for item in package.resources)
+        assert all("child/" not in item["path"] for item in package.resources)
+    finally:
+        ctl.close()
+
+
 def test_exact_name_top1(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path, known_tools=["http_request", "browser", "file"]))
     try:

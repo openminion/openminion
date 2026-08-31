@@ -50,6 +50,9 @@ class SkillValidationReport:
     findings: tuple[SkillValidationFinding, ...]
     lint_summary: Mapping[str, int]
     harness_summary: Mapping[str, int]
+    bundle_summary: Mapping[str, Any]
+    recipe_summary: Mapping[str, Any]
+    readiness: Mapping[str, Any]
     generated_at: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +62,9 @@ class SkillValidationReport:
             "findings": [item.to_dict() for item in self.findings],
             "lint_summary": dict(self.lint_summary),
             "harness_summary": dict(self.harness_summary),
+            "bundle_summary": dict(self.bundle_summary),
+            "recipe_summary": dict(self.recipe_summary),
+            "readiness": dict(self.readiness),
             "generated_at": self.generated_at,
         }
 
@@ -84,6 +90,8 @@ class SkillTestReport:
     skill_id: str
     scenarios: tuple[SkillTestScenario, ...]
     harness_report_ref: str
+    harness_summary: Mapping[str, Any]
+    bundle_results: tuple[Mapping[str, Any], ...]
     regression_refs: tuple[str, ...]
     outcome: SkillTestOutcome
     generated_at: str
@@ -93,6 +101,8 @@ class SkillTestReport:
             "skill_id": self.skill_id,
             "scenarios": [item.to_dict() for item in self.scenarios],
             "harness_report_ref": self.harness_report_ref,
+            "harness_summary": dict(self.harness_summary),
+            "bundle_results": [dict(item) for item in self.bundle_results],
             "regression_refs": list(self.regression_refs),
             "outcome": self.outcome,
             "generated_at": self.generated_at,
@@ -199,6 +209,7 @@ def build_skill_validation_report(
     package: Any,
     *,
     lint_report: Mapping[str, Any] | None,
+    verified_lint_report: Mapping[str, Any] | None = None,
     harness_result: Any | None,
     generated_at: str | None = None,
 ) -> SkillValidationReport:
@@ -210,6 +221,10 @@ def build_skill_validation_report(
 
     lint_findings, lint_counts = _lint_findings(skill_id, lint_report)
     harness_findings, harness_counts = _harness_findings(skill_id, harness_result)
+    draft_blockers = _lint_error_codes(lint_report)
+    verified_blockers = _lint_error_codes(verified_lint_report)
+    recipe = package.recipe
+    steps = tuple(recipe.steps) if recipe is not None else ()
 
     return SkillValidationReport(
         skill_id=skill_id,
@@ -217,8 +232,47 @@ def build_skill_validation_report(
         findings=lint_findings + harness_findings,
         lint_summary=dict(lint_counts),
         harness_summary=dict(harness_counts),
+        bundle_summary=_bundle_result_summary(harness_result),
+        recipe_summary={
+            "step_count": len(steps),
+            "tool_bindings": [step.tool_id for step in steps if step.tool_id],
+        },
+        readiness={
+            "draft": {"ready": not draft_blockers, "blockers": draft_blockers},
+            "verified_admission": {
+                "ready": not verified_blockers,
+                "blockers": verified_blockers,
+            },
+        },
         generated_at=generated_at or _iso_now(),
     )
+
+
+def _lint_error_codes(lint_report: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(lint_report, Mapping):
+        return []
+    errors = lint_report.get("errors")
+    if not isinstance(errors, Sequence):
+        return []
+    return [
+        str(item.get("code") or item.get("rule_id") or "").strip()
+        for item in errors
+        if isinstance(item, Mapping)
+        and str(item.get("code") or item.get("rule_id") or "").strip()
+    ]
+
+
+def _bundle_result_summary(harness_result: Any | None) -> dict[str, Any]:
+    if harness_result is None:
+        return {}
+    return {
+        "parse_ok": harness_result.parse_ok,
+        "parse_warnings": list(harness_result.parse_warnings),
+        "resource_counts": dict(harness_result.resource_counts),
+        "unsupported_entries": list(harness_result.unsupported_entries),
+        "nested_skill_candidates": list(harness_result.nested_skill_candidates),
+        "unknown_front_matter_keys": list(harness_result.unknown_front_matter_keys),
+    }
 
 
 def _scenarios_from_harness(
@@ -272,11 +326,24 @@ def build_skill_test_report(
     refs = tuple(
         str(item).strip() for item in (regression_refs or ()) if str(item).strip()
     )
+    harness_summary: dict[str, Any] = {}
+    bundle_results: tuple[Mapping[str, Any], ...] = ()
+    if harness_report is not None:
+        harness_summary = {
+            "ok": harness_report.ok,
+            "total_skills": harness_report.total_skills,
+            "passed_skills": harness_report.passed_skills,
+            "warning_count": harness_report.warning_count,
+            "error_count": harness_report.error_count,
+        }
+        bundle_results = tuple(item.to_dict() for item in harness_report.results)
 
     return SkillTestReport(
         skill_id=skill_id,
         scenarios=scenarios,
         harness_report_ref=harness_report_ref,
+        harness_summary=harness_summary,
+        bundle_results=bundle_results,
         regression_refs=refs,
         outcome=outcome,
         generated_at=generated_at or _iso_now(),

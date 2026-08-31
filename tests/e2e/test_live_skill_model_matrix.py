@@ -23,6 +23,7 @@ from tests.helpers.live_cli_chat_alibaba import (
     skip_if_completion_contract_failed,
 )
 from tests.helpers.live_skill_targets import SkillLiveTarget
+from tests.helpers.live_skill_targets import official_skill_dense_targets
 from tests.helpers.live_skill_targets import skill_simple_targets
 from tests.helpers.live_skill_targets import validate_skill_live_target
 
@@ -39,9 +40,30 @@ _LINEAR_FIXTURE = (
     / "linear"
     / "SKILL.md"
 )
+_SWIFTUI_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "skill"
+    / "fixtures"
+    / "external_catalog"
+    / "openai"
+    / "swiftui-performance-audit"
+    / "SKILL.md"
+)
+_MINIMAX_RESOURCE_TARGET = next(
+    target
+    for target in official_skill_dense_targets()
+    if target.target_id == "minimax-m2-7"
+)
 
 
-def _ingest_linear_skill(*, config_path: Path, agent_id: str, data_root: Path) -> str:
+def _ingest_skill_fixture(
+    *,
+    fixture_path: Path,
+    config_path: Path,
+    agent_id: str,
+    data_root: Path,
+    known_tools: list[str] | None = None,
+) -> tuple[str, str]:
     base_config = load_cli_config(
         config_path,
         home_root=runtime_home_root(),
@@ -53,7 +75,8 @@ def _ingest_linear_skill(*, config_path: Path, agent_id: str, data_root: Path) -
         data_root=data_root,
     )
     skill_cfg.wal = False
-    skill_cfg.known_tools = ["http_request"]
+    if known_tools is not None:
+        skill_cfg.known_tools = known_tools
     ctl = Skill(config=skill_cfg, home_root=runtime_home_root())
     authority = SkillIngestAuthority.local_operator(
         surface="tests.e2e.skill_model_matrix",
@@ -61,7 +84,7 @@ def _ingest_linear_skill(*, config_path: Path, agent_id: str, data_root: Path) -
     )
     try:
         skill_id, version_hash, warnings = ctl.ingest_file(
-            _LINEAR_FIXTURE,
+            fixture_path,
             scope="agent",
             agent_id=agent_id,
             authority=authority,
@@ -72,10 +95,10 @@ def _ingest_linear_skill(*, config_path: Path, agent_id: str, data_root: Path) -
             version_hash=version_hash,
             expected_active_version_hash=None,
             target_status="verified",
-            reason="live skill matrix fixture admission",
+            reason="live skill fixture admission",
             authority=authority,
         )
-        return skill_id
+        return skill_id, version_hash
     finally:
         ctl.close()
 
@@ -128,10 +151,12 @@ def test_live_skill_model_matrix(target: SkillLiveTarget) -> None:
     )
     data_root.mkdir(parents=True, exist_ok=True)
 
-    skill_id = _ingest_linear_skill(
+    skill_id, _ = _ingest_skill_fixture(
+        fixture_path=_LINEAR_FIXTURE,
         config_path=target.config_path,
         agent_id=agent_id,
         data_root=data_root,
+        known_tools=["http_request"],
     )
     session_id, transcript_path, transcript = _run_skill_cli_smoke(
         config_path=target.config_path,
@@ -211,3 +236,87 @@ def test_live_skill_model_matrix(target: SkillLiveTarget) -> None:
     events_path.write_text(
         json.dumps(events, indent=2, sort_keys=True), encoding="utf-8"
     )
+
+
+@pytest.mark.e2e
+def test_live_minimax_reads_progressive_skill_resource() -> None:
+    require_live_flag()
+    target = _MINIMAX_RESOURCE_TARGET
+    validate_skill_live_target(target)
+    skill_artifacts = artifact_dir() / "skill-progressive-resource"
+    data_root = skill_artifacts / f"data-{uuid.uuid4().hex[:8]}"
+    data_root.mkdir(parents=True, exist_ok=True)
+    skill_id, version_hash = _ingest_skill_fixture(
+        fixture_path=_SWIFTUI_FIXTURE,
+        config_path=target.config_path,
+        agent_id=target.agent_id,
+        data_root=data_root,
+    )
+
+    result = run_cli_session(
+        session_id_prefix="live-skill-resource-minimax",
+        agent_id=target.agent_id,
+        config_path=target.config_path,
+        data_root_override=data_root,
+        matrix_type="skill_simple",
+        user_input=(
+            f"Use the exact skill ID {skill_id} at version {version_hash}. "
+            "Retrieve its bundled references/ContentView.swift resource with "
+            "skill.get using that same version hash, then identify one concrete "
+            "performance issue and name the relevant Swift symbol. Do not edit "
+            "files.\n/debug\n/exit\n"
+        ),
+    )
+    debug_payload = extract_last_debug_payload(result.transcript)
+    last_turn = debug_payload.get("last_turn")
+    assert isinstance(last_turn, dict), result.transcript_path
+    last_turn_metadata = (
+        dict(last_turn.get("metadata", {}))
+        if isinstance(last_turn.get("metadata"), dict)
+        else {}
+    )
+    conversation_id = str(last_turn_metadata.get("conversation_id", "")).strip()
+    event_session_id = (
+        f"{result.session_id}::conv:{conversation_id}"
+        if conversation_id
+        else result.session_id
+    )
+    store = SQLiteSessionStore(
+        resolve_brain_sessions_db_path(
+            storage_path=data_root / "state" / "openminion.db"
+        )
+    )
+    try:
+        events = store.list_events(event_session_id, limit=300)
+    finally:
+        store.close()
+
+    resource_requests = []
+    for event in events:
+        if str(event.get("type", "")) != "tool.request":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("args"), dict):
+            continue
+        args = payload["args"]
+        if args.get("resource_path") == "references/ContentView.swift":
+            resource_requests.append(args)
+
+    assert resource_requests, (
+        "MiniMax did not issue the typed progressive resource request; "
+        f"transcript={result.transcript_path}"
+    )
+    assert any(
+        request.get("skill_id") == skill_id
+        and request.get("version_hash") == version_hash
+        for request in resource_requests
+    )
+    assistant_messages = extract_assistant_messages(
+        transcript=result.transcript,
+        session_id=result.session_id,
+        agent_id=target.agent_id,
+    )
+    assert any(
+        "filteredItems" in message or "10_000" in message
+        for message in assistant_messages
+    ), f"resource-backed symbol missing; transcript={result.transcript_path}"

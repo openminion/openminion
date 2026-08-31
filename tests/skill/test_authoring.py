@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from contextlib import redirect_stdout
 from typing import Any, Sequence
@@ -35,6 +35,7 @@ class _StubPackage:
     tags: list[str] | None = None
     tools: list[str] | None = None
     reference_hints: list[str] | None = None
+    recipe: Any | None = None
 
     def to_catalog_summary(self) -> dict[str, Any]:
         return {
@@ -56,6 +57,20 @@ class _StubHarnessResult:
     errors: tuple[str, ...] = ()
     fixture_input_path: str = "/skills/demo/fixtures/input.json"
     fixture_expected_path: str = "/skills/demo/fixtures/expected.txt"
+    parse_ok: bool = True
+    parse_warnings: tuple[str, ...] = ()
+    resource_counts: dict[str, int] = field(default_factory=dict)
+    unsupported_entries: tuple[str, ...] = ()
+    nested_skill_candidates: tuple[str, ...] = ()
+    unknown_front_matter_keys: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skill_root": self.skill_root,
+            "ok": self.ok,
+            "warnings": list(self.warnings),
+            "errors": list(self.errors),
+        }
 
 
 @dataclass
@@ -99,10 +114,20 @@ def test_build_skill_validation_report_maps_lint_and_harness() -> None:
         ok=False,
         warnings=("no fixtures dir",),
         errors=("missing fixtures/input.json",),
+        parse_ok=False,
     )
     report = build_skill_validation_report(
         package,
         lint_report=lint_report,
+        verified_lint_report={
+            "warnings": [],
+            "errors": [
+                {
+                    "code": "status.requires_verification",
+                    "message": "verification required",
+                }
+            ],
+        },
         harness_result=harness_result,
         generated_at="2026-05-13T00:00:00Z",
     )
@@ -111,6 +136,15 @@ def test_build_skill_validation_report_maps_lint_and_harness() -> None:
     assert report.package_ref == "skill:skill.demo@deadbeef"
     assert report.lint_summary == {"warnings": 1, "errors": 1}
     assert report.harness_summary == {"warnings": 1, "errors": 1, "ok": 0}
+    assert report.bundle_summary["parse_ok"] is False
+    assert report.readiness["draft"] == {
+        "ready": False,
+        "blockers": ["missing_purpose"],
+    }
+    assert report.readiness["verified_admission"] == {
+        "ready": False,
+        "blockers": ["status.requires_verification"],
+    }
     severities = sorted(item.severity for item in report.findings)
     assert severities == ["error", "error", "warning", "warning"]
     codes = {item.code for item in report.findings}
@@ -173,6 +207,8 @@ def test_build_skill_test_report_passed_outcome() -> None:
     assert report.outcome == "passed"
     assert report.regression_refs == ("tests/test_skill_learn_use_regression.py",)
     assert report.harness_report_ref == "harness:/skills/demo:1/1"
+    assert report.harness_summary["total_skills"] == 1
+    assert report.bundle_results[0]["skill_root"] == "/skills/demo"
     assert len(report.scenarios) == 1
     assert report.scenarios[0].expected_outcome == "passed"
 
@@ -442,9 +478,25 @@ def test_umbrella_skill_validate_uses_single_harness_result(monkeypatch) -> None
             assert version is None
             return package
 
-        def lint(self, skill_id: str, version: str | None = None):
+        def lint(
+            self,
+            skill_id: str,
+            version: str | None = None,
+            *,
+            target_status: str | None = None,
+        ):
             assert skill_id == "skill.demo"
             assert version is None
+            if target_status == "verified":
+                return {
+                    "warnings": [],
+                    "errors": [
+                        {
+                            "code": "status.requires_verification",
+                            "message": "verification required",
+                        }
+                    ],
+                }
             return {"warnings": [], "errors": []}
 
         def close(self) -> None:
@@ -483,10 +535,49 @@ def test_umbrella_skill_validate_uses_single_harness_result(monkeypatch) -> None
             )
         )
 
-    assert code == 0
+    assert code == 1
+    assert '"ok": false' in buf.getvalue()
+    assert "status.requires_verification" in buf.getvalue()
     assert '"harness_summary"' in buf.getvalue()
     assert '"errors": 1' in buf.getvalue()
     assert "missing fixtures/input.json" in buf.getvalue()
+
+
+def test_umbrella_skill_test_reports_failed_conformance_as_not_ok(monkeypatch) -> None:
+    from openminion.cli.commands import skill as skill_cmd
+
+    harness_report = _StubHarnessReport(
+        ok=False,
+        total_skills=1,
+        passed_skills=0,
+        warning_count=0,
+        error_count=1,
+        results=(
+            _StubHarnessResult(
+                ok=False,
+                errors=("missing fixtures/input.json",),
+            ),
+        ),
+    )
+    monkeypatch.setattr(skill_cmd, "_check_skill_available", lambda: True)
+    monkeypatch.setattr(
+        "openminion.modules.skill.diagnostics.harness.run_skill_harness",
+        lambda skill_root: harness_report,
+    )
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = skill_cmd._run_skill_test(
+            argparse.Namespace(
+                skill_root="/skills/demo",
+                regression_ref=[],
+                config=None,
+            )
+        )
+
+    assert code == 1
+    assert '"ok": false' in buf.getvalue()
+    assert '"outcome": "failed"' in buf.getvalue()
 
 
 _ = (Sequence,)

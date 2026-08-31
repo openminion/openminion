@@ -691,6 +691,9 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
         try:
             package = ctl.get_skill(args.skill_id, args.version)
             lint_report = ctl.lint(args.skill_id, args.version)
+            verified_lint_report = ctl.lint(
+                args.skill_id, args.version, target_status="verified"
+            )
             harness_report = run_skill_harness(args.project_root)
             harness_result = None
             harness_results = tuple(harness_report.results)
@@ -703,13 +706,15 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
             report = build_skill_validation_report(
                 package,
                 lint_report=lint_report,
+                verified_lint_report=verified_lint_report,
                 harness_result=harness_result,
             )
+            ok = bool(harness_result and harness_result.ok) and not bool(verified_lint_report["errors"])
             print_json_payload(
-                {"ok": True, "report": report.to_dict()},
+                {"ok": ok, "report": report.to_dict()},
                 sort_keys=False,
             )
-            return 0
+            return 0 if ok else 1
         finally:
             ctl.close()
     except SkillError as exc:
@@ -756,11 +761,12 @@ def _run_skill_test(args, app: Any | None = None) -> int:
             harness_report=harness_report,
             regression_refs=tuple(args.regression_ref or ()),
         )
+        ok = report.outcome == "passed"
         print_json_payload(
-            {"ok": True, "report": report.to_dict()},
+            {"ok": ok, "report": report.to_dict()},
             sort_keys=False,
         )
-        return 0 if report.outcome != "failed" else 1
+        return 0 if ok else 1
     except Exception as exc:
         print_json_payload(
             {
@@ -932,7 +938,7 @@ def _register_skill_remove_subcommand(skill_subcommands) -> None:
 def _register_skill_validate_subcommand(skill_subcommands) -> None:
     parser = skill_subcommands.add_parser(
         "validate",
-        help="Emit typed SkillValidationReport (composes typed lint + harness summary)",
+        help="Validate bundle conformance and verified-admission readiness",
     )
     parser.add_argument("skill_id", help="Skill ID to validate")
     parser.add_argument("--version", default=None, help="Specific version to validate")
@@ -948,7 +954,7 @@ def _register_skill_validate_subcommand(skill_subcommands) -> None:
 def _register_skill_test_subcommand(skill_subcommands) -> None:
     parser = skill_subcommands.add_parser(
         "test",
-        help="Emit typed SkillTestReport over the skill harness for a skill root",
+        help="Test filesystem and bundle conformance for a skill root",
     )
     parser.add_argument("skill_root", help="Filesystem skill root containing SKILL.md")
     parser.add_argument(
@@ -963,7 +969,7 @@ def _register_skill_test_subcommand(skill_subcommands) -> None:
 
 def _register_skill_debug_subcommand(skill_subcommands) -> None:
     parser = skill_subcommands.add_parser(
-        "debug", help="Emit typed SkillAuthoringDebugView"
+        "debug", help="Display stored skill and runtime debug facts"
     )
     parser.add_argument("skill_id", help="Skill ID to inspect")
     parser.add_argument("--version", default=None, help="Specific version to inspect")

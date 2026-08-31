@@ -20,7 +20,6 @@ except ModuleNotFoundError:  # pragma: no cover
 
 _FRONTMATTER_BOUNDARY = "---"
 _SECTION_RE = re.compile(r"^\s*#{1,3}\s+(.+?)\s*$")
-_BULLET_RE = re.compile(r"^\s*(?:[-*]|\d+\.)\s+(.+?)\s*$")
 _TOOL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_\.\-]*\b")
 
 RECOGNIZED_FRONT_MATTER_KEYS: frozenset[str] = frozenset(
@@ -36,6 +35,7 @@ RECOGNIZED_FRONT_MATTER_KEYS: frozenset[str] = frozenset(
         "version",
         "verification",
         "rollback",
+        "recipe",
         "references",
         "description",
         "metadata",
@@ -128,77 +128,68 @@ def parse_markdown(
 def build_recipe(
     *,
     front_matter: dict[str, Any],
-    sections: dict[str, str],
     skill_name: str,
     risk_class: str,
     known_tools: list[str],
-) -> ToolRecipe | None:
-    objective = str(front_matter.get("objective", "")).strip() or first_sentence(
-        sections.get("summary", "") or skill_name
-    )
-    preflight = _merge_lists(
-        front_matter.get("preflight"),
-        _extract_items(sections.get("preconditions", "")),
-    )
+) -> tuple[ToolRecipe | None, list[str]]:
+    raw_recipe = front_matter.get("recipe")
+    if raw_recipe is None:
+        return None, []
+    if not isinstance(raw_recipe, dict):
+        return None, ["parse.warning:invalid_recipe"]
 
-    procedure_text = sections.get("procedure", "")
-    step_items = _extract_items(procedure_text)
-    if not step_items and procedure_text.strip():
-        step_items = [
-            line.strip() for line in procedure_text.splitlines() if line.strip()
-        ]
+    raw_steps = raw_recipe.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return None, ["parse.warning:invalid_recipe"]
 
+    known = set(known_tools)
+    seen_step_ids: set[str] = set()
     steps: list[RecipeStep] = []
-    for idx, instruction in enumerate(step_items, start=1):
-        tools = detect_tools(instruction)
-        tool_id = _pick_tool(tools, known_tools)
+    for raw_step in raw_steps:
+        if not isinstance(raw_step, dict):
+            return None, ["parse.warning:invalid_recipe"]
+        step_id = str(raw_step.get("step_id", "")).strip()
+        instruction = str(raw_step.get("instruction", "")).strip()
+        if not step_id or step_id in seen_step_ids or not instruction:
+            return None, ["parse.warning:invalid_recipe"]
+        seen_step_ids.add(step_id)
+
+        requested_tool = str(raw_step.get("tool_id", "")).strip()
         steps.append(
             RecipeStep(
-                step_id=f"step_{idx}",
+                step_id=step_id,
                 instruction=instruction,
-                tool_id=tool_id,
-                input_schema=None,
+                tool_id=requested_tool if requested_tool in known else None,
+                input_schema=(
+                    dict(raw_step["input_schema"])
+                    if isinstance(raw_step.get("input_schema"), dict)
+                    else None
+                ),
             )
         )
 
-    verification = _merge_lists(
-        front_matter.get("verification"),
-        _extract_items(sections.get("verification", "")),
-    )
-    rollback = _merge_lists(
-        front_matter.get("rollback"),
-        _extract_items(sections.get("rollback", "")),
-    )
-
-    stop_conditions = normalize_text_list(front_matter.get("stop_conditions"))
-    safety_notes = _merge_lists(
-        front_matter.get("safety_notes"),
-        _extract_items(sections.get("pitfalls", "")),
-    )
+    safety_notes = normalize_text_list(raw_recipe.get("safety_notes"))
     if risk_class in HIGH_RISK_CLASSES:
         safety_notes.append(
             f"Risk class is {risk_class}; require policy gate before side effects."
         )
 
-    idempotency_notes: str | None = None
-    if isinstance(front_matter.get("idempotency_notes"), str):
-        idempotency_notes = str(front_matter.get("idempotency_notes")).strip() or None
-
-    if not any(
-        [preflight, steps, verification, rollback, stop_conditions, safety_notes]
-    ):
-        return None
-
+    idempotency_notes = raw_recipe.get("idempotency_notes")
     return ToolRecipe(
-        objective=objective,
-        preflight=preflight,
+        objective=str(raw_recipe.get("objective", "")).strip()
+        or first_sentence(skill_name),
+        preflight=normalize_text_list(raw_recipe.get("preflight")),
         steps=steps,
-        verification=verification,
-        rollback=rollback,
-        stop_conditions=stop_conditions,
-        idempotency_notes=idempotency_notes,
+        verification=normalize_text_list(raw_recipe.get("verification")),
+        rollback=normalize_text_list(raw_recipe.get("rollback")),
+        stop_conditions=normalize_text_list(raw_recipe.get("stop_conditions")),
+        idempotency_notes=(
+            str(idempotency_notes).strip()
+            if isinstance(idempotency_notes, str) and idempotency_notes.strip()
+            else None
+        ),
         safety_notes=safety_notes,
-    )
+    ), []
 
 
 def detect_tools(text: str) -> list[str]:
@@ -338,34 +329,6 @@ def _first_nonempty_paragraph(body: str) -> str:
     return paragraphs[0]
 
 
-def _extract_items(text: str) -> list[str]:
-    out: list[str] = []
-    for line in (text or "").splitlines():
-        match = _BULLET_RE.match(line)
-        if match:
-            item = match.group(1).strip()
-            if item:
-                out.append(item)
-        elif line.strip():
-            out.append(line.strip())
-    return _dedupe_parser_values(out)
-
-
-def _merge_lists(*values: Any) -> list[str]:
-    out: list[str] = []
-    for value in values:
-        if isinstance(value, str):
-            if value.strip():
-                out.append(value.strip())
-            continue
-        if isinstance(value, list):
-            for item in value:
-                text = str(item).strip()
-                if text:
-                    out.append(text)
-    return _dedupe_parser_values(out)
-
-
 def _join_sections(sections: dict[str, str], keys: list[str]) -> str:
     parts: list[str] = []
     for key in keys:
@@ -375,18 +338,6 @@ def _join_sections(sections: dict[str, str], keys: list[str]) -> str:
         title = key.replace("_", " ").title()
         parts.append(f"{title}:\n{section}")
     return "\n\n".join(parts).strip()
-
-
-def _pick_tool(candidates: list[str], known_tools: list[str]) -> str | None:
-    if not candidates:
-        return None
-    if not known_tools:
-        return candidates[0]
-    known = set(known_tools)
-    for candidate in candidates:
-        if candidate in known:
-            return candidate
-    return candidates[0]
 
 
 def _dedupe_parser_values(values: list[str]) -> list[str]:
