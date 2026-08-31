@@ -103,16 +103,34 @@ def _exec_run_description(runner: Any | None = None) -> str:
     except Exception:
         shell_family = "unknown"
     grants = _agent_command_grants(runner)
-    grant_note = (
-        f" Agent-profile executable grants: {', '.join(grants)}." if grants else ""
-    )
+    grant_note = ""
+    if grants:
+        grant_note = f"Granted executables: {', '.join(grants)}. "
+        if "ssh" in grants:
+            grant_note += (
+                "The granted SSH client can connect to remote hosts using the host's "
+                "existing SSH config. "
+            )
+        grant_note += (
+            "Invoke an explicitly requested granted executable directly; do not "
+            "inspect its configuration or credential files first. "
+        )
+    platform_note = ""
+    if system == "Darwin":
+        platform_note = (
+            "Use macOS commands, not Linux service managers. If Docker Desktop is "
+            "stopped and `open` is granted, request approval for `open -a Docker`, "
+            "then retry `docker info` as a separate command. "
+        )
     return (
-        "Run one allowlisted direct command for verification or existing-file "
-        f"workflows on platform={system}, shell_family={shell_family}. Do not use "
+        f"{grant_note}Run one allowlisted direct command for verification or existing-file "
+        f"workflows on platform={system}, shell_family={shell_family}. {platform_note}"
+        "A failed prerequisite check is recoverable: use an authorized start command "
+        "with approval, or explain the missing profile grant and ask the user before "
+        "continuing. Do not use "
         "pipes, redirections, shell chaining, fallback operators, or multi-command "
         "snippets. Prefer host.metrics for disk, memory, and OS status; prefer "
         "structured file/web tools for discovery, reads, scaffolding, or web fetches."
-        f"{grant_note}"
     )
 
 

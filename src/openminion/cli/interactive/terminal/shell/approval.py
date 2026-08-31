@@ -9,7 +9,12 @@ from ..overlays import TerminalOverlayPresenter
 
 def format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str:
     name = str(tool_name or "tool").strip() or "tool"
-    args_preview = format_tool_args_preview(name, dict(args or {}))
+    full_command = name.lower().startswith(("exec.", "git."))
+    args_preview = format_tool_args_preview(
+        name,
+        dict(args or {}),
+        compact=not full_command,
+    )
     call_line = f"{name}({args_preview})" if args_preview else f"{name}()"
     return f"Approval required: {call_line}"
 

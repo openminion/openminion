@@ -192,6 +192,37 @@ def test_is_read_only_exec_command_accepts_direct_discovery(command: str) -> Non
 @pytest.mark.parametrize(
     "command",
     [
+        "ps aux",
+        "docker info",
+        "docker version",
+        "docker ps -a",
+        "docker inspect demo",
+        "docker context show",
+        "systemctl status docker",
+        "systemctl is-active docker",
+    ],
+)
+def test_is_read_only_exec_command_accepts_bounded_inspection(command: str) -> None:
+    assert is_read_only_exec_command(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "docker run alpine",
+        "docker start demo",
+        "docker pull nginx",
+        "systemctl start docker",
+        "open -a Docker",
+    ],
+)
+def test_is_read_only_exec_command_rejects_mutating_commands(command: str) -> None:
+    assert not is_read_only_exec_command(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "PATH=/usr/bin command -v nasm",
         "LC_ALL=C which clang",
         "PYTHONPATH=. python --version",

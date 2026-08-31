@@ -1115,6 +1115,10 @@ def test_confirmation_replay_seeded_path_gets_recovery_budget(
 def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.tools.runtime.platform.system",
+        lambda: "Darwin",
+    )
     specs = adaptive_modes.build_runtime_tool_specs(
         None,
         allowed_tools=frozenset(
@@ -1128,6 +1132,10 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
     assert "platform=" in by_name["exec.run"].description
     assert "shell_family=" in by_name["exec.run"].description
     assert "direct command" in by_name["exec.run"].description
+    assert "open -a Docker" in by_name["exec.run"].description
+    assert "failed prerequisite check is recoverable" in (
+        by_name["exec.run"].description
+    )
     assert "host.metrics" in by_name["exec.run"].description
     assert "disk usage" in by_name["host.metrics"].description
     assert "unknown.dynamic" not in by_name
@@ -1152,8 +1160,10 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
 def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> None:
     runner = SimpleNamespace(
         tool_api=SimpleNamespace(
-            agent_profile=SimpleNamespace(command_policy={"allow": ["docker", "open"]}),
-            policy=SimpleNamespace(raw={"commands": {"allow": ["docker"]}}),
+            agent_profile=SimpleNamespace(
+                command_policy={"allow": ["docker", "ssh", "open"]}
+            ),
+            policy=SimpleNamespace(raw={"commands": {"allow": ["docker", "ssh"]}}),
         )
     )
 
@@ -1163,8 +1173,20 @@ def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> No
     )
 
     assert len(specs) == 1
-    assert "Agent-profile executable grants: docker." in specs[0].description
-    assert "open" not in specs[0].description
+    assert (
+        "Granted executables: docker, ssh."
+        in specs[0].description
+    )
+    assert "do not inspect its configuration or credential files first" in (
+        specs[0].description
+    )
+    assert "SSH client can connect to remote hosts" in (
+        specs[0].description
+    )
+    assert "SSH client can connect to remote hosts" in (
+        build_entry_inactive_tool_directory(specs)
+    )
+    assert "Granted executables: docker, ssh, open." not in specs[0].description
 
 
 @pytest.mark.parametrize(

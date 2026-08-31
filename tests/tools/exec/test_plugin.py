@@ -26,6 +26,8 @@ from openminion.tools.exec.plugin import (
 )
 from openminion.tools.exec.process import PROCESS_MANAGER
 from openminion.tools.exec.process import ShellFamily
+from openminion.tools.exec.schemas import ExecRunArgs
+from openminion.tools.exec.sessions import _prepare_exec_run
 
 
 @pytest.fixture(autouse=True)
@@ -174,6 +176,45 @@ def test_exec_run_invokes_system_ssh_client(tmp_path):
     assert result["status"] == "ok"
     assert result["exit_code"] == 0
     assert result["stdout_preview"] or result["stderr_preview"]
+
+
+def test_exec_run_passes_ssh_agent_socket_only_to_direct_ssh(
+    tmp_path,
+):
+    socket_path = str(tmp_path / "agent.sock")
+    ctx = _ctx(
+        tmp_path,
+        env=EnvironmentConfig.from_sources(
+            process_env={
+                "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC": "1",
+                "SSH_AUTH_SOCK": socket_path,
+            }
+        ),
+    )
+
+    def prepare(command: str):
+        return _prepare_exec_run(
+            params=ExecRunArgs(
+                command=command,
+                host="gateway",
+                security="full",
+                ask="off",
+            ),
+            ctx=ctx,
+            started=time.monotonic(),
+            tool_name="exec.run",
+            request_payload={},
+        )
+
+    ssh_prep, ssh_error = prepare("ssh example.test")
+    other_prep, other_error = prepare('printf "%s" "$SSH_AUTH_SOCK"')
+
+    assert ssh_error is None
+    assert ssh_prep is not None
+    assert ssh_prep.env["SSH_AUTH_SOCK"] == socket_path
+    assert other_error is None
+    assert other_prep is not None
+    assert "SSH_AUTH_SOCK" not in other_prep.env
 
 
 def test_exec_run_missing_toolchain_discovery_result_stops_retry_loop(tmp_path):

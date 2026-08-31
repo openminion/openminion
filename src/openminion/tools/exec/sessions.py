@@ -1,7 +1,7 @@
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from openminion.base.runtime.sandbox import (
     ExecSpec,
@@ -52,6 +52,9 @@ from .workspace import (
     _normalize_capture_redirection_suffix,
     _resolve_workspace_cwd,
 )
+
+
+_SSH_AUTH_SOCK_ENV = "SSH_AUTH_SOCK"
 
 
 @dataclass(frozen=True)
@@ -126,6 +129,24 @@ def _build_exec_sandbox_spec(
         max_output_bytes=EXEC_ARTIFACT_THRESHOLD_BYTES * 4,
         session_mode="foreground",
     )
+
+
+def _exec_environment(
+    *,
+    params: ExecRunArgs,
+    ctx: RuntimeContext,
+    checked_commands: list[dict[str, Any]],
+) -> dict[str, str]:
+    env = cast(dict[str, str], ctx.policy.filter_env(dict(params.env)))
+    if (
+        params.host != "sandbox"
+        and len(checked_commands) == 1
+        and checked_commands[0]["exec"] == "ssh"
+    ):
+        ssh_auth_sock = ctx.env.get(_SSH_AUTH_SOCK_ENV, "").strip()
+        if ssh_auth_sock:
+            env[_SSH_AUTH_SOCK_ENV] = ssh_auth_sock
+    return env
 
 
 def _prepare_exec_run(
@@ -274,7 +295,7 @@ def _prepare_exec_run(
             status=EXEC_STATUS_DENIED,
         )
 
-    env = ctx.policy.filter_env(dict(params.env))
+    env = _exec_environment(params=params, ctx=ctx, checked_commands=details["checked"])
     sandbox_runner = _sandbox_runner_for_ctx(ctx)
     sandbox_sessions = _sandbox_session_manager_for_ctx(ctx)
     use_sandbox_runner = (

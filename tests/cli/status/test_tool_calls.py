@@ -115,6 +115,20 @@ def test_args_preview_command_truncation() -> None:
     assert len(result) <= 82  # 80 char body + 2 quotes
 
 
+def test_args_preview_can_preserve_full_command_for_approval() -> None:
+    command = (
+        "ssh -o BatchMode=yes -o ConnectTimeout=3 "
+        "-o StrictHostKeyChecking=yes localhost true"
+    )
+
+    result = format_tool_args_preview(
+        "exec.run", {"command": command}, compact=False
+    )
+
+    assert result == f'"{command}"'
+    assert "…" not in result
+
+
 def test_args_preview_query_truncation() -> None:
     long_query = "find me everything about " + "x" * 100
     result = format_tool_args_preview("web.search", {"query": long_query})

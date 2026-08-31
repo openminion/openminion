@@ -1,6 +1,8 @@
 import shlex
 from dataclasses import dataclass
 
+from openminion.modules.tool.commands import is_bounded_read_only_command
+
 from .process import ShellFamily
 
 
@@ -368,7 +370,11 @@ def is_read_only_exec_command(
     if not argv:
         return False
     executable = argv[0].lower()
-    return executable in _READ_ONLY_EXECUTABLES or _is_read_only_discovery_argv(argv)
+    return (
+        executable in _READ_ONLY_EXECUTABLES
+        or _is_read_only_discovery_argv(argv)
+        or is_bounded_read_only_command(argv)
+    )
 
 
 __all__ = [

@@ -1,4 +1,41 @@
 import shlex
+from collections.abc import Sequence
+
+
+_READ_ONLY_COMMAND_PREFIXES = (
+    ("ps",),
+    ("docker", "info"),
+    ("docker", "version"),
+    ("docker", "ps"),
+    ("docker", "images"),
+    ("docker", "inspect"),
+    ("docker", "context", "ls"),
+    ("docker", "context", "show"),
+    ("docker", "context", "inspect"),
+    ("docker", "container", "ls"),
+    ("docker", "container", "inspect"),
+    ("docker", "image", "ls"),
+    ("docker", "image", "inspect"),
+    ("docker", "network", "ls"),
+    ("docker", "network", "inspect"),
+    ("docker", "volume", "ls"),
+    ("docker", "volume", "inspect"),
+    ("systemctl", "status"),
+    ("systemctl", "show"),
+    ("systemctl", "is-active"),
+    ("systemctl", "is-enabled"),
+    ("systemctl", "is-failed"),
+    ("systemctl", "list-units"),
+    ("systemctl", "list-unit-files"),
+)
+
+
+def is_bounded_read_only_command(argv: Sequence[str]) -> bool:
+    normalized = tuple(str(arg).strip().lower() for arg in argv)
+    return any(
+        normalized[: len(prefix)] == prefix
+        for prefix in _READ_ONLY_COMMAND_PREFIXES
+    )
 
 
 def normalize_cd_prefixed_command(

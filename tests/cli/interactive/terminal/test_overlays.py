@@ -74,11 +74,32 @@ def test_resume_picker_no_sessions_returns_none() -> None:
 
 
 def test_approval_yes_returns_allow() -> None:
-    console, _ = _make_console()
+    console, output = _make_console()
     session = _StubSession(["y"])
     overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     assert overlay.present_approval("Run dangerous command?") == "allow"
-    assert session.prompts == ["Run dangerous command?\n[y]es / [N]o / [a]lways: "]
+    assert output.getvalue() == "Run dangerous command?\n"
+    assert session.prompts == ["[y]es / [N]o / [a]lways: "]
+
+
+def test_approval_prints_full_long_command_outside_input_prompt() -> None:
+    console, output = _make_console()
+    session = _StubSession(["n"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
+    command = (
+        "Approval required: exec.run(\"ssh -o BatchMode=yes "
+        "-o ConnectTimeout=3 -o StrictHostKeyChecking=yes localhost true\")"
+    )
+
+    assert overlay.present_approval(command) == "deny"
+
+    rendered = output.getvalue()
+    assert "BatchMode=yes" in rendered
+    assert "ConnectTimeout=3" in rendered
+    assert "StrictHostKeyChecking=yes" in rendered
+    assert "localhost true\")" in rendered
+    assert "…" not in rendered
+    assert session.prompts == ["[y]es / [N]o / [a]lways: "]
 
 
 def test_approval_always_returns_always() -> None:

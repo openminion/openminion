@@ -51,6 +51,7 @@ class PolicyExecMixin:
         allowlist = self.exec_allowlist()
         commands = cast(dict[str, Any], self.raw.get("commands", {}))
         allow_pattern = matching_allow_pattern(effective_argv, commands)
+        action_class = command_action_class(effective_argv)
 
         def _ask_required(rule: str, details: dict[str, Any]) -> None:
             if confirm:
@@ -69,7 +70,7 @@ class PolicyExecMixin:
             )
 
         if security_mode == TOOL_EXEC_SECURITY_ALLOWLIST:
-            allowed = allow_pattern is not None
+            allowed = allow_pattern is not None or action_class == "inspect"
             for item in allowlist:
                 token = str(item)
                 if not token:
@@ -168,7 +169,11 @@ class PolicyExecMixin:
             )
 
         if mode == TOOL_EXEC_SECURITY_ALLOWLIST:
-            if exec_name not in allow and allow_pattern is None:
+            if (
+                exec_name not in allow
+                and allow_pattern is None
+                and action_class != "inspect"
+            ):
                 raise ToolRuntimeError(
                     "POLICY_DENIED",
                     f"Denied by policy: command '{exec_name}' is not allowlisted",

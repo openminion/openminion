@@ -83,6 +83,50 @@ def test_default_allowlist_permits_identity_inspection(policy_allowlist):
     assert policy_allowlist.ensure_command_allowed(["whoami"]) == "whoami"
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["ps", "aux"],
+        ["docker", "info"],
+        ["docker", "ps", "-a"],
+        ["docker", "context", "show"],
+        ["systemctl", "status", "docker"],
+    ],
+)
+def test_allowlist_permits_built_in_inspection(policy_allowlist, argv):
+    assert policy_allowlist.ensure_command_allowed(argv) == argv[0]
+
+
+def test_exec_allowlist_permits_built_in_inspection_without_confirmation(
+    policy_allowlist,
+    tmp_path,
+):
+    assert (
+        policy_allowlist.ensure_exec_allowed(
+            argv=["docker", "info"],
+            workspace=tmp_path,
+            confirm=False,
+        )
+        == "docker"
+    )
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["docker", "run", "alpine"],
+        ["docker", "start", "demo"],
+        ["systemctl", "start", "docker"],
+        ["open", "-a", "Docker"],
+    ],
+)
+def test_allowlist_denies_ungranted_mutation(policy_allowlist, argv):
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy_allowlist.ensure_command_allowed(argv)
+
+    assert excinfo.value.code == "POLICY_DENIED"
+
+
 def test_preflight_denies_unallowlisted_exec_before_confirmation(tmp_path):
     policy = _exec_policy_for_preflight(tmp_path)
 
