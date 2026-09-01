@@ -239,6 +239,12 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
         TaskPlanRevision(
             plan_id="plan-1",
             revision_id="revision-1",
+            verifier_refs=[""],
+            revised_steps=[{"step_id": "build", "description": "Repair"}],
+        ),
+        TaskPlanRevision(
+            plan_id="plan-1",
+            revision_id="revision-1",
             predecessor_revision_id="stale",
             verifier_refs=["verify:failed-2"],
             revised_steps=[{"step_id": "build", "description": "Repair"}],

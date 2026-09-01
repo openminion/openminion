@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 import uuid
 
+import pytest
+
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILED,
     BRAIN_ACTION_STATUS_SUCCESS,
@@ -177,6 +179,47 @@ def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
     assert result.error_message == "readonly reviewer cannot write files"
     assert call.command is not None
     assert call.command["params"]["permission_mode"] == "readonly"
+
+
+@pytest.mark.parametrize(
+    "outputs",
+    (
+        {"child_agent_id": "", "findings": []},
+        {"child_agent_id": "child-1", "findings": {}},
+        {"child_agent_id": "child-1", "findings": [42]},
+        {
+            "child_agent_id": "child-1",
+            "findings": [{"priority": "P1", "owner": "", "message": "gap"}],
+        },
+    ),
+)
+def test_fixed_readonly_reviewer_rejects_invalid_result(
+    outputs: dict[str, Any],
+) -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+            "outputs": outputs,
+        }
+    )
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        worktree="/repo",
+        diff="git diff -- app.py",
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "A2A_REVIEW_INVALID_RESULT"
+    assert result.target_agent_id == "readonly-reviewer"
 
 
 def test_command_shape_carries_model_named_target_and_instruction() -> None:

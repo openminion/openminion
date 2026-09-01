@@ -2214,6 +2214,111 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
     ]
 
 
+def test_plan_control_reaches_persisted_project_checkpoint(tmp_path) -> None:
+    import asyncio
+
+    from openminion.base.config import OpenMinionConfig
+    from openminion.base.types import Message as ChannelMessage
+    from openminion.modules.brain.loop.adaptive import ActLoopMode
+    from openminion.modules.task import TaskManager, load_latest_project_checkpoint
+    from openminion.modules.task.project.turn import project_turn_from_payload
+    from openminion.services.runtime.project_worker import ProjectWorker
+    from tests._csc_fixtures import _csc_install_default_agent
+    from tests.brain.modes.test_act_adaptive import (
+        _FakeCommandExecutor,
+        _FakeLLMClient,
+        _FakeServices,
+        _ctx,
+    )
+    from tests.services.brain.test_post_execution import DummyBridge, _DummyRunner
+    from tests.services.runtime.test_project_worker import (
+        _TestEvidenceStatus,
+        _evidence,
+        _project,
+    )
+
+    llm = _FakeLLMClient(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-call",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "declare",
+                            "plan_id": "plan-1",
+                            "objective": "Ship the fixture",
+                            "criterion_ids": ["criterion-tests"],
+                            "steps": [{"step_id": "build", "description": "Build it"}],
+                            "continue_plan_autonomously": True,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    plan_runner = SimpleNamespace(
+        session_api=_FakeSessionAPI(),
+        options=SimpleNamespace(failure_strategy="halt"),
+        tool_api=None,
+        profile=SimpleNamespace(),
+    )
+    ctx, _services = _ctx(
+        llm,
+        _FakeCommandExecutor(),
+        services=_FakeServices(runner=plan_runner),
+    )
+    step_out = ActLoopMode().execute(ctx)
+
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = None
+    bridge._identity_metadata = dict
+    response = asyncio.run(
+        bridge._postprocess_turn(
+            runner=_DummyRunner({}),
+            step_out=step_out,
+            message=ChannelMessage(channel="console", target="user", body="plan this"),
+            history=[],
+            session_id="session-1",
+            request_id="trace-1",
+            turn_id="turn-1",
+            turn_start_time=0.0,
+        )
+    )
+
+    store, manager, run = _project(tmp_path, max_iterations=1)
+    ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: project_turn_from_payload(
+            request,
+            payload={},
+            execute=lambda _payload: {
+                "summary": "planned",
+                "metadata": response.metadata,
+            },
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-1",
+    ).run_cycle(run.run_id)
+    restored = load_latest_project_checkpoint(
+        TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db"),
+        task_id="task-1",
+    )
+
+    assert restored is not None
+    assert restored.payload["task_plan"]["plan_id"] == "plan-1"
+    assert restored.payload["task_plan"]["criterion_ids"] == ["criterion-tests"]
+    assert restored.payload["plan_revision_count"] == 0
+
+
 def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
     plan_id = "cross-turn-plan"
 

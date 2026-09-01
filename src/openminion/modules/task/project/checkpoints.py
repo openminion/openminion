@@ -59,7 +59,9 @@ def plan_checkpoint_payload(
             raise ValueError("plan revision must match the checkpoint task plan")
         if not incoming.revision_id:
             raise ValueError("plan revision requires revision_id")
-        if not incoming.verifier_refs:
+        if not incoming.verifier_refs or any(
+            not reference.strip() for reference in incoming.verifier_refs
+        ):
             raise ValueError("plan revision requires verifier_refs")
         if incoming.criterion_ids and incoming.criterion_ids != plan.criterion_ids:
             raise ValueError("plan revision cannot change criterion_ids")
