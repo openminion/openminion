@@ -4,7 +4,7 @@ from typing import Any
 _WRITE_CAPABLE_TOOL_NAMES = frozenset(
     {
         "file.write",
-        "file.delete",
+        "file.trash",
         "file.copy",
         "file.move",
         "file.edit",

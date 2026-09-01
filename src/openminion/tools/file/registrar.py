@@ -52,8 +52,8 @@ FILE_MODEL_TOOLS = (
     ModelToolDef(
         model_tool_id=MODEL_FILE_WRITE,
         description=(
-            "Write or overwrite a file, creating parent directories "
-            "automatically for new project scaffolding."
+            "Write or overwrite one complete target file path, creating parent "
+            "directories automatically."
         ),
         parameters={},
     ),

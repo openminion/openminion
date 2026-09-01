@@ -192,18 +192,32 @@ def test_is_read_only_exec_command_accepts_direct_discovery(command: str) -> Non
 @pytest.mark.parametrize(
     "command",
     [
-        "ps aux",
         "docker info",
         "docker version",
+        "docker context show",
+    ],
+)
+def test_is_read_only_exec_command_accepts_disclosure_safe_inspection(
+    command: str,
+) -> None:
+    assert is_read_only_exec_command(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ps aux",
+        "docker info --format json",
         "docker ps -a",
         "docker inspect demo",
-        "docker context show",
+        "docker context ls",
+        "docker context inspect desktop-linux",
         "systemctl status docker",
         "systemctl is-active docker",
     ],
 )
-def test_is_read_only_exec_command_accepts_bounded_inspection(command: str) -> None:
-    assert is_read_only_exec_command(command)
+def test_is_read_only_exec_command_rejects_sensitive_inspection(command: str) -> None:
+    assert not is_read_only_exec_command(command)
 
 
 @pytest.mark.parametrize(

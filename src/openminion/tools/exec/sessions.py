@@ -54,9 +54,6 @@ from .workspace import (
 )
 
 
-_SSH_AUTH_SOCK_ENV = "SSH_AUTH_SOCK"
-
-
 @dataclass(frozen=True)
 class _ExecRunPreparation:
     agent_id: str
@@ -135,18 +132,10 @@ def _exec_environment(
     *,
     params: ExecRunArgs,
     ctx: RuntimeContext,
-    checked_commands: list[dict[str, Any]],
 ) -> dict[str, str]:
-    env = cast(dict[str, str], ctx.policy.filter_env(dict(params.env)))
-    if (
-        params.host != "sandbox"
-        and len(checked_commands) == 1
-        and checked_commands[0]["exec"] == "ssh"
-    ):
-        ssh_auth_sock = ctx.env.get(_SSH_AUTH_SOCK_ENV, "").strip()
-        if ssh_auth_sock:
-            env[_SSH_AUTH_SOCK_ENV] = ssh_auth_sock
-    return env
+    environment = cast(dict[str, str], ctx.policy.filter_env(dict(params.env)))
+    environment.pop("SSH_AUTH_SOCK", None)
+    return environment
 
 
 def _prepare_exec_run(
@@ -295,7 +284,7 @@ def _prepare_exec_run(
             status=EXEC_STATUS_DENIED,
         )
 
-    env = _exec_environment(params=params, ctx=ctx, checked_commands=details["checked"])
+    env = _exec_environment(params=params, ctx=ctx)
     sandbox_runner = _sandbox_runner_for_ctx(ctx)
     sandbox_sessions = _sandbox_session_manager_for_ctx(ctx)
     use_sandbox_runner = (

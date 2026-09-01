@@ -48,6 +48,7 @@ def test_v1_allowlist_contains_expected_tools() -> None:
         "file.read",
         "file.read_range",
         "file.find",
+        "file.trash",
         "file.write",
         "web.fetch",
         "exec.run",

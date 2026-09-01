@@ -282,6 +282,70 @@ class CodingProfileRunner(
     def execute(self, ctx: ExecutionContext) -> ExecutionResult:
         return self._execute_coding_loop(ctx)
 
+    def _iteration_profile(
+        self,
+        ctx: ExecutionContext,
+        *,
+        loop: AdaptiveToolLoopState,
+        allowed_tools: frozenset[str],
+        tool_specs: list[Any],
+    ) -> tuple[AdaptiveToolLoopProfile, list[Any]]:
+        iteration_allowed_tools = self._allowed_tools_for_current_phase(
+            default_allowed_tools=allowed_tools
+        )
+        verification_targets = (
+            self._verification_targets(ctx)
+            if self._coding_plan is not None
+            and self._coding_plan.current_phase == "verify"
+            else None
+        )
+        required_write_tool = str(
+            loop.scratchpad.get("coding.required_write_direct_tool", "") or ""
+        ).strip()
+        if required_write_tool:
+            iteration_allowed_tools = frozenset({required_write_tool})
+
+        iteration_tool_specs = tool_specs
+        tool_choice: str | dict[str, Any] = "auto"
+        if loop.scratchpad.get("coding.final_answer_reserve_used"):
+            iteration_allowed_tools = frozenset()
+            iteration_tool_specs = []
+            tool_choice = "none"
+        elif loop.scratchpad.get("coding.verification_reserve_used"):
+            iteration_allowed_tools = self._verification_reserve_allowed_tools()
+            iteration_tool_specs = _build_tool_specs(
+                iteration_allowed_tools,
+                ctx=ctx,
+                verification_targets=verification_targets,
+            )
+        elif iteration_allowed_tools != allowed_tools:
+            iteration_tool_specs = _build_tool_specs(
+                iteration_allowed_tools,
+                ctx=ctx,
+                verification_targets=verification_targets,
+            )
+
+        return (
+            AdaptiveToolLoopProfile(
+                profile_name="coding_v1",
+                mode_name=BRAIN_INTERNAL_MODE_ACT_CODING,
+                allowed_tools=iteration_allowed_tools,
+                provider_parallel_tool_capacity=2,
+                max_iterations=self._max_iterations,
+                reflection_policy="never",
+                max_macro_corrections=3,
+                macro_correction_cooldown=2,
+                reflection_model=None,
+                allow_llm_recovery_after_tool_failure=True,
+                tool_choice=tool_choice,
+                llm_request_overrides={
+                    "metadata": build_loop_thinking_metadata(ctx, purpose="act")
+                },
+                final_closure_policy=ADAPTIVE_CLOSURE_MODE_OWNED,
+            ),
+            iteration_tool_specs,
+        )
+
     def _execute_coding_loop(self, ctx: ExecutionContext) -> ExecutionResult:
         try:
             runtime = DefaultCodingLLMRuntime.from_adapter(ctx.llm_adapter)
@@ -310,56 +374,22 @@ class CodingProfileRunner(
             self._sync_plan_telemetry()
             self._dispatch_subtasks_if_needed(ctx)
             loop = self._as_adaptive_state(self._loop_state)
-            iteration_allowed_tools = self._allowed_tools_for_current_phase(
-                default_allowed_tools=allowed_tools
-            )
-            required_write_tool = str(
-                loop.scratchpad.get("coding.required_write_direct_tool", "") or ""
-            ).strip()
-            if required_write_tool:
-                iteration_allowed_tools = frozenset({required_write_tool})
-            iteration_tool_specs = tool_specs
-            iteration_tool_choice: str | dict[str, Any] = "auto"
-            if bool(
-                self._loop_state.scratchpad.get("coding.final_answer_reserve_used")
-            ):
-                iteration_allowed_tools = frozenset()
-                iteration_tool_specs = []
-                iteration_tool_choice = "none"
-            elif bool(
-                self._loop_state.scratchpad.get("coding.verification_reserve_used")
-            ):
-                iteration_allowed_tools = self._verification_reserve_allowed_tools()
-                iteration_tool_specs = _build_tool_specs(
-                    iteration_allowed_tools,
-                    ctx=ctx,
-                )
-            elif iteration_allowed_tools != allowed_tools:
-                iteration_tool_specs = _build_tool_specs(
-                    iteration_allowed_tools,
-                    ctx=ctx,
-                )
-            profile = AdaptiveToolLoopProfile(
-                profile_name="coding_v1",
-                mode_name=BRAIN_INTERNAL_MODE_ACT_CODING,
-                allowed_tools=iteration_allowed_tools,
-                provider_parallel_tool_capacity=2,
-                max_iterations=self._max_iterations,
-                reflection_policy="never",
-                max_macro_corrections=3,
-                macro_correction_cooldown=2,
-                reflection_model=None,
-                allow_llm_recovery_after_tool_failure=True,
-                tool_choice=iteration_tool_choice,
-                llm_request_overrides={
-                    "metadata": build_loop_thinking_metadata(ctx, purpose="act")
-                },
-                final_closure_policy=ADAPTIVE_CLOSURE_MODE_OWNED,
+            profile, iteration_tool_specs = self._iteration_profile(
+                ctx,
+                loop=loop,
+                allowed_tools=allowed_tools,
+                tool_specs=tool_specs,
             )
             outcome = run_adaptive_tool_loop(
                 _CodingLoopContextAdapter(
                     ctx,
-                    on_command_result=self._record_verifier_candidate,
+                    on_command_result=lambda command, action_result: (
+                        self._record_verifier_candidate(
+                            command,
+                            action_result,
+                            scratchpad=loop.scratchpad,
+                        )
+                    ),
                 ),
                 profile=profile,
                 runtime=runtime,
@@ -538,7 +568,7 @@ class CodingProfileRunner(
                     allowed_tools=allowed_tools,
                 )
             return None
-        self._append_phase_instruction()
+        self._append_phase_instruction(ctx)
         self._sync_coding_module_state(ctx)
         return None
 

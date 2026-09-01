@@ -13,6 +13,8 @@ from openminion.modules.llm.schemas import ToolSpec
 
 from .loop_state import CodingLoopState
 
+_BOUND_VERIFICATION_TOOLS = frozenset({"file.read", "file.read_range", "exec.run"})
+
 
 def _runner_and_profile_from_context(
     ctx: ExecutionContext,
@@ -94,22 +96,57 @@ def _runtime_tool_schemas_by_name(
 def _input_schema_for_tool(
     tool_id: str,
     runtime_schemas: dict[str, dict[str, Any]],
+    verification_targets: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
     runtime_schema = runtime_schemas.get(tool_id, {})
     parameters = runtime_schema.get("parameters") if runtime_schema else None
     if isinstance(parameters, dict) and parameters:
-        return dict(parameters)
-    return {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": True,
-    }
+        schema = dict(parameters)
+    else:
+        schema = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+    if tool_id not in _BOUND_VERIFICATION_TOOLS or not verification_targets:
+        return schema
+    target_kinds = [
+        kind for kind in ("criterion", "deliverable") if verification_targets.get(kind)
+    ]
+    target_ids = [
+        target_id for kind in target_kinds for target_id in verification_targets[kind]
+    ]
+    if not target_ids:
+        return schema
+    properties = dict(schema.get("properties", {}) or {})
+    properties.update(
+        {
+            "verification_target_kind": {
+                "type": "string",
+                "enum": target_kinds,
+                "description": "Exact typed Goal target kind for this proof.",
+            },
+            "verification_target_id": {
+                "type": "string",
+                "enum": target_ids,
+                "description": "Exact criterion or deliverable ID for this proof.",
+            },
+        }
+    )
+    required = list(schema.get("required", []) or [])
+    required.extend(
+        name
+        for name in ("verification_target_kind", "verification_target_id")
+        if name not in required
+    )
+    return {**schema, "properties": properties, "required": required}
 
 
 def _build_tool_specs(
     allowed_tools: frozenset[str],
     *,
     ctx: ExecutionContext | None = None,
+    verification_targets: dict[str, tuple[str, ...]] | None = None,
 ) -> list[ToolSpec]:
     descriptions: dict[str, str] = {
         "file.list_dir": "List files and directories at a path.",
@@ -117,10 +154,11 @@ def _build_tool_specs(
         "file.read_range": "Read an inclusive line-numbered range from a file.",
         "file.find": "Search for files matching a pattern.",
         "file.write": (
-            "Write or overwrite a file and create parent directories "
-            "automatically; call this tool with path and content to scaffold "
-            "project files. Do not print JSON path/content payloads as prose."
+            "Write or overwrite one complete target file path and create its parent "
+            "directories automatically. Call this tool with path and content; do not "
+            "print JSON path/content payloads as prose."
         ),
+        "file.trash": "Move one file or directory to the system trash.",
         "code.patch": "Apply a unified-diff patch to a file.",
         "code.grep": "Search workspace text with structured grep results.",
         "code.repo_index": "Return structured workspace file, symbol, and import facts.",
@@ -153,7 +191,11 @@ def _build_tool_specs(
         ToolSpec(
             name=tool_id,
             description=descriptions.get(tool_id, tool_id),
-            input_schema=_input_schema_for_tool(tool_id, runtime_schemas),
+            input_schema=_input_schema_for_tool(
+                tool_id,
+                runtime_schemas,
+                verification_targets,
+            ),
         )
         for tool_id in sorted(allowed_tools)
     ]

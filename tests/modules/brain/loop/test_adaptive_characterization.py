@@ -1132,7 +1132,7 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
     by_name = {spec.name: spec for spec in specs}
 
     assert "parent directories" in by_name["file.write"].description
-    assert "scaffold" in by_name["file.write"].description.lower()
+    assert "complete target file path" in by_name["file.write"].description
     assert "platform=" in by_name["exec.run"].description
     assert "shell_family=" in by_name["exec.run"].description
     assert "direct command" in by_name["exec.run"].description
@@ -1181,10 +1181,9 @@ def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> No
     assert "do not inspect its configuration or credential files first" in (
         specs[0].description
     )
-    assert "SSH client can connect to remote hosts" in (specs[0].description)
-    assert "SSH client can connect to remote hosts" in (
-        build_entry_inactive_tool_directory(specs)
-    )
+    assert "use configured operations tools" in specs[0].description.lower()
+    assert "existing SSH config" not in specs[0].description
+    assert "existing SSH config" not in build_entry_inactive_tool_directory(specs)
     assert "Granted executables: docker, ssh, open." not in specs[0].description
 
 

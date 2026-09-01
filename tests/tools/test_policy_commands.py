@@ -93,16 +93,28 @@ def test_default_allowlist_permits_identity_inspection(policy_allowlist):
         ["systemctl", "status", "docker"],
     ],
 )
-def test_allowlist_permits_built_in_inspection(policy_allowlist, argv):
-    assert policy_allowlist.ensure_command_allowed(argv) == argv[0]
+def test_allowlist_denies_ungranted_inspection(policy_allowlist, argv):
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy_allowlist.ensure_command_allowed(argv)
+
+    assert excinfo.value.code == "POLICY_DENIED"
 
 
-def test_exec_allowlist_permits_built_in_inspection_without_confirmation(
-    policy_allowlist,
-    tmp_path,
-):
+def test_exec_allowlist_permits_granted_safe_inspection(tmp_path):
+    policy = Policy(
+        raw={
+            "commands": {"mode": "allowlist", "allow": ["docker"]},
+            "exec": {
+                "security": "allowlist",
+                "ask": "on-miss",
+                "allowlist": ["docker"],
+            },
+        }
+    )
+
+    assert policy.ensure_command_allowed(["docker", "info"]) == "docker"
     assert (
-        policy_allowlist.ensure_exec_allowed(
+        policy.ensure_exec_allowed(
             argv=["docker", "info"],
             workspace=tmp_path,
             confirm=False,
@@ -415,6 +427,19 @@ commands:
 
     assert excinfo.value.code == "POLICY_DENIED"
     assert excinfo.value.details["rule"] == "commands.deny_exact"
+
+
+def test_default_policy_rm_denial_names_canonical_replacement(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy.ensure_command_allowed(["rm", "obsolete.txt"])
+
+    assert excinfo.value.code == "POLICY_DENIED"
+    assert excinfo.value.details["suggested_tool"] == "file.trash"
+    assert "exact path" in excinfo.value.details["suggested_fix"]
 
 
 def test_exec_approval_honors_command_discovery_allow_pattern(tmp_path):

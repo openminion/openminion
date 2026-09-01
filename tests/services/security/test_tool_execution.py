@@ -96,11 +96,9 @@ def test_exec_platform_probe_bypasses_high_risk_confirmation() -> None:
 @pytest.mark.parametrize(
     "command",
     [
-        "ps aux",
         "docker info",
-        "docker ps -a",
+        "docker version",
         "docker context show",
-        "systemctl status docker",
     ],
 )
 def test_exec_bounded_inspection_bypasses_high_risk_confirmation(
@@ -120,13 +118,18 @@ def test_exec_bounded_inspection_bypasses_high_risk_confirmation(
 @pytest.mark.parametrize(
     "command",
     [
+        "ps aux",
+        "docker ps -a",
+        "systemctl status docker",
         "docker run alpine",
         "docker start demo",
         "systemctl start docker",
         "open -a Docker",
     ],
 )
-def test_exec_mutation_keeps_high_risk_confirmation(command: str) -> None:
+def test_exec_sensitive_or_mutating_command_keeps_high_risk_confirmation(
+    command: str,
+) -> None:
     decision = _adapter().evaluate(
         tool_name=MODEL_EXEC_RUN,
         tool_spec=_exec_spec(),

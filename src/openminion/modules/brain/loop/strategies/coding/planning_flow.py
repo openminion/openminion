@@ -132,18 +132,20 @@ class CodingPlanningMixin:
             },
         )
 
-    def _append_phase_instruction(self: Any) -> None:
+    def _append_phase_instruction(self: Any, ctx: Any) -> None:
         if self._coding_plan is None:
             return
         self._reset_loop_for_continuation()
         phase = self._coding_plan.current_phase_entry()
         if phase.name == "verify":
+            target_guidance = self._verification_target_guidance(ctx)
             instruction = (
                 f"Continue the coding task in phase '{phase.name}'. "
                 f"Goal: {self._coding_plan.goal}. "
                 "Verification is read-only: do not modify files or apply patches. "
                 "Use `file.read` or `file.read_range` first for readback proof and "
                 "use `exec.run` only when shell verification is actually required. "
+                f"{target_guidance} "
                 f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
             )
         else:

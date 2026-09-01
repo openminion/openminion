@@ -108,8 +108,8 @@ def _exec_run_description(runner: Any | None = None) -> str:
         grant_note = f"Granted executables: {', '.join(grants)}. "
         if "ssh" in grants:
             grant_note += (
-                "The granted SSH client can connect to remote hosts using the host's "
-                "existing SSH config. "
+                "For remote hosts, use configured operations tools rather than raw "
+                "SSH. "
             )
         grant_note += (
             "Invoke an explicitly requested granted executable directly; do not "
@@ -665,8 +665,8 @@ def build_runtime_tool_specs(
         "file.read": "Read file contents.",
         "file.find": "Search for files matching a pattern.",
         "file.write": (
-            "Write or overwrite a file and create parent directories "
-            "automatically; use this to scaffold new project files and folders."
+            "Write or overwrite one complete target file path and create its parent "
+            "directories automatically."
         ),
         "file.search": "Search file contents and matches in a workspace.",
         "file.edit": "Apply a targeted file edit or patch.",

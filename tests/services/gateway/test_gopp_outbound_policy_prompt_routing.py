@@ -166,7 +166,7 @@ def test_policy_confirmation_kind_skips_transcript_for_broad_tools() -> None:
     sessions = _RecordingSessions()
     for tool_name, args_preview in (
         ("file.write", "path=/tmp/a.txt"),
-        ("file.delete", "path=/tmp/b"),
+        ("file.trash", "path=/tmp/b"),
         ("exec.run", "cmd=rm -rf .cache"),
     ):
         prose = (

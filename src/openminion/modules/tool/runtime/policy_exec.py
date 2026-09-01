@@ -17,6 +17,7 @@ from ..constants import (
     TOOL_EXEC_SECURITY_DENY,
 )
 from ..contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+from ..contracts.model_ids import MODEL_FILE_TRASH
 from ..errors import ToolRuntimeError
 from .command_patterns import (
     command_action_class,
@@ -51,7 +52,6 @@ class PolicyExecMixin:
         allowlist = self.exec_allowlist()
         commands = cast(dict[str, Any], self.raw.get("commands", {}))
         allow_pattern = matching_allow_pattern(effective_argv, commands)
-        action_class = command_action_class(effective_argv)
 
         def _ask_required(rule: str, details: dict[str, Any]) -> None:
             if confirm:
@@ -70,7 +70,7 @@ class PolicyExecMixin:
             )
 
         if security_mode == TOOL_EXEC_SECURITY_ALLOWLIST:
-            allowed = allow_pattern is not None or action_class == "inspect"
+            allowed = allow_pattern is not None
             for item in allowlist:
                 token = str(item)
                 if not token:
@@ -137,10 +137,21 @@ class PolicyExecMixin:
         commands = cast(dict[str, Any], self.raw.get("commands", {}))
         deny_exact = set(commands.get("deny_exact", []))
         if exec_name in deny_exact:
+            details: dict[str, Any] = {
+                "rule": "commands.deny_exact",
+                "command": exec_name,
+            }
+            if exec_name == "rm":
+                details.update(
+                    {
+                        "suggested_tool": MODEL_FILE_TRASH,
+                        "suggested_fix": "Use file.trash with the exact path.",
+                    }
+                )
             raise ToolRuntimeError(
                 "POLICY_DENIED",
                 f"Denied by policy: command '{exec_name}' is denylisted",
-                {"rule": "commands.deny_exact", "command": exec_name},
+                details,
             )
 
         for expr in commands.get("deny_regex", []):
@@ -169,11 +180,7 @@ class PolicyExecMixin:
             )
 
         if mode == TOOL_EXEC_SECURITY_ALLOWLIST:
-            if (
-                exec_name not in allow
-                and allow_pattern is None
-                and action_class != "inspect"
-            ):
+            if exec_name not in allow and allow_pattern is None:
                 raise ToolRuntimeError(
                     "POLICY_DENIED",
                     f"Denied by policy: command '{exec_name}' is not allowlisted",

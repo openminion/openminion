@@ -178,7 +178,7 @@ def test_exec_run_invokes_system_ssh_client(tmp_path):
     assert result["stdout_preview"] or result["stderr_preview"]
 
 
-def test_exec_run_passes_ssh_agent_socket_only_to_direct_ssh(
+def test_exec_run_never_forwards_ambient_ssh_agent_socket(
     tmp_path,
 ):
     socket_path = str(tmp_path / "agent.sock")
@@ -211,7 +211,7 @@ def test_exec_run_passes_ssh_agent_socket_only_to_direct_ssh(
 
     assert ssh_error is None
     assert ssh_prep is not None
-    assert ssh_prep.env["SSH_AUTH_SOCK"] == socket_path
+    assert "SSH_AUTH_SOCK" not in ssh_prep.env
     assert other_error is None
     assert other_prep is not None
     assert "SSH_AUTH_SOCK" not in other_prep.env

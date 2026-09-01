@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from openminion.modules.brain.runtime.verification.policy import (
-    VerifierInvocation,
     VerifierResult,
-    is_run_completion_confirmed,
-    run_verifier,
+)
+from openminion.modules.brain.runtime.goal.verification import (
+    GoalVerificationInput,
+    verify_goal,
 )
 from openminion.modules.brain.schemas import (
     ActionResult,
@@ -43,6 +44,7 @@ CODING_VERIFIER_VERDICTS: frozenset[CodingVerifierVerdict] = frozenset(
 class CodingVerifierEvaluation:
     verdict: CodingVerifierVerdict
     results: tuple[VerifierResult, ...]
+    missing_targets: tuple[str, ...] = ()
 
 
 def coerce_coding_verifier_verdict(value: str) -> CodingVerifierVerdict:
@@ -87,54 +89,62 @@ def load_verifier_candidate(
 def evaluate_coding_verifier(
     *,
     goal: Goal,
-    command: ToolCommand,
-    action_result: ActionResult,
+    candidates: tuple[tuple[ToolCommand, ActionResult], ...],
     state: WorkingState,
     logger: Any,
     mode: VerificationMode = VerificationMode.rule_based,
     budget_exhausted: bool = False,
     blocked: bool = False,
 ) -> CodingVerifierEvaluation:
-    results: list[VerifierResult] = []
-    run_id = str(command.command_id or "").strip()
-    for criterion in goal.success_criteria:
-        results.append(
-            run_verifier(
-                VerifierInvocation(
-                    family="structural",
-                    goal_id=goal.goal_id,
-                    run_id=run_id,
-                    command=command,
-                    action_result=action_result,
-                    criterion=criterion,
-                    mode=mode,
-                ),
-                state=state,
-                logger=logger,
-            )
-        )
-    for deliverable in goal.deliverables:
-        results.append(
-            run_verifier(
-                VerifierInvocation(
-                    family=deliverable.verification_hint,
-                    goal_id=goal.goal_id,
-                    run_id=run_id,
-                    command=command,
-                    action_result=action_result,
-                    deliverable=deliverable,
-                    mode=mode,
-                ),
-                state=state,
-                logger=logger,
-            )
-        )
+    bound = {
+        (
+            str(command.verification_target_kind or "").strip(),
+            str(command.verification_target_id or "").strip(),
+        ): GoalVerificationInput(command=command, action_result=action_result)
+        for command, action_result in candidates
+        if command.verification_target_kind and command.verification_target_id
+    }
+    criterion_inputs = {
+        criterion.criterion_id: bound[("criterion", criterion.criterion_id)]
+        for criterion in goal.success_criteria
+        if ("criterion", criterion.criterion_id) in bound
+    }
+    deliverable_inputs = {
+        deliverable.deliverable_id: bound[("deliverable", deliverable.deliverable_id)]
+        for deliverable in goal.deliverables
+        if ("deliverable", deliverable.deliverable_id) in bound
+    }
+    verification = verify_goal(
+        goal,
+        run_id=str(state.trace_id or goal.goal_id),
+        state=state,
+        logger=logger,
+        criterion_inputs=criterion_inputs,
+        deliverable_inputs=deliverable_inputs,
+        mode=mode,
+    )
+    missing_targets = tuple(
+        [
+            f"criterion:{criterion.criterion_id}"
+            for criterion in goal.success_criteria
+            if criterion.criterion_id not in criterion_inputs
+        ]
+        + [
+            f"deliverable:{deliverable.deliverable_id}"
+            for deliverable in goal.deliverables
+            if deliverable.deliverable_id not in deliverable_inputs
+        ]
+    )
     if blocked:
         verdict = CODING_VERIFIER_VERDICT_BLOCKED
-    elif is_run_completion_confirmed(goal=goal, results=list(results)):
+    elif verification.status == "passed":
         verdict = CODING_VERIFIER_VERDICT_COMPLETE
     elif budget_exhausted:
         verdict = CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
     else:
         verdict = CODING_VERIFIER_VERDICT_INCOMPLETE
-    return CodingVerifierEvaluation(verdict=verdict, results=tuple(results))
+    return CodingVerifierEvaluation(
+        verdict=verdict,
+        results=verification.verifier_results,
+        missing_targets=missing_targets,
+    )

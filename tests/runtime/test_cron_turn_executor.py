@@ -509,7 +509,12 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
                                 "tool_name": "file.write",
                                 "ok": True,
                                 "call_id": "call-write",
-                            }
+                            },
+                            {
+                                "tool_name": "file.trash",
+                                "ok": True,
+                                "call_id": "call-trash",
+                            },
                         ]
                     )
                 },
@@ -579,7 +584,8 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
     assert store.replaced_payloads[-1][0] == "job-watch"
     stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
     assert stored_watch["write_audit"] == [
-        {"tool_name": "file.write", "ok": True, "call_id": "call-write"}
+        {"tool_name": "file.write", "ok": True, "call_id": "call-write"},
+        {"tool_name": "file.trash", "ok": True, "call_id": "call-trash"},
     ]
 
 
