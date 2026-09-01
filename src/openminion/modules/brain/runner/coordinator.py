@@ -123,6 +123,7 @@ class BrainRunner:
         self.cron_api = cron_api
         self.goal_runtime = goal_runtime
         self.terminal_capture_writer = terminal_capture_writer
+        self._terminal_capture_enabled_for_turn = True
         self._lgmh_hydrated_sessions: set[str] = set()
         self._pending_run_trigger: str | None = None
         self._pending_gateway_system_context: str | None = None
@@ -302,7 +303,10 @@ class BrainRunner:
         result: StepOutput | None = None,
         capture_identity: CaptureIdentity | None = None,
     ) -> None:
-        if self.terminal_capture_writer is not None:
+        if (
+            self.terminal_capture_writer is not None
+            and self._terminal_capture_enabled_for_turn
+        ):
             state = result.working_state if result is not None else None
             identity = capture_identity
             if identity is None and state is not None:

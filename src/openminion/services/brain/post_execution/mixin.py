@@ -18,7 +18,11 @@ from openminion.modules.brain.diagnostics.status import (
     StatusDetailCode,
     normalize_phase_status,
 )
-from openminion.modules.session.capture import capture_is_excluded, capture_run_kwargs
+from openminion.modules.session.capture import (
+    capture_is_excluded,
+    capture_run_kwargs,
+    terminal_capture_is_enabled,
+)
 from openminion.services.security.policy import (
     SecurityPolicyContext,
     ToolBudgetState,
@@ -167,6 +171,9 @@ class BrainBridgeTurnMixin:
             user_input=message.body,
         )
         runner._capture_excluded_for_turn = capture_is_excluded(message.metadata or {})
+        runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(
+            message.metadata or {}
+        )
         self._inject_gateway_system_context(
             runner=runner,
             session_id=session_id,

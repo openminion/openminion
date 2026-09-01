@@ -103,7 +103,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
             vector_adapter=SimpleNamespace(),
         ),
         _context=SimpleNamespace(
-            home_paths=SimpleNamespace(home_root=tmp_path),
+            home_paths=SimpleNamespace(home_root=tmp_path, data_root=tmp_path),
             workspace_root=str(tmp_path),
         ),
         _get_manager_config=lambda _name: None,

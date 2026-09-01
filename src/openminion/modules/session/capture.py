@@ -95,6 +95,12 @@ def capture_is_excluded(metadata: dict[str, Any]) -> bool:
     )
 
 
+def terminal_capture_is_enabled(metadata: dict[str, Any]) -> bool:
+    return str(metadata.get("diagnostic_scope", "") or "").strip().lower() != (
+        "runtime"
+    )
+
+
 def canonical_payload_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(
         payload,

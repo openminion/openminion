@@ -22,6 +22,7 @@ from openminion.modules.session.capture import (
     RuntimeTerminalCaptureWriter,
     TerminalCaptureReceiptError,
     build_capture_identity,
+    terminal_capture_is_enabled,
     verify_terminal_capture_receipt,
 )
 from openminion.modules.storage.runtime.migrations import run_migrations
@@ -59,6 +60,11 @@ def test_capture_identity_is_root_bound_and_deterministic():
     assert first == replay
     assert first.capture_id != later.capture_id
     assert first.event_id != later.event_id
+
+
+def test_runtime_diagnostic_turns_skip_durable_terminal_capture():
+    assert terminal_capture_is_enabled({"diagnostic_scope": "runtime"}) is False
+    assert terminal_capture_is_enabled({}) is True
 
 
 def test_sqlite_capture_bundle_is_atomic_idempotent_and_conflict_checked(tmp_path):
