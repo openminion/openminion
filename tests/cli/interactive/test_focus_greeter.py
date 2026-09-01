@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,7 @@ from openminion.cli.constants import (
 from openminion.cli.presentation import styles
 from openminion.cli.theme import DARK
 from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
+from openminion.cli.interactive.project_context import ProjectContextInfo
 from openminion.cli.interactive.widgets.greeter import build_greeter_message
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.interactive.widgets import FocusTranscript
@@ -69,6 +71,26 @@ def test_greeter_handles_unbound_runtime_cleanly() -> None:
     assert "(unbound)" in msg.body
     assert "(no model)" in msg.body
     assert "theme: dark" in msg.body
+
+
+def test_greeter_describes_loaded_noncanonical_context_neutrally() -> None:
+    runtime = _DemoFocusRuntime(working_dir="/tmp/project")
+    runtime.project_context = ProjectContextInfo(
+        path=Path("/tmp/project/AGENTS.md"),
+        source_name="AGENTS.md",
+        size_bytes=44,
+        content="rules",
+    )
+
+    message = build_greeter_message(
+        runtime=runtime,
+        working_dir="/tmp/project",
+        theme_name="dark",
+    )
+
+    assert "loaded project context from AGENTS.md" in message.body
+    assert "OpenMinion-native filename: OPENMINION.md" in message.body
+    assert "consider renaming" not in message.body
 
 
 def test_greeter_env_override_for_examples(

@@ -99,7 +99,7 @@ def test_greeter_contains_project_context_when_present() -> None:
     assert "123 bytes" in out
 
 
-def test_greeter_warns_for_legacy_context_name() -> None:
+def test_greeter_describes_loaded_noncanonical_context_neutrally() -> None:
     runtime = _StubRuntime(
         project_context=ProjectContextInfo(
             path=Path("/tmp/project/AGENTS.md"),
@@ -112,7 +112,9 @@ def test_greeter_warns_for_legacy_context_name() -> None:
     console = Console(file=buf, force_terminal=False, width=120)
     _push_greeter(console, runtime=runtime, working_dir="/tmp/project")
     out = buf.getvalue()
-    assert "consider renaming to OPENMINION.md" in out
+    assert "loaded project context from AGENTS.md" in out
+    assert "OpenMinion-native filename: OPENMINION.md" in out
+    assert "consider renaming" not in out
 
 
 def test_greeter_renders_panel_border() -> None:

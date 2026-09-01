@@ -929,7 +929,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     ):
         console.print(
             Text(
-                f"found {project_context.display_name}; consider renaming to OPENMINION.md for canonical support",
+                f"loaded project context from {project_context.display_name}; OpenMinion-native filename: OPENMINION.md",
                 style=_MUTED_ITALIC_STYLE,
             )
         )

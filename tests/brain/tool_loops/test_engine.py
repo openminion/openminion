@@ -8003,6 +8003,173 @@ def test_general_loop_does_not_clear_failed_exec_with_successful_read() -> None:
     assert "latest exec.run result was still failed" in outcome.error_message
 
 
+def _run_general_loop_with_tool_results(
+    tool_results: list[tuple[str, dict[str, Any], ActionResult]],
+):
+    tool_responses = [
+        LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text="",
+            tool_calls=[ToolCall(id=f"call-{index}", name=name, arguments=arguments)],
+            finish_reason="tool_calls",
+        )
+        for index, (name, arguments, _result) in enumerate(tool_results)
+    ]
+    final_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="Workspace inspected.",
+        finalization_status={"status": "final_answer"},
+        finish_reason="stop",
+    )
+    runtime = _FakeRuntime(responses=[*tool_responses, final_response, final_response])
+    loop_ctx = _LoopContext(
+        state=_state(
+            tool_calls=len(tool_results) + 1,
+            llm_calls_max=len(tool_results) + 3,
+        ),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=result,
+            )
+            for _name, _arguments, result in tool_results
+        ],
+    )
+    tool_names = frozenset(name for name, _arguments, _result in tool_results)
+    return run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=tool_names,
+            max_iterations=len(tool_results) + 2,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect the workspace")],
+        tool_specs=_tool_specs(*sorted(tool_names)),
+    )
+
+
+def _policy_denied_exec_result() -> ActionResult:
+    return ActionResult(
+        command_id=new_uuid(),
+        status="failed",
+        summary="read-only shell discovery denied",
+        error=ActionError(
+            code="POLICY_DENIED",
+            message="Use the structured read-only tool instead.",
+            details={"suggested_tool": "file.list_dir"},
+        ),
+    )
+
+
+def _tool_result(*, status: str, summary: str) -> ActionResult:
+    return ActionResult(
+        command_id=new_uuid(),
+        status=status,
+        summary=summary,
+        error=(
+            ActionError(code="TOOL_ERROR", message=summary)
+            if status == "failed"
+            else None
+        ),
+    )
+
+
+def test_general_loop_clears_policy_denied_exec_after_suggested_tool_succeeds() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="success", summary="workspace entries"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Workspace inspected."
+    assert not outcome.state.scratchpad.get("unresolved_exec_failure_retry_used", False)
+
+
+def test_general_loop_does_not_clear_policy_denial_with_different_tool() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.read",
+                {"path": "README.md"},
+                _tool_result(status="success", summary="file content"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
+def test_general_loop_does_not_clear_policy_denial_when_suggested_tool_fails() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="failed", summary="listing failed"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
+def test_general_loop_does_not_use_suggested_tool_success_before_denial() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="success", summary="workspace entries"),
+            ),
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
+def test_general_loop_keeps_later_genuine_exec_failure_authoritative() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="success", summary="workspace entries"),
+            ),
+            (
+                "exec.run",
+                {"command": "pytest -q"},
+                ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="pytest failed",
+                    error=ActionError(
+                        code="EXEC_ERROR",
+                        message="command exited with code 1",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
 def test_normal_result_no_enrichment() -> None:
     runtime = _FakeRuntime(
         responses=[
