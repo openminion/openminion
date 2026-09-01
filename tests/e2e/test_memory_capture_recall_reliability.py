@@ -4,10 +4,14 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from openminion.api.runtime import APIRuntime
 from openminion.api.turns import run_turn
 from openminion.base.config import OpenMinionConfig, save_config
 from tests._csc_fixtures import _csc_install_default_agent
+
+pytestmark = pytest.mark.e2e
 
 
 def _echo_config(tmp_path: Path) -> Path:

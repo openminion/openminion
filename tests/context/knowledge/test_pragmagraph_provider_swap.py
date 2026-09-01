@@ -259,11 +259,11 @@ def test_gateway_context_uses_graphify_and_pragmagraph_with_attribution(
     context = _build_context(service, events)
 
     assert "Provider: repo_graph" in context.history[-1].body
-    assert "Provider: repo_pragmas" in context.history[-1].body
     assert context.history[-1].metadata["graph_scope"] == "provider"
     assert context.knowledge_graph_meta["knowledge_graph_providers"] == (
         "repo_graph,repo_pragmas"
     )
+    assert context.knowledge_graph_meta["evidence_duplicate_omissions"] == "2"
     assert [event["event_type"] for event in events] == [
         EVENT_SOURCE_RESOLVED,
         EVENT_QUERY_STARTED,
