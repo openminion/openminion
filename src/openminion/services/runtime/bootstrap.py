@@ -67,6 +67,7 @@ from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.policy.runtime.action_policy import (
     policy_config_from_action_policy,
 )
+from openminion.modules.memory import memory_runtime_configuration
 from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaClient,
     DaytonaConfig,
@@ -78,9 +79,6 @@ from openminion.services.runtime.errors import (
 )
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
-    _normalize_runtime_memory_provider,
-    _resolve_env_override,
-    _resolve_runtime_memory_config as _resolve_bootstrap_memory_config_impl,
 )
 
 
@@ -319,7 +317,7 @@ def build_agent_memory_service(
     | MemoryServiceGatewayAdapter
     | DisabledMemoryGatewayAdapter
 ):
-    env_provider = _resolve_env_override(
+    env_provider = memory_runtime_configuration.resolve_runtime_env_override(
         config_manager=config_manager,
         config=config,
         key="OPENMINION_MEMORY_PROVIDER",
@@ -328,7 +326,11 @@ def build_agent_memory_service(
         env_provider
         or str(getattr(config.runtime, "memory_provider", "memory_v2")).strip()
     )
-    normalized_provider = _normalize_runtime_memory_provider(configured_provider)
+    normalized_provider = (
+        memory_runtime_configuration.normalize_runtime_memory_provider(
+            configured_provider
+        )
+    )
 
     # memory_v2_smoke: ephemeral smoke provider; memory_v2_hello_world is a compat alias.
     if normalized_provider == "memory_v2_smoke":
@@ -369,7 +371,7 @@ def _resolve_bootstrap_memory_config(
     home_root: Path | None = None,
     data_root: Path | None = None,
 ) -> Any:
-    return _resolve_bootstrap_memory_config_impl(
+    return memory_runtime_configuration.resolve_runtime_memory_config(
         config=config,
         memory_root=memory_root,
         config_manager=config_manager,
@@ -659,7 +661,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         resolve_llm_profiles,
         resolve_runner_options,
     )
-    from openminion.services.brain.factory.vector import init_vector_adapter
     from openminion.modules.tool.exposure import get_model_exposure_specs
     from openminion.modules.brain.schemas import AgentProfile
 
@@ -711,11 +712,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         else _Path(service.db_path)
     )
 
-    vector_adapter, service._vector_sync = init_vector_adapter(
-        config=config,
-        db_dir=db_dir,
-        logger=service._logger,
-    )
+    memory_assembly = service._runtime_memory_assembly
+    vector_adapter = getattr(memory_assembly, "vector_adapter", None)
 
     skill_config = service._get_manager_config("skill")
     context_api = bridge_module.create_context_api(
@@ -741,15 +739,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_home_root=service._context.home_paths.home_root,
     )
 
-    memory_config = service._get_manager_config("memory")
-    memory_api = bridge_module.create_memory_api(
-        mode=service.mode,
-        db_dir=db_dir,
-        config=memory_config,
-        vector_adapter=vector_adapter,
-        telemetryctl=service._telemetryctl,
-        agent_id=str(default_profile.name or default_agent_id),
-    )
+    memory_api = getattr(memory_assembly, "memctl", None)
     resolved_action_policy = (
         default_profile.action_policy
         if default_profile.action_policy is not None
@@ -922,6 +912,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         task_manager=TaskManager.from_cron_repository(cron_repository),
         cron_api=cron_repository,
         options=options,
+        terminal_capture_writer=service._terminal_capture_writer,
     )
     brain_runtime_db_path = resolve_brain_runtime_db_path(
         storage_path=_Path(service.db_path)
@@ -959,6 +950,8 @@ def build_agent_runtime_service(
     retrieve_service: Any | None = None,
     action_policy_service: Any | None = None,
     telemetryctl: Any | None = None,
+    sessions: Any | None = None,
+    runtime_memory_assembly: Any | None = None,
 ) -> tuple[object, str, str]:
     from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 
@@ -971,6 +964,16 @@ def build_agent_runtime_service(
         raise RuntimeBootstrapError(f"Brain runtime mode failed. Error: {exc}") from exc
 
     brain_storage_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    terminal_capture_writer = None
+    if (
+        sessions is not None
+        and getattr(runtime_memory_assembly, "memctl", None) is not None
+    ):
+        from openminion.modules.session.capture import (
+            RuntimeTerminalCaptureWriter,
+        )
+
+        terminal_capture_writer = RuntimeTerminalCaptureWriter(sessions)
     return (
         BrainBridgeService(
             config=config,
@@ -989,6 +992,8 @@ def build_agent_runtime_service(
             retrieve_service=retrieve_service,
             action_policy_service=action_policy_service,
             telemetryctl=telemetryctl,
+            terminal_capture_writer=terminal_capture_writer,
+            runtime_memory_assembly=runtime_memory_assembly,
         ),
         "brain",
         fallback_reason,

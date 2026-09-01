@@ -88,6 +88,18 @@ def _resolve_explicit_namespace(
 
 
 class MemoryServiceMutationMixin:
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        handler = getattr(self._store, "apply_capture_bundle", None)
+        if not callable(handler):
+            from openminion.modules.memory.runtime.capture_bundle import (
+                CaptureRecoveryUnsupportedError,
+            )
+
+            raise CaptureRecoveryUnsupportedError(
+                "configured memory backend does not support atomic capture bundles"
+            )
+        return handler(bundle)
+
     def write_record(
         self,
         *,

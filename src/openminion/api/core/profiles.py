@@ -35,7 +35,10 @@ from openminion.services.gateway import GatewayService
 from openminion.services.runtime.bootstrap import (
     build_agent_runtime_service,
     build_gateway_service,
+    build_session_context_service,
 )
+from openminion.services.runtime.memory import build_runtime_memory_assembly
+from openminion.services.brain.factory.vector import init_vector_adapter
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.runtime.turn_input import TurnInputQueue
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
@@ -217,6 +220,7 @@ class RuntimeProfilesMixin:
     agent: AgentService
     gateway: GatewayService
     memory_queries: MemoryNamespaceQueryInterface
+    runtime_memory_assembly: Any
     action_policy: object | None
     retrieve_ctl: object | None
     knowledge_graphs: object | None
@@ -227,6 +231,7 @@ class RuntimeProfilesMixin:
     config_manager: ConfigManager | None
     _agent_services: dict[str, AgentService]
     _gateways: dict[str, GatewayService]
+    _memory_assemblies: dict[str, Any]
     turn_input_queue: TurnInputQueue = field(default_factory=TurnInputQueue)
     run_profile_overrides: RunProfileOverrides = field(
         default_factory=RunProfileOverrides
@@ -315,6 +320,36 @@ class RuntimeProfilesMixin:
                 model=llm_runtime.model,
                 tool_call_strategy=llm_runtime.tool_call_strategy,
             )
+            session_context = build_session_context_service(
+                config=runtime_config,
+                sessions=self.sessions,
+                logger=self.logger.getChild(f"gateway.{profile.name}.session_context"),
+                config_path=self.config_path,
+                storage_path=self.storage_path,
+                memory_root=self.memory_root,
+                data_root=self.data_root,
+                retrieve_ctl=self.retrieve_ctl,
+            )
+            vector_adapter, vector_scheduler = init_vector_adapter(
+                config=runtime_config,
+                db_dir=self.memory_root,
+                logger=self.logger.getChild(f"memory.{profile.name}.vector"),
+            )
+            memory_assembly = build_runtime_memory_assembly(
+                config=runtime_config,
+                agent_id=profile.name,
+                memory_root=self.memory_root,
+                logger=self.logger.getChild(f"memory.{profile.name}"),
+                config_manager=self.config_manager,
+                home_root=self.home_root,
+                data_root=self.data_root,
+                session_context=session_context,
+                retrieve_ctl=self.retrieve_ctl,
+                storage_path=self.storage_path,
+                vector_adapter=vector_adapter,
+                scheduler=vector_scheduler,
+            )
+            memory_assembly.start()
             service, runtime_mode, fallback_reason = build_agent_runtime_service(
                 config=runtime_config,
                 plugins=self.plugins,
@@ -332,11 +367,14 @@ class RuntimeProfilesMixin:
                 retrieve_service=self.retrieve_ctl,
                 action_policy_service=self.action_policy,
                 telemetryctl=self.telemetryctl,
+                sessions=self.sessions,
+                runtime_memory_assembly=memory_assembly,
             )
             agent_service = cast(AgentService, service)
             self._bind_runtime_handle(agent_service, self)
             bind_mcp_sampling_executor(self.tools, agent_service)
             self._agent_services[cache_key] = agent_service
+            self._memory_assemblies[cache_key] = memory_assembly
             self._agent_runtime_modes[cache_key] = runtime_mode
             self._agent_runtime_fallback_reasons[cache_key] = fallback_reason
             return agent_service
@@ -358,6 +396,20 @@ class RuntimeProfilesMixin:
             "fallback_reason": self._agent_runtime_fallback_reasons.get(cache_key, ""),
             "brain_bridge_active": runtime_mode == "brain",
         }
+
+    def resolve_memory_assembly(
+        self,
+        agent_id: str | None = None,
+        overrides: RunProfileOverrides | None = None,
+    ) -> Any:
+        effective_overrides = self._combined_run_profile_overrides(overrides)
+        profile = self.resolve_agent_profile(agent_id, overrides=overrides)
+        cache_key = self._runtime_cache_key(
+            agent_name=profile.name,
+            overrides=effective_overrides,
+        )
+        self.resolve_agent_service(agent_id, overrides=overrides)
+        return self._memory_assemblies[cache_key]
 
     def resolve_gateway(
         self,
@@ -401,6 +453,7 @@ class RuntimeProfilesMixin:
                 config_manager=self.config_manager,
                 knowledge_graphs=self.knowledge_graphs,
                 retrieve_ctl=self.retrieve_ctl,
+                agent_memory=self._memory_assemblies[cache_key].gateway,
             )
             self._gateways[cache_key] = gateway
             return gateway
@@ -410,6 +463,7 @@ class RuntimeProfilesMixin:
         if not normalized:
             return
         evicted_services: list[AgentService] = []
+        evicted_memory: list[Any] = []
         with self._agent_runtime_lock:
             for cache_key in tuple(self._gateways):
                 if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
@@ -419,8 +473,15 @@ class RuntimeProfilesMixin:
                     service = self._agent_services.pop(cache_key, None)
                     if service is not None:
                         evicted_services.append(service)
+            for cache_key in tuple(self._memory_assemblies):
+                if cache_key == normalized or cache_key.startswith(f"{normalized}||"):
+                    assembly = self._memory_assemblies.pop(cache_key, None)
+                    if assembly is not None:
+                        evicted_memory.append(assembly)
         for service in evicted_services:
             service.close()
+        for assembly in evicted_memory:
+            assembly.close()
         self.logger.getChild("runtime").info(
             "evicted agent runtime cache agent_id=%s reason=%s",
             normalized,

@@ -294,25 +294,46 @@ class RuntimeControlsMixin:
         from openminion.modules.memory.runtime.capture_status import (
             project_capture_processing,
             summarize_capture_processing,
+            summarize_recall_processing,
         )
 
         records = self.list_memory_records()
         candidates = self.list_memory_candidates()
-        events = (
-            self._rt.sessions.list_events(
-                session_id=self.session_id,
-                limit=1000,
-                event_type_prefix="memory.write.",
-            )
-            if self.is_bound
-            else []
-        )
+        events: list[Any] = []
+        if self.is_bound:
+            for event_prefix in ("turn.outcome", "memory.", "knowledge_graph.query."):
+                events.extend(
+                    self._rt.sessions.list_events(
+                        session_id=self.session_id,
+                        limit=1000,
+                        event_type_prefix=event_prefix,
+                    )
+                )
         capture = summarize_capture_processing(project_capture_processing(events))
+        provider = self._memory_query_provider()
+        enabled = bool(getattr(provider, "enabled", provider is not None))
+        precision_options = getattr(provider, "_precision_options", None)
+        mode = str(getattr(precision_options, "mode", "legacy") or "legacy")
+        recall_adapter = getattr(provider, "_recall_adapter", None)
+        adapter_capabilities = getattr(recall_adapter, "capabilities", None)
+        capabilities = tuple(
+            name
+            for name in ("keyword", "graph", "recency", "trust", "vector", "rerank")
+            if bool(getattr(adapter_capabilities, name, False))
+        )
+        recall = summarize_recall_processing(
+            events,
+            enabled=enabled,
+            mode=mode,
+            capabilities=capabilities,
+            supported=mode == "legacy" or recall_adapter is not None,
+        )
         return format_memory_report(
             records,
             candidates,
             session_id=self.session_id,
             capture=capture,
+            recall=recall,
         )
 
     def _memory_query_provider(self) -> Any:

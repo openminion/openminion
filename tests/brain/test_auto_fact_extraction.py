@@ -222,17 +222,16 @@ def test_afe_stages_when_model_omits_transport_ids() -> None:
         runner = _runner(Path(tmp), llm_api=_MockLLM(report=report))
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="my name is Jay",
             logger=logger,
         )
 
-        assert len(ids) == 1
-        candidates = _candidate_payloads(tmp)
-        assert candidates[0]["meta"]["source_session_id"] == "afe-session"
-        assert candidates[0]["meta"]["source_agent_id"] == "afe-agent"
+        assert len(envelope["items"]) == 1
+        assert envelope["items"][0]["content"] == "Jay"
+        assert _candidate_payloads(tmp) == []
 
 
 def test_afe_stages_candidates_from_user_message() -> None:
@@ -260,22 +259,19 @@ def test_afe_stages_candidates_from_user_message() -> None:
         runner = _runner(Path(tmp), llm_api=_MockLLM(report=report))
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="my name is Jay and I prefer TypeScript",
             logger=logger,
         )
 
-        assert len(ids) == 2
-        candidates = _candidate_payloads(tmp)
-        assert len(candidates) == 2
-        record_types = {c["record_type"] for c in candidates}
+        assert len(envelope["items"]) == 2
+        record_types = {item["kind"] for item in envelope["items"]}
         assert record_types == {"fact", "user_preference"}
-        assert all(c["meta"]["source"] == "auto_extracted" for c in candidates)
-        assert all(c["meta"]["source_agent_id"] == "afe-agent" for c in candidates)
         # AFE-fixed initial confidence (0.3) — not whatever the model said.
-        assert all(c["confidence"] == 0.3 for c in candidates)
+        assert all(item["confidence"] == 0.3 for item in envelope["items"])
+        assert _candidate_payloads(tmp) == []
         assert any(
             event_type == "brain.auto_fact_extraction.completed"
             for event_type, _p, _k in logger.events
@@ -287,14 +283,14 @@ def test_afe_skips_when_user_message_too_short() -> None:
         runner = _runner(Path(tmp), llm_api=_MockLLM(report=None))
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="hi",
             logger=logger,
         )
 
-        assert ids == []
+        assert envelope == {"items": []}
         assert any(
             event_type == "brain.auto_fact_extraction.skipped"
             and payload.get("reason") == "user_message_too_short"
@@ -311,14 +307,14 @@ def test_afe_graceful_degradation_on_llm_failure() -> None:
         )
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="my name is Jay and I prefer TypeScript",
             logger=logger,
         )
 
-        assert ids == []
+        assert envelope == {"items": [], "error_code": "extraction_failed"}
         skipped = [
             (payload.get("reason"), payload.get("error"))
             for event_type, payload, _kw in logger.events
@@ -359,14 +355,14 @@ def test_afe_caps_items_per_turn() -> None:
         )
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="a long message with many facts",
             logger=logger,
         )
 
-        assert len(ids) == 3
+        assert len(envelope["items"]) == 3
         completed = [
             payload
             for event_type, payload, _kw in logger.events
@@ -374,10 +370,10 @@ def test_afe_caps_items_per_turn() -> None:
         ]
         assert len(completed) == 1
         assert completed[0]["extracted_items"] == 12
-        assert completed[0]["staged_candidates"] == 3
+        assert completed[0]["staged_candidates"] == 0
 
 
-def test_afe_uses_agent_scope_by_default() -> None:
+def test_afe_does_not_write_before_bundle_commit() -> None:
     report = {
         "session_id": "afe-session",
         "agent_id": "afe-agent",
@@ -402,13 +398,10 @@ def test_afe_uses_agent_scope_by_default() -> None:
             logger=logger,
         )
 
-        candidates = _candidate_payloads(tmp)
-        assert len(candidates) == 1
-        assert candidates[0]["scope"] == "agent:afe-agent"
+        assert _candidate_payloads(tmp) == []
 
 
-def test_afe_rebuilds_invalid_normalized_key() -> None:
-    # Model proposes an invalid key — runtime rebuilds a deterministic one.
+def test_afe_preserves_model_authored_normalized_key() -> None:
     report = {
         "session_id": "afe-session",
         "agent_id": "afe-agent",
@@ -426,20 +419,14 @@ def test_afe_rebuilds_invalid_normalized_key() -> None:
         runner = _runner(Path(tmp), llm_api=_MockLLM(report=report))
         logger = _Logger()
 
-        extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="my name is Jay",
             logger=logger,
         )
 
-        candidates = _candidate_payloads(tmp)
-        assert len(candidates) == 1
-        key = candidates[0]["meta"]["normalized_key"]
-        # Rebuilt key must be valid bounded shape.
-        assert key.startswith("fact:")
-        assert ":" in key
-        assert "NOT" not in key  # original invalid key discarded
+        assert envelope["items"][0]["normalized_key"] == "NOT A VALID KEY"
 
 
 def test_afe_skips_when_memory_api_unavailable() -> None:
@@ -448,14 +435,14 @@ def test_afe_skips_when_memory_api_unavailable() -> None:
         runner.memory_api = None
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="my name is Jay",
             logger=logger,
         )
 
-        assert ids == []
+        assert envelope == {"items": []}
         assert any(
             event_type == "brain.auto_fact_extraction.skipped"
             and payload.get("reason") == "memory_api_unavailable"
@@ -475,14 +462,14 @@ def test_afe_skips_when_disabled() -> None:
         )
         logger = _Logger()
 
-        ids = extract_user_message_candidates(
+        envelope = extract_user_message_candidates(
             runner,
             state=_state(),
             user_message="my name is Jay",
             logger=logger,
         )
 
-        assert ids == []
+        assert envelope == {"items": []}
         assert any(
             event_type == "brain.auto_fact_extraction.skipped"
             and payload.get("reason") == "disabled"

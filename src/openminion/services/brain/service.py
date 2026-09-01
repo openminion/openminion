@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -261,6 +261,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         retrieve_service: Any | None = None,
         action_policy_service: Any | None = None,
         telemetryctl: TelemetryCtl | None = None,
+        terminal_capture_writer: Any | None = None,
+        runtime_memory_assembly: Any | None = None,
     ) -> None:
         super().__init__(
             config=config,
@@ -284,6 +286,8 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             config_manager=config_manager,
             retrieve_service=retrieve_service,
             action_policy_service=action_policy_service,
+            terminal_capture_writer=terminal_capture_writer,
+            runtime_memory_assembly=runtime_memory_assembly,
         )
         self._init_bridge_telemetry(config=config, telemetryctl=telemetryctl)
         self._context = BrainBridgeContext(
@@ -307,12 +311,16 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         config_manager: ConfigManager | None,
         retrieve_service: Any | None,
         action_policy_service: Any | None,
+        terminal_capture_writer: Any | None,
+        runtime_memory_assembly: Any | None,
     ) -> None:
         self.mode = mode
         self.db_path = db_path
         self._config_manager = config_manager
         self._retrieve_service = retrieve_service
         self._action_policy_service = action_policy_service
+        self._terminal_capture_writer = terminal_capture_writer
+        self._runtime_memory_assembly = runtime_memory_assembly
         runtime_env = config.runtime.env
         self._env = (
             config_manager.env
@@ -339,7 +347,6 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runner: BrainRunner | None = None
         self._runtime_handle: Any | None = None
         self._llm_wrapper: Any | None = None
-        self._vector_sync: Any | None = None
         self._closed = False
 
     def close(self) -> None:
@@ -349,11 +356,11 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         if self._runner is not None:
             close_owned_runner_bundle(
                 self._runner,
-                vector_sync=self._vector_sync,
+                vector_sync=None,
                 close_policy=self._action_policy_service is None,
                 close_retrieve=self._retrieve_service is None,
             )
-        self._vector_sync = self._runner = None
+        self._runner = None
         super().close()
 
     def _init_bridge_telemetry(
@@ -503,6 +510,28 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
         self._runner = build_brain_runner_bundle(self)
         return self._runner
 
+    def extract_memory_capture_candidates(
+        self,
+        *,
+        session_api: Any,
+        session_id: str,
+        root_turn_id: str,
+        user_message: str,
+    ) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._get_runner().extract_memory_capture_candidates(
+                session_api=session_api,
+                session_id=session_id,
+                root_turn_id=root_turn_id,
+                user_message=user_message,
+            ),
+        )
+
+    @property
+    def memory_capture_assurance_enabled(self) -> bool:
+        return self._terminal_capture_writer is not None
+
     def _resolve_brain_config(self) -> Any | None:
         try:
             runtime_config = derive_brain_runtime_config(
@@ -555,10 +584,11 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             ("llm", llm_api),
             ("tool", tool_api),
             ("a2a", a2a_api),
-            ("memory", memory_api),
             ("policy", policy_api),
             ("safety", safety_api),
         ]
+        if memory_api is not None:
+            checks.append(("memory", memory_api))
         if rlm_api is not None:
             checks.append(("rlm", rlm_api))
         if retrieve_api is not None:

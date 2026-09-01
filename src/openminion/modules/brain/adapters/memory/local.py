@@ -96,6 +96,15 @@ class LocalMemoryAdapter:
         )
         return len(normalized_ids)
 
+    def apply_capture_bundle(self, **_: Any) -> dict[str, Any]:
+        from openminion.modules.memory.runtime.capture_bundle import (
+            CaptureRecoveryUnsupportedError,
+        )
+
+        raise CaptureRecoveryUnsupportedError(
+            "local JSONL memory does not support atomic capture bundles"
+        )
+
     def _append(self, payload: dict[str, Any]) -> None:
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=True) + "\n")

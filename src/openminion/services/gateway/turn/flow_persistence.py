@@ -14,6 +14,7 @@ from openminion.services.gateway.memory import record_memory_turn
 from openminion.services.gateway.response import build_outbound_message
 from openminion.services.gateway.routing import parse_metadata_bool
 
+from openminion.modules.session.capture import verify_terminal_capture_receipt
 from .flow_models import _RoutingResult
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 class GatewayTurnPersistenceDeliveryMixin:
     _sessions: "SessionStore"
+    _agent: Any
 
     def _finish_run_record(
         self,
@@ -136,6 +138,16 @@ class GatewayTurnPersistenceDeliveryMixin:
         thread_id = routing.thread_id
         attach_id = routing.attach_id
         normalized_request_id = routing.normalized_request_id
+
+        verify_terminal_capture_receipt(
+            sessions=self._sessions,
+            response_metadata=response.metadata,
+            session_id=session_id,
+            run_id=run_id,
+            required=bool(
+                getattr(self._agent, "memory_capture_assurance_enabled", False)
+            ),
+        )
 
         self._security.enforce_policy(
             session_id=session_id,

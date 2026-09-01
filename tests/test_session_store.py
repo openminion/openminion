@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,9 @@ from openminion.modules.storage.runtime.session_store import (
     build_session_key,
 )
 from openminion.modules.storage.runtime.sqlite import connect_database
+from openminion.modules.storage.runtime.session_store.models import (
+    RuntimeSessionStoreIntegrityError,
+)
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -188,6 +192,205 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual([item.id for item in events], [first.id, second.id])
         self.assertEqual(events[0].payload["run_id"], "r1")
         self.assertEqual(events[1].event_type, "run_completed")
+        self.assertIsNone(events[0].canonical_event_id)
+
+    def test_runtime_event_migration_adds_canonical_ids_and_capture_holds(
+        self,
+    ) -> None:
+        event_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(events)").fetchall()
+        }
+        hold_table = self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("session_retention_holds",),
+        ).fetchone()
+        migration = self.connection.execute(
+            "SELECT name FROM migrations WHERE version = 11"
+        ).fetchone()
+
+        self.assertIn("canonical_event_id", event_columns)
+        self.assertIsNotNone(hold_table)
+        self.assertEqual(
+            str(migration["name"]),
+            "add_canonical_events_and_capture_holds",
+        )
+
+    def test_exact_event_lookup_uses_stable_canonical_id(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="canonical-event"
+        )
+        created = self.store.append_event(
+            session_id=session.id,
+            canonical_event_id="turn.outcome.v1:root-1",
+            event_type="turn.outcome",
+            payload={"capture_id": "capture-1", "capture_state": "excluded"},
+        )
+
+        exact = self.store.get_event_by_canonical_id("turn.outcome.v1:root-1")
+        listed = self.store.list_events(session_id=session.id, limit=10)
+
+        self.assertEqual(exact, created)
+        self.assertEqual(listed, [created])
+        self.assertEqual(created.canonical_event_id, "turn.outcome.v1:root-1")
+        self.assertIsNone(self.store.get_event_by_canonical_id("missing-event"))
+
+    def test_terminal_turn_commit_is_atomic_idempotent_and_conflict_safe(
+        self,
+    ) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="terminal-capture"
+        )
+        payload = {
+            "capture_id": "capture-1",
+            "capture_state": "pending",
+            "root_turn_id": "root-1",
+        }
+
+        first = self.store.commit_terminal_capture_intent(
+            session_id=session.id,
+            canonical_event_id="turn.outcome.v1:root-1",
+            capture_id="capture-1",
+            payload=payload,
+            payload_hash="payload-sha256",
+        )
+        replay = self.store.commit_terminal_capture_intent(
+            session_id=session.id,
+            canonical_event_id="turn.outcome.v1:root-1",
+            capture_id="capture-1",
+            payload=dict(reversed(tuple(payload.items()))),
+            payload_hash="payload-sha256",
+        )
+
+        self.assertEqual(replay, first)
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            1,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM session_retention_holds WHERE released_at IS NULL"
+            ).fetchone()[0],
+            1,
+        )
+
+        with self.assertRaises(RuntimeSessionStoreIntegrityError) as raised:
+            self.store.commit_terminal_capture_intent(
+                session_id=session.id,
+                canonical_event_id="turn.outcome.v1:root-1",
+                capture_id="capture-1",
+                payload={**payload, "capture_state": "rejected"},
+                payload_hash="conflicting-payload-sha256",
+            )
+        self.assertEqual(
+            raised.exception.code,
+            "SESSION_STORE_INTEGRITY_CONFLICT",
+        )
+        with self.assertRaises(RuntimeSessionStoreIntegrityError):
+            self.store.commit_terminal_capture_intent(
+                session_id=session.id,
+                canonical_event_id="turn.outcome.v1:root-1",
+                capture_id="different-capture",
+                payload=payload,
+                payload_hash="payload-sha256",
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM session_retention_holds"
+            ).fetchone()[0],
+            1,
+        )
+
+    def test_terminal_turn_commit_rolls_back_event_when_hold_insert_fails(
+        self,
+    ) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="capture-rollback"
+        )
+        self.connection.execute(
+            """
+            CREATE TRIGGER reject_capture_hold
+            BEFORE INSERT ON session_retention_holds
+            BEGIN
+              SELECT RAISE(ABORT, 'capture hold rejected');
+            END
+            """
+        )
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.commit_terminal_capture_intent(
+                session_id=session.id,
+                canonical_event_id="turn.outcome.v1:rollback",
+                capture_id="capture-rollback",
+                payload={"capture_id": "capture-rollback", "capture_state": "pending"},
+                payload_hash="payload-sha256",
+            )
+
+        self.assertIsNone(
+            self.store.get_event_by_canonical_id("turn.outcome.v1:rollback")
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM session_retention_holds"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_capture_result_and_hold_release_are_atomic_and_idempotent(self) -> None:
+        session = self.store.resolve_session(
+            agent_id="main", channel="console", target="capture-result"
+        )
+        self.store.commit_terminal_capture_intent(
+            session_id=session.id,
+            canonical_event_id="turn.outcome.v1:result-root",
+            capture_id="capture-result",
+            payload={"capture_id": "capture-result", "capture_state": "pending"},
+            payload_hash="payload-sha256",
+        )
+        result_payload = {
+            "capture_id": "capture-result",
+            "capture_state": "processed",
+            "result_hash": "result-sha256",
+        }
+
+        first = self.store.commit_capture_result_and_release_hold(
+            session_id=session.id,
+            canonical_event_id="memory.capture.result.v1:capture-result",
+            capture_id="capture-result",
+            payload=result_payload,
+        )
+        replay = self.store.commit_capture_result_and_release_hold(
+            session_id=session.id,
+            canonical_event_id="memory.capture.result.v1:capture-result",
+            capture_id="capture-result",
+            payload=result_payload,
+        )
+
+        self.assertFalse(first.replayed)
+        self.assertTrue(replay.replayed)
+        self.assertEqual(replay.event, first.event)
+        assert first.retention_hold is not None
+        self.assertIsNotNone(first.retention_hold.released_at)
+        with self.assertRaises(RuntimeSessionStoreIntegrityError):
+            self.store.commit_capture_result_and_release_hold(
+                session_id=session.id,
+                canonical_event_id="memory.capture.result.v1:capture-result",
+                capture_id="capture-result",
+                payload={**result_payload, "capture_state": "rejected"},
+            )
+
+        with self.assertRaises(RuntimeSessionStoreIntegrityError):
+            self.store.commit_capture_result_and_release_hold(
+                session_id=session.id,
+                canonical_event_id="memory.capture.result.v1:second-result",
+                capture_id="capture-result",
+                payload=result_payload,
+            )
+        self.assertIsNone(
+            self.store.get_event_by_canonical_id(
+                "memory.capture.result.v1:second-result"
+            )
+        )
 
     def test_list_events_supports_prefix_and_descending_order(self) -> None:
         session = self.store.resolve_session(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ...constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_DONE,
@@ -236,6 +238,12 @@ def _interpret_user_input(*, runner, state, logger, tick_ctx, user_input: str) -
         state.goal = resumed_goal
 
 
+def _capture_user_message(runner: Any, raw_user_message: str) -> bool:
+    return not _is_explicit_tool_command(raw_user_message) and not bool(
+        getattr(runner, "_capture_excluded_for_turn", False)
+    )
+
+
 def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
     user_input = tick_ctx.user_input
     if user_input is not None and user_input.strip():
@@ -261,7 +269,7 @@ def process_user_input(*, runner, state, logger, tick_ctx: TickRunContext):
                 meta={"ts": iso_now()},
             )
             raw_user_message = str(tick_ctx.original_user_input or user_input)
-            if not _is_explicit_tool_command(raw_user_message):
+            if _capture_user_message(runner, raw_user_message):
                 try:
                     from ...execution import extract_user_message_candidates
 

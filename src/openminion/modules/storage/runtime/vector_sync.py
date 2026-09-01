@@ -64,6 +64,13 @@ class VectorSyncScheduler:
             thread.join(timeout=5.0)
         logger.info("Vector sync scheduler stopped")
 
+    def bind_record_source(self, record_source: Any) -> None:
+        self._vector_adapter.bind_record_source(record_source)
+
+    def is_alive(self) -> bool:
+        thread = self._thread
+        return bool(thread is not None and thread.is_alive())
+
     def sync_now(self, *, limit: int | None = None) -> int:
         """Sync pending records and return the number processed."""
         if self._vector_adapter is None:

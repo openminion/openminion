@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
@@ -21,7 +21,7 @@ from .audit import (
     resolve_tool_runtime_audit_mode,
 )
 from .delegation import A2ADelegateApi
-from .memory import MemoryToolRuntimeService
+from .memory import MemoryAccessContext, MemoryToolRuntimeService
 from .policy import Policy
 from .repositories import (
     RuntimeRepositories,
@@ -165,6 +165,12 @@ def resolve_audit_repository(ctx: "RuntimeContext") -> Any | None:
 def resolve_memory_service(ctx: "RuntimeContext") -> MemoryToolRuntimeService | None:
     """Resolve the approved typed memory-service seam for tool handlers."""
     service = getattr(ctx, "memory_service", None)
+    bind_access = getattr(service, "for_access_context", None)
+    if callable(bind_access):
+        return cast(
+            MemoryToolRuntimeService,
+            bind_access(ctx.resolve_memory_access_context()),
+        )
     if isinstance(service, MemoryToolRuntimeService):
         return service
     return None
@@ -239,6 +245,23 @@ class RuntimeContext:
     permission_mode: str = "ask"
     agent_query: Callable[[], list[dict[str, Any]]] | None = None
     agent_profile: Optional[Any] = None
+    session_id: str | None = None
+    trace_id: str = ""
+    agent_id: str | None = None
+    tool_name: str = ""
+    tool_call_id: str = ""
+    capture_id: str = ""
+
+    def resolve_memory_access_context(self) -> MemoryAccessContext:
+        metadata = _context_metadata_from_policy(self.policy)
+        return MemoryAccessContext(
+            agent_id=str(self.agent_id or metadata.get("agent_id") or "").strip(),
+            session_id=str(self.session_id or metadata.get("session_id") or "").strip(),
+            capture_id=str(self.capture_id or metadata.get("capture_id") or "").strip(),
+            tool_call_id=str(
+                self.tool_call_id or metadata.get("tool_call_id") or ""
+            ).strip(),
+        )
 
     def add_log(
         self, level: str, msg: str, meta: Optional[Dict[str, Any]] = None

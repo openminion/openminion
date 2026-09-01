@@ -299,7 +299,7 @@ def extract_user_message_candidates(
     state: WorkingState,
     user_message: str,
     logger: CanonicalEventLogger,
-) -> list[str]:
+) -> dict[str, Any]:
     return _memory_reflection_runtime.extract_user_message_candidates(
         runner,
         state=state,

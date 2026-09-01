@@ -1,3 +1,5 @@
+from typing import Any
+
 from openminion.modules.brain.paths import (
     resolve_brain_runtime_db_path,
     resolve_brain_sessions_db_path,
@@ -10,7 +12,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "BrainBridgeService":
         from openminion.services.brain.service import BrainBridgeService
 

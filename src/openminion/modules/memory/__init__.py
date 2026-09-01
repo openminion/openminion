@@ -10,6 +10,8 @@ from .interfaces import (
     ensure_memory_compatibility,
 )
 from .runtime.consolidation.coordinator import MAINTENANCE_MODULE_STATE_KEY
+from .runtime.assembly import RuntimeMemoryAssembly, RuntimeMemoryScheduler
+from .runtime import configuration as memory_runtime_configuration
 from .runtime.provenance import (
     MemoryProvenanceRecorder,
     default_provenance_recorder,
@@ -23,6 +25,9 @@ __all__ = [
     "default_provenance_recorder",
     "MAINTENANCE_MODULE_STATE_KEY",
     "MemoryService",
+    "RuntimeMemoryAssembly",
+    "RuntimeMemoryScheduler",
+    "memory_runtime_configuration",
     "MemoryServiceInterface",
     "MemoryNamespaceQueryInterface",
     "MemoryProvenanceRecorder",

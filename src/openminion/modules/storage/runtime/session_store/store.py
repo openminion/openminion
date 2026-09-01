@@ -22,6 +22,7 @@ from .keys import (
 from .lifecycle import LIFECYCLE_UNSET, RuntimeSessionStoreLifecycle
 from .messages import RuntimeSessionStoreMessages
 from .models import (
+    CaptureEventCommitRecord,
     EventRecord,
     MessageRecord,
     RoomParticipant,
@@ -356,12 +357,58 @@ class SessionStore:
         session_id: str,
         event_type: str,
         payload: Mapping[str, Any] | None = None,
+        canonical_event_id: str | None = None,
         session_turn_fence_token: int | None = None,
     ) -> EventRecord:
         return self._lifecycle.append_event(
             session_id=session_id,
             event_type=event_type,
             payload=payload,
+            canonical_event_id=canonical_event_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
+
+    def get_event_by_canonical_id(self, canonical_event_id: str) -> EventRecord | None:
+        return self._lifecycle.get_event_by_canonical_id(canonical_event_id)
+
+    def commit_terminal_capture_intent(
+        self,
+        *,
+        session_id: str,
+        canonical_event_id: str,
+        capture_id: str,
+        payload: Mapping[str, Any],
+        payload_hash: str,
+        session_turn_fence_token: int | None = None,
+    ) -> EventRecord:
+        if not payload_hash.strip():
+            raise ValueError("payload_hash is required")
+        committed = self._lifecycle.commit_terminal_turn_outcome(
+            session_id=session_id,
+            canonical_event_id=canonical_event_id,
+            capture_id=capture_id,
+            payload=payload,
+            capture_state=str(payload.get("capture_state") or "pending"),
+            session_turn_fence_token=session_turn_fence_token,
+        )
+        return committed.event
+
+    def commit_capture_result_and_release_hold(
+        self,
+        *,
+        session_id: str,
+        canonical_event_id: str,
+        capture_id: str,
+        payload: Mapping[str, Any],
+        event_type: str = "memory.capture.result",
+        session_turn_fence_token: int | None = None,
+    ) -> CaptureEventCommitRecord:
+        return self._lifecycle.commit_capture_result_and_release_hold(
+            session_id=session_id,
+            canonical_event_id=canonical_event_id,
+            capture_id=capture_id,
+            payload=payload,
+            event_type=event_type,
             session_turn_fence_token=session_turn_fence_token,
         )
 
@@ -395,6 +442,17 @@ class SessionStore:
             session_id=session_id,
             limit=limit,
             newest_first=newest_first,
+            event_type_prefix=event_type_prefix,
+        )
+
+    def count_events(
+        self,
+        *,
+        session_id: str,
+        event_type_prefix: str | None = None,
+    ) -> int:
+        return self._lifecycle.count_events(
+            session_id=session_id,
             event_type_prefix=event_type_prefix,
         )
 

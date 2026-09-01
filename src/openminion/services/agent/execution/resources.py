@@ -4,100 +4,40 @@ from pathlib import Path
 from typing import Any, cast
 from collections.abc import Mapping
 
-from openminion.base.config import resolve_data_root
-from openminion.base.constants import OPENMINION_DATA_ROOT_ENV
-from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.runtime.delegation import A2ADelegateApi
 from openminion.modules.tool.runtime.memory import MemoryToolRuntimeService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
-from openminion.services.agent.memory import resolve_memory_root
-from openminion.services.agent.memory.gateway_adapter import (
-    DisabledMemoryGatewayAdapter,
-    MemoryServiceGatewayAdapter,
-)
 from openminion.services.agent.telemetry import _service_port_telemetryctl
 from openminion.services.runtime.a2a_delegate import build_a2a_delegate_api
-from openminion.services.runtime.bootstrap import build_agent_memory_service
+from openminion.services.runtime.memory import RuntimeMemoryAssembly
 
 from .ports import TurnFlowServicePort
 
 
 class ExecutionResources:
-    def __init__(self, service_port: TurnFlowServicePort, runtime: Any) -> None:
+    def __init__(
+        self,
+        service_port: TurnFlowServicePort,
+        runtime: Any,
+        *,
+        memory_assembly: RuntimeMemoryAssembly | None = None,
+        memory_service: MemoryToolRuntimeService | None = None,
+    ) -> None:
         self._service_port = service_port
         self._runtime = runtime
-        self._memory_tool_service: MemoryToolRuntimeService | None = None
-        self._memory_tool_service_resolved = False
+        resolved_assembly = memory_assembly or service_port.memory_assembly
+        self._memory_tool_service = memory_service or getattr(
+            resolved_assembly,
+            "memctl",
+            None,
+        )
         self._a2a_delegate_api: A2ADelegateApi | None = None
         self._a2a_delegate_api_resolved = False
 
     def _resolve_memory_tool_service(self) -> MemoryToolRuntimeService | None:
-        if self._memory_tool_service_resolved:
-            return self._memory_tool_service
-        self._memory_tool_service_resolved = True
-
-        config = getattr(self._service_port, "config", None)
-        runtime_cfg = getattr(config, "runtime", None)
-        if config is None or runtime_cfg is None:
-            return None
-        if not bool(getattr(runtime_cfg, "memory_enabled", True)):
-            return None
-        if (
-            str(getattr(runtime_cfg, "memory_provider", "memory_v2") or "").strip()
-            != "memory_v2"
-        ):
-            return None
-
-        runtime_env = getattr(runtime_cfg, "env", None)
-        env_payload = dict(runtime_env) if isinstance(runtime_env, Mapping) else {}
-        home_root = (
-            Path(self._service_port.home_root or Path.cwd())
-            .expanduser()
-            .resolve(strict=False)
-        )
-        data_root = resolve_data_root(
-            home_root,
-            data_root=str(env_payload.get(OPENMINION_DATA_ROOT_ENV, "") or ""),
-        )
-        storage_path = resolve_database_path(
-            getattr(getattr(config, "storage", None), "path", None),
-            env=env_payload,
-        )
-        memory_root = resolve_memory_root(
-            config=config,
-            config_path=Path(),
-            storage_path=storage_path,
-            data_root=data_root,
-        )
-        try:
-            built = build_agent_memory_service(
-                config=config,
-                agent_id=self._service_port.identity_agent_id,
-                memory_root=memory_root,
-                logger=self._service_port.logger.getChild("memory_tools"),
-                home_root=home_root,
-                data_root=data_root,
-                storage_path=storage_path,
-            )
-        except Exception:
-            return None
-
-        if isinstance(built, MemoryServiceGatewayAdapter):
-            service = getattr(built, "_service", None)
-            if isinstance(service, MemoryToolRuntimeService):
-                self._memory_tool_service = service
-                return service
-            return None
-        if isinstance(
-            built, (DisabledMemoryGatewayAdapter, EphemeralMemorySmokeProvider)
-        ):
-            return None
-        if isinstance(built, MemoryToolRuntimeService):
-            self._memory_tool_service = built
-            return built
-        return None
+        return self._memory_tool_service
 
     def _resolve_a2a_delegate_api(self) -> A2ADelegateApi | None:
         if self._a2a_delegate_api_resolved:

@@ -2,6 +2,7 @@ from typing import Any
 from collections.abc import Callable
 
 from openminion.base.types import Message
+from openminion.modules.session.capture import capture_identity_metadata
 from openminion.modules.policy import RISK_LOW
 from openminion.modules.task.run import (
     RUN_STATE_RESPONDING,
@@ -130,6 +131,9 @@ class GatewayTurnAgentExecutionMixin:
                     routing.normalized_inbound_metadata
                 ),
                 "session_id": routing.session.id,
+                **capture_identity_metadata(
+                    runtime_session_id=routing.session.id, root_turn_id=run_id
+                ),
                 "run_id": run_id,
                 "invocation_id": routing.normalized_inbound_metadata.get(
                     "invocation_id", ""

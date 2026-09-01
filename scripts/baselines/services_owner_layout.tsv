@@ -18,7 +18,9 @@ scope	max_python_files	max_loc
 # composition that invokes the same worker for one fenced cycle per wake.
 # Client contract work (2026-08-30) adds bounded active-turn replay and
 # versioned terminal status facts to the existing runtime manager.
-services	206	40202
+# MCRR (2026-09-01) adds terminal capture assurance, policy-bound recovery,
+# shared runtime memory assembly, and semantic recall wiring to existing owners.
+services	206	40248
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

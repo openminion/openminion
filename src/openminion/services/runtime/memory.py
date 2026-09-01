@@ -1,26 +1,22 @@
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from openminion.base.config import ConfigManager, OpenMinionConfig
-from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.memory.backends import (
-    BuiltinKnowledgeBackend,
-    KnowledgeBackend,
-    NoneKnowledgeBackend,
     instantiate_backend,
-    register_backend_factory,
     resolve_backend_config,
 )
-from openminion.modules.memory.backends.external import resolve_external_backend
-from openminion.modules.memory.config import (
-    from_base_config as memory_from_base_config,
-    merge_candidate_learning_config as merge_memory_candidate_learning_config,
-    merge_ranking_config as merge_memory_ranking_config,
+from openminion.modules.memory import (
+    RuntimeMemoryAssembly,
+    RuntimeMemoryScheduler,
+    SophiagraphRecallAdapter,
+    memory_runtime_configuration,
 )
-from openminion.modules.memory import SophiagraphRecallAdapter
+from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from openminion.modules.memory.service import MemoryService
+from openminion.modules.brain.adapters.memory.runtime import MemctlAdapter
 from openminion.modules.memory.storage import (
     AuditedMemoryStore,
     SQLiteMemoryAuditSink,
@@ -32,45 +28,81 @@ from openminion.services.agent.memory.gateway_adapter import (
     MemoryServiceGatewayAdapter,
 )
 from openminion.services.bootstrap.paths import SERVICES_MEMORY_DB_FILENAME
-from openminion.services.config import resolve_services_env
 from openminion.services.constants import SERVICES_PROJECT_ID_ENV
 from openminion.services.context.session import SessionContextService
 
 
-def _resolve_runtime_memory_config(
+def active_runtime_memory_assembly(
+    *,
+    gateway: Any,
+    service: MemoryService,
+    agent_id: str,
+    vector_adapter: Any | None = None,
+    scheduler: RuntimeMemoryScheduler | None = None,
+) -> RuntimeMemoryAssembly:
+    return RuntimeMemoryAssembly(
+        gateway=gateway,
+        service=service,
+        memctl=MemctlAdapter(service, agent_id=agent_id, owns_backend=False),
+        vector_adapter=vector_adapter,
+        scheduler=scheduler,
+    )
+
+
+def build_runtime_memory_assembly(
     *,
     config: OpenMinionConfig,
+    agent_id: str,
     memory_root: Path,
+    logger: Any,
     config_manager: ConfigManager | None = None,
     home_root: Path | None = None,
     data_root: Path | None = None,
-) -> Any:
-    if config_manager is not None:
-        try:
-            return config_manager.get("memory")
-        except Exception:
-            pass
-
-    if home_root is not None and data_root is not None:
-        return memory_from_base_config(
-            base_config=config,
-            home_root=home_root,
-            data_root=data_root,
+    session_context: SessionContextService | None = None,
+    retrieve_ctl: Any | None = None,
+    storage_path: Path | None = None,
+    vector_adapter: Any | None = None,
+    scheduler: RuntimeMemoryScheduler | None = None,
+) -> RuntimeMemoryAssembly:
+    configured_provider = (
+        memory_runtime_configuration.resolve_runtime_env_override(
+            config_manager=config_manager,
+            config=config,
+            key="OPENMINION_MEMORY_PROVIDER",
         )
-
-    return {
-        "store": {
-            "backend": "sqlite",
-            "sqlite_path": str(
-                (memory_root / SERVICES_MEMORY_DB_FILENAME).resolve(strict=False)
-            ),
-            "sqlite": {
-                "wal_mode": True,
-                "busy_timeout_ms": 5000,
-                "fts5_enabled": True,
-            },
-        }
-    }
+        or str(getattr(config.runtime, "memory_provider", "memory_v2")).strip()
+    )
+    normalized_provider = (
+        memory_runtime_configuration.normalize_runtime_memory_provider(
+            configured_provider
+        )
+    )
+    if normalized_provider == "memory_v2_smoke":
+        return RuntimeMemoryAssembly(
+            gateway=EphemeralMemorySmokeProvider(
+                agent_id=agent_id,
+                logger=logger,
+                enabled=bool(config.runtime.memory_enabled),
+            )
+        )
+    if not bool(config.runtime.memory_enabled):
+        return RuntimeMemoryAssembly(
+            gateway=DisabledMemoryGatewayAdapter(agent_id=agent_id, logger=logger)
+        )
+    return build_memory_v2_runtime_assembly(
+        config=config,
+        agent_id=agent_id,
+        memory_root=memory_root,
+        logger=logger,
+        config_manager=config_manager,
+        home_root=home_root,
+        data_root=data_root,
+        session_context=session_context,
+        retrieve_ctl=retrieve_ctl,
+        storage_path=storage_path,
+        vector_adapter=vector_adapter,
+        scheduler=scheduler,
+    )
 
 
 def _build_memory_v2_gateway_adapter(
@@ -85,55 +117,57 @@ def _build_memory_v2_gateway_adapter(
     session_context: SessionContextService | None,
     retrieve_ctl: Any | None,
     storage_path: Path | None,
-    adapter_cls: type[Any] = MemoryServiceGatewayAdapter,
+    adapter_cls: type[MemoryServiceGatewayAdapter] = MemoryServiceGatewayAdapter,
     resolve_runtime_memory_config_fn: Callable[
         ..., Any
-    ] = _resolve_runtime_memory_config,
+    ] = memory_runtime_configuration.resolve_runtime_memory_config,
     artifactctl_factory: Callable[[], Any] = create_default_artifactctl,
 ) -> MemoryServiceGatewayAdapter:
-    memory_config = resolve_runtime_memory_config_fn(
+    assembly = build_memory_v2_runtime_assembly(
         config=config,
+        agent_id=agent_id,
         memory_root=memory_root,
+        logger=logger,
         config_manager=config_manager,
         home_root=home_root,
         data_root=data_root,
-    )
-    backend_config = resolve_backend_config(memory_config)
-    if backend_config.provider == "none":
-        adapter = DisabledMemoryGatewayAdapter(agent_id=agent_id, logger=logger)
-        adapter.disabled_reason = "backend_none"
-        return adapter
-    db_path = memory_root / SERVICES_MEMORY_DB_FILENAME
-    try:
-        artifactctl = artifactctl_factory()
-    except Exception:
-        artifactctl = None
-    resolved = resolve_memory_backend(
-        config=memory_config,
-        db_path=db_path,
-        artifactctl=artifactctl,
-    )
-    audited_store = AuditedMemoryStore(
-        resolved.store,
-        sink=SQLiteMemoryAuditSink(default_memory_audit_db_path(db_path)),
-    )
-    ranking_config = _merge_ranking_config(
-        memory_config=memory_config,
+        session_context=session_context,
         retrieve_ctl=retrieve_ctl,
+        storage_path=storage_path,
+        adapter_cls=adapter_cls,
+        resolve_runtime_memory_config_fn=resolve_runtime_memory_config_fn,
+        artifactctl_factory=artifactctl_factory,
     )
-    candidate_learning_config = _merge_candidate_learning_config(
-        memory_config=memory_config
-    )
-    _register_memory_backend_factories(audited_store=audited_store)
-    backend = instantiate_backend(config=backend_config)
-    service = MemoryService(backend=backend, ranking_config=ranking_config)
-    _configure_memory_service_runtime(
-        service=service,
-        memory_config=memory_config,
-        retrieve_ctl=retrieve_ctl,
-        ranking_config=ranking_config,
-        candidate_learning_config=candidate_learning_config,
-    )
+    return cast(MemoryServiceGatewayAdapter, assembly.gateway)
+
+
+def _build_memory_v2_gateway(
+    *,
+    adapter_cls: type[MemoryServiceGatewayAdapter],
+    service: MemoryService,
+    agent_id: str,
+    config: OpenMinionConfig,
+    config_manager: ConfigManager | None,
+    session_context: SessionContextService | None,
+    logger: Any,
+    retrieve_ctl: Any | None,
+    memory_config: Any,
+    ranking_config: Any,
+    candidate_learning_config: Any,
+    backend: Any,
+    backend_provider: str,
+    storage_path: Path | None,
+    vector_adapter: Any | None,
+) -> MemoryServiceGatewayAdapter:
+    recall_adapter = None
+    if backend_provider == "sophiagraph":
+        recall_adapter = SophiagraphRecallAdapter(
+            backend=backend,
+            minimum_confidence=float(
+                getattr(ranking_config, "minimum_confidence", 0.0) or 0.0
+            ),
+            vector_adapter=vector_adapter,
+        )
     return adapter_cls(
         service,
         agent_id=agent_id,
@@ -151,17 +185,17 @@ def _build_memory_v2_gateway_adapter(
         ),
         max_facts=int(getattr(config.runtime, "memory_max_facts", 200)),
         max_todos=int(getattr(config.runtime, "memory_max_todos", 200)),
-        session_summary_max_chars=_session_summary_max_chars(memory_config),
-        session_handoff_max_summaries=_session_handoff_max_summaries(memory_config),
+        session_summary_max_chars=(
+            memory_runtime_configuration.session_summary_max_chars(memory_config)
+        ),
+        session_handoff_max_summaries=(
+            memory_runtime_configuration.session_handoff_max_summaries(memory_config)
+        ),
         memory_config=memory_config,
         retrieve_ctl=retrieve_ctl,
         ranking_config=ranking_config,
         candidate_learning_config=candidate_learning_config,
-        recall_adapter=(
-            SophiagraphRecallAdapter(backend=backend)
-            if backend_config.provider == "sophiagraph"
-            else None
-        ),
+        recall_adapter=recall_adapter,
         brain_sessions_db_path=(
             resolve_brain_sessions_db_path(storage_path=storage_path)
             if storage_path is not None
@@ -170,61 +204,103 @@ def _build_memory_v2_gateway_adapter(
     )
 
 
-def _register_memory_backend_factories(*, audited_store: Any) -> None:
-    def _build_sophiagraph_backend(**kwargs: Any) -> KnowledgeBackend:
-        portability_service = MemoryService(store=audited_store)
-        return BuiltinKnowledgeBackend(
-            audited_store,
-            export_snapshot_fn=portability_service.export_bundle_snapshot,
-            import_snapshot_fn=portability_service.import_bundle_snapshot,
-        )
-
-    def _build_none_backend(**kwargs: Any) -> KnowledgeBackend:
-        return NoneKnowledgeBackend()
-
-    def _build_external_backend(**kwargs: Any) -> KnowledgeBackend:
-        config = kwargs.get("config")
-        provider = getattr(config, "external_adapter", None) or "<unset>"
-        backend, _report = resolve_external_backend(
-            adapter=str(provider),
-            config=config,
-            strict=True,
-        )
-        return backend
-
-    register_backend_factory("sophiagraph", _build_sophiagraph_backend)
-    register_backend_factory("none", _build_none_backend)
-    register_backend_factory("external", _build_external_backend)
-
-
-def _configure_memory_service_runtime(
+def build_memory_v2_runtime_assembly(
     *,
-    service: MemoryService,
-    memory_config: Any,
+    config: OpenMinionConfig,
+    agent_id: str,
+    memory_root: Path,
+    logger: Any,
+    config_manager: ConfigManager | None,
+    home_root: Path | None,
+    data_root: Path | None,
+    session_context: SessionContextService | None,
     retrieve_ctl: Any | None,
-    ranking_config: Any,
-    candidate_learning_config: Any,
-) -> None:
-    if hasattr(service, "set_candidate_learning_config"):
-        try:
-            service.set_candidate_learning_config(candidate_learning_config)
-        except Exception:
-            pass
-    retention_config = None
-    if isinstance(memory_config, dict):
-        retention_config = memory_config.get("retention")
-    else:
-        retention_config = getattr(memory_config, "retention", None)
-    if retention_config is not None and hasattr(service, "set_tiering_config"):
-        try:
-            service.set_tiering_config(retention_config)
-        except Exception:
-            pass
-    if retrieve_ctl is not None and hasattr(retrieve_ctl, "set_ranking_config"):
-        try:
-            retrieve_ctl.set_ranking_config(ranking_config)
-        except Exception:
-            pass
+    storage_path: Path | None,
+    vector_adapter: Any | None = None,
+    scheduler: RuntimeMemoryScheduler | None = None,
+    adapter_cls: type[MemoryServiceGatewayAdapter] = MemoryServiceGatewayAdapter,
+    resolve_runtime_memory_config_fn: Callable[
+        ..., Any
+    ] = memory_runtime_configuration.resolve_runtime_memory_config,
+    artifactctl_factory: Callable[[], Any] = create_default_artifactctl,
+) -> RuntimeMemoryAssembly:
+    memory_config = resolve_runtime_memory_config_fn(
+        config=config,
+        memory_root=memory_root,
+        config_manager=config_manager,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    backend_config = resolve_backend_config(memory_config)
+    if backend_config.provider == "none":
+        adapter = DisabledMemoryGatewayAdapter(agent_id=agent_id, logger=logger)
+        adapter.disabled_reason = "backend_none"
+        return RuntimeMemoryAssembly(gateway=adapter)
+    db_path = memory_root / SERVICES_MEMORY_DB_FILENAME
+    try:
+        artifactctl = artifactctl_factory()
+    except Exception:
+        artifactctl = None
+    resolved = resolve_memory_backend(
+        config=memory_config,
+        db_path=db_path,
+        artifactctl=artifactctl,
+    )
+    audited_store = AuditedMemoryStore(
+        resolved.store,
+        sink=SQLiteMemoryAuditSink(default_memory_audit_db_path(db_path)),
+    )
+    ranking_config = memory_runtime_configuration.merged_ranking_config(
+        memory_config=memory_config,
+        retrieve_ctl=retrieve_ctl,
+    )
+    candidate_learning_config = (
+        memory_runtime_configuration.merged_candidate_learning_config(
+            memory_config=memory_config
+        )
+    )
+    memory_runtime_configuration.register_memory_backend_factories(
+        audited_store=audited_store,
+        vector_adapter=vector_adapter,
+    )
+    backend = instantiate_backend(config=backend_config)
+    service = MemoryService(
+        backend=backend,
+        ranking_config=ranking_config,
+        vector_adapter=vector_adapter,
+        owns_store=True,
+    )
+    memory_runtime_configuration.configure_memory_service_runtime(
+        service=service,
+        memory_config=memory_config,
+        retrieve_ctl=retrieve_ctl,
+        ranking_config=ranking_config,
+        candidate_learning_config=candidate_learning_config,
+    )
+    gateway = _build_memory_v2_gateway(
+        adapter_cls=adapter_cls,
+        service=service,
+        agent_id=agent_id,
+        config=config,
+        config_manager=config_manager,
+        session_context=session_context,
+        logger=logger,
+        retrieve_ctl=retrieve_ctl,
+        memory_config=memory_config,
+        ranking_config=ranking_config,
+        candidate_learning_config=candidate_learning_config,
+        backend=backend,
+        backend_provider=backend_config.provider,
+        storage_path=storage_path,
+        vector_adapter=vector_adapter,
+    )
+    return active_runtime_memory_assembly(
+        gateway=gateway,
+        service=service,
+        agent_id=agent_id,
+        vector_adapter=vector_adapter,
+        scheduler=scheduler,
+    )
 
 
 def _resolve_project_id(
@@ -233,77 +309,10 @@ def _resolve_project_id(
     config: OpenMinionConfig,
 ) -> str | None:
     return (
-        _resolve_env_override(
+        memory_runtime_configuration.resolve_runtime_env_override(
             config_manager=config_manager,
             config=config,
             key=SERVICES_PROJECT_ID_ENV,
         )
         or None
-    )
-
-
-def _session_summary_max_chars(memory_config: Any) -> int:
-    return int(
-        getattr(
-            getattr(memory_config, "retention", None),
-            "session_summary_max_chars",
-            500,
-        )
-    )
-
-
-def _session_handoff_max_summaries(memory_config: Any) -> int:
-    return int(
-        getattr(
-            getattr(memory_config, "retrieval", None),
-            "session_handoff_max_summaries",
-            5,
-        )
-    )
-
-
-def _merge_ranking_config(
-    *,
-    memory_config: Any,
-    retrieve_ctl: Any | None,
-) -> Any:
-    retrieve_defaults = getattr(getattr(retrieve_ctl, "config", None), "defaults", None)
-    return merge_memory_ranking_config(
-        getattr(memory_config, "ranking", None),
-        retrieval=getattr(memory_config, "retrieval", None),
-        retrieve_defaults=retrieve_defaults,
-    )
-
-
-def _merge_candidate_learning_config(*, memory_config: Any) -> Any:
-    return merge_memory_candidate_learning_config(
-        getattr(memory_config, "candidate_learning", None),
-        promotion=getattr(memory_config, "promotion", None),
-    )
-
-
-def _resolve_env_override(
-    *,
-    config_manager: ConfigManager | None,
-    config: OpenMinionConfig,
-    key: str,
-) -> str:
-    if config_manager is not None and isinstance(config_manager.env, EnvironmentConfig):
-        return str(config_manager.env.get(key, "") or "").strip()
-    runtime_env = getattr(getattr(config, "runtime", None), "env", {})
-    if not isinstance(runtime_env, dict):
-        runtime_env = {}
-    env = resolve_services_env(runtime_env=runtime_env)
-    return str(env.get(key, "") or "").strip()
-
-
-def _normalize_runtime_memory_provider(value: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized in {"", "memory_v2"}:
-        return "memory_v2"
-    if normalized in {"memory_v2_smoke", "memory_v2_hello_world"}:
-        return "memory_v2_smoke"
-    raise ValueError(
-        "Unsupported runtime.memory_provider="
-        f"{value!r}. Supported providers: memory_v2, memory_v2_smoke (memory_v2_hello_world is a legacy alias)."
     )

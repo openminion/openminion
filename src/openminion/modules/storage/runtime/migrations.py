@@ -350,6 +350,35 @@ DEFAULT_MIGRATIONS: Tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=11,
+        name="add_canonical_events_and_capture_holds",
+        statements=(
+            """
+            ALTER TABLE events
+            ADD COLUMN canonical_event_id TEXT DEFAULT NULL
+            """,
+            """
+            CREATE UNIQUE INDEX idx_events_canonical_event_id
+            ON events(canonical_event_id)
+            """,
+            """
+            CREATE TABLE session_retention_holds (
+                hold_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL,
+                actor_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                released_at TEXT DEFAULT NULL,
+                schema_version TEXT NOT NULL DEFAULT 'session_retention_hold.v1'
+            )
+            """,
+            """
+            CREATE INDEX idx_session_retention_holds_session
+            ON session_retention_holds(session_id, released_at)
+            """,
+        ),
+    ),
 )
 
 

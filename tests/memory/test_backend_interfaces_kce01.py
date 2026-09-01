@@ -29,7 +29,7 @@ from openminion.modules.memory.service import MemoryService
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
 )
-from openminion.services.runtime.memory import _register_memory_backend_factories
+from openminion.modules.memory import memory_runtime_configuration
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
@@ -279,7 +279,9 @@ class TestBuiltinKnowledgeBackend:
 
     def test_runtime_builtin_backend_exports_and_imports_through_factory(self) -> None:
         source_store = InMemoryMemoryStore()
-        _register_memory_backend_factories(audited_store=source_store)
+        memory_runtime_configuration.register_memory_backend_factories(
+            audited_store=source_store
+        )
         source_backend = instantiate_backend(
             config=KnowledgeBackendConfig(provider="sophiagraph")
         )
@@ -298,7 +300,9 @@ class TestBuiltinKnowledgeBackend:
         assert snapshot.manifest["counts"]["records"] == 1
 
         target_store = InMemoryMemoryStore()
-        _register_memory_backend_factories(audited_store=target_store)
+        memory_runtime_configuration.register_memory_backend_factories(
+            audited_store=target_store
+        )
         target_backend = instantiate_backend(
             config=KnowledgeBackendConfig(provider="sophiagraph")
         )
@@ -319,7 +323,9 @@ class TestBuiltinKnowledgeBackend:
 
     def test_runtime_builtin_backend_import_rejects_invalid_options(self) -> None:
         store = InMemoryMemoryStore()
-        _register_memory_backend_factories(audited_store=store)
+        memory_runtime_configuration.register_memory_backend_factories(
+            audited_store=store
+        )
         backend = instantiate_backend(
             config=KnowledgeBackendConfig(provider="sophiagraph")
         )
@@ -333,7 +339,9 @@ class TestBuiltinKnowledgeBackend:
 
     def test_runtime_builtin_backend_conflict_does_not_replace_target(self) -> None:
         source_store = InMemoryMemoryStore()
-        _register_memory_backend_factories(audited_store=source_store)
+        memory_runtime_configuration.register_memory_backend_factories(
+            audited_store=source_store
+        )
         source_backend = instantiate_backend(
             config=KnowledgeBackendConfig(provider="sophiagraph")
         )
@@ -350,7 +358,9 @@ class TestBuiltinKnowledgeBackend:
 
         target_store = InMemoryMemoryStore()
         target_store.put(replace(source_record, content="Uses fish"))
-        _register_memory_backend_factories(audited_store=target_store)
+        memory_runtime_configuration.register_memory_backend_factories(
+            audited_store=target_store
+        )
         target_backend = instantiate_backend(
             config=KnowledgeBackendConfig(provider="sophiagraph")
         )

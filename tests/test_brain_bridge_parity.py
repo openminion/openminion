@@ -105,6 +105,10 @@ class _DummyRunner:
         trigger=None,
         progress_callback=None,
         approval_callback=None,
+        runtime_session_id=None,
+        root_turn_id=None,
+        capture_event_id=None,
+        capture_id=None,
     ):
         self.last_run = {
             "session_id": session_id,
@@ -115,6 +119,10 @@ class _DummyRunner:
             "trigger": trigger,
             "progress_callback": progress_callback,
             "approval_callback": approval_callback,
+            "runtime_session_id": runtime_session_id,
+            "root_turn_id": root_turn_id,
+            "capture_event_id": capture_event_id,
+            "capture_id": capture_id,
         }
         return self.step_out
 
@@ -2472,7 +2480,7 @@ def test_brain_bridge_consumes_canonical_bootstrap_handles() -> None:
     assert service._config is config
 
 
-def test_brain_bridge_close_closes_owned_runtime_graph_before_provider() -> None:
+def test_brain_bridge_close_closes_owned_runner_graph_before_provider() -> None:
     close_order: list[str] = []
 
     def closer(name: str) -> SimpleNamespace:
@@ -2492,9 +2500,6 @@ def test_brain_bridge_close_closes_owned_runtime_graph_before_provider() -> None
         cron_api=closer("cron.close"),
         session_api=closer("session.close"),
     )
-    service._vector_sync = SimpleNamespace(
-        stop=lambda: close_order.append("vector.stop")
-    )
     service._retrieve_service = None
     service._action_policy_service = None
     service._closed = False
@@ -2507,7 +2512,6 @@ def test_brain_bridge_close_closes_owned_runtime_graph_before_provider() -> None
     service.close()
 
     assert close_order == [
-        "vector.stop",
         "a2a.close",
         "context.close",
         "tool.close",

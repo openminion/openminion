@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -42,9 +42,10 @@ class _FakeRunner:
     session_api: MagicMock
     llm_api: MagicMock
     _index: int = 0
+    step_calls: list[dict[str, object]] = field(default_factory=list)
 
     def step(self, **kwargs) -> StepOutput:
-        del kwargs
+        self.step_calls.append(dict(kwargs))
         output = self.outputs[self._index]
         self._index += 1
         return output
@@ -73,6 +74,7 @@ def test_run_until_idle_re_dispatches_continue_status() -> None:
         llm_api=MagicMock(),
     )
 
+    capture_identity = object()
     result = run_until_idle(
         runner,
         session_id="s-continue",
@@ -80,10 +82,15 @@ def test_run_until_idle_re_dispatches_continue_status() -> None:
         trace_id="trace-continue",
         forced_tools=None,
         capability_category=None,
+        capture_identity=capture_identity,
     )
 
     assert result.status == "done"
     assert runner._index == 2
+    assert [call["capture_identity"] for call in runner.step_calls] == [
+        capture_identity,
+        capture_identity,
+    ]
 
 
 def test_run_until_idle_budget_checks_continue_tick() -> None:

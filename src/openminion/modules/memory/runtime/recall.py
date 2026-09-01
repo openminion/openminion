@@ -3,22 +3,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sophiagraph.query import (
+    EmbeddingListOptions,
     GraphStageOptions,
     KeywordStageOptions,
     RecencyStageOptions,
     RetrievalRequest,
     TrustStageOptions,
+    VectorStageOptions,
     assemble_retrieval,
 )
+from sophiagraph.query.retrieval_types import RetrievalOmission
+from sophiagraph.vectors import SimilarityMetric, nearest_neighbors
 
 from openminion.base.time import utc_now_iso
 from openminion.modules.memory.runtime.config_values import (
     coerce_float,
     coerce_int,
     config_value,
+)
+from openminion.modules.memory.runtime.retrieval_eligibility import (
+    retrieval_eligibility,
 )
 
 
@@ -42,6 +49,7 @@ class RecallOutcome:
     reason: str = ""
     candidate_count: int = 0
     threshold_drops: int = 0
+    omissions: tuple[RetrievalOmission, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,8 +98,29 @@ class PrecisionRecallOptions:
 class SophiagraphRecallAdapter:
     """Run supported Sophiagraph retrieval stages."""
 
-    def __init__(self, *, backend: Any) -> None:
+    def __init__(
+        self,
+        *,
+        backend: Any,
+        minimum_confidence: float = 0.0,
+        vector_adapter: Any | None = None,
+    ) -> None:
         self._backend = backend
+        self._minimum_confidence = float(minimum_confidence)
+        self._vector_adapter = vector_adapter
+
+    def _vector_space(self) -> str:
+        adapter = self._vector_adapter
+        if adapter is None or not bool(getattr(adapter, "semantic_ready", False)):
+            return ""
+        identity = getattr(adapter, "vector_space_identity", None)
+        vector_space = str(getattr(identity, "key", "") or "").strip()
+        if not vector_space:
+            return ""
+        embeddings = self._backend.list_embeddings(
+            EmbeddingListOptions(vector_space=vector_space, limit=1)
+        )
+        return vector_space if embeddings else ""
 
     @property
     def capabilities(self) -> RecallCapabilities:
@@ -100,6 +129,7 @@ class SophiagraphRecallAdapter:
             graph=True,
             recency=True,
             trust=True,
+            vector=bool(self._vector_space()),
         )
 
     def retrieve(
@@ -124,6 +154,28 @@ class SophiagraphRecallAdapter:
             60,
             final_limit * max(1, int(candidate_multiplier)),
         )
+        vector_space = self._vector_space()
+        vector_options = None
+        vector_search = None
+        if vector_space:
+            vector_adapter = self._vector_adapter
+            if vector_adapter is None:
+                return RecallOutcome(status="unsupported", reason="vector_unavailable")
+            try:
+                query_embedding = vector_adapter.embedding_provider.embed(
+                    normalized_query
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                return RecallOutcome(
+                    status="unsupported",
+                    reason=f"semantic_embedding_unavailable:{type(exc).__name__}",
+                )
+            vector_options = VectorStageOptions(
+                query_embedding=query_embedding.vector,
+                vector_space=vector_space,
+                limit=candidate_limit,
+            )
+            vector_search = _CandidateVectorSearch()
         result = assemble_retrieval(
             self._backend,
             RetrievalRequest(
@@ -132,6 +184,7 @@ class SophiagraphRecallAdapter:
                     query=normalized_query,
                     limit=candidate_limit,
                 ),
+                vector=vector_options,
                 graph=GraphStageOptions(
                     depth=int(graph_depth),
                     max_expanded_records=candidate_limit,
@@ -139,8 +192,13 @@ class SophiagraphRecallAdapter:
                 recency=RecencyStageOptions(),
                 trust=TrustStageOptions(),
                 limit=candidate_limit,
+                eligibility_callback=lambda record, _stage: retrieval_eligibility(
+                    record,
+                    minimum_confidence=self._minimum_confidence,
+                ),
             ),
             now_iso=utc_now_iso(),
+            vector_adapter=vector_search,
         )
         current_hits = [
             hit
@@ -158,6 +216,29 @@ class SophiagraphRecallAdapter:
             hits=tuple(selected[:final_limit]),
             candidate_count=len(current_hits),
             threshold_drops=max(0, len(current_hits) - len(selected)),
+            omissions=tuple(result.omissions),
+        )
+
+
+class _CandidateVectorSearch:
+    def search(
+        self,
+        *,
+        query_embedding: list[float],
+        vector_space: str,
+        candidates: list[tuple[str, list[float]]],
+        limit: int,
+        metric: str,
+    ) -> list[tuple[str, float]]:
+        del vector_space
+        return cast(
+            list[tuple[str, float]],
+            nearest_neighbors(
+                SimilarityMetric(metric),
+                query_embedding,
+                candidates,
+                k=limit,
+            ),
         )
 
 

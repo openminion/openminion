@@ -39,9 +39,6 @@ def init_vector_adapter(
             vector_adapter=vector_adapter,
             batch_size=getattr(vector_cfg, "sync_batch_size", 32) if vector_cfg else 32,
         )
-        vector_sync.start()
-        logger.info("Vector sync scheduler started")
-
         return vector_adapter, vector_sync
     except Exception as exc:  # noqa: BLE001
         logger.warning(

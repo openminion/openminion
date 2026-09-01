@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -143,6 +144,7 @@ class AuditedMemoryStore:
         self._sink = sink
         self._owns_store = owns_store
         self._owns_sink = owns_sink
+        self._audited_capture_ids: set[str] = set()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
@@ -182,6 +184,30 @@ class AuditedMemoryStore:
             )
         )
         return record_id
+
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        receipt = self._store.apply_capture_bundle(bundle)
+        if receipt.capture_id in self._audited_capture_ids:
+            return receipt
+        self._audited_capture_ids.add(receipt.capture_id)
+        event_token = hashlib.sha256(receipt.capture_id.encode()).hexdigest()
+        self._append(
+            MemoryAuditEvent(
+                event_type="memory.capture_bundle.commit",
+                target_kind="capture_bundle",
+                target_id=receipt.capture_id,
+                session_id=str(getattr(bundle, "session_id", "") or "") or None,
+                details={
+                    "report_hash": receipt.report_hash,
+                    "result_hash": receipt.result_hash,
+                    "disposition": receipt.disposition,
+                    "output_count": len(receipt.output_ids),
+                },
+                event_id=f"memory_capture_{event_token[:32]}",
+                timestamp=receipt.committed_at,
+            )
+        )
+        return receipt
 
     def upsert(
         self, scope: str, type: str, key: str, record_patch: dict[str, Any]

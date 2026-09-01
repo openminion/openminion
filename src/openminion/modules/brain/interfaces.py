@@ -222,6 +222,16 @@ class MemoryAPI(Protocol):
         feedback_delta: float,
     ) -> int: ...
 
+    def apply_capture_bundle(
+        self,
+        *,
+        capture_id: str,
+        root_turn_id: str,
+        session_id: str,
+        agent_id: str,
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+
 
 @runtime_checkable
 class SkillAPI(Protocol):

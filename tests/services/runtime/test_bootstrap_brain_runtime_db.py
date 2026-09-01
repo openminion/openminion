@@ -11,7 +11,11 @@ from openminion.modules.brain.paths import (
     resolve_brain_runtime_db_path,
     resolve_brain_sessions_db_path,
 )
-from openminion.services.runtime.bootstrap import build_brain_runner_bundle
+from openminion.modules.memory.runtime.assembly import RuntimeMemoryAssembly
+from openminion.services.runtime.bootstrap import (
+    build_agent_runtime_service,
+    build_brain_runner_bundle,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -30,6 +34,45 @@ def test_brain_path_helpers_keep_session_and_runtime_dbs_separate(
     assert resolve_brain_runtime_db_path(storage_path=resolved_session_db_path) == (
         tmp_path / "state" / "brain" / "brain.db"
     )
+
+
+def test_disabled_memory_does_not_install_terminal_capture_writer(
+    tmp_path: Path,
+) -> None:
+    config = OpenMinionConfig()
+    sessions = SimpleNamespace()
+    disabled = RuntimeMemoryAssembly(gateway=object())
+    active = RuntimeMemoryAssembly(gateway=object(), memctl=object())
+
+    with mock.patch(
+        "openminion.services.brain.service.BrainBridgeService",
+        return_value=object(),
+    ) as bridge:
+        common = {
+            "config": config,
+            "plugins": object(),
+            "provider": object(),
+            "logger": logging.getLogger("test.bootstrap.capture_writer"),
+            "tools": object(),
+            "security_policy": None,
+            "self_improvement": object(),
+            "storage_path": tmp_path / "runtime.db",
+            "home_root": tmp_path,
+            "data_root": tmp_path,
+            "config_path": tmp_path / "config.yaml",
+            "sessions": sessions,
+        }
+        build_agent_runtime_service(
+            **common,
+            runtime_memory_assembly=disabled,
+        )
+        assert bridge.call_args.kwargs["terminal_capture_writer"] is None
+
+        build_agent_runtime_service(
+            **common,
+            runtime_memory_assembly=active,
+        )
+        assert bridge.call_args.kwargs["terminal_capture_writer"] is not None
 
 
 def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
@@ -54,6 +97,11 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         _provider=None,
         _env=None,
         _vector_sync=None,
+        _terminal_capture_writer=None,
+        _runtime_memory_assembly=SimpleNamespace(
+            memctl=SimpleNamespace(),
+            vector_adapter=SimpleNamespace(),
+        ),
         _context=SimpleNamespace(
             home_paths=SimpleNamespace(home_root=tmp_path),
             workspace_root=str(tmp_path),

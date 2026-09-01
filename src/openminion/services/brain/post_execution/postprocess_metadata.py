@@ -4,6 +4,7 @@ from typing import Any
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
+from openminion.modules.session.capture import capture_response_metadata
 from openminion.services.brain.post_execution.usage import (
     collect_llm_usage_summary_from_events,
 )
@@ -90,6 +91,7 @@ def _build_turn_response_metadata(
         "max_single_call_output_tokens": str(max_single_call_output_tokens),
         "max_single_call_total_tokens": str(max_single_call_total_tokens),
     }
+    metadata.update(capture_response_metadata(step_out))
     action_error = getattr(getattr(step_out, "action_result", None), "error", None)
     if action_error is not None:
         metadata["error_code"] = str(getattr(action_error, "code", "") or "")

@@ -31,6 +31,20 @@ class EmbeddingResult:
     token_usage: dict[str, int] | None = None
 
 
+@dataclass(frozen=True)
+class VectorSpaceIdentity:
+    provider: str
+    model: str
+    dimension: int
+    renderer_version: str = "memory-canonical-v1"
+
+    @property
+    def key(self) -> str:
+        return ":".join(
+            (self.provider, self.model, str(self.dimension), self.renderer_version)
+        )
+
+
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers."""
 
@@ -43,6 +57,14 @@ class EmbeddingProvider(ABC):
     def embed_batch(self, texts: list[str]) -> "EmbeddingBatchResult":
         """Generate embeddings for a batch of texts."""
         pass
+
+    @property
+    def semantic_ready(self) -> bool:
+        return False
+
+    @property
+    @abstractmethod
+    def identity(self) -> VectorSpaceIdentity: ...
 
 
 @dataclass
@@ -154,6 +176,18 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
         return _l2_normalize(vector)
 
+    @property
+    def semantic_ready(self) -> bool:
+        return self._ensure_sentence_transformer()
+
+    @property
+    def identity(self) -> VectorSpaceIdentity:
+        return VectorSpaceIdentity(
+            provider=self.provider,
+            model=self.model,
+            dimension=self.dimension,
+        )
+
     def embed(self, text: str) -> EmbeddingResult:
         vector: list[float]
         if self._ensure_sentence_transformer():
@@ -193,6 +227,14 @@ class APIEmbeddingProvider(EmbeddingProvider):
         self.provider = "api"
 
         # Deterministic fallback until a real HTTP client is wired here.
+
+    @property
+    def identity(self) -> VectorSpaceIdentity:
+        return VectorSpaceIdentity(
+            provider=self.provider,
+            model=self.model,
+            dimension=1536,
+        )
 
     def embed(self, text: str) -> EmbeddingResult:
         text_hash = hashlib.sha256((text + self.model).encode()).hexdigest()
@@ -452,6 +494,16 @@ class SQLiteVecBackend(VectorIndexBackend):
         row = cursor.fetchone()
         return self._blob_to_vector(row[0]) if row else None
 
+    def get_metadata(self, vector_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT metadata_json FROM vector_entries
+            WHERE id = ? AND collection_name = ?
+            """,
+            (vector_id, self.collection_name),
+        ).fetchone()
+        return None if row is None else dict(json.loads(row[0]))
+
     def delete_vectors(self, ids: list[str]) -> None:
         if not ids:
             return
@@ -657,6 +709,23 @@ class VectorIndexAdapter:
         self.__vector_index = vector_index
         self.batch_size = batch_size
         self.search_k = search_k
+        self._record_source: Any | None = None
+
+    @property
+    def semantic_ready(self) -> bool:
+        return isinstance(self.__vector_index, SQLiteVecBackend) and bool(
+            self.embedding_provider.semantic_ready
+        )
+
+    @property
+    def vector_space_identity(self) -> VectorSpaceIdentity:
+        return self.embedding_provider.identity
+
+    def bind_record_source(self, source: Any) -> None:
+        self._record_source = source
+
+    def get_vector(self, record_id: str) -> list[float] | None:
+        return self.__vector_index.get_vector(record_id)
 
     @property
     def _vector_index(self):
@@ -667,8 +736,17 @@ class VectorIndexAdapter:
 
         vector_id = getattr(record, "id", f"record_{int(time.time())}")
 
+        fingerprint = hashlib.sha256(content.encode()).hexdigest()
         self.__vector_index.add_vectors(
-            [vector_id], [embedding_result.vector], [{"source": content}]
+            [vector_id],
+            [embedding_result.vector],
+            [
+                {
+                    "record_id": str(vector_id),
+                    "content_fingerprint": fingerprint,
+                    "vector_space_identity": self.vector_space_identity.key,
+                }
+            ],
         )
 
         return vector_id
@@ -711,6 +789,32 @@ class VectorIndexAdapter:
 
         return search_results
 
+    def sync_pending_records(self, limit: int = 32) -> int:
+        if self._record_source is None or not self.semantic_ready:
+            return 0
+        snapshot = self._record_source.vector_sync_snapshot(limit=max(1, int(limit)))
+        processed = 0
+        for item in snapshot.get("current", []):
+            record_id = str(item["record_id"])
+            metadata_reader = getattr(self.__vector_index, "get_metadata", None)
+            metadata = metadata_reader(record_id) if callable(metadata_reader) else None
+            if metadata and (
+                metadata.get("content_fingerprint") == item["content_fingerprint"]
+                and metadata.get("vector_space_identity")
+                == self.vector_space_identity.key
+            ):
+                continue
+            self.index_record(
+                type("VectorRecord", (), {"id": record_id})(),
+                str(item["text"]),
+            )
+            processed += 1
+        retired_ids = [str(item) for item in snapshot.get("retired", [])]
+        if retired_ids:
+            self.__vector_index.delete_vectors(retired_ids)
+            processed += len(retired_ids)
+        return processed
+
 
 def create_vector_index_adapter(
     db_path: str | Path,
@@ -747,6 +851,10 @@ class MockEmbeddingProvider(EmbeddingProvider):
 
     def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
         return EmbeddingBatchResult(results=[self.embed(text) for text in texts])
+
+    @property
+    def identity(self) -> VectorSpaceIdentity:
+        return VectorSpaceIdentity(provider="mock", model="mock-model", dimension=128)
 
 
 def reindex_vectors(

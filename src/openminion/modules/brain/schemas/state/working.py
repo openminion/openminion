@@ -3,6 +3,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from openminion.modules.session.capture import TerminalCaptureIntentReceipt
+
 from .common import *
 from .common import (
     CognitionTier,
@@ -133,6 +135,12 @@ class WorkingState(BaseModel):
     idempotency_cache: dict[str, ActionResult] = Field(default_factory=dict)
     phase: RunSubstate | None = None
     trace_id: str | None = None
+    runtime_session_id: str | None = None
+    root_turn_id: str | None = None
+    capture_event_id: str | None = None
+    capture_id: str | None = None
+    memory_capture_report_root_turn_id: str | None = None
+    memory_capture_report: dict[str, Any] | None = None
     # trigger that initiated the current `run_until_idle` entry.
     run_trigger: str = "user_input"
     retries_for_step: dict[str, int] = Field(default_factory=dict)
@@ -371,6 +379,8 @@ class StepOutput(BaseModel):
     message: str | None = None
     working_state: WorkingState
     action_result: ActionResult | None = None
+    terminal_capture_intent_receipt: TerminalCaptureIntentReceipt | None = None
+    memory_capture_bundle_result: dict[str, Any] | None = None
     # explicit structural no-op marker. Set True by
     pae_idle_tick_noop: bool = False
     kind: RespondKindLiteral = RESPOND_KIND_ASSISTANT

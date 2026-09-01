@@ -10,10 +10,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_WORKING
-from openminion.modules.session.interfaces import (
-    SESSION_RETENTION_HOLD_VERSION,
-    SESSION_RETENTION_PLAN_VERSION,
-)
+from openminion.modules.session.interfaces import SESSION_RETENTION_PLAN_VERSION
+from openminion.modules.storage.constants import SESSION_RETENTION_HOLD_VERSION
 
 
 class SessionRetentionError(RuntimeError):

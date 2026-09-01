@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from openminion.modules.context.summary.engine import (
     DEFAULT_SESSION_SUMMARY_ENGINE,
     SummaryTurn,
@@ -97,7 +97,29 @@ def _needs_structured_replay_backfill(
     )
 
 
-def load_or_init_state(runner: "BrainRunner", session_id: str) -> WorkingState:
+def _apply_capture_identity(state: WorkingState, capture_identity: Any | None) -> bool:
+    if capture_identity is None:
+        return False
+    next_values = {
+        "runtime_session_id": capture_identity.runtime_session_id,
+        "root_turn_id": capture_identity.root_turn_id,
+        "capture_event_id": capture_identity.event_id,
+        "capture_id": capture_identity.capture_id,
+    }
+    previous_root_turn_id = state.root_turn_id
+    changed = any(getattr(state, key) != value for key, value in next_values.items())
+    for key, value in next_values.items():
+        setattr(state, key, value)
+    if previous_root_turn_id != capture_identity.root_turn_id:
+        state.memory_capture_report_root_turn_id = capture_identity.root_turn_id
+        state.memory_capture_report = {"items": []}
+        changed = True
+    return changed
+
+
+def load_or_init_state(
+    runner: "BrainRunner", session_id: str, capture_identity: Any | None = None
+) -> WorkingState:
     session_mode_override = _session_action_policy_mode_override(
         runner,
         session_id=session_id,
@@ -116,6 +138,9 @@ def load_or_init_state(runner: "BrainRunner", session_id: str) -> WorkingState:
         raw_state = _state_payload_from_raw(raw)
         state = WorkingState.model_validate(raw_state)
         state_changed = _apply_pending_permission_overrides(runner, state)
+        state_changed = (
+            _apply_capture_identity(state, capture_identity) or state_changed
+        )
         if session_mode_override != getattr(
             state,
             ACTION_POLICY_SESSION_OVERRIDE_KEY,
@@ -175,6 +200,7 @@ def load_or_init_state(runner: "BrainRunner", session_id: str) -> WorkingState:
         skill_selection_mode=session_skill_mode,
     )
     _apply_pending_permission_overrides(runner, state)
+    _apply_capture_identity(state, capture_identity)
     save_state(runner, state)
     return state
 

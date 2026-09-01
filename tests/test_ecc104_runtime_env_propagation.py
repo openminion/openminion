@@ -145,6 +145,9 @@ def test_turn_executor_injects_memory_service_into_tool_execution_context(
         _security_policy=None,
         _logger=logging.getLogger("tests.executor.memory"),
         _home_root=tmp_path,
+        _runtime_memory_assembly=SimpleNamespace(
+            memctl=SimpleNamespace(write_record=lambda **_: None)
+        ),
     )
     runtime = SimpleNamespace(
         inbound=Message(channel="console", target="user", body="hello", metadata={})

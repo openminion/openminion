@@ -328,6 +328,10 @@ def run_with_autonomous_continuation(
     progress_callback: Any | None = None,
     approval_callback: Any | None = None,
     initial_trigger: str = "user_input",
+    runtime_session_id: str | None = None,
+    root_turn_id: str | None = None,
+    capture_event_id: str | None = None,
+    capture_id: str | None = None,
 ) -> Any:
     result = runner.run(
         session_id=session_id,
@@ -338,6 +342,10 @@ def run_with_autonomous_continuation(
         trigger=initial_trigger,
         progress_callback=progress_callback,
         approval_callback=approval_callback,
+        runtime_session_id=runtime_session_id,
+        root_turn_id=root_turn_id,
+        capture_event_id=capture_event_id,
+        capture_id=capture_id,
     )
 
     session_api = getattr(runner, "session_api", None)

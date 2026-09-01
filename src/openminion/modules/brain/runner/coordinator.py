@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from openminion.base.errors import error_dict_from_exception
 from openminion.base.redaction import redact_mapping
 from openminion.base.time import utc_now_iso
 from openminion.modules.llm import ProviderError
+from openminion.modules.memory.errors import (
+    CaptureBundleIntegrityError,
+    CaptureRecoveryUnsupportedError,
+    MemctlError,
+)
+from openminion.modules.session.capture import (
+    CaptureIdentity,
+    TerminalCaptureIntentWriter,
+    build_capture_identity,
+)
 from openminion.tools.exec.command_parser import is_read_only_exec_command
 from openminion.tools.exec.process import resolve_shell_family
 
@@ -45,6 +55,25 @@ from ..state import MetaApplication
 from ..diagnostics.telemetry import emit_brain_operation
 
 
+def _resolve_run_capture_identity(
+    *,
+    session_id: str,
+    runtime_session_id: str | None,
+    root_turn_id: str | None,
+    capture_event_id: str | None,
+    capture_id: str | None,
+) -> CaptureIdentity:
+    identity = build_capture_identity(
+        runtime_session_id=str(runtime_session_id or session_id),
+        root_turn_id=str(root_turn_id or "").strip() or new_uuid(),
+    )
+    if capture_event_id and capture_event_id != identity.event_id:
+        raise ValueError("capture_event_id does not match capture identity")
+    if capture_id and capture_id != identity.capture_id:
+        raise ValueError("capture_id does not match capture identity")
+    return identity
+
+
 class BrainRunner:
     contract_version = BRAIN_RUNNER_INTERFACE_VERSION
 
@@ -72,6 +101,7 @@ class BrainRunner:
         goal_runtime: Any | None = None,
         trace_id: str | None = None,
         options: RunnerOptions | None = None,
+        terminal_capture_writer: TerminalCaptureIntentWriter | None = None,
     ) -> None:
         self.profile = profile
         self.session_api = session_api
@@ -92,6 +122,7 @@ class BrainRunner:
         self.task_manager = task_manager
         self.cron_api = cron_api
         self.goal_runtime = goal_runtime
+        self.terminal_capture_writer = terminal_capture_writer
         self._lgmh_hydrated_sessions: set[str] = set()
         self._pending_run_trigger: str | None = None
         self._pending_gateway_system_context: str | None = None
@@ -154,6 +185,112 @@ class BrainRunner:
             feedback_delta=0.1 if outcome == "success" else -0.1,
         )
 
+    def _apply_pending_capture_bundle(
+        self,
+        *,
+        identity: CaptureIdentity,
+        result: StepOutput,
+    ) -> None:
+        state = result.working_state
+        writer = self.terminal_capture_writer
+        if self.memory_api is None or writer is None:
+            return
+        if state.memory_capture_report_root_turn_id != identity.root_turn_id:
+            return
+        report = state.memory_capture_report or {"items": []}
+        error_code = str(report.get("error_code", "") or "").strip()
+        if error_code:
+            result.memory_capture_bundle_result = {
+                "capture_id": identity.capture_id,
+                "disposition": "pending",
+                "error_code": error_code,
+            }
+            return
+        candidates = report.get("items", [])
+        if not isinstance(candidates, list):
+            return
+        apply_bundle = getattr(self.memory_api, "apply_capture_bundle", None)
+        if not callable(apply_bundle):
+            return
+        try:
+            bundle_result = apply_bundle(
+                capture_id=identity.capture_id,
+                root_turn_id=identity.root_turn_id,
+                session_id=identity.runtime_session_id,
+                agent_id=state.agent_id,
+                candidates=candidates,
+            )
+        except (
+            CaptureBundleIntegrityError,
+            CaptureRecoveryUnsupportedError,
+            MemctlError,
+        ) as exc:
+            error_code = str(getattr(exc, "code", "CAPTURE_BUNDLE_PENDING"))
+            result.memory_capture_bundle_result = {
+                "capture_id": identity.capture_id,
+                "disposition": "pending",
+                "error_code": error_code,
+            }
+            return
+        result.memory_capture_bundle_result = dict(bundle_result)
+        writer.commit_capture_result_and_release_hold(
+            identity=identity,
+            result_payload=result.memory_capture_bundle_result,
+        )
+        state.memory_capture_report = None
+
+    def extract_memory_capture_candidates(
+        self,
+        *,
+        session_api: Any,
+        session_id: str,
+        root_turn_id: str,
+        user_message: str,
+    ) -> list[dict[str, Any]]:
+        from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
+        from openminion.modules.brain.execution.memory import (
+            extract_user_message_candidates,
+        )
+        from openminion.modules.brain.schemas import BudgetCounters
+
+        identity = build_capture_identity(
+            runtime_session_id=session_id,
+            root_turn_id=root_turn_id,
+        )
+        state = WorkingState(
+            session_id=session_id,
+            agent_id=self.profile.agent_id,
+            llm_calls_max=1,
+            budgets_remaining=BudgetCounters(
+                ticks=1,
+                tool_calls=0,
+                a2a_calls=0,
+                tokens=self.profile.budgets.max_total_llm_tokens,
+                time_ms=self.profile.budgets.max_elapsed_ms,
+            ),
+            trace_id=root_turn_id,
+            runtime_session_id=session_id,
+            root_turn_id=root_turn_id,
+            capture_event_id=identity.event_id,
+            capture_id=identity.capture_id,
+        )
+        report = extract_user_message_candidates(
+            self,
+            state=state,
+            user_message=user_message,
+            logger=CanonicalEventLogger(
+                session_api=session_api,
+                session_id=session_id,
+                agent_id=self.profile.agent_id,
+                llm_api=self.llm_api,
+            ),
+        )
+        error_code = str(report.get("error_code", "") or "").strip()
+        if error_code:
+            raise RuntimeError(error_code)
+        items = report.get("items", [])
+        return list(items) if isinstance(items, list) else []
+
     def _append_turn_outcome_event(
         self,
         *,
@@ -163,7 +300,42 @@ class BrainRunner:
         status: str,
         redaction: str = "none",
         result: StepOutput | None = None,
+        capture_identity: CaptureIdentity | None = None,
     ) -> None:
+        if self.terminal_capture_writer is not None:
+            state = result.working_state if result is not None else None
+            identity = capture_identity
+            if identity is None and state is not None:
+                identity = CaptureIdentity(
+                    runtime_session_id=str(state.runtime_session_id or session_id),
+                    root_turn_id=str(state.root_turn_id or trace_id),
+                    event_id=str(state.capture_event_id or ""),
+                    capture_id=str(state.capture_id or ""),
+                )
+            if identity is None:
+                raise RuntimeError("terminal capture identity is unavailable")
+            event_payload = {
+                **payload,
+                "agent_id": str(
+                    getattr(state, "agent_id", "") or self.profile.agent_id
+                ),
+            }
+            capture_state: Literal["pending", "excluded"] = (
+                "excluded"
+                if bool(getattr(self, "_capture_excluded_for_turn", False))
+                else "pending"
+            )
+            receipt = self.terminal_capture_writer.commit_terminal_capture_intent(
+                identity=identity,
+                event_payload=event_payload,
+                state=capture_state,
+            )
+            if result is not None:
+                result.terminal_capture_intent_receipt = receipt
+                self._apply_typed_memory_outcome(result)
+                if capture_state == "pending":
+                    self._apply_pending_capture_bundle(identity=identity, result=result)
+            return
         try:
             self.session_api.append_event(
                 session_id,
@@ -265,6 +437,7 @@ class BrainRunner:
         entrypoint: str,
         trace_id: str,
         error: BaseException,
+        capture_identity: CaptureIdentity,
     ) -> None:
         payload, redacted_count = redact_mapping(
             {
@@ -282,7 +455,19 @@ class BrainRunner:
             trace_id=trace_id,
             redaction="bounded" if redacted_count else "none",
             status="error",
+            capture_identity=capture_identity,
         )
+
+    def _hydrate_goal_session(self, session_id: str) -> None:
+        if self.goal_runtime is None or session_id in self._lgmh_hydrated_sessions:
+            return
+        hydrate = getattr(self.goal_runtime, "hydrate_session_start", None)
+        if callable(hydrate):
+            try:
+                hydrate(session_id=session_id, session_api=self.session_api)
+            except RuntimeError:
+                pass
+        self._lgmh_hydrated_sessions.add(session_id)
 
     def run(
         self,
@@ -295,6 +480,10 @@ class BrainRunner:
         progress_callback: Callable[[PhaseStatus], None] | None = None,
         approval_callback: Any | None = None,
         trigger: str = "user_input",
+        runtime_session_id: str | None = None,
+        root_turn_id: str | None = None,
+        capture_event_id: str | None = None,
+        capture_id: str | None = None,
     ) -> StepOutput:
         previous_callback = self._progress_callback
         approval_setter = getattr(self.tool_api, "set_approval_callback", None)
@@ -302,18 +491,15 @@ class BrainRunner:
             approval_setter(approval_callback) if callable(approval_setter) else None
         )
         effective_trace_id = str(trace_id or "").strip() or new_uuid()
+        identity = _resolve_run_capture_identity(
+            session_id=session_id,
+            runtime_session_id=runtime_session_id,
+            root_turn_id=root_turn_id,
+            capture_event_id=capture_event_id,
+            capture_id=capture_id,
+        )
         self._trace_id = effective_trace_id
-        if (
-            self.goal_runtime is not None
-            and session_id not in self._lgmh_hydrated_sessions
-        ):
-            hydrate = getattr(self.goal_runtime, "hydrate_session_start", None)
-            if callable(hydrate):
-                try:
-                    hydrate(session_id=session_id, session_api=self.session_api)
-                except Exception:
-                    pass
-            self._lgmh_hydrated_sessions.add(session_id)
+        self._hydrate_goal_session(session_id)
         if progress_callback is not None:
             self._progress_callback = progress_callback
         self._telemetry_turn_active = True
@@ -337,6 +523,7 @@ class BrainRunner:
                 forced_tools=forced_tools,
                 capability_category=capability_category,
                 trigger=trigger,
+                capture_identity=identity,
             )
             turn_id = (
                 str(result.working_state.trace_id or "").strip() or effective_trace_id
@@ -371,6 +558,7 @@ class BrainRunner:
                 entrypoint="run",
                 trace_id=effective_trace_id,
                 error=exc,
+                capture_identity=identity,
             )
             raise
         finally:
@@ -388,10 +576,15 @@ class BrainRunner:
         trace_id: str | None = None,
         forced_tools: list[str] | None = None,
         capability_category: str | None = None,
+        capture_identity: CaptureIdentity | None = None,
         progress_callback: Callable[[PhaseStatus], None] | None = None,
     ) -> StepOutput:
         previous_callback = self._progress_callback
         effective_trace_id = str(trace_id or "").strip() or new_uuid()
+        identity = capture_identity or build_capture_identity(
+            runtime_session_id=session_id,
+            root_turn_id=effective_trace_id,
+        )
         self._trace_id = effective_trace_id
         if progress_callback is not None:
             self._progress_callback = progress_callback
@@ -414,6 +607,7 @@ class BrainRunner:
                 trace_id=effective_trace_id,
                 forced_tools=forced_tools,
                 capability_category=capability_category,
+                capture_identity=identity,
             )
             if not self._telemetry_turn_active:
                 turn_id = (
@@ -451,6 +645,7 @@ class BrainRunner:
                     entrypoint="step",
                     trace_id=effective_trace_id,
                     error=exc,
+                    capture_identity=identity,
                 )
             raise
         finally:

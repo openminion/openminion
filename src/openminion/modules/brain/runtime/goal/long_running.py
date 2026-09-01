@@ -120,7 +120,7 @@ class LongRunningGoalRuntime:
         ):
             session_api.append_event(
                 session_id=session_id,
-                event_type="goal.resume_context.loaded",
+                type="goal.resume_context.loaded",
                 payload={
                     "goal_count": len(snapshots),
                     "snapshots": [snapshot.as_payload() for snapshot in snapshots],
@@ -155,7 +155,7 @@ class LongRunningGoalRuntime:
         ):
             session_api.append_event(
                 session_id=session_id,
-                event_type="goal.cron.advanced",
+                type="goal.cron.advanced",
                 payload={
                     "goal_id": str(goal_id or "").strip(),
                     "mission_id": str(mission_id or "").strip(),
