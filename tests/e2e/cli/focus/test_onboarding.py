@@ -1087,11 +1087,11 @@ def test_live_provider_setup_and_first_task(
 
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
-    config_path = home_root / ".openminion" / "config.json"
+    config_path = resolve_config_path(None, home_root=home_root)
     with PtySession(
         argv=_command(
             python_bin=python_bin,
-            config_path=config_path,
+            config_path=None,
             home_root=home_root,
             data_root=data_root,
             setup_only=False,
