@@ -40,6 +40,10 @@ RUNTIME_IP_PUBLIC = "runtime.ip.public"
 RUNTIME_IP_LOCAL = "runtime.ip.local"
 RUNTIME_BROWSER = "runtime.browser"
 
+RUNTIME_BLOCKCHAIN_INSPECT = "runtime.blockchain.inspect"
+RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION = "runtime.blockchain.prepare_transaction"
+RUNTIME_BLOCKCHAIN_SEND_TRANSACTION = "runtime.blockchain.send_transaction"
+
 OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     "runtime.ops.target.list",
     "runtime.ops.target.inspect",
@@ -183,6 +187,9 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_IP_PUBLIC,
     RUNTIME_IP_LOCAL,
     RUNTIME_BROWSER,
+    RUNTIME_BLOCKCHAIN_INSPECT,
+    RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+    RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
     *OPS_RUNTIME_BINDING_IDS,
     *SPECIALIZED_OPS_RUNTIME_BINDING_IDS,
     *SECURITY_RUNTIME_BINDING_IDS,

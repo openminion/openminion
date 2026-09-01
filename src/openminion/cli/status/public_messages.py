@@ -25,6 +25,7 @@ STATUS_MESSAGES_EN: dict[StatusKey, str] = {
     "saving_context": "Saving your progress...",
     "waiting_for_user": "Waiting for your reply...",
     "completed": "Done.",
+    "stopped": "Stopped.",
     "blocked": "Unable to continue yet.",
     "error": "Something went wrong.",
     "working": "Working on it...",
@@ -45,6 +46,7 @@ _PRIMARY_ONLY_KEYS = frozenset(
         "awaiting_confirmation",
         "waiting_for_user",
         "completed",
+        "stopped",
         "blocked",
         "error",
     }

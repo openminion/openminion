@@ -14,7 +14,7 @@ from openminion.base.logging import get_logger
 
 from ..contracts.schemas import Artifact, LogEntry, Scope
 from ..errors import ToolRuntimeError
-from ..plugin_api import PolicyAdapter, SafetyAdapter
+from ..plugin_api import PolicyAdapter, PolicyAuthorization, SafetyAdapter
 from .audit import (
     audit_writes_jsonl,
     audit_writes_storage,
@@ -231,7 +231,9 @@ class RuntimeContext:
     artifacts: list[Artifact] = field(default_factory=list)
     safety_adapter: Optional[SafetyAdapter] = None
     policy_adapter: Optional[PolicyAdapter] = None
+    policy_authorization: PolicyAuthorization | None = None
     skill_api: Optional[Any] = None
+    secret_service: Any | None = None
     telemetryctl: Optional[Any] = None
     telemetry_session_id: Optional[str] = None
     telemetry_turn_id: Optional[str] = None
@@ -392,7 +394,7 @@ class RuntimeContext:
             ingest_meta["trace_id"] = trace_id
         return ingest_meta
 
-    def write_audit_event(self, event: Dict[str, Any]) -> None:
+    def write_audit_event(self, event: Dict[str, Any]) -> bool:
         payload = dict(event or {})
         orchestration = _orchestration_metadata_from_policy(self.policy)
         for key, value in orchestration.items():
@@ -401,18 +403,24 @@ class RuntimeContext:
         payload["ts"] = str(payload.get("ts") or iso_now())
         mode = resolve_tool_runtime_audit_mode(policy=self.policy)
 
+        recorded = False
         if audit_writes_jsonl(mode):
-            line = json.dumps(payload, ensure_ascii=True)
-            audit_path = self.run_root / "audit.jsonl"
-            with audit_path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            try:
+                line = json.dumps(payload, ensure_ascii=True)
+                audit_path = self.run_root / "audit.jsonl"
+                with audit_path.open("a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+                recorded = True
+            except OSError:
+                self.add_log("warning", "Tool audit JSONL write failed")
 
         if not audit_writes_storage(mode):
-            return
+            return recorded
         audit_repo = resolve_audit_repository(self)
         if audit_repo is None:
-            return
+            return recorded
         try:
             audit_repo.append_event(payload, run_root=self.run_root)
+            return True
         except Exception:
-            return
+            return recorded

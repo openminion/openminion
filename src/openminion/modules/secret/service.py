@@ -26,6 +26,7 @@ class SecretService:
         env: EnvironmentConfig | Mapping[str, object] | None = None,
         record_store: RecordStore | None = None,
     ) -> None:
+        self._closed = False
         env_config = resolve_environment_config(env=env)
         if master_key is None:
             master_key = env_config.get(OPENMINION_SECRET_KEY_ENV, "")
@@ -75,7 +76,13 @@ class SecretService:
         return SECRET_INTERFACE_VERSION
 
     async def close(self) -> None:
-        await asyncio.to_thread(self._store.close)
+        await asyncio.to_thread(self.close_sync)
+
+    def close_sync(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._store.close()
 
     def _encrypt(self, value: str) -> str:
         try:
@@ -106,9 +113,14 @@ class SecretService:
         )
 
     async def get_secret(self, key: str, *, namespace: str = "default") -> str:
-        encrypted = await asyncio.to_thread(
-            self._store.fetch_value, key=key, namespace=namespace
+        return await asyncio.to_thread(
+            self.get_secret_sync,
+            key,
+            namespace=namespace,
         )
+
+    def get_secret_sync(self, key: str, *, namespace: str = "default") -> str:
+        encrypted = self._store.fetch_value(key=key, namespace=namespace)
         if encrypted is None:
             raise SecretNotFoundError(
                 f"Secret '{key}' not found in namespace '{namespace}'"

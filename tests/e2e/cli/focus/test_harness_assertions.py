@@ -350,6 +350,12 @@ def test_approval_prompt_needs_reply_when_current_screen_is_waiting() -> None:
     assert approval_prompt_needs_reply(transcript, offset=0)
 
 
+def test_high_risk_approval_prompt_needs_reply() -> None:
+    transcript = "High-risk action requires confirmation\nDone in 21s\n"
+
+    assert approval_prompt_needs_reply(transcript, offset=0)
+
+
 def test_tool_activity_does_not_resolve_an_approval_prompt() -> None:
     transcript = (
         "Policy confirmation required.\n"

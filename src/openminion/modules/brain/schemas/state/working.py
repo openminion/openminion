@@ -182,6 +182,7 @@ class WorkingState(BaseModel):
     active_workflow_kind: str | None = None
     mode: BrainMode = cast(BrainMode, BrainMode.COMMAND)
     pending_confirmation_command: Command | None = None
+    pending_policy_approval_id: str | None = None
     pending_confirmation_sub_intents: list[str] = Field(default_factory=list)
     pending_confirmation_sub_intent_refs: list[SubIntent] = Field(default_factory=list)
     pending_confirmation_goal: str | None = None

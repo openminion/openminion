@@ -35,14 +35,11 @@ from openminion.modules.tool import (
 from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
-from openminion.modules.tool.contracts.model_ids import MODEL_FILE_WRITE
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
     resolve_runtime_tool_config,
 )
-from openminion.tools.exec.command_parser import is_read_only_exec_command
-from openminion.tools.exec.process import resolve_shell_family
 from .command_metadata import (
     _confirmation_replay_metadata,
     _extract_runtime_message_ref,
@@ -50,10 +47,13 @@ from .command_metadata import (
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
 )
+from .blockchain_authorization import consume_blockchain_send_authorization
 from .policy_context import (
     _agent_id_from_policy,
     _apply_agent_command_policy,
     _apply_reactions_default_policy,
+    _background_write_authorized,
+    _resolve_auto_confirm,
     _runtime_background_write_authorization_enabled,
     _runtime_env_from_policy,
     _watch_write_authorization_requested,
@@ -63,45 +63,13 @@ from .results import (
     _error_envelope,
     _normalized_artifact_refs,
 )
+from .workspace_policy import child_workspace_policy
 
 _log = get_logger("brain.adapters.tool.runtime")
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override",
     default=None,
 )
-
-
-def _rebase_child_path_argument(
-    args: dict[str, Any], *, parent: Path, child: Path
-) -> None:
-    raw_path = str(args.get("path", "") or "").strip()
-    candidate = Path(raw_path).expanduser()
-    if not raw_path or not candidate.is_absolute():
-        return
-    try:
-        relative_path = candidate.resolve(strict=False).relative_to(
-            parent.resolve(strict=False)
-        )
-    except ValueError:
-        return
-    args["path"] = str(child / relative_path)
-
-
-def _child_workspace_policy(
-    policy: Policy,
-    *,
-    args: dict[str, Any],
-    parent: Path,
-    child: Path,
-) -> Policy:
-    _rebase_child_path_argument(args, parent=parent, child=child)
-    policy_raw = copy.deepcopy(policy.raw)
-    policy_raw["workspace_root"] = str(child)
-    context_metadata = policy_raw.setdefault("context_metadata", {})
-    if isinstance(context_metadata, dict):
-        context_metadata["workspace_root"] = str(child)
-        context_metadata["cwd"] = str(child)
-    return Policy(raw=policy_raw)
 
 
 def _is_confirm_required_code(code: Any) -> bool:
@@ -146,8 +114,10 @@ class ToolAdapter:
         artifactctl: Any | None = None,
         policy: Policy | None = None,
         policy_adapter: PolicyAdapter | None = None,
+        policy_ctl: Any | None = None,
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
+        secret_service: Any | None = None,
         a2a_delegate_api: Any | None = None,
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
@@ -159,11 +129,13 @@ class ToolAdapter:
         policy_from_none = policy is None
         self.policy = self._coerce_policy(policy)
         self.policy_adapter = policy_adapter
+        self.policy_ctl = policy_ctl
         self._approval_callback: Callable[[str, dict[str, Any], str], bool] | None = (
             None
         )
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
+        self.secret_service = secret_service
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
@@ -197,6 +169,11 @@ class ToolAdapter:
                 "allow_background_write_authorization",
                 str(self.allow_background_write_authorization).lower(),
             )
+            context_metadata.update(
+                build_runtime_tool_routing_metadata(
+                    getattr(runtime_config, "tools", None)
+                )
+            )
         _apply_reactions_default_policy(self.policy, runtime_config)
         _apply_agent_command_policy(self.policy, agent_profile)
         registry_prepopulated = runtime_registry is not None
@@ -229,12 +206,15 @@ class ToolAdapter:
             openminion_tools_reaction_plugin.register(self.registry)
 
     def close(self) -> None:
-        if not self._owns_artifactctl or self.artifactctl is None:
-            return
-        self._owns_artifactctl = False
-        artifactctl = self.artifactctl
-        self.artifactctl = None
-        artifactctl.close()
+        if self.secret_service is not None:
+            secret_service = self.secret_service
+            self.secret_service = None
+            secret_service.close_sync()
+        if self._owns_artifactctl and self.artifactctl is not None:
+            self._owns_artifactctl = False
+            artifactctl = self.artifactctl
+            self.artifactctl = None
+            artifactctl.close()
 
     @staticmethod
     def _coerce_policy(policy: Any) -> Policy:
@@ -439,7 +419,7 @@ class ToolAdapter:
             )
         workspace_override = workspace_override or _WORKSPACE_OVERRIDE.get()
         if workspace_override is not None:
-            policy_for_run = _child_workspace_policy(
+            policy_for_run = child_workspace_policy(
                 policy_for_run,
                 args=args,
                 parent=self.workspace_root,
@@ -589,29 +569,14 @@ class ToolAdapter:
                     "tool_name": tool_name,
                 },
             )
-        background_write_authorized = (
-            isinstance(inputs, Mapping)
-            and bool(inputs.get("background_write_authorized"))
-            and str(inputs.get("background_write_authorization_source", "") or "")
-            == "watch_subscription"
+        background_write_authorized = _background_write_authorized(inputs)
+        auto_confirm = _resolve_auto_confirm(
+            tool_name=tool_name,
+            args=validated_args,
+            permission_mode=permission_mode,
+            replay_confirmed=replay_confirmed,
+            background_write_authorized=background_write_authorized,
         )
-
-        auto_confirm = False
-        if permission_mode == "bypass":
-            auto_confirm = True
-        elif permission_mode == "auto":
-            auto_confirm = tool_name in {
-                MODEL_FILE_WRITE,
-                "file.copy",
-                "file.move",
-            }
-        elif replay_confirmed or background_write_authorized:
-            auto_confirm = True
-        elif tool_name == "exec.run":
-            auto_confirm = is_read_only_exec_command(
-                str(validated_args.get("command", "") or ""),
-                shell_family=resolve_shell_family(),
-            )
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(
@@ -643,6 +608,7 @@ class ToolAdapter:
             safety_adapter=AllowAllSafetyAdapter(),
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
+            secret_service=self.secret_service,
             artifactctl=self.artifactctl,
             a2a_delegate_api=self.a2a_delegate_api,
             agent_query=self.agent_query,
@@ -655,6 +621,7 @@ class ToolAdapter:
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id
         ctx.tool_name = tool_name
+        ctx.invocation_id = str(command.get("idempotency_key", "") or "")
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)
 
@@ -716,6 +683,12 @@ class ToolAdapter:
                 validated_args = dict(policy_decision.modified_args)
 
         try:
+            if tool_name == "blockchain.send_transaction":
+                ctx.policy_authorization = consume_blockchain_send_authorization(
+                    policy_ctl=self.policy_ctl,
+                    permission_mode=permission_mode,
+                    args=args,
+                )
             return self._run_tool_spec(
                 spec=spec,
                 validated_args=validated_args,

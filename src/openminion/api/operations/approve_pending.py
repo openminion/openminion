@@ -7,6 +7,7 @@ from openminion.api.core.deps import resolve_runtime_manager
 from openminion.modules.policy.constants import (
     POLICY_APPROVAL_CHOICES as APPROVAL_CHOICES,
 )
+from openminion.modules.policy.models import PolicyControlError
 
 
 def parse_decision(raw: Any) -> str | None:
@@ -89,11 +90,32 @@ def process_approval_decision(
                     "details": {"approval_id": approval_id},
                 },
             }
-        grant_id = policyctl.create_grant_from_confirmation(
-            invocation=dict(invocation),
-            ctx=dict(ctx),
-            action=decision,
-        )
+        tool = str(invocation.get("tool", "") or "")
+        method = str(invocation.get("method", "") or "")
+        if not method and "." in tool:
+            tool, method = tool.rsplit(".", 1)
+        if (
+            tool == "blockchain"
+            and method == "send_transaction"
+            and decision in {"allow_once", "deny"}
+        ):
+            try:
+                grant_id = policyctl.resolve_confirmation(approval_id, decision)
+            except PolicyControlError as exc:
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": exc.code,
+                        "message": str(exc),
+                        "details": {"approval_id": approval_id},
+                    },
+                }
+        else:
+            grant_id = policyctl.create_grant_from_confirmation(
+                invocation=dict(invocation),
+                ctx=dict(ctx),
+                action=decision,
+            )
         return {
             "ok": True,
             "approval_id": approval_id,

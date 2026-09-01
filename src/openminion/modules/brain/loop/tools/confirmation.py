@@ -134,8 +134,11 @@ def confirmation_required_user_message(command: Command) -> str:
         lines.append(
             f"This approval also covers {additional_count} queued {noun} from the same batch."
         )
-    lines.append(
-        "Reply exactly yes to allow once, session to allow this tool for the "
-        "session, or no to cancel."
-    )
+    if tool_name == "blockchain.send_transaction":
+        lines.append("Reply exactly yes to allow once, or no to cancel.")
+    else:
+        lines.append(
+            "Reply exactly yes to allow once, session to allow this tool for the "
+            "session, or no to cancel."
+        )
     return "\n".join(lines)

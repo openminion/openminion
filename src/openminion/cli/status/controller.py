@@ -130,6 +130,7 @@ class PhaseStatusController:
         status_key = str(status.status_key or "").strip()
         terminal = bool(status.terminal) or status_key in {
             "completed",
+            "stopped",
             "error",
         }
         show_spinner = not terminal or status_key in _SHOW_SPINNER_TERMINAL_KEYS

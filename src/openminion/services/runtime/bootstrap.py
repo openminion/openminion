@@ -13,6 +13,9 @@ from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.tool import ToolRegistry
+from openminion.modules.secret.factory import (
+    build_secret_service as _build_secret_service,
+)
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
@@ -65,7 +68,7 @@ from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.services.config import resolve_services_env
 from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.policy.runtime.action_policy import (
-    policy_config_from_action_policy,
+    build_action_policy_service as build_action_policy_service,
 )
 from openminion.modules.memory import memory_runtime_configuration
 from openminion.modules.runtime.sandboxes.daytona import (
@@ -86,33 +89,24 @@ def _map_action_policy_mode(mode: str) -> str:
     return map_action_policy_mode(mode)
 
 
-def build_action_policy_service(
+def build_secret_service(
     *,
     config: OpenMinionConfig,
-    tool_registry: ToolRegistry,
     data_root: Path,
 ) -> Any | None:
-    """Build the canonical policy service once per runtime bootstrap."""
-    from openminion.modules.policy.runtime.service import PolicyCtl
-
-    policy_dir = data_root / "policy"
-    policy_dir.mkdir(parents=True, exist_ok=True)
-    db_path = policy_dir / "policy.db"
-
-    action_policy = config.action_policy
-    policy_ctl = PolicyCtl.with_sqlite(
-        db_path,
-        config=policy_config_from_action_policy(action_policy),
+    return _build_secret_service(
+        data_root=data_root,
+        env=resolve_services_env(runtime_env=config.runtime.env),
     )
 
-    for tool_name, tool in tool_registry.list().items():
-        derived = _derive_tool_risk_spec(tool_name=tool_name, tool=tool)
-        policy_ctl.register_risk(tool_name, derived)
-        # Runner policy adapter maps single-token tool names to `<tool>.default`.
-        if "." not in tool_name:
-            policy_ctl.register_risk(f"{tool_name}.default", derived)
 
-    return policy_ctl
+def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | None:
+    if service.mode == "local":
+        return None
+    return build_secret_service(
+        config=config,
+        data_root=service._context.home_paths.data_root,
+    )
 
 
 def build_daytona_runner(
@@ -176,56 +170,6 @@ def build_tool_authoring_service(
     )
     service.register_runtime_tools(tool_registry)
     return service
-
-
-def _derive_tool_risk_spec(*, tool_name: str, tool: Any) -> Any:
-    from openminion.modules.policy.models import RiskSpec
-
-    min_scope = (
-        str(getattr(tool, "min_scope", "READ_ONLY") or "READ_ONLY").strip().upper()
-    )
-    dangerous = bool(getattr(tool, "dangerous", False))
-    idempotent = bool(getattr(tool, "idempotent", True))
-
-    policy = getattr(tool, "policy", None)
-    policy_risk = str(getattr(policy, "risk", "") or "").strip().lower()
-    if policy_risk in {"high", "critical"}:
-        dangerous = True
-
-    if dangerous:
-        return RiskSpec(
-            risk_class="destructive",
-            side_effects="local",
-            reversibility="irreversible",
-            default_confirm=True,
-        )
-    if min_scope == "READ_ONLY":
-        return RiskSpec(
-            risk_class="read",
-            side_effects="none",
-            reversibility="reversible",
-            default_confirm=False,
-        )
-    if min_scope == "WRITE_SAFE":
-        return RiskSpec(
-            risk_class="write",
-            side_effects="local",
-            reversibility="reversible" if idempotent else "unknown",
-            default_confirm=not idempotent,
-        )
-    if min_scope in {"POWER_USER", "UI_AUTOMATION"}:
-        return RiskSpec(
-            risk_class="exec",
-            side_effects="local",
-            reversibility="unknown",
-            default_confirm=True,
-        )
-    return RiskSpec(
-        risk_class="write",
-        side_effects="local",
-        reversibility="unknown",
-        default_confirm=not idempotent,
-    )
 
 
 def resolve_default_agent(config: OpenMinionConfig) -> AgentProfileConfig:
@@ -751,7 +695,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         policy_service=service._action_policy_service,
         action_policy_config=resolved_action_policy,
     )
-
     safety_api = bridge_module.create_safety_api(mode=service.mode)
 
     retrieve_api = bridge_module.init_retrieve_adapter(
@@ -795,11 +738,12 @@ def build_brain_runner_bundle(service: Any) -> Any:
         runtime_registry=service._tools,
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
+        secret_service=_runtime_secret_service(service, config),
+        policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
     )
-
     service._validate_adapter_contracts(
         session_api=session_api,
         context_api=context_api,

@@ -33,6 +33,7 @@ StatusKey = Literal[
     "saving_context",
     "waiting_for_user",
     "completed",
+    "stopped",
     "blocked",
     "error",
     "working",
@@ -63,6 +64,7 @@ _STATUS_LABELS: dict[StatusKey, str] = {
     "saving_context": "Saving context...",
     "waiting_for_user": "Waiting for your reply...",
     "completed": "Completed.",
+    "stopped": "Stopped.",
     "blocked": "Blocked.",
     "error": "Turn failed.",
     "working": "Working...",
@@ -101,7 +103,7 @@ _RUNTIME_STATUS_MAP: dict[str, StatusKey] = {
     BRAIN_STATE_WAITING_USER: "waiting_for_user",
     BRAIN_STATE_JOB_PENDING: "working",
     BRAIN_STATE_ACTIVE: "working",
-    BRAIN_STATE_STOPPED: "error",
+    BRAIN_STATE_STOPPED: "stopped",
     BRAIN_STATE_DONE: "completed",
     BRAIN_STATE_ERROR: "error",
 }
@@ -554,7 +556,7 @@ def normalize_phase_status(
         step_total=step_total,
     )
     if terminal is None:
-        terminal = status_key in {"completed", "error"}
+        terminal = status_key in {"completed", "stopped", "error"}
 
     normalized_route = _normalized_route_for_phase(
         normalized_event=normalized_event,

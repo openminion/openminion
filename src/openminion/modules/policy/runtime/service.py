@@ -13,21 +13,21 @@ from ..models import (
     InvocationSummary,
     PolicyConfig,
     PolicyDecision,
+    PolicyControlError,
     PolicyGrant,
     PolicyGrantInput,
     DurationType,
     RiskClass,
     RiskSpec,
     SideEffects,
-    sanitize_args,
     stable_invocation_hash,
     utc_now_iso,
 )
 from ..interfaces import POLICY_INTERFACE_VERSION
 from ..constants import (
-    POLICY_CONFIRM_RESPONSE_AFFIRM,
-    POLICY_CONFIRM_RESPONSE_DENY,
-    POLICY_CONFIRM_RESPONSE_UNCLEAR,
+    BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
+    BLOCKCHAIN_POLICY_TOOL,
+    BLOCKCHAIN_SEND_METHOD,
     POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
     POLICY_DECISION_REQUIRE_CONFIRM,
@@ -63,6 +63,7 @@ from ..constants import (
 )
 from ..storage import PolicyStore
 from ..storage.store import SQLitePolicyStore
+from .confirmation import build_confirm_request, parse_confirmation_response
 
 
 _RISK_ORDER: Dict[RiskClass, int] = {
@@ -108,50 +109,6 @@ def _arg_domain(args: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _normalize_confirmation_token(value: str) -> str:
-    token = str(value or "").strip().lower().rstrip(".,!?")
-    return " ".join(part for part in token.split() if part)
-
-
-def parse_confirmation_response(
-    text: str,
-    *,
-    affirmative_tokens: Iterable[str] | None = None,
-    negative_tokens: Iterable[str] | None = None,
-) -> Literal["affirm", "deny", "unclear"]:
-    normalized = _normalize_confirmation_token(text)
-    if not normalized:
-        return POLICY_CONFIRM_RESPONSE_UNCLEAR
-
-    affirmative = {
-        _normalize_confirmation_token(token)
-        for token in (
-            affirmative_tokens
-            if affirmative_tokens is not None
-            else PolicyConfig().affirmative_tokens
-        )
-        if _normalize_confirmation_token(token)
-    }
-    negative = {
-        _normalize_confirmation_token(token)
-        for token in (
-            negative_tokens
-            if negative_tokens is not None
-            else PolicyConfig().negative_tokens
-        )
-        if _normalize_confirmation_token(token)
-    }
-
-    # Confirmation is a safety boundary. Accept only exact configured choices;
-    # mixed, conditional, or explanatory prose must stay unclear.
-    if normalized in affirmative and normalized not in negative:
-        return POLICY_CONFIRM_RESPONSE_AFFIRM
-    if normalized in negative and normalized not in affirmative:
-        return POLICY_CONFIRM_RESPONSE_DENY
-
-    return POLICY_CONFIRM_RESPONSE_UNCLEAR
-
-
 @dataclass(frozen=True)
 class _GrantMatch:
     grant: PolicyGrant
@@ -184,6 +141,11 @@ class PolicyCtl:
         config: Optional[PolicyConfig] = None,
         risk_registry: Optional[Dict[str, RiskSpec | Dict[str, Any]]] = None,
     ) -> "PolicyCtl":
+        path = Path(database_path)
+        if str(path) != ":memory:":
+            from ..storage.migrations import run_migrations
+
+            run_migrations(path)
         return PolicyCtl(
             store=SQLitePolicyStore(database_path),
             config=config,
@@ -221,9 +183,29 @@ class PolicyCtl:
     ) -> PolicyDecision:
         inv = self._normalize_invocation(invocation)
         csum = self._normalize_context(ctx)
-        risk = risk_override or self._resolve_risk(inv)
+        exact_blockchain_send = self._is_exact_blockchain_send(inv.tool, inv.method)
+        risk = (
+            self._resolve_risk(inv)
+            if exact_blockchain_send
+            else risk_override or self._resolve_risk(inv)
+        )
         effective_config = config_overrides or self._config
         mode = effective_config.mode if config_overrides is not None else self.mode()
+
+        if exact_blockchain_send and mode not in {
+            POLICY_MODE_ENFORCE,
+            POLICY_MODE_ENFORCE_SAFE,
+        }:
+            decision = PolicyDecision(
+                decision=POLICY_DECISION_DENY,
+                reason_code="POLICY_MODE_UNSUPPORTED",
+                reason="Enforcing policy is required for blockchain send.",
+                risk=risk,
+                invocation_hash=inv.invocation_hash,
+                details={"mode": mode},
+            )
+            self._log_decision(inv=inv, ctx=csum, decision=decision)
+            return decision
 
         if mode == POLICY_MODE_DISABLED:
             return PolicyDecision(
@@ -260,6 +242,11 @@ class PolicyCtl:
         return enforced
 
     def create_grant(self, grant: PolicyGrantInput) -> str:
+        if self._is_exact_blockchain_send(grant.tool, grant.method):
+            raise PolicyControlError(
+                "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION",
+                "Blockchain send grants require a pending confirmation.",
+            )
         if grant.effect not in POLICY_GRANT_EFFECTS:
             raise ValueError("grant.effect must be allow|deny")
         if grant.duration_type == POLICY_DURATION_ONCE and not grant.invocation_hash:
@@ -279,6 +266,11 @@ class PolicyCtl:
         max_uses: Optional[int] = None,
     ) -> str:
         inv = self._normalize_invocation(invocation)
+        if self._is_exact_blockchain_send(inv.tool, inv.method):
+            raise PolicyControlError(
+                "BLOCKCHAIN_SEND_GRANT_REQUIRES_CONFIRMATION",
+                "Blockchain send grants require a pending confirmation.",
+            )
         csum = self._normalize_context(ctx)
         target = self._default_target_scope(inv)
         if scope_overrides:
@@ -331,6 +323,24 @@ class PolicyCtl:
     ) -> PolicyGrant | None:
         return self._store.resolve_active_grant_for_use(grant_id, **criteria)
 
+    def resolve_confirmation(self, approval_id: str, action: str) -> str | None:
+        return self._store.resolve_confirmation(approval_id, action)
+
+    def resolve_matching_active_grant_for_use(
+        self,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        invocation_hash: str,
+    ) -> PolicyGrant | None:
+        return self._store.resolve_matching_active_grant_for_use(
+            subject_id=subject_id,
+            tool=tool,
+            method=method,
+            invocation_hash=invocation_hash,
+        )
+
     def list_grants(
         self,
         *,
@@ -377,6 +387,8 @@ class PolicyCtl:
         subject_id = csum.subject_id or effective_config.subject_id_default
         candidates = self._store.list_grants(subject_id=subject_id, active_only=True)
         matches = self._find_matching_grants(candidates, inv=inv, csum=csum, risk=risk)
+        if self._is_exact_blockchain_send(inv.tool, inv.method):
+            matches = [match for match in matches if match.grant.approval_id]
         selected = self._select_match(matches)
 
         if selected is not None:
@@ -391,7 +403,9 @@ class PolicyCtl:
                     details={"grant_id": grant.grant_id},
                 )
 
-            if consume_grants:
+            if consume_grants and not self._is_exact_blockchain_send(
+                inv.tool, inv.method
+            ):
                 self._store.consume_grant_use(grant.grant_id)
 
             return PolicyDecision(
@@ -400,6 +414,8 @@ class PolicyCtl:
                 reason="Allowed by explicit grant",
                 risk=risk,
                 matched_grant_id=grant.grant_id,
+                approval_id=grant.approval_id,
+                invocation_hash=inv.invocation_hash,
                 details={"grant_id": grant.grant_id},
             )
 
@@ -516,72 +532,40 @@ class PolicyCtl:
         reason_code: str,
         reason: str,
     ) -> PolicyDecision:
+        confirm_request = build_confirm_request(
+            invocation=inv,
+            context=csum,
+            risk=risk,
+            target_scope=self._default_target_scope(inv),
+        )
+        approval_id: str | None = None
+        if self._is_exact_blockchain_send(inv.tool, inv.method):
+            pending = self._store.get_or_create_pending_confirmation(
+                subject_id=csum.subject_id or self._config.subject_id_default,
+                tool=inv.tool,
+                method=inv.method,
+                invocation_hash=inv.invocation_hash,
+                invocation_id=inv.invocation_id,
+                trace_id=csum.trace_id,
+                session_id=csum.session_id,
+                preview=confirm_request["summary"],
+                ttl_seconds=BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
+            )
+            approval_id = pending.approval_id
+            confirm_request = {
+                "approval_id": approval_id,
+                "choices": ["allow_once", "deny"],
+                "preview": dict(pending.preview),
+            }
         return PolicyDecision(
             decision=POLICY_DECISION_REQUIRE_CONFIRM,
             reason_code=reason_code,
             reason=reason,
             risk=risk,
-            confirm_request=self._build_confirm_request(inv=inv, csum=csum, risk=risk),
+            confirm_request=confirm_request,
+            approval_id=approval_id,
+            invocation_hash=inv.invocation_hash,
         )
-
-    def _build_confirm_request(
-        self,
-        *,
-        inv: InvocationSummary,
-        csum: ContextSummary,
-        risk: RiskSpec,
-    ) -> Dict[str, Any]:
-        target_scope = self._default_target_scope(inv)
-        scope_preview = {
-            "allow_once": {
-                "tool": inv.tool,
-                "method": inv.method,
-                "invocation_hash": inv.invocation_hash,
-            },
-            "allow_until": {
-                "tool": inv.tool,
-                "method": inv.method,
-                "target": dict(target_scope),
-            },
-            "allow_session": {
-                "tool": inv.tool,
-                "method": inv.method,
-                "target": dict(target_scope),
-                "session_id": csum.session_id,
-            },
-            "allow_forever": {
-                "tool": inv.tool,
-                "method": inv.method,
-                "target": dict(target_scope),
-            },
-        }
-        return {
-            "trace_id": csum.trace_id,
-            "invocation_id": inv.invocation_id,
-            "summary": {
-                "tool": inv.tool,
-                "method": inv.method,
-                "args": sanitize_args(inv.args),
-            },
-            "risk": {
-                "risk_class": risk.risk_class,
-                "side_effects": risk.side_effects,
-                "reversibility": risk.reversibility,
-            },
-            "suggested_choices": [
-                {"action": "allow_once", "label": "Allow once"},
-                {
-                    "action": "allow_until",
-                    "label": "Allow for 10 minutes",
-                    "until_seconds": 600,
-                },
-                {"action": "allow_session", "label": "Allow for this session"},
-                {"action": "allow_forever", "label": "Allow forever (scoped)"},
-                {"action": "deny", "label": "Deny"},
-            ],
-            "scope_preview": scope_preview,
-            "deny_option": {"action": "deny"},
-        }
 
     def _default_target_scope(self, inv: InvocationSummary) -> Dict[str, Any]:
         args = inv.args
@@ -988,9 +972,15 @@ class PolicyCtl:
             method=inv.method,
             decision=decision.decision.lower(),
             matched_grant_id=decision.matched_grant_id,
+            approval_id=decision.approval_id,
+            invocation_hash=inv.invocation_hash,
             reason_code=decision.reason_code,
             risk_spec=decision.risk.to_dict(),
         )
+
+    @staticmethod
+    def _is_exact_blockchain_send(tool: str, method: str) -> bool:
+        return tool == BLOCKCHAIN_POLICY_TOOL and method == BLOCKCHAIN_SEND_METHOD
 
 
 def _opt_str(value: Any) -> Optional[str]:

@@ -251,6 +251,7 @@ def _approve_delegate(
         command=command,
         fallback=fallback_question,
     )
+    state.pending_policy_approval_id = decision.approval_id
     return AskUserCommand(
         kind=BRAIN_COMMAND_KIND_ASK_USER,
         title="Policy confirmation required",

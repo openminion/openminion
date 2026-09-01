@@ -13,11 +13,23 @@ from openminion.modules.brain.diagnostics.status import (
     StatusKey,
     coerce_phase_status,
     phase_status_client_facts,
+    phase_status_from_runtime,
 )
 
 
 def test_primary_catalog_covers_every_status_key() -> None:
     assert set(STATUS_MESSAGES_EN) == set(get_args(StatusKey))
+
+
+def test_stopped_runtime_status_is_not_presented_as_an_error() -> None:
+    status = phase_status_from_runtime(
+        trace_id="user-denied",
+        runtime_status="stopped",
+    )
+
+    assert status.status_key == "stopped"
+    assert status.terminal is True
+    assert format_public_status_text(status) == "Stopped."
 
 
 @pytest.mark.parametrize(

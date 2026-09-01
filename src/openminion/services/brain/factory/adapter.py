@@ -34,6 +34,8 @@ def create_tool_api(
     runtime_registry: Any | None = None,
     agent_name: str | None = None,
     skill_api: Any | None = None,
+    secret_service: Any | None = None,
+    policy_ctl: Any | None = None,
     a2a_delegate_api: Any | None = None,
     agent_query: Any | None = None,
     agent_profile: Any | None = None,
@@ -48,6 +50,8 @@ def create_tool_api(
         reactions_enabled=getattr(runtime_config, "reactions_enabled", True),
         agent_id=str(agent_name or "").strip() or None,
         skill_api=skill_api,
+        secret_service=secret_service,
+        policy_ctl=policy_ctl,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=agent_query,
         agent_profile=agent_profile,
@@ -126,7 +130,7 @@ def create_policy_api(
     action_policy_config: ActionPolicyConfig | None = None,
 ) -> Any:
     if policy_service is not None and mode != "local":
-        from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
+        from openminion.modules.brain.adapters.policy import PolicyCtlBrainAdapter
 
         return PolicyCtlBrainAdapter(
             policy_service,

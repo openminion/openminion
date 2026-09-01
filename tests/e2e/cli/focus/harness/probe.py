@@ -30,7 +30,8 @@ _COMPACT_INLINE_APPROVAL_RE = re.compile(
 )
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _APPROVAL_PROMPT_PATTERN = (
-    r"Policy confirmation required|Reply exactly yes to (?:allow once|confirm)"
+    r"Policy confirmation required|High-risk action requires confirmation|"
+    r"Reply exactly yes to (?:allow once|confirm)"
 )
 _SIDECAR_CONSENT_RE = re.compile(
     r"(?:Allow auto-start for PinchTab|Allow [a-z_ -]+ for sidecar '[^']+')\? "
@@ -670,15 +671,15 @@ class FocusProbe:
         event_offset = len(session.visible_transcript)
         approvals = 0
         continuations = 0
-        continuation_probe: str | None = None
+        completion_probe: str | None = None
         deadline = time.monotonic() + scenario.timeout
         while time.monotonic() < deadline:
             time.sleep(0.1)
             transcript = session.visible_transcript
             screen_text = session.screen_text
             done_match = (
-                latest_done_after_submission(transcript, continuation_probe)
-                if continuation_probe is not None
+                latest_done_after_submission(transcript, completion_probe)
+                if completion_probe is not None
                 else latest_done_event(transcript, offset=event_offset)
             )
             failure_match = latest_terminal_failure(transcript, offset=event_offset)
@@ -701,13 +702,22 @@ class FocusProbe:
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
                 self._submit_inline_approval(session, scenario.approval_reply)
+                approval_probe = composer_echo_probe(scenario.approval_reply)
+                completion_probe = (
+                    approval_probe
+                    if screen_after_submission(session.screen_text, approval_probe)
+                    is not None
+                    else None
+                )
                 event_offset = len(session.visible_transcript)
                 continue
             if approval_needs_reply or approval_visible:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1
                 assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
-                self._submit_composer_line(session, scenario.approval_reply)
+                completion_probe = self._submit_composer_line(
+                    session, scenario.approval_reply
+                )
                 event_offset = len(session.visible_transcript)
                 continue
             if failure_match is not None:
@@ -723,7 +733,7 @@ class FocusProbe:
                     and continuations < scenario.max_auto_continuations
                 ):
                     continuations += 1
-                    continuation_probe = self._submit_composer_line(
+                    completion_probe = self._submit_composer_line(
                         session,
                         "continue",
                     )

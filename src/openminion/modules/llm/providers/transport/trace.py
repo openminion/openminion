@@ -12,6 +12,7 @@ from openminion.modules.telemetry.trace.structured import (
 from openminion.modules.telemetry.trace.layout import (
     build_trace_file_path,
     resolve_trace_root,
+    write_protected_trace_file,
 )
 
 
@@ -118,8 +119,9 @@ def trace_http_json_request(
         "trace": trace,
     }
     try:
-        trace_path.write_text(
-            json.dumps(payload_out, indent=2, sort_keys=True), encoding="utf-8"
+        write_protected_trace_file(
+            trace_path,
+            json.dumps(payload_out, indent=2, sort_keys=True),
         )
     except Exception:
         return
@@ -163,8 +165,9 @@ def trace_http_json_response(
         "trace": trace,
     }
     try:
-        trace_path.write_text(
-            json.dumps(payload_out, indent=2, sort_keys=True), encoding="utf-8"
+        write_protected_trace_file(
+            trace_path,
+            json.dumps(payload_out, indent=2, sort_keys=True),
         )
     except Exception:
         return

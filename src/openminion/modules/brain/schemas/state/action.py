@@ -79,3 +79,4 @@ class PolicyDecision(BaseModel):
     patched_command: Command | None = None
     require_clarification: bool = False
     clarification_question: str | None = None
+    approval_id: str | None = None

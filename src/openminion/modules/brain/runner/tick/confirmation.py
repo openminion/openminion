@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ...constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_DONE,
@@ -35,10 +37,17 @@ from .context import (
     TickRunContext,
     _apply_pending_confirmation_metadata_for_replay,
     _clear_pending_confirmation_metadata,
+    _deny_pending_confirmation,
     _grant_once_from_confirmation,
     _parse_confirmation_response,
     _runner_delegate,
 )
+
+
+def _session_grant_requested(text: str, state: Any) -> bool:
+    return not bool(state.pending_policy_approval_id) and (
+        is_session_confirmation_response(text)
+    )
 
 
 def _is_adaptive_budget_extension(command) -> bool:
@@ -187,7 +196,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
     ):
         confirmation_text = str(tick_ctx.user_input or "")
         confirmation_reply = _parse_confirmation_response(runner, confirmation_text)
-        session_grant = is_session_confirmation_response(confirmation_text)
+        session_grant = _session_grant_requested(confirmation_text, state)
         if _is_adaptive_budget_extension(state.pending_confirmation_command):
             budget_result = _process_adaptive_budget_extension_reply(
                 runner=runner,
@@ -278,7 +287,6 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             _clear_pending_confirmation_metadata(state)
             tick_ctx.decision = None
             from ...schemas import ActDecision
-
             replay_reason_code = "confirmation_replay"
             if is_explicit_direct_tool_reason(prior_reason_code):
                 replay_reason_code = prior_reason_code
@@ -323,6 +331,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 denied_total_steps = len(state.plan.steps)
             elif state.pending_confirmation_command is not None:
                 denied_command = state.pending_confirmation_command
+            _deny_pending_confirmation(runner, state=state)
             state.pending_confirmation_command = None
             _clear_pending_confirmation_metadata(state)
             tick_ctx.consume_user_input_for_command = True

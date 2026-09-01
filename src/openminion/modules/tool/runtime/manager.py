@@ -100,6 +100,17 @@ class ToolRegistryManager:
         self._manifests: list[ToolBindingManifest] = []
         self._compiled: _CompiledBindings | None = None
         self._runtime_schema_by_tool_name: dict[str, dict[str, Any]] = {}
+        self._expected_missing_model_ids: set[str] = set()
+        self._expected_missing_runtime_ids: set[str] = set()
+
+    def set_expected_contract_omissions(
+        self,
+        *,
+        model_ids: set[str],
+        runtime_ids: set[str],
+    ) -> None:
+        self._expected_missing_model_ids = set(model_ids)
+        self._expected_missing_runtime_ids = set(runtime_ids)
 
     def register_manifest(self, manifest: ToolBindingManifest) -> None:
         validate_manifest(manifest)
@@ -476,7 +487,12 @@ class ToolRegistryManager:
         assert self._compiled is not None
         return self._compiled
 
-    def contract_drift_report(self) -> ToolContractDriftReport:
+    def contract_drift_report(
+        self,
+        *,
+        expected_missing_model_ids: set[str] | None = None,
+        expected_missing_runtime_ids: set[str] | None = None,
+    ) -> ToolContractDriftReport:
         """Compare compiled manifest IDs against canonical contract constants."""
         compiled = self._ensure_compiled()
         compiled_model_ids = set(compiled.model_to_runtime_binding_id)
@@ -486,7 +502,15 @@ class ToolRegistryManager:
 
         return ToolContractDriftReport(
             model_tool_ids_missing_from_manifests=tuple(
-                sorted(ALL_MODEL_TOOL_IDS_SET - compiled_model_ids)
+                sorted(
+                    ALL_MODEL_TOOL_IDS_SET
+                    - compiled_model_ids
+                    - (
+                        expected_missing_model_ids
+                        if expected_missing_model_ids is not None
+                        else self._expected_missing_model_ids
+                    )
+                )
             ),
             model_tool_ids_missing_from_contracts=tuple(
                 sorted(
@@ -496,7 +520,15 @@ class ToolRegistryManager:
                 )
             ),
             runtime_binding_ids_missing_from_manifests=tuple(
-                sorted(ALL_RUNTIME_BINDING_IDS_SET - compiled_runtime_binding_ids)
+                sorted(
+                    ALL_RUNTIME_BINDING_IDS_SET
+                    - compiled_runtime_binding_ids
+                    - (
+                        expected_missing_runtime_ids
+                        if expected_missing_runtime_ids is not None
+                        else self._expected_missing_runtime_ids
+                    )
+                )
             ),
             runtime_binding_ids_missing_from_contracts=tuple(
                 sorted(

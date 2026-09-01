@@ -1,7 +1,7 @@
 from typing import Any, ClassVar, Protocol
 
 
-POLICY_INTERFACE_VERSION = "v1"
+POLICY_INTERFACE_VERSION = "v2"
 _REQUIRED_METHODS = (
     "close",
     "mode",
@@ -10,6 +10,8 @@ _REQUIRED_METHODS = (
     "check",
     "create_grant",
     "create_grant_from_confirmation",
+    "resolve_confirmation",
+    "resolve_matching_active_grant_for_use",
     "revoke_grant",
     "list_grants",
     "cleanup_expired",
@@ -73,6 +75,17 @@ class PolicyCtlInterface(Protocol):
         scope_overrides: dict[str, Any] | None = None,
         max_uses: int | None = None,
     ) -> str: ...
+
+    def resolve_confirmation(self, approval_id: str, action: str) -> str | None: ...
+
+    def resolve_matching_active_grant_for_use(
+        self,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        invocation_hash: str,
+    ) -> Any | None: ...
 
     def revoke_grant(self, grant_id: str) -> bool: ...
 

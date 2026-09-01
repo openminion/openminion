@@ -171,6 +171,23 @@ def test_controller_view_model_terminal_detection() -> None:
     assert view.show_spinner is False
 
 
+def test_controller_stopped_view_model_is_terminal_without_error_copy() -> None:
+    controller = PhaseStatusController()
+    controller.start_turn()
+    view = controller.update(
+        PhaseStatus(
+            trace_id="user-denied",
+            status_key="stopped",
+            label="Stopped.",
+        )
+    )
+
+    assert view is not None
+    assert view.primary_text == "Stopped."
+    assert view.terminal is True
+    assert view.show_spinner is False
+
+
 def test_controller_view_model_waiting_for_user_still_shows_spinner() -> None:
     controller = PhaseStatusController()
     controller.start_turn()
@@ -340,7 +357,7 @@ def test_view_model_matches_shared_formatter_across_all_shells(
     expected_primary = format_public_status_text(status)
     assert view.primary_text == expected_primary
     # Terminal status keys must set terminal=True
-    if status.status_key in {"completed", "error"} or status.terminal:
+    if status.status_key in {"completed", "stopped", "error"} or status.terminal:
         assert view.terminal is True
     else:
         assert view.terminal is False
