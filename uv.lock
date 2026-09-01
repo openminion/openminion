@@ -2864,6 +2864,9 @@ dev = [
     { name = "faker" },
     { name = "graphfakos" },
     { name = "mypy" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
     { name = "playwright" },
     { name = "pre-commit" },
     { name = "pyte" },
@@ -2874,6 +2877,7 @@ dev = [
     { name = "ruff" },
     { name = "twine" },
     { name = "types-pyyaml" },
+    { name = "web3" },
 ]
 fetch-scrapling = [
     { name = "scrapling" },
@@ -2939,8 +2943,11 @@ requires-dist = [
     { name = "kubernetes", marker = "extra == 'remote-kubernetes'", specifier = ">=36,<37" },
     { name = "llmlingua", marker = "extra == 'compress'", specifier = ">=0.2,<1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<2" },
+    { name = "opentelemetry-api", marker = "extra == 'dev'", specifier = ">=1.20,<2" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.20,<2" },
+    { name = "opentelemetry-exporter-otlp", marker = "extra == 'dev'", specifier = ">=1.20,<2" },
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'otel'", specifier = ">=1.20,<2" },
+    { name = "opentelemetry-sdk", marker = "extra == 'dev'", specifier = ">=1.20,<2" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20,<2" },
     { name = "platformdirs" },
     { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.45,<2" },
@@ -2964,7 +2971,7 @@ requires-dist = [
     { name = "scrapling", marker = "extra == 'fetch-scrapling'", specifier = ">=0.2.0" },
     { name = "scrapling", marker = "extra == 'fetch-scrapling-fetchers'", specifier = ">=0.2.0" },
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27,<4" },
-    { name = "sophiagraph", specifier = ">=0.0.7" },
+    { name = "sophiagraph", specifier = ">=0.0.10" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0,<3" },
     { name = "textual", specifier = ">=1,<9" },
     { name = "tqdm", marker = "extra == 'progress'", specifier = ">=4.65" },
@@ -2973,6 +2980,7 @@ requires-dist = [
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7" },
     { name = "unicode-animatio", marker = "extra == 'animations'", specifier = ">=0.0.2" },
     { name = "web3", marker = "extra == 'blockchain'", specifier = ">=7,<8" },
+    { name = "web3", marker = "extra == 'dev'", specifier = ">=7,<8" },
 ]
 provides-extras = ["acp", "animations", "remote", "remote-winrm", "remote-kubernetes", "remote-aws", "blockchain", "dev", "viewer", "postgres", "otel", "metrics", "fetch-scrapling", "fetch-scrapling-fetchers", "progress", "compress", "slack"]
 
@@ -4382,14 +4390,14 @@ wheels = [
 
 [[package]]
 name = "sophiagraph"
-version = "0.0.8"
+version = "0.0.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "graphfakos" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/eb/3f566879e08d95d715c203b7f586d09143a11eea33bb663c3afaaa451493/sophiagraph-0.0.8.tar.gz", hash = "sha256:abd58ab5cd5b76726c1586beb289026bdc00886e575e609c799d5e4025621848", size = 556472, upload-time = "2026-08-12T20:39:04.812Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f9/0b/86b86b097bd09e068217aa8e3e0896df5214e984180a0d59d08e9c3238ed/sophiagraph-0.0.10.tar.gz", hash = "sha256:7e20561581f093d3f93c33d9f338e216d8f27192aa58c9dbfad8b0a73243f67d", size = 562329, upload-time = "2026-09-01T21:02:03.128Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/3f/15a4aa2d52d376d9eef16df379e5867eff2c3956c01fcaff5771a7b24f5e/sophiagraph-0.0.8-py3-none-any.whl", hash = "sha256:c8d4352aa4629bb419b62c35d0ec5b1218f0c31899080dd134c7778e5cafb15a", size = 466796, upload-time = "2026-08-12T20:39:02.935Z" },
+    { url = "https://files.pythonhosted.org/packages/12/e8/0512acadf4bd1ea91c44bd36c1b6230840740898d655084e345c09de40ad/sophiagraph-0.0.10-py3-none-any.whl", hash = "sha256:6f0ce15f926a993e13a6faebeb07ae71432ced0e4a37b8070050e8cf7958b80c", size = 468496, upload-time = "2026-09-01T21:02:01.122Z" },
 ]
 
 [[package]]
