@@ -28,6 +28,8 @@ _SUPPORTED_RUN_TRIGGERS = frozenset(
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from openminion.modules.session.capture import CaptureIdentity
+
     from .coordinator import BrainRunner
     from ..schemas import StepOutput
 
@@ -85,6 +87,15 @@ def configure_runtime_controls(
     runner._last_meta_application = None
 
 
+def _normalize_run_trigger(trigger: str) -> str:
+    trigger_mode = str(trigger or RUN_TRIGGER_USER_INPUT).strip()
+    return (
+        trigger_mode
+        if trigger_mode in _SUPPORTED_RUN_TRIGGERS
+        else RUN_TRIGGER_USER_INPUT
+    )
+
+
 def run_until_idle(
     runner: "BrainRunner",
     *,
@@ -94,10 +105,9 @@ def run_until_idle(
     forced_tools: list[str] | None,
     capability_category: str | None,
     trigger: str = RUN_TRIGGER_USER_INPUT,
+    capture_identity: "CaptureIdentity | None" = None,
 ) -> "StepOutput":
-    trigger_mode = str(trigger or RUN_TRIGGER_USER_INPUT).strip()
-    if trigger_mode not in _SUPPORTED_RUN_TRIGGERS:
-        trigger_mode = RUN_TRIGGER_USER_INPUT
+    trigger_mode = _normalize_run_trigger(trigger)
     if trigger_mode == RUN_TRIGGER_PLAN_CONTINUATION:
         user_input = None
         _emit_run_trigger_started(
@@ -127,6 +137,7 @@ def run_until_idle(
         trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
+        capture_identity=capture_identity,
     )
     iterations = 1
 
@@ -202,7 +213,7 @@ def run_until_idle(
                 )
             break
         previous_status = last.status
-        last = runner.step(session_id=session_id)
+        last = _continue_run(runner, session_id, capture_identity)
         iterations += 1
         if (
             previous_status == BRAIN_STATE_JOB_PENDING
@@ -222,6 +233,14 @@ def run_until_idle(
                 )
             break
     return last
+
+
+def _continue_run(
+    runner: "BrainRunner",
+    session_id: str,
+    capture_identity: "CaptureIdentity | None",
+) -> "StepOutput":
+    return runner.step(session_id=session_id, capture_identity=capture_identity)
 
 
 def _emit_run_trigger_started(

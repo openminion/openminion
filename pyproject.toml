@@ -32,7 +32,7 @@ dependencies = [
   "platformdirs",
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.
-  "sophiagraph>=0.0.7",
+  "sophiagraph>=0.0.10",
   "psutil>=5",
   "pydantic>=2",
   "pyfiglet>=1.0,<2",
@@ -74,9 +74,18 @@ remote-kubernetes = [
 remote-aws = [
   "boto3>=1.43,<2",
 ]
+blockchain = [
+  "web3>=7,<8",
+]
 dev = [
   # Exercise the optional ACP adapter in the standard development/CI suite.
   "agent-client-protocol>=0.12,<0.13",
+  # The standard test suite covers the optional blockchain tool family.
+  "web3>=7,<8",
+  # The standard telemetry suite exercises all OTLP signal exporters.
+  "opentelemetry-api>=1.20,<2",
+  "opentelemetry-sdk>=1.20,<2",
+  "opentelemetry-exporter-otlp>=1.20,<2",
   # Local release checks build artifacts and validate their rendered metadata.
   "build>=1,<2",
   # Package-integration tests exercise optional sibling package surfaces while

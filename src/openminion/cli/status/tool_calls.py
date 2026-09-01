@@ -108,10 +108,17 @@ def format_tool_call_line(
     return f"{line} {duration_suffix}" if duration_suffix else line
 
 
-def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> str:
+def format_tool_args_preview(
+    tool_name: str,
+    args: Mapping[str, Any] | None,
+    *,
+    compact: bool = True,
+) -> str:
     """Render an args preview per spec §7.2.
 
     Empty / missing args -> `""` (caller wraps with parentheses).
+    Security-sensitive callers may set ``compact=False`` when complete values
+    are required.
     """
     args_dict = dict(args or {})
     if not args_dict:
@@ -126,7 +133,10 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
             or _join_args_string(args_dict.get("args"))
         )
         if command:
-            return _quote(_truncate_middle(command, _COMMAND_PREVIEW_MAX))
+            rendered = (
+                _truncate_middle(command, _COMMAND_PREVIEW_MAX) if compact else command
+            )
+            return _quote(rendered)
 
     if name in {"web.search", "code.grep", "code.symbol_find"}:
         query = (
@@ -135,7 +145,8 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
             or str(args_dict.get("pattern", "") or "")
         )
         if query:
-            return _quote(_truncate_middle(query, _QUERY_PREVIEW_MAX))
+            rendered = _truncate_middle(query, _QUERY_PREVIEW_MAX) if compact else query
+            return _quote(rendered)
 
     path = (
         str(args_dict.get("path", "") or "")
@@ -145,15 +156,15 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
     if path and (
         name.startswith("file.") or name.startswith("code.") or name == "web.fetch"
     ):
-        return _quote(_short_path(path))
+        return _quote(_short_path(path) if compact else path)
 
     try:
-        compact = json.dumps(
+        serialized = json.dumps(
             args_dict, sort_keys=True, default=str, separators=(",", ":")
         )
     except (TypeError, ValueError):
-        compact = str(args_dict)
-    return _truncate_middle(compact, _COMMAND_PREVIEW_MAX)
+        serialized = str(args_dict)
+    return _truncate_middle(serialized, _COMMAND_PREVIEW_MAX) if compact else serialized
 
 
 def format_tool_provenance_marker(

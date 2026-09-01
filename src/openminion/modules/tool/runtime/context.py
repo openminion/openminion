@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, cast
 
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
@@ -14,14 +14,14 @@ from openminion.base.logging import get_logger
 
 from ..contracts.schemas import Artifact, LogEntry, Scope
 from ..errors import ToolRuntimeError
-from ..plugin_api import PolicyAdapter, SafetyAdapter
+from ..plugin_api import PolicyAdapter, PolicyAuthorization, SafetyAdapter
 from .audit import (
     audit_writes_jsonl,
     audit_writes_storage,
     resolve_tool_runtime_audit_mode,
 )
 from .delegation import A2ADelegateApi
-from .memory import MemoryToolRuntimeService
+from .memory import MemoryAccessContext, MemoryToolRuntimeService
 from .policy import Policy
 from .repositories import (
     RuntimeRepositories,
@@ -165,6 +165,12 @@ def resolve_audit_repository(ctx: "RuntimeContext") -> Any | None:
 def resolve_memory_service(ctx: "RuntimeContext") -> MemoryToolRuntimeService | None:
     """Resolve the approved typed memory-service seam for tool handlers."""
     service = getattr(ctx, "memory_service", None)
+    bind_access = getattr(service, "for_access_context", None)
+    if callable(bind_access):
+        return cast(
+            MemoryToolRuntimeService,
+            bind_access(ctx.resolve_memory_access_context()),
+        )
     if isinstance(service, MemoryToolRuntimeService):
         return service
     return None
@@ -225,7 +231,9 @@ class RuntimeContext:
     artifacts: list[Artifact] = field(default_factory=list)
     safety_adapter: Optional[SafetyAdapter] = None
     policy_adapter: Optional[PolicyAdapter] = None
+    policy_authorization: PolicyAuthorization | None = None
     skill_api: Optional[Any] = None
+    secret_service: Any | None = None
     telemetryctl: Optional[Any] = None
     telemetry_session_id: Optional[str] = None
     telemetry_turn_id: Optional[str] = None
@@ -239,6 +247,23 @@ class RuntimeContext:
     permission_mode: str = "ask"
     agent_query: Callable[[], list[dict[str, Any]]] | None = None
     agent_profile: Optional[Any] = None
+    session_id: str | None = None
+    trace_id: str = ""
+    agent_id: str | None = None
+    tool_name: str = ""
+    tool_call_id: str = ""
+    capture_id: str = ""
+
+    def resolve_memory_access_context(self) -> MemoryAccessContext:
+        metadata = _context_metadata_from_policy(self.policy)
+        return MemoryAccessContext(
+            agent_id=str(self.agent_id or metadata.get("agent_id") or "").strip(),
+            session_id=str(self.session_id or metadata.get("session_id") or "").strip(),
+            capture_id=str(self.capture_id or metadata.get("capture_id") or "").strip(),
+            tool_call_id=str(
+                self.tool_call_id or metadata.get("tool_call_id") or ""
+            ).strip(),
+        )
 
     def add_log(
         self, level: str, msg: str, meta: Optional[Dict[str, Any]] = None
@@ -369,7 +394,7 @@ class RuntimeContext:
             ingest_meta["trace_id"] = trace_id
         return ingest_meta
 
-    def write_audit_event(self, event: Dict[str, Any]) -> None:
+    def write_audit_event(self, event: Dict[str, Any]) -> bool:
         payload = dict(event or {})
         orchestration = _orchestration_metadata_from_policy(self.policy)
         for key, value in orchestration.items():
@@ -378,18 +403,24 @@ class RuntimeContext:
         payload["ts"] = str(payload.get("ts") or iso_now())
         mode = resolve_tool_runtime_audit_mode(policy=self.policy)
 
+        recorded = False
         if audit_writes_jsonl(mode):
-            line = json.dumps(payload, ensure_ascii=True)
-            audit_path = self.run_root / "audit.jsonl"
-            with audit_path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            try:
+                line = json.dumps(payload, ensure_ascii=True)
+                audit_path = self.run_root / "audit.jsonl"
+                with audit_path.open("a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+                recorded = True
+            except OSError:
+                self.add_log("warning", "Tool audit JSONL write failed")
 
         if not audit_writes_storage(mode):
-            return
+            return recorded
         audit_repo = resolve_audit_repository(self)
         if audit_repo is None:
-            return
+            return recorded
         try:
             audit_repo.append_event(payload, run_root=self.run_root)
+            return True
         except Exception:
-            return
+            return recorded

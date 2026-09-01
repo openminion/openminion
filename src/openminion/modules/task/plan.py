@@ -105,6 +105,7 @@ class TaskPlan(BaseModel):
     workflow_id: str | None = None
     workflow_version_hash: str | None = None
     root_goal_id: str | None = None
+    criterion_ids: list[str] = Field(default_factory=list)
     status: TaskPlanStatus = "active"
     steps: list[TaskPlanStep] = Field(min_length=1)
     continue_plan_autonomously: bool = False
@@ -196,6 +197,10 @@ class TaskPlanStepBlocked(BaseModel):
 
 class TaskPlanRevision(BaseModel):
     plan_id: str = Field(min_length=1)
+    revision_id: str | None = None
+    predecessor_revision_id: str | None = None
+    criterion_ids: list[str] = Field(default_factory=list)
+    verifier_refs: list[str] = Field(default_factory=list)
     reason: str = ""
     revised_steps: list[TaskPlanStep] = Field(min_length=1)
     objective: str | None = None
@@ -213,7 +218,14 @@ class TaskPlanRevision(BaseModel):
     def _strip_reason(cls, value: Any) -> str:
         return _trimmed_non_empty(value)
 
-    @field_validator("objective", "workflow_id", "workflow_version_hash", mode="before")
+    @field_validator(
+        "revision_id",
+        "predecessor_revision_id",
+        "objective",
+        "workflow_id",
+        "workflow_version_hash",
+        mode="before",
+    )
     @classmethod
     def _optional_text(cls, value: Any) -> str | None:
         return _trimmed_non_empty(value) or None
@@ -224,6 +236,7 @@ class TaskPlanRevision(BaseModel):
         fallback_objective: str,
         fallback_workflow_id: str | None = None,
         fallback_workflow_version_hash: str | None = None,
+        fallback_criterion_ids: list[str] | None = None,
     ) -> TaskPlan:
         return TaskPlan(
             plan_id=self.plan_id,
@@ -233,6 +246,7 @@ class TaskPlanRevision(BaseModel):
                 self.workflow_version_hash or fallback_workflow_version_hash
             ),
             root_goal_id=None,
+            criterion_ids=self.criterion_ids or list(fallback_criterion_ids or []),
             status="active",
             steps=list(self.revised_steps),
             continue_plan_autonomously=self.continue_plan_autonomously,

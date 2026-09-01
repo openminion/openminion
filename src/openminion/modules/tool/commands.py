@@ -1,4 +1,17 @@
 import shlex
+from collections.abc import Sequence
+
+
+_DISCLOSURE_SAFE_COMMANDS = (
+    ("docker", "info"),
+    ("docker", "version"),
+    ("docker", "context", "show"),
+)
+
+
+def is_bounded_read_only_command(argv: Sequence[str]) -> bool:
+    normalized = tuple(str(arg).strip().lower() for arg in argv)
+    return normalized in _DISCLOSURE_SAFE_COMMANDS
 
 
 def normalize_cd_prefixed_command(

@@ -11,6 +11,8 @@ from openminion.tools.skill.plugin import (
     _h_skill_list,
     _h_skill_remove,
 )
+from openminion.tools.skill.registrar import REGISTRAR
+from openminion.tools.skill.schemas import SkillGetArgs
 
 
 @dataclass
@@ -69,6 +71,57 @@ def test_skill_get_not_found_error() -> None:
     result = _h_skill_get({"skill_id": "missing"}, ctx)
     assert result["ok"] is False
     assert result["error"]["code"] == "NOT_FOUND"
+
+
+def test_skill_get_contract_exposes_progressive_resource_retrieval() -> None:
+    manifest = REGISTRAR.get_manifest(SimpleNamespace())
+    model_tool = next(
+        item for item in manifest.model_tools if item.model_tool_id == "skill.get"
+    )
+    schema = SkillGetArgs.model_json_schema()["properties"]
+
+    assert "resource_path" in model_tool.description
+    assert "version_hash" in model_tool.description
+    assert "references/guide.md" in schema["resource_path"]["description"]
+    assert "reuse it" in schema["version_hash"]["description"]
+
+
+def test_skill_get_reads_requested_resource_with_pinned_version() -> None:
+    calls: list[dict[str, object]] = []
+
+    def _read_skill_resource(**kwargs):
+        calls.append(kwargs)
+        return {
+            "skill_id": kwargs["skill_id"],
+            "version_hash": kwargs["version_hash"],
+            "resource_path": kwargs["resource_path"],
+            "content": "struct ContentView {}",
+            "truncated": False,
+        }
+
+    ctx = SimpleNamespace(
+        skill_api=SimpleNamespace(read_skill_resource=_read_skill_resource)
+    )
+    result = _h_skill_get(
+        {
+            "skill_id": "swiftui-performance-audit",
+            "version_hash": "v1",
+            "resource_path": "references/ContentView.swift",
+            "max_chars": 2000,
+        },
+        ctx,
+    )
+
+    assert result["ok"] is True
+    assert result["content"] == "struct ContentView {}"
+    assert calls == [
+        {
+            "skill_id": "swiftui-performance-audit",
+            "version_hash": "v1",
+            "resource_path": "references/ContentView.swift",
+            "max_chars": 2000,
+        }
+    ]
 
 
 def test_skill_remove_success_deleted_count() -> None:

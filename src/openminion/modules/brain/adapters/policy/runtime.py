@@ -1,7 +1,14 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
+from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
+from openminion.modules.policy.adapters.brain import (
+    PolicyCtlBrainAdapter as _PolicyCtlBrainAdapter,
+)
+
+
+class PolicyCtlBrainAdapter(_PolicyCtlBrainAdapter):  # type: ignore[misc]
+    contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
 
 def create_policy_runtime_adapter(
@@ -18,9 +25,12 @@ def create_policy_runtime_adapter(
     resolved_path = Path(db_path)
     if resolved_path.suffix == "":
         resolved_path = resolved_path / "policy.db"
-    return PolicyCtlBrainAdapter.with_sqlite(
-        resolved_path,
-        action_policy_config=action_policy_config,
+    return cast(
+        PolicyCtlBrainAdapter,
+        PolicyCtlBrainAdapter.with_sqlite(
+            resolved_path,
+            action_policy_config=action_policy_config,
+        ),
     )
 
 

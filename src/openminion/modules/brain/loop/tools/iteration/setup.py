@@ -11,12 +11,11 @@ from openminion.modules.brain.schemas import DelegationContext
 from openminion.modules.llm.schemas import Message, ToolSpec
 
 from ..budget_control import (
-    _adaptive_budget_config,
-    _effective_cap,
     _emit_budget_event,
     _emit_high_watermark_if_needed,
     _general_profile_name,
 )
+from ..budget import _effective_cap
 from ..contracts import (
     AdaptiveToolLoopContext,
     AdaptiveToolLoopProfile,
@@ -352,7 +351,7 @@ def prepare_loop_frame(
         model=model,
         turn_scope_id=turn_scope_id,
     )
-    if _adaptive_budget_config(profile) is not None:
+    if profile.adaptive_budget_config is not None:
         _emit_budget_event(
             loop_ctx,
             "budget.allocated",

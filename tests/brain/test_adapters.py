@@ -3708,7 +3708,10 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
             enabled_adapter = ToolAdapter(
                 workspace_root=Path(tmp),
                 agent_profile=SimpleNamespace(
-                    command_policy={"allow": ["docker"], "allow_host": True},
+                    command_policy={
+                        "allow": ["docker", "open"],
+                        "allow_host": True,
+                    },
                 ),
             )
 
@@ -3716,6 +3719,18 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertFalse(default_adapter.policy.exec_host_enabled())
         self.assertIn("docker", enabled_adapter.policy.raw["commands"]["allow"])
         self.assertIn("docker", enabled_adapter.policy.exec_allowlist())
+        self.assertIn("open", enabled_adapter.policy.raw["commands"]["allow"])
+        self.assertIn("open", enabled_adapter.policy.exec_allowlist())
+        self.assertEqual(
+            enabled_adapter.policy.ensure_command_allowed(
+                ["docker", "desktop", "start"]
+            ),
+            "docker",
+        )
+        self.assertEqual(
+            enabled_adapter.policy.ensure_command_allowed(["open", "-a", "Docker"]),
+            "open",
+        )
         self.assertTrue(enabled_adapter.policy.exec_host_enabled())
 
     def test_os_adapter_rejects_incompatible_policy_objects(self) -> None:

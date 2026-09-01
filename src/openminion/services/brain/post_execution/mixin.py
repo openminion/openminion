@@ -18,6 +18,11 @@ from openminion.modules.brain.diagnostics.status import (
     StatusDetailCode,
     normalize_phase_status,
 )
+from openminion.modules.session.capture import (
+    capture_is_excluded,
+    capture_run_kwargs,
+    terminal_capture_is_enabled,
+)
 from openminion.services.security.policy import (
     SecurityPolicyContext,
     ToolBudgetState,
@@ -164,6 +169,10 @@ class BrainBridgeTurnMixin:
             runner=runner,
             session_id=session_id,
             user_input=message.body,
+        )
+        runner._capture_excluded_for_turn = capture_is_excluded(message.metadata or {})
+        runner._terminal_capture_enabled_for_turn = terminal_capture_is_enabled(
+            message.metadata or {}
         )
         self._inject_gateway_system_context(
             runner=runner,
@@ -352,6 +361,7 @@ class BrainBridgeTurnMixin:
     ) -> Any:
         # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
+        capture_kwargs = capture_run_kwargs(metadata_source)
         self._bind_inbound_permission_metadata(
             runner=runner,
             metadata_source=metadata_source,
@@ -391,6 +401,7 @@ class BrainBridgeTurnMixin:
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
                 initial_trigger="idle_tick",
+                **capture_kwargs,
             )
         options = getattr(runner, "options", None)
         ctgp_enabled = bool(getattr(options, "autonomous_continuation_enabled", True))
@@ -424,6 +435,7 @@ class BrainBridgeTurnMixin:
                 ),
                 progress_callback=progress_callback,
                 approval_callback=approval_callback,
+                **capture_kwargs,
             )
         return runner.run(
             session_id=session_id,
@@ -433,6 +445,7 @@ class BrainBridgeTurnMixin:
             capability_category=capability_category,
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            **capture_kwargs,
         )
 
     async def run_turn(

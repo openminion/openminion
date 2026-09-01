@@ -13,6 +13,11 @@ from openminion.modules.memory.models import (
     MemoryCandidate,
     MemoryRecord,
 )
+from openminion.modules.memory.runtime.capture_bundle import (
+    CaptureBundleInput,
+    CaptureBundleIntegrityError,
+    CaptureCandidateInput,
+)
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
@@ -142,6 +147,49 @@ def test_candidate_and_promotion_conformance_round_trip(store) -> None:
     assert [item.candidate_id for item in listed] == ["c1"]
     promoted = store.promote_candidate("c1", "agent:main")
     assert promoted.scope == "agent:main"
+
+
+def test_capture_bundle_conformance_round_trip(store) -> None:
+    bundle = CaptureBundleInput(
+        capture_id="capture-conformance",
+        root_turn_id="turn-conformance",
+        session_id="session-conformance",
+        agent_id="agent-conformance",
+        candidates=(
+            CaptureCandidateInput(
+                kind="fact",
+                normalized_key="fact:conformance",
+                title="Conformance fact",
+                content="Capture bundles are atomic.",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    first = store.apply_capture_bundle(bundle)
+    replay = store.apply_capture_bundle(bundle)
+
+    assert replay == first
+    assert first.disposition == "succeeded"
+    assert len(first.output_ids) == 1
+    assert store.candidate_get(first.output_ids[0]) is not None
+
+    changed = CaptureBundleInput(
+        capture_id=bundle.capture_id,
+        root_turn_id=bundle.root_turn_id,
+        session_id=bundle.session_id,
+        agent_id=bundle.agent_id,
+        candidates=(
+            CaptureCandidateInput(
+                kind="fact",
+                normalized_key="fact:conformance",
+                title="Conformance fact",
+                content="Changed content conflicts.",
+            ),
+        ),
+    )
+    with pytest.raises(CaptureBundleIntegrityError):
+        store.apply_capture_bundle(changed)
 
 
 def test_invalidate_conformance_round_trip(store) -> None:

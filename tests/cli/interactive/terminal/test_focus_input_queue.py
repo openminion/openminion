@@ -10,6 +10,7 @@ from openminion.cli.presentation.models import MessageKind
 from openminion.cli.interactive.terminal import shell as terminal_shell
 from openminion.cli.interactive.terminal.shell.approval import (
     build_terminal_approval_callback,
+    format_terminal_approval_prompt,
 )
 from openminion.cli.interactive.terminal.transcript import (
     TerminalTranscript as _BaseTranscript,
@@ -790,6 +791,18 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert len(events) == 3
     assert events[1].startswith("prompt:Approval required: exec.run(")
     assert "docker desktop start" in events[1]
+
+
+def test_terminal_approval_prompt_preserves_full_exec_command() -> None:
+    command = (
+        "ssh -o BatchMode=yes -o ConnectTimeout=3 "
+        "-o StrictHostKeyChecking=yes localhost true"
+    )
+
+    prompt = format_terminal_approval_prompt("exec.run", {"command": command})
+
+    assert command in prompt
+    assert "…" not in prompt
 
 
 @pytest.mark.asyncio

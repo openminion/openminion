@@ -17,6 +17,14 @@ class SessionRecord:
     expires_at: str | None
     active_agent_id: str | None = None
 
+    @property
+    def owner_agent_id(self) -> str:
+        if self.active_agent_id:
+            return self.active_agent_id
+        from .keys import agent_id_from_session_key
+
+        return agent_id_from_session_key(self.session_key)
+
 
 @dataclass(frozen=True)
 class RoomParticipant:
@@ -52,6 +60,33 @@ class EventRecord:
     event_type: str
     payload: dict[str, Any]
     created_at: str
+    canonical_event_id: str | None = None
+
+
+@dataclass(frozen=True)
+class MemoryCaptureRetentionHoldRecord:
+    hold_id: str
+    session_id: str
+    reason: str
+    actor_id: str
+    created_at: str
+    released_at: str | None
+    schema_version: str
+
+
+@dataclass(frozen=True)
+class CaptureEventCommitRecord:
+    event: EventRecord
+    retention_hold: MemoryCaptureRetentionHoldRecord | None
+    replayed: bool
+
+
+class RuntimeSessionStoreIntegrityError(RuntimeError):
+    code = "SESSION_STORE_INTEGRITY_CONFLICT"
+
+    def __init__(self, message: str, *, canonical_event_id: str) -> None:
+        self.canonical_event_id = canonical_event_id
+        super().__init__(message)
 
 
 @dataclass(frozen=True)

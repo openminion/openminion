@@ -3,6 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from openminion.base.config import ToolFamilyRuntimeConfig, ToolRuntimeConfig
+from openminion.base.config.runtime.tools import BlockchainToolRuntimeConfig
+from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
     resolve_runtime_provider_chain,
@@ -82,6 +85,28 @@ def test_resolve_runtime_tool_config_defaults_when_metadata_missing() -> None:
         SimpleNamespace(policy=SimpleNamespace(raw={}))
     )
     assert config.configured_families() == {}
+
+
+def test_tool_adapter_threads_runtime_tool_config_into_context(tmp_path) -> None:
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_config=SimpleNamespace(
+            tools=ToolRuntimeConfig(
+                blockchain=BlockchainToolRuntimeConfig(
+                    enabled=True,
+                    rpc_url="http://127.0.0.1:8545",
+                    chain_id=31337,
+                )
+            )
+        ),
+        runtime_registry=ToolRegistry(),
+    )
+
+    config = resolve_runtime_tool_config(SimpleNamespace(policy=adapter.policy))
+
+    assert config.blockchain is not None
+    assert config.blockchain.enabled is True
+    assert config.blockchain.chain_id == 31337
 
 
 def test_resolve_runtime_provider_chain_prioritizes_runtime_config_over_hints() -> None:

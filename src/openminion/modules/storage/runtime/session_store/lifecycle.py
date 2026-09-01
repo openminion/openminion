@@ -1,20 +1,44 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from typing import Any
 from collections.abc import Callable, Mapping
 
+from openminion.modules.storage.constants import SESSION_RETENTION_HOLD_VERSION
+
 from .backend import RuntimeSessionStoreBackend
 from .constants import EVENT_PAGE_MAX
 from .keys import normalize_session_status, utc_now_iso
-from .models import EventRecord, SessionRecord
+from .models import (
+    CaptureEventCommitRecord,
+    EventRecord,
+    MemoryCaptureRetentionHoldRecord,
+    RuntimeSessionStoreIntegrityError,
+    SessionRecord,
+)
 from .rows import (
+    EVENT_COLUMNS,
+    RETENTION_HOLD_COLUMNS,
+    metadata_json,
     normalize_nullable_text,
     parse_iso_datetime,
     row_to_event,
+    row_to_retention_hold,
 )
 
 LIFECYCLE_UNSET = object()
+MEMORY_CAPTURE_HOLD_ACTOR = "memory_capture"
+MEMORY_CAPTURE_HOLD_SCHEMA_VERSION = SESSION_RETENTION_HOLD_VERSION
+
+
+def _memory_capture_hold_identity(
+    *, session_id: str, capture_id: str
+) -> tuple[str, str]:
+    reason = f"memory_capture:{capture_id}"
+    material = f"{session_id}:{reason}:{MEMORY_CAPTURE_HOLD_ACTOR}"
+    digest = hashlib.sha256(material.encode()).hexdigest()[:16]
+    return f"hold-{digest}", reason
 
 
 class RuntimeSessionStoreLifecycle:
@@ -47,40 +71,302 @@ class RuntimeSessionStoreLifecycle:
         session_id: str,
         event_type: str,
         payload: Mapping[str, Any] | None = None,
+        canonical_event_id: str | None = None,
         session_turn_fence_token: int | None = None,
     ) -> EventRecord:
-        from .rows import metadata_json
-
-        now = utc_now_iso()
         with self._backend.transaction():
             self._assert_fence_if_requested(
                 session_id=session_id,
                 session_turn_fence_token=session_turn_fence_token,
             )
-            event_id = self._backend.insert(
-                "events",
-                {
-                    "session_id": session_id,
-                    "event_type": event_type,
-                    "payload_json": metadata_json(payload),
-                    "created_at": now,
-                },
+            canonical_id = (canonical_event_id or "").strip()
+            if canonical_id:
+                event, _replayed = self._commit_canonical_event_locked(
+                    session_id=session_id,
+                    canonical_event_id=canonical_id,
+                    event_type=event_type,
+                    payload=payload,
+                )
+                return event
+            return self._insert_event_locked(
+                session_id=session_id,
+                event_type=event_type,
+                payload=payload,
             )
-            row = self._backend.query_one(
-                """
-                SELECT id, session_id, event_type, payload_json, created_at
-                FROM events
-                WHERE id = ?
-                """,
-                (event_id,),
+
+    def get_event_by_canonical_id(self, canonical_event_id: str) -> EventRecord | None:
+        canonical_id = canonical_event_id.strip()
+        if not canonical_id:
+            raise ValueError("canonical_event_id is required")
+        row = self._backend.query_one(
+            f"SELECT {EVENT_COLUMNS} FROM events WHERE canonical_event_id = ?",
+            (canonical_id,),
+        )
+        return None if row is None else row_to_event(row)
+
+    def commit_terminal_turn_outcome(
+        self,
+        *,
+        session_id: str,
+        canonical_event_id: str,
+        capture_id: str,
+        payload: Mapping[str, Any],
+        event_type: str = "turn.outcome",
+        capture_state: str = "pending",
+        session_turn_fence_token: int | None = None,
+    ) -> CaptureEventCommitRecord:
+        capture = capture_id.strip()
+        if not capture:
+            raise ValueError("capture_id is required")
+        self._assert_capture_id_matches_payload(
+            capture_id=capture,
+            payload=payload,
+            canonical_event_id=canonical_event_id,
+        )
+        with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
             )
-            if row is None:
-                raise RuntimeError(f"Failed to read inserted event: {event_id}")
+            event, replayed = self._commit_canonical_event_locked(
+                session_id=session_id,
+                canonical_event_id=canonical_event_id,
+                event_type=event_type,
+                payload=payload,
+            )
+            hold = None
+            if capture_state.strip() == "pending":
+                hold = self._ensure_capture_hold_locked(
+                    session_id=session_id,
+                    capture_id=capture,
+                    canonical_event_id=canonical_event_id,
+                )
+            return CaptureEventCommitRecord(
+                event=event,
+                retention_hold=hold,
+                replayed=replayed,
+            )
+
+    def commit_capture_result_and_release_hold(
+        self,
+        *,
+        session_id: str,
+        canonical_event_id: str,
+        capture_id: str,
+        payload: Mapping[str, Any],
+        event_type: str = "memory.capture.result",
+        session_turn_fence_token: int | None = None,
+    ) -> CaptureEventCommitRecord:
+        capture = capture_id.strip()
+        if not capture:
+            raise ValueError("capture_id is required")
+        self._assert_capture_id_matches_payload(
+            capture_id=capture,
+            payload=payload,
+            canonical_event_id=canonical_event_id,
+        )
+        with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
+            )
+            event, replayed = self._commit_canonical_event_locked(
+                session_id=session_id,
+                canonical_event_id=canonical_event_id,
+                event_type=event_type,
+                payload=payload,
+            )
+            hold_id, reason = _memory_capture_hold_identity(
+                session_id=session_id,
+                capture_id=capture,
+            )
+            hold = self._get_retention_hold(hold_id)
+            if hold is None:
+                raise RuntimeSessionStoreIntegrityError(
+                    f"capture {capture!r} has no retention hold",
+                    canonical_event_id=canonical_event_id,
+                )
+            self._assert_capture_hold_matches(
+                hold,
+                session_id=session_id,
+                reason=reason,
+                canonical_event_id=canonical_event_id,
+            )
+            if hold.released_at is not None and not replayed:
+                raise RuntimeSessionStoreIntegrityError(
+                    f"capture {capture!r} already has a terminal result",
+                    canonical_event_id=canonical_event_id,
+                )
+            if hold.released_at is None:
+                self._backend.execute_count(
+                    "UPDATE session_retention_holds SET released_at = ? WHERE hold_id = ?",
+                    (utc_now_iso(), hold_id),
+                )
+                hold = self._get_retention_hold(hold_id)
+                if hold is None:
+                    raise RuntimeError(f"Failed to read released hold: {hold_id}")
+            return CaptureEventCommitRecord(
+                event=event,
+                retention_hold=hold,
+                replayed=replayed,
+            )
+
+    def _commit_canonical_event_locked(
+        self,
+        *,
+        session_id: str,
+        canonical_event_id: str,
+        event_type: str,
+        payload: Mapping[str, Any] | None,
+    ) -> tuple[EventRecord, bool]:
+        canonical_id = canonical_event_id.strip()
+        if not canonical_id:
+            raise ValueError("canonical_event_id is required")
+        payload_json = metadata_json(payload)
+        now = utc_now_iso()
+        inserted = self._backend.execute_count(
+            """
+            INSERT INTO events(
+              session_id, event_type, payload_json, created_at, canonical_event_id
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_event_id) DO NOTHING
+            """,
+            (session_id, event_type, payload_json, now, canonical_id),
+        )
+        row = self._backend.query_one(
+            f"SELECT {EVENT_COLUMNS} FROM events WHERE canonical_event_id = ?",
+            (canonical_id,),
+        )
+        if row is None:
+            raise RuntimeError(f"Failed to read canonical event: {canonical_id}")
+        if (
+            str(row["session_id"]) != session_id
+            or str(row["event_type"]) != event_type
+            or str(row["payload_json"]) != payload_json
+        ):
+            raise RuntimeSessionStoreIntegrityError(
+                f"canonical event {canonical_id!r} conflicts with stored event",
+                canonical_event_id=canonical_id,
+            )
+        if inserted > 0:
             self._backend.execute_count(
                 "UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?",
                 (now, now, session_id),
             )
+        return row_to_event(row), inserted == 0
+
+    def _insert_event_locked(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: Mapping[str, Any] | None,
+    ) -> EventRecord:
+        now = utc_now_iso()
+        event_id = self._backend.insert(
+            "events",
+            {
+                "session_id": session_id,
+                "event_type": event_type,
+                "payload_json": metadata_json(payload),
+                "created_at": now,
+                "canonical_event_id": None,
+            },
+        )
+        row = self._backend.query_one(
+            f"SELECT {EVENT_COLUMNS} FROM events WHERE id = ?",
+            (event_id,),
+        )
+        if row is None:
+            raise RuntimeError(f"Failed to read inserted event: {event_id}")
+        self._backend.execute_count(
+            "UPDATE sessions SET updated_at = ?, last_activity_at = ? WHERE id = ?",
+            (now, now, session_id),
+        )
         return row_to_event(row)
+
+    def _ensure_capture_hold_locked(
+        self,
+        *,
+        session_id: str,
+        capture_id: str,
+        canonical_event_id: str,
+    ) -> MemoryCaptureRetentionHoldRecord:
+        hold_id, reason = _memory_capture_hold_identity(
+            session_id=session_id,
+            capture_id=capture_id,
+        )
+        hold = self._get_retention_hold(hold_id)
+        if hold is not None:
+            self._assert_capture_hold_matches(
+                hold,
+                session_id=session_id,
+                reason=reason,
+                canonical_event_id=canonical_event_id,
+            )
+            return hold
+        self._backend.execute_count(
+            """
+            INSERT INTO session_retention_holds(
+              hold_id, session_id, reason, actor_id,
+              created_at, released_at, schema_version
+            )
+            VALUES (?, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                hold_id,
+                session_id,
+                reason,
+                MEMORY_CAPTURE_HOLD_ACTOR,
+                utc_now_iso(),
+                MEMORY_CAPTURE_HOLD_SCHEMA_VERSION,
+            ),
+        )
+        hold = self._get_retention_hold(hold_id)
+        if hold is None:
+            raise RuntimeError(f"Failed to read inserted hold: {hold_id}")
+        return hold
+
+    def _get_retention_hold(
+        self, hold_id: str
+    ) -> MemoryCaptureRetentionHoldRecord | None:
+        row = self._backend.query_one(
+            f"SELECT {RETENTION_HOLD_COLUMNS} FROM session_retention_holds WHERE hold_id = ?",
+            (hold_id,),
+        )
+        return None if row is None else row_to_retention_hold(row)
+
+    @staticmethod
+    def _assert_capture_id_matches_payload(
+        *,
+        capture_id: str,
+        payload: Mapping[str, Any],
+        canonical_event_id: str,
+    ) -> None:
+        if str(payload.get("capture_id") or "").strip() != capture_id:
+            raise RuntimeSessionStoreIntegrityError(
+                "capture_id does not match the canonical event payload",
+                canonical_event_id=canonical_event_id,
+            )
+
+    @staticmethod
+    def _assert_capture_hold_matches(
+        hold: MemoryCaptureRetentionHoldRecord,
+        *,
+        session_id: str,
+        reason: str,
+        canonical_event_id: str,
+    ) -> None:
+        if (
+            hold.session_id != session_id
+            or hold.reason != reason
+            or hold.actor_id != MEMORY_CAPTURE_HOLD_ACTOR
+        ):
+            raise RuntimeSessionStoreIntegrityError(
+                f"retention hold {hold.hold_id!r} conflicts with capture",
+                canonical_event_id=canonical_event_id,
+            )
 
     def list_events(
         self,
@@ -97,8 +383,8 @@ class RuntimeSessionStoreLifecycle:
             return []
         direction = "DESC" if newest_first else "ASC"
         params: list[object] = [session_id]
-        query = """
-            SELECT id, session_id, event_type, payload_json, created_at
+        query = f"""
+            SELECT {EVENT_COLUMNS}
             FROM events
             WHERE session_id = ?
         """
@@ -111,6 +397,23 @@ class RuntimeSessionStoreLifecycle:
         rows = self._backend.query_dicts(query, params)
         return [row_to_event(row) for row in rows]
 
+    def count_events(
+        self,
+        *,
+        session_id: str,
+        event_type_prefix: str | None = None,
+    ) -> int:
+        from .rows import normalize_optional_text
+
+        params: list[object] = [session_id]
+        query = "SELECT COUNT(*) AS count FROM events WHERE session_id = ?"
+        prefix = normalize_optional_text(event_type_prefix)
+        if prefix:
+            query += " AND event_type LIKE ?"
+            params.append(f"{prefix}%")
+        row = self._backend.query_one(query, params)
+        return 0 if row is None else int(row["count"])
+
     def list_events_before_id(
         self,
         *,
@@ -122,8 +425,8 @@ class RuntimeSessionStoreLifecycle:
         if safe_limit == 0:
             return []
         rows = self._backend.query_dicts(
-            """
-            SELECT id, session_id, event_type, payload_json, created_at
+            f"""
+            SELECT {EVENT_COLUMNS}
             FROM events
             WHERE session_id = ? AND id < ?
             ORDER BY id DESC
@@ -152,8 +455,8 @@ class RuntimeSessionStoreLifecycle:
         if safe_limit == 0:
             return []
         rows = self._backend.query_dicts(
-            """
-            SELECT id, session_id, event_type, payload_json, created_at
+            f"""
+            SELECT {EVENT_COLUMNS}
             FROM events
             WHERE session_id = ? AND id > ? AND id <= ?
             ORDER BY id ASC

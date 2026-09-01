@@ -132,6 +132,15 @@ class PolicyCtlBrainAdapter:
 
         config_overrides = self._effective_policy_config(working_state=working_state)
         if self._is_policy_disabled(config_overrides=config_overrides):
+            if str(getattr(command, "tool_name", "") or "") == (
+                "blockchain.send_transaction"
+            ):
+                return PolicyDecision(
+                    outcome="DENY",
+                    explanation=(
+                        "Blockchain transaction send requires enforcing policy mode."
+                    ),
+                )
             self._log_policy_bypass(command=command, working_state=working_state)
             return PolicyDecision(
                 outcome="ALLOW",
@@ -243,6 +252,7 @@ class PolicyCtlBrainAdapter:
             explanation=str(getattr(decision, "reason", "") or ""),
             require_clarification=require_clarification,
             clarification_question=clarification_question or None,
+            approval_id=str(getattr(decision, "approval_id", "") or "") or None,
         )
 
     @staticmethod
@@ -289,6 +299,12 @@ class PolicyCtlBrainAdapter:
         session_context: dict[str, Any],
     ) -> str:
         """Create a one-time allow grant for a confirmed pending command."""
+        approval_id = str(
+            getattr(working_state, "pending_policy_approval_id", "") or ""
+        ).strip()
+        if approval_id:
+            grant_id = self._ctl.resolve_confirmation(approval_id, "allow_once")
+            return str(grant_id or "")
         invocation, ctx = self._build_invocation_and_context(
             command=command,
             working_state=working_state,
@@ -303,10 +319,17 @@ class PolicyCtlBrainAdapter:
             max_uses=1,
         )
 
+    def deny_confirmation(self, *, working_state: Any) -> None:
+        approval_id = str(
+            getattr(working_state, "pending_policy_approval_id", "") or ""
+        ).strip()
+        if approval_id:
+            self._ctl.resolve_confirmation(approval_id, "deny")
+
     def parse_confirmation_response(self, text: str) -> str:
         action_policy_config = self._action_policy_config
         if action_policy_config is not None:
-            from ..runtime.service import parse_confirmation_response
+            from ..runtime.confirmation import parse_confirmation_response
 
             return parse_confirmation_response(
                 text,

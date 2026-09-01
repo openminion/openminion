@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from openminion.modules.tool.contracts.model_ids import MODEL_EXEC_RUN
 from openminion.modules.tool.registry import ToolSpec
 from openminion.services.security.policy import (
@@ -89,6 +91,67 @@ def test_exec_platform_probe_bypasses_high_risk_confirmation() -> None:
     assert decision.allowed is True
     assert decision.requires_confirm is False
     assert decision.code == "OK"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "docker info",
+        "docker version",
+        "docker context show",
+    ],
+)
+def test_exec_bounded_inspection_bypasses_high_risk_confirmation(
+    command: str,
+) -> None:
+    decision = _adapter().evaluate(
+        tool_name=MODEL_EXEC_RUN,
+        tool_spec=_exec_spec(),
+        args={"command": command},
+    )
+
+    assert decision.allowed is True
+    assert decision.requires_confirm is False
+    assert decision.code == "OK"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ps aux",
+        "docker ps -a",
+        "systemctl status docker",
+        "docker run alpine",
+        "docker start demo",
+        "systemctl start docker",
+        "open -a Docker",
+    ],
+)
+def test_exec_sensitive_or_mutating_command_keeps_high_risk_confirmation(
+    command: str,
+) -> None:
+    decision = _adapter().evaluate(
+        tool_name=MODEL_EXEC_RUN,
+        tool_spec=_exec_spec(),
+        args={"command": command},
+    )
+
+    assert decision.allowed is False
+    assert decision.requires_confirm is True
+    assert decision.code == "require_approval"
+
+
+def test_exec_ssh_command_is_not_replaced_by_local_file_tools() -> None:
+    decision = _adapter().evaluate(
+        tool_name=MODEL_EXEC_RUN,
+        tool_spec=_exec_spec(),
+        args={"command": "ssh deploy@example.test ls -al"},
+    )
+
+    assert decision.allowed is False
+    assert decision.requires_confirm is True
+    assert decision.reason == "approval_required_high_risk"
+    assert decision.details.get("suggested_tool") is None
 
 
 def test_non_discovery_exec_command_keeps_high_risk_confirmation_contract() -> None:

@@ -153,7 +153,7 @@ def extract_user_message_candidates(
     state: WorkingState,
     user_message: str,
     logger: CanonicalEventLogger,
-) -> list[str]:
+) -> dict[str, Any]:
     return _afe_runtime.extract_user_message_candidates(
         runner=runner,
         state=state,

@@ -43,6 +43,7 @@ DEFAULT_POLICY: dict[str, Any] = {
             "proc.",
             "tool.",
             "browser",
+            "blockchain.",
             "web.",
             "exec.",
             "git.",
@@ -148,9 +149,8 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny_keys_regex": [".*KEY.*", ".*TOKEN.*", ".*SECRET.*"],
     },
     "confirm": {
-        "required_tools": ["file.delete", "proc.kill"],
+        "required_tools": ["proc.kill"],
         "required_when": [
-            {"tool": "file.delete", "args_match": {"recursive": True}},
             {"tool": "file.copy", "args_match": {"overwrite": True}},
             {"tool": "file.move", "args_match": {"overwrite": True}},
             {"tool": "cmd.run", "args_match_contains_argv": ["sudo"]},

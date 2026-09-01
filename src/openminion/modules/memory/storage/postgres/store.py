@@ -21,6 +21,10 @@ from openminion.modules.storage.migrations.runner import MigrationRunner
 
 from ..base import MemoryStore
 from ..migrations import TARGET_USER_VERSION
+from .capture_bundle import (
+    CAPTURE_BUNDLE_RECEIPT_DDL,
+    apply_capture_bundle as _apply_capture_bundle_workflow,
+)
 from .candidate_supersession import (
     candidate_delete as _candidate_delete_workflow,
     candidate_get as _candidate_get_workflow,
@@ -154,6 +158,7 @@ class PostgresMemoryStore(MemoryStore):
                 ON memory_relations(target_record_id, created_at DESC)
                 """
             )
+            conn.exec_driver_sql(CAPTURE_BUNDLE_RECEIPT_DDL)
 
     def _resolve_artifactctl(self) -> Any | None:
         if self._artifactctl is _ARTIFACTCTL_UNSET:
@@ -264,6 +269,7 @@ class PostgresMemoryStore(MemoryStore):
     _apply_supersession = _apply_supersession_workflow
     _upsert_entities = _upsert_entities_workflow
     _insert_record = _insert_record_workflow
+    apply_capture_bundle = _apply_capture_bundle_workflow
     put = _put_workflow
     upsert = _upsert_workflow
     get = _get_query

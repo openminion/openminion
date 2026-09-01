@@ -45,7 +45,7 @@ _TOOL_DEFINITIONS = (
     ),
     (
         MODEL_SKILL_GET,
-        "Get one stored skill by ID and optional version hash.",
+        "Get one stored skill by ID and optional version hash. When the skill lists a bundled reference, asset, or script, call this tool again with resource_path and the same version_hash to read that resource before using it.",
         RUNTIME_SKILL_GET,
     ),
     (

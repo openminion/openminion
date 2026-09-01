@@ -4,9 +4,7 @@ from typing import Mapping
 
 from openminion.base.config.base import ConfigError
 from openminion.base.config.runtime.tools import (
-    ToolFamilyRuntimeConfig,
-    ToolRuntimeConfig,
-    coerce_tool_runtime_config,
+    merge_tool_runtime_overrides as merge_tool_runtime_overrides,
 )
 
 from .capability import (
@@ -122,69 +120,6 @@ def _resolve_effective_provider_order(
     else:
         ordered = list(effective_enabled)
     return [item for item in ordered if not allowed or item in allowed]
-
-
-def merge_tool_runtime_overrides(
-    *,
-    system_tools: ToolRuntimeConfig | None,
-    agent_tools: ToolRuntimeConfig | None,
-) -> ToolRuntimeConfig:
-    system = coerce_tool_runtime_config(system_tools)
-    agent = coerce_tool_runtime_config(agent_tools)
-    return ToolRuntimeConfig(
-        **{
-            name: _merge_tool_family_runtime_overrides(
-                family_name=name,
-                system_family=getattr(system, name),
-                agent_family=getattr(agent, name),
-            )
-            for name in ("search", "fetch", "browser", "weather")
-        }
-    )
-
-
-def _merge_tool_family_runtime_overrides(
-    *,
-    family_name: str,
-    system_family: ToolFamilyRuntimeConfig | None,
-    agent_family: ToolFamilyRuntimeConfig | None,
-) -> ToolFamilyRuntimeConfig | None:
-    if system_family is None or agent_family is None:
-        return agent_family or system_family
-    system_enabled = list(system_family.enabled_providers)
-    agent_enabled = list(agent_family.enabled_providers)
-    if system_enabled and agent_enabled:
-        extra = [item for item in agent_enabled if item not in system_enabled]
-        if extra:
-            raise ConfigError(
-                f"agent runtime override tools.{family_name}.enabled_providers cannot "
-                f"exceed runtime.tools.{family_name}.enabled_providers: {extra!r}."
-            )
-    enabled = agent_enabled or system_enabled
-    default = agent_family.default_provider or system_family.default_provider
-    if enabled and default and default not in enabled:
-        raise ConfigError(
-            f"agent runtime override tools.{family_name}.default_provider={default!r} "
-            f"is blocked by the effective enabled_providers {enabled!r}."
-        )
-    order = list(agent_family.provider_order or system_family.provider_order)
-    extra = [item for item in order if enabled and item not in enabled]
-    if extra:
-        raise ConfigError(
-            f"agent runtime override tools.{family_name}.provider_order cannot exceed "
-            f"the effective enabled_providers: {extra!r}."
-        )
-    fallback = (
-        agent_family.allow_fallback
-        if agent_family.allow_fallback is not None
-        else system_family.allow_fallback
-    )
-    if system_family.allow_fallback is False and agent_family.allow_fallback is True:
-        raise ConfigError(
-            f"agent runtime override tools.{family_name}.allow_fallback=true cannot "
-            f"override runtime.tools.{family_name}.allow_fallback=false."
-        )
-    return ToolFamilyRuntimeConfig(enabled, default, order, fallback)
 
 
 def _normalized_modes(

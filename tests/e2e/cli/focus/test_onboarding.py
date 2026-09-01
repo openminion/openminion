@@ -18,6 +18,8 @@ from openminion.base.config import (
     resolve_config_path,
 )
 from openminion.modules.llm.setup_catalog import get_setup_preset
+from openminion.modules.storage.record_store import RecordStoreSQLite
+from openminion.modules.storage.runtime.session_store import SessionStore
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 
@@ -99,18 +101,20 @@ def _run_first_task(
         include_project_context=True,
     )
     probe.wait_ready(session)
-    return probe.run_turn(
+    result = probe.run_turn(
         session,
         FocusScenario(
             scenario_id="onboarding-first-task",
             prompt=(
-                "In one sentence, give me one safe read-only command to inspect "
-                "the current directory and end with exactly: ONBOARDING_OK"
+                "Inspect the current workspace with structured read-only tools, "
+                "report a few entries, and end with exactly: ONBOARDING_OK"
             ),
-            expected_markers=("ONBOARDING_OK", "ls|find|Get-ChildItem"),
+            expected_markers=("ONBOARDING_OK",),
             timeout=timeout,
         ),
     )
+    probe.wait_ready(session)
+    return result
 
 
 def _assert_owner_only(path: Path) -> None:
@@ -118,7 +122,91 @@ def _assert_owner_only(path: Path) -> None:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def _assert_owner_directory(path: Path) -> None:
+    if os.name == "posix":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+
+def _latest_outbound_metadata(data_root: Path) -> dict[str, Any]:
+    record_store = RecordStoreSQLite(
+        data_root / "state" / "openminion.db",
+        read_only=True,
+    )
+    try:
+        session_store = SessionStore(record_store)
+        sessions = session_store.list_sessions(limit=1, newest_first=True)
+        assert sessions
+        messages = session_store.list_messages(session_id=sessions[0].id, limit=100)
+        outbound = [message for message in messages if message.role == "outbound"]
+        assert outbound
+        return dict(outbound[-1].metadata)
+    finally:
+        record_store.close()
+
+
+def _persisted_tool_results(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = json.loads(str(metadata["tool_results"]))
+    assert isinstance(payload, list)
+    return payload
+
+
 class _OllamaFixtureHandler(BaseHTTPRequestHandler):
+    requests: list[dict[str, Any]] = []
+    turn_response_index = 0
+    turn_response_messages: tuple[dict[str, Any], ...] = (
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-exec",
+                    "function": {
+                        "name": "exec.run",
+                        "arguments": {"command": "ls"},
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-request-list-dir",
+                    "function": {
+                        "name": "tool.request",
+                        "arguments": {
+                            "name": "file.list_dir",
+                            "terminal_after_success": False,
+                        },
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-list-dir",
+                    "function": {
+                        "name": "file.list_dir",
+                        "arguments": {"path": "."},
+                    },
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "Workspace entries listed. ONBOARDING_OK\n\n"
+                '<finalization_status>{"status":"final_answer",'
+                '"reasoning":"Structured workspace listing completed."}'
+                "</finalization_status>"
+            ),
+        },
+    )
+
     def log_message(self, format: str, *args: object) -> None:
         del format, args
 
@@ -127,24 +215,44 @@ class _OllamaFixtureHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         content_length = int(self.headers.get("Content-Length", "0"))
-        request_payload = {}
+        request_payload: dict[str, Any] = {}
         if content_length:
             request_payload = json.loads(self.rfile.read(content_length))
-        messages = request_payload.get("messages", [])
-        last_message = messages[-1] if isinstance(messages, list) and messages else {}
-        prompt = str(last_message.get("content", "") or "").lower()
-        response_text = "openminion provider check ok"
-        if "openminion provider check ok" not in prompt:
-            response_text = "Use ls to inspect the current directory. ONBOARDING_OK"
+        type(self).requests.append(request_payload)
+        messages = request_payload["messages"]
+        last_content = str(messages[-1].get("content", ""))
+        schema_title = request_payload.get("format", {}).get("title", "")
+        if last_content == "Reply with exactly: openminion provider check ok":
+            response_message = {
+                "role": "assistant",
+                "content": "openminion provider check ok",
+            }
+        elif schema_title == "UserMessageCandidateReport":
+            response_message = {"role": "assistant", "content": '{"items":[]}'}
+        elif schema_title == "FreshnessContract":
+            response_message = {
+                "role": "assistant",
+                "content": (
+                    '{"intent":"workspace listing","domain":"general",'
+                    '"time_sensitive":false,"needs_live_data":false,'
+                    '"needs_sources":false,"needs_exact_date":false,'
+                    '"answer_mode":"local_only","reason":"local workspace",'
+                    '"confidence":1.0}'
+                ),
+            }
+        else:
+            response_message = type(self).turn_response_messages[
+                type(self).turn_response_index
+            ]
+            type(self).turn_response_index += 1
         payload = json.dumps(
             {
                 "model": "qwen2.5:14b",
-                "message": {
-                    "role": "assistant",
-                    "content": response_text,
-                },
+                "message": response_message,
                 "done": True,
-                "done_reason": "stop",
+                "done_reason": (
+                    "tool_calls" if response_message.get("tool_calls") else "stop"
+                ),
                 "prompt_eval_count": 1,
                 "eval_count": 1,
             }
@@ -157,12 +265,17 @@ class _OllamaFixtureHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _ollama_fixture_server() -> Iterator[str]:
+def _ollama_fixture_server() -> Iterator[tuple[str, list[dict[str, Any]]]]:
+    _OllamaFixtureHandler.requests = []
+    _OllamaFixtureHandler.turn_response_index = 0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaFixtureHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        yield (
+            f"http://127.0.0.1:{server.server_port}",
+            _OllamaFixtureHandler.requests,
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -583,8 +696,9 @@ def test_local_ollama_check_can_verify_against_fixture_server(
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
     config_path = resolve_config_path(None, home_root=home_root)
+    fixture_key = "fixture-ollama-key-not-for-network-use"
 
-    with _ollama_fixture_server() as base_url:
+    with _ollama_fixture_server() as (base_url, requests):
         with PtySession(
             argv=_command(
                 python_bin=python_bin,
@@ -594,7 +708,11 @@ def test_local_ollama_check_can_verify_against_fixture_server(
                 setup_only=False,
             ),
             cwd=openminion_root,
-            env=_environment(home_root=home_root, data_root=data_root),
+            env=_environment(
+                home_root=home_root,
+                data_root=data_root,
+                OLLAMA_API_KEY=fixture_key,
+            ),
         ) as session:
             _reply(session, "Choose your model provider:", "6")
             _reply(
@@ -616,10 +734,64 @@ def test_local_ollama_check_can_verify_against_fixture_server(
             )
             transcript = session.transcript
 
+    metadata = _latest_outbound_metadata(data_root)
+    tool_results = _persisted_tool_results(metadata)
+    turn_requests = [
+        request
+        for request in requests
+        if "format" not in request
+        and request["messages"][-1].get("content")
+        != "Reply with exactly: openminion provider check ok"
+    ]
+    request_tool_messages = [
+        json.loads(message["content"])
+        for message in turn_requests[1]["messages"]
+        if message.get("role") == "tool"
+    ]
+    denial = next(
+        message
+        for message in request_tool_messages
+        if message.get("error", {}).get("code") == "POLICY_DENIED"
+    )
+    denied_exec = next(
+        result for result in tool_results if result["tool_name"] == "exec.run"
+    )
+    list_dir_result = next(
+        result for result in tool_results if result["tool_name"] == "file.list_dir"
+    )
+
+    assert len(requests) == 7
+    assert len(turn_requests) == 4
+    assert turn_requests[0]["messages"][-1]["role"] == "user"
+    assert denial["error"]["details"]["suggested_tool"] == "file.list_dir"
+    assert any(
+        tool_call["function"]["name"] == "tool.request"
+        for message in turn_requests[2]["messages"]
+        for tool_call in message.get("tool_calls", [])
+    )
+    assert any(
+        tool_call["function"]["name"] == "file.list_dir"
+        for message in turn_requests[3]["messages"]
+        for tool_call in message.get("tool_calls", [])
+    )
+    assert any(
+        message.get("role") == "tool"
+        and message.get("tool_call_id") == "call-list-dir"
+        and json.loads(message["content"])["status"] == "success"
+        for message in turn_requests[3]["messages"]
+    )
+    assert denied_exec["error_code"] == "POLICY_DENIED"
+    assert denied_exec["data"]["error_details"]["suggested_tool"] == "file.list_dir"
+    assert list_dir_result["ok"] is True
+    assert metadata["tool_loop_termination_reason"] == "final_text"
     assert "Connection verified." in transcript
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
     assert "ONBOARDING_OK" in first_task
+    assert fixture_key not in transcript
+    assert fixture_key not in config_path.read_text(encoding="utf-8")
+    assert fixture_key not in json.dumps(requests)
+    _assert_owner_directory(config_path.parent)
     _assert_owner_only(config_path)
     write_transcript(
         artifact_root(tmp_path),
@@ -904,27 +1076,25 @@ def test_live_provider_setup_and_first_task(
     if str(os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E", "")).strip() != "1":
         pytest.skip("live onboarding proof requires explicit live E2E consent")
 
-    preset_id = str(os.getenv("OPENMINION_ONBOARDING_E2E_PROVIDER", "minimax")).strip()
-    preset = get_setup_preset(preset_id)
+    preset = get_setup_preset("minimax")
     credential = (
         str(os.getenv(preset.credential_env, "")).strip()
         if preset.credential_env
         else ""
     )
     if not preset.credential_env or not credential:
-        pytest.skip(f"{preset.credential_env or 'provider credential'} is unavailable")
+        pytest.fail("explicit live onboarding selected without its credential")
 
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
-    config_path = home_root / ".openminion" / "config.json"
+    config_path = resolve_config_path(None, home_root=home_root)
     with PtySession(
         argv=_command(
             python_bin=python_bin,
-            config_path=config_path,
+            config_path=None,
             home_root=home_root,
             data_root=data_root,
             setup_only=False,
-            extra_setup_args=("--provider", preset_id, "--check-provider"),
         ),
         cwd=openminion_root,
         env=_environment(
@@ -933,6 +1103,10 @@ def test_live_provider_setup_and_first_task(
             **{preset.credential_env: credential},
         ),
     ) as session:
+        _reply(session, "Choose your model provider:", "5")
+        _reply(session, "Choose a recommended model", "1")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(session, r"Test this provider now\? \[y/N\]:", "y")
         session.wait_for_after("Entering OpenMinion", offset=0, timeout=240)
         first_task = _run_first_task(
             session,
@@ -944,10 +1118,26 @@ def test_live_provider_setup_and_first_task(
         )
         transcript = session.transcript
 
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    metadata = _latest_outbound_metadata(data_root)
+    tool_results = _persisted_tool_results(metadata)
+
+    assert payload["agents"]["openminion"]["provider"] == "openai"
+    assert payload["providers"]["openai"]["model"] == "MiniMax-M2.7"
+    assert payload["providers"]["openai"]["provider_identity"]["service_vendor"] == (
+        "minimax"
+    )
+    assert any(
+        result["ok"]
+        and result["tool_name"] not in {"plan", "tool.request", "decompose"}
+        for result in tool_results
+    )
+    assert metadata["tool_loop_termination_reason"] in {"final_text", "model_final"}
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
     assert "ONBOARDING_OK" in first_task
     assert credential not in transcript
     assert credential not in config_path.read_text(encoding="utf-8")
+    _assert_owner_directory(config_path.parent)
     _assert_owner_only(config_path)
     write_transcript(artifact_root(tmp_path), "onboarding-live-provider", transcript)

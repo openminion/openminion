@@ -31,6 +31,7 @@ ALLOWED_ROOT_FILES = {
 ALLOWED_TOP_LEVEL_DIRS = {
     "agent",
     "browser",
+    "blockchain",
     "code",
     "cloud_ops",
     "config_mgmt",

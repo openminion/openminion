@@ -73,5 +73,5 @@ def test_vector_factory_local_sqlite(monkeypatch, tmp_path) -> None:
 
     assert adapter == "adapter"
     assert isinstance(sync, DummyScheduler)
-    assert sync.started is True
+    assert sync.started is False
     assert provider_calls == [{"args": (), "kwargs": {"model": "m", "dimension": 8}}]

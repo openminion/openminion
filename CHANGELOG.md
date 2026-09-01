@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-08-29
+Last updated: 2026-09-01
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -9,7 +9,25 @@ This file tracks package-facing release notes for `openminion`.
 
 - No unreleased package-facing changes yet.
 
-## Current package line - 2026-08-29
+## Current package line - 2026-09-01
+
+- Generalized authenticated active-turn status and streaming contracts with
+  bounded history, redaction, terminal controls, and durable interruption
+  evidence across API, daemon, Focus, and autonomy surfaces.
+- Hardened deterministic deep-work execution with explicit evidence contracts,
+  resumable checkpoints, read-only review composition, and reliable tool,
+  verification, and complex-workflow closeout behavior.
+- Strengthened memory capture and recall with atomic capture bundles, explicit
+  retrieval eligibility, surfaced evidence, session continuity, and aligned
+  SQLite and PostgreSQL persistence paths.
+- Added scoped per-agent command grants, structured host inventory and
+  execution contracts, and validated external skill bundles while preserving
+  existing tool and skill ownership boundaries.
+- Added a bounded blockchain inspection, preparation, and transaction lifecycle
+  with explicit financial authorization, secret bridging, persistent
+  confirmations, and local certification coverage.
+
+## Prior package line - 2026-08-29
 
 - Preserved typed project-turn and provider failures across CLI, runtime, cron,
   checkpoint, and resume boundaries so verification cannot mask failed work.
@@ -23,7 +41,7 @@ This file tracks package-facing release notes for `openminion`.
   with effective identity, durable lineage, bounded redacted reports, and
   restart evidence without claiming unfinished long-duration certification.
 
-## Prior package line - 2026-08-27
+## Earlier package line - 2026-08-27
 
 - Hardened agent-loop recovery with durable failed-turn outcomes, bounded tool
   and finalization recovery, and clearer terminal evidence.
@@ -38,7 +56,7 @@ This file tracks package-facing release notes for `openminion`.
   runtime continuity, control-plane polling, release gates, and regression
   coverage.
 
-## Earlier package line - 2026-07-12
+## Historical package line - 2026-07-12
 
 - Added typed SophiaGraph namespace filters to existing `memctl` list/search
   commands and local memory-record HTTP routes.

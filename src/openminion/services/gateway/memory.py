@@ -13,12 +13,12 @@ from openminion.modules.memory.gateway_turn import (
     MEMORY_CONTEXT_BUILD_FAILED_REASON as MEMORY_CONTEXT_BUILD_FAILED_REASON,
     MEMORY_FOLLOWUP_FAILED_CODE,
     MEMORY_FOLLOWUP_FAILED_REASON,
+    apply_assured_capture_result as _apply_assured_capture_result,
     derive_memory_patch_id as _maybe_derive_patch_id,
     emit_memory_write_rejected as _emit_memory_write_rejected,
-    emit_memory_write_started as _emit_memory_write_started,
-    emit_memory_write_events as _emit_memory_write_events,
     memory_error_facts,
     record_memory_failure as _record_memory_failure,
+    record_primary_memory_turn as _record_primary_memory_turn,
     text_fingerprint as _text_fingerprint,
 )
 from openminion.services.constants import MEMORY_CAPSULE_STRATEGY_REFRESH_ON_WRITE
@@ -405,6 +405,62 @@ def _build_memory_followup_job(
     )
 
 
+def _record_primary_memory_turn_safely(
+    *,
+    agent_memory: Any,
+    logger: logging.Logger,
+    agent_id: str,
+    memory_capsule_strategy: str,
+    session_id: str,
+    run_id: str,
+    request_id: str,
+    channel: str,
+    target: str,
+    user_message: str,
+    assistant_message: str,
+    emit_memory_event: MemoryEventEmitter,
+    outbound_metadata: dict[str, str],
+) -> bool:
+    patch_id_hint = _maybe_derive_patch_id(
+        agent_memory=agent_memory,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        user_message=user_message,
+    )
+    try:
+        return _record_primary_memory_turn(
+            agent_memory=agent_memory,
+            patch_id_hint=patch_id_hint,
+            memory_capsule_strategy=memory_capsule_strategy,
+            session_id=session_id,
+            run_id=run_id,
+            request_id=request_id,
+            channel=channel,
+            target=target,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            emit_memory_event=emit_memory_event,
+            outbound_metadata=outbound_metadata,
+        )
+    except RuntimeSessionTurnFenceError:
+        raise
+    except Exception as exc:
+        _record_memory_failure(
+            exc=exc,
+            logger=logger,
+            agent_id=agent_id,
+            session_id=session_id,
+            run_id=run_id,
+            request_id=request_id,
+            memory_capsule_strategy=memory_capsule_strategy,
+            patch_id_hint=patch_id_hint,
+            emit_memory_event=emit_memory_event,
+            outbound_metadata=outbound_metadata,
+        )
+        return False
+
+
 def record_memory_turn(
     *,
     agent_memory: Any,
@@ -429,8 +485,6 @@ def record_memory_turn(
     session_turn_fence_token: int | None = None,
     emit_memory_followup: MemoryEventEmitter | None = None,
 ) -> None:
-    patch_id_hint = ""
-    patch_changed = False
     fenced_emit_memory_event = partial(
         emit_memory_event,
         session_turn_fence_token=session_turn_fence_token,
@@ -458,67 +512,25 @@ def record_memory_turn(
             reason=disabled_reason,
         )
         return
-    try:
-        patch_id_hint = _maybe_derive_patch_id(
-            agent_memory=agent_memory,
-            session_id=session_id,
-            run_id=run_id,
-            request_id=request_id,
-            user_message=user_message,
-        )
-        _emit_memory_write_started(
-            emit_memory_event=scoped_emit_memory_event,
-            session_id=session_id,
-            run_id=run_id,
-            request_id=request_id,
-            memory_capsule_strategy=memory_capsule_strategy,
-            patch_id=patch_id_hint,
-        )
-        memory_patch = agent_memory.record_turn(
-            session_id=session_id,
-            run_id=run_id,
-            request_id=request_id,
-            channel=channel,
-            target=target,
-            user_message=user_message,
-            assistant_message=assistant_message,
-        )
-        outbound_metadata["memory_enabled"] = "true"
-        outbound_metadata["memory_facts_added"] = str(memory_patch.facts_added)
-        outbound_metadata["memory_todos_added"] = str(memory_patch.todos_added)
-        outbound_metadata["memory_todos_completed"] = str(memory_patch.todos_completed)
-        outbound_metadata["memory_patch_id"] = str(memory_patch.patch_id or "")
-        patch_changed = (
-            memory_patch.facts_added > 0
-            or memory_patch.todos_added > 0
-            or memory_patch.todos_completed > 0
-        )
-        _emit_memory_write_events(
-            emit_memory_event=scoped_emit_memory_event,
-            session_id=session_id,
-            run_id=run_id,
-            request_id=request_id,
-            memory_capsule_strategy=memory_capsule_strategy,
-            patch_id_hint=patch_id_hint,
-            memory_patch=memory_patch,
-            patch_changed=patch_changed,
-        )
-    except RuntimeSessionTurnFenceError:
-        raise
-    except Exception as exc:
-        _record_memory_failure(
-            exc=exc,
-            logger=logger,
-            agent_id=agent_id,
-            session_id=session_id,
-            run_id=run_id,
-            request_id=request_id,
-            memory_capsule_strategy=memory_capsule_strategy,
-            patch_id_hint=patch_id_hint,
-            emit_memory_event=scoped_emit_memory_event,
-            outbound_metadata=outbound_metadata,
-        )
-
+    assured_result = outbound_metadata.get("memory_capture_bundle_result", "").strip()
+    if assured_result:
+        _apply_assured_capture_result(assured_result, outbound_metadata)
+        return
+    patch_changed = _record_primary_memory_turn_safely(
+        agent_memory=agent_memory,
+        logger=logger,
+        agent_id=agent_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        channel=channel,
+        target=target,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        emit_memory_event=scoped_emit_memory_event,
+        outbound_metadata=outbound_metadata,
+    )
     deferred = bool(defer_followup and followup_queue is not None)
     followup_job = _build_memory_followup_job(
         agent_memory=agent_memory,
@@ -538,7 +550,7 @@ def record_memory_turn(
         patch_changed=patch_changed,
         deferred=deferred,
     )
-    if deferred and _has_followup_work(followup_job):
+    if deferred and followup_queue is not None and _has_followup_work(followup_job):
         _emit_followup_pending(followup_job)
         followup_queue.enqueue(followup_job)
         return

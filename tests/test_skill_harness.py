@@ -99,3 +99,40 @@ def test_skill_harness_fails_when_no_skills_discovered() -> None:
     assert report.total_skills == 0
     assert report.error_count == 1
     assert len(report.global_errors) >= 1
+
+
+def test_skill_harness_reports_external_bundle_facts() -> None:
+    fixture_root = (
+        Path(__file__).resolve().parent
+        / "skill"
+        / "fixtures"
+        / "external_catalog"
+        / "hermes"
+        / "system-inventory"
+    )
+
+    report = run_skill_harness(fixture_root)
+    result = report.results[0]
+
+    assert result.parse_ok is True
+    assert result.resource_counts == {"references": 1, "assets": 0, "scripts": 0}
+    assert result.unsupported_entries == ("child", "specifications")
+    assert result.nested_skill_candidates == ("child/SKILL.md",)
+    assert result.unknown_front_matter_keys == (
+        "author",
+        "platforms",
+        "prerequisites",
+    )
+
+
+def test_skill_harness_does_not_double_count_nested_skills(tmp_path: Path) -> None:
+    parent = tmp_path / "skills" / "parent"
+    child = parent / "child"
+    child.mkdir(parents=True)
+    parent.joinpath("SKILL.md").write_text(SKILL_BODY, encoding="utf-8")
+    child.joinpath("SKILL.md").write_text(SKILL_BODY, encoding="utf-8")
+
+    report = run_skill_harness(tmp_path)
+
+    assert report.total_skills == 1
+    assert report.results[0].nested_skill_candidates == ("child/SKILL.md",)

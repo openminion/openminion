@@ -48,6 +48,7 @@ def test_v1_allowlist_contains_expected_tools() -> None:
         "file.read",
         "file.read_range",
         "file.find",
+        "file.trash",
         "file.write",
         "web.fetch",
         "exec.run",
@@ -285,7 +286,11 @@ def test_action_result_to_tool_message_error() -> None:
         command_id=new_uuid(),
         status="failed",
         summary="file not found",
-        error=ActionError(code="FILE_NOT_FOUND", message="file not found"),
+        error=ActionError(
+            code="FILE_NOT_FOUND",
+            message="file not found",
+            details={"path": "missing.txt", "schema": {"required": ["path"]}},
+        ),
     )
     msg = action_result_to_tool_message(
         tool_call_id=None, tool_name="file.read", action_result=result
@@ -295,6 +300,11 @@ def test_action_result_to_tool_message_error() -> None:
     payload = json.loads(msg.content)
     assert payload["status"] == "failed"
     assert payload["error"]["code"] == "FILE_NOT_FOUND"
+    assert payload["error"]["details"] == {
+        "path": "missing.txt",
+        "schema": {"required": ["path"]},
+    }
+    assert msg.tool_error == payload["error"]
     assert "tool_call_id" not in msg.meta
 
 

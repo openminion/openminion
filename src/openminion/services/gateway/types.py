@@ -2,6 +2,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openminion.base.types import AgentResponse, Message
+from openminion.modules.context.schemas import (
+    ContextEvidenceItem,
+    ContextEvidenceOmission,
+    ContextEvidencePack,
+)
 from openminion.services.constants import MEMORY_CAPSULE_STRATEGY_OFF
 from openminion.modules.controlplane.channels.authenticity import (
     ChannelAuthenticityDecision,
@@ -34,6 +39,11 @@ class TurnContext:
     memory_context_meta: dict[str, str] = field(default_factory=dict)
     memory_retrieval_meta: dict[str, str] = field(default_factory=dict)
     knowledge_graph_meta: dict[str, str] = field(default_factory=dict)
+    evidence_items: tuple[ContextEvidenceItem, ...] = ()
+    evidence_source_omissions: tuple[ContextEvidenceOmission, ...] = ()
+    evidence_pack: ContextEvidencePack | None = None
+    memory_evidence_typed: bool = False
+    knowledge_evidence_typed: bool = False
     memory_strategy: str = MEMORY_CAPSULE_STRATEGY_OFF
     capsule_cache_hit: bool = False
 

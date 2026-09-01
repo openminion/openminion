@@ -16,8 +16,58 @@ from openminion.modules.memory.storage.base import (
     ListQueryOptions,
     SearchQueryOptions,
 )
+from openminion.modules.tool import (
+    MemoryAccessContext,
+    MemoryToolRuntimeService,
+)
+from openminion.modules.tool.errors import ToolRuntimeError
 
 _FACT_PREFIX_RE = re.compile(r"^\s*(?:remember|fact)\s*:\s*(.+)$", flags=re.IGNORECASE)
+
+
+class _AccessBoundMemctl:
+    def __init__(
+        self,
+        adapter: "MemctlAdapter",
+        access_context: MemoryAccessContext,
+    ) -> None:
+        self._adapter = adapter
+        self._access_context = access_context
+
+    def write_record(
+        self,
+        *,
+        scope: str,
+        record_type: str,
+        title: str,
+        content: dict[str, Any] | str,
+        tags: list[str] | None = None,
+        evidence_refs: list[str] | None = None,
+        confidence: float | None = None,
+    ) -> str:
+        return self._adapter.write_record(
+            access_context=self._access_context,
+            scope=scope,
+            record_type=record_type,
+            title=title,
+            content=content,
+            tags=tags,
+            evidence_refs=evidence_refs,
+            confidence=confidence,
+        )
+
+    def search(self, options: Any) -> list[Any]:
+        return self._adapter.search(
+            options,
+            access_context=self._access_context,
+        )
+
+    def delete_record(self, record_id: str, *, reason: str | None = None) -> bool:
+        return self._adapter.delete_record(
+            record_id,
+            access_context=self._access_context,
+            reason=reason,
+        )
 
 
 class MemctlAdapter:
@@ -47,12 +97,95 @@ class MemctlAdapter:
         self._candidate_get_api = getattr(store, "candidate_get", None)
         self._candidate_update_api = getattr(store, "candidate_update", None)
         self._candidate_list_api = getattr(store, "candidate_list", None)
+        self._get_api = getattr(self.store, "get", None)
+        self._delete_api = getattr(store, "delete_record", None)
         self._find_candidate_by_normalized_key_api = getattr(
             store, "find_candidate_by_normalized_key", None
         )
         self._reinforce_candidate_api = getattr(store, "reinforce_candidate", None)
         self._procedure_api = getattr(store, "get_procedure", None)
+        self._capture_bundle_api = getattr(store, "apply_capture_bundle", None)
+        self._vector_sync_snapshot_api = getattr(store, "vector_sync_snapshot", None)
         self._generation = 0
+
+    def for_access_context(
+        self,
+        access_context: MemoryAccessContext,
+    ) -> MemoryToolRuntimeService:
+        return _AccessBoundMemctl(self, access_context)
+
+    def write_record(
+        self,
+        *,
+        access_context: MemoryAccessContext,
+        scope: str,
+        record_type: str,
+        title: str,
+        content: dict[str, Any] | str,
+        tags: list[str] | None = None,
+        evidence_refs: list[str] | None = None,
+        confidence: float | None = None,
+    ) -> str:
+        normalized_scope = access_context.require_scope(scope)
+        if not callable(self._write_api):
+            raise RuntimeError("memory backend does not support record writes")
+        kwargs: dict[str, Any] = {
+            "scope": normalized_scope,
+            "record_type": record_type,
+            "title": title,
+            "content": content,
+            "tags": tags,
+            "evidence_refs": evidence_refs,
+            "confidence": confidence,
+            "agent_id": access_context.agent_id or None,
+            "session_id": access_context.session_id or None,
+        }
+        operation_id = access_context.explicit_operation_id("write")
+        if operation_id:
+            kwargs.update(
+                {
+                    "idempotency_key": operation_id,
+                    "capture_id": access_context.capture_id,
+                    "tool_call_id": access_context.tool_call_id,
+                }
+            )
+        return str(self._write_api(**kwargs))
+
+    def search(
+        self,
+        options: SearchQueryOptions,
+        *,
+        access_context: MemoryAccessContext,
+    ) -> list[Any]:
+        access_context.require_scopes(list(options.scopes))
+        if not callable(self._search_api):
+            return []
+        return list(
+            self._search_api(
+                options,
+                agent_id=access_context.agent_id or None,
+            )
+        )
+
+    def delete_record(
+        self,
+        record_id: str,
+        *,
+        access_context: MemoryAccessContext,
+        reason: str | None = None,
+    ) -> bool:
+        if callable(self._get_api):
+            record = self._get_api(record_id)
+            if record is not None:
+                try:
+                    access_context.require_scope(
+                        str(getattr(record, "scope", "") or "")
+                    )
+                except ToolRuntimeError:
+                    return False
+        if not callable(self._delete_api):
+            raise RuntimeError("memory backend does not support record deletion")
+        return bool(self._delete_api(record_id, reason=reason))
 
     def close(self) -> None:
         if self._owns_backend:
@@ -71,6 +204,55 @@ class MemctlAdapter:
         setter = getattr(self._backend, "set_telemetry_context", None)
         if callable(setter):
             setter(session_id=session_id, turn_id=turn_id)
+
+    def apply_capture_bundle(
+        self,
+        *,
+        capture_id: str,
+        root_turn_id: str,
+        session_id: str,
+        agent_id: str,
+        candidates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        from openminion.modules.memory.runtime.capture_bundle import (
+            CaptureBundleInput,
+            CaptureCandidateInput,
+            CaptureRecoveryUnsupportedError,
+        )
+        from openminion.modules.memory.errors import ConstraintViolationError
+
+        if not callable(self._capture_bundle_api):
+            raise CaptureRecoveryUnsupportedError(
+                "configured memory backend does not support atomic capture bundles"
+            )
+        if str(agent_id or "").strip() != self._agent_id:
+            raise ConstraintViolationError(
+                "capture agent is not authorized for this memory runtime",
+                details={"reason_code": "capture_agent_not_authorized"},
+            )
+        bundle = CaptureBundleInput(
+            capture_id=str(capture_id),
+            root_turn_id=str(root_turn_id),
+            session_id=str(session_id),
+            agent_id=str(agent_id),
+            candidates=tuple(
+                CaptureCandidateInput(
+                    kind=str(item.get("kind", "")),
+                    normalized_key=str(item.get("normalized_key", "")),
+                    title=str(item.get("title", "")),
+                    content=str(item.get("content", "")),
+                    tags=tuple(str(tag) for tag in item.get("tags", ()) or ()),
+                    confidence=float(item.get("confidence", 0.3) or 0.0),
+                )
+                for item in candidates
+            ),
+        )
+        return dict(self._capture_bundle_api(bundle).as_payload())
+
+    def vector_sync_snapshot(self, *, limit: int = 32) -> dict[str, list[Any]]:
+        if not callable(self._vector_sync_snapshot_api):
+            return {"current": [], "retired": []}
+        return dict(self._vector_sync_snapshot_api(limit=limit))
 
     @property
     def enabled(self) -> bool:
@@ -139,12 +321,14 @@ class MemctlAdapter:
         if not callable(self._search_api):
             return []
         try:
-            return self._search_api(
-                SearchQueryOptions(
-                    query=query,
-                    scopes=scopes,
-                    types=types,
-                    limit=max(1, int(limit)),
+            return list(
+                self._search_api(
+                    SearchQueryOptions(
+                        query=query,
+                        scopes=scopes,
+                        types=types,
+                        limit=max(1, int(limit)),
+                    )
                 )
             )
         except Exception:
@@ -160,11 +344,13 @@ class MemctlAdapter:
         if not callable(self._list_api):
             return []
         try:
-            return self._list_api(
-                ListQueryOptions(
-                    scopes=scopes,
-                    types=types,
-                    limit=max(1, int(limit)),
+            return list(
+                self._list_api(
+                    ListQueryOptions(
+                        scopes=scopes,
+                        types=types,
+                        limit=max(1, int(limit)),
+                    )
                 )
             )
         except Exception:
@@ -471,7 +657,7 @@ class MemctlAdapter:
             created_at=datetime.now(timezone.utc).isoformat(),
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
-        return self.store.put(record)
+        return str(self.store.put(record))
 
     def stage_candidate(
         self,
@@ -512,7 +698,7 @@ class MemctlAdapter:
             evidence_refs=self._build_artifact_refs(evidence_refs),
             meta=dict(meta or {}),
         )
-        return self.store.candidate_put(candidate)
+        return str(self.store.candidate_put(candidate))
 
     def list_candidates(
         self,

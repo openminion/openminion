@@ -642,13 +642,13 @@ class SkillIngestMixin:
         ]
         snippets = build_default_snippets(sections)
 
-        recipe = build_recipe(
+        recipe, recipe_warnings = build_recipe(
             front_matter=front_matter,
-            sections=sections,
             skill_name=name,
             risk_class=risk_class,
             known_tools=list(self._known_tools),
         )
+        parse_warnings.extend(recipe_warnings)
 
         verification_rules = _dedupe(
             normalize_text_list(front_matter.get("verification"))

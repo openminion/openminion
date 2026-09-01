@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 import uuid
 
+import pytest
+
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILED,
     BRAIN_ACTION_STATUS_SUCCESS,
@@ -89,6 +91,135 @@ def test_success_status_maps_to_ok_result() -> None:
     assert result.content == "delegated turn completed"
     assert result.outputs == {"body": "result text"}
     assert result.target_agent_id == "researcher"
+
+
+def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+            "outputs": {
+                "child_agent_id": "readonly-reviewer",
+                "findings": [
+                    {
+                        "priority": "P1",
+                        "owner": "project plan lineage",
+                        "message": "Add a stale predecessor test.",
+                    }
+                ],
+                "verifier_refs": ["pytest:plan-lineage"],
+            },
+        }
+    )
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="preserve project plan lineage",
+        criteria=["no P0 findings", "no P1 findings"],
+        worktree="/repo",
+        diff="git diff -- src tests",
+        verifier_refs=["pytest:plan-lineage"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is True
+    assert result.target_agent_id == "readonly-reviewer"
+    assert result.outputs["child_agent_id"] == "readonly-reviewer"
+    assert result.outputs["findings"][0]["priority"] == "P1"
+    assert call.command is not None
+    instruction = (
+        "Review objective: preserve project plan lineage\n"
+        "Criteria: no P0 findings, no P1 findings\n"
+        "Worktree: /repo\n"
+        "Diff: git diff -- src tests\n"
+        "Verifier refs: pytest:plan-lineage\n"
+        "Repository instructions: AGENTS.md"
+    )
+    assert call.command["params"] == {
+        "goal": instruction,
+        "instruction": instruction,
+        "timeout_seconds": 30,
+        "mode": "sync",
+        "permission_mode": "readonly",
+        "workspace_root": "/repo",
+        "cwd": "/repo",
+    }
+
+
+def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_FAILED,
+            "summary": "reviewer mutation denied",
+            "error": {
+                "code": "POLICY_DENIED",
+                "message": "readonly reviewer cannot write files",
+            },
+        }
+    )
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        worktree="/repo",
+        diff="git diff -- app.py",
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "POLICY_DENIED"
+    assert result.error_message == "readonly reviewer cannot write files"
+    assert call.command is not None
+    assert call.command["params"]["permission_mode"] == "readonly"
+
+
+@pytest.mark.parametrize(
+    "outputs",
+    (
+        {"child_agent_id": "", "findings": []},
+        {"child_agent_id": "child-1", "findings": {}},
+        {"child_agent_id": "child-1", "findings": [42]},
+        {
+            "child_agent_id": "child-1",
+            "findings": [{"priority": "P1", "owner": "", "message": "gap"}],
+        },
+    ),
+)
+def test_fixed_readonly_reviewer_rejects_invalid_result(
+    outputs: dict[str, Any],
+) -> None:
+    call = _RecordingCall(
+        {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+            "outputs": outputs,
+        }
+    )
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        worktree="/repo",
+        diff="git diff -- app.py",
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "A2A_REVIEW_INVALID_RESULT"
+    assert result.target_agent_id == "readonly-reviewer"
 
 
 def test_command_shape_carries_model_named_target_and_instruction() -> None:

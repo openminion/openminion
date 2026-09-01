@@ -99,7 +99,14 @@ def _runtime(
 ):
     runtime_manager = _FakeRuntimeManager(list(responses))
     runner = SimpleNamespace(goal_runtime=goal_runtime)
-    agent_service = SimpleNamespace(_runner=runner)
+    agent_service = SimpleNamespace(
+        _runner=runner,
+        _security_policy=None,
+        _tools=None,
+        _identity_agent_id=agent_name,
+        extract_memory_capture_candidates=lambda **_kwargs: [],
+    )
+    memory_assembly = SimpleNamespace(recover_pending_captures=lambda **_kwargs: None)
     runtime = SimpleNamespace(
         config=SimpleNamespace(
             agent=SimpleNamespace(name=agent_name),
@@ -110,6 +117,7 @@ def _runtime(
         list_registered_agents=(lambda: list(registered_agents or [])),
         sessions=_FakeSessions(),
         resolve_agent_service=(lambda _agent_id: agent_service),
+        resolve_memory_assembly=(lambda _agent_id: memory_assembly),
         tools=build_default_tool_registry(strict=False) if monitoring else None,
         ops_service=local_ops_service() if monitoring else None,
     )
@@ -501,7 +509,12 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
                                 "tool_name": "file.write",
                                 "ok": True,
                                 "call_id": "call-write",
-                            }
+                            },
+                            {
+                                "tool_name": "file.trash",
+                                "ok": True,
+                                "call_id": "call-trash",
+                            },
                         ]
                     )
                 },
@@ -571,7 +584,8 @@ def test_cron_turn_executor_watch_forwards_bounds_and_stages_progress() -> None:
     assert store.replaced_payloads[-1][0] == "job-watch"
     stored_watch = store.replaced_payloads[-1][1]["_openminion_watch"]
     assert stored_watch["write_audit"] == [
-        {"tool_name": "file.write", "ok": True, "call_id": "call-write"}
+        {"tool_name": "file.write", "ok": True, "call_id": "call-write"},
+        {"tool_name": "file.trash", "ok": True, "call_id": "call-trash"},
     ]
 
 

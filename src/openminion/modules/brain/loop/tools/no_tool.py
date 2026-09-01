@@ -41,6 +41,7 @@ from .postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
     tool_evidence_closeout_text,
 )
+from .plan_control import unresolved_active_plan_step_ids
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
@@ -256,6 +257,45 @@ def _retry_confident_complete_without_answer(
     )
 
 
+def _unresolved_plan_retry(
+    runner: Any,
+    *,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    status = str(getattr(finalization_status, "status", "") or "").strip()
+    if isinstance(finalization_status, dict):
+        status = str(finalization_status.get("status", "") or "").strip()
+    if status in {"blocked", "incomplete"} or not normalized_final_text:
+        return None
+    unresolved_step_ids = unresolved_active_plan_step_ids(runner.loop_ctx)
+    if not unresolved_step_ids:
+        return None
+    return runner._retry_with_system_message(
+        "The active task plan still has unresolved typed steps: "
+        f"{', '.join(unresolved_step_ids)}. Continue the work and update those "
+        "steps through the plan tool before returning a success answer. If the "
+        "work cannot continue, return typed status=incomplete or status=blocked.",
+        discard_assistant_text=normalized_final_text,
+    )
+
+
+def _no_tool_retry(
+    runner: Any,
+    finalization_status: Any,
+    normalized_final_text: str,
+) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
+    return (
+        _argument_retry(runner, finalization_status, normalized_final_text)
+        or _failed_exec_retry(runner, finalization_status, normalized_final_text)
+        or _unresolved_plan_retry(
+            runner,
+            finalization_status=finalization_status,
+            normalized_final_text=normalized_final_text,
+        )
+    )
+
+
 class AdaptiveLoopRunnerNoToolMixin:
     def _build_response_payloads(self, response: Any) -> dict[str, Any]:
         finalization_status = _finalization_status_payload(response)
@@ -411,12 +451,10 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "Provider returned no usable response after configured retries",
                 code="EMPTY_PROVIDER_RESPONSE",
             )
-        retry = _argument_retry(self, finalization_status, normalized_final_text)
+        self.loop_state.scratchpad.pop("empty_payload_recovery_retry_count", None)
+        retry = _no_tool_retry(self, finalization_status, normalized_final_text)
         if retry is not None:
             return retry
-        failed = _failed_exec_retry(self, finalization_status, normalized_final_text)
-        if failed is not None:
-            return failed
         raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
         )

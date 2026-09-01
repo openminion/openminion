@@ -131,6 +131,46 @@ def test_project_turn_error_payloads_preserve_typed_error(
     )
 
 
+def test_project_turn_decodes_typed_plan_metadata() -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "summary": "planned",
+            "metadata": {
+                "task_plan": (
+                    '{"plan_id":"plan-1","objective":"ship",'
+                    '"criterion_ids":["criterion-tests"],'
+                    '"steps":[{"step_id":"build","description":"Build"}]}'
+                ),
+                "task_plan.revision": (
+                    '{"plan_id":"plan-1","revision_id":"revision-1",'
+                    '"criterion_ids":["criterion-tests"],'
+                    '"verifier_refs":["verify:failed-1"],'
+                    '"revised_steps":[{"step_id":"build",'
+                    '"description":"Repair"}]}'
+                ),
+            },
+        },
+    )
+
+    assert result.task_plan is not None
+    assert result.task_plan.criterion_ids == ["criterion-tests"]
+    assert result.task_plan_revision is not None
+    assert result.task_plan_revision.revision_id == "revision-1"
+
+
 @pytest.mark.parametrize(
     ("details", "expected"),
     (

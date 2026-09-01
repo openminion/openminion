@@ -32,6 +32,8 @@ from .context import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from openminion.modules.session.capture import CaptureIdentity
+
     from ..core import BrainRunner
     from ...schemas import StepOutput
 
@@ -224,10 +226,13 @@ def run_step(
     trace_id: str | None = None,
     forced_tools: list[str] | None = None,
     capability_category: str | None = None,
+    capture_identity: "CaptureIdentity | None" = None,
 ) -> "StepOutput":
     started = _runner_delegate("_now_ms", runner)
     with active_chat_phase("brain_state_load"):
-        state = _runner_delegate("_load_or_init_state", runner, session_id)
+        state = _runner_delegate(
+            "_load_or_init_state", runner, session_id, capture_identity
+        )
     pending_trigger = _stamp_pending_run_context(runner, state)
     _refresh_budget_for_new_trigger(runner, state, pending_trigger)
     logger = CanonicalEventLogger(

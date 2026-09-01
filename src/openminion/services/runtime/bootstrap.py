@@ -13,6 +13,9 @@ from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.tool import ToolRegistry
+from openminion.modules.secret.factory import (
+    build_secret_service as _build_secret_service,
+)
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
@@ -65,8 +68,9 @@ from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.services.config import resolve_services_env
 from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.policy.runtime.action_policy import (
-    policy_config_from_action_policy,
+    build_action_policy_service as build_action_policy_service,
 )
+from openminion.modules.memory import memory_runtime_configuration
 from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaClient,
     DaytonaConfig,
@@ -78,9 +82,6 @@ from openminion.services.runtime.errors import (
 )
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
-    _normalize_runtime_memory_provider,
-    _resolve_env_override,
-    _resolve_runtime_memory_config as _resolve_bootstrap_memory_config_impl,
 )
 
 
@@ -88,33 +89,24 @@ def _map_action_policy_mode(mode: str) -> str:
     return map_action_policy_mode(mode)
 
 
-def build_action_policy_service(
+def build_secret_service(
     *,
     config: OpenMinionConfig,
-    tool_registry: ToolRegistry,
     data_root: Path,
 ) -> Any | None:
-    """Build the canonical policy service once per runtime bootstrap."""
-    from openminion.modules.policy.runtime.service import PolicyCtl
-
-    policy_dir = data_root / "policy"
-    policy_dir.mkdir(parents=True, exist_ok=True)
-    db_path = policy_dir / "policy.db"
-
-    action_policy = config.action_policy
-    policy_ctl = PolicyCtl.with_sqlite(
-        db_path,
-        config=policy_config_from_action_policy(action_policy),
+    return _build_secret_service(
+        data_root=data_root,
+        env=resolve_services_env(runtime_env=config.runtime.env),
     )
 
-    for tool_name, tool in tool_registry.list().items():
-        derived = _derive_tool_risk_spec(tool_name=tool_name, tool=tool)
-        policy_ctl.register_risk(tool_name, derived)
-        # Runner policy adapter maps single-token tool names to `<tool>.default`.
-        if "." not in tool_name:
-            policy_ctl.register_risk(f"{tool_name}.default", derived)
 
-    return policy_ctl
+def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | None:
+    if service.mode == "local":
+        return None
+    return build_secret_service(
+        config=config,
+        data_root=service._context.home_paths.data_root,
+    )
 
 
 def build_daytona_runner(
@@ -178,56 +170,6 @@ def build_tool_authoring_service(
     )
     service.register_runtime_tools(tool_registry)
     return service
-
-
-def _derive_tool_risk_spec(*, tool_name: str, tool: Any) -> Any:
-    from openminion.modules.policy.models import RiskSpec
-
-    min_scope = (
-        str(getattr(tool, "min_scope", "READ_ONLY") or "READ_ONLY").strip().upper()
-    )
-    dangerous = bool(getattr(tool, "dangerous", False))
-    idempotent = bool(getattr(tool, "idempotent", True))
-
-    policy = getattr(tool, "policy", None)
-    policy_risk = str(getattr(policy, "risk", "") or "").strip().lower()
-    if policy_risk in {"high", "critical"}:
-        dangerous = True
-
-    if dangerous:
-        return RiskSpec(
-            risk_class="destructive",
-            side_effects="local",
-            reversibility="irreversible",
-            default_confirm=True,
-        )
-    if min_scope == "READ_ONLY":
-        return RiskSpec(
-            risk_class="read",
-            side_effects="none",
-            reversibility="reversible",
-            default_confirm=False,
-        )
-    if min_scope == "WRITE_SAFE":
-        return RiskSpec(
-            risk_class="write",
-            side_effects="local",
-            reversibility="reversible" if idempotent else "unknown",
-            default_confirm=not idempotent,
-        )
-    if min_scope in {"POWER_USER", "UI_AUTOMATION"}:
-        return RiskSpec(
-            risk_class="exec",
-            side_effects="local",
-            reversibility="unknown",
-            default_confirm=True,
-        )
-    return RiskSpec(
-        risk_class="write",
-        side_effects="local",
-        reversibility="unknown",
-        default_confirm=not idempotent,
-    )
 
 
 def resolve_default_agent(config: OpenMinionConfig) -> AgentProfileConfig:
@@ -319,7 +261,7 @@ def build_agent_memory_service(
     | MemoryServiceGatewayAdapter
     | DisabledMemoryGatewayAdapter
 ):
-    env_provider = _resolve_env_override(
+    env_provider = memory_runtime_configuration.resolve_runtime_env_override(
         config_manager=config_manager,
         config=config,
         key="OPENMINION_MEMORY_PROVIDER",
@@ -328,7 +270,11 @@ def build_agent_memory_service(
         env_provider
         or str(getattr(config.runtime, "memory_provider", "memory_v2")).strip()
     )
-    normalized_provider = _normalize_runtime_memory_provider(configured_provider)
+    normalized_provider = (
+        memory_runtime_configuration.normalize_runtime_memory_provider(
+            configured_provider
+        )
+    )
 
     # memory_v2_smoke: ephemeral smoke provider; memory_v2_hello_world is a compat alias.
     if normalized_provider == "memory_v2_smoke":
@@ -369,7 +315,7 @@ def _resolve_bootstrap_memory_config(
     home_root: Path | None = None,
     data_root: Path | None = None,
 ) -> Any:
-    return _resolve_bootstrap_memory_config_impl(
+    return memory_runtime_configuration.resolve_runtime_memory_config(
         config=config,
         memory_root=memory_root,
         config_manager=config_manager,
@@ -659,7 +605,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         resolve_llm_profiles,
         resolve_runner_options,
     )
-    from openminion.services.brain.factory.vector import init_vector_adapter
     from openminion.modules.tool.exposure import get_model_exposure_specs
     from openminion.modules.brain.schemas import AgentProfile
 
@@ -711,11 +656,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         else _Path(service.db_path)
     )
 
-    vector_adapter, service._vector_sync = init_vector_adapter(
-        config=config,
-        db_dir=db_dir,
-        logger=service._logger,
-    )
+    memory_assembly = service._runtime_memory_assembly
+    vector_adapter = getattr(memory_assembly, "vector_adapter", None)
 
     skill_config = service._get_manager_config("skill")
     context_api = bridge_module.create_context_api(
@@ -741,15 +683,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_home_root=service._context.home_paths.home_root,
     )
 
-    memory_config = service._get_manager_config("memory")
-    memory_api = bridge_module.create_memory_api(
-        mode=service.mode,
-        db_dir=db_dir,
-        config=memory_config,
-        vector_adapter=vector_adapter,
-        telemetryctl=service._telemetryctl,
-        agent_id=str(default_profile.name or default_agent_id),
-    )
+    memory_api = getattr(memory_assembly, "memctl", None)
     resolved_action_policy = (
         default_profile.action_policy
         if default_profile.action_policy is not None
@@ -761,7 +695,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         policy_service=service._action_policy_service,
         action_policy_config=resolved_action_policy,
     )
-
     safety_api = bridge_module.create_safety_api(mode=service.mode)
 
     retrieve_api = bridge_module.init_retrieve_adapter(
@@ -805,11 +738,12 @@ def build_brain_runner_bundle(service: Any) -> Any:
         runtime_registry=service._tools,
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
+        secret_service=_runtime_secret_service(service, config),
+        policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
     )
-
     service._validate_adapter_contracts(
         session_api=session_api,
         context_api=context_api,
@@ -922,6 +856,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         task_manager=TaskManager.from_cron_repository(cron_repository),
         cron_api=cron_repository,
         options=options,
+        terminal_capture_writer=service._terminal_capture_writer,
     )
     brain_runtime_db_path = resolve_brain_runtime_db_path(
         storage_path=_Path(service.db_path)
@@ -959,6 +894,8 @@ def build_agent_runtime_service(
     retrieve_service: Any | None = None,
     action_policy_service: Any | None = None,
     telemetryctl: Any | None = None,
+    sessions: Any | None = None,
+    runtime_memory_assembly: Any | None = None,
 ) -> tuple[object, str, str]:
     from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 
@@ -971,6 +908,16 @@ def build_agent_runtime_service(
         raise RuntimeBootstrapError(f"Brain runtime mode failed. Error: {exc}") from exc
 
     brain_storage_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    terminal_capture_writer = None
+    if (
+        sessions is not None
+        and getattr(runtime_memory_assembly, "memctl", None) is not None
+    ):
+        from openminion.modules.session.capture import (
+            RuntimeTerminalCaptureWriter,
+        )
+
+        terminal_capture_writer = RuntimeTerminalCaptureWriter(sessions)
     return (
         BrainBridgeService(
             config=config,
@@ -989,6 +936,8 @@ def build_agent_runtime_service(
             retrieve_service=retrieve_service,
             action_policy_service=action_policy_service,
             telemetryctl=telemetryctl,
+            terminal_capture_writer=terminal_capture_writer,
+            runtime_memory_assembly=runtime_memory_assembly,
         ),
         "brain",
         fallback_reason,

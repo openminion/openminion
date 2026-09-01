@@ -154,7 +154,7 @@ def _exit_final_text(
         disposition = None
 
     if disposition == BRAIN_DISPOSITION_CONTINUE:
-        runner._append_phase_instruction()
+        runner._append_phase_instruction(ctx)
         runner._sync_coding_module_state(ctx)
         return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
 

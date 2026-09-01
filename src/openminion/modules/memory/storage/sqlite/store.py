@@ -75,6 +75,7 @@ from .write import (
     supersede_by_contradiction as _supersede_by_contradiction_impl,
     upsert as _upsert_impl,
 )
+from .capture_bundle import apply_capture_bundle as _apply_capture_bundle_impl
 from openminion.modules.storage.runtime.sqlite import connect_database
 
 _ARTIFACTCTL_UNSET = object()
@@ -162,6 +163,9 @@ class SQLiteMemoryStore(MemoryStore):
         artifactctl = self._artifactctl
         self._artifactctl = None
         artifactctl.close()
+
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        return _apply_capture_bundle_impl(self, bundle)
 
     def _add_artifact_refs(self, *, owner_id: str, ref_values: Any) -> None:
         targets = normalize_artifact_ref_targets(ref_values)

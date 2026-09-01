@@ -51,7 +51,7 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
-from openminion.modules.task.project.checkpoints import project_cycle_summaries
+from openminion.modules.task.project import checkpoints as project_cp
 
 _LOGGER = get_logger("project_worker")
 
@@ -166,7 +166,7 @@ class ProjectWorker:
     ) -> ProjectWorkerResult:
         if max_cycles < 1:
             raise ValueError("max_cycles must be greater than zero")
-        result: ProjectWorkerResult | None = None
+        result: ProjectWorkerResult
         for _ in range(max_cycles):
             result = self.run_cycle(
                 run_id,
@@ -175,7 +175,6 @@ class ProjectWorker:
             if result.decision != ProjectCycleDecision.CONTINUE:
                 return result
             triggering_cron_job_id = None
-        assert result is not None
         return result
 
     def run_cycle(
@@ -239,6 +238,7 @@ class ProjectWorker:
                     "condition": evaluation.turn.condition.value,
                     "decision_reason": evaluation.reason,
                     "replan_count": evaluation.replan_count,
+                    **project_cp.plan_checkpoint_payload(checkpoint, evaluation.turn),
                     **({"error": turn_error.to_dict()} if turn_error else {}),
                 },
             )
@@ -611,7 +611,7 @@ class ProjectWorker:
             run,
             validation_summary=validation_summary,
             final_operator_summary=run.operator_summary or "Autonomy project closed.",
-            cycle_summaries=project_cycle_summaries(
+            cycle_summaries=project_cp.project_cycle_summaries(
                 self._task_manager, task_id=run.task_id or ""
             ),
             tests_run=verification,

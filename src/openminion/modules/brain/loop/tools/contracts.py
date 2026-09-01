@@ -334,6 +334,8 @@ class AdaptiveToolLoopState:
     total_tool_calls: int = 0
     termination_reason: str = ""
     scratchpad: dict[str, Any] = field(default_factory=dict)
+    task_plan: dict[str, Any] | None = None
+    task_plan_revision: dict[str, Any] | None = None
     seen_signatures: list[str] = field(default_factory=list)
     direct_tool_turn: DirectToolTurnContext | None = None
     direct_tool_requested_batch_satisfied: bool = False
@@ -419,8 +421,9 @@ class AdaptiveToolLoopOutcome:
             and self.delegation_result_summary
         ):
             payload["delegation_result_summary"] = dict(self.delegation_result_summary)
-        if isinstance(self.task_plan, dict) and self.task_plan:
-            payload["task_plan"] = dict(self.task_plan)
+        task_plan = self.task_plan or self.state.task_plan
+        if isinstance(task_plan, dict) and task_plan:
+            payload["task_plan"] = dict(task_plan)
         if (
             isinstance(self.task_plan_step_completed, dict)
             and self.task_plan_step_completed
@@ -431,8 +434,9 @@ class AdaptiveToolLoopOutcome:
             and self.task_plan_step_blocked
         ):
             payload["task_plan.step_blocked"] = dict(self.task_plan_step_blocked)
-        if isinstance(self.task_plan_revision, dict) and self.task_plan_revision:
-            payload["task_plan.revision"] = dict(self.task_plan_revision)
+        task_plan_revision = self.task_plan_revision or self.state.task_plan_revision
+        if isinstance(task_plan_revision, dict) and task_plan_revision:
+            payload["task_plan.revision"] = dict(task_plan_revision)
         if isinstance(self.task_plan_abandoned, dict) and self.task_plan_abandoned:
             payload["task_plan.abandoned"] = dict(self.task_plan_abandoned)
         if isinstance(self.task_plan_completed, dict) and self.task_plan_completed:

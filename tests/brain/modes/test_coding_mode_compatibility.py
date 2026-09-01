@@ -47,5 +47,6 @@ def test_public_decision_descriptions_keep_coding_guidance_under_act() -> None:
 
 def test_coding_mode_v1_allowlist_is_frozen_set() -> None:
     assert isinstance(CODING_V1_ALLOWED_TOOLS, frozenset)
-    assert len(CODING_V1_ALLOWED_TOOLS) == 18
+    assert len(CODING_V1_ALLOWED_TOOLS) == 19
+    assert "file.trash" in CODING_V1_ALLOWED_TOOLS
     assert MODEL_TASK_DELEGATE in CODING_V1_ALLOWED_TOOLS

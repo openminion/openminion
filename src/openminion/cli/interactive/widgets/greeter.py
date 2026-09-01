@@ -73,7 +73,7 @@ def build_greeter_message(
         getattr(project_context, "is_canonical_name", False)
     ):
         lines.append(
-            f"found {project_context.display_name}; consider renaming to OPENMINION.md for canonical support"
+            f"loaded project context from {project_context.display_name}; OpenMinion-native filename: OPENMINION.md"
         )
 
     body = "\n".join(lines)

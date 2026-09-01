@@ -2,6 +2,9 @@
 
 from typing import Any, Callable, Iterable, cast
 
+from sophiagraph.models import MemoryEmbedding
+from sophiagraph.query import EmbeddingListOptions, ListQueryOptions
+
 from openminion.modules.memory.errors import InvalidArgumentError
 from openminion.modules.memory.portability.models import (
     MemoryBundleExportOptions,
@@ -39,10 +42,55 @@ class BuiltinKnowledgeBackend(KnowledgeBackend):
         *,
         export_snapshot_fn: ExportSnapshotFn | None = None,
         import_snapshot_fn: ImportSnapshotFn | None = None,
+        vector_adapter: Any | None = None,
     ) -> None:
         self.store = store
         self._export_snapshot_fn = export_snapshot_fn
         self._import_snapshot_fn = import_snapshot_fn
+        self._vector_adapter = vector_adapter
+
+    def list_embeddings(self, options: EmbeddingListOptions) -> list[MemoryEmbedding]:
+        if self._vector_adapter is None or not self._vector_adapter.semantic_ready:
+            return []
+        identity = self._vector_adapter.vector_space_identity
+        if options.vector_space and options.vector_space != identity.key:
+            return []
+        records: list[MemoryRecordLike] = []
+        for scope in self.store.list_scopes():
+            records.extend(
+                self.store.list(ListQueryOptions(scopes=[scope], limit=None))
+            )
+        result: list[MemoryEmbedding] = []
+        for record in records:
+            if options.record_id and record.id != options.record_id:
+                continue
+            if options.namespaces and not any(
+                record.effective_namespace.matches(namespace)
+                for namespace in options.namespaces
+            ):
+                continue
+            vector = self._vector_adapter.get_vector(record.id)
+            if vector is None:
+                continue
+            result.append(
+                MemoryEmbedding(
+                    record_id=record.id,
+                    vector_space=identity.key,
+                    dimension=identity.dimension,
+                    provider=identity.provider,
+                    model=identity.model,
+                    namespace=record.effective_namespace,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                    vector=vector if options.include_vectors else None,
+                    metadata={}
+                    if options.include_vectors
+                    else {"vector_omitted": True},
+                )
+            )
+            if options.limit is not None and len(result) >= options.limit:
+                break
+        return result
 
     def put_record(self, record: MemoryRecordLike) -> str:
         return self.store.put(record)
@@ -401,6 +449,9 @@ class BackendMemoryStoreAdapter(MemoryStore):
 
     def list_all(self):
         return _call_backend_extra(self._backend, "list_all")
+
+    def apply_capture_bundle(self, bundle: Any) -> Any:
+        return _call_backend_extra(self._backend, "apply_capture_bundle", bundle)
 
 
 def adapt_backend_to_store(backend: KnowledgeBackend) -> MemoryStore:

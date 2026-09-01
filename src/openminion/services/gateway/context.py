@@ -2,10 +2,6 @@ import logging
 from typing import Any, Callable, cast
 
 from openminion.base.types import Message
-from openminion.modules.context.knowledge.config import (
-    DEFAULT_RETRIEVAL_MAX_CHARS,
-    DEFAULT_RETRIEVAL_MAX_RESULTS,
-)
 from openminion.modules.context.knowledge.constants import (
     EVENT_QUERY_COMPLETED,
     EVENT_QUERY_DEGRADED,
@@ -16,11 +12,8 @@ from openminion.modules.context.knowledge.constants import (
 )
 from openminion.modules.context.knowledge.errors import KnowledgeGraphError
 from openminion.modules.context.knowledge.models import (
-    GraphContextItem,
-    GraphPathEvidence,
     GraphQueryRequest,
     GraphQueryResult,
-    GraphSourceRef,
 )
 from openminion.services.constants import (
     MEMORY_CAPSULE_CACHEABLE_STRATEGIES,
@@ -32,14 +25,19 @@ from openminion.services.gateway.memory import (
     _text_fingerprint,
     memory_error_facts,
 )
+from openminion.modules.context.pack.evidence import (
+    map_knowledge_evidence as _map_knowledge_evidence,
+    map_memory_evidence as _map_memory_evidence,
+    pack_evidence_context as _pack_evidence_context,
+)
+from openminion.modules.memory.surfacing.evidence import (
+    MemoryRetrievalEvidenceSelection,
+)
 from openminion.services.gateway.types import TurnContext
 from openminion.services.gateway.turn.runtime import (
     _append_knowledge_graph_context,
     _append_memory_retrieval_context,
     _inject_memory_context,
-)
-from openminion.modules.prompting.context_blocks import (
-    THIRD_BRAIN_GRAPH_CONTEXT_HEADER,
 )
 
 MemoryEventEmitter = Callable[..., None]
@@ -109,108 +107,19 @@ def _build_dynamic_retrieval_context(
     )
 
 
-def _source_ref_text(source_ref: GraphSourceRef) -> str:
-    path = str(source_ref.path or "").strip()
-    if source_ref.line is not None:
-        return f"{path}:L{source_ref.line}" if path else f"L{source_ref.line}"
-    if source_ref.page is not None:
-        return f"{path}:p{source_ref.page}" if path else f"p{source_ref.page}"
-    if source_ref.span is not None:
-        start, end = source_ref.span
-        return f"{path}:{start}-{end}" if path else f"{start}-{end}"
-    return path
-
-
-def _graph_item_line(item: GraphContextItem) -> str:
-    snippet = str(item.snippet or "").strip()
-    source = _source_ref_text(item.source_ref)
-    suffix = f" ({source})" if source else ""
-    node_id = str(item.node_or_edge_id or "").strip()
-    if snippet and node_id:
-        return f"- {node_id}: {snippet}{suffix}"
-    if snippet:
-        return f"- {snippet}{suffix}"
-    if node_id:
-        return f"- {node_id}{suffix}"
-    return ""
-
-
-def _graph_path_line(path: GraphPathEvidence) -> str:
-    node_ids = [
-        str(node.node_or_edge_id or "").strip()
-        for node in path.nodes
-        if str(node.node_or_edge_id or "").strip()
-    ]
-    explanation = str(path.explanation or "").strip()
-    if node_ids and explanation:
-        return f"- path {' -> '.join(node_ids)}: {explanation}"
-    if node_ids:
-        return f"- path {' -> '.join(node_ids)}"
-    if explanation:
-        return f"- path: {explanation}"
-    return ""
-
-
-def _format_graph_results(
-    results: tuple[GraphQueryResult, ...],
+def _build_dynamic_retrieval_evidence(
+    agent_memory: Any,
     *,
-    max_chars: int,
-    max_results: int,
-) -> tuple[str, dict[str, str]]:
-    lines = [THIRD_BRAIN_GRAPH_CONTEXT_HEADER]
-    included = 0
-    omitted = 0
-    seen: set[tuple[str, str, str]] = set()
-    providers: list[str] = []
-    for result in results:
-        providers.append(result.provider)
-        header = f"Provider: {result.provider}"
-        if result.tags:
-            header = f"{header} ({', '.join(result.tags)})"
-        provider_lines = [header]
-        for item in result.items:
-            key = (result.provider, item.node_or_edge_id, item.snippet)
-            if key in seen:
-                omitted += 1
-                continue
-            seen.add(key)
-            if included >= max_results:
-                omitted += 1
-                continue
-            line = _graph_item_line(item)
-            if not line:
-                continue
-            provider_lines.append(line)
-            included += 1
-        for path in result.paths:
-            if included >= max_results:
-                omitted += 1
-                continue
-            line = _graph_path_line(path)
-            if not line:
-                continue
-            provider_lines.append(line)
-            included += 1
-        omitted += len(result.omitted)
-        if len(provider_lines) > 1:
-            lines.extend(provider_lines)
-    if included == 0:
-        return "", {
-            "knowledge_graph_results": "0",
-            "knowledge_graph_omitted": str(omitted),
-            "knowledge_graph_providers": ",".join(providers),
-        }
-    text = "\n".join(lines)
-    truncated = len(text) > max_chars
-    if truncated:
-        text = text[: max(0, max_chars - 32)].rstrip() + "\n[graph context truncated]"
-    return text, {
-        "knowledge_graph_results": str(included),
-        "knowledge_graph_omitted": str(omitted),
-        "knowledge_graph_providers": ",".join(providers),
-        "knowledge_graph_truncated": str(truncated).lower(),
-        "knowledge_graph_limit_chars": str(max_chars),
-    }
+    session_id: str,
+    user_message: str,
+) -> MemoryRetrievalEvidenceSelection | None:
+    build_items = getattr(agent_memory, "build_retrieval_evidence_items", None)
+    if not callable(build_items):
+        return None
+    return cast(
+        MemoryRetrievalEvidenceSelection,
+        build_items(session_id=session_id, user_message=user_message),
+    )
 
 
 def _error_facts(exc: Exception) -> dict[str, str]:
@@ -241,26 +150,24 @@ def _knowledge_graph_source_payload(knowledge_graphs: Any) -> dict[str, str]:
     }
 
 
-def _build_knowledge_graph_context(
+def _query_knowledge_graph_results(
     knowledge_graphs: Any,
     *,
     user_message: str,
-    max_results: int = DEFAULT_RETRIEVAL_MAX_RESULTS,
-    max_chars: int = DEFAULT_RETRIEVAL_MAX_CHARS,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[tuple[GraphQueryResult, ...], dict[str, str]]:
     if knowledge_graphs is None:
-        return "", {}
+        return (), {}
     list_sources = getattr(knowledge_graphs, "list_sources", None)
     query = getattr(knowledge_graphs, "query", None)
     if not callable(list_sources) or not callable(query):
-        return "", {}
+        return (), {}
     sources = tuple(list_sources(layer=LAYER_THIRD_BRAIN))
     if not sources:
-        return "", {}
+        return (), {}
     request = GraphQueryRequest(
         query=user_message,
-        max_results=max_results,
-        max_chars=max_chars,
+        max_results=None,
+        max_chars=None,
         include_paths=True,
         include_explanations=True,
     )
@@ -299,11 +206,14 @@ def _build_knowledge_graph_context(
         results.extend(source_results)
     if failures and not results:
         raise failed_exceptions[0]
-    text, meta = _format_graph_results(
-        tuple(results),
-        max_chars=max_chars,
-        max_results=max_results,
-    )
+    meta = {
+        "knowledge_graph_results": str(
+            sum(len(result.items) + len(result.paths) for result in results)
+        ),
+        "knowledge_graph_omitted": str(sum(len(result.omitted) for result in results)),
+        "knowledge_graph_providers": ",".join(result.provider for result in results),
+        "knowledge_graph_truncated": "false",
+    }
     if failures:
         meta = {
             **meta,
@@ -315,7 +225,7 @@ def _build_knowledge_graph_context(
                 f"{failure['provider']}:{failure['error_code']}" for failure in failures
             ),
         }
-    return text, meta
+    return tuple(results), meta
 
 
 def _build_cached_memory_context(
@@ -511,14 +421,43 @@ def build_turn_context(
         user_message=user_message,
     )
 
-    _attach_memory_context_to_history(
+    _finalize_turn_context(
+        turn_context=turn_context,
+        channel=channel,
+        target=target,
+        session_id=session_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        agent_id=agent_id,
+        agent_memory=agent_memory,
+        logger=logger,
+        user_message=user_message,
+        memory_evidence_enabled=memory_dynamic_retrieval_enabled,
+        knowledge_evidence_enabled=knowledge_graphs is not None,
+    )
+
+    return turn_context
+
+
+def _finalize_turn_context(
+    *,
+    turn_context: TurnContext,
+    channel: str,
+    target: str,
+    session_id: str,
+    memory_capsule_strategy: str,
+    agent_id: str,
+    agent_memory: Any,
+    logger: logging.Logger,
+    user_message: str,
+    memory_evidence_enabled: bool,
+    knowledge_evidence_enabled: bool,
+) -> None:
+    _attach_memory_capsule_to_history(
         turn_context=turn_context,
         channel=channel,
         target=target,
         session_id=session_id,
     )
-
-    # rollout-guarded ContextCtl call-site wiring.
     if memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF:
         _maybe_apply_contextctl_call_site(
             turn_context=turn_context,
@@ -528,8 +467,17 @@ def build_turn_context(
             session_id=session_id,
             user_message=user_message,
         )
-
-    return turn_context
+    _apply_shared_evidence_context(
+        turn_context=turn_context,
+        memory_evidence_enabled=(
+            memory_evidence_enabled
+            and memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF
+        ),
+        knowledge_evidence_enabled=knowledge_evidence_enabled,
+        channel=channel,
+        target=target,
+        session_id=session_id,
+    )
 
 
 def _populate_memory_context(
@@ -554,14 +502,26 @@ def _populate_memory_context(
         memory_capsule_cache=memory_capsule_cache,
     )
     if memory_dynamic_retrieval_enabled:
-        (
-            turn_context.memory_retrieval_context,
-            turn_context.memory_retrieval_meta,
-        ) = _build_dynamic_retrieval_context(
+        selection = _build_dynamic_retrieval_evidence(
             agent_memory,
             session_id=session_id,
             user_message=user_message,
         )
+        if selection is None:
+            (
+                turn_context.memory_retrieval_context,
+                turn_context.memory_retrieval_meta,
+            ) = _build_dynamic_retrieval_context(
+                agent_memory,
+                session_id=session_id,
+                user_message=user_message,
+            )
+            return
+        items, omissions = _map_memory_evidence(selection)
+        turn_context.evidence_items += items
+        turn_context.evidence_source_omissions += omissions
+        turn_context.memory_retrieval_meta = selection.metadata_dict()
+        turn_context.memory_evidence_typed = True
 
 
 def _populate_knowledge_graph_context(
@@ -605,13 +565,14 @@ def _populate_knowledge_graph_context(
         payload=payload_base,
     )
     try:
-        (
-            turn_context.knowledge_graph_context,
-            turn_context.knowledge_graph_meta,
-        ) = _build_knowledge_graph_context(
+        results, turn_context.knowledge_graph_meta = _query_knowledge_graph_results(
             knowledge_graphs,
             user_message=user_message,
         )
+        items, omissions = _map_knowledge_evidence(results)
+        turn_context.evidence_items += items
+        turn_context.evidence_source_omissions += omissions
+        turn_context.knowledge_evidence_typed = True
     except Exception as exc:
         facts = _error_facts(exc)
         logger.warning(
@@ -732,7 +693,27 @@ def _record_memory_context_failure(
     }
 
 
-def _attach_memory_context_to_history(
+def _apply_shared_evidence_context(
+    *,
+    turn_context: TurnContext,
+    memory_evidence_enabled: bool,
+    knowledge_evidence_enabled: bool,
+    channel: str,
+    target: str,
+    session_id: str,
+) -> None:
+    if not memory_evidence_enabled and not knowledge_evidence_enabled:
+        return
+    _pack_evidence_context(turn_context)
+    _attach_evidence_context_to_history(
+        turn_context=turn_context,
+        channel=channel,
+        target=target,
+        session_id=session_id,
+    )
+
+
+def _attach_memory_capsule_to_history(
     *,
     turn_context: TurnContext,
     channel: str,
@@ -747,6 +728,15 @@ def _attach_memory_context_to_history(
             session_id=session_id,
             memory_context=turn_context.memory_context,
         )
+
+
+def _attach_evidence_context_to_history(
+    *,
+    turn_context: TurnContext,
+    channel: str,
+    target: str,
+    session_id: str,
+) -> None:
     if turn_context.memory_retrieval_context:
         turn_context.history = _append_memory_retrieval_context(
             history=turn_context.history,

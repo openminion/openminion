@@ -24,7 +24,6 @@ from openminion.modules.brain.loop.tools.engine import (
     _force_duplicate_batch_answer_only_closure,
     _action_result_has_retry_or_poll_signal,
     _active_work_summary_from_state,
-    _adaptive_budget_config,
     _append_tool_result_payload,
     _build_enrichment_message,
     _build_intent_execution_state_message,
@@ -131,6 +130,53 @@ class _NoToolRepairHarness(AdaptiveLoopRunnerNoToolMixin):
 
 class _ResponseAppendHarness(AdaptiveLoopRunnerPostprocessMixin):
     pass
+
+
+def test_no_tool_success_retries_while_typed_plan_step_is_unresolved() -> None:
+    runner = _NoToolRepairHarness()
+    runner.loop_ctx = SimpleNamespace(
+        _plan_tool_active_plan_override={
+            "plan_id": "plan-1",
+            "objective": "Validate the change",
+            "steps": [
+                {
+                    "step_id": "validate",
+                    "description": "Run validation",
+                    "status": "in_progress",
+                }
+            ],
+        },
+        provider_retry_max_attempts=1,
+    )
+    runner.loop_state = AdaptiveToolLoopState(
+        messages=[Message(role="assistant", content="done")]
+    )
+    runner.profile = _profile(allowed_tools=frozenset())
+    runner.allowed_tools = frozenset()
+    runner.public_mode_tag = "act"
+    response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="done",
+        finish_reason="stop",
+    )
+
+    continue_loop, outcome = runner._handle_no_tool_calls(
+        prepared=SimpleNamespace(
+            response=response,
+            iter_llm_duration_ms=1,
+            iter_input_tokens=1,
+            iter_output_tokens=1,
+        ),
+        payloads=runner._build_response_payloads(response),
+    )
+
+    assert continue_loop is True
+    assert outcome is None
+    assert runner.loop_state.messages[-1].role == "system"
+    assert "validate" in runner.loop_state.messages[-1].content
+    assert runner.loop_state.messages[0].content != "done"
 
 
 def test_append_response_messages_discards_noncanonical_embedded_tool_calls() -> None:
@@ -548,17 +594,6 @@ class TestEffectiveCap:
         prof = _profile(allowed_tools=frozenset({"x"}), max_iterations=3)
         loop_state = AdaptiveToolLoopState(messages=[], effective_max_iterations=0)
         assert _effective_cap(prof, loop_state) == 3
-
-
-class TestAdaptiveBudgetConfig:
-    def test_returns_none_when_absent(self) -> None:
-        prof = _profile(allowed_tools=frozenset({"x"}))
-        assert _adaptive_budget_config(prof) is None
-
-    def test_returns_existing_instance(self) -> None:
-        cfg = AdaptiveBudgetConfig(mode="autonomous", extend_by=4, idle_timeout_s=60)
-        prof = _profile(allowed_tools=frozenset({"x"}), adaptive_budget_config=cfg)
-        assert _adaptive_budget_config(prof) is cfg
 
 
 # Loop state tool-result helpers
@@ -1241,7 +1276,7 @@ class TestBuildToolFailureRecoveryMessage:
         msg = _build_tool_failure_recovery_message(tool_name="t", action_result=ar)
         assert msg is not None
 
-    def test_exec_run_invalid_working_dir_arg_gets_supported_field_guidance(
+    def test_validation_error_preserves_structured_schema_facts(
         self,
     ) -> None:
         ar = ActionResult(
@@ -1254,6 +1289,10 @@ class TestBuildToolFailureRecoveryMessage:
                     "1 validation error for ExecRunArgs\nworking_dir\n"
                     "  Extra inputs are not permitted"
                 ),
+                details={
+                    "validation_path": ["working_dir"],
+                    "schema": {"required": ["command"]},
+                },
             ),
         )
         msg = _build_tool_failure_recovery_message(
@@ -1261,11 +1300,11 @@ class TestBuildToolFailureRecoveryMessage:
             action_result=ar,
         )
         assert msg is not None
-        assert "path field" in msg.content
-        assert "cwd / working_directory aliases" in msg.content
-        assert "do not pass working_dir" in msg.content
+        assert "code=INVALID_ARGUMENT" in msg.content
+        assert '"validation_path": ["working_dir"]' in msg.content
+        assert '"required": ["command"]' in msg.content
 
-    def test_exec_run_argument_shape_error_gets_schema_guidance(self) -> None:
+    def test_argument_error_does_not_add_command_specific_repair(self) -> None:
         ar = ActionResult(
             command_id="x",
             status="failed",
@@ -1284,11 +1323,11 @@ class TestBuildToolFailureRecoveryMessage:
             action_result=ar,
         )
         assert msg is not None
-        assert "plain command string" in msg.content
-        assert "not a JSON array" in msg.content
-        assert "omit desc, environment_variables" in msg.content
+        assert "plain command string" not in msg.content
+        assert "omit desc" not in msg.content
+        assert "Use the tool schema" in msg.content
 
-    def test_file_write_argument_shape_error_gets_schema_guidance(self) -> None:
+    def test_argument_error_does_not_add_tool_specific_repair(self) -> None:
         ar = ActionResult(
             command_id="x",
             status="failed",
@@ -1307,10 +1346,10 @@ class TestBuildToolFailureRecoveryMessage:
             action_result=ar,
         )
         assert msg is not None
-        assert "path and content as strings" in msg.content
-        assert "Do not repeat the same invalid call" in msg.content
+        assert "path and content as strings" not in msg.content
+        assert "Use the tool schema" in msg.content
 
-    def test_exec_run_policy_denied_array_command_gets_string_guidance(self) -> None:
+    def test_policy_denial_without_details_still_exposes_typed_error(self) -> None:
         ar = ActionResult(
             command_id="x",
             status="blocked",
@@ -1325,10 +1364,10 @@ class TestBuildToolFailureRecoveryMessage:
             action_result=ar,
         )
         assert msg is not None
-        assert "plain command string" in msg.content
-        assert "not a JSON array" in msg.content
+        assert "code=POLICY_DENIED" in msg.content
+        assert "Use the tool schema" in msg.content
 
-    def test_exec_run_pytest_failure_gets_patch_then_rerun_guidance(self) -> None:
+    def test_tool_failure_does_not_infer_a_recovery_from_output_text(self) -> None:
         ar = ActionResult(
             command_id="x",
             status="failed",
@@ -1353,9 +1392,8 @@ class TestBuildToolFailureRecoveryMessage:
             action_result=ar,
         )
         assert msg is not None
-        assert "failing verifier output" in msg.content
-        assert "patch the relevant file" in msg.content
-        assert "same verification command" in msg.content
+        assert "patch the relevant file" not in msg.content
+        assert "same verification command" not in msg.content
 
 
 class TestBuildMissingActionResult:
@@ -1532,6 +1570,34 @@ class TestToolRequestResult:
         assert ar.status == "failed"
         assert ar.error.code == "TOOL_REQUEST_UNAVAILABLE"
         assert mutated is False
+
+    def test_generic_file_name_returns_exact_available_names_without_mutation(
+        self,
+    ) -> None:
+        specs = _tool_specs("file.list_dir", "file.read", "file.write")
+        active_specs = list(_tool_specs("web.search"))
+        active_names = {"web.search"}
+
+        ar, mutated = _tool_request_result(
+            requested_name="file",
+            active_tool_names=active_names,
+            requestable_specs_by_name={spec.name: spec for spec in specs},
+            active_tool_specs=active_specs,
+        )
+
+        assert ar.status == "failed"
+        assert ar.error.code == "TOOL_REQUEST_UNAVAILABLE"
+        assert ar.error.details == {
+            "tool_name": "file",
+            "requestable_tool_names": [
+                "file.list_dir",
+                "file.read",
+                "file.write",
+            ],
+        }
+        assert mutated is False
+        assert active_names == {"web.search"}
+        assert [spec.name for spec in active_specs] == ["web.search"]
 
     def test_activates_requested_tool(self) -> None:
         specs = _tool_specs("new.tool")
@@ -2402,6 +2468,36 @@ def test_loop_seed_response_skips_first_llm_call() -> None:
     assert len(runtime.calls) == 0  # seed used first
 
 
+def test_loop_seed_response_does_not_debit_accounted_entry_usage() -> None:
+    seed = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="from accounted seed",
+        finish_reason="stop",
+        usage=UsageInfo(input_tokens=6000, output_tokens=877),
+    )
+    runtime = _FakeRuntime(responses=[])
+    state = _state(tokens=1123)
+    state.llm_calls_used = 2
+    loop_ctx = _LoopContext(state=state, outcomes=[])
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="seed me")],
+        tool_specs=_tool_specs("file.read"),
+        seed_response=seed,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert runtime.calls == []
+    assert state.llm_calls_used == 2
+    assert state.budgets_remaining.tokens == 1123
+
+
 def test_loop_with_initial_state_skips_message_initialization() -> None:
     runtime = _FakeRuntime(
         responses=[
@@ -2750,6 +2846,70 @@ def test_loop_repeated_marked_no_tool_response_honors_provider_retry_limit() -> 
         )
 
     assert len(runtime.calls) == 3
+
+
+def test_loop_resets_empty_response_retries_after_usable_tool_call() -> None:
+    marked = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="display fallback",
+        empty_payload_recovered=True,
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            marked,
+            marked,
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                tool_calls=[
+                    ToolCall(
+                        id="read",
+                        name="file.read",
+                        arguments={"path": "report.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            marked,
+            marked,
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="Read report.py.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, llm_calls_max=8),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="file.read", args={"path": "report.py"}
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="source"
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"}), max_iterations=8),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="read report.py")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Read report.py."
+    assert len(runtime.calls) == 6
 
 
 def test_loop_marked_no_tool_response_honors_single_provider_attempt() -> None:
@@ -4452,6 +4612,36 @@ def test_loop_with_delegation_context_injects_parent_context_message() -> None:
 
 
 class TestForceBudgetAnswerOnlyFinalization:
+    def test_unresolved_plan_skips_answer_only_finalization(self) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"file.write"}),
+            profile_name="general_adaptive_v1",
+        )
+        st_loop = AdaptiveToolLoopState(messages=[], total_tool_calls=1)
+        loop_ctx = _LoopContext(state=_state())
+        loop_ctx._plan_tool_active_plan_override = {
+            "plan_id": "plan-1",
+            "steps": [{"step_id": "validate", "status": "pending"}],
+        }
+        runtime = _FakeRuntime(responses=[])
+
+        outcome = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+        )
+
+        assert outcome is not None
+        assert outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        assert outcome.final_text is None
+        assert runtime.calls == []
+
     def test_has_tool_evidence_uses_prior_tool_messages(self) -> None:
         st_loop = AdaptiveToolLoopState(
             messages=[Message(role="tool", content='{"status":"success"}')]
@@ -4988,6 +5178,59 @@ class TestForceBudgetAnswerOnlyFinalization:
 
 
 class TestFinalizeIterationCapExit:
+    def test_iteration_cap_with_unresolved_plan_skips_success_fallback(self) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"file.write"}),
+            profile_name="general_adaptive_v1",
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            total_tool_calls=1,
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "content": "wrote partial.txt",
+                        "data": {"path": "partial.txt"},
+                    }
+                ]
+            },
+        )
+        loop_ctx = _LoopContext(state=_state())
+        loop_ctx._plan_tool_active_plan_override = {
+            "plan_id": "plan-1",
+            "objective": "Finish validation",
+            "steps": [
+                {
+                    "step_id": "validate",
+                    "description": "Run validation",
+                    "status": "pending",
+                }
+            ],
+        }
+        runtime = _FakeRuntime(responses=[])
+
+        outcome = finalize_iteration_cap_exit(
+            loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_name="Act",
+            public_mode_tag="act",
+            max_output_tokens=100,
+            metadata=None,
+            loop_profiler=SimpleNamespace(summary=dict),
+            trigger_macro_correction=lambda **_: None,
+            dispatch_correction_plan=lambda **_: None,
+        )
+
+        assert outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        assert outcome.final_text is None
+        assert runtime.calls == []
+
     def test_iteration_cap_forces_answer_only_when_tool_work_exists(self) -> None:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"

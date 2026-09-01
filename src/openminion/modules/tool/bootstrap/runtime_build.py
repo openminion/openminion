@@ -71,10 +71,83 @@ def _ci_mode_enabled() -> bool:
     return token in {"1", "true", "yes", "on"}
 
 
+def _set_blockchain_contract_omissions(
+    registry_manager: ToolRegistryManager,
+    config: Any | None,
+) -> None:
+    runtime_cfg = getattr(config, "runtime", config)
+    tools_cfg = getattr(runtime_cfg, "tools", None)
+    blockchain_cfg = getattr(tools_cfg, "blockchain", None)
+    if blockchain_cfg and getattr(blockchain_cfg, "enabled", False):
+        return
+
+    from openminion.modules.tool.contracts.model_ids import (
+        MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+    from openminion.modules.tool.contracts.runtime_ids import (
+        RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+
+    registry_manager.set_expected_contract_omissions(
+        model_ids={
+            MODEL_BLOCKCHAIN_INSPECT,
+            MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+            MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+        },
+        runtime_ids={
+            RUNTIME_BLOCKCHAIN_INSPECT,
+            RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+            RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+        },
+    )
+
+
 def _emit_contract_drift_report(
     registry_manager: ToolRegistryManager,
+    *,
+    config: Any | None = None,
 ) -> ToolContractDriftReport:
-    report = registry_manager.contract_drift_report()
+    from openminion.modules.tool.contracts.model_ids import (
+        MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+        MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+    from openminion.modules.tool.contracts.runtime_ids import (
+        RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+        RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+    )
+
+    runtime_cfg = getattr(config, "runtime", config)
+    tools_cfg = getattr(runtime_cfg, "tools", None)
+    blockchain_cfg = getattr(tools_cfg, "blockchain", None)
+    blockchain_enabled = bool(
+        blockchain_cfg and getattr(blockchain_cfg, "enabled", False)
+    )
+    report = registry_manager.contract_drift_report(
+        expected_missing_model_ids=(
+            set()
+            if blockchain_enabled
+            else {
+                MODEL_BLOCKCHAIN_INSPECT,
+                MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
+                MODEL_BLOCKCHAIN_SEND_TRANSACTION,
+            }
+        ),
+        expected_missing_runtime_ids=(
+            set()
+            if blockchain_enabled
+            else {
+                RUNTIME_BLOCKCHAIN_INSPECT,
+                RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
+                RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
+            }
+        ),
+    )
     if report.has_drift:
         payload = {
             "model_tool_ids_missing_from_manifests": list(
@@ -118,12 +191,10 @@ def build_runtime_bootstrap(
 
     registry_manager = ToolRegistryManager()
     registry = ToolRegistry([])
-
     workspace_path = Path(workspace_root) if workspace_root else None
     run_path = Path(run_root) if run_root else None
-
     bootstrap_records: list[_ToolBootstrapRecord] = []
-
+    _set_blockchain_contract_omissions(registry_manager, config)
     for entry in _dynamic_tool_bootstrap_entries(
         config,
         tool_bootstrap_entries=tool_bootstrap_entries or _TOOL_BOOTSTRAP_ENTRIES,
@@ -167,8 +238,10 @@ def build_runtime_bootstrap(
 
     registry_manager.set_runtime_tool_schemas(_collect_runtime_tool_schemas(registry))
     registry_manager.compile()
-    contract_drift_report = _emit_contract_drift_report(registry_manager)
-
+    contract_drift_report = _emit_contract_drift_report(
+        registry_manager,
+        config=config,
+    )
     # Wire the populated manager into the resolver module
     set_registry_manager(registry_manager)
     set_registry(registry)

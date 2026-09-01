@@ -29,14 +29,14 @@ def extract_user_message_candidates(
     state: WorkingState,
     user_message: str,
     logger: CanonicalEventLogger,
-) -> list[str]:
+) -> dict[str, Any]:
     config_data = _build_afe_config_data(
         runner=runner,
         state=state,
         user_message=user_message,
         logger=logger,
     )
-    if isinstance(config_data, list):
+    if isinstance(config_data, dict):
         return config_data
     report = _run_afe_reflection(
         runner=runner,
@@ -44,9 +44,9 @@ def extract_user_message_candidates(
         logger=logger,
         config_data=config_data,
     )
-    if isinstance(report, list):
+    if isinstance(report, dict):
         return report
-    return _stage_afe_candidates(
+    return _store_afe_report(
         state=state,
         logger=logger,
         report=report,
@@ -60,7 +60,7 @@ def _build_afe_config_data(
     state: WorkingState,
     user_message: str,
     logger: CanonicalEventLogger,
-) -> _AfeConfigData | list[str]:
+) -> _AfeConfigData | dict[str, Any]:
     from openminion.modules.memory.runtime.staging import (
         AFE_INITIAL_CONFIDENCE,
     )
@@ -187,7 +187,7 @@ def _run_afe_reflection(
     state: WorkingState,
     logger: CanonicalEventLogger,
     config_data: _AfeConfigData,
-) -> UserMessageCandidateReport | list[str]:
+) -> UserMessageCandidateReport | dict[str, Any]:
     _runner_delegate(
         "_track_call_started",
         runner,
@@ -222,60 +222,47 @@ def _run_afe_reflection(
             state=state,
             reason="extraction_failed",
             status="warning",
+            retryable=True,
             error=str(exc),
         )
     finally:
         _runner_delegate("_track_call_completed", runner, config_data.llm_call_id)
 
 
-def _stage_afe_candidates(
+def _store_afe_report(
     *,
     state: WorkingState,
     logger: CanonicalEventLogger,
     report: UserMessageCandidateReport,
     config_data: _AfeConfigData,
-) -> list[str]:
-    from openminion.modules.memory.runtime.staging import (
-        ExtractedCandidateDTO,
-        stage_extracted_candidates,
-    )
-
-    dtos = [
-        ExtractedCandidateDTO(
-            kind=str(item.kind),
-            normalized_key=str(item.normalized_key),
-            title=str(item.title),
-            content=str(item.content),
-            tags=tuple(item.tags or ()),
-            model_confidence=None,
-        )
+) -> dict[str, Any]:
+    items = [
+        {
+            "kind": str(item.kind),
+            "normalized_key": str(item.normalized_key),
+            "title": str(item.title),
+            "content": str(item.content),
+            "tags": list(item.tags or ()),
+            "confidence": config_data.initial_confidence,
+        }
         for item in report.items[: config_data.max_items]
     ]
-    result = stage_extracted_candidates(
-        memory_service=config_data.memory_service,
-        session_id=str(getattr(state, "session_id", "") or ""),
-        agent_id=str(getattr(state, "agent_id", "") or ""),
-        trace_id=str(getattr(state, "trace_id", "") or "") or None,
-        candidates=dtos,
-        initial_confidence=config_data.initial_confidence,
-    )
-    candidate_ids = list(result.candidate_ids)
-    state.memory_candidates.extend(candidate_ids)
+    envelope = {"items": items}
+    state.memory_capture_report_root_turn_id = state.root_turn_id
+    state.memory_capture_report = envelope
     logger.emit(
         "brain.auto_fact_extraction.completed",
         {
             "llm_call_id": config_data.llm_call_id,
             "extracted_items": len(report.items),
-            "staged_candidates": result.staged_count,
-            "skipped_count": len(result.skipped),
-            "candidate_sample": candidate_ids[:5],
+            "staged_candidates": 0,
+            "skipped_count": 0,
             "initial_confidence": config_data.initial_confidence,
         },
         trace_id=state.trace_id,
-        memory_refs=candidate_ids,
         status="ok",
     )
-    return candidate_ids
+    return envelope
 
 
 def _emit_afe_skipped(
@@ -284,12 +271,17 @@ def _emit_afe_skipped(
     state: WorkingState,
     reason: str,
     status: str = "info",
+    retryable: bool = False,
     **extra: Any,
-) -> list[str]:
+) -> dict[str, Any]:
     logger.emit(
         "brain.auto_fact_extraction.skipped",
         {"reason": reason, **extra},
         trace_id=state.trace_id,
         status=status,
     )
-    return []
+    state.memory_capture_report_root_turn_id = state.root_turn_id
+    state.memory_capture_report = {"items": []}
+    if retryable:
+        state.memory_capture_report["error_code"] = reason
+    return state.memory_capture_report

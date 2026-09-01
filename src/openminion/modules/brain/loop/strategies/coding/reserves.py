@@ -203,11 +203,13 @@ class CodingReserveMixin:
         )
 
     def _has_verifier_candidate(self: Any) -> bool:
-        if str(
-            self._loop_state.scratchpad.get("coding.pending_verifier_session_id", "")
-            or ""
-        ).strip():
+        if self._loop_state.scratchpad.get("coding.pending_verifier_sessions"):
             return False
+        if (
+            self._coding_plan is not None
+            and getattr(self._coding_plan, "verifier_goal", None) is not None
+        ):
+            return bool(self._bound_verifier_candidates())
         candidate = (
             self._last_verifier_candidate_payload
             or self._loop_state.scratchpad.get("coding.last_verifier_candidate")
@@ -289,22 +291,31 @@ class CodingReserveMixin:
         self._loop_state.seen_signatures = []
         self._loop_state.termination_reason = ""
         self._loop_state.scratchpad["coding.verification_reserve_used"] = True
-        pending_session_id = str(
-            self._loop_state.scratchpad.get("coding.pending_verifier_session_id", "")
-            or ""
-        ).strip()
+        pending_sessions = tuple(
+            str(session_id)
+            for session_id in dict(
+                self._loop_state.scratchpad.get("coding.pending_verifier_sessions", {})
+                or {}
+            )
+        )
+        if ensure_tool_budget and budgets is not None and pending_sessions:
+            budgets.tool_calls = max(
+                int(getattr(budgets, "tool_calls", 0) or 0),
+                len(pending_sessions),
+            )
         instruction = (
-            "Poll the pending verification process now with `exec.poll` using "
-            f"session_id `{pending_session_id}`. Do not start another command. "
-            "Then continue with the terminal verification result."
-            if pending_session_id
+            "Poll each pending verification process now with `exec.poll` using "
+            f"these session IDs: {', '.join(pending_sessions)}. Do not start "
+            "another command. Each poll inherits its original verification target. "
+            "Then continue with the terminal verification results."
+            if pending_sessions
             else (
                 "Use the reserved final tool step for verification only. "
                 "Verification is read-only. Run exactly one verification "
                 "readback step now, preferring `file.read` when a structured "
                 "reader can prove the change and using `exec.run` only when "
-                "shell verification is actually needed. Then continue with "
-                "the verified answer."
+                "shell verification is actually needed. Bind the call to one "
+                "listed verification target, then continue with the verified answer."
             )
         )
         self._loop_state.messages.append(

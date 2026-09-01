@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.time import utc_now_iso
@@ -42,6 +43,56 @@ def test_runtime_factory_wires_precision_recall_to_selected_backend(tmp_path) ->
 
     assert adapter._recall_adapter.capabilities.keyword is True  # noqa: SLF001
     assert adapter._precision_options.mode == "sophiagraph"  # noqa: SLF001
+
+
+def test_precision_recall_uses_semantic_vector_stage_when_ready() -> None:
+    store = InMemoryMemoryStore()
+    service = MemoryService(store=store)
+    record_id = service.write_record(
+        scope="agent:alpha",
+        record_type="fact",
+        title="Preferred editor",
+        content={"text": "The user prefers Helix."},
+    )
+
+    class _EmbeddingProvider:
+        def embed(self, _query: str):
+            return SimpleNamespace(vector=[1.0, 0.0])
+
+    class _VectorAdapter:
+        semantic_ready = True
+        vector_space_identity = SimpleNamespace(
+            key="local:model:2:v1",
+            provider="local",
+            model="model",
+            dimension=2,
+        )
+        embedding_provider = _EmbeddingProvider()
+
+        def get_vector(self, candidate_id: str):
+            return [1.0, 0.0] if candidate_id == record_id else None
+
+    vector_adapter = _VectorAdapter()
+    backend = BuiltinKnowledgeBackend(store, vector_adapter=vector_adapter)
+    recall = SophiagraphRecallAdapter(
+        backend=backend,
+        vector_adapter=vector_adapter,
+    )
+
+    outcome = recall.retrieve(
+        query="unrelated query text",
+        scopes=["agent:alpha"],
+        limit=5,
+        candidate_multiplier=3,
+        minimum_score=0.0,
+        graph_depth=1,
+    )
+
+    assert recall.capabilities.vector is True
+    assert [hit.record.id for hit in outcome.hits] == [record_id]
+    assert "vector" in {
+        component.kind for component in outcome.hits[0].explanation.components
+    }
 
 
 def test_runtime_factory_keeps_backend_none_explicit(tmp_path) -> None:
@@ -294,7 +345,7 @@ def test_gateway_precision_context_keeps_content_and_full_fetch_id() -> None:
     assert meta["memory_recall_capabilities"] == "keyword,graph,recency,trust"
 
 
-def test_gateway_precision_context_fits_complete_card_with_bounded_excerpt() -> None:
+def test_gateway_precision_context_preserves_complete_card_for_shared_packer() -> None:
     _, service, recall = _memory()
     record_id = service.write_record(
         scope="agent:alpha",
@@ -321,10 +372,10 @@ def test_gateway_precision_context_fits_complete_card_with_bounded_excerpt() -> 
         user_message="Tokyo",
     )
 
-    assert len(content) <= 256
+    assert len(content) > 256
     assert "Tokyo notes" in content
     assert "東京" in content
-    assert "…" in content
+    assert "…" not in content
     assert f"full record: fetch authorized memory ID {record_id}" in content
     assert meta["memory_envelope_included_items"] == "1"
 

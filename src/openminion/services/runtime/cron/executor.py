@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Any, Callable
 
 from openminion.base.config.core import resolve_default_agent_id
@@ -6,6 +7,10 @@ from openminion.base.logging import format_structured_event, get_logger
 from openminion.services.runtime.routine_context import (
     CronRunRoutineSink,
     ToolRegistryPreTurnContext,
+)
+from openminion.services.agent.execution.composition import AgentServiceTurnFlowAdapter
+from openminion.modules.policy.adapters.memory import (
+    memory_capture_recovery_allowed,
 )
 from openminion.tools.task.routine.dispatcher import (
     RoutineDispatcher,
@@ -526,6 +531,24 @@ class CronTurnExecutor:
                 "summary": f"cron job agent is not registered in this daemon: {agent_id}",
                 "error": True,
             }
+
+        consolidation = self._consolidation_metadata(payload)
+        if consolidation:
+            assembly = self._runtime.resolve_memory_assembly(agent_id)
+            agent_service = self._runtime.resolve_agent_service(agent_id)
+            service_port = AgentServiceTurnFlowAdapter(agent_service)
+            assembly.recover_pending_captures(
+                sessions=self._runtime.sessions,
+                agent_id=agent_id,
+                extract_candidates=agent_service.extract_memory_capture_candidates,
+                authorize=partial(
+                    memory_capture_recovery_allowed,
+                    policy=service_port.security_policy,
+                    tools=service_port.tools,
+                    agent_id=service_port.identity_agent_id,
+                ),
+                limit=int(consolidation.get("batch_limit", 32) or 32),
+            )
 
         request_payload = self._request_payload(
             job=job,

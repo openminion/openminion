@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from openminion.base.time import utc_now_iso
 from openminion.modules.memory import default_provenance_recorder
@@ -8,7 +8,6 @@ from openminion.modules.memory.contracts.provenance import (
     TurnProvenanceTrace,
 )
 from openminion.modules.memory.errors import MemctlError
-from openminion.modules.memory.models import MemoryScope
 from openminion.modules.memory.runtime.recall import RecallOutcome
 from openminion.modules.memory.storage.base import (
     ListQueryOptions,
@@ -21,11 +20,25 @@ from openminion.modules.memory.runtime.extraction.records import (
 from openminion.modules.memory.runtime.retrieval_pipeline import (
     build_empty_meta,
 )
+from openminion.modules.memory.runtime.retrieval_eligibility import (
+    retrieval_eligibility,
+)
+from openminion.modules.memory.surfacing.evidence import (
+    MemoryEvidenceOmission,
+    MemoryRetrievalEvidenceSelection,
+    build_memory_retrieval_items,
+)
+from openminion.modules.prompting.context_blocks import DYNAMIC_MEMORY_BLOCK_HEADER
 
 _logger = logging.getLogger(__name__)
 
 
 class ContextBuildersMixin:
+    _pipeline: Any
+    _precision_options: Any
+    _retrieve_ctl: Any
+    _trace: Callable[..., Any]
+
     def _is_current_session_summary_record(
         self, record: Any, *, session_id: str
     ) -> bool:
@@ -47,31 +60,11 @@ class ContextBuildersMixin:
 
     def _filter_retrievable_records(self, records: list[Any]) -> list[Any]:
         threshold = float(getattr(self, "_retrieval_min_confidence", 0.0) or 0.0)
-        if threshold <= 0.0:
-            return list(records)
-        filtered: list[Any] = []
-        for record in records:
-            scope = str(getattr(record, "scope", "") or "")
-            record_type = str(getattr(record, "type", "") or "")
-            try:
-                parsed_scope = MemoryScope.parse(scope)
-            except ValueError:
-                parsed_scope = None
-            if (
-                parsed_scope is not None and parsed_scope.is_session
-            ) or record_type in {
-                "session_summary",
-                "pin",
-            }:
-                filtered.append(record)
-                continue
-            try:
-                confidence = float(getattr(record, "confidence", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                confidence = 0.0
-            if confidence >= threshold:
-                filtered.append(record)
-        return filtered
+        return [
+            record
+            for record in records
+            if retrieval_eligibility(record, minimum_confidence=threshold).eligible
+        ]
 
     def _prioritize_structured_retrieval_records(self, records: list[Any]) -> list[Any]:
         structured: list[Any] = []
@@ -720,19 +713,85 @@ class ContextBuildersMixin:
         )
         return content
 
-    def build_retrieval_context_with_metadata(
+    def _select_retrieval_evidence_hits(
+        self,
+        *,
+        session_id: str,
+        user_message: str,
+        memory_hits: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        self._pipeline.sync_runtime_state(
+            config=self._config,
+            ranking_config=self._ranking_config,
+            retrieve_ctl=self._retrieve_ctl,
+            trace_fn=self._trace,
+        )
+        retrieve_hits, split_counts = self._pipeline._rank_retrieve_hits(  # noqa: SLF001
+            user_message=user_message,
+            session_id=session_id,
+            project_id=self._project_id,
+        )
+        merged_hits = self._pipeline._merge_and_dedup(  # noqa: SLF001
+            memory_hits,
+            retrieve_hits,
+        )
+        self._trace(
+            "memory.retrieval.dual_query",
+            {
+                "session_id": session_id,
+                "memory_hits": len(memory_hits),
+                "retrieve_hits": len(retrieve_hits),
+                "merged_hits": len(merged_hits),
+                "retrieve_ctl_available": str(self._retrieve_ctl is not None).lower(),
+                "conversational_hits": split_counts["conversational"],
+                "knowledge_hits": split_counts["knowledge"],
+                "retrieve_no_result_reason": (
+                    None if retrieve_hits else "no_candidates"
+                ),
+            },
+        )
+        return retrieve_hits, merged_hits
+
+    def _populate_retrieval_evidence_meta(
+        self,
+        *,
+        meta: dict[str, str],
+        limit: int,
+        item_count: int,
+        omission_count: int,
+        precision: RecallOutcome | None,
+    ) -> None:
+        options = self._precision_options
+        meta["memory_envelope_included_items"] = str(item_count)
+        meta["memory_envelope_omitted_items"] = str(omission_count)
+        meta["memory_envelope_limit_chars"] = str(limit)
+        meta["memory_recall_mode"] = options.mode
+        if precision is None:
+            return
+        meta["memory_recall_status"] = precision.status
+        meta["memory_recall_candidates"] = str(precision.candidate_count)
+        meta["memory_recall_threshold_drops"] = str(precision.threshold_drops)
+        meta["memory_recall_abstained"] = str(
+            precision.status == "ok" and not precision.hits
+        ).lower()
+        meta["memory_recall_capabilities"] = ",".join(
+            name
+            for name in ("keyword", "graph", "recency", "trust", "vector", "rerank")
+            if bool(getattr(self._recall_adapter.capabilities, name, False))
+        )
+
+    def build_retrieval_evidence_items(
         self,
         *,
         session_id: str,
         user_message: str,
         max_chars: int | None = None,
-    ) -> tuple[str, dict[str, str]]:
-        limit = max(
-            128, max_chars if max_chars is not None else self._retrieval_max_chars
-        )
+    ) -> MemoryRetrievalEvidenceSelection:
+        limit = max(128, max_chars or self._retrieval_max_chars)
         meta = build_empty_meta("retrieval", limit)
         if not user_message.strip():
-            return "", meta
+            return MemoryRetrievalEvidenceSelection(metadata=tuple(meta.items()))
+
         try:
             self._maybe_run_session_lifecycle(session_id=session_id)
             retrieval_scopes = [f"session:{session_id}", *self._long_term_scopes()]
@@ -749,42 +808,45 @@ class ContextBuildersMixin:
             ):
                 meta["memory_recall_status"] = precision.status
                 meta["memory_recall_reason"] = precision.reason
-                return "", meta
-            self._pipeline.sync_runtime_state(
-                config=self._config,
-                ranking_config=self._ranking_config,
-                retrieve_ctl=self._retrieve_ctl,
-                trace_fn=self._trace,
-            )
-            content, meta, retrieve_hits, merged_hits = self._pipeline.rank_and_format(
-                memory_hits,
-                session_id=session_id,
-                user_message=user_message,
-                max_chars=min(limit, options.max_tokens * 4)
-                if options.mode == "sophiagraph"
-                else limit,
-                project_id=self._project_id,
-            )
-            meta["memory_recall_mode"] = options.mode
-            if precision is not None:
-                meta["memory_recall_status"] = precision.status
-                meta["memory_recall_candidates"] = str(precision.candidate_count)
-                meta["memory_recall_threshold_drops"] = str(precision.threshold_drops)
-                meta["memory_recall_abstained"] = str(
-                    precision.status == "ok" and not precision.hits
-                ).lower()
-                meta["memory_recall_capabilities"] = ",".join(
-                    name
-                    for name in (
-                        "keyword",
-                        "graph",
-                        "recency",
-                        "trust",
-                        "vector",
-                        "rerank",
-                    )
-                    if bool(getattr(self._recall_adapter.capabilities, name, False))
+                omission = MemoryEvidenceOmission(
+                    item_id="precision-recall",
+                    provenance_ids=(),
+                    reason=precision.reason or precision.status,
                 )
+                return MemoryRetrievalEvidenceSelection(
+                    omissions=(omission,),
+                    metadata=tuple(meta.items()),
+                )
+
+            retrieve_hits, merged_hits = self._select_retrieval_evidence_hits(
+                memory_hits=memory_hits,
+                user_message=user_message,
+                session_id=session_id,
+            )
+            items = build_memory_retrieval_items(
+                merged_hits,
+                extract_text=self._pipeline._extract_hit_text,  # noqa: SLF001
+                render_item=self._pipeline._format_retrieval_item,  # noqa: SLF001
+            )
+
+            omissions: list[MemoryEvidenceOmission] = []
+            if precision is not None and precision.threshold_drops:
+                omissions.append(
+                    MemoryEvidenceOmission(
+                        item_id="precision-threshold",
+                        provenance_ids=(),
+                        reason="relevance",
+                        count=precision.threshold_drops,
+                    )
+                )
+            omission_count = sum(omission.count for omission in omissions)
+            self._populate_retrieval_evidence_meta(
+                meta=meta,
+                limit=limit,
+                item_count=len(items),
+                omission_count=omission_count,
+                precision=precision,
+            )
             self._record_retrieval_provenance(
                 session_id=session_id,
                 user_message=user_message,
@@ -795,15 +857,50 @@ class ContextBuildersMixin:
                 retrieve_hits=retrieve_hits,
             )
             self._touch_merged_memory_hits(merged_hits)
-            return content, meta
+            self._trace(
+                "memory.retrieval.result",
+                {
+                    "session_id": session_id,
+                    "query_len": len(user_message),
+                    "results": len(items),
+                    "omitted": omission_count,
+                    "retrieval_chars": sum(len(item.rendered_text) for item in items),
+                    "no_result_reason": None if items else "no_candidates",
+                },
+            )
+            return MemoryRetrievalEvidenceSelection(
+                items, tuple(omissions), tuple(meta.items())
+            )
         except Exception as exc:
             self._logger.warning(
-                "memory.build_retrieval_context_with_metadata failed agent_id=%s session_id=%s error=%s",
+                "memory.build_retrieval_evidence_items failed "
+                "agent_id=%s session_id=%s error=%s",
                 self._agent_id,
                 session_id,
                 exc,
             )
-            return "", meta
+            return MemoryRetrievalEvidenceSelection(metadata=tuple(meta.items()))
+
+    def build_retrieval_context_with_metadata(
+        self,
+        *,
+        session_id: str,
+        user_message: str,
+        max_chars: int | None = None,
+    ) -> tuple[str, dict[str, str]]:
+        selection = self.build_retrieval_evidence_items(
+            session_id=session_id,
+            user_message=user_message,
+            max_chars=max_chars,
+        )
+        if not selection.items:
+            return "", selection.metadata_dict()
+        content = (
+            DYNAMIC_MEMORY_BLOCK_HEADER
+            + "\n"
+            + "\n\n".join(item.rendered_text for item in selection.items)
+        )
+        return content, selection.metadata_dict()
 
 
 __all__ = ["ContextBuildersMixin"]

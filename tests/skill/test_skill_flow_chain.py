@@ -36,6 +36,22 @@ inputs:
   - name: service
     type: string
     description: Service name
+recipe:
+  objective: Recover Docker and verify service health
+  steps:
+    - step_id: restart
+      instruction: Restart Docker
+      tool_id: tool.shell
+    - step_id: logs
+      instruction: Inspect Docker logs
+      tool_id: tool.log
+    - step_id: status
+      instruction: Check Docker status
+      tool_id: tool.shell
+  verification:
+    - Docker service is running
+  rollback:
+    - Restart Docker again after checking logs
 ---
 
 # Summary

@@ -64,6 +64,8 @@ def build_default_runtime_stack(
         retrieve_service=infrastructure["retrieve_ctl"],
         action_policy_service=infrastructure["action_policy"],
         telemetryctl=infrastructure.get("telemetryctl"),
+        sessions=runtime_storage.sessions,
+        runtime_memory_assembly=infrastructure["runtime_memory_assembly"],
     )
     bind_mcp_sampling_executor(infrastructure["tools"], agent)
     gateway = build_gateway_service(
@@ -134,6 +136,7 @@ def finalize_runtime_instance(
         agent=agent,
         gateway=gateway,
         memory_queries=infrastructure["agent_memory"],
+        runtime_memory_assembly=infrastructure["runtime_memory_assembly"],
         action_policy=infrastructure["action_policy"],
         retrieve_ctl=infrastructure["retrieve_ctl"],
         knowledge_graphs=infrastructure["knowledge_graphs"],
@@ -144,6 +147,7 @@ def finalize_runtime_instance(
         config_manager=manager,
         _agent_services={},
         _gateways={},
+        _memory_assemblies={},
         run_profile_overrides=effective_run_profile_overrides,
     )
     runtime._runtime_mode = runtime_mode
@@ -157,6 +161,7 @@ def finalize_runtime_instance(
     )
     runtime._agent_services[cache_key] = agent
     runtime._gateways[cache_key] = gateway
+    runtime._memory_assemblies[cache_key] = infrastructure["runtime_memory_assembly"]
     runtime._agent_runtime_modes[cache_key] = runtime_mode
     runtime._agent_runtime_fallback_reasons[cache_key] = fallback_reason
     return runtime

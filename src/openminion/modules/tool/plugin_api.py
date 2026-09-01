@@ -1,5 +1,7 @@
+import hashlib
+import json
 from dataclasses import dataclass, field
-from typing import Any, Protocol, TYPE_CHECKING, runtime_checkable
+from typing import Any, Literal, Protocol, TYPE_CHECKING, runtime_checkable
 
 if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from .registry.catalog import ToolSpec
@@ -47,6 +49,16 @@ class SafetyDecision:
 
 
 @dataclass
+class PolicyAuthorization:
+    tool: Literal["blockchain"]
+    method: Literal["send_transaction"]
+    invocation_hash: str
+    approval_id: str
+    grant_id: str
+    duration_type: Literal["once"]
+
+
+@dataclass
 class PolicyDecision:
     allowed: bool
     reason: str
@@ -54,6 +66,22 @@ class PolicyDecision:
     requires_confirm: bool = False
     modified_args: dict[str, Any] = field(default_factory=dict)
     details: dict[str, Any] = field(default_factory=dict)
+    approval_id: str | None = None
+
+
+def stable_invocation_hash(*, tool: str, method: str, args: dict[str, Any]) -> str:
+    filtered_args = {
+        key: value
+        for key, value in (args or {}).items()
+        if not str(key).startswith("_")
+    }
+    encoded = json.dumps(
+        {"tool": str(tool), "method": str(method), "args": filtered_args},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @runtime_checkable

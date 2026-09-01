@@ -83,6 +83,7 @@ from ..tools.iteration.helpers import (  # noqa: E402
 from ..tools.evidence import (  # noqa: E402
     _successful_substantive_tool_results,
 )
+from ..tools.plan_control import unresolved_active_plan_step_ids  # noqa: E402
 
 
 def _finalization_contract_missing_result(
@@ -131,6 +132,30 @@ def _maybe_close_contract_missing_with_tool_evidence(
         profile_name=BRAIN_ACT_PROFILE_GENERAL,
     )
     return closed_result
+
+
+def _missing_typed_finalization(
+    outcome: AdaptiveToolLoopOutcome,
+    ctx: ExecutionContext,
+    required: bool,
+) -> bool:
+    return (
+        outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        and required
+        and not unresolved_active_plan_step_ids(ctx)
+    )
+
+
+def _budget_exhausted_message(ctx: ExecutionContext) -> str:
+    if unresolved_active_plan_step_ids(ctx):
+        return (
+            f"{_public_act_tag()} budget exhausted with an incomplete active plan. "
+            "Continue in a new turn to resume."
+        )
+    return (
+        f"{_public_act_tag()} budget exhausted before a final answer. "
+        "Continue in a new turn or narrow the scope."
+    )
 
 
 class ActLoopFinalizationMixin:
@@ -631,10 +656,7 @@ class ActLoopFinalizationMixin:
                 profile=SimpleNamespace(profile_name=outcome.profile_name),
                 loop_state=outcome.state,
             )
-            if (
-                outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-                and requires_typed_finalization
-            ):
+            if _missing_typed_finalization(outcome, ctx, requires_typed_finalization):
                 message = (
                     "General act work ended without the required typed "
                     "finalization_status contract."
@@ -642,10 +664,7 @@ class ActLoopFinalizationMixin:
                 return _finalization_contract_missing_result(ctx, message=message)
             adaptive_modes._extract_failure_memories_for_outcome(ctx, outcome=outcome)
             if outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED:
-                message = (
-                    f"{_public_act_tag()} budget exhausted before a final answer. "
-                    "Continue in a new turn or narrow the scope."
-                )
+                message = _budget_exhausted_message(ctx)
                 code = "act_adaptive_budget_exhausted"
             elif (
                 outcome.termination_reason == ADAPTIVE_TERM_CORRECTION_BUDGET_EXHAUSTED

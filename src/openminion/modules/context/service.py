@@ -44,6 +44,7 @@ from .pack.finalize import (
     build_runtime_cache_lookup_key as _build_runtime_cache_lookup_key_impl,
     finalize_context_pack as _finalize_context_pack_impl,
 )
+from .pack.evidence import pack_evidence_items as _pack_evidence_items_impl
 from .prefix import PinnedPrefixBuilder, PrefixCacheAdapter
 from .render.sections import (
     estimate_tokens as _estimate_tokens_messages_impl,
@@ -272,6 +273,8 @@ class ContextCtlService:
                 if strict:
                     raise RuntimeError(message) from exc
                 _logger.warning("%s", message)
+
+    pack_evidence_items = staticmethod(_pack_evidence_items_impl)
 
     def build_pack(self, request: BuildPackRequest) -> ContextPack:
         runtime_state = self._prepare_build_pack_runtime_state(request)
@@ -928,16 +931,12 @@ class ContextCtlService:
 
     def render_memory_cards(self, records: list[MemoryCard], max_tokens: int) -> str:
         return _render_memory_cards_impl(
-            records,
-            max_tokens,
-            fit_to_budget=_fit_to_budget,
+            records, max_tokens, fit_to_budget=_fit_to_budget
         )
 
     def render_artifact_digest(self, digest: ArtifactDigest, max_tokens: int) -> str:
         return _render_artifact_digest_impl(
-            digest,
-            max_tokens,
-            fit_to_budget=_fit_to_budget,
+            digest, max_tokens, fit_to_budget=_fit_to_budget
         )
 
     def render_procedure_snippet(self, proc: Any, max_tokens: int) -> str:

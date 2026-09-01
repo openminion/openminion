@@ -64,7 +64,8 @@ class TestFailureRecoveryContract:
         assert msg is not None
         assert msg.content == (
             "The previous weather.lookup tool call failed (code=E_INPUT): "
-            "missing city argument Do not repeat the same invalid call."
+            "missing city argument. Use the tool schema and these structured "
+            "error facts to choose the next action."
         )
 
     def test_exact_content_without_error_code(self) -> None:
@@ -78,7 +79,8 @@ class TestFailureRecoveryContract:
         assert msg is not None
         assert msg.content == (
             "The previous weather.lookup tool call failed: "
-            "tool crashed Do not repeat the same invalid call."
+            "tool crashed. Use the tool schema and these structured error facts "
+            "to choose the next action."
         )
 
     def test_absence_of_next_step_prose(self) -> None:
@@ -135,7 +137,7 @@ class TestFailureRecoveryContract:
         assert msg is not None
         assert "any.tool" in msg.content
         assert "boom" in msg.content
-        assert "Do not repeat the same invalid call." in msg.content
+        assert "Use the tool schema" in msg.content
 
     def test_timeout_status_also_emits_rail(self) -> None:
         action = _FakeActionResult(

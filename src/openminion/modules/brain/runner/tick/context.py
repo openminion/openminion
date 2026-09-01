@@ -100,6 +100,7 @@ def _parse_confirmation_response(runner: "BrainRunner", text: str) -> str:
 
 
 def _clear_pending_confirmation_metadata(state: Any) -> None:
+    state.pending_policy_approval_id = None
     state.pending_confirmation_sub_intents = []
     state.pending_confirmation_sub_intent_refs = []
     state.pending_confirmation_goal = None
@@ -108,6 +109,13 @@ def _clear_pending_confirmation_metadata(state: Any) -> None:
     state.pending_confirmation_success_criteria = {}
     state.pending_confirmation_feasibility_state = {}
     state.pending_confirmation_feasibility_report = None
+
+
+def _deny_pending_confirmation(runner: "BrainRunner", *, state: Any) -> None:
+    policy_api = getattr(runner, "policy_api", None)
+    deny = getattr(policy_api, "deny_confirmation", None)
+    if callable(deny):
+        deny(working_state=state)
 
 
 def _store_pending_confirmation_metadata(state: Any) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from typing import Any, Callable
 
@@ -72,6 +73,75 @@ def derive_memory_patch_id(
             user_message=user_message,
         )
         or ""
+    )
+
+
+def record_primary_memory_turn(
+    *,
+    agent_memory: Any,
+    patch_id_hint: str,
+    session_id: str,
+    run_id: str,
+    request_id: str,
+    channel: str,
+    target: str,
+    user_message: str,
+    assistant_message: str,
+    memory_capsule_strategy: str,
+    emit_memory_event: MemoryEventEmitter,
+    outbound_metadata: dict[str, str],
+) -> bool:
+    emit_memory_write_started(
+        emit_memory_event=emit_memory_event,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        patch_id=patch_id_hint,
+    )
+    memory_patch = agent_memory.record_turn(
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        channel=channel,
+        target=target,
+        user_message=user_message,
+        assistant_message=assistant_message,
+    )
+    outbound_metadata["memory_enabled"] = "true"
+    outbound_metadata["memory_facts_added"] = str(memory_patch.facts_added)
+    outbound_metadata["memory_todos_added"] = str(memory_patch.todos_added)
+    outbound_metadata["memory_todos_completed"] = str(memory_patch.todos_completed)
+    outbound_metadata["memory_patch_id"] = str(memory_patch.patch_id or "")
+    changed = bool(
+        memory_patch.facts_added
+        or memory_patch.todos_added
+        or memory_patch.todos_completed
+    )
+    emit_memory_write_events(
+        emit_memory_event=emit_memory_event,
+        session_id=session_id,
+        run_id=run_id,
+        request_id=request_id,
+        memory_capsule_strategy=memory_capsule_strategy,
+        patch_id_hint=patch_id_hint,
+        memory_patch=memory_patch,
+        patch_changed=changed,
+    )
+    return changed
+
+
+def apply_assured_capture_result(
+    assured_result: str, outbound_metadata: dict[str, str]
+) -> None:
+    payload = json.loads(assured_result)
+    output_ids = payload.get("output_ids", [])
+    outbound_metadata["memory_enabled"] = "true"
+    outbound_metadata["memory_capture_state"] = str(
+        payload.get("disposition", "pending") or "pending"
+    )
+    outbound_metadata["memory_capture_output_count"] = str(
+        len(output_ids) if isinstance(output_ids, list) else 0
     )
 
 
@@ -233,6 +303,7 @@ __all__ = [
     "MEMORY_CONTEXT_BUILD_FAILED_REASON",
     "MEMORY_FOLLOWUP_FAILED_CODE",
     "MEMORY_FOLLOWUP_FAILED_REASON",
+    "apply_assured_capture_result",
     "derive_memory_patch_id",
     "capture_evidence_id",
     "emit_memory_write_rejected",
@@ -240,5 +311,6 @@ __all__ = [
     "emit_memory_write_events",
     "memory_error_facts",
     "record_memory_failure",
+    "record_primary_memory_turn",
     "text_fingerprint",
 ]

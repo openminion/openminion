@@ -72,6 +72,10 @@ from openminion.modules.brain.loop.tools.contracts import (
     PreparedToolDispatch,
     RawToolResult,
 )
+from openminion.modules.brain.runtime.reconciliation import (
+    apply_plan_reconciliation_to_judgment,
+    evaluate_plan_reconciliation,
+)
 from openminion.modules.brain.schemas import (
     ActionError,
     ActionResult,
@@ -87,7 +91,7 @@ from openminion.modules.brain.trailers import EXPECTED_TRAILERS_METADATA_KEY
 from openminion.modules.context.compress.eligibility import (
     DefaultCompactionEligibility,
 )
-from openminion.modules.llm.schemas import LLMResponse, ToolCall
+from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall
 
 
 @dataclass
@@ -1115,6 +1119,10 @@ def test_confirmation_replay_seeded_path_gets_recovery_budget(
 def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "openminion.modules.brain.loop.tools.runtime.platform.system",
+        lambda: "Darwin",
+    )
     specs = adaptive_modes.build_runtime_tool_specs(
         None,
         allowed_tools=frozenset(
@@ -1124,10 +1132,14 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
     by_name = {spec.name: spec for spec in specs}
 
     assert "parent directories" in by_name["file.write"].description
-    assert "scaffold" in by_name["file.write"].description.lower()
+    assert "complete target file path" in by_name["file.write"].description
     assert "platform=" in by_name["exec.run"].description
     assert "shell_family=" in by_name["exec.run"].description
     assert "direct command" in by_name["exec.run"].description
+    assert "open -a Docker" in by_name["exec.run"].description
+    assert "failed prerequisite check is recoverable" in (
+        by_name["exec.run"].description
+    )
     assert "host.metrics" in by_name["exec.run"].description
     assert "disk usage" in by_name["host.metrics"].description
     assert "unknown.dynamic" not in by_name
@@ -1152,8 +1164,10 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
 def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> None:
     runner = SimpleNamespace(
         tool_api=SimpleNamespace(
-            agent_profile=SimpleNamespace(command_policy={"allow": ["docker", "open"]}),
-            policy=SimpleNamespace(raw={"commands": {"allow": ["docker"]}}),
+            agent_profile=SimpleNamespace(
+                command_policy={"allow": ["docker", "ssh", "open"]}
+            ),
+            policy=SimpleNamespace(raw={"commands": {"allow": ["docker", "ssh"]}}),
         )
     )
 
@@ -1163,8 +1177,14 @@ def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> No
     )
 
     assert len(specs) == 1
-    assert "Agent-profile executable grants: docker." in specs[0].description
-    assert "open" not in specs[0].description
+    assert "Granted executables: docker, ssh." in specs[0].description
+    assert "do not inspect its configuration or credential files first" in (
+        specs[0].description
+    )
+    assert "use configured operations tools" in specs[0].description.lower()
+    assert "existing SSH config" not in specs[0].description
+    assert "existing SSH config" not in build_entry_inactive_tool_directory(specs)
+    assert "Granted executables: docker, ssh, open." not in specs[0].description
 
 
 @pytest.mark.parametrize(
@@ -1225,6 +1245,93 @@ def test_result_from_outcome_maps_terminal_reasons(
     result = mode._result_from_outcome(ctx, outcome=outcome)
     assert result.status == expected_status
     assert result.action_result is not None
+
+
+def test_budget_exhaustion_with_unresolved_plan_waits_without_closing() -> None:
+    class _PlanAwareServices(_FakeServices):
+        closure_judgments: list[ClosureJudgment]
+
+        def __init__(self) -> None:
+            super().__init__(disposition="continue")
+            self.closure_judgments = []
+
+        def evaluate_turn_closure(self, **kwargs: Any) -> ClosureJudgment:
+            del kwargs
+            judgment = ClosureJudgment(
+                satisfied=True,
+                reason="model proposed close",
+                next_action="close",
+                final_answer="done",
+            )
+            plan = self.runner.session_api.active_plan
+            apply_plan_reconciliation_to_judgment(
+                judgment,
+                evaluate_plan_reconciliation(plan),
+                state=_state(
+                    budgets_remaining=BudgetCounters(
+                        ticks=0,
+                        tool_calls=0,
+                        a2a_calls=0,
+                        tokens=0,
+                        time_ms=0,
+                    )
+                ),
+            )
+            self.closure_judgments.append(judgment)
+            return judgment
+
+    services = _PlanAwareServices()
+    services.runner = SimpleNamespace(
+        session_api=_FakeSessionAPI(
+            active_plan={
+                "plan_id": "plan-1",
+                "objective": "Validate the change",
+                "steps": [
+                    {
+                        "step_id": "validate",
+                        "description": "Run validation",
+                        "status": "in_progress",
+                    }
+                ],
+            }
+        ),
+        memory_api=None,
+        profile=SimpleNamespace(goal_execution_policy=None),
+        tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        options=SimpleNamespace(failure_strategy="halt"),
+    )
+    ctx = _ctx(services=services)
+    outcome = _outcome(
+        ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+        final_text="partial",
+        finalization_status={"status": "blocked", "reasoning": "validation pending"},
+        state=AdaptiveToolLoopState(
+            messages=[Message(role="user", content="continue")],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "content": "wrote partial.txt",
+                        "data": {"path": "partial.txt"},
+                    }
+                ]
+            },
+        ),
+    )
+
+    result = ActLoopMode()._result_from_outcome(ctx, outcome=outcome)
+
+    assert result.status == BRAIN_STATE_WAITING_USER
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "act_adaptive_budget_exhausted"
+    assert "Continue in a new turn to resume." in str(result.message)
+    assert services.closure_judgments[0].satisfied is False
+    assert services.closure_judgments[0].final_answer is None
+    assert services.runner.session_api.active_plan["steps"][0]["status"] == (
+        "in_progress"
+    )
 
 
 def test_result_from_outcome_decompose_handoff_and_missing_subtasks(

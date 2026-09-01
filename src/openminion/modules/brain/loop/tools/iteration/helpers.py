@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.brain.constants import (
@@ -254,71 +255,6 @@ def _build_enrichment_message(
     )
 
 
-def _file_write_argument_shape_guidance(
-    *,
-    tool_name: str,
-    error_code: str,
-    lowered_failure_text: str,
-) -> str:
-    if tool_name not in {"file.write", "file_write"}:
-        return ""
-    if not (
-        error_code.strip().upper() in {"INVALID_ARGUMENT", "TOOL_ARG_VALIDATION_FAILED"}
-        or "invalid tool arguments" in lowered_failure_text
-        or "validation error" in lowered_failure_text
-    ):
-        return ""
-    return (
-        "For file.write, pass supported arguments only: path and content "
-        "as strings. Do not pass nested objects, file arrays, or prose-only snippets."
-    )
-
-
-def _is_exec_argument_shape_error(
-    *,
-    tool_name: str,
-    error_code: str,
-    lowered_failure_text: str,
-) -> bool:
-    if tool_name != "exec.run":
-        return False
-    normalized_code = error_code.strip().upper()
-    if normalized_code == "INVALID_ARGUMENT":
-        return any(
-            marker in lowered_failure_text
-            for marker in (
-                "validation error for execrunargs",
-                "extra inputs are not permitted",
-                "environment_variables",
-                "\ndesc\n",
-            )
-        )
-    return normalized_code == "POLICY_DENIED" and any(
-        marker in lowered_failure_text for marker in ('["python"', "[python,")
-    )
-
-
-def _is_exec_verifier_failure(
-    *,
-    tool_name: str,
-    error_code: str,
-    lowered_failure_text: str,
-) -> bool:
-    return (
-        tool_name == "exec.run"
-        and error_code.strip().upper() == "EXEC_ERROR"
-        and any(
-            marker in lowered_failure_text
-            for marker in (
-                "python -m pytest",
-                "short test summary info",
-                "assertionerror",
-                "failed tests/",
-            )
-        )
-    )
-
-
 def _build_tool_failure_recovery_message(
     *,
     tool_name: str,
@@ -341,116 +277,25 @@ def _build_tool_failure_recovery_message(
         if isinstance(nested_details, dict):
             details_dict = nested_details
     summary = str(getattr(action_result, "summary", "") or "").strip()
-    output_text_parts: list[str] = []
-    if isinstance(outputs, dict):
-        for key in ("stdout_preview", "stdout", "stderr_preview", "stderr", "summary"):
-            value = outputs.get(key)
-            if value is None:
-                continue
-            rendered = str(value).strip()
-            if rendered:
-                output_text_parts.append(rendered)
-    combined_output_text = "\n".join(output_text_parts).strip()
-    combined_failure_text = "\n".join(
-        part
-        for part in (error_message, summary, combined_output_text)
-        if str(part or "").strip()
-    ).strip()
-    lowered_failure_text = combined_failure_text.lower()
-    is_structured_policy_denial = (
-        error_code.strip().upper() == "POLICY_DENIED"
-        and bool(str(details_dict.get("suggested_tool", "") or "").strip())
-    )
-    is_invalid_workdir = (
-        error_code.strip().upper() == "INVALID_ARGUMENT"
-        and bool(str(details_dict.get("workdir", "") or "").strip())
-        and "workdir" in (error_message or summary).lower()
-    )
-    is_invalid_working_dir_argument = (
-        tool_name == "exec.run"
-        and error_code.strip().upper() == "INVALID_ARGUMENT"
-        and "working_dir" in lowered_failure_text
-    )
-    is_exec_argument_shape_error = _is_exec_argument_shape_error(
-        tool_name=tool_name,
-        error_code=error_code,
-        lowered_failure_text=lowered_failure_text,
-    )
-    is_exec_verifier_failure = _is_exec_verifier_failure(
-        tool_name=tool_name,
-        error_code=error_code,
-        lowered_failure_text=lowered_failure_text,
-    )
-    if status not in {BRAIN_ACTION_STATUS_FAILED, BRAIN_ACTION_STATUS_TIMEOUT} and not (
-        status == BRAIN_ACTION_STATUS_BLOCKED
-        and (
-            is_structured_policy_denial
-            or is_invalid_workdir
-            or is_exec_argument_shape_error
-        )
-    ):
+    if status not in {
+        BRAIN_ACTION_STATUS_BLOCKED,
+        BRAIN_ACTION_STATUS_FAILED,
+        BRAIN_ACTION_STATUS_TIMEOUT,
+    }:
         return None
     details = error_message or summary or "The tool call failed."
     code_suffix = f" (code={error_code})" if error_code else ""
-    suggested_tool = str(details_dict.get("suggested_tool", "") or "").strip()
-    suggested_fix = str(details_dict.get("suggested_fix", "") or "").strip()
-    recovery_suffix = ""
-    if suggested_tool:
-        recovery_suffix = (
-            f" Retry the task using {suggested_tool} instead of repeating the same "
-            "denied command."
-        )
-    if suggested_fix:
-        recovery_suffix = f"{recovery_suffix} {suggested_fix}".strip()
-    if (
-        tool_name == "exec.run"
-        and str(details_dict.get("parse_error_code", "") or "").strip()
-        == "unsupported_redirection"
-    ):
-        recovery_suffix = (
-            f"{recovery_suffix} Retry with a single direct exec.run command only; "
-            "do not add shell operators, pipes, redirections, or fallback chaining. "
-            "If the task already specified an exact verification command, run that "
-            "exact command next."
-        ).strip()
-    if is_invalid_workdir:
-        recovery_suffix = (
-            f"{recovery_suffix} exec.run already runs from the current workspace "
-            "root. Retry without workdir when the command targets that root, or "
-            "use an existing subdirectory relative to it."
-        ).strip()
-    if is_invalid_working_dir_argument:
-        recovery_suffix = (
-            f"{recovery_suffix} For exec.run directory targeting, use the supported "
-            "path field (or the cwd / working_directory aliases); do not pass "
-            "working_dir."
-        ).strip()
-    if is_exec_argument_shape_error:
-        recovery_suffix = (
-            f"{recovery_suffix} For exec.run, pass a plain command string, not a "
-            "JSON array. Keep only supported exec.run args: command plus "
-            "path/cwd/working_directory when needed; omit desc, "
-            "environment_variables, and other extra fields."
-        ).strip()
-    if is_exec_verifier_failure:
-        recovery_suffix = (
-            f"{recovery_suffix} Use the failing verifier output to identify the "
-            "broken file or assertion, patch the relevant file before running the "
-            "verifier again, and reuse the same verification command only after "
-            "the patch is in place."
-        ).strip()
-    file_write_guidance = _file_write_argument_shape_guidance(
-        tool_name=tool_name,
-        error_code=error_code,
-        lowered_failure_text=lowered_failure_text,
+    details_suffix = (
+        f" details={json.dumps(details_dict, ensure_ascii=False, sort_keys=True)}"
+        if details_dict
+        else ""
     )
-    if file_write_guidance:
-        recovery_suffix = f"{recovery_suffix} {file_write_guidance}".strip()
     return Message(
         role="system",
         content=(
-            f"The previous {tool_name} tool call failed{code_suffix}: {details} "
-            f"Do not repeat the same invalid call. {recovery_suffix}".strip()
+            f"The previous {tool_name} tool call failed{code_suffix}: "
+            f"{details}.{details_suffix} Use the tool schema and these structured "
+            "error facts to choose the next action."
         ),
     )
 

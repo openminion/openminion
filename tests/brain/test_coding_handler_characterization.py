@@ -12,7 +12,11 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_SUCCESS,
 )
 from openminion.modules.brain.loop.strategies.coding import handler
+from openminion.modules.brain.loop.strategies.coding import context_adapter
 from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
+from openminion.modules.brain.loop.strategies.coding.context_adapter import (
+    _CodingLoopContextAdapter,
+)
 from openminion.modules.brain.loop.strategies.coding.handler import (
     CodingMode,
     CodingProfileRunner,
@@ -31,6 +35,10 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopState,
+)
+from openminion.modules.brain.loop.tools.contracts import (
+    CommandExecutionOutcome,
+    PreparedToolDispatch,
 )
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_BUDGET_EXHAUSTED,
@@ -127,7 +135,7 @@ class TestCodingHandlerPureHelperBehavior:
         by_name = {spec.name: spec for spec in specs}
 
         assert "parent directories" in by_name["file.write"].description
-        assert "scaffold" in by_name["file.write"].description.lower()
+        assert "complete target file path" in by_name["file.write"].description
         assert "structured file tools" in by_name["exec.run"].description
         assert "directories" in by_name["exec.run"].description
 
@@ -164,6 +172,32 @@ class TestCodingHandlerPureHelperBehavior:
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
 
+    def test_build_tool_specs_projects_targets_only_for_verify_candidates(self) -> None:
+        specs = handler._build_tool_specs(
+            frozenset({"file.read", "file.read_range", "exec.run", "exec.poll"}),
+            verification_targets={
+                "criterion": ("criterion-http",),
+                "deliverable": ("deliverable-page",),
+            },
+        )
+        by_name = {spec.name: spec for spec in specs}
+
+        for tool_name in ("file.read", "file.read_range", "exec.run"):
+            schema = by_name[tool_name].input_schema
+            assert "verification_target_kind" in schema["required"]
+            assert "verification_target_id" in schema["required"]
+            assert schema["properties"]["verification_target_id"]["enum"] == [
+                "criterion-http",
+                "deliverable-page",
+            ]
+        assert (
+            "verification_target_id"
+            not in by_name["exec.poll"].input_schema["properties"]
+        )
+
+        [ordinary] = handler._build_tool_specs(frozenset({"exec.run"}))
+        assert "verification_target_id" not in ordinary.input_schema["properties"]
+
     def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
         runner = CodingProfileRunner()
         runner._coding_plan = CodingPlan.fallback(
@@ -198,12 +232,96 @@ class TestCodingHandlerPureHelperBehavior:
         )
         runner._coding_plan.current_phase = "verify"
 
-        runner._append_phase_instruction()
+        runner._append_phase_instruction(
+            SimpleNamespace(state=SimpleNamespace(goal=None))
+        )
 
         prompt = runner._loop_state.messages[-1].content
         assert "Verification is read-only" in prompt
         assert "do not modify files or apply patches" in prompt
         assert "`file.read` or `file.read_range` first" in prompt
+
+    def test_verification_binding_survives_direct_and_prepared_dispatch(self) -> None:
+        seen: list[ToolCommand] = []
+        callbacks: list[ToolCommand] = []
+
+        def execute_command(*, state, command, logger, include_reflect):
+            del state, logger, include_reflect
+            seen.append(command)
+            return CommandExecutionOutcome(
+                approved_command=command,
+                action_result=ActionResult(
+                    command_id=command.command_id,
+                    status=BRAIN_ACTION_STATUS_SUCCESS,
+                    summary="ok",
+                ),
+            )
+
+        direct_executor = SimpleNamespace(execute_command=execute_command)
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(),
+            command_executor=direct_executor,
+            logger=None,
+        )
+        command = ToolCommand(
+            title="verify",
+            tool_name="exec.run",
+            args={
+                "argv": ["pytest", "-q"],
+                "verification_target_kind": "criterion",
+                "verification_target_id": "criterion-tests",
+            },
+        )
+        with patch.object(
+            context_adapter,
+            "runner_from_context",
+            return_value=SimpleNamespace(session_api=None, options=None),
+        ):
+            adapter = _CodingLoopContextAdapter(
+                ctx,
+                on_command_result=lambda approved, result: callbacks.append(approved),
+            )
+            adapter.execute_command(command=command)
+
+        assert seen[0].args == {"argv": ["pytest", "-q"]}
+        assert seen[0].verification_target_kind == "criterion"
+        assert seen[0].verification_target_id == "criterion-tests"
+        assert callbacks == seen
+
+        def prepare_tool_dispatch(*, state, command, logger, include_reflect):
+            del state, logger, include_reflect
+            seen.append(command)
+            return PreparedToolDispatch(
+                approved_command=command,
+                original_command=command,
+                command_id=command.command_id,
+                tool_name=command.tool_name,
+                validated_args=dict(command.args),
+                session_id="session-1",
+                trace_id="trace-1",
+                agent_id="agent-1",
+                lineage={},
+                permission_mode="default",
+                payload={},
+            )
+
+        prepared_executor = SimpleNamespace(
+            prepare_tool_dispatch=prepare_tool_dispatch,
+            execute_prepared_tool_dispatch=lambda **kwargs: None,
+            finalize_tool_result=lambda **kwargs: None,
+        )
+        ctx.command_executor = prepared_executor
+        with patch.object(
+            context_adapter,
+            "runner_from_context",
+            return_value=SimpleNamespace(session_api=None, options=None),
+        ):
+            prepared_adapter = _CodingLoopContextAdapter(ctx)
+            prepared = prepared_adapter.prepare_tool_dispatch(command=command)
+
+        assert prepared.approved_command.args == {"argv": ["pytest", "-q"]}
+        assert prepared.approved_command.verification_target_kind == "criterion"
+        assert prepared.approved_command.verification_target_id == "criterion-tests"
 
     @pytest.mark.parametrize(
         "termination_reason",
@@ -393,67 +511,150 @@ class TestCodingVerificationReserve:
 
         assert "coding.unresolved_verifier_failure" not in runner._loop_state.scratchpad
 
-    def test_running_exec_requires_terminal_poll_before_verification(self) -> None:
+    def test_parallel_running_exec_polls_inherit_original_targets(self) -> None:
         runner = CodingProfileRunner()
-        command = ToolCommand(
-            title="run tests",
-            tool_name="exec.run",
-            args={"argv": ["python", "-m", "pytest", "-q"]},
-        )
-        action_result = ActionResult(
-            command_id="cmd-running",
-            status=BRAIN_ACTION_STATUS_SUCCESS,
-            summary="Command still running",
-            outputs={"status": "running", "session_id": "execproc-1"},
-        )
+        for session_id, target_kind, target_id in (
+            ("execproc-1", "criterion", "criterion-tests"),
+            ("execproc-2", "deliverable", "deliverable-report"),
+        ):
+            runner._record_verifier_candidate(
+                ToolCommand(
+                    title="run verifier",
+                    tool_name="exec.run",
+                    args={"argv": ["python", "-m", "pytest", "-q"]},
+                    verification_target_kind=target_kind,
+                    verification_target_id=target_id,
+                ),
+                ActionResult(
+                    command_id=f"cmd-{session_id}",
+                    status=BRAIN_ACTION_STATUS_SUCCESS,
+                    summary="Command still running",
+                    outputs={"status": "running", "session_id": session_id},
+                ),
+            )
 
-        runner._record_verifier_candidate(command, action_result)
-
-        assert "coding.last_verifier_candidate" not in runner._loop_state.scratchpad
+        pending = runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        assert pending == {
+            "execproc-1": {
+                "verification_target_kind": "criterion",
+                "verification_target_id": "criterion-tests",
+            },
+            "execproc-2": {
+                "verification_target_kind": "deliverable",
+                "verification_target_id": "deliverable-report",
+            },
+        }
         assert runner._has_verifier_candidate() is False
-        assert (
-            runner._loop_state.scratchpad["coding.pending_verifier_session_id"]
-            == "execproc-1"
-        )
 
         runner._record_verifier_candidate(
             ToolCommand(
-                title="read tests",
-                tool_name="file.read",
-                args={"path": "test_tiny_math.py"},
-            ),
-            ActionResult(
-                command_id="cmd-read",
-                status=BRAIN_ACTION_STATUS_SUCCESS,
-                summary="read tests",
-                outputs={"content": "def test_add_one(): ..."},
-            ),
-        )
-
-        assert "coding.last_verifier_candidate" not in runner._loop_state.scratchpad
-
-        runner._record_verifier_candidate(
-            ToolCommand(
-                title="poll tests",
+                title="poll first verifier",
                 tool_name="exec.poll",
                 args={"session_id": "execproc-1"},
+                verification_target_kind="deliverable",
+                verification_target_id="deliverable-report",
             ),
             ActionResult(
-                command_id="cmd-poll",
+                command_id="cmd-poll-1",
                 status=BRAIN_ACTION_STATUS_SUCCESS,
                 summary="tests passed",
                 outputs={
-                    "status": "completed",
+                    "status": "exited",
+                    "session_id": "execproc-1",
+                    "exit_code": 0,
+                },
+            ),
+        )
+        first = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
+        assert first["command"]["verification_target_kind"] == "criterion"
+        assert first["command"]["verification_target_id"] == "criterion-tests"
+        assert set(
+            runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        ) == {"execproc-2"}
+        assert runner._has_verifier_candidate() is False
+
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="poll second verifier",
+                tool_name="exec.poll",
+                args={"session_id": "execproc-2"},
+            ),
+            ActionResult(
+                command_id="cmd-poll-2",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="report created",
+                outputs={
+                    "status": "exited",
+                    "session_id": "execproc-2",
+                    "exit_code": 0,
+                },
+            ),
+        )
+
+        assert not runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        assert runner._has_verifier_candidate() is True
+        candidates = runner._loop_state.scratchpad["coding.verifier_candidates"]
+        assert set(candidates) == {
+            "criterion:criterion-tests",
+            "deliverable:deliverable-report",
+        }
+
+    def test_failed_exec_poll_preserves_original_target_for_terminal_poll(self) -> None:
+        runner = CodingProfileRunner()
+        runner._record_verifier_candidate(
+            ToolCommand(
+                title="run verifier",
+                tool_name="exec.run",
+                args={"argv": ["python", "-m", "pytest", "-q"]},
+                verification_target_kind="criterion",
+                verification_target_id="criterion-tests",
+            ),
+            ActionResult(
+                command_id="cmd-run",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="Command still running",
+                outputs={"status": "running", "session_id": "execproc-1"},
+            ),
+        )
+        poll = ToolCommand(
+            title="poll verifier",
+            tool_name="exec.poll",
+            args={"session_id": "execproc-1"},
+        )
+
+        runner._record_verifier_candidate(
+            poll,
+            ActionResult(
+                command_id="cmd-poll-failed",
+                status="failed",
+                summary="poll transport failed",
+                outputs={"status": "error"},
+            ),
+        )
+
+        assert (
+            "execproc-1"
+            in runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        )
+
+        runner._record_verifier_candidate(
+            poll,
+            ActionResult(
+                command_id="cmd-poll-terminal",
+                status=BRAIN_ACTION_STATUS_SUCCESS,
+                summary="tests passed",
+                outputs={
+                    "status": "exited",
                     "session_id": "execproc-1",
                     "exit_code": 0,
                 },
             ),
         )
 
-        assert "coding.pending_verifier_session_id" not in runner._loop_state.scratchpad
-        assert runner._has_verifier_candidate() is True
-        candidate = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
-        assert candidate["command"]["tool_name"] == "exec.poll"
+        assert not runner._loop_state.scratchpad["coding.pending_verifier_sessions"]
+        command, _result = runner._bound_verifier_candidates()[0]
+        assert command.verification_target_kind == "criterion"
+        assert command.verification_target_id == "criterion-tests"
 
     @pytest.mark.parametrize(
         "termination_reason",

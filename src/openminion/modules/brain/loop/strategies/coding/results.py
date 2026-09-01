@@ -548,7 +548,7 @@ def _maybe_continue_after_tool_failure(
         ctx,
         failure_summary=str(failure_summary or "").strip(),
     )
-    runner._append_phase_instruction()
+    runner._append_phase_instruction(ctx)
     runner._emit_phase_status(ctx)
     return True
 

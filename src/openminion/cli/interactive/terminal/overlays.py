@@ -58,10 +58,9 @@ class TerminalOverlayPresenter:
     async def present_approval_async(
         self, prompt: str
     ) -> Literal["allow", "deny", "always"]:
+        self._console.print(Text(prompt))
         try:
-            text = await self._session.prompt_async(
-                f"{prompt}\n[y]es / [N]o / [a]lways: "
-            )
+            text = await self._session.prompt_async("[y]es / [N]o / [a]lways: ")
         except (EOFError, KeyboardInterrupt):
             return "deny"
         norm = (text or "").strip().lower()

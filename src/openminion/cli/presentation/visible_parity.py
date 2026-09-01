@@ -67,6 +67,7 @@ def format_memory_report(
     *,
     session_id: str = "",
     capture: Any | None = None,
+    recall: Any | None = None,
 ) -> str:
     records = list(rows or [])
     pending = list(candidates or [])
@@ -75,74 +76,19 @@ def format_memory_report(
         f"  records     {len(records)}",
         f"  candidates  {len(pending)}",
     ]
-    if capture is not None:
-        lines.extend(
-            (
-                f"  capture     {int(getattr(capture, 'pending', 0))} pending · "
-                f"{int(getattr(capture, 'failed_terminal', 0))} failed",
-                f"  processed   {int(getattr(capture, 'processed', 0))} writes · "
-                f"{int(getattr(capture, 'succeeded_no_output', 0))} no output",
-            )
-        )
-        oldest_pending_at = str(getattr(capture, "oldest_pending_at", "") or "")
-        if oldest_pending_at:
-            lines.append(f"  oldest      {oldest_pending_at}")
+    lines.extend(_memory_processing_lines(capture=capture, recall=recall))
     if not records and not pending:
         lines.extend(("", "No persisted memory for this session or agent."))
         return "\n".join(lines)
 
-    type_counts: dict[str, int] = {}
-    summaries: list[Any] = []
-    other_records: list[Any] = []
-    for row in records:
-        record_type = _memory_text(row, "type") or "record"
-        type_counts[record_type] = type_counts.get(record_type, 0) + 1
-        if record_type == "session_summary":
-            summaries.append(row)
-        else:
-            other_records.append(row)
-
-    lines.extend(("", "By type:"))
-    for record_type, count in sorted(
-        type_counts.items(), key=lambda item: (-item[1], item[0])
-    ):
-        lines.append(f"  {_memory_type_label(record_type):<18} {count}")
-
-    current_summary = next(
-        (
-            row
-            for row in summaries
-            if _memory_text(row, "key") == f"session_summary:{session_id}"
-        ),
-        None,
-    )
-    if current_summary is not None:
-        lines.extend(("", "Current session summary:"))
-        questions = _summary_user_questions(current_summary)
-        if questions:
-            lines.extend(f"  - {question[:120]}" for question in questions[-5:])
-        else:
-            lines.append(f"  - {_memory_record_title(current_summary)}")
-        if updated_at := _memory_text(current_summary, "updated_at"):
-            lines.append(f"  updated {updated_at.replace('T', ' ')[:19]} UTC")
-
-    if other_records:
-        lines.extend(("", "Recent records:"))
-        for row in other_records[:6]:
-            lines.append(f"  - {_memory_record_title(row)}")
-            record_type = _memory_type_label(_memory_text(row, "type") or "record")
-            scope = _memory_scope_label(_memory_text(row, "scope"))
-            lines.append(f"    {record_type} · {scope}")
-
+    type_counts, summaries, other_records = _partition_memory_records(records)
+    _append_memory_type_counts(lines, type_counts)
+    current_summary = _append_current_session_summary(lines, summaries, session_id)
+    _append_recent_memory_records(lines, other_records)
     previous_summary_count = len(summaries) - int(current_summary is not None)
     if previous_summary_count:
         lines.extend(("", f"Previous session summaries: {previous_summary_count}"))
-
-    if pending:
-        lines.extend(("", "Pending candidates:"))
-        for row in pending[:5]:
-            lines.append(f"  - {_memory_record_title(row)}")
-
+    _append_pending_memory_candidates(lines, pending)
     lines.extend(
         (
             "",
@@ -150,6 +96,105 @@ def format_memory_report(
         )
     )
     return "\n".join(lines)
+
+
+def _memory_processing_lines(*, capture: Any | None, recall: Any | None) -> list[str]:
+    lines: list[str] = []
+    if capture is not None:
+        lines.extend(
+            (
+                f"  capture     {int(getattr(capture, 'eligible', 0))} eligible · "
+                f"{int(getattr(capture, 'pending', 0))} pending · "
+                f"{int(getattr(capture, 'terminal', 0))} terminal",
+                f"  terminal    {int(getattr(capture, 'processed', 0))} processed · "
+                f"{int(getattr(capture, 'succeeded_no_output', 0))} no output · "
+                f"{int(getattr(capture, 'rejected', 0))} rejected · "
+                f"{int(getattr(capture, 'failed_terminal', 0))} failed",
+                f"  integrity   {int(getattr(capture, 'integrity_errors', 0))} errors",
+            )
+        )
+        if oldest := str(getattr(capture, "oldest_pending_at", "") or ""):
+            lines.append(f"  oldest      {oldest}")
+    if recall is None:
+        return lines
+    capabilities = tuple(getattr(recall, "capabilities", ()) or ())
+    lines.extend(
+        (
+            f"  recall      {getattr(recall, 'health', 'unsupported')} · "
+            f"mode {getattr(recall, 'mode', 'unsupported')}",
+            f"  capability  {', '.join(capabilities) or 'none'}",
+            f"  score       {getattr(recall, 'score_domain', 'unavailable')}",
+            f"  selected    memory {int(getattr(recall, 'selected_memory', 0))} · "
+            f"knowledge {int(getattr(recall, 'selected_knowledge', 0))}",
+        )
+    )
+    omissions = tuple(getattr(recall, "omission_reasons", ()) or ())
+    detail = " · ".join(f"{reason} {count}" for reason, count in omissions)
+    lines.append(f"  omissions   {detail or 'none'}")
+    return lines
+
+
+def _partition_memory_records(
+    records: list[Any],
+) -> tuple[dict[str, int], list[Any], list[Any]]:
+    type_counts: dict[str, int] = {}
+    summaries: list[Any] = []
+    other_records: list[Any] = []
+    for row in records:
+        record_type = _memory_text(row, "type") or "record"
+        type_counts[record_type] = type_counts.get(record_type, 0) + 1
+        (summaries if record_type == "session_summary" else other_records).append(row)
+    return type_counts, summaries, other_records
+
+
+def _append_memory_type_counts(lines: list[str], type_counts: dict[str, int]) -> None:
+    lines.extend(("", "By type:"))
+    for record_type, count in sorted(
+        type_counts.items(), key=lambda item: (-item[1], item[0])
+    ):
+        lines.append(f"  {_memory_type_label(record_type):<18} {count}")
+
+
+def _append_current_session_summary(
+    lines: list[str], summaries: list[Any], session_id: str
+) -> Any | None:
+    current = next(
+        (
+            row
+            for row in summaries
+            if _memory_text(row, "key") == f"session_summary:{session_id}"
+        ),
+        None,
+    )
+    if current is None:
+        return None
+    lines.extend(("", "Current session summary:"))
+    questions = _summary_user_questions(current)
+    if questions:
+        lines.extend(f"  - {question[:120]}" for question in questions[-5:])
+    else:
+        lines.append(f"  - {_memory_record_title(current)}")
+    if updated_at := _memory_text(current, "updated_at"):
+        lines.append(f"  updated {updated_at.replace('T', ' ')[:19]} UTC")
+    return current
+
+
+def _append_recent_memory_records(lines: list[str], records: list[Any]) -> None:
+    if not records:
+        return
+    lines.extend(("", "Recent records:"))
+    for row in records[:6]:
+        lines.append(f"  - {_memory_record_title(row)}")
+        record_type = _memory_type_label(_memory_text(row, "type") or "record")
+        scope = _memory_scope_label(_memory_text(row, "scope"))
+        lines.append(f"    {record_type} · {scope}")
+
+
+def _append_pending_memory_candidates(lines: list[str], pending: list[Any]) -> None:
+    if not pending:
+        return
+    lines.extend(("", "Pending candidates:"))
+    lines.extend(f"  - {_memory_record_title(row)}" for row in pending[:5])
 
 
 def _memory_value(row: Any, key: str) -> Any:

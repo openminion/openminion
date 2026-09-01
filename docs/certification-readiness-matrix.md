@@ -1,7 +1,7 @@
 # OpenMinion Certification Readiness Matrix
 
 Status: active
-Last updated: 2026-08-15
+Last updated: 2026-09-01
 
 Purpose: summarize the current proof posture for the public `openminion`
 package surface.
@@ -19,6 +19,7 @@ package surface.
 | examples | hello examples, quickstart, identity bundle, `sample` module | `examples/`, `tests/examples/test_examples.py`, sample CLI and skill-fixture tests, plus compile and lint checks | alpha-ready |
 | package docs | README, docs entrypoint, compatibility/release/source-boundary refs | `README.md`, `docs/`, `API_COMPATIBILITY.md`, `RELEASING.md`, current canonical-version package proof | alpha-ready |
 | long-horizon project worker | `docs/long-horizon-project-worker.md`, project-worker E2E runner, autonomy reports | deterministic compressed pilots plus a validation-only 2-hour interim certification support report; full 8-hour and 24-hour real elapsed certification pilots remain pending | alpha substrate, not certification-ready |
+| deep technical work | Focus, typed plans, exact tools, checkpoints, delegation, and verifier-backed project reports | deterministic contracts pass; the 2026-09-01 MiniMax campaign made bounded progress but claimed coding completion before the required verifier, plan revision, restart, and multi-file proof | bounded supervised not ready for the tested campaign and corpus |
 | memory/context usefulness | memory records, session/context surfaces, scorecard references | local utility and audit evidence exists; live provider-backed ContextCtl proof and paired usefulness claims remain routed to their owning trackers | alpha substrate, claim-gated |
 
 ## Remaining alpha caveats
@@ -34,6 +35,9 @@ These are still true even when the public package surface is documented:
    provider-backed memory/context usefulness.
 5. validation-only interim reports and compressed pilots are support evidence;
    they do not replace real elapsed certification pilots.
+6. deterministic deep-work mechanics do not certify a model profile; the
+   complete live corpus and its external verifier must pass before a bounded
+   supervised readiness claim.
 
 ## Current package note
 

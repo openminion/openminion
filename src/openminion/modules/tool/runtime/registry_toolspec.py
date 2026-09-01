@@ -236,6 +236,15 @@ def execute_tool_spec_call(
     from openminion.modules.tool.errors import ToolRuntimeError
 
     tool_name = str(getattr(tool, "name", "")).strip() or "unknown"
+    if tool_name == "blockchain.send_transaction":
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            ok=False,
+            content="",
+            verified=False,
+            error="Blockchain transaction send requires the canonical policy service.",
+            data={"error_code": "POLICY_MODE_UNSUPPORTED"},
+        )
     args_model = getattr(tool, "args_model", dict)
     validated_args = _validated_tool_arguments(
         tool_name=tool_name,

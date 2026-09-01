@@ -53,7 +53,13 @@ def test_build_agent_memory_service_retrieve_ctl_none(tmp_path) -> None:
 
 
 def test_build_agent_memory_service_retrieve_ctl_passthrough(tmp_path) -> None:
-    marker = object()
+    class _RetrieveCtl:
+        ranking_config = None
+
+        def set_ranking_config(self, ranking_config) -> None:
+            self.ranking_config = ranking_config
+
+    marker = _RetrieveCtl()
     adapter = build_agent_memory_service(
         config=_build_config(),
         agent_id="di-agent",
@@ -63,6 +69,7 @@ def test_build_agent_memory_service_retrieve_ctl_passthrough(tmp_path) -> None:
     )
     assert isinstance(adapter, MemoryServiceGatewayAdapter)
     assert getattr(adapter, "_retrieve_ctl", None) is marker
+    assert marker.ranking_config is not None
 
 
 def test_build_agent_memory_service_keeps_runtime_and_memory_summary_budgets_separate(

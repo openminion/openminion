@@ -2,7 +2,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.tool import Policy, canonical_tool_name
-from openminion.modules.tool.contracts.model_ids import MODEL_TASK_WATCH
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_FILE_WRITE,
+    MODEL_TASK_WATCH,
+)
+from openminion.tools.exec.command_parser import is_read_only_exec_command
+from openminion.tools.exec.process import resolve_shell_family
 
 _REACTIONS_SET_TOOL_NAME = "reactions.set"
 _REACTIONS_DEFAULT_POLICIES = frozenset({"allow", "deny", "confirm"})
@@ -144,10 +149,47 @@ def _watch_write_authorization_requested(
     return tool_name == MODEL_TASK_WATCH and bool(args.get("write_authorized", False))
 
 
+def _background_write_authorized(inputs: Any) -> bool:
+    return (
+        isinstance(inputs, Mapping)
+        and bool(inputs.get("background_write_authorized"))
+        and str(inputs.get("background_write_authorization_source", "") or "")
+        == "watch_subscription"
+    )
+
+
+def _resolve_auto_confirm(
+    *,
+    tool_name: str,
+    args: Mapping[str, Any],
+    permission_mode: str,
+    replay_confirmed: bool,
+    background_write_authorized: bool,
+) -> bool:
+    if permission_mode == "bypass":
+        return True
+    if permission_mode == "auto":
+        return tool_name in {MODEL_FILE_WRITE, "file.copy", "file.move"}
+    if replay_confirmed or background_write_authorized:
+        return True
+    if tool_name == "blockchain.send_transaction":
+        return True
+    if tool_name == "exec.run":
+        return bool(
+            is_read_only_exec_command(
+                str(args.get("command", "") or ""),
+                shell_family=resolve_shell_family(),
+            )
+        )
+    return False
+
+
 __all__ = [
     "_agent_id_from_policy",
     "_apply_agent_command_policy",
     "_apply_reactions_default_policy",
+    "_background_write_authorized",
+    "_resolve_auto_confirm",
     "_runtime_background_write_authorization_enabled",
     "_runtime_env_from_policy",
     "_watch_write_authorization_requested",

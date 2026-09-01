@@ -10,7 +10,6 @@ import time
 
 
 _ROOT = Path(__file__).resolve().parents[3]
-_PYTHON = _ROOT / ".venv" / "bin" / "python3.11"
 _SUMMARY_ENV = "OPENMINION_CLI_FOCUS_E2E_SUMMARY_OUTPUT"
 _TIMEOUT_ENV = "OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS"
 
@@ -181,7 +180,7 @@ def _run(
     timeout_seconds: int | None = None,
 ) -> int:
     command = [
-        str(_PYTHON),
+        sys.executable,
         "-m",
         "pytest",
         "-q",
@@ -255,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     env = os.environ.copy()
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    env["OPENMINION_PYTHON"] = sys.executable
     if mode not in SUITES:
         options = ", ".join(suite_names())
         print(f"usage: run_cli_focus_e2e.py [{options}]", file=sys.stderr)

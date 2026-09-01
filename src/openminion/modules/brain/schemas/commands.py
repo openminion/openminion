@@ -13,6 +13,8 @@ class ToolCommand(BaseCommand):
     env: dict[str, Any] | None = None
     artifacts_expected: bool = False
     idempotency_key: str = Field(default_factory=new_uuid, min_length=1)
+    verification_target_kind: Literal["criterion", "deliverable"] | None = None
+    verification_target_id: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _normalize_args_from_inputs(self) -> "ToolCommand":

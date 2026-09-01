@@ -9,6 +9,7 @@ from openminion.modules.llm import ProviderError
 from openminion.modules.llm.schemas import Message, ToolCall
 from ..budget import (
     _debit_llm_usage,
+    _effective_cap,
     _profile_budget_exhausted,
     _remaining_budget_fraction,
     _tool_call_budget_exhausted,
@@ -16,7 +17,6 @@ from ..budget import (
 )
 from ..budget_control import (
     _answer_only_finalization_messages,
-    _effective_cap,
     _force_budget_answer_only_finalization,
     _maybe_extend_iteration_budget,
     _is_internal_failure_final_text,
@@ -485,7 +485,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
         llm_tools, llm_tool_choice, response_was_tool_suppressed = (
             self._prepare_llm_request()
         )
-        if self.pending_response is not None:
+        if response_was_pending := self.pending_response is not None:
             response = self.pending_response
             self.pending_response = None
         else:
@@ -518,13 +518,13 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 )
         iter_llm_duration_ms = int((time.monotonic() - llm_start) * 1000)
         iter_tool_records: list[IterationToolCallRecord] = []
-        iter_input_tokens = 0
-        iter_output_tokens = 0
+        iter_input_tokens = iter_output_tokens = 0
         usage = getattr(response, "usage", None)
         if usage is not None:
             iter_input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
             iter_output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-        _debit_llm_usage(self.loop_ctx, response)
+        if not response_was_pending:
+            _debit_llm_usage(self.loop_ctx, response)
         self.loop_state.llm_calls += 1
         _set_turn_progress(
             self.loop_state,
@@ -571,6 +571,8 @@ class AdaptiveLoopRunnerPostprocessMixin(
         tool_calls: list[Any],
         response_was_tool_suppressed: bool,
     ) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
+        if tool_calls:
+            self.loop_state.scratchpad.pop("empty_payload_recovery_retry_count", None)
         if not response_was_tool_suppressed or not tool_calls:
             return False, None
         if _reopen_terminal_tool_request(self.loop_state):

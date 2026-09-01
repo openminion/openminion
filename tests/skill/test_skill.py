@@ -39,6 +39,17 @@ verification:
   - systemctl status docker
 rollback:
   - systemctl restart docker
+recipe:
+  objective: Restart Docker and verify daemon health
+  steps:
+    - step_id: restart
+      instruction: Restart the Docker service
+      tool_id: tool.shell
+    - step_id: inspect_logs
+      instruction: Inspect recent Docker logs
+      tool_id: tool.log
+  verification:
+    - Confirm the Docker service is running
 ---
 
 ## Summary
@@ -100,6 +111,44 @@ Format a disk.
 """.strip()
 
 
+DECLARED_UNKNOWN_RECIPE_SKILL = """
+---
+name: Declared Unknown Recipe Tool
+id: declared_unknown_recipe_tool
+status: draft
+tools: [tool.declared]
+risk: low
+recipe:
+  steps:
+    - step_id: inspect
+      instruction: Inspect with the declared tool
+      tool_id: tool.declared
+---
+
+## Procedure
+Inspect the target.
+""".strip()
+
+
+INVALID_RECIPE_SKILL = """
+---
+name: Invalid Recipe
+id: invalid_recipe
+status: draft
+risk: low
+recipe:
+  steps:
+    - step_id: repeated
+      instruction: Inspect
+    - step_id: repeated
+      instruction: Report
+---
+
+## Procedure
+Inspect and report.
+""".strip()
+
+
 def test_ingest_and_get_skill(tmp_path: Path) -> None:
     ctl = Skill(_cfg(tmp_path))
     try:
@@ -117,6 +166,37 @@ def test_ingest_and_get_skill(tmp_path: Path) -> None:
         assert package.risk_class == "medium"
         assert package.recipe is not None
         assert package.recipe.verification
+    finally:
+        ctl.close()
+
+
+def test_declared_tool_does_not_authorize_recipe_binding(tmp_path: Path) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, _ = ingest_text_and_admit(
+            ctl,
+            name="Declared Unknown Recipe Tool",
+            markdown=DECLARED_UNKNOWN_RECIPE_SKILL,
+        )
+
+        recipe = ctl.get_skill(skill_id, version_hash).recipe
+        assert recipe is not None
+        assert recipe.steps[0].tool_id is None
+    finally:
+        ctl.close()
+
+
+def test_invalid_recipe_warns_and_is_not_partially_projected(tmp_path: Path) -> None:
+    ctl = Skill(_cfg(tmp_path))
+    try:
+        skill_id, version_hash, warnings = ingest_text_and_admit(
+            ctl,
+            name="Invalid Recipe",
+            markdown=INVALID_RECIPE_SKILL,
+        )
+
+        assert warnings.count("parse.warning:invalid_recipe") == 1
+        assert ctl.get_skill(skill_id, version_hash).recipe is None
     finally:
         ctl.close()
 
@@ -382,6 +462,12 @@ id: safe_recipe
 status: draft
 tools: [tool.shell]
 risk: low
+recipe:
+  objective: Echo hello
+  steps:
+    - step_id: echo
+      instruction: Echo hello
+      tool_id: tool.shell
 ---
 
 ## Summary

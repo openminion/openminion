@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -14,7 +15,13 @@ from openminion.modules.storage.record_store import RecordStore
 from .base import PolicyStore
 from .migrations import list_migrations
 from ..constants import POLICY_DURATION_ONCE
-from ..models import PolicyGrant, PolicyGrantInput, utc_now_iso
+from ..models import (
+    PendingPolicyConfirmation,
+    PolicyControlError,
+    PolicyGrant,
+    PolicyGrantInput,
+    utc_now_iso,
+)
 
 
 def _to_json(value: Any) -> str:
@@ -43,6 +50,38 @@ def _mapping_contains(value: Mapping[str, Any], required: Mapping[str, Any]) -> 
     return True
 
 
+def _create_blockchain_policy_schema(record_store: RecordStore) -> None:
+    record_store.execute_count(
+        """
+        CREATE TABLE IF NOT EXISTS policy_pending_confirmations (
+            approval_id TEXT PRIMARY KEY,
+            subject_id TEXT NOT NULL,
+            tool TEXT NOT NULL,
+            method TEXT NOT NULL,
+            invocation_hash TEXT NOT NULL,
+            invocation_id TEXT NOT NULL,
+            trace_id TEXT,
+            session_id TEXT,
+            preview_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            resolution_action TEXT,
+            grant_id TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            resolved_at TEXT
+        )
+        """
+    )
+    record_store.execute_count(
+        """
+        CREATE INDEX IF NOT EXISTS idx_policy_pending_confirmation_lookup
+            ON policy_pending_confirmations(
+                subject_id, tool, method, invocation_hash, state
+            )
+        """
+    )
+
+
 def _create_policy_schema(record_store: RecordStore) -> None:
     record_store.execute_count(
         """
@@ -64,7 +103,8 @@ def _create_policy_schema(record_store: RecordStore) -> None:
             updated_at TEXT NOT NULL,
             revoked_at TEXT,
             reason TEXT,
-            created_trace_id TEXT
+            created_trace_id TEXT,
+            approval_id TEXT
         )
         """
     )
@@ -81,11 +121,14 @@ def _create_policy_schema(record_store: RecordStore) -> None:
             decision TEXT NOT NULL,
             matched_grant_id TEXT,
             reason_code TEXT,
+            approval_id TEXT,
+            invocation_hash TEXT,
             risk_spec_json TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
         """
     )
+    _create_blockchain_policy_schema(record_store)
     record_store.execute_count(
         """
         CREATE TABLE IF NOT EXISTS policy_settings (
@@ -128,6 +171,9 @@ def _create_policy_schema(record_store: RecordStore) -> None:
 
 
 class _PolicyStoreMixin(PolicyStore):
+    _lock: Any
+    _record_store: RecordStore
+
     """Backend-neutral policy store behavior shared by SQLite and Postgres."""
 
     def _list_migrations(self) -> list[str]:
@@ -146,14 +192,25 @@ class _PolicyStoreMixin(PolicyStore):
     def create_grant(self, grant: PolicyGrantInput) -> str:
         now = utc_now_iso()
         grant_id = str(uuid4())
+        self._insert_grant(grant_id=grant_id, grant=grant, now=now)
+        return grant_id
+
+    def _insert_grant(
+        self,
+        *,
+        grant_id: str,
+        grant: PolicyGrantInput,
+        now: str,
+    ) -> None:
         self._record_store.execute_count(
             """
             INSERT INTO policy_grants (
                 grant_id, subject_id, effect, tool, method, target_json, risk_floor,
                 duration_type, expires_at, session_id, invocation_hash, max_uses, uses_count,
-                created_at, updated_at, revoked_at, reason, created_trace_id
+                created_at, updated_at, revoked_at, reason, created_trace_id,
+                approval_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?, ?)
             """,
             (
                 grant_id,
@@ -172,9 +229,9 @@ class _PolicyStoreMixin(PolicyStore):
                 now,
                 grant.reason,
                 grant.created_trace_id,
+                grant.approval_id,
             ),
         )
-        return grant_id
 
     def revoke_grant(self, grant_id: str) -> bool:
         now = utc_now_iso()
@@ -311,6 +368,173 @@ class _PolicyStoreMixin(PolicyStore):
             )
             return grant if updated == 1 else None
 
+    def get_or_create_pending_confirmation(
+        self,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        invocation_hash: str,
+        invocation_id: str,
+        trace_id: str | None,
+        session_id: str | None,
+        preview: Mapping[str, Any],
+        ttl_seconds: int,
+    ) -> PendingPolicyConfirmation:
+        now = utc_now_iso()
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        ).isoformat()
+        with self._lock, self._record_store.transaction():
+            rows = self._record_store.query_dicts(
+                """
+                SELECT * FROM policy_pending_confirmations
+                WHERE subject_id = ? AND tool = ? AND method = ?
+                  AND invocation_hash = ? AND state = 'pending'
+                  AND expires_at > ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (subject_id, tool, method, invocation_hash, now),
+            )
+            if rows:
+                return self._row_to_pending_confirmation(rows[0])
+            approval_id = str(uuid4())
+            self._record_store.execute_count(
+                """
+                INSERT INTO policy_pending_confirmations (
+                    approval_id, subject_id, tool, method, invocation_hash,
+                    invocation_id, trace_id, session_id, preview_json, state,
+                    resolution_action, grant_id, created_at, expires_at, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, NULL)
+                """,
+                (
+                    approval_id,
+                    subject_id,
+                    tool,
+                    method,
+                    invocation_hash,
+                    invocation_id,
+                    trace_id,
+                    session_id,
+                    _to_json(preview),
+                    now,
+                    expires_at,
+                ),
+            )
+            return self._row_to_pending_confirmation(
+                self._record_store.query_dicts(
+                    "SELECT * FROM policy_pending_confirmations WHERE approval_id = ?",
+                    (approval_id,),
+                )[0]
+            )
+
+    def resolve_confirmation(self, approval_id: str, action: str) -> str | None:
+        now = utc_now_iso()
+        with self._lock, self._record_store.transaction():
+            rows = self._record_store.query_dicts(
+                "SELECT * FROM policy_pending_confirmations WHERE approval_id = ?",
+                (approval_id,),
+            )
+            if not rows:
+                raise PolicyControlError(
+                    "PENDING_CONFIRMATION_NOT_FOUND",
+                    "Pending confirmation was not found.",
+                )
+            pending = self._row_to_pending_confirmation(rows[0])
+            if pending.state != "pending":
+                if pending.resolution_action == action:
+                    return pending.grant_id
+                raise PolicyControlError(
+                    "PENDING_CONFIRMATION_ALREADY_RESOLVED",
+                    "Pending confirmation was already resolved.",
+                )
+            if pending.expires_at <= now:
+                self._record_store.execute_count(
+                    """
+                    UPDATE policy_pending_confirmations
+                    SET state = 'expired', resolved_at = ?
+                    WHERE approval_id = ? AND state = 'pending'
+                    """,
+                    (now, approval_id),
+                )
+                raise PolicyControlError(
+                    "PENDING_CONFIRMATION_EXPIRED",
+                    "Pending confirmation expired.",
+                )
+
+            grant_id: str | None = None
+            state = "denied"
+            if action == "allow_once":
+                grant_id = str(uuid4())
+                self._insert_grant(
+                    grant_id=grant_id,
+                    grant=PolicyGrantInput(
+                        effect="allow",
+                        subject_id=pending.subject_id,
+                        tool=pending.tool,
+                        method=pending.method,
+                        duration_type="once",
+                        invocation_hash=pending.invocation_hash,
+                        max_uses=1,
+                        reason="created_from_pending_confirmation",
+                        created_trace_id=pending.trace_id,
+                        approval_id=pending.approval_id,
+                    ),
+                    now=now,
+                )
+                state = "allowed"
+            elif action != "deny":
+                raise ValueError("confirmation action must be allow_once|deny")
+
+            self._record_store.execute_count(
+                """
+                UPDATE policy_pending_confirmations
+                SET state = ?, resolution_action = ?, grant_id = ?, resolved_at = ?
+                WHERE approval_id = ? AND state = 'pending'
+                """,
+                (state, action, grant_id, now, approval_id),
+            )
+            return grant_id
+
+    def resolve_matching_active_grant_for_use(
+        self,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        invocation_hash: str,
+    ) -> PolicyGrant | None:
+        now = utc_now_iso()
+        with self._lock, self._record_store.transaction():
+            rows = self._record_store.query_dicts(
+                """
+                SELECT * FROM policy_grants
+                WHERE subject_id = ? AND effect = 'allow'
+                  AND tool = ? AND method = ? AND invocation_hash = ?
+                  AND duration_type = 'once' AND approval_id IS NOT NULL
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND (max_uses IS NULL OR uses_count < max_uses)
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (subject_id, tool, method, invocation_hash, now),
+            )
+            if not rows:
+                return None
+            grant = self._row_to_grant(rows[0])
+            updated = self._record_store.execute_count(
+                """
+                UPDATE policy_grants
+                SET uses_count = uses_count + 1, updated_at = ?, revoked_at = ?
+                WHERE grant_id = ? AND revoked_at IS NULL
+                  AND (max_uses IS NULL OR uses_count < max_uses)
+                """,
+                (now, now, grant.grant_id),
+            )
+            return grant if updated == 1 else None
+
     def cleanup_expired(self) -> int:
         now = utc_now_iso()
         return self._record_store.execute_count(
@@ -333,6 +557,8 @@ class _PolicyStoreMixin(PolicyStore):
         method: str,
         decision: str,
         matched_grant_id: Optional[str],
+        approval_id: Optional[str] = None,
+        invocation_hash: Optional[str] = None,
         reason_code: str,
         risk_spec: dict[str, Any],
     ) -> str:
@@ -342,9 +568,10 @@ class _PolicyStoreMixin(PolicyStore):
             """
             INSERT INTO policy_decisions (
                 decision_id, trace_id, session_id, agent_id, invocation_id, tool, method,
-                decision, matched_grant_id, reason_code, risk_spec_json, created_at
+                decision, matched_grant_id, reason_code, approval_id,
+                invocation_hash, risk_spec_json, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 decision_id,
@@ -357,6 +584,8 @@ class _PolicyStoreMixin(PolicyStore):
                 decision,
                 matched_grant_id,
                 reason_code,
+                approval_id,
+                invocation_hash,
                 _to_json(risk_spec),
                 now,
             ),
@@ -403,6 +632,13 @@ class _PolicyStoreMixin(PolicyStore):
         payload = dict(row)
         payload["target_json"] = _parse_json(payload.get("target_json"), {})
         return PolicyGrant(**payload)
+
+    def _row_to_pending_confirmation(
+        self, row: Mapping[str, Any]
+    ) -> PendingPolicyConfirmation:
+        payload = dict(row)
+        payload["preview"] = _parse_json(payload.pop("preview_json", None), {})
+        return PendingPolicyConfirmation(**payload)
 
 
 class SQLitePolicyStore(_PolicyStoreMixin, BaseModuleSQLiteStore):

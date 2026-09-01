@@ -13,6 +13,7 @@ from openminion.modules.controlplane.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
 from openminion.modules.task.autonomy import autonomy_permission_metadata
+from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
 
 from .progress import AutonomyLoopConditionKind
 
@@ -38,6 +39,8 @@ class ProjectTurnResult:
     evidence_kinds: tuple[str, ...] = ()
     effect_refs: tuple[str, ...] = ()
     tool_call_count: int = 0
+    task_plan: TaskPlan | None = None
+    task_plan_revision: TaskPlanRevision | None = None
     error: ErrorInfo | None = None
 
 
@@ -197,8 +200,27 @@ def project_turn_from_payload(
             if isinstance(metadata.get("tool_call_count"), int)
             else 0
         ),
+        task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
+        task_plan_revision=_project_metadata_model(
+            metadata,
+            "task_plan.revision",
+            TaskPlanRevision,
+        ),
         error=error,
     )
+
+
+def _project_metadata_model(
+    metadata: Mapping[str, object],
+    key: str,
+    model_type: type[TaskPlan] | type[TaskPlanRevision],
+) -> TaskPlan | TaskPlanRevision | None:
+    value = metadata.get(key)
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, Mapping):
+        return None
+    return model_type.model_validate(value)
 
 
 def _project_error_condition(error: ErrorInfo) -> AutonomyLoopConditionKind:

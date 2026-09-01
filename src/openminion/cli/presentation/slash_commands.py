@@ -118,7 +118,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/effort", "Show or set per-turn effort", "_slash_effort", "_slash_effort"
     ),
     SlashCommandMetadata(
-        "/memory", "Show memory inventory", "_slash_memory", "_slash_memory"
+        "/memory", "Show memory health and inventory", "_slash_memory", "_slash_memory"
     ),
     SlashCommandMetadata(
         "/graph",

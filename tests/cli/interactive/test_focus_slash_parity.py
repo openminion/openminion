@@ -208,7 +208,17 @@ async def test_mcp_command_renders_status_report() -> None:
 async def test_memory_command_renders_capture_health() -> None:
     class _MemoryRuntime(_DemoFocusRuntime):
         def memory_report(self) -> str:
-            return "Memory:\n  capture     1 pending · 0 failed\n  processed   2 writes · 1 no output"
+            return (
+                "Memory:\n"
+                "  capture     3 eligible · 1 pending · 2 terminal\n"
+                "  terminal    1 processed · 1 no output · 0 rejected · 0 failed\n"
+                "  integrity   0 errors\n"
+                "  recall      healthy · mode shadow\n"
+                "  capability  keyword, graph, vector\n"
+                "  score       hybrid-semantic-v1\n"
+                "  selected    memory 2 · knowledge 1\n"
+                "  omissions   budget 1 · relevance 2"
+            )
 
     with tempfile.TemporaryDirectory() as tmp:
         runtime = _MemoryRuntime(working_dir=tmp, session="memory-test")
@@ -220,8 +230,11 @@ async def test_memory_command_renders_capture_health() -> None:
             body = _last_system_body(app.screen.query_one(FocusTranscript))
 
     assert "1 pending" in body
-    assert "2 writes" in body
+    assert "2 terminal" in body
     assert "1 no output" in body
+    assert "recall      healthy · mode shadow" in body
+    assert "selected    memory 2 · knowledge 1" in body
+    assert "omissions   budget 1 · relevance 2" in body
 
 
 @pytest.mark.asyncio

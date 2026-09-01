@@ -20,6 +20,7 @@ def test_delegation_resources_preserve_runtime_and_approval_owners(
         home_root=None,
         identity_agent_id="parent",
         logger=SimpleNamespace(getChild=lambda _name: None),
+        memory_assembly=None,
     )
     runtime = SimpleNamespace(
         inbound=Message(channel="console", target="user", body="delegate"),
@@ -89,6 +90,7 @@ def test_execution_resources_support_normal_delegate_handler(monkeypatch) -> Non
         ops_service=None,
         tools=registry,
         telemetryctl=None,
+        memory_assembly=None,
     )
     runtime = SimpleNamespace(
         inbound=Message(

@@ -12,17 +12,92 @@ from openminion.modules.skill.runtime.parser import (
 )
 
 
-def test_build_recipe_does_not_infer_idempotency_from_prose() -> None:
-    recipe = build_recipe(
+def test_build_recipe_does_not_infer_recipe_from_prose() -> None:
+    recipe, warnings = build_recipe(
         front_matter={},
-        sections={"procedure": "Retry idempotently if the first attempt fails."},
         skill_name="retry safely",
         risk_class="low",
         known_tools=[],
     )
 
+    assert recipe is None
+    assert warnings == []
+
+
+def test_build_recipe_uses_explicit_mapping_and_exact_known_tools() -> None:
+    recipe, warnings = build_recipe(
+        front_matter={
+            "recipe": {
+                "objective": "Inspect and report",
+                "steps": [
+                    {
+                        "step_id": "inspect",
+                        "instruction": "Inspect the workspace",
+                        "tool_id": "tool.shell",
+                    },
+                    {
+                        "step_id": "report",
+                        "instruction": "Write the report",
+                        "tool_id": "tool.unknown",
+                    },
+                    {
+                        "step_id": "path",
+                        "instruction": "Read the bundled guide",
+                        "tool_id": "references/guide.md",
+                    },
+                    {
+                        "step_id": "host",
+                        "instruction": "Contact the service",
+                        "tool_id": "api.example.com",
+                    },
+                    {
+                        "step_id": "declared",
+                        "instruction": "Use the declared tool",
+                        "tool_id": "tool.declared",
+                    },
+                ],
+                "verification": ["Report exists"],
+            }
+        },
+        skill_name="workspace report",
+        risk_class="low",
+        known_tools=["tool.shell"],
+    )
+
+    assert warnings == []
     assert recipe is not None
-    assert recipe.idempotency_notes is None
+    assert [step.tool_id for step in recipe.steps] == [
+        "tool.shell",
+        None,
+        None,
+        None,
+        None,
+    ]
+    assert recipe.verification == ["Report exists"]
+
+
+def test_build_recipe_rejects_invalid_mapping_as_one_unit() -> None:
+    recipe, warnings = build_recipe(
+        front_matter={
+            "recipe": {
+                "steps": [
+                    {"step_id": "inspect", "instruction": "Inspect"},
+                    {"step_id": "inspect", "instruction": "Report"},
+                ]
+            }
+        },
+        skill_name="invalid recipe",
+        risk_class="low",
+        known_tools=[],
+    )
+
+    assert recipe is None
+    assert warnings == ["parse.warning:invalid_recipe"]
+
+
+def test_recipe_is_a_recognized_front_matter_key() -> None:
+    assert "recipe" in RECOGNIZED_FRONT_MATTER_KEYS
+    assert front_matter_unknown_key_warnings({"recipe": {"steps": []}}) == []
 
 
 def test_h1_only_skill_preserves_canonical_sections() -> None:

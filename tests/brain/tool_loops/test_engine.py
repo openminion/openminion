@@ -655,8 +655,8 @@ def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -
                 model="fake-model",
                 output_text="SOURCES\n- wrote app.py\n\nCHANGES\n- created app\n\nTESTS\n- not run",
                 finalization_status={
-                    "status": "final_answer",
-                    "reasoning": "The requested project file was written.",
+                    "status": "incomplete",
+                    "reasoning": "The file was written but the active plan remains.",
                 },
                 finish_reason="stop",
             ),
@@ -690,7 +690,7 @@ def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -
         tool_specs=_tool_specs("file.write"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
     assert outcome.state.scratchpad["plan_control.noop_retries"] == 1
     assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
@@ -792,8 +792,8 @@ def test_engine_redirects_repeated_plan_only_calls_to_substantive_work() -> None
                 model="fake-model",
                 output_text="Wrote app.py and validated the loop.",
                 finalization_status={
-                    "status": "final_answer",
-                    "reasoning": "The requested file was written.",
+                    "status": "incomplete",
+                    "reasoning": "The file was written but the active plan remains.",
                 },
                 finish_reason="stop",
             ),
@@ -828,7 +828,7 @@ def test_engine_redirects_repeated_plan_only_calls_to_substantive_work() -> None
         tool_specs=_tool_specs("file.write"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
     assert outcome.state.scratchpad["plan_control.noop_retries"] == 2
     assert outcome.state.scratchpad["plan_control.tool_suppressed"] is True
@@ -1306,7 +1306,7 @@ def test_engine_retries_when_model_stops_after_recoverable_argument_failure() ->
     ]
     assert len(runtime.calls) == 4
     assert any(
-        "Make one corrected tool call now" in message.content
+        "Use the tool schema and these structured error facts" in message.content
         for message in runtime.calls[2]["messages"]
         if message.role == "system"
     )
@@ -1522,7 +1522,7 @@ def test_engine_recovers_blocked_policy_denial_with_suggested_tool() -> None:
         "file.find",
     ]
     assert any(
-        "Retry the task using file.find" in message.content
+        '"suggested_tool": "file.find"' in message.content
         for message in runtime.calls[1]["messages"]
         if message.role == "system"
     )
@@ -2157,6 +2157,7 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
                             "action": "declare",
                             "plan_id": "apd-proof",
                             "objective": "Research Japan trip requirements",
+                            "criterion_ids": ["criterion-entry"],
                             "steps": [
                                 {
                                     "step_id": "entry",
@@ -2176,6 +2177,10 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
                 provider="fake",
                 model="fake-model",
                 output_text="planned",
+                finalization_status={
+                    "status": "incomplete",
+                    "reasoning": "The plan is recorded and its work remains.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -2195,7 +2200,7 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
         tool_specs=[],
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert outcome.state.total_tool_calls == 0
     assert loop_ctx.state.budgets_remaining.tool_calls == 2
     assert PLAN_TOOL_NAME in {spec.name for spec in runtime.calls[0]["tools"]}
@@ -2204,6 +2209,114 @@ def test_engine_handles_plan_control_tool_without_tool_budget_debit() -> None:
         for event in session_api.events
         if event["event_type"].startswith("task_plan.")
     ] == ["task_plan.declared"]
+    assert outcome.telemetry_payload()["task_plan"]["criterion_ids"] == [
+        "criterion-entry"
+    ]
+
+
+def test_plan_control_reaches_persisted_project_checkpoint(tmp_path) -> None:
+    import asyncio
+
+    from openminion.base.config import OpenMinionConfig
+    from openminion.base.types import Message as ChannelMessage
+    from openminion.modules.brain.loop.adaptive import ActLoopMode
+    from openminion.modules.task import TaskManager, load_latest_project_checkpoint
+    from openminion.modules.task.project.turn import project_turn_from_payload
+    from openminion.services.runtime.project_worker import ProjectWorker
+    from tests._csc_fixtures import _csc_install_default_agent
+    from tests.brain.modes.test_act_adaptive import (
+        _FakeCommandExecutor,
+        _FakeLLMClient,
+        _FakeServices,
+        _ctx,
+    )
+    from tests.services.brain.test_post_execution import DummyBridge, _DummyRunner
+    from tests.services.runtime.test_project_worker import (
+        _TestEvidenceStatus,
+        _evidence,
+        _project,
+    )
+
+    llm = _FakeLLMClient(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-call",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "declare",
+                            "plan_id": "plan-1",
+                            "objective": "Ship the fixture",
+                            "criterion_ids": ["criterion-tests"],
+                            "steps": [{"step_id": "build", "description": "Build it"}],
+                            "continue_plan_autonomously": True,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    plan_runner = SimpleNamespace(
+        session_api=_FakeSessionAPI(),
+        options=SimpleNamespace(failure_strategy="halt"),
+        tool_api=None,
+        profile=SimpleNamespace(),
+    )
+    ctx, _services = _ctx(
+        llm,
+        _FakeCommandExecutor(),
+        services=_FakeServices(runner=plan_runner),
+    )
+    step_out = ActLoopMode().execute(ctx)
+
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = None
+    bridge._identity_metadata = dict
+    response = asyncio.run(
+        bridge._postprocess_turn(
+            runner=_DummyRunner({}),
+            step_out=step_out,
+            message=ChannelMessage(channel="console", target="user", body="plan this"),
+            history=[],
+            session_id="session-1",
+            request_id="trace-1",
+            turn_id="turn-1",
+            turn_start_time=0.0,
+        )
+    )
+
+    store, manager, run = _project(tmp_path, max_iterations=1)
+    ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: project_turn_from_payload(
+            request,
+            payload={},
+            execute=lambda _payload: {
+                "summary": "planned",
+                "metadata": response.metadata,
+            },
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-1",
+    ).run_cycle(run.run_id)
+    restored = load_latest_project_checkpoint(
+        TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db"),
+        task_id="task-1",
+    )
+
+    assert restored is not None
+    assert restored.payload["task_plan"]["plan_id"] == "plan-1"
+    assert restored.payload["task_plan"]["criterion_ids"] == ["criterion-tests"]
+    assert restored.payload["plan_revision_count"] == 0
 
 
 def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
@@ -2383,8 +2496,8 @@ def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
                 model="fake-model",
                 output_text="I completed the missing step.",
                 finalization_status={
-                    "status": "final_answer",
-                    "reasoning": "The invalid plan event was surfaced.",
+                    "status": "incomplete",
+                    "reasoning": "The invalid plan event left the plan unresolved.",
                 },
                 finish_reason="stop",
             ),
@@ -2421,7 +2534,7 @@ def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
         tool_specs=[],
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
     assert [
         event["event_type"]
@@ -2438,6 +2551,10 @@ def test_engine_does_not_complete_plan_step_from_prose_only() -> None:
                 provider="fake",
                 model="fake-model",
                 output_text="The entry step is done.",
+                finalization_status={
+                    "status": "incomplete",
+                    "reasoning": "No typed step completion was recorded.",
+                },
                 finish_reason="stop",
             )
         ]
@@ -2473,7 +2590,7 @@ def test_engine_does_not_complete_plan_step_from_prose_only() -> None:
         tool_specs=[],
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
     assert session_api.events == []
 
 
@@ -2655,6 +2772,97 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
         "activated": True,
     }
     assert loop_ctx.state.budgets_remaining.tool_calls == 4
+    assert outcome.final_text == "done"
+
+
+def test_generic_file_request_recovers_with_exact_active_file_tool() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="request-file",
+                        name=TOOL_REQUEST_TOOL_NAME,
+                        arguments={"name": "file"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="list-files",
+                        name="file.list_dir",
+                        arguments={"path": "."},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The directory was listed.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=5, llm_calls_max=10),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="listed",
+                    outputs={"entries": []},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.list_dir", "file.read", "file.write"}),
+            max_iterations=4,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="list the workspace")],
+        tool_specs=_tool_specs("file.list_dir"),
+        requestable_tool_specs=_tool_specs(
+            "file.list_dir",
+            "file.read",
+            "file.write",
+        ),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.list_dir"]
+    first_tools = [spec.name for spec in runtime.calls[0]["tools"]]
+    second_tools = [spec.name for spec in runtime.calls[1]["tools"]]
+    assert first_tools == second_tools
+    assert "file.list_dir" in second_tools
+    request_result = next(
+        message for message in runtime.calls[1]["messages"] if message.role == "tool"
+    )
+    assert json.loads(request_result.content)["error"]["code"] == (
+        "TOOL_REQUEST_UNAVAILABLE"
+    )
     assert outcome.final_text == "done"
 
 
@@ -7578,7 +7786,7 @@ def test_failed_tool_result_appends_recovery_hint() -> None:
     second_call_messages = runtime.calls[1]["messages"]
     system_messages = [m for m in second_call_messages if m.role == "system"]
     assert any(
-        "Do not repeat the same invalid call" in m.content and "weather" in m.content
+        "Use the tool schema" in m.content and "weather" in m.content
         for m in system_messages
     )
 
@@ -7793,6 +8001,173 @@ def test_general_loop_does_not_clear_failed_exec_with_successful_read() -> None:
     assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
     assert outcome.error_message is not None
     assert "latest exec.run result was still failed" in outcome.error_message
+
+
+def _run_general_loop_with_tool_results(
+    tool_results: list[tuple[str, dict[str, Any], ActionResult]],
+):
+    tool_responses = [
+        LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text="",
+            tool_calls=[ToolCall(id=f"call-{index}", name=name, arguments=arguments)],
+            finish_reason="tool_calls",
+        )
+        for index, (name, arguments, _result) in enumerate(tool_results)
+    ]
+    final_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="Workspace inspected.",
+        finalization_status={"status": "final_answer"},
+        finish_reason="stop",
+    )
+    runtime = _FakeRuntime(responses=[*tool_responses, final_response, final_response])
+    loop_ctx = _LoopContext(
+        state=_state(
+            tool_calls=len(tool_results) + 1,
+            llm_calls_max=len(tool_results) + 3,
+        ),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=result,
+            )
+            for _name, _arguments, result in tool_results
+        ],
+    )
+    tool_names = frozenset(name for name, _arguments, _result in tool_results)
+    return run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=tool_names,
+            max_iterations=len(tool_results) + 2,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect the workspace")],
+        tool_specs=_tool_specs(*sorted(tool_names)),
+    )
+
+
+def _policy_denied_exec_result() -> ActionResult:
+    return ActionResult(
+        command_id=new_uuid(),
+        status="failed",
+        summary="read-only shell discovery denied",
+        error=ActionError(
+            code="POLICY_DENIED",
+            message="Use the structured read-only tool instead.",
+            details={"suggested_tool": "file.list_dir"},
+        ),
+    )
+
+
+def _tool_result(*, status: str, summary: str) -> ActionResult:
+    return ActionResult(
+        command_id=new_uuid(),
+        status=status,
+        summary=summary,
+        error=(
+            ActionError(code="TOOL_ERROR", message=summary)
+            if status == "failed"
+            else None
+        ),
+    )
+
+
+def test_general_loop_clears_policy_denied_exec_after_suggested_tool_succeeds() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="success", summary="workspace entries"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Workspace inspected."
+    assert not outcome.state.scratchpad.get("unresolved_exec_failure_retry_used", False)
+
+
+def test_general_loop_does_not_clear_policy_denial_with_different_tool() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.read",
+                {"path": "README.md"},
+                _tool_result(status="success", summary="file content"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
+def test_general_loop_does_not_clear_policy_denial_when_suggested_tool_fails() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="failed", summary="listing failed"),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
+def test_general_loop_does_not_use_suggested_tool_success_before_denial() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="success", summary="workspace entries"),
+            ),
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
+
+
+def test_general_loop_keeps_later_genuine_exec_failure_authoritative() -> None:
+    outcome = _run_general_loop_with_tool_results(
+        [
+            ("exec.run", {"command": "ls"}, _policy_denied_exec_result()),
+            (
+                "file.list_dir",
+                {"path": "."},
+                _tool_result(status="success", summary="workspace entries"),
+            ),
+            (
+                "exec.run",
+                {"command": "pytest -q"},
+                ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="pytest failed",
+                    error=ActionError(
+                        code="EXEC_ERROR",
+                        message="command exited with code 1",
+                    ),
+                ),
+            ),
+        ]
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
 
 
 def test_normal_result_no_enrichment() -> None:

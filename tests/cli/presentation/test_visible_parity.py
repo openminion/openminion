@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from openminion.cli.status.token_usage import TokenUsageSnapshot
 from openminion.cli.presentation.visible_parity import (
     handle_effort_command,
@@ -12,7 +14,10 @@ from openminion.cli.presentation.visible_parity import (
     render_tasks_report,
     statusline_label,
 )
-from openminion.modules.memory.runtime.capture_status import CaptureProcessingSummary
+from openminion.modules.memory.runtime.capture_status import (
+    CaptureProcessingSummary,
+    RecallProcessingSummary,
+)
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
 
@@ -141,12 +146,75 @@ def test_format_memory_report_shows_content_free_capture_health() -> None:
             rejected=0,
             failed_terminal=1,
             oldest_pending_at="2026-08-24T00:00:00Z",
+            eligible=7,
+            terminal=6,
+            integrity_errors=0,
+        ),
+        recall=RecallProcessingSummary(
+            health="healthy",
+            mode="shadow",
+            capabilities=("keyword", "graph", "vector"),
+            score_domain="hybrid-semantic-v1",
+            selected_memory=2,
+            selected_knowledge=1,
+            omission_reasons=(("budget", 1), ("relevance", 2)),
         ),
     )
 
-    assert "capture     1 pending · 1 failed" in body
-    assert "processed   2 writes · 3 no output" in body
+    assert "capture     7 eligible · 1 pending · 6 terminal" in body
+    assert "terminal    2 processed · 3 no output · 0 rejected · 1 failed" in body
+    assert "integrity   0 errors" in body
     assert "oldest      2026-08-24T00:00:00Z" in body
+    assert "recall      healthy · mode shadow" in body
+    assert "capability  keyword, graph, vector" in body
+    assert "score       hybrid-semantic-v1" in body
+    assert "selected    memory 2 · knowledge 1" in body
+    assert "omissions   budget 1 · relevance 2" in body
+
+
+def test_format_memory_status_does_not_render_sensitive_runtime_fields() -> None:
+    body = format_memory_report(
+        [],
+        [],
+        capture=CaptureProcessingSummary(
+            pending=0,
+            processed=0,
+            succeeded_no_output=0,
+            rejected=0,
+            failed_terminal=0,
+            oldest_pending_at="",
+        ),
+        recall=SimpleNamespace(
+            health="degraded",
+            mode="sophiagraph",
+            capabilities=("keyword",),
+            score_domain="structured-retrieval-v1",
+            selected_memory=0,
+            selected_knowledge=0,
+            omission_reasons=(),
+            transcript="private transcript",
+            query="private query",
+            exception="private exception",
+            path="/private/path",
+            url="https://private.invalid",
+            provider="provider-name",
+            model="model-name",
+            secret="secret-value",
+        ),
+    )
+
+    assert "recall      degraded" in body
+    for sensitive in (
+        "private transcript",
+        "private query",
+        "private exception",
+        "/private/path",
+        "https://private.invalid",
+        "provider-name",
+        "model-name",
+        "secret-value",
+    ):
+        assert sensitive not in body
 
 
 def test_render_skills_report_uses_runtime_rows() -> None:

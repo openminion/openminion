@@ -56,6 +56,11 @@ def _entry_enabled_for_runtime_config(
     entry: _ToolBootstrapEntry,
     config: Any | None,
 ) -> bool:
+    if entry.module_name == "openminion.tools.blockchain":
+        runtime_cfg = getattr(config, "runtime", config)
+        tools_cfg = getattr(runtime_cfg, "tools", None)
+        blockchain_cfg = getattr(tools_cfg, "blockchain", None)
+        return bool(blockchain_cfg and getattr(blockchain_cfg, "enabled", False))
     if entry.module_name != "openminion.tools.reaction":
         return True
     runtime_cfg = getattr(config, "runtime", config)
@@ -140,6 +145,12 @@ def _prepared_state_record_details(
 
 
 _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.blockchain",
+        label="Blockchain",
+        required=False,
+    ),
     _ToolBootstrapEntry(
         kind="tool",
         module_name="openminion.tools.file",

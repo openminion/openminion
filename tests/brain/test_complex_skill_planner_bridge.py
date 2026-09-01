@@ -15,6 +15,18 @@ COMPLEX_SKILL = """---
 name: release-check
 id: release-check
 tools: [tool.shell, tool.fetch]
+recipe:
+  objective: Validate and publish a release
+  steps:
+    - step_id: test
+      instruction: Run tests
+      tool_id: tool.shell
+    - step_id: verify
+      instruction: Verify the release manifest
+      tool_id: tool.fetch
+    - step_id: publish
+      instruction: Publish the release
+      tool_id: tool.shell
 ---
 
 # Summary
@@ -66,7 +78,7 @@ def test_complex_skill_workflow_is_version_pinned_in_model_authored_plan(
             reason="complex workflow reviewed",
             authority=authority,
         )
-        workflow = ctl.get_workflow("workflow.release-check")
+        workflow = ctl.get_workflow(f"workflow.{skill_id}")
         plan = TaskPlan(
             plan_id="release-plan",
             objective="Publish safely",

@@ -12,7 +12,7 @@ from openminion.modules.brain.loop.constants import (
 )
 from openminion.modules.llm.schemas import Message
 
-from ..budget_control import _effective_cap
+from ..budget import _effective_cap
 from ..contracts import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_FINAL_TEXT,
@@ -183,6 +183,7 @@ def _is_plan_tool_call(tool_call: Any) -> bool:
 def _record_successful_plan_action(
     loop_state: AdaptiveToolLoopState,
     arguments: dict[str, Any],
+    outputs: dict[str, Any],
 ) -> None:
     loop_state.scratchpad[PLAN_TOOL_USED_SCRATCHPAD_KEY] = True
     recorded_actions = list(
@@ -193,6 +194,10 @@ def _record_successful_plan_action(
     loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
         _count_substantive_non_control_tool_results(loop_state)
     )
+    if isinstance(outputs.get("task_plan"), dict):
+        loop_state.task_plan = dict(outputs["task_plan"])
+    if isinstance(outputs.get("task_plan.revision"), dict):
+        loop_state.task_plan_revision = dict(outputs["task_plan.revision"])
 
 
 def _autonomous_plan_continuation_result(
@@ -441,8 +446,8 @@ def _process_plan_tool_calls(
         action_result = handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
         _persist_control_terminal(loop_ctx, loop_state, tool_call, action_result)
         if str(getattr(action_result, "status", "") or "") == "success":
-            _record_successful_plan_action(loop_state, arguments)
             outputs = dict(getattr(action_result, "outputs", {}) or {})
+            _record_successful_plan_action(loop_state, arguments, outputs)
             if bool(outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, False)):
                 autonomous_continuation_summary = str(
                     getattr(action_result, "summary", "") or ""

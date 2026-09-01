@@ -29,6 +29,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
     MODEL_FILE_READ_RANGE,
+    MODEL_FILE_TRASH,
     MODEL_FILE_WRITE,
     MODEL_WEB_FETCH,
 )
@@ -39,6 +40,7 @@ CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
         MODEL_FILE_READ,
         MODEL_FILE_READ_RANGE,
         MODEL_FILE_FIND,
+        MODEL_FILE_TRASH,
         MODEL_FILE_WRITE,
         MODEL_CODE_PATCH,
         MODEL_CODE_GREP,

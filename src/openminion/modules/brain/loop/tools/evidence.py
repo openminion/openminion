@@ -63,9 +63,27 @@ def _has_unresolved_tool_failure(
     *,
     tool_name: str,
 ) -> bool:
-    unresolved = False
-    for item in _loop_tool_result_payloads(loop_state):
+    tool_results = _loop_tool_result_payloads(loop_state)
+    latest_index = -1
+    for index, item in enumerate(tool_results):
         if _normalized_tool_name(item.get("tool_name")) != tool_name:
             continue
-        unresolved = not bool(item.get("ok"))
-    return unresolved
+        latest_index = index
+    if latest_index < 0:
+        return False
+
+    latest_result = tool_results[latest_index]
+    if bool(latest_result.get("ok")):
+        return False
+    if latest_result.get("error_code") != "POLICY_DENIED":
+        return True
+
+    error_details = latest_result.get("data", {}).get("error_details", {})
+    suggested_tool = _normalized_tool_name(error_details.get("suggested_tool"))
+    if not suggested_tool:
+        return True
+    return not any(
+        _normalized_tool_name(item.get("tool_name")) == suggested_tool
+        and bool(item.get("ok"))
+        for item in tool_results[latest_index + 1 :]
+    )

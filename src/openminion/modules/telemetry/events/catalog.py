@@ -82,6 +82,7 @@ MEMORY_CANDIDATE_UPDATE = "memory.candidate.update"
 MEMORY_CAPSULE_REFRESHED = "memory.capsule.refreshed"
 MEMORY_CAPSULE_REFRESH_FAILED = "memory.capsule.refresh_failed"
 MEMORY_CAPSULE_REFRESH_SKIPPED = "memory.capsule.refresh_skipped"
+MEMORY_CAPTURE_BUNDLE_COMMIT = "memory.capture_bundle.commit"
 MEMORY_CONTEXT_BUILT = "memory.context.built"
 MEMORY_CONTEXT_FAILED = "memory.context.failed"
 MEMORY_FOLLOWUP_COMPLETED = "memory.followup.completed"
@@ -96,6 +97,8 @@ MEMORY_RECORD_SUPERSEDE = "memory.record.supersede"
 MEMORY_RECORD_TOMBSTONE = "memory.record.tombstone"
 MEMORY_RECORD_UPSERT = "memory.record.upsert"
 MEMORY_RELATION_PUT = "memory.relation.put"
+MEMORY_CAPTURE_STATUS = "memory.capture.status"
+MEMORY_RECALL_STATUS = "memory.recall.status"
 MEMORY_RETRIEVAL_BUILT = "memory.retrieval.built"
 MEMORY_TIER_TRANSITION_PUT = "memory.tier_transition.put"
 MEMORY_TURN_RECORDED = "memory.turn.recorded"
@@ -305,6 +308,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_CAPSULE_REFRESHED,
         MEMORY_CAPSULE_REFRESH_FAILED,
         MEMORY_CAPSULE_REFRESH_SKIPPED,
+        MEMORY_CAPTURE_BUNDLE_COMMIT,
         MEMORY_CONTEXT_BUILT,
         MEMORY_CONTEXT_FAILED,
         MEMORY_FOLLOWUP_COMPLETED,
@@ -319,6 +323,8 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_RECORD_TOMBSTONE,
         MEMORY_RECORD_UPSERT,
         MEMORY_RELATION_PUT,
+        MEMORY_CAPTURE_STATUS,
+        MEMORY_RECALL_STATUS,
         MEMORY_RETRIEVAL_BUILT,
         MEMORY_TIER_TRANSITION_PUT,
         MEMORY_TURN_RECORDED,
@@ -553,6 +559,7 @@ __all__ = [
     "MEMORY_CAPSULE_REFRESHED",
     "MEMORY_CAPSULE_REFRESH_FAILED",
     "MEMORY_CAPSULE_REFRESH_SKIPPED",
+    "MEMORY_CAPTURE_BUNDLE_COMMIT",
     "MEMORY_CONTEXT_BUILT",
     "MEMORY_CONTEXT_FAILED",
     "MEMORY_FOLLOWUP_COMPLETED",
@@ -567,6 +574,8 @@ __all__ = [
     "MEMORY_RECORD_TOMBSTONE",
     "MEMORY_RECORD_UPSERT",
     "MEMORY_RELATION_PUT",
+    "MEMORY_CAPTURE_STATUS",
+    "MEMORY_RECALL_STATUS",
     "MEMORY_RETRIEVAL_BUILT",
     "MEMORY_TIER_TRANSITION_PUT",
     "MEMORY_TURN_RECORDED",

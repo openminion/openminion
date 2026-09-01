@@ -53,6 +53,7 @@ class ProjectMetricSnapshot(_StrictReportModel):
     cost_microusd: int = Field(default=0, ge=0)
     proof_packet_completeness_percent: float = Field(default=0.0, ge=0.0, le=100.0)
     operator_intervention_count: int = Field(default=0, ge=0)
+    plan_revision_count: int = Field(default=0, ge=0)
 
 
 class ProjectMetricComparison(_StrictReportModel):
@@ -132,6 +133,7 @@ def build_project_report_from_task(
         restart_resume_success_count=int(record.metadata.get("resume_count") or 0),
         operator_intervention_count=_operator_intervention_count(record.metadata),
         proof_packet_completeness_percent=round((len(proof_refs) / 3) * 100, 2),
+        plan_revision_count=int(checkpoint.payload.get("plan_revision_count") or 0),
     )
     return build_project_report(
         checkpoint.project_run,

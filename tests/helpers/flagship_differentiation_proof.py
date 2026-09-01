@@ -214,14 +214,7 @@ def _ensure_pragmagraph_src() -> Path:
 
 
 def _fixture_root() -> Path:
-    return (
-        Path(__file__).resolve().parents[3]
-        / "pragmagraph"
-        / "tests"
-        / "fixtures"
-        / "repos"
-        / "tiny_repo"
-    )
+    return Path(__file__).resolve().parents[1] / "fixtures" / "flagship_tiny_repo"
 
 
 def _default_output_path() -> Path:

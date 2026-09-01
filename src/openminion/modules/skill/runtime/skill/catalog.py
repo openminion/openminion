@@ -502,9 +502,15 @@ class SkillCatalogMixin:
         return entry
 
     def lint(
-        self, skill_id: str, version_hash: str | None = None
+        self,
+        skill_id: str,
+        version_hash: str | None = None,
+        *,
+        target_status: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         package = self.get_skill(skill_id=skill_id, version_hash=version_hash)
+        if target_status is not None:
+            package = replace(package, status=normalize_status(target_status))
         issues = self._lint_package(package)
         warnings = [item.to_dict() for item in issues if item.severity != "error"]
         errors = [item.to_dict() for item in issues if item.severity == "error"]

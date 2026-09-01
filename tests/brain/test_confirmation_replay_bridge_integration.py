@@ -398,3 +398,50 @@ def test_confirmation_replay_replays_full_confirmed_batch() -> None:
     ]
     assert len(confirm_events) == 1
     assert confirm_events[0][1]["replay_count"] == 3
+
+
+def test_confirmation_replay_preserves_verification_target_binding() -> None:
+    pending = ToolCommand(
+        title="run tests",
+        tool_name="exec.run",
+        args={"command": "pytest -q"},
+        inputs={"command": "pytest -q"},
+        requires_confirmation=True,
+        verification_target_kind="criterion",
+        verification_target_id="criterion-tests",
+    )
+    state = WorkingState(
+        session_id="sess-verification-replay",
+        agent_id="agent-verification-replay",
+        trace_id="trace-verification-replay",
+        budgets_remaining={
+            "ticks": 8,
+            "tool_calls": 8,
+            "a2a_calls": 0,
+            "tokens": 100000,
+            "time_ms": 45000,
+        },
+        pending_confirmation_command=pending,
+        pending_confirmation_sub_intents=[],
+        pending_confirmation_sub_intent_refs=[],
+        pending_confirmation_rationale="run verification",
+        pending_confirmation_success_criteria={},
+        pending_confirmation_feasibility_state={},
+        pending_confirmation_feasibility_report=None,
+    )
+    runner = _DummyRunner({}, policy_api=_GrantingPolicyAPI(["grant-1"]))
+    tick_ctx = TickRunContext(
+        session_id="sess-verification-replay",
+        user_input="yes",
+    )
+
+    confirmation_process(
+        runner=runner,
+        state=state,
+        logger=_CapturingLogger(),
+        tick_ctx=tick_ctx,
+    )
+
+    replayed = list(getattr(tick_ctx.decision, "_seeded_commands", []) or [])[0]
+    assert replayed.verification_target_kind == "criterion"
+    assert replayed.verification_target_id == "criterion-tests"

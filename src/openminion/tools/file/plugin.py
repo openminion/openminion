@@ -157,7 +157,7 @@ class FileWriteArgs(BaseModel):
     path: str = Field(
         ...,
         min_length=1,
-        description="File path",
+        description="Complete target file path, including the filename",
         validation_alias=AliasChoices("path", "filename", "file_path", "destination"),
     )
     content: str = Field(

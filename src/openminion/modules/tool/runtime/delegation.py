@@ -1,4 +1,5 @@
 import hashlib
+from collections.abc import Mapping
 from uuid import uuid4
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -221,6 +222,61 @@ class A2aRuntimeDelegateAdapter:
         owner = getattr(self._a2a_call, "__self__", None)
         setter = getattr(owner, "set_approval_callback", None)
         return setter(callback) if callable(setter) else None
+
+    def review_readonly(
+        self,
+        *,
+        reviewer_agent_id: str,
+        objective: str,
+        criteria: list[str],
+        worktree: str,
+        diff: str,
+        verifier_refs: list[str],
+        repository_instructions: str,
+        timeout_seconds: int,
+    ) -> A2ADelegateResult:
+        instruction = "\n".join(
+            (
+                f"Review objective: {objective}",
+                f"Criteria: {', '.join(criteria)}",
+                f"Worktree: {worktree}",
+                f"Diff: {diff}",
+                f"Verifier refs: {', '.join(verifier_refs)}",
+                f"Repository instructions: {repository_instructions}",
+            )
+        )
+        result = self.delegate(
+            agent_id=reviewer_agent_id,
+            instruction=instruction,
+            timeout_seconds=timeout_seconds,
+            permission_mode="readonly",
+            workspace_root=worktree,
+            cwd=worktree,
+        )
+        if not result.ok:
+            return result
+        child_id = result.outputs.get("child_agent_id")
+        findings = result.outputs.get("findings")
+        valid_findings = isinstance(findings, list) and all(
+            isinstance(finding, Mapping)
+            and all(
+                isinstance(finding.get(key), str) and finding[key].strip()
+                for key in ("priority", "owner", "message")
+            )
+            for finding in findings
+        )
+        if not isinstance(child_id, str) or not child_id.strip() or not valid_findings:
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="A2A_REVIEW_INVALID_RESULT",
+                error_message="readonly review requires child identity and findings",
+                target_agent_id=result.target_agent_id,
+                trace_id=result.trace_id,
+                task_id=result.task_id,
+                outputs=result.outputs,
+            )
+        return result
 
     def _idempotency_key(
         self,
