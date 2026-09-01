@@ -121,9 +121,7 @@ def test_args_preview_can_preserve_full_command_for_approval() -> None:
         "-o StrictHostKeyChecking=yes localhost true"
     )
 
-    result = format_tool_args_preview(
-        "exec.run", {"command": command}, compact=False
-    )
+    result = format_tool_args_preview("exec.run", {"command": command}, compact=False)
 
     assert result == f'"{command}"'
     assert "…" not in result

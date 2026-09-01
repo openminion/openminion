@@ -134,9 +134,7 @@ def format_tool_args_preview(
         )
         if command:
             rendered = (
-                _truncate_middle(command, _COMMAND_PREVIEW_MAX)
-                if compact
-                else command
+                _truncate_middle(command, _COMMAND_PREVIEW_MAX) if compact else command
             )
             return _quote(rendered)
 
@@ -147,9 +145,7 @@ def format_tool_args_preview(
             or str(args_dict.get("pattern", "") or "")
         )
         if query:
-            rendered = (
-                _truncate_middle(query, _QUERY_PREVIEW_MAX) if compact else query
-            )
+            rendered = _truncate_middle(query, _QUERY_PREVIEW_MAX) if compact else query
             return _quote(rendered)
 
     path = (
@@ -168,11 +164,7 @@ def format_tool_args_preview(
         )
     except (TypeError, ValueError):
         serialized = str(args_dict)
-    return (
-        _truncate_middle(serialized, _COMMAND_PREVIEW_MAX)
-        if compact
-        else serialized
-    )
+    return _truncate_middle(serialized, _COMMAND_PREVIEW_MAX) if compact else serialized
 
 
 def format_tool_provenance_marker(

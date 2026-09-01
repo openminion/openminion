@@ -1177,16 +1177,11 @@ def test_build_runtime_tool_specs_exposes_effective_agent_command_grants() -> No
     )
 
     assert len(specs) == 1
-    assert (
-        "Granted executables: docker, ssh."
-        in specs[0].description
-    )
+    assert "Granted executables: docker, ssh." in specs[0].description
     assert "do not inspect its configuration or credential files first" in (
         specs[0].description
     )
-    assert "SSH client can connect to remote hosts" in (
-        specs[0].description
-    )
+    assert "SSH client can connect to remote hosts" in (specs[0].description)
     assert "SSH client can connect to remote hosts" in (
         build_entry_inactive_tool_directory(specs)
     )

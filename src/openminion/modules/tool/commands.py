@@ -33,8 +33,7 @@ _READ_ONLY_COMMAND_PREFIXES = (
 def is_bounded_read_only_command(argv: Sequence[str]) -> bool:
     normalized = tuple(str(arg).strip().lower() for arg in argv)
     return any(
-        normalized[: len(prefix)] == prefix
-        for prefix in _READ_ONLY_COMMAND_PREFIXES
+        normalized[: len(prefix)] == prefix for prefix in _READ_ONLY_COMMAND_PREFIXES
     )
 
 

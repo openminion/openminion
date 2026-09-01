@@ -87,8 +87,8 @@ def test_approval_prints_full_long_command_outside_input_prompt() -> None:
     session = _StubSession(["n"])
     overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
     command = (
-        "Approval required: exec.run(\"ssh -o BatchMode=yes "
-        "-o ConnectTimeout=3 -o StrictHostKeyChecking=yes localhost true\")"
+        'Approval required: exec.run("ssh -o BatchMode=yes '
+        '-o ConnectTimeout=3 -o StrictHostKeyChecking=yes localhost true")'
     )
 
     assert overlay.present_approval(command) == "deny"
@@ -97,7 +97,7 @@ def test_approval_prints_full_long_command_outside_input_prompt() -> None:
     assert "BatchMode=yes" in rendered
     assert "ConnectTimeout=3" in rendered
     assert "StrictHostKeyChecking=yes" in rendered
-    assert "localhost true\")" in rendered
+    assert 'localhost true")' in rendered
     assert "…" not in rendered
     assert session.prompts == ["[y]es / [N]o / [a]lways: "]
 

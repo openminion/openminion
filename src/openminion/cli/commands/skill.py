@@ -709,7 +709,9 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
                 verified_lint_report=verified_lint_report,
                 harness_result=harness_result,
             )
-            ok = bool(harness_result and harness_result.ok) and not bool(verified_lint_report["errors"])
+            ok = bool(harness_result and harness_result.ok) and not bool(
+                verified_lint_report["errors"]
+            )
             print_json_payload(
                 {"ok": ok, "report": report.to_dict()},
                 sort_keys=False,
