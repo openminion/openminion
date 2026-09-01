@@ -71,9 +71,7 @@ def test_with_sqlite_upgrades_real_baseline_file(tmp_path: Path) -> None:
         / "storage"
     )
     alembic_config = Config(str(storage_root / "alembic.ini"))
-    alembic_config.set_main_option(
-        "script_location", str(storage_root / "migrations")
-    )
+    alembic_config.set_main_option("script_location", str(storage_root / "migrations"))
     alembic_config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.upgrade(alembic_config, "0001_baseline")
     runner = MigrationRunner(
@@ -100,8 +98,7 @@ def test_with_sqlite_upgrades_real_baseline_file(tmp_path: Path) -> None:
             row[1] for row in connection.execute("PRAGMA table_info(policy_grants)")
         }
         decision_columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(policy_decisions)")
+            row[1] for row in connection.execute("PRAGMA table_info(policy_decisions)")
         }
     finally:
         connection.close()
@@ -160,9 +157,10 @@ def test_allow_once_resolution_is_idempotent_and_consumed_once(tmp_path: Path) -
     try:
         pending = ctl.check(_invocation(), _context())
         grant_id = ctl.resolve_confirmation(pending.approval_id or "", "allow_once")
-        assert ctl.resolve_confirmation(
-            pending.approval_id or "", "allow_once"
-        ) == grant_id
+        assert (
+            ctl.resolve_confirmation(pending.approval_id or "", "allow_once")
+            == grant_id
+        )
 
         allowed = ctl.check(_invocation(), _context())
         assert allowed.decision == "ALLOW"
@@ -264,9 +262,7 @@ def test_exact_registered_financial_risk_wins_over_low_override(tmp_path: Path) 
 
 @pytest.mark.parametrize("mode", ["disabled", "log_only"])
 def test_non_enforcing_modes_deny_exact_send(mode: str, tmp_path: Path) -> None:
-    ctl = PolicyCtl.with_sqlite(
-        tmp_path / f"{mode}.db", config=PolicyConfig(mode=mode)
-    )
+    ctl = PolicyCtl.with_sqlite(tmp_path / f"{mode}.db", config=PolicyConfig(mode=mode))
     try:
         decision = ctl.check(_invocation(), _context())
         assert decision.decision == "DENY"

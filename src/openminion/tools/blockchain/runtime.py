@@ -185,7 +185,9 @@ def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
             "chain_id": chain_id,
             "transaction_hash": request.transaction_hash,
             "from_address": client.to_checksum_address(transaction["from"]),
-            "to_address": client.to_checksum_address(to_address) if to_address else None,
+            "to_address": client.to_checksum_address(to_address)
+            if to_address
+            else None,
             "value_wei": _decimal(transaction["value"]),
             "input": _hex_data(transaction["input"]),
             "nonce": _decimal(transaction["nonce"]),
@@ -292,7 +294,9 @@ def _build_prepared_transaction(
         "nonce": nonce,
         "data": data,
     }
-    gas_limit = int(_rpc("estimate_gas", lambda: client.eth.estimate_gas(rpc_transaction)))
+    gas_limit = int(
+        _rpc("estimate_gas", lambda: client.eth.estimate_gas(rpc_transaction))
+    )
     pending_block = _rpc("chain_read", lambda: client.eth.get_block("pending"))
     base_fee = pending_block.get("baseFeePerGas")
     common = {
@@ -456,7 +460,9 @@ def _rpc_transaction(transaction: Mapping[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _load_signing_account(config: Any, context: Any, web3: Any | None) -> tuple[Any, Any]:
+def _load_signing_account(
+    config: Any, context: Any, web3: Any | None
+) -> tuple[Any, Any]:
     secret_service = getattr(context, "secret_service", None)
     if secret_service is None or not config.signer_secret_key:
         raise KeyError("signer unavailable")
@@ -812,9 +818,7 @@ def _send_terminal(
                 "block_number": receipt["block_number"],
                 "receipt_status": receipt["status"],
                 "gas_used": receipt["gas_used"],
-                "effective_gas_price_wei": receipt[
-                    "effective_gas_price_wei"
-                ],
+                "effective_gas_price_wei": receipt["effective_gas_price_wei"],
             }
         )
     error = result.get("error")

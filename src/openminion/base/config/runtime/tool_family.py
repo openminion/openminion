@@ -73,7 +73,6 @@ def coerce_tool_family_runtime_config(
         value.get("allow_fallback"),
         field_path=f"{field_path}.allow_fallback",
     )
-
     if "enabled_providers" in value and not enabled_providers:
         raise ConfigError(
             f"{field_path}.enabled_providers must contain at least one provider id."
@@ -82,7 +81,8 @@ def coerce_tool_family_runtime_config(
         raise ConfigError(
             f"{field_path}.provider_order must contain at least one provider id."
         )
-    if default_provider and enabled_providers and default_provider not in enabled_providers:
+    default_is_enabled = default_provider in enabled_providers
+    if default_provider and enabled_providers and not default_is_enabled:
         raise ConfigError(
             f"{field_path}.default_provider must be listed in "
             f"{field_path}.enabled_providers."
@@ -147,9 +147,7 @@ def _validate_blockchain_config(
         or isinstance(config.chain_id, bool)
         or config.chain_id < 1
     ):
-        raise ConfigError(
-            "runtime.tools.blockchain.chain_id must be an integer >= 1."
-        )
+        raise ConfigError("runtime.tools.blockchain.chain_id must be an integer >= 1.")
     timeout = config.receipt_timeout_seconds
     if (
         not isinstance(timeout, int)
@@ -197,9 +195,7 @@ def coerce_blockchain_tool_runtime_config(
         return _validate_blockchain_config(value)
     if not isinstance(value, Mapping):
         raise ConfigError("runtime.tools.blockchain must be an object.")
-    unknown = sorted(
-        str(key) for key in value if key not in _BLOCKCHAIN_CONFIG_KEYS
-    )
+    unknown = sorted(str(key) for key in value if key not in _BLOCKCHAIN_CONFIG_KEYS)
     if unknown:
         raise ConfigError(
             f"runtime.tools.blockchain contains unsupported keys: {unknown!r}."
@@ -219,9 +215,7 @@ def coerce_blockchain_tool_runtime_config(
                 value.get("signer_secret_namespace", "blockchain")
             ).strip(),
             writes_enabled=value.get("writes_enabled", False),
-            max_total_fee_wei=str(
-                value.get("max_total_fee_wei", "10000000000000000")
-            ),
+            max_total_fee_wei=str(value.get("max_total_fee_wei", "10000000000000000")),
             receipt_timeout_seconds=value.get("receipt_timeout_seconds", 60),
         )
     )

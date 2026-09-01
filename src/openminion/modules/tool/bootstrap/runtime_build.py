@@ -188,6 +188,7 @@ def build_runtime_bootstrap(
         _DEFAULT_RUNTIME_FALLBACK_ON,
         _DEFAULT_RUNTIME_NO_FALLBACK_ON,
     )
+
     registry_manager = ToolRegistryManager()
     registry = ToolRegistry([])
     workspace_path = Path(workspace_root) if workspace_root else None
@@ -241,7 +242,6 @@ def build_runtime_bootstrap(
         registry_manager,
         config=config,
     )
-
     # Wire the populated manager into the resolver module
     set_registry_manager(registry_manager)
     set_registry(registry)

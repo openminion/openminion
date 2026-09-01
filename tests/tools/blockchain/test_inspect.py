@@ -123,9 +123,7 @@ class _FailingWeb3:
 
 
 def test_chain_summary_returns_grounded_decimal_facts() -> None:
-    result = inspect_blockchain(
-        {"action": "chain_summary"}, _context(), web3=_Web3()
-    )
+    result = inspect_blockchain({"action": "chain_summary"}, _context(), web3=_Web3())
 
     assert result == {
         "ok": True,

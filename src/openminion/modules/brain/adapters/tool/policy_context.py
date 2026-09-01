@@ -2,7 +2,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.tool import Policy, canonical_tool_name
-from openminion.modules.tool.contracts.model_ids import MODEL_FILE_WRITE, MODEL_TASK_WATCH
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_FILE_WRITE,
+    MODEL_TASK_WATCH,
+)
 from openminion.tools.exec.command_parser import is_read_only_exec_command
 from openminion.tools.exec.process import resolve_shell_family
 

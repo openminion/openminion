@@ -109,6 +109,7 @@ def register(registry: ToolRegistry) -> None:
         )
     )
 
+
 __all__ = [
     "BLOCKCHAIN_INSPECT_DESCRIPTION",
     "BLOCKCHAIN_PREPARE_DESCRIPTION",

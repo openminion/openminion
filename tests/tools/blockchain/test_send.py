@@ -99,14 +99,18 @@ def _transaction() -> dict[str, Any]:
 def _context(tmp_path, *, authorized: bool = True):
     events: list[dict[str, Any]] = []
     transaction = _transaction()
-    authorization = PolicyAuthorization(
-        tool="blockchain",
-        method="send_transaction",
-        invocation_hash="hash",
-        approval_id="approval",
-        grant_id="grant",
-        duration_type="once",
-    ) if authorized else None
+    authorization = (
+        PolicyAuthorization(
+            tool="blockchain",
+            method="send_transaction",
+            invocation_hash="hash",
+            approval_id="approval",
+            grant_id="grant",
+            duration_type="once",
+        )
+        if authorized
+        else None
+    )
     return SimpleNamespace(
         secret_service=_SecretService(),
         policy_authorization=authorization,

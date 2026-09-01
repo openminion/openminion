@@ -24,8 +24,7 @@ def test_secret_sync_and_async_reads_share_the_same_value(tmp_path: Path) -> Non
 
     assert service.get_secret_sync("signer", namespace="chain") == "private-value"
     assert (
-        asyncio.run(service.get_secret("signer", namespace="chain"))
-        == "private-value"
+        asyncio.run(service.get_secret("signer", namespace="chain")) == "private-value"
     )
     service.close_sync()
 

@@ -8,7 +8,13 @@ from ..constants import (
     POLICY_CONFIRM_RESPONSE_DENY,
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
 )
-from ..models import ContextSummary, InvocationSummary, PolicyConfig, RiskSpec, sanitize_args
+from ..models import (
+    ContextSummary,
+    InvocationSummary,
+    PolicyConfig,
+    RiskSpec,
+    sanitize_args,
+)
 
 
 def _normalize_confirmation_token(value: str) -> str:

@@ -76,7 +76,9 @@ def _json_rows(database: Path, table: str) -> list[dict]:
 
 
 def _session_status(data_root: Path, scenario_id: str) -> str:
-    session_id = f"bttl-focus-minimax-{scenario_id}::conv:focus-bttl-focus-minimax-{scenario_id}"
+    session_id = (
+        f"bttl-focus-minimax-{scenario_id}::conv:focus-bttl-focus-minimax-{scenario_id}"
+    )
     rows = _json_rows(data_root / "state" / "brain" / "sessions.db", "sessions")
     return str(
         next(row for row in rows if row.get("session_id") == session_id).get("status")
@@ -264,9 +266,7 @@ def main() -> int:
             row for row in pending_rows if "-deny::" in str(row.get("session_id"))
         )
         allowed_confirmation = next(
-            row
-            for row in pending_rows
-            if "-approve::" in str(row.get("session_id"))
+            row for row in pending_rows if "-approve::" in str(row.get("session_id"))
         )
         audit_files = sorted((data_root / "tool-runs").rglob("audit.jsonl"))
         audits = [
@@ -290,7 +290,9 @@ def main() -> int:
         assert denied_confirmation["resolution_action"] == "deny"
         assert allowed_confirmation["state"] == "allowed"
         assert allowed_confirmation["resolution_action"] == "allow_once"
-        assert any(item.get("tool_name") == "blockchain.inspect" for item in tool_results)
+        assert any(
+            item.get("tool_name") == "blockchain.inspect" for item in tool_results
+        )
         assert any(
             item.get("tool_name") == "blockchain.prepare_transaction"
             for item in tool_results
@@ -308,9 +310,7 @@ def main() -> int:
             and row.get("decision") == "allow"
         )
         denied_policy_decision = next(
-            row
-            for row in send_policy_rows
-            if "-deny::" in str(row.get("session_id"))
+            row for row in send_policy_rows if "-deny::" in str(row.get("session_id"))
         )
         trace_root = ARTIFACT_ROOT / "traces"
         shutil.copytree(data_root / "traces", trace_root, dirs_exist_ok=True)

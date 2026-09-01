@@ -174,9 +174,7 @@ def test_prepare_branches_are_deterministic_and_side_effect_free(
     }
     assert (result["call_context"] is not None) is has_call_context
     assert result["preparation_digest"].startswith("sha256:")
-    assert secret.reads == [
-        ("signer-reference-sentinel", "chain-reference-sentinel")
-    ]
+    assert secret.reads == [("signer-reference-sentinel", "chain-reference-sentinel")]
     assert client.eth.signed == 0
     assert client.eth.broadcast == 0
 

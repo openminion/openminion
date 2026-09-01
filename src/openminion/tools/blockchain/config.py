@@ -7,7 +7,9 @@ from openminion.modules.tool import resolve_runtime_tool_config
 
 
 def resolve_blockchain_config(context: Any | None) -> BlockchainToolRuntimeConfig:
-    return resolve_runtime_tool_config(context).blockchain or BlockchainToolRuntimeConfig()
+    return (
+        resolve_runtime_tool_config(context).blockchain or BlockchainToolRuntimeConfig()
+    )
 
 
 __all__ = ["resolve_blockchain_config"]

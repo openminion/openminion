@@ -45,7 +45,9 @@ def test_enabled_bootstrap_registers_exact_three_blockchain_tools(tmp_path) -> N
     assert bootstrap.contract_drift_report.has_drift is False
 
 
-def test_disabled_bootstrap_registers_no_blockchain_tools_and_no_drift(tmp_path) -> None:
+def test_disabled_bootstrap_registers_no_blockchain_tools_and_no_drift(
+    tmp_path,
+) -> None:
     bootstrap = build_runtime_bootstrap(
         config=_config(False),
         workspace_root=tmp_path,

@@ -29,6 +29,7 @@ from ...execution import (
     transition_to_replan_state,
 )
 from ...schemas import (
+    ActDecision,
     Plan,
     new_uuid,
     refresh_command_identity,
@@ -286,7 +287,6 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             _apply_pending_confirmation_metadata_for_replay(state)
             _clear_pending_confirmation_metadata(state)
             tick_ctx.decision = None
-            from ...schemas import ActDecision
             replay_reason_code = "confirmation_replay"
             if is_explicit_direct_tool_reason(prior_reason_code):
                 replay_reason_code = prior_reason_code

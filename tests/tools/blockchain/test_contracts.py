@@ -80,7 +80,17 @@ def test_inspect_schema_is_closed_and_discriminated() -> None:
 
 @pytest.mark.parametrize(
     "abi_type",
-    ["address", "bool", "string", "bytes", "bytes32", "uint", "int256", "address[]", "uint8[2][]"],
+    [
+        "address",
+        "bool",
+        "string",
+        "bytes",
+        "bytes32",
+        "uint",
+        "int256",
+        "address[]",
+        "uint8[2][]",
+    ],
 )
 def test_non_tuple_abi_parameter_accepts_supported_types(abi_type: str) -> None:
     assert AbiParameter(name="value", type=abi_type).type == abi_type
