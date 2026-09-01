@@ -94,6 +94,7 @@ def test_focus_startup_notice_preserves_single_composer(
         rows=42,
         cols=140,
     ) as session:
+        focus_probe.wait_ready(session)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             screen = session.screen_text
