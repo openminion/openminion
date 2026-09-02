@@ -171,9 +171,10 @@ def test_telemetryctl_trace_list_and_show(
     listing = json.loads(capsys.readouterr().out)
     files = {item["path"]: item for item in listing["files"]}
     assert listing["count"] == 2
-    assert files[
-        "llm/agent-a/turn-session/step01-call01-structured.json"
-    ]["kind"] == "structured"
+    assert (
+        files["llm/agent-a/turn-session/step01-call01-structured.json"]["kind"]
+        == "structured"
+    )
     assert files["llm/agent-a/turn-session/step01-call01-raw.txt"]["kind"] == (
         "raw_request"
     )
@@ -334,7 +335,9 @@ def test_telemetryctl_invocation_list_show_and_graph_are_structural(
     assert shown["summary"]["input_tokens"] == 10
     assert shown["summary"]["cost_usd"] == 0.01
     assert shown["summary"]["policy_decisions"] == {"deny": 1}
-    llm_row = next(row for row in shown["events"] if row["event_type"] == "llm.call.completed")
+    llm_row = next(
+        row for row in shown["events"] if row["event_type"] == "llm.call.completed"
+    )
     assert llm_row == {
         "agent_id": "agent-1",
         "duration_ms": 30,

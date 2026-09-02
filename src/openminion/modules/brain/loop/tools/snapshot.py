@@ -86,7 +86,9 @@ def compress_transcript(
         if sum(len(json.dumps(item, default=str)) for item in candidate) > max_chars:
             break
         retained.append(message)
-    marker["content"] = f"[{len(messages) - len(prefix) - len(retained)} messages compressed]"
+    marker["content"] = (
+        f"[{len(messages) - len(prefix) - len(retained)} messages compressed]"
+    )
     return [
         *prefix,
         marker,

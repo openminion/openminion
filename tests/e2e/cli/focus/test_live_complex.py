@@ -308,9 +308,7 @@ def test_live_focus_complex_workflow_closeout(
         "normalize.py",
         "test_helpers.py",
     ]
-    ledger_lines = (scratch_dir / "ledger.tsv").read_text(
-        encoding="utf-8"
-    ).splitlines()
+    ledger_lines = (scratch_dir / "ledger.tsv").read_text(encoding="utf-8").splitlines()
     assert ledger_lines[0] == "file\tdisposition"
     assert set(ledger_lines[1:]) == {
         "labels.py\tkeep",

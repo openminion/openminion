@@ -71,11 +71,13 @@ class CodingVerificationMixin:
             return None
         goal = self._coding_plan.verifier_goal
         targets = [
-            *(('criterion', item.criterion_id) for item in goal.success_criteria),
-            *(('deliverable', item.deliverable_id) for item in goal.deliverables),
+            *(("criterion", item.criterion_id) for item in goal.success_criteria),
+            *(("deliverable", item.deliverable_id) for item in goal.deliverables),
         ]
         bound = set(dict(scratchpad.get("coding.verifier_candidates", {}) or {}))
-        remaining = [target for target in targets if f"{target[0]}:{target[1]}" not in bound]
+        remaining = [
+            target for target in targets if f"{target[0]}:{target[1]}" not in bound
+        ]
         return remaining[0] if len(remaining) == 1 else None
 
     @staticmethod

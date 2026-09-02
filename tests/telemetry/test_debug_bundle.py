@@ -122,9 +122,7 @@ def test_bundle_cli_writes_private_atomic_sanitized_artifact(
     graph = json.loads((destination / "invocation-graph.json").read_text())
     assert summary["failure_code"] == "TEST_CODE"
     terminal = next(
-        row
-        for row in graph["events"]
-        if row["event_type"] == "agent.invocation.failed"
+        row for row in graph["events"] if row["event_type"] == "agent.invocation.failed"
     )
     assert terminal["error_code"] == "TEST_CODE"
     assert terminal["operation"] == "agent_turn"
