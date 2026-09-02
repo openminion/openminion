@@ -220,11 +220,7 @@ def test_sse_trace_records_consumed_lines_and_normal_completion(
         client.close()
 
     trace_path = (
-        tmp_path
-        / "llm"
-        / "sess"
-        / "turn-sess"
-        / "step01-call01-http-sse-response.json"
+        tmp_path / "llm" / "sess" / "turn-sess" / "step01-call01-http-sse-response.json"
     )
     traced = json.loads(trace_path.read_text(encoding="utf-8"))
     assert traced["lines"] == lines
@@ -274,11 +270,7 @@ def test_sse_trace_records_consumer_close_without_provider_error(
         client.close()
 
     trace_path = (
-        tmp_path
-        / "llm"
-        / "sess"
-        / "turn-sess"
-        / "step01-call01-http-sse-response.json"
+        tmp_path / "llm" / "sess" / "turn-sess" / "step01-call01-http-sse-response.json"
     )
     traced = json.loads(trace_path.read_text(encoding="utf-8"))
     assert traced["lines"] == ["data: first"]
@@ -321,11 +313,7 @@ def test_sse_trace_records_structural_timeout_and_preserves_error(
 
     assert exc_info.value.code == "TIMEOUT"
     trace_path = (
-        tmp_path
-        / "llm"
-        / "sess"
-        / "turn-sess"
-        / "step01-call01-http-sse-response.json"
+        tmp_path / "llm" / "sess" / "turn-sess" / "step01-call01-http-sse-response.json"
     )
     traced = json.loads(trace_path.read_text(encoding="utf-8"))
     assert traced["complete"] is False

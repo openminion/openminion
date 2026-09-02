@@ -224,7 +224,11 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                     payload=self._lifecycle_ops.corr_payload(
                         normalized_request_id=routing.normalized_request_id,
                         lifecycle_payload=lifecycle_payload,
-                        extra={"error": str(exc), "error_code": getattr(exc, "code", None) or type(exc).__name__},
+                        extra={
+                            "error": str(exc),
+                            "error_code": getattr(exc, "code", None)
+                            or type(exc).__name__,
+                        },
                     ),
                     conversation_id=routing.conversation_id or None,
                     thread_id=routing.thread_id or None,

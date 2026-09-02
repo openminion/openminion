@@ -71,7 +71,12 @@ def _redact_url(url: str) -> str:
         host = f"<redacted>{password}@{host}"
     query = urlencode(
         [
-            (key, "<redacted>" if key.strip().lower() in _CREDENTIAL_QUERY_NAMES else value)
+            (
+                key,
+                "<redacted>"
+                if key.strip().lower() in _CREDENTIAL_QUERY_NAMES
+                else value,
+            )
             for key, value in parse_qsl(parsed.query, keep_blank_values=True)
         ],
         doseq=True,

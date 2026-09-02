@@ -355,9 +355,7 @@ def _active_plan_continues_after_step(
         return False
     if str(active_plan.get("plan_id") or "").strip() != str(plan_id or "").strip():
         return False
-    if not (
-        continue_requested or bool(active_plan.get("continue_plan_autonomously"))
-    ):
+    if not (continue_requested or bool(active_plan.get("continue_plan_autonomously"))):
         return False
     steps = [
         dict(step)

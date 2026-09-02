@@ -76,7 +76,11 @@ def test_http_trace_redacts_fixed_credential_surfaces(tmp_path, monkeypatch) -> 
         "x-amz-security-token",
     ]
     query = "&".join(
-        [*(f"{name}=secret-{index}" for index, name in enumerate(query_names)), "page=2", "token=again"]
+        [
+            *(f"{name}=secret-{index}" for index, name in enumerate(query_names)),
+            "page=2",
+            "token=again",
+        ]
     )
     trace_http_json_request(
         trace_metadata={
@@ -89,7 +93,10 @@ def test_http_trace_redacts_fixed_credential_surfaces(tmp_path, monkeypatch) -> 
         url=f"https://user:password@provider.example/path?{query}#fragment",
         body_json='{"api_key":"body-remains-sensitive"}',
         payload={"api_key": "body-remains-sensitive"},
-        headers={**{name: f"secret-{name}" for name in header_names}, "Accept": "application/json"},
+        headers={
+            **{name: f"secret-{name}" for name in header_names},
+            "Accept": "application/json",
+        },
         timeout_seconds=10,
         transport="urllib",
     )

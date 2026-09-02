@@ -216,7 +216,8 @@ def http_json_get(
         response_metadata.clear()
     transport_name = http_client.transport_name if http_client else "urllib"
     emit_performance = partial(
-        _emit_transport_performance, transport=transport_name,
+        _emit_transport_performance,
+        transport=transport_name,
         trace_metadata=trace_metadata,
     )
     write_event = partial(write_llm_debug_event, env=env_owner)
@@ -554,7 +555,8 @@ def http_json_post(
         response_metadata.clear()
     transport_name = http_client.transport_name if http_client else "urllib"
     emit_performance = partial(
-        _emit_transport_performance, transport=transport_name,
+        _emit_transport_performance,
+        transport=transport_name,
         trace_metadata=trace_metadata,
     )
     write_event = partial(write_llm_debug_event, env=env_owner)
@@ -604,9 +606,7 @@ def http_json_post(
             timeout_seconds=timeout_seconds,
             http_client=http_client,
         )
-        emit_performance = partial(
-            emit_performance, response_open_ms=response_open_ms
-        )
+        emit_performance = partial(emit_performance, response_open_ms=response_open_ms)
         if response_metadata is not None and request_id:
             response_metadata["request_id"] = request_id
         round_trip_ms = _elapsed_ms(round_trip_started)

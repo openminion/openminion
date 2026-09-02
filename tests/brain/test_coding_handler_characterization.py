@@ -499,9 +499,7 @@ class TestCodingVerificationReserve:
         runner = CodingProfileRunner()
         runner._coding_plan = SimpleNamespace(
             verifier_goal=SimpleNamespace(
-                deliverables=[
-                    SimpleNamespace(deliverable_id="test_section_summary.py")
-                ]
+                deliverables=[SimpleNamespace(deliverable_id="test_section_summary.py")]
             )
         )
         command = ToolCommand(
@@ -971,7 +969,9 @@ class TestCodingVerificationReserve:
         assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
         assert "Do not call any tools" in runner._loop_state.messages[-1].content
         assert "Original request:" in runner._loop_state.messages[-1].content
-        assert "Use the exact label `result:`." in runner._loop_state.messages[-1].content
+        assert (
+            "Use the exact label `result:`." in runner._loop_state.messages[-1].content
+        )
 
     def test_verify_closeout_reserve_promotes_verify_with_existing_readback(
         self,

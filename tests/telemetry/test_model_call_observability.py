@@ -102,9 +102,7 @@ def test_failed_model_call_closes_span_with_normalized_error() -> None:
     assert span.attributes["openminion.error.code"] == "LLM_PROVIDER_EXHAUSTED"
     assert span.attributes["openminion.error.category"] == "availability"
     assert "openminion.error.message" not in span.attributes
-    assert not any(
-        key.endswith(".error.message") for key in span.attributes
-    )
+    assert not any(key.endswith(".error.message") for key in span.attributes)
 
 
 def test_error_prose_is_not_exported_when_assistant_body_is_enabled() -> None:
@@ -117,9 +115,7 @@ def test_error_prose_is_not_exported_when_assistant_body_is_enabled() -> None:
         ),
         sink=sink,
     )
-    exporter.export(
-        _event("llm.call.started", llm_call_id="call-error-content")
-    )
+    exporter.export(_event("llm.call.started", llm_call_id="call-error-content"))
     exporter.export(
         _event(
             "llm.call.failed",

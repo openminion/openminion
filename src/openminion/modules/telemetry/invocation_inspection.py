@@ -46,9 +46,12 @@ def structural_error_code(data: dict[str, Any]) -> str | None:
     error = data.get("error")
     if not isinstance(error, dict):
         return None
-    return str(
-        error.get("code") or error.get("type") or error.get("category") or ""
-    ).strip() or None
+    return (
+        str(
+            error.get("code") or error.get("type") or error.get("category") or ""
+        ).strip()
+        or None
+    )
 
 
 def safe_event_row(event: TelemetryEvent) -> dict[str, Any]:
@@ -92,8 +95,7 @@ def read_invocation_events(
     session_id: str | None = None,
 ) -> list[Any]:
     return [
-        row.event
-        for row in _scoped_invocation_rows(service, invocation_id, session_id)
+        row.event for row in _scoped_invocation_rows(service, invocation_id, session_id)
     ]
 
 

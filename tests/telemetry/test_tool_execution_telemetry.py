@@ -175,10 +175,14 @@ def test_unknown_tool_emits_one_failed_lifecycle_and_execute_tool_span() -> None
 def test_mcp_success_emits_only_allowlisted_terminal_provenance() -> None:
     telemetry = _Telemetry()
     tool = _MCPResultTool(ok=True)
-    result = ToolRegistry([tool]).execute_calls(
-        [ProviderToolCall(id="call-mcp-ok", name=tool.name, arguments={})],
-        context=_context(telemetry),
-    ).results[0]
+    result = (
+        ToolRegistry([tool])
+        .execute_calls(
+            [ProviderToolCall(id="call-mcp-ok", name=tool.name, arguments={})],
+            context=_context(telemetry),
+        )
+        .results[0]
+    )
 
     assert result.ok is True
     terminal = telemetry.events[-1].data
@@ -193,10 +197,14 @@ def test_mcp_success_emits_only_allowlisted_terminal_provenance() -> None:
 def test_mcp_approval_failure_emits_only_allowlisted_terminal_provenance() -> None:
     telemetry = _Telemetry()
     tool = _MCPResultTool(ok=False)
-    result = ToolRegistry([tool]).execute_calls(
-        [ProviderToolCall(id="call-mcp-denied", name=tool.name, arguments={})],
-        context=_context(telemetry),
-    ).results[0]
+    result = (
+        ToolRegistry([tool])
+        .execute_calls(
+            [ProviderToolCall(id="call-mcp-denied", name=tool.name, arguments={})],
+            context=_context(telemetry),
+        )
+        .results[0]
+    )
 
     assert result.state == "denied"
     terminal = telemetry.events[-1].data
