@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
@@ -102,7 +103,7 @@ class Agent(Generic[InputT, OutputT]):
     def _build_payload(self, message: str) -> dict[str, Any]:
         payload: dict[str, Any] = {"message": message}
         if self.instructions:
-            payload["system_prompt"] = self.instructions
+            payload["override_system_prompt"] = self.instructions
         if self.model:
             payload["override_model"] = self.model
         if self.tools:
@@ -199,11 +200,14 @@ class Agent(Generic[InputT, OutputT]):
     ) -> AgentRunResult[Any]:
         runtime = self._ensure_runtime()
         payload = self._build_payload(self._serialize_input(message))
-        registered_handoffs = self._register_handoff_tools_for_run(runtime)
-        try:
-            raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
-        finally:
-            self._unregister_handoff_tools(runtime, registered_handoffs)
+        registry = getattr(runtime, "tools", None)
+        registration_lock = getattr(registry, "temporary_registration_lock", None)
+        with registration_lock or nullcontext():
+            registered_handoffs = self._register_handoff_tools_for_run(runtime)
+            try:
+                raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
+            finally:
+                self._unregister_handoff_tools(runtime, registered_handoffs)
         reply_text = self._reply_text(raw)
         output = self._coerce_output(reply_text)
         raw_payload = dict(raw or {})

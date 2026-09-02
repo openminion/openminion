@@ -86,7 +86,10 @@ def _http_sse(
     body: dict[str, Any],
     timeout_seconds: float = 30.0,
 ) -> tuple[bool, int | None, str, str | None]:
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+    }
     req = urllib_request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
@@ -95,7 +98,16 @@ def _http_sse(
     )
     try:
         with urllib_request.urlopen(req, timeout=timeout_seconds) as response:
-            raw = response.read().decode("utf-8")
+            lines: list[str] = []
+            saw_done = False
+            while line := response.readline():
+                decoded = line.decode("utf-8")
+                lines.append(decoded)
+                if decoded.strip() == "event: done":
+                    saw_done = True
+                elif saw_done and not decoded.strip():
+                    break
+            raw = "".join(lines)
             return True, response.getcode(), raw, None
     except urllib_error.HTTPError as exc:
         detail = ""
@@ -299,9 +311,9 @@ class AutonomySmokeSuite:
             [
                 "tools",
                 "run",
-                "list_files",
+                "file.list_dir",
                 "--json",
-                '{"path":".","depth":1}',
+                '{"path":"."}',
                 "--session",
                 self.session_id,
             ],
@@ -468,8 +480,8 @@ class AutonomySmokeSuite:
                 stream_ok, stream_status, stream_text, stream_err = _http_sse(
                     f"{base_url}/v1/turn/stream",
                     body={
-                        "prompt": "Autonomy smoke SSE check.",
-                        "session_id": self.session_id,
+                        "input_text": "Autonomy smoke SSE check.",
+                        "session_id": f"{self.session_id}-api",
                         "agent_id": self.agent_id,
                     },
                     timeout_seconds=float(self.args.api_timeout_seconds),
@@ -665,3 +677,7 @@ def main(argv: list[str] | None = None) -> int:
         args.output_dir = str(generated_root / "autonomy-smoke")
     suite = AutonomySmokeSuite(args)
     return suite.run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

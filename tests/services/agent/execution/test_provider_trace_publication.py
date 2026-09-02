@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import logging
 
 import pytest
 
@@ -7,8 +8,18 @@ from openminion.modules.llm.providers.base import (
     ProviderRequest,
     ProviderResponse,
 )
-from openminion.modules.telemetry.trace.structured import TraceArtifactPublication
-from openminion.services.agent.telemetry import generate_with_provider_call_telemetry
+from openminion.modules.telemetry.trace.layout import (
+    resolve_trace_root,
+    write_protected_trace_file,
+)
+from openminion.modules.telemetry.trace.structured import (
+    TraceArtifactPublication,
+    trace_context_payload,
+)
+from openminion.services.agent.telemetry import (
+    generate_with_provider_call_telemetry,
+    trace_provider_response,
+)
 
 
 class _TelemetryCtl:
@@ -185,3 +196,33 @@ async def test_disabled_tracing_records_a_complete_empty_terminal() -> None:
 
 async def _response() -> ProviderResponse:
     return ProviderResponse(text="ok", model="model-1")
+
+
+def test_response_publication_includes_existing_sse_transport_trace(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
+    trace_context = trace_context_payload(
+        session_id="session-1",
+        turn_id="turn-1",
+        inference_step=1,
+        label="call01",
+        home_root=tmp_path,
+    )
+    relative = trace_context["http_sse_response_trace_filename"]
+    trace_path = resolve_trace_root(home_root=tmp_path) / relative
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    write_protected_trace_file(trace_path, "{}")
+
+    publication = trace_provider_response(
+        provider_response=ProviderResponse(text="ok", model="model-1"),
+        label="call01",
+        provider_name="provider-1",
+        home_root=tmp_path,
+        inbound_metadata={"session_id": "session-1"},
+        turn_id="turn-1",
+        inference_step=1,
+        logger=logging.getLogger(__name__),
+    )
+
+    assert relative in publication.paths

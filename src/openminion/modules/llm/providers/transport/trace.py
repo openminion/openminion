@@ -3,6 +3,7 @@ from pathlib import Path
 import time
 from typing import Any
 from collections.abc import Mapping
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
@@ -16,15 +17,72 @@ from openminion.modules.telemetry.trace.layout import (
 )
 
 
+_CREDENTIAL_HEADERS = {
+    "api-key",
+    "authorization",
+    "cf-access-client-secret",
+    "cookie",
+    "proxy-authorization",
+    "set-cookie",
+    "x-access-token",
+    "x-amz-security-token",
+    "x-api-key",
+    "x-auth-token",
+    "x-goog-api-key",
+}
+_CREDENTIAL_QUERY_NAMES = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "client_secret",
+    "key",
+    "password",
+    "secret",
+    "sig",
+    "signature",
+    "token",
+    "x-amz-credential",
+    "x-amz-signature",
+    "x-amz-security-token",
+}
+
+
 def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
     redacted: dict[str, str] = {}
     for key, value in headers.items():
         lowered = key.strip().lower()
-        if lowered in {"authorization", "x-api-key", "api-key"}:
+        if lowered in _CREDENTIAL_HEADERS:
             redacted[key] = "<redacted>"
         else:
             redacted[key] = value
     return redacted
+
+
+def _redact_url(url: str) -> str:
+    parsed = urlsplit(url)
+    hostname = parsed.hostname or ""
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    if parsed.username is not None:
+        password = ":<redacted>" if parsed.password is not None else ""
+        host = f"<redacted>{password}@{host}"
+    query = urlencode(
+        [
+            (
+                key,
+                "<redacted>"
+                if key.strip().lower() in _CREDENTIAL_QUERY_NAMES
+                else value,
+            )
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        ],
+        doseq=True,
+        safe="<>",
+    )
+    return urlunsplit((parsed.scheme, host, parsed.path, query, ""))
 
 
 def _resolve_trace_context(
@@ -108,7 +166,7 @@ def trace_http_json_request(
         "event": "http_request",
         "provider": provider_name,
         "transport": transport,
-        "url": url,
+        "url": _redact_url(url),
         "method": (method or "POST").upper(),
         "timeout_seconds": timeout_seconds,
         "headers": _redact_headers(headers),
@@ -151,7 +209,7 @@ def trace_http_json_response(
         "event": "http_response",
         "provider": provider_name,
         "transport": transport,
-        "url": url,
+        "url": _redact_url(url),
         "status_code": status_code,
         "body_text": body_text,
         "json": parsed_json,
@@ -160,7 +218,7 @@ def trace_http_json_response(
             "provider": provider_name,
             "transport": transport,
             "status_code": status_code,
-            "url": url,
+            "url": _redact_url(url),
         },
         "trace": trace,
     }
@@ -170,6 +228,52 @@ def trace_http_json_response(
             json.dumps(payload_out, indent=2, sort_keys=True),
         )
     except Exception:
+        return
+
+
+def trace_http_sse_response(
+    *,
+    trace_metadata: dict[str, Any] | None,
+    provider_name: str,
+    url: str,
+    status_code: int,
+    request_id: str,
+    lines: list[str],
+    complete: bool,
+    transport: str,
+    error: Mapping[str, Any] | None = None,
+    env: EnvironmentConfig | Mapping[str, object] | None = None,
+) -> None:
+    """Write the decoded SSE lines consumed by the provider parser."""
+    if not _trace_requests_enabled(env=env):
+        return
+    meta, trace = _resolve_trace_context(trace_metadata)
+    trace_path = _resolve_trace_path(
+        meta,
+        trace,
+        suffix="-http-sse-response.json",
+    )
+    if trace_path is None:
+        return
+
+    payload_out = {
+        "event": "http_sse_response",
+        "provider": provider_name,
+        "transport": transport,
+        "url": _redact_url(url),
+        "status_code": status_code,
+        "request_id": request_id,
+        "lines": list(lines),
+        "complete": complete,
+        "error": dict(error or {}),
+        "trace": trace,
+    }
+    try:
+        write_protected_trace_file(
+            trace_path,
+            json.dumps(payload_out, indent=2, sort_keys=True),
+        )
+    except (OSError, TypeError, ValueError):
         return
 
 

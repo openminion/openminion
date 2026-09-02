@@ -128,7 +128,7 @@ class PlanToolContinuationParamTests(unittest.TestCase):
 
         return _LoopCtx(), session_api
 
-    def test_step_completed_outputs_signal_when_set(self) -> None:
+    def test_final_step_drops_explicit_continuation_signal(self) -> None:
         loop_ctx, session_api = self._loop_ctx_with_active_plan("p-abc")
         result = handle_plan_tool_call(
             loop_ctx=loop_ctx,
@@ -141,11 +141,11 @@ class PlanToolContinuationParamTests(unittest.TestCase):
             },
         )
         self.assertEqual(result.status, "success")
-        self.assertTrue(result.outputs.get(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY))
+        self.assertNotIn(PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY, result.outputs)
         events = session_api.list_events("s1")
         latest = events[-1]
         self.assertEqual(latest["event_type"], "task_plan.step_completed")
-        self.assertTrue(latest["payload"]["continue_plan_autonomously"])
+        self.assertFalse(latest["payload"]["continue_plan_autonomously"])
 
     def test_step_completed_absent_signal_defaults_false(self) -> None:
         loop_ctx, session_api = self._loop_ctx_with_active_plan("p-xyz")
@@ -598,14 +598,18 @@ class _StubRunner:
         capture_event_id: str | None = None,
         capture_id: str | None = None,
     ) -> Any:
-        del runtime_session_id, root_turn_id, capture_event_id, capture_id
         self.call_log.append(
             {
                 "user_input": user_input,
                 "trigger": trigger,
                 "trace_id": trace_id,
+                "runtime_session_id": runtime_session_id,
+                "root_turn_id": root_turn_id,
+                "capture_event_id": capture_event_id,
+                "capture_id": capture_id,
             }
         )
+        step: dict[str, Any] = {}
         if self._idx < len(self._script):
             step = self._script[self._idx]
             self._idx += 1
@@ -637,13 +641,74 @@ class _StubRunner:
                 self.trace_id = tid
 
         class _StepOutput:
-            def __init__(self, tid: str | None) -> None:
+            def __init__(self, tid: str | None, values: dict[str, Any]) -> None:
                 self.working_state = _State(tid)
+                self.terminal_capture_intent_receipt = values.get("capture_receipt")
+                self.memory_capture_bundle_result = values.get("capture_result")
 
-        return _StepOutput(trace_id or "trace-autonomous")
+        return _StepOutput(trace_id or "trace-autonomous", step)
 
 
 class RunWithAutonomousContinuationTests(unittest.TestCase):
+    def test_autonomous_roots_keep_runtime_session_and_initial_capture_result(
+        self,
+    ) -> None:
+        session_api = _InMemorySessionAPI()
+        runner = _StubRunner(
+            session_api=session_api,
+            script=[
+                {
+                    "event_type": "task_plan.declared",
+                    "plan_id": "p1",
+                    "continue_plan_autonomously": True,
+                    "capture_receipt": "gateway-root-receipt",
+                    "capture_result": {"capture_id": "gateway-root"},
+                },
+                {
+                    "event_type": "task_plan.step_completed",
+                    "plan_id": "p1",
+                    "continue_plan_autonomously": False,
+                    "capture_receipt": "autonomous-root-receipt",
+                    "capture_result": {"capture_id": "autonomous-root"},
+                },
+            ],
+        )
+
+        result = run_with_autonomous_continuation(
+            runner,
+            session_id="brain-session::conversation",
+            user_input="start building",
+            runtime_session_id="runtime-session",
+            root_turn_id="gateway-root",
+            capture_event_id="gateway-event",
+            capture_id="gateway-capture",
+        )
+
+        self.assertEqual(
+            runner.call_log[0],
+            {
+                "user_input": "start building",
+                "trigger": "user_input",
+                "trace_id": None,
+                "runtime_session_id": "runtime-session",
+                "root_turn_id": "gateway-root",
+                "capture_event_id": "gateway-event",
+                "capture_id": "gateway-capture",
+            },
+        )
+        self.assertEqual(runner.call_log[1]["runtime_session_id"], "runtime-session")
+        self.assertIsNone(runner.call_log[1]["root_turn_id"])
+        self.assertIsNone(runner.call_log[1]["capture_event_id"])
+        self.assertIsNone(runner.call_log[1]["capture_id"])
+        self.assertEqual(
+            result.terminal_capture_intent_receipt,
+            "gateway-root-receipt",
+        )
+        self.assertEqual(
+            result.memory_capture_bundle_result,
+            {"capture_id": "gateway-root"},
+        )
+
     def test_three_step_plan_runs_three_autonomous_turns(self) -> None:
         session_api = _InMemorySessionAPI()
         runner = _StubRunner(

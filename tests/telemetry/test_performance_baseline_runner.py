@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -29,6 +30,10 @@ def _load_module():
 
 def _bound_identity(module, **kwargs):
     identity = module._measurement_identity(**kwargs)
+    return _complete_identity(module, identity)
+
+
+def _complete_identity(module, identity):
     runtime_config = dict(identity["runtime_config"])
     runtime_config.update(
         {
@@ -40,7 +45,31 @@ def _bound_identity(module, **kwargs):
         {
             "git_head": "a" * 40,
             "dirty_tree_fingerprint": "b" * 64,
+            "runner_path": "/opt/owpr/performance_baseline.py",
             "runner_source_sha256": "c" * 64,
+            "loaded_openminion_package_root": "/opt/owpr/openminion",
+            "runtime_environment": {
+                "resolved_python_executable": sys.executable,
+                "running_python_executable": sys.executable,
+                "python_implementation": "CPython",
+                "python_version": sys.version.split()[0],
+                "python_build": ["test", "test"],
+                "platform": "test-platform",
+                "host_runtime_hash": "d" * 64,
+                "effective_sys_path": ["/work/openminion/src", "/work/openminion"],
+                "effective_sys_path_shape": ["<SUT_SRC>", "<SUT_REPO>"],
+                "inherited_pythonpath": "/work/openminion/src:/work/openminion",
+                "inherited_pythonpath_shape": ["<SUT_SRC>", "<SUT_REPO>"],
+                "bytecode_cache_environment": {
+                    "dont_write_bytecode": "1",
+                    "pycache_prefix": "/tmp/pycache",
+                    "pycache_posture": "external",
+                    "no_user_site": "1",
+                },
+                "runtime_dependency_hash": "e" * 64,
+                "editable_dependency_names": [],
+                "distributions": [],
+            },
             "config_hash": module._stable_json_hash(runtime_config),
             "runtime_config": runtime_config,
         }
@@ -151,6 +180,13 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
             },
         },
     ]
+    for run in runs:
+        run["measurement_identity"] = _complete_identity(
+            module, run["measurement_identity"]
+        )
+        run["comparison_identity"] = module._comparison_identity(
+            run["measurement_identity"]
+        )
 
     summary = module.summarize_runs(runs)
 
@@ -191,7 +227,7 @@ def test_canonical_help_command_uses_root_help_and_explicit_data_root(
     assert command[command.index("--data-root") + 1] == str(data_root)
 
 
-def test_comparison_rejects_identity_mismatch() -> None:
+def test_comparison_allows_source_and_workspace_identity_changes() -> None:
     module = _load_module()
     current_identity = _bound_identity(
         module,
@@ -201,18 +237,30 @@ def test_comparison_rejects_identity_mismatch() -> None:
         fixture_revision=module.STARTUP_FIXTURE_REVISION,
     )
     baseline_identity = dict(current_identity)
-    baseline_identity["command"] = "python -m openminion --data-root /tmp/b --help"
+    baseline_identity["git_head"] = "f" * 40
+    baseline_identity["dirty_tree_fingerprint"] = "0" * 64
+    baseline_runtime = dict(baseline_identity["runtime_config"])
+    baseline_runtime["workspace_root"] = "/different/workspace"
+    baseline_runtime["data_root"] = "/different/data-root"
+    baseline_identity["runtime_config"] = baseline_runtime
     current = {
-        "wall_time_ms": {"median": 100},
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.0},
         "measurement_identity": current_identity,
+        "comparison_identity": module._comparison_identity(current_identity),
     }
     baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
         "scenarios": {
             "cold_focus_startup": {
-                "wall_time_ms": {"median": 100},
+                "count": 20,
+                "ok_count": 20,
+                "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.0},
                 "measurement_identity": baseline_identity,
+                "comparison_identity": module._comparison_identity(baseline_identity),
             }
-        }
+        },
     }
 
     result = module._threshold_result(
@@ -222,11 +270,101 @@ def test_comparison_rejects_identity_mismatch() -> None:
         threshold_mode="hard",
     )
 
-    assert result["status"] == "ineligible"
-    assert "command" in result["identity_errors"]
+    assert result["status"] == "pass"
 
 
-def test_comparison_rejects_v2_artifact_for_v3_thresholds() -> None:
+def test_comparison_rejects_semantic_and_environment_mismatches() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="cold_focus_startup",
+        command="python -m openminion --data-root /tmp/a --help",
+        measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+        fixture_revision=module.STARTUP_FIXTURE_REVISION,
+    )
+    current = module._comparison_identity(identity)
+    for key, changed in (
+        ("artifact_schema_version", "pomv2.performance.v5"),
+        ("fixture_revision", "changed-fixture"),
+        ("measured_boundary", module.SUT_BOUNDARY_IN_PROCESS),
+        ("python_implementation", "PyPy"),
+        ("python_version", "0.0.0"),
+        ("python_build", ["changed", "build"]),
+        ("resolved_python_executable", "/different/python"),
+        ("runner_source_sha256", "0" * 64),
+        ("host_runtime_hash", "1" * 64),
+        ("runtime_dependency_hash", "2" * 64),
+        ("effective_sys_path_shape", ["<SUT_REPO>"]),
+        ("inherited_pythonpath_shape", ["<SUT_SRC>"]),
+        ("bytecode_cache_posture", {"pycache_posture": "interpreter_default"}),
+        ("provider_posture", "provider"),
+        ("model_posture", "model"),
+        ("process_posture", "warm"),
+        ("include_importtime", True),
+        ("profile", True),
+        ("warmup_runs", 2),
+        ("scenario_config", {"timeout_seconds": 99}),
+    ):
+        baseline = dict(current)
+        baseline[key] = changed
+        assert key in module._comparison_identity_errors(current, baseline)
+
+
+def test_comparison_accepts_empty_inherited_pythonpath_shape() -> None:
+    module = _load_module()
+    identity = _bound_identity(
+        module,
+        scenario_id="repeated_local_turns",
+        command="in_process:repeated_local_turns",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="adhoc",
+    )
+    current = module._comparison_identity(identity)
+    current["inherited_pythonpath_shape"] = []
+
+    assert module._comparison_identity_errors(current, dict(current)) == []
+
+    missing = dict(current)
+    del missing["inherited_pythonpath_shape"]
+    assert "inherited_pythonpath_shape" in module._comparison_identity_errors(
+        current, missing
+    )
+
+
+def test_dirty_fingerprint_includes_nested_untracked_file_bytes(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "openminion"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    nested = repo / "scratch" / "nested.txt"
+    nested.parent.mkdir()
+    nested.write_text("first", encoding="utf-8")
+
+    first = module._dirty_worktree_fingerprint(tmp_path)
+    nested.write_text("second", encoding="utf-8")
+    second = module._dirty_worktree_fingerprint(tmp_path)
+
+    assert first != second
+
+
+def test_requested_baseline_must_be_readable_and_well_formed(tmp_path: Path) -> None:
+    module = _load_module()
+    missing = tmp_path / "missing.json"
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("[]", encoding="utf-8")
+
+    for path in (missing, malformed):
+        try:
+            module._load_comparison_baseline(path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid comparison baseline accepted: {path}")
+
+
+def test_comparison_rejects_v3_artifact_for_v4_thresholds() -> None:
     module = _load_module()
     current_identity = _bound_identity(
         module,
@@ -235,33 +373,33 @@ def test_comparison_rejects_v2_artifact_for_v3_thresholds() -> None:
         measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
         fixture_revision="fixture-v1",
     )
-    baseline_identity = dict(current_identity)
-    baseline_identity["artifact_schema_version"] = "pomv2.performance.v2"
-
     result = module._threshold_result(
         current={
-            "count": 5,
-            "ok_count": 5,
-            "wall_time_ms": {"p95": 10, "coefficient_of_variation": 0.0},
+            "count": 20,
+            "ok_count": 20,
+            "wall_time_ns": {"p95": 10, "coefficient_of_variation": 0.0},
             "measurement_identity": current_identity,
+            "comparison_identity": module._comparison_identity(current_identity),
         },
         baseline={
+            "artifact_schema_version": "pomv2.performance.v3",
             "scenarios": {
                 "simple_turn": {
-                    "wall_time_ms": {
+                    "count": 20,
+                    "ok_count": 20,
+                    "wall_time_ns": {
                         "p95": 10,
                         "coefficient_of_variation": 0.0,
                     },
-                    "measurement_identity": baseline_identity,
                 }
-            }
+            },
         },
         scenario_id="simple_turn",
         threshold_mode="hard",
     )
 
     assert result["status"] == "ineligible"
-    assert result["reason"] == "artifact schema version mismatch"
+    assert result["reason"] == "artifact schema version mismatch; v3 is display-only"
     assert result["identity_errors"] == ["artifact_schema_version"]
 
 
@@ -275,18 +413,23 @@ def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
         fixture_revision="fixture-v1",
     )
     current = {
-        "count": 5,
-        "ok_count": 4,
-        "wall_time_ms": {"p95": 1, "coefficient_of_variation": 0.0},
+        "count": 20,
+        "ok_count": 19,
+        "wall_time_ns": {"p95": 1, "coefficient_of_variation": 0.0},
         "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
     }
     baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
         "scenarios": {
             "simple_turn": {
-                "wall_time_ms": {"p95": 10, "coefficient_of_variation": 0.0},
+                "count": 20,
+                "ok_count": 20,
+                "wall_time_ns": {"p95": 10, "coefficient_of_variation": 0.0},
                 "measurement_identity": identity,
+                "comparison_identity": module._comparison_identity(identity),
             }
-        }
+        },
     }
 
     result = module._threshold_result(
@@ -300,7 +443,7 @@ def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
     assert result["reason"] == "quality fixture failure"
 
 
-def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
+def test_comparison_uses_twenty_sample_nanosecond_p95_and_variance_rule() -> None:
     module = _load_module()
     identity = _bound_identity(
         module,
@@ -310,15 +453,22 @@ def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
         fixture_revision="fixture-v1",
     )
     baseline_scenario = {
-        "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.10},
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ns": {"p95": 100, "coefficient_of_variation": 0.10},
         "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
     }
-    baseline = {"scenarios": {"simple_turn": baseline_scenario}}
+    baseline = {
+        "artifact_schema_version": module.ARTIFACT_SCHEMA_VERSION,
+        "scenarios": {"simple_turn": baseline_scenario},
+    }
     current = {
-        "count": 5,
-        "ok_count": 5,
-        "wall_time_ms": {"p95": 111, "coefficient_of_variation": 0.10},
+        "count": 20,
+        "ok_count": 20,
+        "wall_time_ns": {"p95": 111, "coefficient_of_variation": 0.10},
         "measurement_identity": identity,
+        "comparison_identity": module._comparison_identity(identity),
     }
 
     result = module._threshold_result(
@@ -330,7 +480,7 @@ def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
     assert result["status"] == "fail"
     assert result["regression_ratio"] == 1.10
 
-    current["wall_time_ms"] = {"p95": 90, "coefficient_of_variation": 0.21}
+    current["wall_time_ns"] = {"p95": 90, "coefficient_of_variation": 0.21}
     result = module._threshold_result(
         current=current,
         baseline=baseline,
@@ -359,7 +509,8 @@ def test_summary_rejects_mixed_sample_identities() -> None:
             "ok": True,
             "provider_variance_class": module.LOCAL_VARIANCE,
             "measurement_identity": identity,
-            "metrics": {"wall_time_ms": 10},
+            "comparison_identity": module._comparison_identity(identity),
+            "metrics": {"wall_time_ns": 10},
         }
         for sample_index, identity in enumerate((first_identity, second_identity))
     ]
@@ -524,7 +675,7 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     assert run.metrics["terminal_fact"] is None
     assert run.metrics["availability_reasons"]["terminal_fact"] == "not_applicable"
     assert run.measurement_identity["artifact_schema_version"] == (
-        "pomv2.performance.v3"
+        "pomv2.performance.v4"
     )
     for key in (
         "git_head",
@@ -1125,13 +1276,31 @@ def test_run_baseline_rejects_source_drift_at_campaign_close(
                 "git_head": "a" * 40,
                 "dirty_tree_fingerprint": "b" * 64,
                 "dirty_worktree_summary": {"available": True},
+                "runner_path": "/opt/owpr/performance_baseline.py",
                 "runner_source_sha256": "c" * 64,
+                "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "runtime_environment": _bound_identity(
+                    module,
+                    scenario_id="repeated_local_turns",
+                    command="repeated_local_fixture:single_iteration_sample",
+                    measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+                    fixture_revision="test",
+                )["runtime_environment"],
             },
             {
                 "git_head": "d" * 40,
                 "dirty_tree_fingerprint": "b" * 64,
                 "dirty_worktree_summary": {"available": True},
+                "runner_path": "/opt/owpr/performance_baseline.py",
                 "runner_source_sha256": "c" * 64,
+                "loaded_openminion_package_root": "/opt/owpr/openminion",
+                "runtime_environment": _bound_identity(
+                    module,
+                    scenario_id="repeated_local_turns",
+                    command="repeated_local_fixture:single_iteration_sample",
+                    measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+                    fixture_revision="test",
+                )["runtime_environment"],
             },
         )
     )

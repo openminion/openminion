@@ -5,7 +5,11 @@ Last updated: 2026-08-10
 
 OpenMinion has one canonical interactive CLI: `openminion`. It uses the
 terminal renderer by default. Textual remains available through explicit
-`openminion --rich`, not as the default.
+`openminion --rich`, not as the default. Install that optional renderer with:
+
+```bash
+python -m pip install "openminion[textual]"
+```
 
 ## Canonical routes
 

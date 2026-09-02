@@ -38,6 +38,36 @@ def test_push_agent_message_plain_text() -> None:
     assert "reply" in buf.getvalue()
 
 
+def test_push_attributed_agent_message_renders_author() -> None:
+    t, buf = _make_transcript()
+    t.push_message(
+        ChatMessage(
+            kind=MessageKind.AGENT,
+            sender="review-agent",
+            body="reply",
+            show_header=True,
+        )
+    )
+    output = buf.getvalue()
+    assert "review-agent" in output
+    assert "reply" in output
+
+
+def test_push_non_room_agent_message_omits_author_header() -> None:
+    t, buf = _make_transcript()
+    t.push_message(
+        ChatMessage(
+            kind=MessageKind.AGENT,
+            sender="configured-agent",
+            body="reply",
+            show_header=False,
+        )
+    )
+    output = buf.getvalue()
+    assert "configured-agent" not in output
+    assert "reply" in output
+
+
 def test_push_agent_markdown_renders_via_markdown() -> None:
     t, buf = _make_transcript()
     body = "# heading\n\n- item one\n- item two"

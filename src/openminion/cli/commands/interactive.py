@@ -279,9 +279,6 @@ def _launch_textual_focus(
 
 
 def run_interactive(args: argparse.Namespace) -> int:
-    from openminion.api.runtime import APIRuntime
-    from openminion.cli.status.surface import record_surface_event
-
     backend = _resolve_interactive_backend(args)
     if backend == "terminal":
         from openminion.cli.presentation.styles import set_color_mode
@@ -300,6 +297,26 @@ def run_interactive(args: argparse.Namespace) -> int:
 
     runtime = None
     try:
+        if backend == "textual":
+            try:
+                from importlib import import_module
+
+                import_module("openminion.cli.interactive.app")
+            except ModuleNotFoundError as exc:
+                if exc.name == "textual":
+                    import sys
+
+                    print(
+                        "openminion --rich requires the Textual renderer. "
+                        "Install it with: pip install 'openminion[textual]'",
+                        file=sys.stderr,
+                    )
+                    return 2
+                raise
+
+        from openminion.api.runtime import APIRuntime
+        from openminion.cli.status.surface import record_surface_event
+
         runtime = APIRuntime.from_config_path(
             getattr(args, "config", None),
             home_root=getattr(args, "home_root", None),

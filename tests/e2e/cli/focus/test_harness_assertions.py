@@ -62,6 +62,19 @@ def test_continuation_cue_allows_terminal_line_wrapping() -> None:
     )
 
 
+def test_screen_after_submission_excludes_an_older_continuation_cue() -> None:
+    transcript = (
+        "Continue in a new turn to resume.\n"
+        "❯ continue\n"
+        "The task is complete.\nDone in 2s\n"
+    )
+
+    trailing = screen_after_submission(transcript, "continue")
+
+    assert trailing is not None
+    assert not continuation_cue_present(trailing)
+
+
 def test_scenario_contract_requires_expected_files_and_transcript_rules(
     tmp_path: Path,
 ) -> None:

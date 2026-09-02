@@ -84,6 +84,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
             skill_catalog_explicit="skill_catalog" in agent_config,
             system_prompt=agent_config.get("system_prompt", ""),
             provider_config_overrides=_parse_dict(get("provider_config_overrides")),
+            model_connections=_parse_dict(get("model_connections")),
             model_capability_overrides=_parse_model_capability_overrides(
                 agent_config.get("model_capability_overrides")
             ),

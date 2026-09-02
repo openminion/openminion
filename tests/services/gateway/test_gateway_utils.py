@@ -22,3 +22,22 @@ def test_extract_ephemeral_prompt_metadata_includes_cron_metadata() -> None:
         "scheduled_for": "2026-03-20T00:00:00Z",
         "workspace_root": "/tmp/workspace",
     }
+
+
+def test_extract_ephemeral_prompt_metadata_keeps_turn_tool_scope() -> None:
+    extracted = _extract_ephemeral_prompt_metadata(
+        {
+            "subagent_context_id": "subagent-1",
+            "subagent_tool_allowlist": "file.read,web.search",
+            "turn_tool_allowlist": "file.read",
+            "turn_tool_allowlist_supplied": "true",
+            "ignored_key": "ignored",
+        }
+    )
+
+    assert extracted == {
+        "subagent_context_id": "subagent-1",
+        "subagent_tool_allowlist": "file.read,web.search",
+        "turn_tool_allowlist": "file.read",
+        "turn_tool_allowlist_supplied": "true",
+    }

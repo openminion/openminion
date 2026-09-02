@@ -244,12 +244,12 @@ class A2actlAdapter:
     def poll_task(
         self, *, task_id: str, session_id: str, trace_id: str
     ) -> dict[str, Any]:
-        del session_id, trace_id
+        del trace_id
         runtime = self._ensure_runtime()
         start = time.monotonic()
         try:
             job = runtime.job_status(str(task_id or "").strip())
-            self._require_job_owner(job)
+            self._require_job_owner(job, session_id=session_id)
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
             return response
@@ -264,12 +264,12 @@ class A2actlAdapter:
     def cancel_task(
         self, *, task_id: str, session_id: str, trace_id: str
     ) -> dict[str, Any]:
-        del session_id, trace_id
+        del trace_id
         runtime = self._ensure_runtime()
         start = time.monotonic()
         try:
             task_id = str(task_id or "").strip()
-            self._require_job_owner(runtime.job_status(task_id))
+            self._require_job_owner(runtime.job_status(task_id), session_id=session_id)
             job = runtime.job_cancel(task_id)
             response = _job_record_to_response(job)
             response.setdefault("metrics", _metrics(start))
@@ -282,9 +282,14 @@ class A2actlAdapter:
                 "metrics": _metrics(start),
             }
 
-    def _require_job_owner(self, job: Any) -> None:
+    def _require_job_owner(self, job: Any, *, session_id: str) -> None:
         owner = str(getattr(job, "owner_agent_id", "") or "").strip()
-        if not owner or owner != self._agent_id:
+        job_scope = str(getattr(job, "idempotency_scope", "") or "").strip()
+        expected_scope = (
+            f"job.start:{getattr(job, 'agent_id', '')}:"
+            f"{getattr(job, 'method', '')}:{str(session_id or '').strip()}"
+        )
+        if not owner or owner != self._agent_id or job_scope != expected_scope:
             raise PermissionError("A2A job handle does not belong to this agent")
 
     def _ensure_runtime(self):

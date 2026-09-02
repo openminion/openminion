@@ -25,6 +25,7 @@ from openminion.cli.interactive.terminal.shell.slash_output import (
 from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.interactive.models import ModelSelection
 
 
 class _StubOverlay:
@@ -49,11 +50,23 @@ class _VisibleRuntime:
     permission_mode = "default"
     permission_overrides: dict[str, str] = {}
 
-    def list_models(self) -> list[tuple[str, str, bool]]:
-        return [("openai", "MiniMax-M2.7", True)]
+    def list_models(self) -> list[ModelSelection]:
+        return [
+            ModelSelection(
+                index=1,
+                connection_id="minimax",
+                connection_name="MiniMax",
+                provider="openai",
+                transport_adapter="openai_chat",
+                model="MiniMax-M2.7",
+                configured_connection=True,
+                active=True,
+                agent_default=True,
+            )
+        ]
 
-    def switch_model(self, arg: str) -> tuple[str, str]:
-        return arg, ""
+    def switch_model(self, _arg: str) -> ModelSelection:
+        return self.list_models()[0]
 
     def memory_report(self) -> str:
         return ""
@@ -125,6 +138,34 @@ class _VisibleRuntime:
 
     def execute_goal_command(self, _text: str) -> tuple[str, str]:
         return "ok", "goal ok"
+
+    def room_participants_report(self) -> str:
+        return "Room: review\n  routing: addressed\n  participants: 2"
+
+    def room_invite_agent(self, agent_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            participant_type="agent",
+            participant_id=agent_id,
+            role="participant",
+        )
+
+    def room_invite_human(
+        self, human_id: str, *, role: str = "participant"
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            participant_type="human",
+            participant_id=human_id,
+            role=role,
+        )
+
+    def room_kick(self, _participant_type: str, _participant_id: str) -> bool:
+        return True
+
+    def room_activate(self, _agent_id: str) -> None:
+        return None
+
+    def room_set_routing(self, _mode: str) -> None:
+        return None
 
 
 def _extract_implemented_slashes() -> set[str]:
@@ -272,6 +313,25 @@ def test_bare_slash_dispatch_prints_menu() -> None:
     assert "not yet implemented" not in out
 
 
+def test_terminal_room_invite_rejects_agent_role_operand() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/invite agent beta owner",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "usage: /invite agent <id>" in buf.getvalue()
+
+
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:
     from openminion.cli.interactive.terminal.shell import actions
 
@@ -333,7 +393,8 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
 
     out = buf.getvalue()
     assert "current model: MiniMax-M2.7" in out
-    assert "Configured model" in out
+    assert "Connection" in out
+    assert "API format" in out
     assert transcript._messages[-1].kind.value == "system"
 
 

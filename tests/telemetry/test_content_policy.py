@@ -74,6 +74,32 @@ def test_sensitive_opt_in_never_overrides_prohibited_fields() -> None:
     assert "approval_token" not in cleaned
 
 
+def test_error_prose_requires_local_sensitive_content_opt_in() -> None:
+    payload = {
+        "error": {
+            "code": "PROVIDER_ERROR",
+            "type": "provider_error",
+            "category": "availability",
+            "message": "Bearer private-error",
+            "details": {"response": "private-details"},
+        },
+        "error_text": "private scalar error",
+    }
+
+    default = apply_content_policy(payload, allow_sensitive_content=False)
+    opted_in = apply_content_policy(payload, allow_sensitive_content=True)
+
+    assert default["error"] == {
+        "code": "PROVIDER_ERROR",
+        "type": "provider_error",
+        "category": "availability",
+    }
+    assert "error_text" not in default
+    assert opted_in["error"]["message"] == "Bearer private-error"
+    assert opted_in["error"]["details"] == {"response": "private-details"}
+    assert opted_in["error_text"] == "private scalar error"
+
+
 def test_truncation_records_original_and_retained_size() -> None:
     cleaned = apply_content_policy(
         {"status": "x" * 20},
@@ -100,7 +126,18 @@ def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
                 session_id="session-1",
                 turn_id="turn-1",
                 event_type="llm.call.completed",
-                data={"content": "external opt-in", "api_key": "never"},
+                data={
+                    "content": "external opt-in",
+                    "api_key": "never",
+                    "error": {
+                        "code": "FAIL",
+                        "type": "provider_error",
+                        "category": "availability",
+                        "message": "never export",
+                        "details": "never export details",
+                    },
+                    "error_text": "never export scalar",
+                },
             )
         )
     )
@@ -109,6 +146,12 @@ def test_local_and_external_content_controls_are_independent(tmp_path) -> None:
     external = exporter.events[0]
     assert "content" not in local.data
     assert external.data["content"] == "external opt-in"
+    assert external.data["error"] == {
+        "code": "FAIL",
+        "type": "provider_error",
+        "category": "availability",
+    }
+    assert "error_text" not in external.data
     assert "api_key" not in local.data
     assert "api_key" not in external.data
     service.close_sync()

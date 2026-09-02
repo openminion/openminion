@@ -27,7 +27,8 @@ _EXPLICIT_USER_EMAIL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _AGENT_MEMORY_EXACT_VALUE_GUIDANCE = (
-    "  Note: copy remembered values verbatim when answering exact-value questions."
+    "  Note: copy remembered values verbatim when answering exact-value questions, "
+    "and reuse a record's exact key when correcting it."
 )
 
 
@@ -105,7 +106,9 @@ def _format_records_as_context(
             text = title_text or content_text[:120]
         rtype = getattr(rec, "type", "")
         prefix = "📌" if rtype == "pin" else "•"
-        lines.append(f"  {prefix} {text}")
+        record_key = str(getattr(rec, "key", "") or "").strip()
+        key_prefix = f"[key={record_key}] " if record_key != title_text else ""
+        lines.append(f"  {prefix} {key_prefix}{text}")
     joined = "\n".join(lines)
     if len(joined) > max_chars:
         joined = joined[:max_chars] + "\n  [truncated]"

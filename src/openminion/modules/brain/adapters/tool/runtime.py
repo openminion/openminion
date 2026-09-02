@@ -18,7 +18,7 @@ from openminion.modules.brain.constants import (
     BRAIN_STATE_ERROR,
 )
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
-from .permission_mode import canonical_permission_mode
+from .permission_mode import permission_mode_from_inputs
 from openminion.modules.tool import (
     DEFAULT_POLICY,
     Policy,
@@ -43,6 +43,7 @@ from openminion.modules.tool.runtime.routing import (
 from .command_metadata import (
     _confirmation_replay_metadata,
     _extract_runtime_message_ref,
+    _inject_runtime_message_ref,
     _merge_orchestration_context_metadata,
     _orchestration_metadata_from_command,
     _runtime_workspace_from_command,
@@ -62,6 +63,7 @@ from .results import (
     _derive_toolspec_summary,
     _error_envelope,
     _normalized_artifact_refs,
+    _tool_allowlist_error,
 )
 from .workspace_policy import child_workspace_policy
 
@@ -69,6 +71,9 @@ _log = get_logger("brain.adapters.tool.runtime")
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override",
     default=None,
+)
+_TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
+    "openminion_turn_tool_allowlist", default=None
 )
 
 
@@ -118,6 +123,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         secret_service: Any | None = None,
+        memory_service: Any | None = None,
         a2a_delegate_api: Any | None = None,
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
@@ -136,6 +142,7 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.secret_service = secret_service
+        self.memory_service = memory_service
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
@@ -215,6 +222,22 @@ class ToolAdapter:
             artifactctl = self.artifactctl
             self.artifactctl = None
             artifactctl.close()
+
+    @contextmanager
+    def restrict_tools(self, allowed_tools: tuple[str, ...]) -> Iterator[None]:
+        allowlist = frozenset(
+            name for item in allowed_tools if (name := str(item or "").strip())
+        )
+        token = _TURN_TOOL_ALLOWLIST.set(allowlist)
+        try:
+            yield
+        finally:
+            _TURN_TOOL_ALLOWLIST.reset(token)
+
+    @staticmethod
+    def is_tool_allowed(tool_name: str) -> bool:
+        allowlist = _TURN_TOOL_ALLOWLIST.get()
+        return allowlist is None or str(tool_name or "").strip() in allowlist
 
     @staticmethod
     def _coerce_policy(policy: Any) -> Policy:
@@ -378,24 +401,20 @@ class ToolAdapter:
         raw_args = command.get("args", {})
         args = dict(raw_args) if isinstance(raw_args, Mapping) else {}
         inputs = command.get("inputs")
-        permission_mode = canonical_permission_mode(
-            str(inputs.get("permission_mode")).strip()
-            if isinstance(inputs, Mapping) and inputs.get("permission_mode")
-            else "default"
-        )
+        permission_mode = permission_mode_from_inputs(inputs)
         replay_confirmation_metadata = _confirmation_replay_metadata(inputs)
         start_time = time.monotonic()
         runtime_message_ref = _extract_runtime_message_ref(command=command, args=args)
         orchestration_metadata = _orchestration_metadata_from_command(command)
         requested_workspace = _runtime_workspace_from_command(command)
-        if (
-            runtime_message_ref is not None
-            and tool_name.startswith("reactions.")
-            and not args.get("message")
-        ):
-            args["message"] = runtime_message_ref
+        _inject_runtime_message_ref(
+            tool_name=tool_name, args=args, message_ref=runtime_message_ref
+        )
 
         tool_name, spec, runtime_tool = self._resolve_registry_tool(tool_name)
+
+        if not self.is_tool_allowed(tool_name):
+            return _tool_allowlist_error(tool_name)
 
         if spec is None and runtime_tool is None:
             return _error_envelope(
@@ -610,6 +629,7 @@ class ToolAdapter:
             skill_api=self.skill_api,
             secret_service=self.secret_service,
             artifactctl=self.artifactctl,
+            memory_service=self.memory_service,
             a2a_delegate_api=self.a2a_delegate_api,
             agent_query=self.agent_query,
             telemetry_session_id=session_id,
@@ -624,7 +644,6 @@ class ToolAdapter:
         ctx.invocation_id = str(command.get("idempotency_key", "") or "")
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)
-
         if ctx.policy_adapter is not None:
             policy_decision = ctx.policy_adapter.evaluate(
                 tool_name=tool_name,
@@ -969,4 +988,5 @@ class ToolAdapter:
             target=session_id or "session",
             session_id=session_id,
             metadata=metadata,
+            memory_service=self.memory_service,
         )

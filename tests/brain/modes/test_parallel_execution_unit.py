@@ -230,6 +230,15 @@ def test_order_preserving_result_merger_reorders_out_of_order_results() -> None:
     assert [item.result.output for item in merged] == ["A", "B", "C"]
 
 
+def test_order_preserving_result_merger_omits_unexecuted_subtasks() -> None:
+    merged = OrderPreservingResultMerger().merge(
+        results={"a": _child_result("a", output="A")},
+        original_order=["a", "b"],
+    )
+
+    assert [item.subtask_id for item in merged] == ["a"]
+
+
 def test_continue_on_error_policy_returns_continue() -> None:
     policy = ContinueOnErrorPolicy()
     result = _child_result("x", failed=True)

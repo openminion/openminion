@@ -1,6 +1,9 @@
-from typing import Any
+from __future__ import annotations
 
-from .contracts.schemas import ErrorCode
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .contracts.schemas import ErrorCode
 
 
 class ToolRuntimeError(Exception):

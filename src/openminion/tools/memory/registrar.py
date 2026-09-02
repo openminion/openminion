@@ -44,12 +44,20 @@ class MemoryRegistrar:
             model_tools=(
                 ModelToolDef(
                     model_tool_id=MODEL_MEMORY_WRITE,
-                    description="Store an explicit structured memory record",
+                    description=(
+                        "Store something the user explicitly asks to remember in "
+                        "the active agent scope. For a correction, search first "
+                        "and reuse the prior scope, type, and key."
+                    ),
                     parameters={},
                 ),
                 ModelToolDef(
                     model_tool_id=MODEL_MEMORY_SEARCH,
-                    description="Search explicit memory records by typed query and scope",
+                    description=(
+                        "Search explicit memory records by typed query and scope. "
+                        "For recall or correction across sessions, search the active "
+                        "agent scope first."
+                    ),
                     parameters={},
                 ),
                 ModelToolDef(

@@ -251,6 +251,7 @@ def _lift_payload_fields(*, meta: dict[str, Any], payload: dict[str, Any]) -> No
         "timeout_seconds",
         "inbound_metadata",
         "deliver",
+        "allowed_tools",
         "forced_tools",
         "capability_category",
     ):

@@ -56,6 +56,7 @@ def test_live_export_preflight_does_not_open_service(
         "local_recording": "not_run",
         "queue": "not_run",
         "sampling": "not_run",
+        "signal": "logs",
         "timeout_ms": 5000,
         "transport": "skipped",
     }
@@ -113,6 +114,7 @@ def test_live_export_records_once_and_reports_direct_flush(
     assert observed[1] == 5.0
     assert payload["status"] == "ready"
     assert payload["probe"]["queue"] == "bypassed"
+    assert payload["probe"]["signal"] == "logs"
     assert payload["proof"] == {
         "collector_artifact": False,
         "otlp_transport": True,

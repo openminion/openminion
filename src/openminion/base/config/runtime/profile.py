@@ -47,7 +47,9 @@ def resolve_runtime_profile(
     """Return the effective :class:`AgentProfileConfig` for *agent_id*."""
 
     selected = resolve_agent_config(config, agent_id)
-    effective_overrides = overrides or RunProfileOverrides()
+    effective_overrides, _ = _resolve_model_connection(
+        selected, overrides or RunProfileOverrides()
+    )
     provider_resolution = resolve_provider_runtime_policy(
         system_policy=config.runtime.provider_policy,
         agent_policy=selected.provider_policy,
@@ -87,8 +89,10 @@ def build_runtime_config(
     agent_id: str | None = None,
     overrides: RunProfileOverrides | None = None,
 ) -> OpenMinionConfig:
-    effective_overrides = overrides or RunProfileOverrides()
     selected_profile = resolve_agent_config(config, agent_id)
+    effective_overrides, connection = _resolve_model_connection(
+        selected_profile, overrides or RunProfileOverrides()
+    )
     selected_agent_id = (agent_id or "").strip()
     effective_profile = resolve_runtime_profile(
         config,
@@ -148,6 +152,7 @@ def build_runtime_config(
         selected_profile,
         effective_profile,
         effective_overrides,
+        connection,
     )
     effective_model_override = (
         effective_overrides.model
@@ -185,7 +190,9 @@ def build_capability_runtime_diagnostics(
     overrides: RunProfileOverrides | None = None,
 ) -> dict[str, Any]:
     selected = resolve_agent_config(config, agent_id)
-    effective_overrides = overrides or RunProfileOverrides()
+    effective_overrides, _ = _resolve_model_connection(
+        selected, overrides or RunProfileOverrides()
+    )
     provider_resolution = resolve_provider_runtime_policy(
         system_policy=config.runtime.provider_policy,
         agent_policy=selected.provider_policy,
@@ -267,18 +274,32 @@ def _pick_flag(
     return None, False
 
 
+def _resolve_model_connection(
+    profile: AgentProfileConfig,
+    overrides: RunProfileOverrides,
+) -> tuple[RunProfileOverrides, dict[str, Any] | None]:
+    connection = profile.model_connections.get(overrides.provider)
+    if connection is None:
+        return overrides, None
+    models = connection.get("models")
+    model = overrides.model or (str(models[0]) if models else "")
+    return replace(
+        overrides, provider=str(connection["provider"]), model=model
+    ), connection
+
+
 def _select_profile_provider_config_overrides(
-    selected_profile: AgentProfileConfig,
-    effective_profile: AgentProfileConfig,
-    effective_overrides: RunProfileOverrides,
+    selected: AgentProfileConfig,
+    effective: AgentProfileConfig,
+    overrides: RunProfileOverrides,
+    connection: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    if effective_overrides.provider:
+    if connection is not None:
+        return dict(connection.get("provider_config_overrides", {}))
+    selected_provider = selected.provider.strip().lower()
+    if overrides.provider or selected_provider != effective.provider.strip().lower():
         return {}
-    selected_provider = selected_profile.provider.strip().lower()
-    effective_provider = effective_profile.provider.strip().lower()
-    if not selected_provider or selected_provider != effective_provider:
-        return {}
-    return dict(selected_profile.provider_config_overrides)
+    return dict(selected.provider_config_overrides)
 
 
 def _apply_provider_config_patch(

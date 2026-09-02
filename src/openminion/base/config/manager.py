@@ -9,6 +9,7 @@ from openminion.base.config.io import load_config, resolve_config_path
 from openminion.base.config.core import OpenMinionConfig
 from openminion.base.config.paths import resolve_data_root, resolve_home_root
 from openminion.base.config.interface import ModuleConfigFactory
+from openminion.base import constants as env_keys
 
 
 class ConfigManagerError(RuntimeError):
@@ -28,8 +29,12 @@ class ConfigManager:
     env: EnvironmentConfig = field(init=False)
 
     def __post_init__(self) -> None:
-        runtime_env = self.base_config.runtime.env or {}
-        self.env = EnvironmentConfig.from_sources(runtime_env=runtime_env)
+        runtime_env = self.base_config.runtime.env
+        values = EnvironmentConfig.from_sources(runtime_env=runtime_env).snapshot()
+        values[env_keys.OPENMINION_HOME_ENV] = str(self.home_root)
+        values[env_keys.OPENMINION_DATA_ROOT_ENV] = str(self.data_root)
+        values[env_keys.OPENMINION_GENERATED_ROOT_ENV] = str(self.data_root / "runtime")
+        self.env = EnvironmentConfig(values=values)
 
     @classmethod
     def load(
@@ -56,17 +61,14 @@ class ConfigManager:
         )
         if not resolved_config_path.exists():
             raise ConfigManagerError(f"config file not found: {resolved_config_path}")
-        resolved_data_root = data_root or resolve_data_root(
-            resolved_home_root,
-            data_root=env_config.openminion_data_root or None,
-        )
+        data_root = data_root or resolve_data_root(resolved_home_root, env=env_config)
         base_config = load_config(
             str(resolved_config_path), home_root=resolved_home_root
         )
         return cls(
             base_config=base_config,
             home_root=resolved_home_root,
-            data_root=resolved_data_root,
+            data_root=data_root,
             config_path=resolved_config_path,
         )
 
@@ -80,9 +82,7 @@ class ConfigManager:
 
     def is_registered(self, name: str) -> bool:
         key = name.strip()
-        if not key:
-            return False
-        return key in self._factories
+        return bool(key) and key in self._factories
 
     def get(self, name: str) -> Any:
         key = name.strip()
@@ -106,6 +106,5 @@ class ConfigManager:
             self._cache.clear()
             return
         key = name.strip()
-        if not key:
-            return
-        self._cache.pop(key, None)
+        if key:
+            self._cache.pop(key, None)

@@ -133,6 +133,8 @@ def test_runtime_failure_and_cancellation_project_same_source(
     invocation = next(event for event in events if event.event_type == invocation_type)
     assert invocation.timestamp == execution.timestamp
     assert invocation.data["source_event_id"] == execution.event_id
+    assert invocation.data["error"]["code"] == error_type.__name__
+    assert invocation.data["error"]["type"] == error_type.__name__
 
 
 def test_durable_execution_completion_does_not_close_invocation(

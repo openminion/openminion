@@ -11,6 +11,7 @@ def test_root_layout_stays_clean_and_intentional() -> None:
     assert (root / "docs" / "source-tree-owner-map.md").is_file()
     assert (root / "docs" / "testing-and-validation.md").is_file()
     assert (root / "examples").is_dir()
+    assert (root / "MANIFEST.in").read_text(encoding="utf-8") == "prune tests\n"
 
     assert not (root / "fixtures").exists()
     assert not (root / "handoff").exists()

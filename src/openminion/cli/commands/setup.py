@@ -280,6 +280,8 @@ def _build_interactive_setup(
             home_root=roots.home_root,
             data_root=roots.data_root,
             env=env_snapshot,
+            add_model=bool(getattr(args, "add_model", False)),
+            connection_id=str(getattr(args, "connection", "") or ""),
         )
     )
 
@@ -326,6 +328,8 @@ def _build_non_interactive_setup(
                 home_root=roots.home_root,
                 data_root=roots.data_root,
                 env=resolve_environment_config().snapshot(),
+                add_model=bool(getattr(args, "add_model", False)),
+                connection_id=str(getattr(args, "connection", "") or ""),
             )
         )
     except SetupCatalogError as exc:
@@ -340,7 +344,11 @@ def _print_preview(result: ProviderSetupResult) -> None:
     print(f"  API adapter: {preview.api_format_label}")
     print(f"  credential: {preview.credential}")
     print(f"  config target: {preview.config_path}")
-    print(f"  default agent: {preview.agent_id}")
+    print(f"  agent: {preview.agent_id}")
+    if preview.changes_agent_default:
+        print("  default: use this model for the agent")
+    else:
+        print("  default: unchanged")
     if result.preset.requires_base_url:
         print(f"  base URL: {preview.base_url}")
     if preview.shared_adapter_isolated:
@@ -477,12 +485,26 @@ def _resolve_runtime_helper(name: str) -> Any:
     return getattr(module, name)
 
 
+def _reject_incompatible_model_flags(args: Any) -> bool:
+    if not (
+        getattr(args, "add_model", False) and getattr(args, "check_provider", False)
+    ):
+        return False
+    print(
+        "Setup failed: --check-provider cannot validate a non-default added "
+        "model; select it in Focus to test it."
+    )
+    return True
+
+
 def run_setup(args) -> int:
     from openminion.base.config.core import resolve_default_agent_id
 
     if getattr(args, "list_providers", False):
         _resolve_runtime_helper("_print_provider_listing")()
         return 0
+    if _reject_incompatible_model_flags(args):
+        return 2
 
     saved_path: Path | None = None
     try:
@@ -529,8 +551,9 @@ def run_setup(args) -> int:
             )
             return doctor_code
 
+        add_model = bool(getattr(args, "add_model", False))
         provider_check_requested = bool(getattr(args, "check_provider", False))
-        if not provider_check_requested and interactive_preset:
+        if not add_model and not provider_check_requested and interactive_preset:
             provider_check_requested = _prompt_provider_check(interactive_preset)
         if provider_check_requested:
             check_code = _resolve_runtime_helper("_run_setup_provider_check")(
@@ -544,7 +567,9 @@ def run_setup(args) -> int:
                 return check_code
             connection_state = "verified"
 
-        if connection_state == "not tested":
+        if add_model:
+            print("Added model not tested; select it in Focus to make a request.")
+        elif connection_state == "not tested":
             print("Connection not tested; no provider request was made.")
         elif connection_state == "not applicable":
             print("Provider connection not applicable for this setup path.")
@@ -601,6 +626,16 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--model",
         default=None,
         help="Non-interactive model id or interactive default model override",
+    )
+    setup.add_argument(
+        "--add-model",
+        action="store_true",
+        help="Add the selected model to an agent without changing its default",
+    )
+    setup.add_argument(
+        "--connection",
+        default=None,
+        help="Connection id used by /model (defaults to the provider preset id)",
     )
     setup.add_argument(
         "--base-url",

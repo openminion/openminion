@@ -57,6 +57,27 @@ def _operation_extra(
     return payload or None
 
 
+def mcp_audit_fields(data: Mapping[str, Any]) -> dict[str, Any]:
+    details = data.get("details")
+    sources = (data, details) if isinstance(details, Mapping) else (data,)
+    fields: dict[str, Any] = {}
+    for key in (
+        "mcp_server",
+        "mcp_remote_tool_name",
+        "runtime_tool_name",
+        "approval_mode",
+        "approval_required",
+        "reason_code",
+    ):
+        for source in sources:
+            if key in source and source[key] not in (None, ""):
+                fields[key] = source[key]
+                break
+    if fields.get("mcp_server") and fields.get("mcp_remote_tool_name"):
+        fields["mcp_primitive"] = "tools"
+    return fields
+
+
 def emit_tool_exec_operation(
     *,
     telemetryctl: Any,

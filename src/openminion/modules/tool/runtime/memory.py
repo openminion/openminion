@@ -31,6 +31,7 @@ class MemoryAccessContext:
                 {
                     "reason_code": "memory_scope_not_permitted",
                     "requested_scope": normalized,
+                    "allowed_scopes": sorted(allowed),
                 },
             )
         return normalized
@@ -67,6 +68,7 @@ class MemoryToolRuntimeService(Protocol):
         *,
         scope: str,
         record_type: str,
+        key: str | None = None,
         title: str,
         content: dict[str, Any] | str,
         tags: list[str] | None = None,

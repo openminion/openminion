@@ -655,7 +655,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         if _Path(service.db_path).suffix
         else _Path(service.db_path)
     )
-
     memory_assembly = service._runtime_memory_assembly
     vector_adapter = getattr(memory_assembly, "vector_adapter", None)
 
@@ -739,6 +738,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
+        memory_service=memory_api,
         policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),

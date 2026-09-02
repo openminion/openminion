@@ -120,6 +120,7 @@ class InvocationTerminalLifecycleTests(GatewayServiceTestCase):
         ]
         assert facts[-1].payload["source_event_type"] == "run.failed"
         assert facts[-1].payload["resolved_state"] == "failed"
+        assert facts[-1].payload["error_code"] == "RuntimeError"
 
     def test_exhausted_empty_response_projects_failed_terminal(self) -> None:
         class _RepeatedRecoveredEmptyProvider(LLMProvider):
@@ -158,6 +159,7 @@ class InvocationTerminalLifecycleTests(GatewayServiceTestCase):
             "agent.invocation.failed",
         ]
         assert facts[-1].payload["source_event_type"] == "run.failed"
+        assert facts[-1].payload["error_code"] == "EMPTY_PROVIDER_RESPONSE"
 
     def test_deferred_delivery_closes_only_on_replay(self) -> None:
         facts = self._capture(self.gateway)

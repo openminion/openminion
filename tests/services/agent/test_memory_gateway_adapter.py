@@ -366,6 +366,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
 
         self.assertIn("## Agent Memory", context)
         self.assertIn("copy remembered values verbatim", context)
+        self.assertIn("[key=fact:user_email]", context)
         self.assertIn("new@example.com", context)
         self.assertIn("old@example.com", context)
         self.assertLess(

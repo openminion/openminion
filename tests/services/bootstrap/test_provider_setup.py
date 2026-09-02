@@ -7,7 +7,11 @@ from unittest import mock
 
 import pytest
 
-from openminion.base.config import AgentProfileConfig, OpenMinionConfig
+from openminion.base.config import (
+    AgentProfileConfig,
+    OpenMinionConfig,
+    RunProfileOverrides,
+)
 from openminion.base.config.runtime.profile import build_runtime_config
 from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_presets
 from openminion.services.bootstrap.provider_setup import (
@@ -631,6 +635,53 @@ def test_minimax_and_openrouter_keep_separate_credential_references(
     assert payload["providers"]["openai"]["api_key_env"] == "MINIMAX_API_KEY"
     assert payload["providers"]["openai"]["base_url"] == ("https://api.minimax.io/v1")
     assert shared_fixture_value not in json.dumps(payload)
+
+
+def test_add_model_preserves_legacy_default_and_adds_configured_choice(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig(
+        agents={
+            "minimax-agent": AgentProfileConfig(
+                name="minimax-agent",
+                provider="openai",
+            )
+        },
+        default_agent="minimax-agent",
+    )
+    existing.providers.openai.model = "MiniMax-M2.7"
+    existing.providers.openai.base_url = "https://api.minimax.io/v1"
+    existing.providers.openai.api_key_env = "MINIMAX_API_KEY"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            model="MiniMax-M2.7-highspeed",
+            add_model=True,
+            config_path=str(tmp_path / "config.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": "fixture-key"},
+        ),
+        existing_config=existing,
+    )
+    profile = result.config.agents["minimax-agent"]
+
+    assert profile.model_connections["minimax"]["default"] is True
+    assert profile.model_connections["minimax"]["models"] == [
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+    ]
+    runtime_config = build_runtime_config(
+        result.config,
+        agent_id="minimax-agent",
+        overrides=RunProfileOverrides(
+            provider="minimax",
+            model="MiniMax-M2.7-highspeed",
+        ),
+    )
+    assert runtime_config.providers.openai.model == "MiniMax-M2.7-highspeed"
 
 
 def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None:

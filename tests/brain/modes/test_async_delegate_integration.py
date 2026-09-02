@@ -28,6 +28,14 @@ class _FakeA2AAPI:
         }
         self.poll_calls: list[str] = []
         self.cancel_calls: list[str] = []
+        self.cancel_response: dict[str, Any] = {
+            "status": "cancelled",
+            "summary": "Delegation cancelled.",
+            "error": {
+                "code": "A2A_JOB_CANCELLED",
+                "message": "Delegation cancelled.",
+            },
+        }
 
     def poll_task(
         self, *, task_id: str, session_id: str, trace_id: str
@@ -41,14 +49,7 @@ class _FakeA2AAPI:
     ) -> dict[str, Any]:
         del session_id, trace_id
         self.cancel_calls.append(task_id)
-        return {
-            "status": "cancelled",
-            "summary": "Delegation cancelled.",
-            "error": {
-                "code": "A2A_JOB_CANCELLED",
-                "message": "Delegation cancelled.",
-            },
-        }
+        return dict(self.cancel_response)
 
 
 @dataclass
@@ -305,6 +306,42 @@ def test_async_delegate_cancel_updates_job_and_task_state() -> None:
         assert a2a_api.cancel_calls == ["job-1"]
         assert record is not None
         assert record.state == TaskLifecycleState.CANCELLED
+
+
+def test_async_delegate_rejected_cancel_preserves_task_state() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        task_manager = TaskManager.for_lifecycle_db(
+            db_path=Path(tmp) / "task" / "tasks.db"
+        )
+        a2a_api = _FakeA2AAPI()
+        a2a_api.cancel_response = {
+            "status": "failed",
+            "summary": "A2A job handle does not belong to this session.",
+            "error": {
+                "code": "A2A_JOB_CANCEL_FAILED",
+                "message": "A2A job handle does not belong to this session.",
+            },
+        }
+        ctx, _services = _ctx(task_manager, a2a_api)
+        mode = DelegateMode(strategy=AsyncJobStrategy())
+        assert mode.execute(ctx).status == "job_pending"
+        task_id = str(ctx.state.delegation_task_id)
+        before = task_manager.get_task(task_id)
+        assert before is not None
+
+        result = mode._cancellation.cancel_async(
+            ctx=ctx,
+            job_id=str(ctx.state.delegation_job_id),
+            task_id=task_id,
+        )
+
+        after = task_manager.get_task(task_id)
+        assert result.status == "error"
+        assert result.action_result is not None
+        assert result.action_result.error is not None
+        assert result.action_result.error.code == "A2A_JOB_CANCEL_FAILED"
+        assert after is not None
+        assert after.state == before.state
 
 
 def test_async_delegate_resume_cascades_parent_cancellation() -> None:

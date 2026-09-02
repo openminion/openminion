@@ -160,7 +160,7 @@ class GatewayTurnAgentExecutionMixin:
             },
         )
 
-    def _persist_inbound_message(
+    def _persist_inbound_message_if_needed(
         self,
         routing: _RoutingResult,
         *,
@@ -170,8 +170,12 @@ class GatewayTurnAgentExecutionMixin:
         run_id: str,
         participant_id: str,
         session_turn_fence_token: int | None,
-    ) -> None:
-        self._sessions.append_message(
+    ) -> str:
+        metadata = routing.normalized_inbound_metadata
+        existing_id = metadata.get("persisted_inbound_message_id", "")
+        if parse_metadata_bool(metadata, "room_router_skip_inbound_persist"):
+            return existing_id
+        record = self._sessions.append_message(
             session_id=routing.session.id,
             conversation_id=routing.conversation_id or None,
             thread_id=routing.thread_id or None,
@@ -198,6 +202,7 @@ class GatewayTurnAgentExecutionMixin:
             display_name=participant_id,
             session_turn_fence_token=session_turn_fence_token,
         )
+        return str(record.id)
 
     def _finalize_agent_response_metadata(
         self,
@@ -331,19 +336,15 @@ class GatewayTurnAgentExecutionMixin:
             authenticity_decision=authenticity_decision,
             participant_id=participant_id,
         )
-        if not parse_metadata_bool(
-            routing.normalized_inbound_metadata,
-            "room_router_skip_inbound_persist",
-        ):
-            self._persist_inbound_message(
-                routing,
-                channel=channel,
-                target=target,
-                body=body,
-                run_id=run_id,
-                participant_id=participant_id,
-                session_turn_fence_token=session_turn_fence_token,
-            )
+        persisted_inbound_message_id = self._persist_inbound_message_if_needed(
+            routing,
+            channel=channel,
+            target=target,
+            body=body,
+            run_id=run_id,
+            participant_id=participant_id,
+            session_turn_fence_token=session_turn_fence_token,
+        )
 
         response = await self._agent.run_turn(
             inbound,
@@ -353,6 +354,7 @@ class GatewayTurnAgentExecutionMixin:
             progress_callback=_capture_progress,
             approval_callback=approval_callback,
         )
+        response.metadata["persisted_inbound_message_id"] = persisted_inbound_message_id
         self._finalize_agent_response_metadata(
             response=response,
             routing=routing,

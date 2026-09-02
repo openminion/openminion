@@ -229,6 +229,7 @@ class _GatewayTurnLifecycleOps:
                     "thread_id": projection.thread_id,
                     "provider": source.payload.get("provider") or None,
                     "model": source.payload.get("model") or None,
+                    "error_code": source.payload.get("error_code") or None,
                 },
             )
         )

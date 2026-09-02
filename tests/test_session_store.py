@@ -507,6 +507,48 @@ class SessionStoreTests(unittest.TestCase):
         )
         self.assertEqual([item.id for item in by_metadata], [focus_a.id])
 
+    def test_list_sessions_agent_filter_includes_room_members_before_limit(
+        self,
+    ) -> None:
+        room = self.store.create_room(
+            channel="cli",
+            target="focus",
+            session_id="custom-room-id",
+            metadata={"working_dir": "/workspace"},
+        )
+        self.store.add_participant(
+            session_id=room.id,
+            participant_type="agent",
+            participant_id="active-agent",
+            channel="cli",
+            role="participant",
+        )
+        self.store.add_participant(
+            session_id=room.id,
+            participant_type="agent",
+            participant_id="main-agent",
+            channel="cli",
+            role="participant",
+        )
+        self.assertEqual(self.store.get_active_agent(room.id), "active-agent")
+        for index in range(205):
+            self.store.resolve_session(
+                agent_id=f"foreign-{index}",
+                channel="cli",
+                target="focus",
+                session_id=f"foreign-session-{index}",
+                metadata={"working_dir": "/workspace"},
+            )
+
+        sessions = self.store.list_sessions(
+            limit=1,
+            agent_id="main-agent",
+            target="focus",
+            metadata_filter={"working_dir": "/workspace"},
+        )
+
+        self.assertEqual([item.id for item in sessions], [room.id])
+
     def test_delete_session_removes_session_messages_events_and_context(self) -> None:
         session = self.store.resolve_session(
             agent_id="main",
@@ -1062,6 +1104,20 @@ class SessionStoreTests(unittest.TestCase):
         )
         self.assertTrue(removed)
         self.assertEqual(self.store.get_active_agent(session.id), "writer-agent")
+
+    def test_room_participant_rejects_unsupported_role(self) -> None:
+        session = self.store.create_room(channel="cli", target="role-check")
+
+        with self.assertRaisesRegex(ValueError, "Invalid participant role"):
+            self.store.add_participant(
+                session_id=session.id,
+                participant_type="human",
+                participant_id="alice",
+                channel="cli",
+                role="admin",
+            )
+
+        self.assertEqual(self.store.list_participants(session.id), [])
 
     def test_append_message_stores_participant_attribution(self) -> None:
         session = self.store.resolve_session(

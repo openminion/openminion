@@ -89,6 +89,13 @@ def _extract_runtime_message_ref(
     return None
 
 
+def _inject_runtime_message_ref(
+    *, tool_name: str, args: dict[str, Any], message_ref: dict[str, str] | None
+) -> None:
+    if message_ref and tool_name.startswith("reactions.") and not args.get("message"):
+        args["message"] = message_ref
+
+
 def _orchestration_metadata_from_command(command: Mapping[str, Any]) -> dict[str, Any]:
     meta = command.get("meta")
     if not isinstance(meta, Mapping):
@@ -136,6 +143,7 @@ def _merge_orchestration_context_metadata(
 __all__ = [
     "_confirmation_replay_metadata",
     "_extract_runtime_message_ref",
+    "_inject_runtime_message_ref",
     "_merge_orchestration_context_metadata",
     "_orchestration_metadata_from_command",
     "_runtime_workspace_from_command",

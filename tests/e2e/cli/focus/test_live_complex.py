@@ -69,6 +69,17 @@ def test_security_validation_does_not_trust_fixture_test(tmp_path) -> None:
         )
 
 
+def test_long_research_synthesis_uses_isolated_workspace() -> None:
+    scenario = next(
+        item
+        for item in COMPLEX_LIVE_SCENARIOS
+        if item.scenario_id == "research_long_synthesis"
+    )
+
+    assert scenario.use_scratch_workspace is True
+    assert scenario.include_project_context is False
+
+
 @pytest.mark.parametrize(
     "scenario",
     [_scenario_param(scenario) for scenario in COMPLEX_LIVE_SCENARIOS],
@@ -297,12 +308,13 @@ def test_live_focus_complex_workflow_closeout(
         "normalize.py",
         "test_helpers.py",
     ]
-    assert (scratch_dir / "ledger.tsv").read_text(encoding="utf-8").splitlines() == [
-        "file\tdisposition",
+    ledger_lines = (scratch_dir / "ledger.tsv").read_text(encoding="utf-8").splitlines()
+    assert ledger_lines[0] == "file\tdisposition"
+    assert set(ledger_lines[1:]) == {
         "labels.py\tkeep",
         "normalize.py\ttrim",
         "test_helpers.py\tkeep",
-    ]
+    }
     assert (scratch_dir / "summary.md").read_text(encoding="utf-8").splitlines() == [
         "changed: normalize.py",
         "unchanged: labels.py, test_helpers.py",

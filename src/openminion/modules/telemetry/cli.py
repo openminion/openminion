@@ -40,6 +40,7 @@ from .inspection import (
 )
 from .invocation_inspection import (
     build_invocation_snapshot,
+    read_safe_invocation_event_rows,
     select_invocation_snapshots,
 )
 from .service import TelemetryService
@@ -227,27 +228,6 @@ async def _print_summary(*, db_path, session_id: str) -> int:
     return 0
 
 
-def _event_row(event) -> dict[str, Any]:
-    data = event.data
-    error = data.get("error")
-    error_type = (
-        str(error.get("type") or error.get("code") or "")
-        if isinstance(error, dict)
-        else ""
-    )
-    return {
-        "agent_id": event.agent_id or "",
-        "event_id": event.event_id,
-        "event_type": event.event_type,
-        "execution_id": event.execution_id or "",
-        "session_id": event.session_id,
-        "status": str(data.get("status") or ""),
-        "timestamp": event.timestamp,
-        "turn_id": event.turn_id,
-        "error_type": error_type,
-    }
-
-
 async def _print_invocation(*, args, db_path) -> int:
     command = str(args.invocation_command)
     if command != "list":
@@ -291,6 +271,8 @@ def _print_invocation_detail(*, args: Any, db_path: Path) -> int:
         print_json_payload(report.to_dict())
         return telemetry_debug_exit(report)
     home_root = str(args.home_root or "").strip() or None
+    event_type = str(args.event_type or "").strip()
+    safe_rows: list[dict[str, Any]] = []
     try:
         with open_telemetry_inspection(
             db_path=db_path,
@@ -307,6 +289,8 @@ def _print_invocation_detail(*, args: Any, db_path: Path) -> int:
                 return telemetry_debug_exit(report)
             invocation_id = str(report.selection.selected_invocation_id)
             payload, events = build_invocation_snapshot(service, invocation_id)
+            if args.invocation_command == "show":
+                safe_rows = read_safe_invocation_event_rows(service, invocation_id)
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
         report = build_telemetry_debug_error(
             telemetry_storage_error_code(exc),
@@ -314,14 +298,17 @@ def _print_invocation_detail(*, args: Any, db_path: Path) -> int:
         )
         print_json_payload(report.to_dict())
         return telemetry_debug_exit(report)
-    event_type = str(args.event_type or "").strip()
     filtered_events = (
         [event for event in events if event.event_type == event_type]
         if event_type
         else events
     )
     if args.invocation_command == "show":
-        payload["events"] = [_event_row(event) for event in filtered_events]
+        payload["events"] = (
+            [row for row in safe_rows if row["event_type"] == event_type]
+            if event_type
+            else safe_rows
+        )
     elif event_type:
         payload["event_filter"] = {
             "event_type": event_type,
@@ -389,6 +376,7 @@ def _smoke_report(
             "protocol": protocol,
         },
         probe={
+            "signal": "logs",
             "event_id": event_id,
             "local_recording": local_recording,
             "transport": transport,

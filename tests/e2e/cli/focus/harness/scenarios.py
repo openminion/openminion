@@ -113,6 +113,8 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=4,
         approval_reply="session",
+        use_scratch_workspace=True,
+        include_project_context=False,
         max_auto_continuations=4,
     ),
 )

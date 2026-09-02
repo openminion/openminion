@@ -218,6 +218,10 @@ def test_mcp_approval_required_denial_returns_structured_tool_result() -> None:
     assert result.data["details"]["approval_required"] is True
     assert result.data["details"]["requires_confirm"] is True
     assert result.data["details"]["mcp_server"] == "fixture"
+    assert result.data["details"]["mcp_remote_tool_name"] == "delete-all"
+    assert result.data["details"]["runtime_tool_name"] == spec.name
+    assert result.data["details"]["approval_mode"] == "always"
+    assert result.data["details"]["reason_code"] == "POLICY_MCP_APPROVAL_REQUIRED"
     assert manager.calls == []
 
 

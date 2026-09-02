@@ -18,6 +18,13 @@ def _run(coro: Any) -> Any:
 def test_session_adapter_emits_turn_pack_tool_loop_and_retry(tmp_path: Path) -> None:
     telemetry = TelemetryService(str(tmp_path / ".openminion" / "telemetry.db"))
     ctl = TelemetryCtl(telemetry)
+    ctl.bind_execution(
+        "sess-session",
+        "turn-1",
+        invocation_id="invocation-1",
+        execution_id="execution-1",
+        agent_id="agent-1",
+    )
     adapter = SessctlAdapter(tmp_path / "sessions.db", telemetryctl=ctl)
     adapter.set_telemetry_context(session_id="sess-session", turn_id="turn-1")
     adapter.append_turn("sess-session", "user", "hello")
@@ -27,13 +34,13 @@ def test_session_adapter_emits_turn_pack_tool_loop_and_retry(tmp_path: Path) -> 
         "sess-session",
         "tool.completed",
         {"ok": True},
-        trace_id="turn-1",
+        trace_id="trace-1",
     )
     adapter.emit_canonical_event(
         "sess-session",
         "llm.call.retry",
         payload={"attempt": 2},
-        trace_id="turn-1",
+        trace_id="trace-1",
     )
 
     summary = _run(telemetry.get_module_summary("sess-session"))
@@ -49,6 +56,13 @@ def test_session_adapter_emits_turn_pack_tool_loop_and_retry(tmp_path: Path) -> 
     assert "turn.assistant" in event_types
     assert "tool.completed" in event_types
     assert "llm.call.retry" in event_types
+    canonical = [
+        event
+        for event in session_summary.events
+        if event.event_type in {"tool.completed", "llm.call.retry"}
+    ]
+    assert {event.turn_id for event in canonical} == {"turn-1"}
+    assert {event.invocation_id for event in canonical} == {"invocation-1"}
     _run(telemetry.close())
 
 

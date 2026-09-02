@@ -25,7 +25,10 @@ from openminion.modules.brain.loop.tools.runtime import (
     DefaultAdaptiveToolLoopLLMRuntime,
     build_runtime_tool_specs,
 )
-from openminion.modules.llm.client_call import response_cost_payload
+from openminion.modules.llm.client_call import (
+    response_cost_payload,
+    response_telemetry_event_fields,
+)
 from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.constants import (
@@ -888,7 +891,7 @@ def decide(
             "retry_count": attempt,
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
             "configured_output_limit": budget_max_tokens,
-            **provider_request_id_payload(response.telemetry),
+            **response_telemetry_event_fields(response),
         },
         trace_id=state.trace_id,
     )

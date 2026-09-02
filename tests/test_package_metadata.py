@@ -3,7 +3,10 @@ from __future__ import annotations
 import subprocess
 import tomllib
 import re
+import sys
+import tarfile
 from pathlib import Path
+import zipfile
 
 from openminion import __version__ as package_version
 from openminion.base.version import OPENMINION_VERSION
@@ -116,14 +119,43 @@ def test_remote_transport_dependencies_are_protocol_scoped() -> None:
     )
 
 
-def test_default_terminal_renderer_dependencies_are_core() -> None:
+def test_renderer_and_animation_dependencies_are_scoped() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     )
     dependencies = pyproject["project"]["dependencies"]
+    extras = pyproject["project"]["optional-dependencies"]
 
     assert any(dep.startswith("prompt-toolkit") for dep in dependencies)
-    assert any(dep.startswith("textual") for dep in dependencies)
+    assert any(dep.startswith("rich") for dep in dependencies)
+    assert not any(dep.startswith(("textual", "pyfiglet")) for dep in dependencies)
+    assert extras["textual"] == ["textual>=1,<9"]
+    assert "pyfiglet>=1.0,<2" in extras["animations"]
+    assert "textual>=1,<9" in extras["dev"]
+    assert "pyfiglet>=1.0,<2" in extras["dev"]
+
+
+def test_built_archives_exclude_test_tree(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    dist = tmp_path / "dist"
+    subprocess.run(
+        [sys.executable, "-m", "build", "--outdir", str(dist)],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    source_archive = next(dist.glob("openminion-*.tar.gz"))
+    wheel = next(dist.glob("openminion-*.whl"))
+
+    with tarfile.open(source_archive, "r:gz") as archive:
+        assert not any("/tests/" in name for name in archive.getnames())
+    with zipfile.ZipFile(wheel) as archive:
+        assert not any(name.startswith("tests/") for name in archive.namelist())
+        assert {
+            "openminion/cli/interactive/foundation.tcss",
+            "openminion/cli/interactive/styles.tcss",
+        } <= set(archive.namelist())
 
 
 def test_package_version_owner_matches_public_metadata() -> None:

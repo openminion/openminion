@@ -1,4 +1,5 @@
 from pathlib import Path
+import shlex
 from typing import TYPE_CHECKING, Any, Mapping
 
 from openminion.base.config.action_policy import (
@@ -11,6 +12,7 @@ from openminion.base.config.runtime.profile import (
     next_permission_mode,
 )
 from openminion.cli.status import TokenUsageTotals
+from openminion.cli.interactive.models import ModelSelection
 from openminion.modules.memory.errors import MemctlError
 from openminion.modules.memory.interfaces import (
     CandidateListOptions,
@@ -23,6 +25,8 @@ from openminion.modules.skill import Skill
 _PROVIDER_CONFIG_ALIASES = {
     "claude": "anthropic",
 }
+_MODEL_CONNECTION_SESSION_KEY = "override_model_connection"
+_MODEL_SESSION_KEY = "override_model"
 
 
 class RuntimeControlsMixin:
@@ -32,6 +36,7 @@ class RuntimeControlsMixin:
     _current_turn_usage: TokenUsageTotals | None
     _memory_provider: Any
     _model_override_model: str
+    _model_override_connection: str
     _model_override_provider: str
     _action_policy_mode_override: str
     _permission_mode: str
@@ -61,61 +66,150 @@ class RuntimeControlsMixin:
 
         def token_usage_report(self) -> str: ...
 
-    def list_models(self) -> list[tuple[str, str, bool]]:
-        result: list[tuple[str, str, bool]] = []
-        providers_cfg = getattr(getattr(self._rt, "config", None), "providers", None)
-        if providers_cfg is None:
-            return result
-        active_provider, active_model = self._provider_model_identity()
-        for provider_name in (
-            "anthropic",
-            "openai",
-            "openrouter",
-            "cerebras",
-            "groq",
-            "ollama",
-            "cortensor",
-        ):
-            provider_cfg = getattr(providers_cfg, provider_name, None)
-            if provider_cfg is None:
-                continue
-            configured_model = str(getattr(provider_cfg, "model", "") or "").strip()
-            is_active = provider_name == active_provider
-            if is_active and active_model:
-                configured_model = active_model
-            result.append((provider_name, configured_model, is_active))
-        return result
+    def list_models(self) -> list[ModelSelection]:
+        catalog = getattr(self._rt, "model_connection_catalog", None)
+        if not callable(catalog):
+            return []
+        rows = list(catalog(self.agent_id) or [])
+        active_connection = self._model_override_connection
+        active_model = self._model_override_model
+        if not active_connection:
+            default_row = next(
+                (row for row in rows if bool(row.get("is_default"))),
+                rows[0] if rows else None,
+            )
+            if default_row is not None:
+                active_connection = str(default_row["connection_id"])
+                active_model = str(default_row["model"])
+        return [
+            ModelSelection(
+                index=index,
+                connection_id=str(row["connection_id"]),
+                connection_name=str(row["connection_name"]),
+                provider=str(row["provider"]),
+                transport_adapter=str(row["transport_adapter"]),
+                model=str(row["model"]),
+                configured_connection=bool(row["configured_connection"]),
+                active=str(row["connection_id"]) == active_connection
+                and str(row["model"]) == active_model,
+                agent_default=bool(row["is_default"]),
+            )
+            for index, row in enumerate(rows, start=1)
+        ]
 
-    def switch_model(self, target: str) -> tuple[str, str]:
+    def switch_model(self, target: str) -> ModelSelection:
         raw = str(target or "").strip()
         if not raw or raw.lower() == "default":
-            self._model_override_provider = ""
-            self._model_override_model = ""
-            provider, model = self._provider_model_identity()
-            return provider, model
-        if "/" in raw:
-            provider_part, _, model_part = raw.partition("/")
-        else:
-            provider_part, model_part = raw, ""
-        provider_part = provider_part.strip().lower()
-        model_part = model_part.strip()
-        provider_key = _PROVIDER_CONFIG_ALIASES.get(provider_part, provider_part)
-        providers_cfg = getattr(getattr(self._rt, "config", None), "providers", None)
-        provider_cfg = (
-            getattr(providers_cfg, provider_key, None)
-            if providers_cfg is not None
-            else None
+            self._clear_model_selection()
+            self._persist_session_model_selection()
+            return self._active_model_selection()
+        selected = self._resolve_model_selection(raw)
+        if not selected.configured_connection:
+            self._clear_model_selection()
+            self._persist_session_model_selection()
+            return self._active_model_selection()
+        self._model_override_connection = (
+            selected.connection_id if selected.configured_connection else ""
         )
-        if provider_cfg is None:
-            valid = ", ".join(name for name, _, _ in self.list_models())
+        self._model_override_provider = selected.provider
+        self._model_override_model = selected.model
+        self._persist_session_model_selection()
+        return self._active_model_selection()
+
+    def set_default_model(self, target: str) -> ModelSelection:
+        selected = self._resolve_model_selection(target)
+        self._rt.set_agent_default_model(
+            agent_id=self.agent_id,
+            connection_id=selected.connection_id,
+            model=selected.model,
+        )
+        self._gateway = self._rt.resolve_gateway(self.agent_id)
+        return self.switch_model(str(selected.index))
+
+    def model_setup_command(self) -> str:
+        parts = ["openminion"]
+        config_path = getattr(self._rt, "config_path", None)
+        if config_path is not None:
+            parts.extend(("--config", str(config_path)))
+        parts.extend(("setup", "--add-model", "--no-focus", "--agent", self.agent_id))
+        return " ".join(shlex.quote(part) for part in parts)
+
+    def restore_session_model_selection(self, record: Any) -> None:
+        metadata = getattr(record, "metadata", {})
+        if not isinstance(metadata, Mapping):
+            return
+        connection_id = str(
+            metadata.get(_MODEL_CONNECTION_SESSION_KEY, "") or ""
+        ).strip()
+        model = str(metadata.get(_MODEL_SESSION_KEY, "") or "").strip()
+        if not connection_id:
+            self._clear_model_selection()
+            return
+        selected = self._resolve_model_selection(f"{connection_id} {model}".strip())
+        self._model_override_connection = (
+            selected.connection_id if selected.configured_connection else ""
+        )
+        self._model_override_provider = selected.provider
+        self._model_override_model = selected.model
+
+    def _clear_model_selection(self) -> None:
+        self._model_override_connection = ""
+        self._model_override_provider = ""
+        self._model_override_model = ""
+
+    def _model_request_overrides(self) -> dict[str, str]:
+        return {
+            "override_provider": self._model_override_connection
+            or self._model_override_provider,
+            "override_model": self._model_override_model,
+        }
+
+    def _resolve_model_selection(self, target: str) -> ModelSelection:
+        rows = self.list_models()
+        if not rows:
+            raise ValueError("this agent has no configured model connections")
+        raw = str(target or "").strip()
+        if raw.isdigit():
+            index = int(raw)
+            selected = next((row for row in rows if row.index == index), None)
+            if selected is not None:
+                return selected
+        connection_id, _, model = raw.partition(" ")
+        matches = [
+            row
+            for row in rows
+            if row.connection_id == connection_id
+            and (not model or row.model == model.strip())
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            default = next((row for row in matches if row.agent_default), None)
+            if default is not None:
+                return default
             raise ValueError(
-                f"unknown provider {provider_part!r}; "
-                f"valid options: {valid or '(none configured)'}"
+                f"connection {connection_id!r} has multiple models; use its row number"
             )
-        self._model_override_provider = provider_key
-        self._model_override_model = model_part
-        provider, model = self._provider_model_identity()
-        return provider, model
+        valid = ", ".join(str(row.index) for row in rows)
+        raise ValueError(f"unknown model choice {raw!r}; valid row numbers: {valid}")
+
+    def _active_model_selection(self) -> ModelSelection:
+        rows = self.list_models()
+        selected = next((row for row in rows if row.active), None)
+        if selected is None:
+            raise ValueError("this agent has no active configured model")
+        return selected
+
+    def _persist_session_model_selection(self) -> None:
+        if not self.is_bound or not self.session_id:
+            return
+        self._rt.sessions.update_session_metadata(
+            session_id=self.session_id,
+            patch={
+                _MODEL_CONNECTION_SESSION_KEY: self._model_override_connection,
+                _MODEL_SESSION_KEY: self._model_override_model,
+            },
+        )
 
     @property
     def read_only_mode(self) -> bool:
@@ -575,12 +669,18 @@ class RuntimeControlsMixin:
 
     @property
     def service_vendor_name(self) -> str:
+        selected = next((row for row in self.list_models() if row.active), None)
+        if selected is not None:
+            return selected.connection_name
         provider_name, _ = self._provider_model_identity()
         provider_identity = self._provider_identity(provider_name)
         return str(provider_identity.get("service_vendor") or provider_name).strip()
 
     @property
     def transport_adapter_name(self) -> str:
+        selected = next((row for row in self.list_models() if row.active), None)
+        if selected is not None:
+            return selected.transport_adapter
         provider_name, _ = self._provider_model_identity()
         provider_identity = self._provider_identity(provider_name)
         return str(provider_identity.get("transport_adapter") or "").strip()
@@ -607,6 +707,9 @@ class RuntimeControlsMixin:
         )
 
     def _provider_model_identity(self) -> tuple[str, str]:
+        selected = next((row for row in self.list_models() if row.active), None)
+        if selected is not None:
+            return selected.provider, selected.model
         try:
             profile = self._rt.resolve_agent_profile(self.agent_id)
         except (AttributeError, TypeError, ValueError):

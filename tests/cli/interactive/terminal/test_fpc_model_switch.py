@@ -7,227 +7,267 @@ from typing import Any
 import pytest
 from rich.console import Console
 
-from openminion.cli.interactive.terminal.shell import _render_model_status
+from openminion.api.core.profiles import RuntimeProfilesMixin
+from openminion.base.config import (
+    AgentProfileConfig,
+    OpenMinionConfig,
+    load_config,
+)
 from openminion.cli.interactive.runtime import OpenMinionRuntime
+from openminion.cli.interactive.terminal.shell import _render_model_status
 
 
-class _StubAPIRuntime:
-    def __init__(
+class _SessionStore:
+    def __init__(self) -> None:
+        self.metadata: dict[str, dict[str, str]] = {}
+
+    def update_session_metadata(
         self,
         *,
-        anthropic_model: str = "claude-3-5-sonnet-latest",
-        openai_model: str = "gpt-4.1-mini",
+        session_id: str,
+        patch: dict[str, str],
     ) -> None:
-        self.config = SimpleNamespace(
-            providers=SimpleNamespace(
-                anthropic=SimpleNamespace(model=anthropic_model),
-                openai=SimpleNamespace(
-                    model=openai_model,
-                    provider_identity={
-                        "service_vendor": "nvidia",
-                        "transport_adapter": "openai_chat",
-                    },
-                ),
-                openrouter=SimpleNamespace(model="openai/gpt-4.1-mini"),
-                cerebras=SimpleNamespace(model="gpt-oss-120b"),
-                groq=SimpleNamespace(model="llama-3.1-70b"),
-                ollama=SimpleNamespace(model="llama3"),
-                cortensor=SimpleNamespace(model="cortensor-default"),
-            ),
+        self.metadata.setdefault(session_id, {}).update(patch)
+
+
+class _StubAPIRuntime(RuntimeProfilesMixin):
+    def __init__(self, *, config_path=None) -> None:
+        self.config = OpenMinionConfig(
             agents={
-                "default-agent": SimpleNamespace(
+                "default-agent": AgentProfileConfig(
                     name="default-agent",
                     provider="anthropic",
-                    model=anthropic_model,
                     default_channel="cli",
+                    provider_config_overrides={"model": "claude-sonnet-5"},
+                    model_connections={
+                        "anthropic": {
+                            "provider": "anthropic",
+                            "display_name": "Anthropic",
+                            "models": ["claude-sonnet-5"],
+                            "default": True,
+                        },
+                        "minimax": {
+                            "provider": "openai",
+                            "display_name": "MiniMax",
+                            "models": ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+                            "provider_config_overrides": {
+                                "base_url": "https://api.minimax.io/v1",
+                                "api_key_env": "MINIMAX_API_KEY",
+                                "provider_identity": {
+                                    "service_vendor": "minimax",
+                                    "transport_adapter": "openai_chat",
+                                },
+                            },
+                        },
+                    },
                 )
             },
+            default_agent="default-agent",
         )
+        self.config_path = config_path
+        self.sessions = _SessionStore()
+        self.evictions: list[tuple[str, str]] = []
 
-    def resolve_agent_profile(self, agent_id: str | None = None, overrides=None) -> Any:
-        return self.config.agents.get("default-agent")
+    def resolve_agent_profile(
+        self,
+        agent_id: str | None = None,
+        overrides=None,
+    ) -> Any:
+        return self.config.agents[agent_id or "default-agent"]
+
+    def evict_agent_runtime(self, *, agent_id: str, reason: str) -> None:
+        self.evictions.append((agent_id, reason))
+
+    def resolve_gateway(self, _agent_id: str) -> object:
+        return object()
 
 
-def _make_runtime() -> OpenMinionRuntime:
+def _make_runtime(*, api_runtime: _StubAPIRuntime | None = None) -> OpenMinionRuntime:
     rt = OpenMinionRuntime.__new__(OpenMinionRuntime)
-    rt._rt = _StubAPIRuntime()
+    rt._rt = api_runtime or _StubAPIRuntime()
     rt._agent_id_override = "default-agent"
     rt._agent_id = "default-agent"
     rt._channel = "cli"
     rt._target = "tui"
     rt._history_limit = 200
     rt._working_dir = ""
-    # _ensure_agent_resolved short-circuits when both _agent_id and
-    # _gateway are truthy — set a non-None sentinel for _gateway so
-    # the resolver doesn't try to reach a real gateway.
     rt._gateway = object()
-    rt._session_id = None
+    rt._session_id = "session-1"
+    rt._conversation_id = ""
     rt._prompt_on_resume = False
     rt._project_context = None
     rt._project_context_pending = False
+    rt._model_override_connection = ""
     rt._model_override_provider = ""
     rt._model_override_model = ""
+    rt._action_policy_mode_override = ""
+    rt._permission_mode = ""
+    rt._permission_overrides = {}
+    rt._read_only_mode = False
+    rt._effort_level = ""
     rt._pending_candidate_session = None
     return rt
 
 
-def test_list_models_returns_configured_providers() -> None:
+def test_list_models_returns_only_agent_configured_models() -> None:
+    rows = _make_runtime().list_models()
+
+    assert [(row.connection_id, row.model) for row in rows] == [
+        ("anthropic", "claude-sonnet-5"),
+        ("minimax", "MiniMax-M2.7"),
+        ("minimax", "MiniMax-M2.7-highspeed"),
+    ]
+    assert [row.index for row in rows] == [1, 2, 3]
+
+
+def test_list_models_marks_active_and_agent_default_separately() -> None:
+    rows = _make_runtime().list_models()
+
+    assert [row.index for row in rows if row.active] == [1]
+    assert [row.index for row in rows if row.agent_default] == [1]
+
+
+def test_switch_model_uses_configured_row_number() -> None:
     rt = _make_runtime()
-    rows = rt.list_models()
-    names = [name for name, _, _ in rows]
-    assert "anthropic" in names
-    assert "openai" in names
-    assert "openrouter" in names
+
+    selected = rt.switch_model("2")
+
+    assert selected.connection_name == "MiniMax"
+    assert rt.provider_name == "openai"
+    assert rt.model_name == "MiniMax-M2.7"
+    assert rt.service_vendor_name == "MiniMax"
+    assert rt.transport_adapter_name == "openai_chat"
 
 
-def test_list_models_marks_active_provider() -> None:
+def test_switch_model_accepts_unambiguous_connection_and_model() -> None:
     rt = _make_runtime()
-    rows = rt.list_models()
-    actives = [name for name, _, is_active in rows if is_active]
-    assert actives == ["anthropic"]
+
+    selected = rt.switch_model("minimax MiniMax-M2.7-highspeed")
+
+    assert selected.index == 3
+    assert rt.model_name == "MiniMax-M2.7-highspeed"
 
 
-def test_list_models_marks_active_after_switch() -> None:
+def test_switch_model_requires_row_number_for_multi_model_connection() -> None:
     rt = _make_runtime()
-    rt.switch_model("openai")
-    rows = rt.list_models()
-    actives = [name for name, _, is_active in rows if is_active]
-    assert actives == ["openai"]
+
+    with pytest.raises(ValueError, match="multiple models"):
+        rt.switch_model("minimax")
 
 
-def test_switch_model_provider_only_uses_configured_default() -> None:
+def test_switch_model_rejects_unconfigured_choice() -> None:
     rt = _make_runtime()
-    provider, model = rt.switch_model("openai")
-    assert provider == "openai"
-    assert model == "gpt-4.1-mini"
+
+    with pytest.raises(ValueError, match="valid row numbers: 1, 2, 3"):
+        rt.switch_model("openai/gpt-4o")
 
 
-def test_switch_model_provider_and_model_pair() -> None:
+def test_switch_model_default_clears_session_override() -> None:
     rt = _make_runtime()
-    provider, model = rt.switch_model("openai/gpt-4o")
-    assert provider == "openai"
-    assert model == "gpt-4o"
+    rt.switch_model("3")
 
+    selected = rt.switch_model("default")
 
-def test_switch_model_anthropic_alias_normalized() -> None:
-    rt = _make_runtime()
-    provider, _ = rt.switch_model("claude")
-    assert provider == "anthropic"
-
-
-def test_switch_model_unknown_provider_raises_with_valid_options() -> None:
-    rt = _make_runtime()
-    with pytest.raises(ValueError) as exc:
-        rt.switch_model("invalid-provider")
-    msg = str(exc.value)
-    assert "invalid-provider" in msg
-    # Lists valid options.
-    assert "anthropic" in msg
-    assert "openai" in msg
-
-
-def test_switch_model_clears_override_with_default() -> None:
-    rt = _make_runtime()
-    rt.switch_model("openai")
-    assert rt._model_override_provider == "openai"
-    rt.switch_model("default")
-    assert rt._model_override_provider == ""
-    assert rt._model_override_model == ""
-    assert rt.provider_name == "anthropic"
-
-
-def test_switch_model_clears_override_with_empty_string() -> None:
-    rt = _make_runtime()
-    rt.switch_model("openai/gpt-4o")
-    rt.switch_model("")
+    assert selected.index == 1
+    assert rt._model_override_connection == ""
     assert rt._model_override_provider == ""
     assert rt._model_override_model == ""
 
 
-def test_provider_name_reflects_override() -> None:
+def test_switch_model_persists_and_restores_session_selection() -> None:
+    api_runtime = _StubAPIRuntime()
+    first = _make_runtime(api_runtime=api_runtime)
+    first.switch_model("3")
+    metadata = api_runtime.sessions.metadata["session-1"]
+
+    resumed = _make_runtime(api_runtime=api_runtime)
+    resumed.restore_session_model_selection(SimpleNamespace(metadata=metadata))
+
+    assert resumed.model_name == "MiniMax-M2.7-highspeed"
+    assert resumed.service_vendor_name == "MiniMax"
+
+
+def test_turn_metadata_uses_typed_connection_for_configured_route() -> None:
     rt = _make_runtime()
-    assert rt.provider_name == "anthropic"
-    rt.switch_model("openai")
-    assert rt.provider_name == "openai"
+    rt.switch_model("2")
+
+    metadata = rt._turn_inbound_metadata(None)
+
+    assert metadata is not None
+    assert metadata["override_provider"] == "minimax"
+    assert metadata["override_model"] == "MiniMax-M2.7"
 
 
-def test_model_name_reflects_override() -> None:
-    rt = _make_runtime()
-    rt.switch_model("openai/gpt-4o")
-    assert rt.model_name == "gpt-4o"
-
-
-def test_provider_only_switch_inherits_provider_default_model() -> None:
-    rt = _make_runtime()
-    rt.switch_model("openai")
-    assert rt.provider_name == "openai"
-    assert rt.model_name == "gpt-4.1-mini"
-
-
-def test_profile_provider_override_sets_active_model() -> None:
-    rt = _make_runtime()
-    profile = rt._rt.config.agents["default-agent"]
+def test_turn_metadata_keeps_legacy_route_on_existing_profile_fields() -> None:
+    api_runtime = _StubAPIRuntime()
+    profile = api_runtime.config.agents["default-agent"]
+    profile.model_connections = {}
     profile.provider = "openai"
-    profile.model = ""
-    profile.provider_config_overrides = {"model": "openai/gpt-oss-20b"}
+    profile.provider_config_overrides = {
+        "base_url": "https://api.minimax.io/v1",
+        "model": "MiniMax-M2.7",
+    }
+    rt = _make_runtime(api_runtime=api_runtime)
+    assert rt.list_models()[0].configured_connection is False
+    rt.switch_model("1")
 
-    assert rt.model_name == "openai/gpt-oss-20b"
-    assert next(row for row in rt.list_models() if row[0] == "openai") == (
-        "openai",
-        "openai/gpt-oss-20b",
-        True,
-    )
+    metadata = rt._turn_inbound_metadata(None)
 
-
-def test_provider_identity_separates_service_and_transport_adapter() -> None:
-    rt = _make_runtime()
-    rt.switch_model("openai/google/gemma-4-31b-it")
-
-    assert rt.model_name == "google/gemma-4-31b-it"
-    assert rt.service_vendor_name == "nvidia"
-    assert rt.transport_adapter_name == "openai_chat"
+    assert metadata is None
 
 
-def test_provider_identity_uses_canonical_translation_when_not_configured() -> None:
-    rt = _make_runtime()
-    provider_cfg = rt._rt.config.providers.openai
-    provider_cfg.provider_identity = {}
-    provider_cfg.base_url = "https://api.minimax.io/v1"
-    rt.switch_model("openai/MiniMax-M2.7")
+def test_set_default_model_saves_agent_default(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    api_runtime = _StubAPIRuntime(config_path=config_path)
+    rt = _make_runtime(api_runtime=api_runtime)
 
-    assert rt.service_vendor_name == "minimax"
-    assert rt.transport_adapter_name == "openai_chat"
+    selected = rt.set_default_model("3")
+    saved = load_config(str(config_path))
+    profile = saved.agents["default-agent"]
 
-
-def test_switch_model_is_session_scoped() -> None:
-    rt1 = _make_runtime()
-    rt1.switch_model("openai")
-    assert rt1.provider_name == "openai"
-
-    rt2 = _make_runtime()
-    assert rt2.provider_name == "anthropic"
+    assert selected.model == "MiniMax-M2.7-highspeed"
+    assert profile.model_connections["minimax"]["default"] is True
+    assert profile.provider == "openai"
+    assert profile.provider_config_overrides["model"] == "MiniMax-M2.7-highspeed"
+    assert api_runtime.evictions == [("default-agent", "model_default_changed")]
 
 
-def test_render_model_status_shows_current_and_table() -> None:
+def test_model_setup_command_targets_active_agent_and_config(tmp_path) -> None:
+    config_path = tmp_path / "agent config.json"
+    rt = _make_runtime(api_runtime=_StubAPIRuntime(config_path=config_path))
+
+    command = rt.model_setup_command()
+
+    assert "setup --add-model --no-focus" in command
+    assert "--agent default-agent" in command
+    assert str(config_path) in command
+
+
+def test_render_model_status_uses_connection_model_and_api_format_columns() -> None:
     rt = _make_runtime()
     buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=120)
+    console = Console(file=buf, force_terminal=False, width=140)
+
     _render_model_status(runtime=rt, console=console)
+
     out = buf.getvalue()
-    assert "current model:" in out
-    assert "provider: anthropic" in out
-    assert "Config key" in out
-    assert "anthropic" in out
-    assert "openai" in out
-    assert "Switch with" in out
+    assert "agent: default-agent" in out
+    assert "current model: claude-sonnet-5" in out
+    assert "connection: Anthropic" in out
+    assert "Connection" in out
+    assert "Model" in out
+    assert "API format" in out
+    assert "Config key" not in out
+    assert "MiniMax-M2.7-highspeed" in out
+    assert "/model use <#>" in out
 
 
 def test_render_model_status_marks_active_row() -> None:
     rt = _make_runtime()
-    rt.switch_model("openai")
+    rt.switch_model("2")
     buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=120)
+    console = Console(file=buf, force_terminal=False, width=140)
+
     _render_model_status(runtime=rt, console=console)
-    out = buf.getvalue()
-    assert "◆" in out
-    assert "openai" in out
+
+    assert "◆" in buf.getvalue()

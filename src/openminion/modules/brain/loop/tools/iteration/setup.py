@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, NamedTuple
 
 from pydantic import ValidationError
@@ -8,6 +9,7 @@ from openminion.modules.brain.execution.public_taxonomy import (
     public_mode_name_for_mode_name,
 )
 from openminion.modules.brain.schemas import DelegationContext
+from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
 from openminion.modules.llm.schemas import Message, ToolSpec
 
 from ..budget_control import (
@@ -67,6 +69,22 @@ def _has_system_message(messages: list[Message], content: str) -> bool:
         message.role == "system" and message.content.strip() == content
         for message in messages
     )
+
+
+def _loop_request_metadata(
+    profile: AdaptiveToolLoopProfile,
+    requestable_specs: list[ToolSpec],
+) -> dict[str, Any] | None:
+    metadata_override = profile.llm_request_overrides.get("metadata")
+    metadata = (
+        dict(metadata_override or {}) if isinstance(metadata_override, dict) else None
+    )
+    if requestable_specs:
+        metadata = dict(metadata or {})
+        metadata[REQUESTABLE_TOOL_NAMES_METADATA_KEY] = json.dumps(
+            [spec.name for spec in requestable_specs if spec.name.strip()]
+        )
+    return metadata
 
 
 def _ensure_system_message(
@@ -337,10 +355,7 @@ def prepare_loop_frame(
             loop_state.messages.append(inactive_directory_message)
 
     max_output_tokens = profile.llm_request_overrides.get("max_output_tokens")
-    metadata_override = profile.llm_request_overrides.get("metadata")
-    metadata = (
-        dict(metadata_override or {}) if isinstance(metadata_override, dict) else None
-    )
+    metadata = _loop_request_metadata(profile, requestable_specs)
 
     turn_scope_id = _current_turn_scope_id(loop_ctx)
 

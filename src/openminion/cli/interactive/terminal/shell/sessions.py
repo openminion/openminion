@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
+from threading import Event
 from typing import Any
 
 from rich.console import Console
 from rich.text import Text
 
+from openminion.cli.interactive.runtime.messages import room_result_chat_messages
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.styles import StyleToken
+from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
 from ..overlays import TerminalOverlayPresenter
 from ..transcript import TerminalTranscript
@@ -14,6 +19,110 @@ from ..transcript import TerminalTranscript
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _MUTED_STYLE = token_rich_style(StyleToken.MUTED)
 _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
+
+
+async def run_room_turn_if_bound(
+    runtime: Any,
+    text: str,
+    *,
+    progress_callback: Callable[[dict[str, Any]], None],
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    transcript: TerminalTranscript,
+    handle: Any,
+) -> str | None:
+    room_runner = getattr(runtime, "run_room_turn", None)
+    room_detector = getattr(runtime, "is_room_session", None)
+    if not callable(room_runner) or not callable(room_detector) or not room_detector():
+        return None
+    cancel_event = Event()
+    try:
+        messages = room_result_chat_messages(
+            await room_runner(
+                text,
+                progress_callback=progress_callback,
+                approval_callback=approval_callback,
+                cancel_event=cancel_event,
+            )
+        )
+    except asyncio.CancelledError:
+        cancel_event.set()
+        raise
+    if not messages:
+        return ""
+    first, *remaining = messages
+    if transcript._messages:
+        transcript._messages[-1].sender = first.sender
+        transcript._messages[-1].msg_id = first.msg_id
+    if first.sender:
+        handle.append_renderable(Text(first.sender, style="bold"))
+    for message in remaining:
+        transcript.push_message(message)
+    mark_active_chat_first_text()
+    return str(first.body)
+
+
+def runtime_message_stream(
+    runtime: Any,
+    text: str,
+    progress_callback: Callable[[dict[str, Any]], None],
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+) -> Any:
+    kwargs: dict[str, Any] = {"progress_callback": progress_callback}
+    if approval_callback is not None:
+        kwargs["approval_callback"] = approval_callback
+    return runtime.send_message(text, **kwargs)
+
+
+def handle_room_slash(
+    cmd: str,
+    args: str,
+    *,
+    runtime: Any,
+    console: Console,
+) -> None:
+    parts = str(args or "").split()
+    try:
+        if cmd == "/participants":
+            body = runtime.room_participants_report()
+        elif cmd == "/invite":
+            if len(parts) == 2 and parts[0] == "agent":
+                participant = runtime.room_invite_agent(parts[1])
+            elif len(parts) in {2, 3} and parts[0] == "human":
+                participant = runtime.room_invite_human(
+                    parts[1],
+                    role=parts[2] if len(parts) == 3 else "participant",
+                )
+            else:
+                raise ValueError(
+                    "usage: /invite agent <id> or /invite human <id> [role]"
+                )
+            body = (
+                f"invited {participant.participant_type} "
+                f"{participant.participant_id} as {participant.role}"
+            )
+        elif cmd == "/kick":
+            if len(parts) != 2:
+                raise ValueError("usage: /kick <agent|human> <id>")
+            removed = runtime.room_kick(parts[0], parts[1])
+            body = "participant removed" if removed else "participant not found"
+        elif cmd == "/activate":
+            if len(parts) != 1:
+                raise ValueError("usage: /activate <agent-id>")
+            runtime.room_activate(parts[0])
+            body = f"active room agent: {parts[0]}"
+        elif cmd == "/routing":
+            if not parts:
+                body = runtime.room_participants_report()
+            elif len(parts) == 1:
+                runtime.room_set_routing(parts[0])
+                body = f"room routing: {parts[0].lower()}"
+            else:
+                raise ValueError("usage: /routing [addressed|broadcast|sequential]")
+        else:
+            return
+    except (RuntimeError, ValueError) as exc:
+        body = f"{cmd}: {exc}"
+    console.print(Text(body, style=token_rich_style(StyleToken.SYSTEM)))
 
 
 def start_new_session(

@@ -161,6 +161,38 @@ Open the interactive CLI:
 openminion
 ```
 
+Run two configured agents in one Focus room with explicit runtime roots:
+
+```bash
+runtime_root="$PWD/.openminion-room"
+config_path="$HOME/.openminion/agents.json"
+room_output="$(openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  room create \
+  --name "Review room" \
+  --human owner-local \
+  --agent writer \
+  --agent reviewer \
+  --channel console \
+  --target focus)"
+room_id="$(printf '%s\n' "$room_output" | sed -n 's/^room=//p')"
+
+openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  --agent writer \
+  --session "$room_id" \
+  --dir "$PWD"
+```
+
+Inside Focus, use `/participants` to inspect the room, `/routing broadcast` or
+`/routing sequential` to change its mode, and address one agent with
+`@reviewer`. Room mutations require the local owner; participants can post and
+observers cannot.
+
 Embed the same runtime from Python:
 
 ```python

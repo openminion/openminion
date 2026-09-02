@@ -282,6 +282,19 @@ def provider_history_payload(message: ProviderHistoryMessage) -> dict[str, Any] 
     return payload
 
 
+def response_telemetry_event_fields(response: Any) -> dict[str, Any]:
+    telemetry = response.telemetry
+    trace_context = telemetry.get("trace_context", {})
+    payload = {
+        "trace_artifact_paths": trace_context.get("trace_artifact_paths", []),
+        "trace_artifacts_complete": trace_context.get("trace_artifacts_complete", True),
+    }
+    request_id = str(telemetry.get("request_id") or "").strip()
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
 def split_system_and_conversation(
     messages: list[tuple[str, str, dict[str, Any]]],
 ) -> tuple[str, list[tuple[str, str, dict[str, Any]]]]:
@@ -543,6 +556,7 @@ __all__ = [
     "request_mode_name",
     "request_purpose",
     "response_cost_payload",
+    "response_telemetry_event_fields",
     "split_system_and_conversation",
     "token_usage_values",
     "trim_submit_output_history",

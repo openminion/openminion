@@ -3,8 +3,12 @@
 import asyncio
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable
+from uuid import uuid4
 
 from openminion.base.config import RunProfileOverrides
+from openminion.modules.controlplane.constants import (
+    CALLER_HANDLES_DELIVERY_METADATA_KEY,
+)
 from openminion.modules.telemetry.usage import RunStats
 from openminion.modules.runtime.sync import await_with_cancel
 from openminion.services.runtime.turn_router import TurnRouter
@@ -15,6 +19,7 @@ from .types import (
     RuntimeTurnRequest,
     RuntimeTurnResult,
     TurnContext,
+    TurnRequestError,
     TurnTimeoutError,
     freeze_metadata,
 )
@@ -47,6 +52,7 @@ def execute_runtime_turn(
             session_id=request.session_id,
             idempotency_key=request.idempotency_key,
             request_id=request.request_id,
+            exclude_history_message_ids=(),
             deliver=request.deliver,
             capability_category=request.capability_category,
             timeout_seconds=request.timeout_seconds,
@@ -88,17 +94,15 @@ def _routed_agents(
 ) -> tuple[tuple[str, ...], str]:
     session, participants = None, []
     if request.session_id:
-        try:
-            session = runtime.sessions.get_session(request.session_id)
-            if session is not None:
-                participants = runtime.sessions.list_participants(request.session_id)
-        except Exception:
-            session, participants = None, []
+        session = runtime.sessions.get_session(request.session_id)
+        if session is not None:
+            participants = runtime.sessions.list_participants(request.session_id)
     decision = TurnRouter().route(
         session=session,
         message=request.message,
         participants=participants,
         requested_agent_id=request.profile_agent_id,
+        configured_agent_ids=runtime.config.agents,
     )
     routed_agents = tuple(agent_id for agent_id in decision.agent_ids if agent_id)
     return routed_agents or (request.profile_agent_id,), decision.mode
@@ -116,48 +120,66 @@ def _execute_routed_turns(
     approval_callback: Any | None,
     cancel_event: Any | None,
 ) -> Any:
+    if request.deliver:
+        raise TurnRequestError("Multi-agent room turns require deliver=False.")
+
     routed_results = []
+    request_id_base = request.request_id or uuid4().hex
+    persisted_inbound_message_id = ""
+    persisted_outbound_message_ids: list[str] = []
     for index, agent_name in enumerate(routed_agents):
         inbound_metadata = dict(request.inbound_metadata or {})
+        inbound_metadata[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        exclude_history_message_ids: tuple[str, ...] = ()
         if index > 0:
             inbound_metadata["room_router_skip_inbound_persist"] = "true"
-        routed_idempotency_key = (
-            f"{request.idempotency_key}::{agent_name}"
-            if request.idempotency_key
-            else None
-        )
-        routed_results.append(
-            (
-                agent_name,
-                execute_gateway_turn_impl(
-                    runtime=runtime,
-                    agent_name=agent_name,
-                    channel=request.channel,
-                    target=request.target,
-                    context=_build_turn_context(
-                        message=request.message,
-                        forced_tools=list(context.forced_tools),
-                        inbound_metadata=inbound_metadata or None,
-                    ),
-                    session_id=request.session_id,
-                    idempotency_key=routed_idempotency_key,
-                    request_id=request.request_id,
-                    deliver=False,
-                    capability_category=request.capability_category,
-                    timeout_seconds=request.timeout_seconds,
-                    run_profile_overrides=request.run_profile_overrides,
-                    run_gateway_once=run_gateway_once,
-                    progress_callback=progress_callback,
-                    approval_callback=approval_callback,
-                    cancel_event=cancel_event,
-                ),
+            inbound_metadata["room_router_skip_session_compaction"] = "true"
+            inbound_metadata["persisted_inbound_message_id"] = (
+                persisted_inbound_message_id
             )
+            prior_outputs = (
+                persisted_outbound_message_ids if routing_mode == "broadcast" else []
+            )
+            exclude_history_message_ids = (persisted_inbound_message_id, *prior_outputs)
+        result = execute_gateway_turn_impl(
+            runtime=runtime,
+            agent_name=agent_name,
+            channel=request.channel,
+            target=request.target,
+            context=_build_turn_context(
+                message=request.message,
+                forced_tools=list(context.forced_tools),
+                inbound_metadata=inbound_metadata or None,
+            ),
+            session_id=request.session_id,
+            idempotency_key=(
+                f"{request.idempotency_key}::{agent_name}"
+                if request.idempotency_key
+                else None
+            ),
+            request_id=f"{request_id_base}::{agent_name}",
+            exclude_history_message_ids=exclude_history_message_ids,
+            deliver=False,
+            capability_category=request.capability_category,
+            timeout_seconds=request.timeout_seconds,
+            run_profile_overrides=request.run_profile_overrides,
+            run_gateway_once=run_gateway_once,
+            progress_callback=progress_callback,
+            approval_callback=approval_callback,
+            cancel_event=cancel_event,
+        )
+        routed_results.append((agent_name, result))
+        result_metadata = result.metadata
+        if index == 0:
+            persisted_inbound_message_id = str(
+                result_metadata.get("persisted_inbound_message_id", "")
+            ).strip()
+        persisted_outbound_message_ids.append(
+            str(result_metadata.get("persisted_outbound_message_id", "")).strip()
         )
     return _aggregate_routed_results(
         routed_results=routed_results,
         routing_mode=routing_mode,
-        channel=request.channel,
-        target=request.target,
     )
 
 
@@ -165,41 +187,34 @@ def _aggregate_routed_results(
     *,
     routed_results: list[tuple[str, Any]],
     routing_mode: str,
-    channel: str,
-    target: str,
 ) -> Any:
-    if not routed_results:
-        raise RuntimeError("routed_results must not be empty")
     if len(routed_results) == 1:
         return routed_results[0][1]
 
     parts: list[str] = []
     aggregate_metadata: dict[str, Any] = {}
     last_result = routed_results[-1][1]
-    last_metadata = getattr(last_result, "metadata", {}) or {}
-    if isinstance(last_metadata, dict):
-        for key in (
-            "session_id",
-            "conversation_id",
-            "thread_id",
-            "attach_id",
-            "run_id",
-        ):
-            value = last_metadata.get(key)
-            if value is not None and str(value).strip():
-                aggregate_metadata[key] = value
+    last_metadata = last_result.metadata
+    for key in ("session_id", "conversation_id", "thread_id", "attach_id", "run_id"):
+        value = last_metadata.get(key)
+        if value is not None and str(value).strip():
+            aggregate_metadata[key] = value
+    room_responses = []
     for agent_id, result in routed_results:
-        body = str(
-            getattr(result, "body", "") or getattr(result, "text", "") or ""
-        ).strip()
-        if not body:
-            continue
-        parts.append(f"[{agent_id}]\n{body}")
-        metadata = getattr(result, "metadata", {}) or {}
-        if isinstance(metadata, dict):
-            aggregate_metadata[f"{agent_id}_response_id"] = metadata.get(
-                "response_id", ""
-            )
+        body = str(result.body).strip()
+        metadata = result.metadata
+        room_responses.append(
+            {
+                "agent_id": agent_id,
+                "body": body,
+                "persisted_outbound_message_id": str(
+                    metadata.get("persisted_outbound_message_id", "")
+                ).strip(),
+            }
+        )
+        if body:
+            parts.append(f"[{agent_id}]\n{body}")
+    aggregate_metadata["room_responses"] = room_responses
     aggregate_metadata["room_routing_mode"] = routing_mode
     aggregate_metadata["room_routed_agents"] = ",".join(
         agent_id for agent_id, _ in routed_results
@@ -207,8 +222,8 @@ def _aggregate_routed_results(
     aggregate_metadata["room_aggregated"] = "true"
     aggregate_stats: RunStats | None = None
     for _, result in routed_results:
-        result_stats = getattr(result, "stats", None)
-        if not isinstance(result_stats, RunStats):
+        result_stats = result.stats
+        if result_stats is None:
             continue
         aggregate_stats = (
             result_stats
@@ -217,9 +232,9 @@ def _aggregate_routed_results(
         )
 
     return RuntimeTurnResult(
-        id=str(getattr(last_result, "id", "")).strip(),
-        channel=str(getattr(last_result, "channel", channel)).strip(),
-        target=str(getattr(last_result, "target", target)).strip(),
+        id=str(last_result.id).strip(),
+        channel=str(last_result.channel).strip(),
+        target=str(last_result.target).strip(),
         body="\n\n".join(parts).strip(),
         metadata=MappingProxyType(aggregate_metadata),
         agent_id=str(routed_results[0][0]),
@@ -250,6 +265,7 @@ def execute_gateway_turn_impl(
     session_id: str | None,
     idempotency_key: str | None,
     request_id: str | None,
+    exclude_history_message_ids: tuple[str, ...],
     deliver: bool,
     capability_category: str | None,
     timeout_seconds: float,
@@ -273,6 +289,7 @@ def execute_gateway_turn_impl(
                     session_id=session_id,
                     idempotency_key=idempotency_key,
                     request_id=request_id,
+                    exclude_history_message_ids=exclude_history_message_ids,
                     inbound_metadata=_mutable_inbound_metadata(
                         context.inbound_metadata
                     ),

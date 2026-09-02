@@ -71,7 +71,6 @@ class OpenRouterProvider(OpenAIProvider):
             if request.tools
             else None
         )
-
         payload: dict[str, Any] = {
             "model": model,
             "messages": _messages_openai_like(
@@ -132,6 +131,7 @@ class OpenRouterProvider(OpenAIProvider):
             trace_metadata=request.metadata,
             env=config.get("__env__"),
             http_client=http_client_for_config(self._http_client, config),
+            telemetryctl=config.get("telemetryctl"),
         )
 
         choices = response_payload.get("choices")
@@ -315,6 +315,7 @@ class OpenRouterProvider(OpenAIProvider):
                 provider_name=self.name,
                 trace_metadata=request.metadata,
                 http_client=http_client_for_config(self._http_client, config),
+                telemetryctl=config.get("telemetryctl"),
             ):
                 if not line.startswith("data:"):
                     continue
@@ -378,6 +379,7 @@ class OpenRouterProvider(OpenAIProvider):
                 provider_name=self.name,
                 env=config.get("__env__"),
                 http_client=http_client_for_config(self._http_client, config),
+                telemetryctl=config.get("telemetryctl"),
             )
             data = payload.get("data")
             if isinstance(data, list):

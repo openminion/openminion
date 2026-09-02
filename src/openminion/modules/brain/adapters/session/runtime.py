@@ -99,11 +99,12 @@ class SessctlAdapter:
         status: str | None = None,
         error: dict[str, Any] | None = None,
     ) -> None:
+        telemetry_turn_id = self._telemetry_turn_id or turn_id
         operation = self._operation_from_event_type(event_type)
         if operation is not None:
             self._emit_session_operation(
                 session_id=session_id,
-                turn_id=turn_id,
+                turn_id=telemetry_turn_id,
                 operation=operation,
                 status="error" if error else (status or "ok"),
                 extra={"event_type": str(event_type or "").strip()},
@@ -112,7 +113,7 @@ class SessctlAdapter:
             self._telemetryctl,
             "emit_canonical_event",
             session_id,
-            turn_id,
+            telemetry_turn_id,
             event_type,
             payload,
             trace_id=trace_id,

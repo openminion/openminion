@@ -347,6 +347,9 @@ class CodingReserveMixin:
         self._loop_state.seen_signatures = []
         self._loop_state.termination_reason = ""
         self._loop_state.scratchpad["coding.final_answer_reserve_used"] = True
+        original_request = str(
+            getattr(ctx.state, "goal", "") or getattr(ctx, "user_input", "") or ""
+        ).strip()
         self._loop_state.messages.append(
             Message(
                 role="user",
@@ -355,7 +358,8 @@ class CodingReserveMixin:
                     "Base the answer on the files already written and the most recent "
                     "verification/readback evidence. Satisfy any explicit final-output "
                     "labels or result markers the user requested, include validation "
-                    "status, and return only the final answer."
+                    "status, and return only the final answer.\n\n"
+                    f"Original request:\n{original_request}"
                 ),
             )
         )

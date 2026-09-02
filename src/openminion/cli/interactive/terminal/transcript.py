@@ -278,7 +278,14 @@ class TerminalTranscript:
             return
         if message.kind == MessageKind.AGENT:
             body = str(message.body or "")
-            self._write_render(lambda: self._console.print(render_body(body)))
+            sender = str(message.sender or "").strip()
+
+            def _render_agent() -> None:
+                if message.show_header and sender not in {"", "agent", "assistant"}:
+                    self._console.print(Text(sender, style="bold"))
+                self._console.print(render_body(body))
+
+            self._write_render(_render_agent)
             return
         if message.kind == MessageKind.SYSTEM:
             self._write_render(

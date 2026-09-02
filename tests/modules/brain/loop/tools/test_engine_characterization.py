@@ -3378,6 +3378,7 @@ def test_loop_requestable_tool_specs_enables_tool_request() -> None:
         requestable_tool_specs=_tool_specs("extra.tool"),
     )
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert runtime.calls[0]["metadata"]["requestable_tool_names"] == '["extra.tool"]'
 
 
 def test_loop_disallowed_tool_terminates_with_disallowed_tool() -> None:
@@ -4790,13 +4791,22 @@ class TestForceBudgetAnswerOnlyFinalization:
                     {
                         "tool_name": "web.search",
                         "ok": False,
-                        "summary": "Primary evidence check failed",
+                        "summary": "Stale first evidence",
                         "error": {"code": "check_failed"},
                     },
+                    *[
+                        {
+                            "tool_name": "web.search",
+                            "ok": True,
+                            "content": f"Intermediate result {index}",
+                            "data": {},
+                        }
+                        for index in range(7)
+                    ],
                     {
                         "tool_name": "web.search",
                         "ok": True,
-                        "content": "Useful search result",
+                        "content": "Latest useful search result",
                         "data": {"results": ["source one"]},
                     },
                 ]
@@ -4839,8 +4849,8 @@ class TestForceBudgetAnswerOnlyFinalization:
         )
         assert result is not None
         assert result.final_text == "A final answer."
-        assert "Primary evidence check failed" in sent_text
-        assert "Useful search result" in sent_text
+        assert "Stale first evidence" not in sent_text
+        assert "Latest useful search result" in sent_text
         assert large_transcript_marker not in sent_text
 
     def test_budget_exhaustion_forces_answer_only_from_prior_tool_evidence(
@@ -5059,7 +5069,9 @@ class TestForceBudgetAnswerOnlyFinalization:
             "Apply current PyPA console-script guidance and return SOURCES, "
             "CHANGES, TESTS."
         )
+        state.goal = state.last_user_input
         loop_ctx = _LoopContext(state=state)
+        loop_ctx.user_input = "continue"
         runtime = _FakeRuntime(
             responses=[
                 LLMResponse(
@@ -7447,6 +7459,61 @@ def test_loop_keeps_requested_tools_active_across_later_requests() -> None:
     assert "cannot be called directly" in inactive_directories[-1]
     assert "provider-safe `tool_request`" in inactive_directories[-1]
     assert "- extra.one:" not in inactive_directories[-1]
+
+
+def test_loop_repeated_tool_request_does_not_trigger_duplicate_work_guard() -> None:
+    def request(call_id: str) -> LLMResponse:
+        return LLMResponse(
+            ok=True,
+            provider="fake",
+            model="m",
+            output_text="",
+            tool_calls=[
+                ToolCall(
+                    id=call_id,
+                    name="tool.request",
+                    arguments={"name": "extra.tool"},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    runtime = _FakeRuntime(
+        responses=[
+            request("r1"),
+            request("r2"),
+            request("r3"),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="run", name="extra.tool", arguments={"value": 1})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="done after repeated requests",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    outcome = run_adaptive_tool_loop(
+        _LoopContext(state=_state(), outcomes=[_success_outcome("extra.tool", "ok")]),
+        profile=_profile(allowed_tools=frozenset({"file.read", "extra.tool"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="request and run a tool")],
+        tool_specs=_tool_specs("file.read"),
+        requestable_tool_specs=_tool_specs("extra.tool"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "done after repeated requests"
 
 
 def test_loop_provider_parallel_capacity_drives_dispatch() -> None:

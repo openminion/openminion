@@ -258,7 +258,6 @@ class OllamaProvider:
             messages = _insert_ollama_schema_instruction(
                 messages, schema_format=schema_format
             )
-
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -295,6 +294,7 @@ class OllamaProvider:
             trace_metadata=request.metadata,
             env=config.get("__env__"),
             http_client=http_client_for_config(self._http_client, config),
+            telemetryctl=config.get("telemetryctl"),
         )
         message_payload = response_payload.get("message")
         raw_text = ""

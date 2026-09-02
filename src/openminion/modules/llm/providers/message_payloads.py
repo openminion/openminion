@@ -614,6 +614,7 @@ def _http_json_post(
     http_client: ProviderHTTPClient | None = None,
     response_metadata: Dict[str, str] | None = None,
     allow_curl_fallback: bool = True,
+    telemetryctl: Any | None = None,
 ) -> Dict[str, Any]:
     return http_json_post(
         url=url,
@@ -626,6 +627,7 @@ def _http_json_post(
         http_client=http_client,
         response_metadata=response_metadata,
         allow_curl_fallback=allow_curl_fallback,
+        telemetryctl=telemetryctl,
     )
 
 
@@ -639,6 +641,7 @@ def _http_json_get(
     env: Mapping[str, object] | None = None,
     http_client: ProviderHTTPClient | None = None,
     response_metadata: Dict[str, str] | None = None,
+    telemetryctl: Any | None = None,
 ) -> Dict[str, Any]:
     return http_json_get(
         url=url,
@@ -649,6 +652,7 @@ def _http_json_get(
         env=env,
         http_client=http_client,
         response_metadata=response_metadata,
+        telemetryctl=telemetryctl,
     )
 
 

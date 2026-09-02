@@ -1,3 +1,5 @@
+from typing import Any
+
 from openminion.cli.commands.agent.delegation import (
     render_agent_delegate_result,
     request_from_slash_args,
@@ -10,53 +12,79 @@ from ..widgets import FocusTranscript
 class RuntimeCommandMixin:
     """Slash commands that inspect or switch the active runtime."""
 
+    _runtime: Any
+
     def _slash_model(self, args: str) -> None:
-        provider = self._runtime_provider_name() or "(unknown)"
+        connection = self._runtime_provider_name() or "(unknown)"
         model = self._runtime_model_name() or "(unknown)"
         arg = str(args or "").strip()
         if not arg:
             lister = getattr(self._runtime, "list_models", None)
-            rows: list[tuple[str, str, bool]] = []
+            rows: list[Any] = []
             if callable(lister):
                 try:
                     rows = list(lister() or [])
                 except Exception:
                     rows = []
-            lines = [f"current    {provider}/{model}"]
+            lines = [f"current    {connection} / {model}"]
             if rows:
-                lines.extend(("", "configured providers:"))
-                for name, configured_model, is_active in rows:
-                    marker = "◆" if is_active else " "
+                lines.extend(("", "configured models:"))
+                for row in rows:
+                    marker = "◆" if row.active else " "
+                    default = " (agent default)" if row.agent_default else ""
                     lines.append(
-                        f"  {marker} {name:<12} {configured_model or '(none)'}"
+                        f"  {marker} {row.index}. {row.connection_name:<12} "
+                        f"{row.model}{default}"
                     )
                 lines.extend(
                     (
                         "",
-                        "Switch with `/model <provider>` or "
-                        "`/model <provider>/<model>` (session-scoped).",
+                        "Use `/model use <#>` for this session, "
+                        "`/model default <#>` for this agent, or `/model add`.",
                     )
                 )
             else:
-                lines.append("(no providers configured)")
+                lines.append("(this agent has no configured models)")
             self._push_runtime_message("\n".join(lines))
+            return
+
+        if arg == "add":
+            self._push_runtime_message(
+                "Add a model with the existing setup flow, then restart Focus:\n"
+                + self._runtime.model_setup_command()
+            )
+            return
+
+        action, _, target = arg.partition(" ")
+        if action == "default":
+            if not target.strip():
+                self._push_runtime_message("/model: use `/model default <#>`")
+                return
+            try:
+                selected = self._runtime.set_default_model(target.strip())
+            except ValueError as exc:
+                self._push_runtime_message(f"/model: {exc}")
+                return
+            self._push_runtime_message(
+                f"model default → {selected.connection_name} / {selected.model} "
+                f"for agent {self._runtime.agent_id}"
+            )
             return
 
         switcher = getattr(self._runtime, "switch_model", None)
         if not callable(switcher):
             self._push_runtime_message("(/model: runtime does not expose switch_model)")
             return
+        target = target.strip() if action == "use" else arg
         try:
-            new_provider, new_model = switcher(arg)
+            selected = switcher(target)
         except ValueError as exc:
             self._push_runtime_message(f"/model: {exc}")
             return
-        label = (
-            f"{new_provider}/{new_model}"
-            if new_model
-            else (new_provider or "(default)")
+        self._push_runtime_message(
+            f"model → {selected.connection_name} / {selected.model} "
+            "(saved for this session)"
         )
-        self._push_runtime_message(f"model → {label} (session-scoped; restart reverts)")
 
     def _slash_cost(self, _args: str) -> None:
         snapshot_getter = getattr(self._runtime, "token_usage_snapshot", None)
@@ -170,6 +198,71 @@ class RuntimeCommandMixin:
             approval_callback=getattr(self, "_approval_callback", None),
         )
         self._push_runtime_message(render_agent_delegate_result(dict(result or {})))
+
+    def _slash_participants(self, _args: str) -> None:
+        try:
+            body = self._runtime.room_participants_report()
+        except (RuntimeError, ValueError) as exc:
+            body = f"/participants: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_invite(self, args: str) -> None:
+        parts = str(args or "").split()
+        try:
+            if len(parts) == 2 and parts[0] == "agent":
+                participant = self._runtime.room_invite_agent(parts[1])
+            elif len(parts) in {2, 3} and parts[0] == "human":
+                participant = self._runtime.room_invite_human(
+                    parts[1],
+                    role=parts[2] if len(parts) == 3 else "participant",
+                )
+            else:
+                raise ValueError(
+                    "usage: /invite agent <id> or /invite human <id> [role]"
+                )
+            body = (
+                f"invited {participant.participant_type} "
+                f"{participant.participant_id} as {participant.role}"
+            )
+        except (RuntimeError, ValueError) as exc:
+            body = f"/invite: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_kick(self, args: str) -> None:
+        parts = str(args or "").split()
+        try:
+            if len(parts) != 2:
+                raise ValueError("usage: /kick <agent|human> <id>")
+            removed = self._runtime.room_kick(parts[0], parts[1])
+            body = "participant removed" if removed else "participant not found"
+        except (RuntimeError, ValueError) as exc:
+            body = f"/kick: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_activate(self, args: str) -> None:
+        try:
+            agent_id = str(args or "").strip()
+            if not agent_id or len(agent_id.split()) != 1:
+                raise ValueError("usage: /activate <agent-id>")
+            self._runtime.room_activate(agent_id)
+            body = f"active room agent: {agent_id}"
+        except (RuntimeError, ValueError) as exc:
+            body = f"/activate: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_routing(self, args: str) -> None:
+        mode = str(args or "").strip()
+        try:
+            if not mode:
+                body = self._runtime.room_participants_report()
+            elif len(mode.split()) != 1:
+                raise ValueError("usage: /routing [addressed|broadcast|sequential]")
+            else:
+                self._runtime.room_set_routing(mode)
+                body = f"room routing: {mode.lower()}"
+        except (RuntimeError, ValueError) as exc:
+            body = f"/routing: {exc}"
+        self._push_runtime_message(body)
 
     def _push_runtime_message(self, body: str) -> None:
         self.query_one(FocusTranscript).push_message(

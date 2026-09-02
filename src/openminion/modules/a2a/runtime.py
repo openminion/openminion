@@ -179,6 +179,24 @@ class A2ARuntime:
             )
 
         scope = self._idempotency_scope(envelope, route.descriptor.agent_id)
+        with self._lock:
+            return self._start_or_replay_job(
+                envelope=envelope,
+                resolved_agent=route.descriptor.agent_id,
+                handler=route.handler,
+                job_handler=route.job_handler,
+                scope=scope,
+            )
+
+    def _start_or_replay_job(
+        self,
+        *,
+        envelope: Envelope,
+        resolved_agent: str,
+        handler: AgentHandler,
+        job_handler: JobHandler | None,
+        scope: str,
+    ) -> str:
         reserved, existing = self.state_store.reserve_idempotency(
             envelope.idempotency_key, scope
         )
@@ -203,7 +221,7 @@ class A2ARuntime:
             task_id=task_id,
             trace_id=envelope.trace_id,
             idempotency_key=envelope.idempotency_key,
-            agent_id=route.descriptor.agent_id,
+            agent_id=resolved_agent,
             method=envelope.method,
             state=A2A_JOB_STATE_PENDING,
             current_step="queued",
@@ -224,129 +242,104 @@ class A2ARuntime:
 
         self._append_audit_record(
             envelope=envelope,
-            resolved_agent=route.descriptor.agent_id,
+            resolved_agent=resolved_agent,
             status=A2A_AUDIT_STATUS_JOB_QUEUED,
             task_id=task_id,
             payload=envelope.to_dict(),
         )
 
         cancel_event = threading.Event()
+        self._cancel_events[task_id] = cancel_event
         future = self._executor.submit(
             self._run_job,
             envelope,
-            route.descriptor.agent_id,
-            route.handler,
-            route.job_handler,
+            resolved_agent,
+            handler,
+            job_handler,
             task_id,
             scope,
             cancel_event,
         )
-
-        with self._lock:
-            self._futures[task_id] = future
-            self._cancel_events[task_id] = cancel_event
+        self._futures[task_id] = future
+        future.add_done_callback(lambda _: self._forget_job(task_id))
 
         return task_id
 
     def job_status(self, task_id: str) -> JobRecord:
-        job = self.state_store.get_job(task_id)
-        if job is None:
-            raise A2AError(ERROR_CODE_JOB_NOT_FOUND, f"Job '{task_id}' was not found")
-        return job
-
-    def job_cancel(self, task_id: str) -> JobRecord:
-        job = self.job_status(task_id)
-        if job.is_terminal():
+        with self._lock:
+            job = self.state_store.get_job(task_id)
+            if job is None:
+                raise A2AError(
+                    ERROR_CODE_JOB_NOT_FOUND, f"Job '{task_id}' was not found"
+                )
+            if task_id not in self._futures and self._recover_stale_job(
+                job, now=datetime.now(timezone.utc)
+            ):
+                recovered = self.state_store.get_job(task_id)
+                if recovered is not None:
+                    return recovered
             return job
 
+    def job_cancel(self, task_id: str) -> JobRecord:
         with self._lock:
+            job = self.job_status(task_id)
+            if job.is_terminal():
+                return job
+
             cancel_event = self._cancel_events.get(task_id)
             future = self._futures.get(task_id)
+            if cancel_event is not None:
+                cancel_event.set()
+            if future is not None:
+                future.cancel()
 
-        if cancel_event is not None:
-            cancel_event.set()
-        if future is not None:
-            future.cancel()
-
-        error = {"code": ERROR_CODE_CANCELED, "message": "Job canceled"}
-        updated = self.state_store.update_job(
-            task_id,
-            self._job_patch(
-                state=A2A_JOB_STATE_CANCELED,
-                current_step="canceled",
-                error=error,
-            ),
-        )
-
-        scope = updated.idempotency_scope or (
-            f"job.start:{updated.agent_id}:{updated.method}"
-        )
-        self.state_store.set_idempotency_result(
-            updated.idempotency_key,
-            scope,
-            A2A_IDEMPOTENCY_STATUS_CANCELED,
-            error=error,
-            task_id=task_id,
-        )
-
-        self._append_runtime_audit(
-            trace_id=updated.trace_id,
-            resolved_agent=updated.agent_id,
-            method=updated.method,
-            status=A2A_AUDIT_STATUS_CANCELED,
-            audit_type="job.cancel",
-            task_id=task_id,
-            error_code=ERROR_CODE_CANCELED,
-            error_message="Job canceled",
-            data=updated.to_dict(),
-        )
-        return updated
-
-    def recover_stale_jobs(self) -> list[str]:
-        stale: list[str] = []
-        now = datetime.now(timezone.utc)
-        rows = self.state_store.list_jobs(
-            {"states": list(A2A_ACTIVE_JOB_STATES), "limit": 5000}
-        )
-        for row in rows:
-            if not _is_stale(
-                row.heartbeat_at,
-                now=now,
-                stale_after_sec=self.recovery_stale_heartbeat_sec,
-            ):
-                continue
-            error = {
-                "code": ERROR_CODE_STALE_JOB,
-                "message": "Job marked failed during startup recovery due to stale heartbeat",
-            }
-            self.state_store.update_job(
-                row.task_id,
+            error = {"code": ERROR_CODE_CANCELED, "message": "Job canceled"}
+            updated = self.state_store.update_job(
+                task_id,
                 self._job_patch(
-                    state=A2A_JOB_STATE_FAILED,
-                    current_step="recovery_failed",
+                    state=A2A_JOB_STATE_CANCELED,
+                    current_step="canceled",
                     error=error,
                 ),
             )
-            scope = row.idempotency_scope or f"job.start:{row.agent_id}:{row.method}"
+
+            scope = updated.idempotency_scope or (
+                f"job.start:{updated.agent_id}:{updated.method}"
+            )
             self.state_store.set_idempotency_result(
-                row.idempotency_key,
+                updated.idempotency_key,
                 scope,
-                A2A_IDEMPOTENCY_STATUS_FAILED,
+                A2A_IDEMPOTENCY_STATUS_CANCELED,
                 error=error,
-                task_id=row.task_id,
+                task_id=task_id,
             )
-            stale.append(row.task_id)
+
             self._append_runtime_audit(
-                trace_id=row.trace_id,
-                resolved_agent=row.agent_id,
-                method=row.method,
-                status=A2A_AUDIT_STATUS_RECOVERY_FAILED,
-                task_id=row.task_id,
-                error_code=ERROR_CODE_STALE_JOB,
-                error_message=error["message"],
-                data={"task_id": row.task_id},
+                trace_id=updated.trace_id,
+                resolved_agent=updated.agent_id,
+                method=updated.method,
+                status=A2A_AUDIT_STATUS_CANCELED,
+                audit_type="job.cancel",
+                task_id=task_id,
+                error_code=ERROR_CODE_CANCELED,
+                error_message="Job canceled",
+                data=updated.to_dict(),
             )
-        return stale
+            return updated
+
+    def recover_stale_jobs(self) -> list[str]:
+        with self._lock:
+            stale: list[str] = []
+            now = datetime.now(timezone.utc)
+            rows = self.state_store.list_jobs(
+                {"states": list(A2A_ACTIVE_JOB_STATES), "limit": 5000}
+            )
+            for row in rows:
+                if row.task_id not in self._futures and self._recover_stale_job(
+                    row, now=now
+                ):
+                    stale.append(row.task_id)
+            return stale
 
     def query_trace(self, trace_id: str, limit: int = 1000) -> list[dict[str, Any]]:
         rows = self.audit_store.query_audit({"trace_id": trace_id, "limit": limit})
@@ -413,10 +406,10 @@ class A2ARuntime:
         cancel_event: threading.Event,
     ) -> None:
         try:
-            self._mark_job_running(
+            started = self._mark_job_running(
                 envelope=envelope, resolved_agent=resolved_agent, task_id=task_id
             )
-            if cancel_event.is_set():
+            if not started or cancel_event.is_set():
                 return
             result = (
                 job_handler(envelope, cancel_event)
@@ -424,9 +417,6 @@ class A2ARuntime:
                 else handler(envelope)
             )
             if cancel_event.is_set():
-                return
-            current = self.state_store.get_job(task_id)
-            if current is None or current.state == A2A_JOB_STATE_CANCELED:
                 return
             self._mark_job_success(
                 envelope=envelope,
@@ -445,10 +435,6 @@ class A2ARuntime:
                 scope=scope,
                 exc=exc,
             )
-        finally:
-            with self._lock:
-                self._futures.pop(task_id, None)
-                self._cancel_events.pop(task_id, None)
 
     def _audit_call_received(self, envelope: Envelope, *, resolved_agent: str) -> None:
         self._append_audit_record(
@@ -525,23 +511,28 @@ class A2ARuntime:
 
     def _mark_job_running(
         self, *, envelope: Envelope, resolved_agent: str, task_id: str
-    ) -> None:
-        self.state_store.update_job(
-            task_id,
-            self._job_patch(
-                state=A2A_JOB_STATE_RUNNING,
-                current_step="executing",
-                progress=0.1,
-            ),
-        )
-        self._append_runtime_audit(
-            trace_id=envelope.trace_id,
-            resolved_agent=resolved_agent,
-            method=envelope.method,
-            status=A2A_AUDIT_STATUS_RUNNING,
-            task_id=task_id,
-            to_capability=envelope.to_capability,
-        )
+    ) -> bool:
+        with self._lock:
+            current = self.state_store.get_job(task_id)
+            if current is None or current.is_terminal():
+                return False
+            self.state_store.update_job(
+                task_id,
+                self._job_patch(
+                    state=A2A_JOB_STATE_RUNNING,
+                    current_step="executing",
+                    progress=0.1,
+                ),
+            )
+            self._append_runtime_audit(
+                trace_id=envelope.trace_id,
+                resolved_agent=resolved_agent,
+                method=envelope.method,
+                status=A2A_AUDIT_STATUS_RUNNING,
+                task_id=task_id,
+                to_capability=envelope.to_capability,
+            )
+            return True
 
     def _mark_job_success(
         self,
@@ -551,38 +542,43 @@ class A2ARuntime:
         task_id: str,
         scope: str,
         result: Envelope,
-    ) -> None:
-        result_inline, result_ref = self._store_result_if_needed(
-            result, label=envelope.method
-        )
-        self.state_store.update_job(
-            task_id,
-            self._job_patch(
-                state=A2A_JOB_STATE_SUCCESS,
-                current_step="done",
-                progress=1.0,
+    ) -> bool:
+        with self._lock:
+            current = self.state_store.get_job(task_id)
+            if current is None or current.is_terminal():
+                return False
+            result_inline, result_ref = self._store_result_if_needed(
+                result, label=envelope.method
+            )
+            self.state_store.update_job(
+                task_id,
+                self._job_patch(
+                    state=A2A_JOB_STATE_SUCCESS,
+                    current_step="done",
+                    progress=1.0,
+                    result_inline=result_inline,
+                    result_ref=result_ref,
+                    error=None,
+                ),
+            )
+            self.state_store.set_idempotency_result(
+                envelope.idempotency_key,
+                scope,
+                A2A_IDEMPOTENCY_STATUS_SUCCESS,
                 result_inline=result_inline,
                 result_ref=result_ref,
-                error=None,
-            ),
-        )
-        self.state_store.set_idempotency_result(
-            envelope.idempotency_key,
-            scope,
-            A2A_IDEMPOTENCY_STATUS_SUCCESS,
-            result_inline=result_inline,
-            result_ref=result_ref,
-            task_id=task_id,
-        )
-        self._append_runtime_audit(
-            trace_id=envelope.trace_id,
-            resolved_agent=resolved_agent,
-            method=envelope.method,
-            status=A2A_AUDIT_STATUS_SUCCESS,
-            task_id=task_id,
-            to_capability=envelope.to_capability,
-            data={"result_ref": result_ref},
-        )
+                task_id=task_id,
+            )
+            self._append_runtime_audit(
+                trace_id=envelope.trace_id,
+                resolved_agent=resolved_agent,
+                method=envelope.method,
+                status=A2A_AUDIT_STATUS_SUCCESS,
+                task_id=task_id,
+                to_capability=envelope.to_capability,
+                data={"result_ref": result_ref},
+            )
+            return True
 
     def _mark_job_failed(
         self,
@@ -594,25 +590,25 @@ class A2ARuntime:
         exc: Exception,
     ) -> None:
         error = {"code": ERROR_CODE_JOB_FAILED, "message": str(exc)}
-        try:
+        with self._lock:
             current = self.state_store.get_job(task_id)
-            if current is not None and current.state != A2A_JOB_STATE_CANCELED:
-                self.state_store.update_job(
-                    task_id,
-                    self._job_patch(
-                        state=A2A_JOB_STATE_FAILED,
-                        current_step="failed",
-                        error=error,
-                    ),
-                )
-                self.state_store.set_idempotency_result(
-                    envelope.idempotency_key,
-                    scope,
-                    A2A_IDEMPOTENCY_STATUS_FAILED,
+            if current is None or current.is_terminal():
+                return
+            self.state_store.update_job(
+                task_id,
+                self._job_patch(
+                    state=A2A_JOB_STATE_FAILED,
+                    current_step="failed",
                     error=error,
-                    task_id=task_id,
-                )
-        finally:
+                ),
+            )
+            self.state_store.set_idempotency_result(
+                envelope.idempotency_key,
+                scope,
+                A2A_IDEMPOTENCY_STATUS_FAILED,
+                error=error,
+                task_id=task_id,
+            )
             self._append_runtime_audit(
                 trace_id=envelope.trace_id,
                 resolved_agent=resolved_agent,
@@ -623,6 +619,50 @@ class A2ARuntime:
                 error_code=ERROR_CODE_JOB_FAILED,
                 error_message=str(exc),
             )
+
+    def _forget_job(self, task_id: str) -> None:
+        with self._lock:
+            self._futures.pop(task_id, None)
+            self._cancel_events.pop(task_id, None)
+
+    def _recover_stale_job(self, job: JobRecord, *, now: datetime) -> bool:
+        if job.is_terminal() or not _is_stale(
+            job.heartbeat_at,
+            now=now,
+            stale_after_sec=self.recovery_stale_heartbeat_sec,
+        ):
+            return False
+        error = {
+            "code": ERROR_CODE_STALE_JOB,
+            "message": "Job marked failed during recovery due to stale heartbeat",
+        }
+        self.state_store.update_job(
+            job.task_id,
+            self._job_patch(
+                state=A2A_JOB_STATE_FAILED,
+                current_step="recovery_failed",
+                error=error,
+            ),
+        )
+        scope = job.idempotency_scope or f"job.start:{job.agent_id}:{job.method}"
+        self.state_store.set_idempotency_result(
+            job.idempotency_key,
+            scope,
+            A2A_IDEMPOTENCY_STATUS_FAILED,
+            error=error,
+            task_id=job.task_id,
+        )
+        self._append_runtime_audit(
+            trace_id=job.trace_id,
+            resolved_agent=job.agent_id,
+            method=job.method,
+            status=A2A_AUDIT_STATUS_RECOVERY_FAILED,
+            task_id=job.task_id,
+            error_code=ERROR_CODE_STALE_JOB,
+            error_message=error["message"],
+            data={"task_id": job.task_id},
+        )
+        return True
 
     def _idempotency_scope(self, envelope: Envelope, resolved_agent: str) -> str:
         base_scope = f"{envelope.type}:{resolved_agent}:{envelope.method}"

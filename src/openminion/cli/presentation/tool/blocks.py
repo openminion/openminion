@@ -1,5 +1,5 @@
 import json
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -17,50 +17,17 @@ from openminion.cli.status.tool_calls import (
 )
 
 from ..models import ToolEvent
+from .formatting import _TOOL_VERBS as _TOOL_VERBS
+from .formatting import (
+    tool_call_body,
+    tool_context_hint,
+    verbs_for_tool,
+)
 
 VerbosityLevel = Literal["quiet", "normal", "verbose"]
 _VERBOSE_LINE_CAP = 200
 _NORMAL_LINE_CAP = 6
 _TRUNCATION_HINT = "... {remaining} more lines; copy keeps full output"
-
-_TOOL_VERBS: dict[str, tuple[str, str]] = {
-    "exec.run": ("Running", "Ran"),
-    "file.read": ("Reading", "Read"),
-    "file.edit": ("Editing", "Edited"),
-    "file.write": ("Writing", "Wrote"),
-}
-_TOOL_VERB_PREFIXES: tuple[tuple[str, tuple[str, str]], ...] = (
-    ("fetch", ("Fetching", "Fetched")),
-    ("search", ("Searching", "Searched")),
-)
-_DEFAULT_VERBS: tuple[str, str] = ("Running", "Ran")
-
-
-def verbs_for_tool(tool_name: str) -> tuple[str, str]:
-    name = str(tool_name or "").strip()
-    if name in _TOOL_VERBS:
-        return _TOOL_VERBS[name]
-    for prefix, verbs in _TOOL_VERB_PREFIXES:
-        if name.startswith(prefix):
-            return verbs
-    return _DEFAULT_VERBS
-
-
-def tool_context_hint(tool_name: str, args: Mapping[str, Any]) -> str:
-    name = str(tool_name or "").strip()
-    args = args or {}
-    if name == "exec.run":
-        return str(args.get("command", "") or "").strip()
-    if name in {"file.read", "file.edit"}:
-        return str(args.get("path", "") or "").strip()
-    if name.startswith("fetch"):
-        return str(args.get("url", "") or "").strip()
-    return ""
-
-
-def tool_call_body(tool_event: ToolEvent) -> str:
-    hint = tool_context_hint(tool_event.tool_name, tool_event.args)
-    return hint or tool_event.tool_name
 
 
 class ToolBlockWidget(Widget):

@@ -273,9 +273,20 @@ class RuntimeSessionStoreSessions:
         if normalized_agent:
             encoded_agent = quote(normalized_agent, safe="")
             clauses.append(
-                "(session_key LIKE ? OR LOWER(COALESCE(active_agent_id, '')) LIKE ?)"
+                "(session_key LIKE ? OR LOWER(COALESCE(active_agent_id, '')) LIKE ? "
+                "OR EXISTS (SELECT 1 FROM room_participants AS participant "
+                "WHERE participant.session_id = sessions.id "
+                "AND participant.participant_type = 'agent' "
+                "AND LOWER(participant.participant_id) = ? "
+                "AND participant.left_at IS NULL))"
             )
-            params.extend([f"agent:{encoded_agent}%|%", f"{normalized_agent}%"])
+            params.extend(
+                [
+                    f"agent:{encoded_agent}%|%",
+                    f"{normalized_agent}%",
+                    normalized_agent,
+                ]
+            )
         if normalized_status:
             clauses.append("status = ?")
             params.append(normalize_session_status(normalized_status))

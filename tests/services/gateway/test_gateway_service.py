@@ -149,6 +149,162 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
             "no_tool_answer",
         )
 
+    def test_gateway_exposes_exact_persisted_message_ids(self) -> None:
+        class _ResponseIdAgent:
+            async def run_turn(self, message, **_kwargs):  # noqa: ANN001
+                return AgentResponse(
+                    text="persisted reply",
+                    channel=message.channel,
+                    target=message.target,
+                    metadata={"response_id": "provider-response-id"},
+                )
+
+        self.gateway._turn_runner._agent = _ResponseIdAgent()
+
+        response = asyncio.run(
+            self.gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="persist this",
+                session_id="persisted-ids",
+                deliver=False,
+            )
+        )
+        transcript = self.sessions.list_messages(session_id="persisted-ids", limit=10)
+
+        self.assertEqual(
+            response.metadata["persisted_inbound_message_id"], transcript[0].id
+        )
+        self.assertEqual(
+            response.metadata["persisted_outbound_message_id"], transcript[1].id
+        )
+        self.assertNotEqual(
+            response.metadata["persisted_outbound_message_id"],
+            response.metadata["response_id"],
+        )
+
+    def test_room_broadcast_children_receive_identical_compacted_history(self) -> None:
+        provider = _CaptureProvider()
+        gateway, _sink = self._build_gateway(
+            provider=provider,
+            logger_name="openminion.tests.gateway.room.broadcast",
+            agent_logger_name="openminion.tests.gateway.agent.room.broadcast",
+            history_limit=2,
+        )
+        session = self.sessions.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="room",
+            session_id="room-broadcast-history",
+        )
+        for index in range(4):
+            self.sessions.append_message(
+                session_id=session.id,
+                role="inbound" if index % 2 == 0 else "outbound",
+                body=f"prior-{index}",
+            )
+
+        first = asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="room",
+                message="room prompt",
+                session_id=session.id,
+                request_id="room-child-main",
+                inbound_metadata={"caller_handles_delivery": "true"},
+                deliver=False,
+            )
+        )
+        second = asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="room",
+                message="room prompt",
+                session_id=session.id,
+                request_id="room-child-review",
+                inbound_metadata={
+                    "room_router_skip_inbound_persist": "true",
+                    "room_router_skip_session_compaction": "true",
+                    "persisted_inbound_message_id": first.metadata[
+                        "persisted_inbound_message_id"
+                    ],
+                    "caller_handles_delivery": "true",
+                },
+                exclude_history_message_ids=(
+                    first.metadata["persisted_inbound_message_id"],
+                    first.metadata["persisted_outbound_message_id"],
+                ),
+                deliver=False,
+            )
+        )
+
+        self.assertEqual(provider.requests[0].history, provider.requests[1].history)
+        self.assertEqual(
+            second.metadata["persisted_inbound_message_id"],
+            first.metadata["persisted_inbound_message_id"],
+        )
+
+    def test_room_sequential_child_receives_prior_peer_output(self) -> None:
+        provider = _CaptureProvider()
+        gateway, _sink = self._build_gateway(
+            provider=provider,
+            logger_name="openminion.tests.gateway.room.sequential",
+            agent_logger_name="openminion.tests.gateway.agent.room.sequential",
+            history_limit=2,
+        )
+        session = self.sessions.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="room",
+            session_id="room-sequential-history",
+        )
+        for index in range(4):
+            self.sessions.append_message(
+                session_id=session.id,
+                role="inbound" if index % 2 == 0 else "outbound",
+                body=f"prior-{index}",
+            )
+
+        first = asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="room",
+                message="room prompt",
+                session_id=session.id,
+                request_id="room-child-main",
+                inbound_metadata={"caller_handles_delivery": "true"},
+                deliver=False,
+            )
+        )
+        asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="room",
+                message="room prompt",
+                session_id=session.id,
+                request_id="room-child-review",
+                inbound_metadata={
+                    "room_router_skip_inbound_persist": "true",
+                    "room_router_skip_session_compaction": "true",
+                    "persisted_inbound_message_id": first.metadata[
+                        "persisted_inbound_message_id"
+                    ],
+                    "caller_handles_delivery": "true",
+                },
+                exclude_history_message_ids=(
+                    first.metadata["persisted_inbound_message_id"],
+                ),
+                deliver=False,
+            )
+        )
+
+        second_history = provider.requests[1].history
+        self.assertEqual(second_history[-1].content, first.body)
+        self.assertNotIn(
+            "room prompt",
+            [item.content for item in second_history],
+        )
+
     def test_gateway_budgeted_history_keeps_recent_large_assistant_artifact(
         self,
     ) -> None:

@@ -49,6 +49,41 @@ Focus. A useful first task is:
 Give me one safe read-only command to inspect the current directory.
 ```
 
+### Start a local human-plus-agents room
+
+Use explicit root flags so the room and its telemetry stay under one chosen
+runtime directory. Replace `writer` and `reviewer` with agent IDs from your
+config:
+
+```bash
+runtime_root="$PWD/.openminion-room"
+config_path="$HOME/.openminion/agents.json"
+room_output="$(openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  room create \
+  --name "Review room" \
+  --human owner-local \
+  --agent writer \
+  --agent reviewer \
+  --channel console \
+  --target focus)"
+room_id="$(printf '%s\n' "$room_output" | sed -n 's/^room=//p')"
+
+openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  --agent writer \
+  --session "$room_id" \
+  --dir "$PWD"
+```
+
+Use `/participants`, `/status`, and `/sessions` to inspect the room. The local
+owner can use `/invite`, `/kick`, `/activate`, and `/routing`; address one agent
+with `@reviewer`, or select `broadcast` or `sequential` routing for both agents.
+
 The first screen goes directly to the model provider. OpenAI, Anthropic,
 OpenRouter, Cortensor Portal, MiniMax, and local Ollama appear first; additional providers,
 custom endpoints, and config import remain available from the same menu.
@@ -173,6 +208,25 @@ openminion setup \
   --agent minimax-m27 \
   --no-focus
 ```
+
+Inside the interactive CLI, `/model` shows only models configured for the
+active agent. A connection is the service and credential/endpoint route, while
+the API format describes how OpenMinion talks to it. For example, MiniMax is
+the connection and OpenAI-compatible is the API format.
+
+```text
+/model
+/model use 2
+/model default 2
+/model add
+```
+
+`/model use <#>` changes the current session and is restored when that session
+is resumed. `/model default <#>` updates the active agent's saved default.
+`/model add` prints the existing setup command for that agent; setup keeps the
+current default unless the user later changes it explicitly. It does not add a
+second provider system or ask the user to choose an API format for a known
+provider.
 
 For another OpenAI-compatible provider, choose the provider preset and model:
 

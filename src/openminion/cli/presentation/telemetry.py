@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path, PurePosixPath
 import shlex
 from typing import Any
@@ -13,9 +14,15 @@ from openminion.modules.telemetry.inspection import (
     read_trace_file,
     telemetry_storage_error_code,
 )
+from openminion.modules.telemetry.invocation_inspection import (
+    read_safe_invocation_event_rows,
+)
 from openminion.modules.telemetry.schemas import TelemetryDebugReport
 
-TELEMETRY_USAGE = "usage: /telemetry [latest|failed|invocation <invocation-id>]"
+TELEMETRY_USAGE = (
+    "usage: /telemetry "
+    "[latest|failed|invocation <invocation-id>|events [--limit <1..100>]]"
+)
 TRACE_USAGE = "usage: /trace [list [--limit <1..100>]|show <relative-path>]"
 
 
@@ -24,6 +31,9 @@ def render_telemetry_slash(args: str, *, runtime: Any) -> str:
         parts = shlex.split(str(args or ""))
     except ValueError:
         return TELEMETRY_USAGE
+    if parts and parts[0] == "events":
+        limit = _trace_limit(parts[1:])
+        return TELEMETRY_USAGE if limit is None else _render_event_rows(runtime, limit)
     if not parts or parts == ["latest"]:
         selector_kind, invocation_id = "latest", None
     elif parts == ["failed"]:
@@ -106,6 +116,9 @@ def load_telemetry_report(
     selector_kind: str,
     invocation_id: str | None,
 ) -> TelemetryDebugReport:
+    session_id = _runtime_session_id(runtime)
+    if not session_id:
+        return build_telemetry_debug_error("ACTIVE_SESSION_UNAVAILABLE", "internal")
     try:
         data_root = _runtime_data_root(runtime)
         with open_telemetry_inspection(
@@ -116,6 +129,7 @@ def load_telemetry_report(
                 selector_kind=selector_kind,
                 invocation_id=invocation_id,
                 trace_root=data_root / "traces",
+                session_id=session_id,
             )
     except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
         return build_telemetry_debug_error(
@@ -130,6 +144,48 @@ def _runtime_data_root(runtime: Any) -> Path:
     if value is None:
         raise RuntimeError("telemetry data root is unavailable")
     return Path(str(value)).expanduser().resolve(strict=False)
+
+
+def _runtime_session_id(runtime: Any) -> str:
+    return str(getattr(runtime, "session_id", "") or "").strip()
+
+
+def _render_event_rows(runtime: Any, limit: int) -> str:
+    session_id = _runtime_session_id(runtime)
+    if not session_id:
+        return "telemetry: error\nerror: ACTIVE_SESSION_UNAVAILABLE"
+    invocation_id = str(
+        getattr(runtime, "_interactive_telemetry_invocation_id", "") or ""
+    ).strip()
+    if not invocation_id:
+        return "telemetry: error\nerror: NO_SELECTED_INVOCATION"
+    try:
+        data_root = _runtime_data_root(runtime)
+        with open_telemetry_inspection(
+            db_path=data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH,
+        ) as service:
+            report = build_telemetry_debug_report(
+                service,
+                selector_kind="invocation_id",
+                invocation_id=invocation_id,
+                trace_root=data_root / "traces",
+                session_id=session_id,
+            )
+            if report.error:
+                return f"telemetry: error\nerror: {report.error.code}"
+            if service is None:
+                return "telemetry: empty"
+            rows = read_safe_invocation_event_rows(
+                service,
+                invocation_id,
+                session_id=session_id,
+                limit=limit,
+            )
+    except TELEMETRY_INSPECTION_EXCEPTIONS as exc:
+        return f"telemetry: error\nerror: {telemetry_storage_error_code(exc)}"
+    lines = [f"telemetry events: {invocation_id} ({len(rows)})"]
+    lines.extend(json.dumps(row, sort_keys=True) for row in rows)
+    return "\n".join(lines)
 
 
 def _render_card(report: TelemetryDebugReport) -> str:
@@ -149,10 +205,7 @@ def _render_card(report: TelemetryDebugReport) -> str:
         if invocation.provider and invocation.model
         else "-"
     )
-    failure = next(
-        (item.code for item in report.diagnostics if item.severity == "error"),
-        "-",
-    )
+    failure = invocation.failure_code or "-"
     input_tokens = usage.input_tokens if usage else "-"
     output_tokens = usage.output_tokens if usage else "-"
     cost = usage.cost_usd if usage and usage.cost_usd is not None else "-"

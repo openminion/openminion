@@ -81,6 +81,9 @@ class _StreamingRuntimeDouble:
     def list_tools(self) -> list[tuple[str, bool]]:
         return list(self.tool_list)
 
+    def is_room_session(self) -> bool:
+        return False
+
     def switch_session(self, session_id: str) -> list[ChatMessage]:
         return []
 
@@ -128,8 +131,67 @@ class _StreamingRuntimeDouble:
             self.active_turns -= 1
 
 
+class _RoomRuntimeDouble(_StreamingRuntimeDouble):
+    def __init__(self, *, working_dir: str, result: dict[str, object]) -> None:
+        super().__init__(working_dir=working_dir, chunks=[])
+        self.result = result
+
+    def is_room_session(self) -> bool:
+        return True
+
+    async def run_room_turn(self, text: str, **kwargs):  # noqa: ANN003, ANN202
+        self.sent_texts.append(text)
+        self.cancel_event = kwargs["cancel_event"]
+        return self.result
+
+
 def _make_app(runtime: _StreamingRuntimeDouble) -> FocusApp:
     return FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+
+@pytest.mark.asyncio
+async def test_focus_room_turn_renders_structured_agent_attribution() -> None:
+    runtime = _RoomRuntimeDouble(
+        working_dir="/tmp/focus-room-render",
+        result={
+            "agent_id": "alpha",
+            "body": "aggregate",
+            "metadata": {
+                "room_responses": [
+                    {
+                        "agent_id": "alpha",
+                        "body": "alpha reply",
+                        "persisted_outbound_message_id": "out-alpha",
+                    },
+                    {
+                        "agent_id": "beta",
+                        "body": "beta reply",
+                        "persisted_outbound_message_id": "out-beta",
+                    },
+                ]
+            },
+        },
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("review"))
+        for _ in range(20):
+            await pilot.pause()
+            if not app.screen._busy:
+                break
+        chat = app.screen.query_one(FocusTranscript)
+        agent_messages = [
+            message for message in chat._messages if message.kind == MessageKind.AGENT
+        ]
+
+    assert runtime.sent_texts == ["review"]
+    assert [(item.sender, item.body, item.msg_id) for item in agent_messages] == [
+        ("alpha", "alpha reply", "out-alpha"),
+        ("beta", "beta reply", "out-beta"),
+    ]
 
 
 @pytest.mark.asyncio
