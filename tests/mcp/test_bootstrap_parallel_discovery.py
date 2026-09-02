@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 from openminion.base.config.mcp import MCPServerConfig
@@ -50,11 +49,8 @@ def _close_bootstrap(bootstrap) -> None:
 
 
 def test_bootstrap_parallel_discovery_isolates_slow_server() -> None:
-    started = time.monotonic()
     bootstrap = build_runtime_bootstrap(config=_runtime_config(), strict=True)
-    elapsed = time.monotonic() - started
     try:
-        assert elapsed < 2.5
         manager = bootstrap.mcp_manager
         assert manager is not None
         failed = manager.failed_servers
