@@ -1,11 +1,20 @@
+import asyncio
 import json
 import re
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Mapping, cast
+from uuid import uuid4
 
 from openminion.base.types import Message
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.formatting import tool_call_body
+from openminion.modules.storage import (
+    is_room_session_key,
+    normalize_identity,
+    normalize_participant_role,
+    normalize_participant_type,
+)
+from openminion.modules.telemetry.trace import phase_timing
 from openminion.services.gateway.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
@@ -19,8 +28,241 @@ _TIMESTAMPED_SENDER_PREFIX_RE = re.compile(
 
 class RuntimeMessageMixin:
     _agent_id: str | None
+    _channel: str
+    _rt: Any
     _target: str
     _working_dir: str | None
+
+    if TYPE_CHECKING:
+
+        @property
+        def agent_id(self) -> str: ...
+
+        @property
+        def session_id(self) -> str: ...
+
+        def _begin_turn_usage_tracking(self) -> None: ...
+
+        def _finalize_turn_usage(
+            self, metadata: Mapping[str, Any] | None, *, succeeded: bool
+        ) -> None: ...
+
+        def _record_chat_phase_timing(
+            self, timer: phase_timing.ChatPhaseTimer, *, turn_id: str
+        ) -> None: ...
+
+        def _turn_inbound_metadata(
+            self, inbound_metadata: dict[str, str] | None
+        ) -> dict[str, str] | None: ...
+
+        def _wrap_progress_callback(
+            self, callback: Callable[[dict[str, Any]], None] | None
+        ) -> Callable[[dict[str, Any]], None]: ...
+
+    def is_room_session(self) -> bool:
+        session = self._rt.sessions.get_session(self.session_id)
+        return session is not None and is_room_session_key(
+            str(getattr(session, "session_key", "") or "")
+        )
+
+    def _room_session_and_actor(self) -> tuple[Any, Any]:
+        session = self._rt.sessions.get_session(self.session_id)
+        if session is None or not is_room_session_key(
+            str(getattr(session, "session_key", "") or "")
+        ):
+            raise RuntimeError("interactive runtime is not bound to a room session")
+        local_human_id = str(
+            (getattr(session, "metadata", {}) or {}).get("local_human_id", "") or ""
+        ).strip()
+        if not local_human_id:
+            raise RuntimeError("room session has no local human identity")
+        actor = self._rt.sessions.get_participant(
+            session.id,
+            "human",
+            local_human_id,
+        )
+        if actor is None:
+            raise RuntimeError("local human is not an active room participant")
+        if actor.role not in {"owner", "participant", "observer"}:
+            raise RuntimeError(f"unsupported room participant role: {actor.role}")
+        return session, actor
+
+    def _room_owner(self) -> tuple[Any, Any]:
+        session, actor = self._room_session_and_actor()
+        if actor.role != "owner":
+            raise RuntimeError("room mutations require the local human owner")
+        return session, actor
+
+    def room_participants_report(self) -> str:
+        session, actor = self._room_session_and_actor()
+        participants = list(self._rt.sessions.list_participants(session.id))
+        metadata = dict(getattr(session, "metadata", {}) or {})
+        routing = str(metadata.get("room_routing_mode", "") or "addressed")
+        room_name = str(metadata.get("name") or session.id)
+        lines = [
+            f"Room: {room_name}",
+            f"  key: {session.session_key}",
+            f"  routing: {routing}",
+            f"  local human: {actor.participant_id} ({actor.role})",
+            f"  active agent: {session.active_agent_id or '(none)'}",
+            f"  participants: {len(participants)}",
+        ]
+        for participant in participants:
+            active = (
+                " *active"
+                if participant.participant_type == "agent"
+                and participant.participant_id == session.active_agent_id
+                else ""
+            )
+            lines.append(
+                f"    {participant.participant_type} "
+                f"{participant.participant_id} [{participant.role}]{active}"
+            )
+        return "\n".join(lines)
+
+    def room_invite_agent(self, agent_id: str) -> Any:
+        session, _actor = self._room_owner()
+        normalized_agent = normalize_identity(agent_id)
+        if normalized_agent not in self._rt.config.agents:
+            raise ValueError(f"Unknown configured agent: {normalized_agent}")
+        return self._rt.sessions.add_participant(
+            session_id=session.id,
+            participant_type="agent",
+            participant_id=normalized_agent,
+            channel=session.channel,
+            role="participant",
+            display_name=normalized_agent,
+        )
+
+    def room_invite_human(self, human_id: str, *, role: str = "participant") -> Any:
+        session, _actor = self._room_owner()
+        normalized_human = normalize_identity(human_id)
+        normalized_role = normalize_participant_role(role)
+        return self._rt.sessions.add_participant(
+            session_id=session.id,
+            participant_type="human",
+            participant_id=normalized_human,
+            channel=session.channel,
+            role=normalized_role,
+            display_name=normalized_human,
+        )
+
+    def room_kick(self, participant_type: str, participant_id: str) -> bool:
+        session, actor = self._room_owner()
+        normalized_type = normalize_participant_type(participant_type)
+        normalized_id = normalize_identity(participant_id)
+        if normalized_type == "human" and normalized_id == actor.participant_id:
+            raise ValueError("the acting room owner cannot remove themself")
+        return bool(
+            self._rt.sessions.remove_participant(
+                session_id=session.id,
+                participant_type=normalized_type,
+                participant_id=normalized_id,
+            )
+        )
+
+    def room_activate(self, agent_id: str) -> Any:
+        session, _actor = self._room_owner()
+        normalized_agent = normalize_identity(agent_id)
+        if normalized_agent not in self._rt.config.agents:
+            raise ValueError(f"Unknown configured agent: {normalized_agent}")
+        return self._rt.sessions.set_active_agent(
+            session_id=session.id,
+            agent_id=normalized_agent,
+        )
+
+    def room_set_routing(self, mode: str) -> Any:
+        session, _actor = self._room_owner()
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in {"addressed", "broadcast", "sequential"}:
+            raise ValueError("routing mode must be addressed, broadcast, or sequential")
+        return self._rt.sessions.update_session_metadata(
+            session_id=session.id,
+            patch={"room_routing_mode": normalized_mode},
+        )
+
+    async def run_room_turn(
+        self,
+        text: str,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        inbound_metadata: dict[str, str] | None = None,
+        approval_callback: Callable[[str, dict[str, Any], Any], Awaitable[bool]]
+        | None = None,
+        cancel_event: Any,
+    ) -> dict[str, object]:
+        session, actor = self._room_session_and_actor()
+        if actor.role not in {"owner", "participant"}:
+            raise RuntimeError("local room observer cannot post messages")
+
+        loop = asyncio.get_running_loop()
+        wrapped_progress = self._wrap_progress_callback(progress_callback)
+
+        def progress_from_worker(payload: object) -> None:
+            if isinstance(payload, Mapping):
+                mapped = dict(payload)
+            else:
+                model_dump = getattr(payload, "model_dump", None)
+                mapped = dict(model_dump(mode="json")) if callable(model_dump) else {}
+            if mapped:
+                loop.call_soon_threadsafe(wrapped_progress, mapped)
+
+        approval_from_worker = None
+        if approval_callback is not None:
+
+            def approval_from_worker(
+                tool_name: str, args: dict[str, Any], call_id: Any
+            ) -> bool:
+                return bool(
+                    asyncio.run_coroutine_threadsafe(
+                        cast(
+                            Coroutine[Any, Any, bool],
+                            approval_callback(tool_name, args, call_id),
+                        ),
+                        loop,
+                    ).result()
+                )
+
+        merged_metadata = self._turn_inbound_metadata(inbound_metadata) or {}
+        merged_metadata[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        merged_metadata["participant_id"] = actor.participant_id
+        payload: dict[str, object] = {
+            "message": text,
+            "agent_id": self.agent_id,
+            "session_id": session.id,
+            "channel": self._channel,
+            "target": self._target,
+            "inbound_metadata": merged_metadata,
+            "deliver": False,
+        }
+        timer = phase_timing.ChatPhaseTimer(cold_start=False)
+        turn_id = uuid4().hex
+        result: dict[str, object] | None = None
+        succeeded = False
+        self._begin_turn_usage_tracking()
+        try:
+            with phase_timing.use_chat_phase_timer(timer):
+                result = cast(
+                    dict[str, object],
+                    await asyncio.to_thread(
+                        self._rt.run_turn,
+                        payload=payload,
+                        progress_callback=progress_from_worker,
+                        approval_callback=approval_from_worker,
+                        cancel_event=cancel_event,
+                    ),
+                )
+            succeeded = True
+            if str(result.get("body", "") or "").strip():
+                phase_timing.mark_active_chat_first_text()
+            return result
+        finally:
+            metadata = result.get("metadata") if result is not None else None
+            self._finalize_turn_usage(
+                metadata if isinstance(metadata, Mapping) else None,
+                succeeded=succeeded,
+            )
+            self._record_chat_phase_timing(timer, turn_id=turn_id)
 
     @staticmethod
     def _apply_focus_turn_metadata(metadata: dict[str, str]) -> None:
@@ -70,6 +312,7 @@ class RuntimeMessageMixin:
                             kind=MessageKind.AGENT,
                             sender=self._role_to_sender(role, metadata),
                             body=self._strip_sender_prefix(body),
+                            show_header=self.is_room_session(),
                             created_at=created_at,
                             msg_id=msg_id,
                         )
@@ -91,6 +334,7 @@ class RuntimeMessageMixin:
                 body=body,
                 tool_result=tool_result,
                 tool_event=tool_event,
+                show_header=kind == MessageKind.AGENT and self.is_room_session(),
                 created_at=created_at,
                 msg_id=msg_id,
             )
@@ -112,7 +356,12 @@ class RuntimeMessageMixin:
 
     def _role_to_sender(self, role: str, metadata: dict[str, object]) -> str:
         if role in {"assistant", "agent", "outbound"}:
-            return str(self._agent_id or "")
+            return str(
+                metadata.get("display_name")
+                or metadata.get("participant_id")
+                or self._agent_id
+                or ""
+            )
         if role == "tool":
             tool_name = str(
                 metadata.get("tool_name")
@@ -338,3 +587,36 @@ class RuntimeMessageMixin:
             if text:
                 return text
         return ""
+
+
+def room_result_chat_messages(payload: Mapping[str, Any]) -> list[ChatMessage]:
+    metadata = payload.get("metadata")
+    response_items = (
+        metadata.get("room_responses") if isinstance(metadata, Mapping) else None
+    )
+    if isinstance(response_items, list):
+        return [
+            ChatMessage(
+                kind=MessageKind.AGENT,
+                sender=str(item.get("agent_id", "") or ""),
+                body=str(item.get("body", "") or ""),
+                show_header=True,
+                msg_id=str(item.get("persisted_outbound_message_id", "") or ""),
+            )
+            for item in response_items
+            if isinstance(item, Mapping)
+        ]
+    persisted_id = (
+        str(metadata.get("persisted_outbound_message_id", "") or "")
+        if isinstance(metadata, Mapping)
+        else ""
+    )
+    return [
+        ChatMessage(
+            kind=MessageKind.AGENT,
+            sender=str(payload.get("agent_id", "") or ""),
+            body=str(payload.get("body", "") or ""),
+            show_header=True,
+            msg_id=persisted_id,
+        )
+    ]

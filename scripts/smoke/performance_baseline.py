@@ -1455,6 +1455,7 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
             def __init__(self) -> None:
                 self.sessions = _Sessions()
                 self.config = SimpleNamespace(
+                    agents={"fixture-agent": SimpleNamespace()},
                     runtime=SimpleNamespace(process_mode="benchmark"),
                     gateway=SimpleNamespace(api_turn_timeout_seconds=5),
                 )

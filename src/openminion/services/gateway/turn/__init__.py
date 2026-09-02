@@ -15,6 +15,7 @@ from openminion.services.gateway.turn.flow import (
 from openminion.services.gateway.turn.route_classification import (
     classify_setup_cost_route,
 )
+from openminion.services.gateway.routing import parse_metadata_bool
 from openminion.services.gateway.turn.lifecycle import RuntimeSessionTurnFenceError
 from openminion.modules.task.run import (
     RUN_STATE_FAILED,
@@ -22,6 +23,32 @@ from openminion.modules.task.run import (
 
 
 class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
+    async def _compact_session_if_needed(
+        self,
+        *,
+        routing: Any,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        if parse_metadata_bool(
+            routing.normalized_inbound_metadata,
+            "room_router_skip_session_compaction",
+        ):
+            return
+        try:
+            with active_chat_phase("session_compaction"):
+                await self._session_context.acompact_session(
+                    session_id=routing.session.id,
+                    session_turn_fence_token=session_turn_fence_token,
+                )
+        except RuntimeSessionTurnFenceError:
+            raise
+        except Exception as exc:
+            self._logger.warning(
+                "session context compaction failed session_id=%s error=%s",
+                routing.session.id,
+                exc,
+            )
+
     async def run(
         self,
         *,
@@ -32,6 +59,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
         request_id: Optional[str],
         inbound_metadata: Optional[dict[str, str]],
         deliver: bool,
+        exclude_history_message_ids: tuple[str, ...] = (),
         forced_tools: Optional[list[str]] = None,
         capability_category: Optional[str] = None,
         typed_turn_intent: TypedTurnIntent | None = None,
@@ -64,26 +92,17 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                 session_turn_fence_token=session_turn_fence_token,
             )
 
-        try:
-            with active_chat_phase("session_compaction"):
-                await self._session_context.acompact_session(
-                    session_id=routing.session.id,
-                    session_turn_fence_token=session_turn_fence_token,
-                )
-        except RuntimeSessionTurnFenceError:
-            raise
-        except Exception as exc:
-            self._logger.warning(
-                "session context compaction failed session_id=%s error=%s",
-                routing.session.id,
-                exc,
-            )
+        await self._compact_session_if_needed(
+            routing=routing,
+            session_turn_fence_token=session_turn_fence_token,
+        )
         with active_chat_phase("gateway_session_context"):
             history = await self._session_context.abuild_history(
                 session_id=routing.session.id,
                 channel=channel,
                 target=target,
                 recent_limit=self._history_limit,
+                exclude_history_message_ids=exclude_history_message_ids,
                 conversation_id=routing.conversation_id or None,
                 thread_id=routing.thread_id or None,
                 session_turn_fence_token=session_turn_fence_token,

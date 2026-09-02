@@ -126,6 +126,34 @@ class _VisibleRuntime:
     def execute_goal_command(self, _text: str) -> tuple[str, str]:
         return "ok", "goal ok"
 
+    def room_participants_report(self) -> str:
+        return "Room: review\n  routing: addressed\n  participants: 2"
+
+    def room_invite_agent(self, agent_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            participant_type="agent",
+            participant_id=agent_id,
+            role="participant",
+        )
+
+    def room_invite_human(
+        self, human_id: str, *, role: str = "participant"
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            participant_type="human",
+            participant_id=human_id,
+            role=role,
+        )
+
+    def room_kick(self, _participant_type: str, _participant_id: str) -> bool:
+        return True
+
+    def room_activate(self, _agent_id: str) -> None:
+        return None
+
+    def room_set_routing(self, _mode: str) -> None:
+        return None
+
 
 def _extract_implemented_slashes() -> set[str]:
     implemented: set[str] = set()
@@ -270,6 +298,25 @@ def test_bare_slash_dispatch_prints_menu() -> None:
     assert "Slash commands:" in out
     assert "/help" in out
     assert "not yet implemented" not in out
+
+
+def test_terminal_room_invite_rejects_agent_role_operand() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/invite agent beta owner",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    assert "usage: /invite agent <id>" in buf.getvalue()
 
 
 def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> None:

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 import tempfile
 from pathlib import Path
 from tests._csc_fixtures import _csc_install_default_agent
@@ -148,6 +149,54 @@ def test_config_manager_explicit_relative_config_ignores_home_root_for_path_look
         manager.base_config.agents[next(iter(manager.base_config.agents.keys()))].name
         == "cwd-wins"
     )
+
+
+def test_config_manager_explicit_roots_replace_ambient_snapshot(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config)
+    config_path = tmp_path / "config.json"
+    save_config(config, str(config_path))
+    explicit_home = tmp_path / "explicit-home"
+    explicit_data = tmp_path / "explicit-data"
+    ambient_home = tmp_path / "ambient-home"
+    ambient_data = tmp_path / "ambient-data"
+    ambient_generated = tmp_path / "ambient-generated"
+    monkeypatch.setenv("OPENMINION_HOME", str(ambient_home))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(ambient_data))
+    monkeypatch.setenv("OPENMINION_GENERATED_ROOT", str(ambient_generated))
+
+    manager = ConfigManager.load(
+        config_path,
+        home_root=explicit_home,
+        data_root=explicit_data,
+    )
+
+    assert manager.env.openminion_home == str(explicit_home.resolve())
+    assert manager.env.openminion_data_root == str(explicit_data.resolve())
+    assert manager.env.openminion_generated_root == str(
+        (explicit_data / "runtime").resolve()
+    )
+    assert os.environ["OPENMINION_HOME"] == str(ambient_home)
+    assert os.environ["OPENMINION_DATA_ROOT"] == str(ambient_data)
+    assert os.environ["OPENMINION_GENERATED_ROOT"] == str(ambient_generated)
+
+
+def test_config_manager_explicit_home_ignores_mismatched_ambient_data_root(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config)
+    config_path = tmp_path / "config.json"
+    save_config(config, str(config_path))
+    explicit_home = tmp_path / "explicit-home"
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path / "ambient-home"))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "ambient-data"))
+
+    manager = ConfigManager.load(config_path, home_root=explicit_home)
+
+    assert manager.data_root == (explicit_home / ".openminion").resolve()
 
 
 def test_config_manager_duplicate_registration_raises(fresh_config_manager) -> None:

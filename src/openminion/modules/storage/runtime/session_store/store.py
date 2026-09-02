@@ -310,12 +310,16 @@ class SessionStore:
         limit: int = 100,
         conversation_id: str | None = None,
         thread_id: str | None = None,
+        exclude_message_ids: tuple[str, ...] = (),
+        after_rowid: int = 0,
     ) -> list[MessageRecord]:
         return self._messages.list_recent_messages(
             session_id=session_id,
             limit=limit,
             conversation_id=conversation_id,
             thread_id=thread_id,
+            exclude_message_ids=exclude_message_ids,
+            after_rowid=after_rowid,
         )
 
     def latest_conversation_id(self, *, session_id: str) -> str | None:

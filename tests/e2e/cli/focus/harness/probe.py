@@ -360,6 +360,19 @@ class FocusProbe:
             ),
         )
 
+    def for_session(self, session_id: str) -> "FocusProbe":
+        return FocusProbe(
+            python_bin=self.python_bin,
+            openminion_root=self.openminion_root,
+            framework_root=self.framework_root,
+            data_root=self.data_root,
+            config_path=self.config_path,
+            agent_id=self.agent_id,
+            workdir=self.workdir,
+            session_id=session_id,
+            include_project_context=self.include_project_context,
+        )
+
     def uses_echo_agent(self) -> bool:
         return _config_uses_echo_agent(self.config_path, self.agent_id)
 

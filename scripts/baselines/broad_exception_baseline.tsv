@@ -369,7 +369,6 @@ src/openminion/services/runtime/cron/delivery.py	1	0	current broad-handler basel
 src/openminion/services/runtime/cron/executor.py	15	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/daemon.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/engine.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/runtime/ingress/execution.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/ingress/payloads.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/ingress/timing.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/manager.py	3	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

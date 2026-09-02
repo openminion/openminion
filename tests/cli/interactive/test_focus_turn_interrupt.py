@@ -78,6 +78,9 @@ class _InterruptRuntimeDouble:
     def list_tools(self) -> list[tuple[str, bool]]:
         return list(self.tool_list)
 
+    def is_room_session(self) -> bool:
+        return False
+
     def switch_session(self, session_id: str) -> list[ChatMessage]:
         self._session_id = str(session_id)
         return []
@@ -125,6 +128,27 @@ class _InterruptRuntimeDouble:
             raise
 
 
+class _RoomInterruptRuntimeDouble(_InterruptRuntimeDouble):
+    def is_room_session(self) -> bool:
+        return True
+
+    async def run_room_turn(self, text: str, **kwargs):  # noqa: ANN003, ANN202
+        del text
+        self.started.set()
+        self.room_cancel_event = kwargs["cancel_event"]
+        try:
+            await self.release.wait()
+            return {
+                "agent_id": "alpha",
+                "body": "late room result",
+                "metadata": {"persisted_outbound_message_id": "out-late"},
+            }
+        except asyncio.CancelledError:
+            self.cancelled = True
+            self.cancel_event_was_set = self.room_cancel_event.is_set()
+            raise
+
+
 def _make_app(runtime: _InterruptRuntimeDouble) -> FocusApp:
     return FocusApp(runtime=runtime, working_dir=runtime.working_dir)
 
@@ -148,6 +172,30 @@ async def test_idle_ctrl_c_does_not_open_interrupt_prompt() -> None:
         assert isinstance(app.screen, FocusScreen)
         assert not list(app.screen.query(".focus-inline-prompt")), (
             "idle ctrl+c must not open the interrupt prompt"
+        )
+
+
+@pytest.mark.asyncio
+async def test_room_interrupt_sets_runtime_cancellation_before_task_cancel() -> None:
+    runtime = _RoomInterruptRuntimeDouble(
+        working_dir="/tmp/focus-room-interrupt",
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("review"))
+        await runtime.started.wait()
+        await app.screen._interrupt_current_turn()
+        await pilot.pause()
+        chat = app.screen.query_one(FocusTranscript)
+
+        assert runtime.cancelled is True
+        assert runtime.cancel_event_was_set is True
+        assert not any(
+            message.kind == MessageKind.AGENT and message.body == "late room result"
+            for message in chat._messages
         )
 
 

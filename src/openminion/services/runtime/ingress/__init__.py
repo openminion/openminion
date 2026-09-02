@@ -7,10 +7,9 @@ from openminion.base.config.core import resolve_default_agent_id
 
 from .execution import (
     _build_turn_context,
-    execute_gateway_turn_impl,
     execute_runtime_turn as _execute_runtime_turn_impl,
 )
-from .gateway_call import run_gateway_once_impl
+from .gateway_call import run_gateway_once_impl as _run_gateway_once
 from .payloads import (
     apply_inbound_overrides,
     mutable_inbound_metadata as _mutable_inbound_metadata,
@@ -30,7 +29,6 @@ from .types import (
     RuntimeTurnHandle,
     RuntimeTurnRequest,
     RuntimeTurnResult,
-    TurnContext,
     TurnRequestError,
     TurnTimeoutError,
 )
@@ -141,73 +139,4 @@ def execute_runtime_turn(
         progress_callback=progress_callback,
         approval_callback=approval_callback,
         cancel_event=cancel_event,
-    )
-
-
-def _execute_gateway_turn(
-    *,
-    runtime: Any,
-    agent_name: str,
-    channel: str,
-    target: str,
-    context: TurnContext,
-    session_id: str | None,
-    idempotency_key: str | None,
-    request_id: str | None,
-    deliver: bool,
-    capability_category: str | None,
-    timeout_seconds: float,
-    run_profile_overrides: Any,
-    progress_callback: Callable[[object], None] | None,
-    approval_callback: Any | None = None,
-) -> Any:
-    return execute_gateway_turn_impl(
-        runtime=runtime,
-        agent_name=agent_name,
-        channel=channel,
-        target=target,
-        context=context,
-        session_id=session_id,
-        idempotency_key=idempotency_key,
-        request_id=request_id,
-        deliver=deliver,
-        capability_category=capability_category,
-        timeout_seconds=timeout_seconds,
-        run_profile_overrides=run_profile_overrides,
-        run_gateway_once=_run_gateway_once,
-        progress_callback=progress_callback,
-        approval_callback=approval_callback,
-    )
-
-
-async def _run_gateway_once(
-    *,
-    gateway: Any,
-    channel: str,
-    target: str,
-    message: str,
-    session_id: str | None,
-    idempotency_key: str | None,
-    request_id: str | None,
-    inbound_metadata: dict[str, str] | None,
-    deliver: bool,
-    forced_tools: list[str] | None = None,
-    capability_category: str | None = None,
-    progress_callback: Callable[[object], None] | None = None,
-    approval_callback: Any | None = None,
-) -> Any:
-    return await run_gateway_once_impl(
-        gateway=gateway,
-        channel=channel,
-        target=target,
-        message=message,
-        session_id=session_id,
-        idempotency_key=idempotency_key,
-        request_id=request_id,
-        inbound_metadata=inbound_metadata,
-        deliver=deliver,
-        forced_tools=forced_tools,
-        capability_category=capability_category,
-        progress_callback=progress_callback,
-        approval_callback=approval_callback,
     )

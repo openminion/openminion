@@ -387,6 +387,9 @@ class _FocusRuntimeDouble:
     def list_tools(self) -> list[tuple[str, bool]]:
         return list(self.tool_list)
 
+    def is_room_session(self) -> bool:
+        return False
+
     def switch_session(self, session_id: str) -> list[ChatMessage]:
         self.bind_session(session_id)
         return self.get_current_history()

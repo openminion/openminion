@@ -56,6 +56,8 @@ from .tool_exposure import tool_exposure_command
 
 
 class SlashCommandMixin:
+    _runtime: Any
+
     @property
     def _slash_command_registry(self) -> list[tuple[tuple[str, ...], str, str]]:
         return rich_slash_command_registry()
@@ -636,7 +638,7 @@ class SlashCommandMixin:
             self.action_show_sessions()
 
     def _slash_status(self, _args: str) -> None:
-        self._push_system_body(
+        body = (
             f"agent      {self._runtime.agent_id}\n"
             f"provider   {self._runtime_provider_name()}\n"
             f"model      {self._runtime_model_name()}\n"
@@ -644,6 +646,11 @@ class SlashCommandMixin:
             f"dir        {self._working_dir}\n"
             f"transport  {self._runtime.transport}"
         )
+        room_detector = getattr(self._runtime, "is_room_session", None)
+        room_reporter = getattr(self._runtime, "room_participants_report", None)
+        if callable(room_detector) and room_detector() and callable(room_reporter):
+            body = f"{body}\n\n{room_reporter()}"
+        self._push_system_body(body)
 
     def _slash_telemetry(self, args: str) -> None:
         self._push_system_body(render_telemetry_slash(args, runtime=self._runtime))

@@ -32,7 +32,8 @@ from openminion.modules.telemetry.events.catalog import (
 )
 from openminion.base.config.settings import SettingsResolver
 from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
-from .agent_sidebar import build_agent_sidebar_items
+from openminion.modules.storage import is_room_session_key
+from .agent_sidebar import build_agent_sidebar_items, build_session_sidebar_item
 from .controls import RuntimeControlsMixin
 from .delegation import RuntimeDelegationMixin
 from .directory_sessions import build_directory_session_record
@@ -324,29 +325,9 @@ class OpenMinionRuntime(
             ]
         items: list[SidebarItem] = []
         for session in sessions:
-            preview_records = self._rt.sessions.list_messages(
-                session_id=session.id,
-                limit=3,
-            )
-            preview_lines = [
-                f"{self._role_to_sender(str(getattr(record, 'role', '') or '').strip().lower(), getattr(record, 'metadata', {}) or {})}: "
-                f"{str(getattr(record, 'body', '') or '')[:40]}"
-                for record in preview_records
-                if str(getattr(record, "body", "") or "").strip()
-            ]
             items.append(
-                SidebarItem(
-                    id=session.id,
-                    label=session.id[:12],
-                    active=(session.id == self._session_id),
-                    meta={
-                        "channel": session.channel,
-                        "target": session.target,
-                        "status": session.status,
-                        "updated_at": session.updated_at,
-                        "preview_lines": preview_lines,
-                        "session_type": self._classify_session_type(session),
-                    },
+                build_session_sidebar_item(
+                    self, session, active_session_id=self._session_id
                 )
             )
         return items
@@ -391,6 +372,15 @@ class OpenMinionRuntime(
         session_key = str(getattr(session, "session_key", "") or "")
         if not session_key:
             return True
+        if is_room_session_key(session_key):
+            return (
+                self._rt.sessions.get_participant(
+                    session.id,
+                    "agent",
+                    agent_id,
+                )
+                is not None
+            )
         agent_fragment = f"agent:{agent_id}|"
         return agent_fragment in session_key
 
@@ -406,7 +396,7 @@ class OpenMinionRuntime(
                 return "default"
         if session_id.startswith("focus-"):
             return _TARGET_KIND_FOCUS
-        if session_id.startswith("room-"):
+        if is_room_session_key(session_key):
             return "room"
         if session_id.startswith("sess-"):
             return "named"
@@ -946,7 +936,11 @@ class OpenMinionRuntime(
 
     def _sync_conversation_id(self) -> None:
         session_id = str(self._session_id or "").strip()
-        if self._target == _TARGET_KIND_FOCUS and session_id:
+        if (
+            self._target == _TARGET_KIND_FOCUS
+            and session_id
+            and not self.is_room_session()
+        ):
             self._conversation_id = f"focus-{session_id}"
             return
         self._conversation_id = ""

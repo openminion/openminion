@@ -54,7 +54,7 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
-from .sessions import resume_session, start_new_session
+from .sessions import handle_room_slash, resume_session, start_new_session
 from .slash_output import handle_debug_output_slash
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
@@ -688,6 +688,14 @@ async def _handle_slash(
         return False
     if cmd == "/agents":
         _handle_slash_agents(text, runtime=runtime, console=console)
+        return False
+    if cmd in {"/participants", "/invite", "/kick", "/activate", "/routing"}:
+        handle_room_slash(
+            cmd,
+            _slash_arg(text),
+            runtime=runtime,
+            console=console,
+        )
         return False
     if cmd == "/readonly":
         _handle_slash_readonly(

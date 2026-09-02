@@ -39,6 +39,12 @@ class _SessionStoreStub:
         self.resolved: list[dict[str, str]] = []
         self.events: list[dict[str, object]] = []
 
+    def get_session(self, session_id: str) -> None:
+        return None
+
+    def list_participants(self, session_id: str) -> list[object]:
+        return []
+
     def resolve_session(
         self,
         *,

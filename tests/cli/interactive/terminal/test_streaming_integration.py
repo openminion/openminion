@@ -96,6 +96,49 @@ class _ApprovalRuntime:
         await asyncio.sleep(0)
 
 
+class _RoomRuntime:
+    def __init__(self) -> None:
+        self.cancel_event = None
+
+    def is_room_session(self) -> bool:
+        return True
+
+    async def run_room_turn(self, text: str, **kwargs):  # noqa: ANN003, ANN202
+        del text
+        self.cancel_event = kwargs["cancel_event"]
+        return {
+            "agent_id": "alpha",
+            "body": "aggregate",
+            "metadata": {
+                "room_responses": [
+                    {
+                        "agent_id": "alpha",
+                        "body": "alpha reply",
+                        "persisted_outbound_message_id": "out-alpha",
+                    },
+                    {
+                        "agent_id": "beta",
+                        "body": "beta reply",
+                        "persisted_outbound_message_id": "out-beta",
+                    },
+                ]
+            },
+        }
+
+
+class _BlockingRoomRuntime(_RoomRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def run_room_turn(self, text: str, **kwargs):  # noqa: ANN003, ANN202
+        del text
+        self.cancel_event = kwargs["cancel_event"]
+        self.started.set()
+        await asyncio.Event().wait()
+        return {}
+
+
 def _make_transcript() -> tuple[TerminalTranscript, io.StringIO]:
     buf = io.StringIO()
     return TerminalTranscript(Console(file=buf, force_terminal=False, width=80)), buf
@@ -181,6 +224,28 @@ def test_agent_turn_passes_terminal_approval_callback() -> None:
     assert "approval ok" in buf.getvalue()
 
 
+def test_terminal_room_turn_renders_structured_agent_attribution() -> None:
+    transcript, buf = _make_transcript()
+    runtime = _RoomRuntime()
+
+    asyncio.run(
+        _run_agent_turn(
+            text="review",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+        )
+    )
+
+    agents = [item for item in transcript._messages if item.kind == MessageKind.AGENT]
+    assert [(item.sender, item.body, item.msg_id) for item in agents] == [
+        ("alpha", "alpha reply", "out-alpha"),
+        ("beta", "beta reply", "out-beta"),
+    ]
+    assert "alpha reply" in buf.getvalue()
+    assert "beta reply" in buf.getvalue()
+
+
 def test_mid_stream_error_preserves_partial_and_emits_error() -> None:
     transcript, buf = _make_transcript()
     runtime = _StreamingRuntime(
@@ -246,6 +311,42 @@ def test_escape_interrupt_cancels_terminal_turn_and_preserves_partial(
     assert agents[-1].body == "partial reply"
     assert systems
     assert systems[-1].body == "Interrupted current turn."
+
+
+def test_escape_interrupt_sets_room_cancellation_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _BlockingRoomRuntime()
+    transcript, _ = _make_transcript()
+
+    def _fake_watcher(turn_task: asyncio.Task[None]):
+        async def _cancel_after_start() -> None:
+            await runtime.started.wait()
+            turn_task.cancel()
+
+        asyncio.create_task(_cancel_after_start())
+        return terminal_shell._EscapeInterruptWatcher(
+            stop=lambda: None,
+            interrupted=lambda: True,
+        )
+
+    monkeypatch.setattr(
+        terminal_shell,
+        "_start_escape_interrupt_watcher",
+        _fake_watcher,
+    )
+
+    asyncio.run(
+        terminal_shell._run_interruptible_agent_turn(
+            text="review",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+        )
+    )
+
+    assert runtime.cancel_event is not None
+    assert runtime.cancel_event.is_set()
 
 
 @pytest.mark.skipif(

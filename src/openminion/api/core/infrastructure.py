@@ -13,6 +13,11 @@ from openminion.base.config import (
     build_runtime_config,
 )
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.constants import (
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+    OPENMINION_HOME_ENV,
+)
 from openminion.base.logging import configure_logging
 from openminion.modules.llm.providers.factory import build_runtime_llm_handle
 from openminion.modules.storage.runtime import (
@@ -43,6 +48,12 @@ from openminion.services.runtime.env import apply_runtime_environment
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 from openminion.tools.ops.service import OpsService, configured_ops_service
+
+_ROOT_ENV_KEYS = (
+    OPENMINION_HOME_ENV,
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+)
 
 
 @dataclass(frozen=True)
@@ -108,7 +119,10 @@ def build_runtime_infrastructure(
     disable_security_policy: bool,
     logging_mode: str,
 ) -> dict[str, object]:
-    apply_runtime_environment(base_config.runtime.env)
+    runtime_env = base_config.runtime.env or {}
+    filtered_env = {k: v for k, v in runtime_env.items() if k not in _ROOT_ENV_KEYS}
+    apply_runtime_environment(filtered_env)
+    base_config.runtime.env = manager.env.snapshot()
     telemetry_service = TelemetryService(
         home_root=paths.home,
         env=manager.env.snapshot(),
@@ -128,6 +142,8 @@ def build_runtime_infrastructure(
     extension_runtime = LifecycleService.from_config(
         base_config,
         config_path=str(paths.config),
+        home_root=paths.home,
+        data_root=paths.data,
         logger=logger,
     ).build(
         security_policy=security_policy,

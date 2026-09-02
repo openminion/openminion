@@ -206,6 +206,7 @@ class GatewayTurnPersistenceDeliveryMixin:
                 display_name=self._agent_id,
                 session_turn_fence_token=session_turn_fence_token,
             )
+        outbound.metadata["persisted_outbound_message_id"] = outbound_record.id
         self._lifecycle_ops.emit_turn_event(
             session_id=session_id,
             event_type="response.persisted",

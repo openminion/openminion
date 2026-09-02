@@ -60,6 +60,8 @@ from .actions import (
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
+from .sessions import run_room_turn_if_bound, runtime_message_stream
+from .timing import push_phase_timing_report_if_enabled
 from .renderers import (
     _render_cost_snapshot as _render_cost_snapshot,
     _render_mcp_status as _render_mcp_status,
@@ -939,19 +941,30 @@ async def _run_agent_turn(
             status_line=status_line,
             invalidate_prompt=invalidate_prompt,
         )
-        send_kwargs: dict[str, Any] = {"progress_callback": progress_callback}
-        if approval_callback is not None:
-            send_kwargs["approval_callback"] = approval_callback
-        async for chunk in runtime.send_message(text, **send_kwargs):
-            chunk_str = str(chunk or "")
-            if not chunk_str:
-                continue
-            reply += chunk_str
-            mark_active_chat_first_text()
-            handle.append_token(chunk_str)
+        room_reply = await run_room_turn_if_bound(
+            runtime,
+            text,
+            progress_callback=progress_callback,
+            approval_callback=approval_callback,
+            transcript=transcript,
+            handle=handle,
+        )
+        if room_reply is not None:
+            reply = room_reply
+        else:
+            async for chunk in runtime_message_stream(
+                runtime,
+                text,
+                progress_callback,
+                approval_callback,
+            ):
+                chunk_str = str(chunk or "")
+                if not chunk_str:
+                    continue
+                reply += chunk_str
+                mark_active_chat_first_text()
+                handle.append_token(chunk_str)
         handle.complete(final_text=reply)
-        from .timing import push_phase_timing_report_if_enabled
-
         push_phase_timing_report_if_enabled(runtime=runtime, transcript=transcript)
     except asyncio.CancelledError:
         try:

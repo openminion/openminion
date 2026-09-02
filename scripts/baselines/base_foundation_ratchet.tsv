@@ -17,7 +17,7 @@ config/env/snapshot.py	294	46	13	4
 config/env/subprocess.py	50	1	15	2
 config/interface.py	29	1	7	4
 config/io.py	89	4	19	3
-config/manager.py	111	6	37	4
+config/manager.py	110	6	34	4
 config/mcp.py	714	33	50	2
 config/parse.py	216	19	13	2
 config/parser/__init__.py	18	0	0	0

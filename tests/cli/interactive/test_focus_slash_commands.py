@@ -75,6 +75,52 @@ async def test_slash_help_lists_every_registered_command_with_description() -> N
 
 
 @pytest.mark.asyncio
+async def test_room_slash_commands_use_runtime_contract_and_reject_agent_role() -> None:
+    class _RoomRuntime(_DemoFocusRuntime):
+        def __init__(self, *, working_dir: str) -> None:
+            super().__init__(working_dir=working_dir)
+            self.calls: list[tuple[str, ...]] = []
+
+        def room_participants_report(self) -> str:
+            return "Room: review\n  routing: addressed\n  participants: 2"
+
+        def room_invite_agent(self, agent_id: str) -> SimpleNamespace:
+            self.calls.append(("invite-agent", agent_id))
+            return SimpleNamespace(
+                participant_type="agent",
+                participant_id=agent_id,
+                role="participant",
+            )
+
+        def room_invite_human(
+            self, human_id: str, *, role: str = "participant"
+        ) -> SimpleNamespace:
+            self.calls.append(("invite-human", human_id, role))
+            return SimpleNamespace(
+                participant_type="human",
+                participant_id=human_id,
+                role=role,
+            )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _RoomRuntime(working_dir=tmp)
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            chat = screen.query_one(FocusTranscript)
+
+            screen._handle_command("/participants")
+            assert "routing: addressed" in _last_system_body(chat)
+            screen._handle_command("/invite agent beta")
+            assert _last_system_body(chat) == "invited agent beta as participant"
+            screen._handle_command("/invite agent beta owner")
+            assert "usage: /invite agent <id>" in _last_system_body(chat)
+
+    assert runtime.calls == [("invite-agent", "beta")]
+
+
+@pytest.mark.asyncio
 async def test_slash_overview_opens_read_only_rich_overlay() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         app = _make_app(tmp)

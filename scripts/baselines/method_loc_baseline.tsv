@@ -96,7 +96,7 @@ src/openminion/modules/tool/executor.py	execute_single_call	203	current over-thr
 src/openminion/modules/tool/runtime/manager.py	ToolRegistryManager.compile	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/schema_service.py	ToolSchemaService.collect_execution_tool_schemas	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/gateway/service.py	GatewayService.handle_message_streaming	116	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/gateway/turn/__init__.py	GatewayTurnRunner.run	201	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/services/gateway/turn/__init__.py	GatewayTurnRunner.run	193	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/observability.py	_build_brain_llm_mode_observability_check	167	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/service.py	collect_health_snapshot	199	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/runtime/bootstrap.py	build_brain_runner_bundle	291	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

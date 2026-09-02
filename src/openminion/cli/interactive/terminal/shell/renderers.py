@@ -48,22 +48,28 @@ def _render_sessions_list(*, runtime: Any, console: Console) -> None:
     table.add_column("Label")
     table.add_column("Updated", style=_MUTED_STYLE)
     table.add_column("Channel", style=_MUTED_STYLE)
+    table.add_column("Room", style=_MUTED_STYLE)
     for item in items:
         active = bool(getattr(item, "active", False))
         marker = "◆" if active else " "
         sid = str(getattr(item, "id", "") or "")
         label = str(getattr(item, "label", "") or sid[:12] or "—")
         meta = getattr(item, "meta", None)
-        updated = channel = ""
+        updated = channel = room = ""
         if isinstance(meta, dict):
             updated = str(meta.get("updated_at", "") or "")[:19]
             channel = str(meta.get("channel", "") or "")
+            if str(meta.get("session_type", "") or "") == "room":
+                routing = str(meta.get("room_routing_mode", "") or "addressed")
+                count = int(meta.get("participant_count", 0) or 0)
+                room = f"{routing}, {count} participants"
         table.add_row(
             Text(marker, style=_INFO_BOLD_STYLE if active else ""),
             sid,
             label,
             updated,
             channel,
+            room,
         )
     console.print(table)
 
@@ -90,6 +96,11 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
         console.print(Text(f"  API adapter: {adapter}"))
     console.print(Text(f"  session: {session_id}", style=_MUTED_STYLE))
     console.print(Text(f"  cwd: {working_dir}", style=_MUTED_STYLE))
+    room_detector = getattr(runtime, "is_room_session", None)
+    room_reporter = getattr(runtime, "room_participants_report", None)
+    if callable(room_detector) and room_detector() and callable(room_reporter):
+        console.print()
+        console.print(Text(room_reporter()))
     if usage_summary:
         console.print(Text(f"  usage: {usage_summary}", style=_MUTED_STYLE))
     else:

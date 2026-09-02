@@ -552,6 +552,7 @@ class SessionContextService:
         channel: str,
         target: str,
         recent_limit: int,
+        exclude_history_message_ids: tuple[str, ...] = (),
         conversation_id: str | None = None,
         thread_id: str | None = None,
         session_turn_fence_token: int | None = None,
@@ -590,11 +591,14 @@ class SessionContextService:
                     )
                 )
 
+        recent_limit = max(1, int(recent_limit))
         recent_records = self._sessions.list_recent_messages(
             session_id=session_id,
-            limit=max(1, int(recent_limit)),
+            limit=recent_limit,
             conversation_id=conversation_value or None,
             thread_id=thread_value or None,
+            exclude_message_ids=exclude_history_message_ids,
+            after_rowid=context.compacted_until_rowid if context else 0,
         )
         history_messages = [
             Message(
@@ -666,6 +670,7 @@ class SessionContextService:
         channel: str,
         target: str,
         recent_limit: int,
+        exclude_history_message_ids: tuple[str, ...] = (),
         conversation_id: str | None = None,
         thread_id: str | None = None,
         session_turn_fence_token: int | None = None,
@@ -681,6 +686,7 @@ class SessionContextService:
             channel=channel,
             target=target,
             recent_limit=recent_limit,
+            exclude_history_message_ids=exclude_history_message_ids,
             conversation_id=conversation_id,
             thread_id=thread_id,
             **fence_kwargs,

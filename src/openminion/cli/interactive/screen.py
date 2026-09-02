@@ -1,7 +1,8 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Any, cast
+from threading import Event
+from typing import Any, AsyncIterator, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -38,6 +39,7 @@ from .overlay import FocusOverlayInteractionMixin
 from .commands import SlashCommandMixin
 from .actions import FocusActionMixin
 from .runtime.commands import RuntimeCommandMixin
+from .runtime.messages import room_result_chat_messages
 from .widgets.debug_pane import FocusDebugPane
 from .widgets.inline_choice import _InlineChoiceWidget
 from .widgets import (
@@ -130,6 +132,7 @@ class FocusScreen(
         self._last_turn_debug: dict[str, Any] = {}
         self._session_initializing = True
         self._turn_worker: Worker[None] | None = None
+        self._room_cancel_event: Event | None = None
         self._interrupt_requested = False
         self._run_next_after_interrupt = False
         self._cancel_run_next_expected_queue_id: str | None = None
@@ -398,6 +401,50 @@ class FocusScreen(
             return
         status_line.set_state(input_state=input_state)
 
+    async def _room_turn_reply(
+        self,
+        text: str,
+        *,
+        chat: FocusTranscript,
+        turn: Any,
+        cancel_event: Event,
+    ) -> str:
+        result = await self._runtime.run_room_turn(
+            text,
+            progress_callback=self._handle_progress_event,
+            inbound_metadata={
+                "workspace_root": self._working_dir,
+                "cwd": self._working_dir,
+            },
+            approval_callback=self._approval_callback,
+            cancel_event=cancel_event,
+        )
+        messages = room_result_chat_messages(result)
+        if not messages:
+            turn.complete(final_text="")
+            return ""
+        first, *remaining = messages
+        turn._widget._message.sender = first.sender
+        turn._widget._message.msg_id = first.msg_id
+        turn.complete(final_text=first.body)
+        for message in remaining:
+            chat.push_message(message)
+        return str(first.body)
+
+    async def _stream_turn_tokens(self, text: str) -> AsyncIterator[str]:
+        async for chunk in self._runtime.send_message(
+            text,
+            progress_callback=self._handle_progress_event,
+            inbound_metadata={
+                "workspace_root": self._working_dir,
+                "cwd": self._working_dir,
+            },
+            approval_callback=self._approval_callback,
+        ):
+            token = str(chunk or "")
+            if token:
+                yield token
+
     async def _run_turn(
         self,
         text: str,
@@ -422,26 +469,27 @@ class FocusScreen(
         turn = chat.begin_turn(role="assistant")
         self._active_turn = turn
         turn._widget._message.sender = self._runtime.agent_id
+        self._room_cancel_event = Event() if self._runtime.is_room_session() else None
+        room_cancel_event = self._room_cancel_event
         try:
-            async for chunk in self._runtime.send_message(
-                text,
-                progress_callback=self._handle_progress_event,
-                inbound_metadata={
-                    "workspace_root": self._working_dir,
-                    "cwd": self._working_dir,
-                },
-                approval_callback=self._approval_callback,
-            ):
-                token = str(chunk or "")
-                if not token:
-                    continue
-                reply += token
-                mark_active_chat_first_text()
-                turn.append_token(token)
-            turn.complete(final_text=reply)
+            if room_cancel_event is not None:
+                reply = await self._room_turn_reply(
+                    text,
+                    chat=chat,
+                    turn=turn,
+                    cancel_event=room_cancel_event,
+                )
+            else:
+                async for token in self._stream_turn_tokens(text):
+                    reply += token
+                    mark_active_chat_first_text()
+                    turn.append_token(token)
+                turn.complete(final_text=reply)
             if not reply.strip():
                 self._drop_empty_streaming_turn(chat, turn)
         except asyncio.CancelledError:
+            if room_cancel_event is not None:
+                room_cancel_event.set()
             interrupted = self._interrupt_requested
             turn.complete(final_text=reply)
             if interrupted and not reply.strip():
@@ -466,6 +514,8 @@ class FocusScreen(
                 )
             )
         finally:
+            if self._room_cancel_event is room_cancel_event:
+                self._room_cancel_event = None
             self._active_turn = None
             interrupted = bool(self._interrupt_requested)
             elapsed_seconds = time.perf_counter() - started
@@ -607,6 +657,8 @@ class FocusScreen(
         if worker is None:
             return
         self._interrupt_requested = True
+        if self._room_cancel_event is not None:
+            self._room_cancel_event.set()
         self._dismiss_turn_owned_interactions()
         worker.cancel()
         try:

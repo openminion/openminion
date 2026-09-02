@@ -1,3 +1,5 @@
+from typing import Any
+
 from openminion.cli.commands.agent.delegation import (
     render_agent_delegate_result,
     request_from_slash_args,
@@ -9,6 +11,8 @@ from ..widgets import FocusTranscript
 
 class RuntimeCommandMixin:
     """Slash commands that inspect or switch the active runtime."""
+
+    _runtime: Any
 
     def _slash_model(self, args: str) -> None:
         provider = self._runtime_provider_name() or "(unknown)"
@@ -170,6 +174,71 @@ class RuntimeCommandMixin:
             approval_callback=getattr(self, "_approval_callback", None),
         )
         self._push_runtime_message(render_agent_delegate_result(dict(result or {})))
+
+    def _slash_participants(self, _args: str) -> None:
+        try:
+            body = self._runtime.room_participants_report()
+        except (RuntimeError, ValueError) as exc:
+            body = f"/participants: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_invite(self, args: str) -> None:
+        parts = str(args or "").split()
+        try:
+            if len(parts) == 2 and parts[0] == "agent":
+                participant = self._runtime.room_invite_agent(parts[1])
+            elif len(parts) in {2, 3} and parts[0] == "human":
+                participant = self._runtime.room_invite_human(
+                    parts[1],
+                    role=parts[2] if len(parts) == 3 else "participant",
+                )
+            else:
+                raise ValueError(
+                    "usage: /invite agent <id> or /invite human <id> [role]"
+                )
+            body = (
+                f"invited {participant.participant_type} "
+                f"{participant.participant_id} as {participant.role}"
+            )
+        except (RuntimeError, ValueError) as exc:
+            body = f"/invite: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_kick(self, args: str) -> None:
+        parts = str(args or "").split()
+        try:
+            if len(parts) != 2:
+                raise ValueError("usage: /kick <agent|human> <id>")
+            removed = self._runtime.room_kick(parts[0], parts[1])
+            body = "participant removed" if removed else "participant not found"
+        except (RuntimeError, ValueError) as exc:
+            body = f"/kick: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_activate(self, args: str) -> None:
+        try:
+            agent_id = str(args or "").strip()
+            if not agent_id or len(agent_id.split()) != 1:
+                raise ValueError("usage: /activate <agent-id>")
+            self._runtime.room_activate(agent_id)
+            body = f"active room agent: {agent_id}"
+        except (RuntimeError, ValueError) as exc:
+            body = f"/activate: {exc}"
+        self._push_runtime_message(body)
+
+    def _slash_routing(self, args: str) -> None:
+        mode = str(args or "").strip()
+        try:
+            if not mode:
+                body = self._runtime.room_participants_report()
+            elif len(mode.split()) != 1:
+                raise ValueError("usage: /routing [addressed|broadcast|sequential]")
+            else:
+                self._runtime.room_set_routing(mode)
+                body = f"room routing: {mode.lower()}"
+        except (RuntimeError, ValueError) as exc:
+            body = f"/routing: {exc}"
+        self._push_runtime_message(body)
 
     def _push_runtime_message(self, body: str) -> None:
         self.query_one(FocusTranscript).push_message(

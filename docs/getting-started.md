@@ -49,6 +49,41 @@ Focus. A useful first task is:
 Give me one safe read-only command to inspect the current directory.
 ```
 
+### Start a local human-plus-agents room
+
+Use explicit root flags so the room and its telemetry stay under one chosen
+runtime directory. Replace `writer` and `reviewer` with agent IDs from your
+config:
+
+```bash
+runtime_root="$PWD/.openminion-room"
+config_path="$HOME/.openminion/agents.json"
+room_output="$(openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  room create \
+  --name "Review room" \
+  --human owner-local \
+  --agent writer \
+  --agent reviewer \
+  --channel console \
+  --target focus)"
+room_id="$(printf '%s\n' "$room_output" | sed -n 's/^room=//p')"
+
+openminion \
+  --home-root "$runtime_root/home" \
+  --data-root "$runtime_root/data" \
+  --config "$config_path" \
+  --agent writer \
+  --session "$room_id" \
+  --dir "$PWD"
+```
+
+Use `/participants`, `/status`, and `/sessions` to inspect the room. The local
+owner can use `/invite`, `/kick`, `/activate`, and `/routing`; address one agent
+with `@reviewer`, or select `broadcast` or `sequential` routing for both agents.
+
 The first screen goes directly to the model provider. OpenAI, Anthropic,
 OpenRouter, Cortensor Portal, MiniMax, and local Ollama appear first; additional providers,
 custom endpoints, and config import remain available from the same menu.

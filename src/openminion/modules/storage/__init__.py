@@ -1,11 +1,5 @@
-from openminion.modules.storage.runtime.module_store import (
-    BaseModuleStore,
-    BaseModuleSQLiteStore,
-)
-from openminion.modules.storage.runtime.module_integrity import (
-    verify_module_integrity,
-    repair_module_db,
-)
+from .runtime.module_store import BaseModuleSQLiteStore, BaseModuleStore
+from .runtime.module_integrity import repair_module_db, verify_module_integrity
 from .runtime.module_io import backup_module_db, restore_module_db
 from openminion.modules.storage.backends.registry import (
     BackendRegistry,
@@ -37,16 +31,17 @@ from openminion.modules.storage.interfaces import (
 )
 from openminion.modules.storage.migrations import MigrationRunner
 from openminion.modules.storage.models import BlobRef, EventRef, ReindexReport, RowRef
-from openminion.modules.storage.runtime.provider_selection import (
-    resolve_storage_provider,
+from .runtime.provider_selection import resolve_storage_provider
+from openminion.modules.storage.runtime.session_store.keys import (
+    is_room_session_key,
+    normalize_identity,
+    normalize_participant_role,
+    normalize_participant_type,
 )
 from openminion.modules.storage.runtime.vector_sync import VectorSyncScheduler
 from openminion.modules.storage.runtime.context import build_runtime_storage
 from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLite
-from openminion.modules.storage.telemetry import (
-    NoopStorageTelemetryHook,
-    StorageTelemetryHook,
-)
+from .telemetry import NoopStorageTelemetryHook, StorageTelemetryHook
 from openminion.modules.storage.backends.zvec import ZvecVectorStore
 
 __all__ = (
@@ -92,4 +87,8 @@ __all__ = (
     "create_capability_error_envelope",
     "ensure_interface_compatibility",
     "check_capability_support",
+    "is_room_session_key",
+    "normalize_identity",
+    "normalize_participant_role",
+    "normalize_participant_type",
 )

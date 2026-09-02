@@ -36,6 +36,36 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         ("/session",),
     ),
     SlashCommandMetadata(
+        "/participants",
+        "Show room participants and routing",
+        "_slash_participants",
+        "_slash_participants",
+    ),
+    SlashCommandMetadata(
+        "/invite",
+        "Invite a room agent or human",
+        "_slash_invite",
+        "_slash_invite",
+    ),
+    SlashCommandMetadata(
+        "/kick",
+        "Remove a room participant",
+        "_slash_kick",
+        "_slash_kick",
+    ),
+    SlashCommandMetadata(
+        "/activate",
+        "Set the active room agent",
+        "_slash_activate",
+        "_slash_activate",
+    ),
+    SlashCommandMetadata(
+        "/routing",
+        "Show or set room routing",
+        "_slash_routing",
+        "_slash_routing",
+    ),
+    SlashCommandMetadata(
         "/resume",
         "Resume a prior session with messages",
         "_slash_resume",
