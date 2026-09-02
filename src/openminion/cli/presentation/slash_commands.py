@@ -86,7 +86,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/model",
-        "Show or switch the active provider/model",
+        "Show or choose this agent's configured model",
         "_slash_model",
         "_slash_model",
     ),

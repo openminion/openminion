@@ -7,6 +7,8 @@ from rich.text import Text
 
 from openminion.cli.status import format_token_usage_summary
 from openminion.cli.presentation.header import (
+    format_api_adapter,
+    format_connection_name,
     format_runtime_adapter,
     format_runtime_provider,
 )
@@ -140,7 +142,7 @@ def _render_tools_list(*, runtime: Any, console: Console) -> None:
 
 
 def _render_model_status(*, runtime: Any, console: Console) -> None:
-    """Show the current model and configured providers."""
+    """Show the active agent's configured model connections."""
     from rich.table import Table
 
     lister = getattr(runtime, "list_models", None)
@@ -155,32 +157,82 @@ def _render_model_status(*, runtime: Any, console: Console) -> None:
         console.print(Text(f"(/model: error — {exc})", style=_ERR_STYLE))
         return
     model_name = _runtime_label(runtime)
-    provider = format_runtime_provider(runtime)
+    provider = format_connection_name(format_runtime_provider(runtime))
     adapter = format_runtime_adapter(runtime)
+    agent = str(getattr(runtime, "agent_id", "") or "").strip() or "—"
+    console.print(Text(f"agent: {agent}", style=_MUTED_STYLE))
     console.print(Text(f"current model: {model_name}", style="bold"))
-    connection = f"provider: {provider}"
+    connection = f"connection: {provider}"
     if adapter:
-        connection += f" · API adapter: {adapter}"
+        connection += f" · API format: {adapter}"
     console.print(Text(connection, style=_MUTED_STYLE))
     if not rows:
-        console.print(Text("(no providers configured)", style=_MUTED_ITALIC_STYLE))
+        console.print(
+            Text("(this agent has no configured models)", style=_MUTED_ITALIC_STYLE)
+        )
         return
     table = Table(show_header=True, header_style="bold", expand=False)
     table.add_column("")
-    table.add_column("Config key", style=_INFO_STYLE)
-    table.add_column("Configured model")
-    for name, configured_model, is_active in rows:
-        marker = "◆" if is_active else " "
+    table.add_column("#", justify="right")
+    table.add_column("Connection", style=_INFO_STYLE)
+    table.add_column("Model")
+    table.add_column("API format")
+    table.add_column("Default")
+    for row in rows:
+        marker = "◆" if row.active else " "
         table.add_row(
-            Text(marker, style=_INFO_BOLD_STYLE if is_active else ""),
-            name,
-            configured_model or "(none)",
+            Text(marker, style=_INFO_BOLD_STYLE if row.active else ""),
+            str(row.index),
+            format_connection_name(row.connection_name),
+            row.model,
+            format_api_adapter(row.transport_adapter),
+            "agent" if row.agent_default else "",
         )
     console.print(table)
     console.print(
         Text(
-            "Switch with `/model <provider>` or `/model <provider>/<model>`. "
-            "Session-scoped; restart reverts.",
+            "Use `/model use <#>` for this session, `/model default <#>` to "
+            "change this agent's default, or `/model add` to configure another model.",
+            style=_MUTED_ITALIC_STYLE,
+        )
+    )
+
+
+def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
+    arg = arg.strip()
+    if not arg:
+        _render_model_status(runtime=runtime, console=console)
+        return
+    if arg == "add":
+        console.print(
+            Text(
+                "Add a model with the existing setup flow, then restart Focus:",
+                style=_MUTED_ITALIC_STYLE,
+            )
+        )
+        console.print(Text(runtime.model_setup_command(), style=_SYSTEM_STYLE))
+        return
+    action, _, target = arg.partition(" ")
+    if action == "default" and not target.strip():
+        console.print(Text("(/model: use `/model default <#>`)", style=_ERR_STYLE))
+        return
+    try:
+        selected = (
+            runtime.set_default_model(target.strip())
+            if action == "default"
+            else runtime.switch_model(target.strip() if action == "use" else arg)
+        )
+    except ValueError as exc:
+        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+        return
+    suffix = (
+        f"is now the default for agent {runtime.agent_id}"
+        if action == "default"
+        else "saved for this session"
+    )
+    console.print(
+        Text(
+            f"(model: {selected.connection_name} / {selected.model} — {suffix})",
             style=_MUTED_ITALIC_STYLE,
         )
     )

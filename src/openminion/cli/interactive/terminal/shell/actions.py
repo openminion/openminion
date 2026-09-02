@@ -46,7 +46,7 @@ from ..transcript import TerminalTranscript
 from .renderers import (
     _render_cost_snapshot,
     _render_mcp_status,
-    _render_model_status,
+    _render_model_command,
     _render_sessions_list,
     _render_status_block,
     _render_theme_status,
@@ -117,22 +117,7 @@ def _handle_slash_theme(text: str, *, console: Console) -> None:
 
 
 def _handle_slash_model(text: str, *, runtime: Any, console: Console) -> None:
-    arg = _slash_arg(text).strip()
-    if not arg:
-        _render_model_status(runtime=runtime, console=console)
-        return
-    try:
-        provider, model = runtime.switch_model(arg)
-    except ValueError as exc:
-        console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
-        return
-    label = f"{provider}/{model}" if model else provider or "(default)"
-    console.print(
-        Text(
-            f"(model: switched to {label} — session-scoped)",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
+    _render_model_command(_slash_arg(text), runtime=runtime, console=console)
 
 
 def _runtime_permission_mode(runtime: Any) -> str:

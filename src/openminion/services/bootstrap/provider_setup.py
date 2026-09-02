@@ -11,7 +11,11 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-from openminion.base.config import AgentProfileConfig, OpenMinionConfig
+from openminion.base.config import (
+    AgentProfileConfig,
+    OpenMinionConfig,
+    RunProfileOverrides,
+)
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.io import resolve_config_path
 from openminion.base.config.runtime.profile import build_runtime_config
@@ -22,6 +26,12 @@ from openminion.modules.llm.setup_catalog import (
     resolve_model_choice,
 )
 from openminion.modules.llm.config import resolve_provider_identity_translation
+from openminion.modules.llm.model_connections import (
+    add_model_connection,
+    canonical_provider_name,
+    configured_model,
+    legacy_model_connection,
+)
 
 
 _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
@@ -34,9 +44,6 @@ _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
         "timeout_seconds",
     }
 )
-_PROVIDER_ALIASES = {
-    "claude": "anthropic",
-}
 
 
 class ProviderSetupError(ValueError):
@@ -66,6 +73,8 @@ class ProviderSetupRequest:
     home_root: Path | None = None
     data_root: Path | None = None
     env: Mapping[str, str] | None = None
+    add_model: bool = False
+    connection_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,6 +90,7 @@ class ProviderSetupPreview:
     base_url: str
     credential: str
     shared_adapter_isolated: bool
+    changes_agent_default: bool
 
 
 @dataclass(frozen=True)
@@ -153,14 +163,14 @@ def build_provider_setup(
         raise ProviderSetupError(
             f"{preset.display_label} requires an explicit model id."
         )
-    configured_model = _configured_model(
+    current_model = configured_model(
         base_config,
         preset=preset,
         agent_id=agent_id,
     )
     model_choice = resolve_model_choice(
         preset=preset,
-        configured_model=configured_model if config_exists else "",
+        configured_model=current_model if config_exists else "",
         manual_model=request.model,
     )
     model = model_choice.selected_model
@@ -172,6 +182,12 @@ def build_provider_setup(
         model=model,
         base_url=base_url,
     )
+    existing_profile = base_config.agents.get(agent_id)
+    changes_agent_default = (
+        not request.add_model
+        or existing_profile is None
+        or not existing_profile.provider
+    )
     config, shared_isolated, changed_sections = _apply_setup_selection(
         base_config,
         preset=preset,
@@ -182,6 +198,8 @@ def build_provider_setup(
         provider_identity=provider_identity,
         data_root=data_root,
         config_exists=config_exists,
+        add_model=request.add_model,
+        connection_id=request.connection_id,
     )
     preview = ProviderSetupPreview(
         config_path=config_path,
@@ -195,6 +213,7 @@ def build_provider_setup(
         base_url=base_url,
         credential=_credential_preview(credential),
         shared_adapter_isolated=shared_isolated,
+        changes_agent_default=changes_agent_default,
     )
     return ProviderSetupResult(
         config=config,
@@ -310,67 +329,6 @@ def _resolve_base_url(*, preset: ProviderSetupPreset, base_url: str) -> str:
     return value
 
 
-def _configured_model(
-    config: OpenMinionConfig,
-    *,
-    preset: ProviderSetupPreset,
-    agent_id: str,
-) -> str:
-    provider_cfg = getattr(config.providers, preset.runtime_adapter, None)
-    if provider_cfg is None:
-        return ""
-
-    model = str(getattr(provider_cfg, "model", "") or "").strip()
-    base_url = str(getattr(provider_cfg, "base_url", "") or "").strip()
-    provider_identity = dict(getattr(provider_cfg, "provider_identity", {}) or {})
-    profile = config.agents.get(agent_id)
-    if profile is not None:
-        if _canonical_provider_name(profile.provider) != _canonical_provider_name(
-            preset.runtime_adapter
-        ):
-            return ""
-        overrides = dict(profile.provider_config_overrides or {})
-        model = str(overrides.get("model", model) or "").strip()
-        base_url = str(overrides.get("base_url", base_url) or "").strip()
-        provider_identity = dict(
-            overrides.get("provider_identity", provider_identity) or {}
-        )
-
-    if not model or preset.requires_base_url:
-        return ""
-    if preset.runtime_adapter != "openai":
-        return model
-
-    configured_identity = provider_identity or resolve_provider_identity_translation(
-        "openai",
-        model=model,
-        base_url=base_url,
-    )
-    expected_identity = resolve_provider_identity_translation(
-        "openai",
-        model=preset.recommended_models[0],
-        base_url=preset.default_base_url,
-    )
-    configured_vendor = configured_identity.get("service_vendor", "")
-    expected_vendor = expected_identity.get("service_vendor", "")
-    if configured_vendor != expected_vendor:
-        return ""
-    if expected_vendor == "openai" and not _same_endpoint(
-        base_url, preset.default_base_url
-    ):
-        return ""
-    return model
-
-
-def _same_endpoint(left: str, right: str) -> bool:
-    return left.rstrip("/").lower() == right.rstrip("/").lower()
-
-
-def _canonical_provider_name(provider_name: str) -> str:
-    normalized = provider_name.strip().lower()
-    return _PROVIDER_ALIASES.get(normalized, normalized)
-
-
 def _apply_setup_selection(
     config: OpenMinionConfig,
     *,
@@ -382,17 +340,19 @@ def _apply_setup_selection(
     provider_identity: Mapping[str, str],
     data_root: Path,
     config_exists: bool,
+    add_model: bool,
+    connection_id: str,
 ) -> tuple[OpenMinionConfig, bool, list[str]]:
-    changed = ["agents", "default_agent"]
+    changed = ["agents"]
     adapter = preset.runtime_adapter
-    canonical_adapter = _canonical_provider_name(adapter)
+    canonical_adapter = canonical_provider_name(adapter)
     config.runtime.demo_mode = False
     if not config_exists or not str(config.storage.path or "").strip():
         config.storage.path = default_storage_path(data_root)
         changed.append("storage")
     shared_adapter = any(
         existing_id != agent_id
-        and _canonical_provider_name(profile.provider) == canonical_adapter
+        and canonical_provider_name(profile.provider) == canonical_adapter
         for existing_id, profile in config.agents.items()
     )
     provider_patch = _provider_patch(
@@ -404,8 +364,39 @@ def _apply_setup_selection(
     )
     profile = config.agents.get(agent_id) or AgentProfileConfig(name=agent_id)
     profile.name = profile.name or agent_id
-    profile.provider = adapter
     profile.default_channel = profile.default_channel or "console"
+    preserve_default = add_model and bool(profile.provider)
+    if preserve_default and not profile.model_connections:
+        legacy = legacy_model_connection(config, profile)
+        if legacy is not None:
+            legacy_id, legacy_route = legacy
+            profile.model_connections[legacy_id] = legacy_route
+    normalized_connection_id = _normalize_connection_id(
+        connection_id or preset.preset_id
+    )
+    add_model_connection(
+        profile,
+        connection_id=normalized_connection_id,
+        display_name=preset.display_label,
+        provider=adapter,
+        model=model,
+        provider_patch=provider_patch,
+        default=not preserve_default,
+    )
+    changed.append(f"agents.{agent_id}.model_connections")
+    if preserve_default:
+        config.agents[agent_id] = profile
+        build_runtime_config(
+            config,
+            agent_id=agent_id,
+            overrides=RunProfileOverrides(
+                provider=normalized_connection_id,
+                model=model,
+            ),
+        )
+        return config, shared_adapter, changed
+
+    profile.provider = adapter
     unmanaged_overrides = _unmanaged_provider_overrides(
         profile.provider_config_overrides
     )
@@ -426,8 +417,18 @@ def _apply_setup_selection(
         changed.append(f"providers.{adapter}")
     config.agents[agent_id] = profile
     config.default_agent = agent_id
+    changed.append("default_agent")
     build_runtime_config(config, agent_id=agent_id)
     return config, shared_adapter, changed
+
+
+def _normalize_connection_id(value: str) -> str:
+    normalized = "-".join(str(value or "").strip().lower().split())
+    if not normalized:
+        raise ProviderSetupError("Model connection id is required.")
+    if "/" in normalized:
+        raise ProviderSetupError("Model connection id must not contain '/'.")
+    return normalized
 
 
 def _provider_patch(

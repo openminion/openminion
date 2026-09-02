@@ -209,6 +209,25 @@ openminion setup \
   --no-focus
 ```
 
+Inside the interactive CLI, `/model` shows only models configured for the
+active agent. A connection is the service and credential/endpoint route, while
+the API format describes how OpenMinion talks to it. For example, MiniMax is
+the connection and OpenAI-compatible is the API format.
+
+```text
+/model
+/model use 2
+/model default 2
+/model add
+```
+
+`/model use <#>` changes the current session and is restored when that session
+is resumed. `/model default <#>` updates the active agent's saved default.
+`/model add` prints the existing setup command for that agent; setup keeps the
+current default unless the user later changes it explicitly. It does not add a
+second provider system or ask the user to choose an API format for a known
+provider.
+
 For another OpenAI-compatible provider, choose the provider preset and model:
 
 ```bash

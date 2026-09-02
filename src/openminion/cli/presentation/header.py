@@ -73,10 +73,34 @@ def format_runtime_provider(runtime: Any) -> str:
     return service or provider or "—"
 
 
+def format_connection_name(value: str) -> str:
+    normalized = str(value or "").strip()
+    brands = {
+        "anthropic": "Anthropic",
+        "cerebras": "Cerebras",
+        "cortensor": "Cortensor",
+        "groq": "Groq",
+        "minimax": "MiniMax",
+        "ollama": "Ollama",
+        "openai": "OpenAI",
+        "openrouter": "OpenRouter",
+    }
+    return brands.get(normalized.lower(), normalized)
+
+
 def format_runtime_adapter(runtime: Any) -> str:
     adapter = str(getattr(runtime, "transport_adapter_name", "") or "").strip()
+    return format_api_adapter(adapter)
+
+
+def format_api_adapter(adapter: str) -> str:
+    adapter = str(adapter or "").strip()
     if adapter == "openai_chat":
         return "OpenAI-compatible"
+    if adapter == "anthropic_messages":
+        return "Anthropic Messages"
+    if adapter == "ollama_chat":
+        return "Ollama local"
     return adapter
 
 
@@ -112,6 +136,8 @@ class RuntimeHeaderContext:
 __all__ = [
     "RuntimeHeaderContext",
     "format_clock",
+    "format_connection_name",
+    "format_api_adapter",
     "format_runtime_adapter",
     "format_runtime_label",
     "format_runtime_provider",

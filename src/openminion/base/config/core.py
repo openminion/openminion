@@ -130,6 +130,7 @@ class AgentProfileConfig:
     skill_catalog_explicit: bool = False
     system_prompt: str = ""
     provider_config_overrides: dict[str, Any] = field(default_factory=dict)
+    model_connections: dict[str, dict[str, Any]] = field(default_factory=dict)
     model_capability_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     action_policy: ActionPolicyConfig | None = None
     command_policy: dict[str, Any] = field(default_factory=dict)
@@ -142,7 +143,6 @@ class AgentProfileConfig:
 
     thinking_policy: ThinkingRuntimePolicyConfig | None = None
     provider_policy: ProviderRuntimePolicyConfig | None = None
-
     modes: dict[str, ModeRuntimePolicyConfig] = field(default_factory=dict)
     plugins: PluginRuntimePolicyConfig | None = None
     tools: ToolRuntimeConfig = field(default_factory=ToolRuntimeConfig)
@@ -185,6 +185,8 @@ class AgentProfileConfig:
             payload["skill_catalog"] = list(self.skill_catalog)
         if self.provider_config_overrides:
             payload["provider_config_overrides"] = dict(self.provider_config_overrides)
+        if self.model_connections:
+            payload["model_connections"] = dict(self.model_connections)
         if self.model_capability_overrides:
             payload["model_capability_overrides"] = dict(
                 self.model_capability_overrides

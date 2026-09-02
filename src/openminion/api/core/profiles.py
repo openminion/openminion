@@ -17,9 +17,12 @@ from openminion.base.config import (
     build_capability_runtime_diagnostics,
     build_runtime_config,
     combine_run_profile_overrides,
+    resolve_agent_config,
     resolve_runtime_profile,
 )
 from openminion.modules.llm import RuntimeLLMHandle
+from openminion.modules.llm.config import resolve_provider_identity_translation
+from openminion.modules.llm.model_connections import legacy_model_connection
 from openminion.modules.memory.interfaces import MemoryNamespaceQueryInterface
 from openminion.modules.storage.runtime import (
     IdempotencyStore,
@@ -278,6 +281,113 @@ class RuntimeProfilesMixin:
             self.config,
             agent_id=agent_id,
             overrides=self._combined_run_profile_overrides(overrides),
+        )
+
+    def model_connection_catalog(
+        self,
+        agent_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Return configured model routes for one agent without UI formatting."""
+
+        profile = resolve_agent_config(self.config, agent_id)
+        connections = profile.model_connections
+        configured_connections = bool(connections)
+        if not connections:
+            legacy = legacy_model_connection(self.config, profile)
+            connections = {legacy[0]: legacy[1]} if legacy is not None else {}
+        default_provider = self._model_provider_config(profile.provider)
+        default_model = str(
+            profile.provider_config_overrides.get(
+                "model", getattr(default_provider, "model", "")
+            )
+            or ""
+        ).strip()
+
+        rows: list[dict[str, object]] = []
+        for connection_id, connection in connections.items():
+            provider = str(connection.get("provider", "") or "").strip().lower()
+            provider_config = self._model_provider_config(provider)
+            route = dict(connection.get("provider_config_overrides", {}))
+            identity = route.get("provider_identity") or getattr(
+                provider_config,
+                "provider_identity",
+                None,
+            )
+            base_url = str(
+                route.get("base_url", getattr(provider_config, "base_url", "")) or ""
+            ).strip()
+            for model in connection.get("models", []):
+                resolved_identity = identity or resolve_provider_identity_translation(
+                    provider,
+                    model=model,
+                    base_url=base_url,
+                )
+                rows.append(
+                    {
+                        "connection_id": connection_id,
+                        "connection_name": connection.get("display_name")
+                        or str(resolved_identity.get("service_vendor") or provider),
+                        "provider": provider,
+                        "transport_adapter": str(
+                            resolved_identity.get("transport_adapter") or provider
+                        ),
+                        "model": model,
+                        "configured_connection": configured_connections,
+                        "is_default": bool(connection.get("default"))
+                        and model == default_model,
+                    }
+                )
+        if rows and not any(bool(row["is_default"]) for row in rows):
+            rows[0]["is_default"] = True
+        return rows
+
+    def _model_provider_config(self, provider: str) -> object | None:
+        provider_key = "anthropic" if provider == "claude" else provider
+        return getattr(self.config.providers, provider_key, None)
+
+    def set_agent_default_model(
+        self,
+        *,
+        agent_id: str,
+        connection_id: str,
+        model: str,
+    ) -> None:
+        resolve_agent_config(self.config, agent_id)
+        profile = self.config.agents[agent_id]
+        selected = next(
+            (
+                row
+                for row in self.model_connection_catalog(agent_id)
+                if row["connection_id"] == connection_id and row["model"] == model
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError(
+                f"Model {model!r} is not configured on connection {connection_id!r}."
+            )
+        if connection_id not in profile.model_connections:
+            legacy = legacy_model_connection(self.config, profile)
+            if legacy is not None:
+                profile.model_connections[legacy[0]] = legacy[1]
+        connection = profile.model_connections[connection_id]
+        for candidate in profile.model_connections.values():
+            candidate["default"] = candidate is connection
+        profile.provider = str(connection["provider"])
+        profile.provider_config_overrides = {
+            **dict(connection.get("provider_config_overrides", {})),
+            "model": model,
+        }
+        if self.config_path is None:
+            raise ValueError("runtime config path is unavailable")
+        from openminion.services.bootstrap.provider_setup import (
+            atomic_save_setup_config,
+        )
+
+        atomic_save_setup_config(self.config, self.config_path)
+        self.evict_agent_runtime(
+            agent_id=agent_id,
+            reason="model_default_changed",
         )
 
     def capability_runtime_diagnostics(

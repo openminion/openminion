@@ -107,6 +107,7 @@ class OpenMinionRuntime(
         self._last_live_usage_update_at: float | None = None
         self._project_context: ProjectContextInfo | None = None
         self._project_context_pending: bool = False
+        self._model_override_connection: str = ""
         self._model_override_provider: str = ""
         self._model_override_model: str = ""
         self._action_policy_mode_override: str = ""
@@ -132,6 +133,7 @@ class OpenMinionRuntime(
             )
             self._session_id = session.id
             self._sync_conversation_id()
+            self.restore_session_model_selection(session)
         elif self._prompt_on_resume:
             self._ensure_agent_resolved()
             if normalized_session_id:
@@ -469,6 +471,7 @@ class OpenMinionRuntime(
     def switch_agent(self, agent_id: str) -> None:
         profile = self._rt.resolve_agent_profile(agent_id)
         self._agent_id = profile.name
+        self._clear_model_selection()
         self._gateway = self._rt.resolve_gateway(self._agent_id)
         self._reset_token_usage_accounting()
         if self.is_bound and self._target == _TARGET_KIND_FOCUS:
@@ -486,6 +489,7 @@ class OpenMinionRuntime(
             )
             self._session_id = session.id
             self._sync_conversation_id()
+            self.restore_session_model_selection(session)
 
     def new_session(self) -> str:
         return self.create_new_session()
@@ -503,6 +507,7 @@ class OpenMinionRuntime(
         )
         self._session_id = record.id
         self._sync_conversation_id()
+        self.restore_session_model_selection(record)
         self._project_context_pending = False
         self._reset_token_usage_accounting()
 
@@ -526,11 +531,13 @@ class OpenMinionRuntime(
                 session_id=session.id,
                 patch=metadata_patch,
             )
+        self.restore_session_model_selection(session)
         self._project_context_pending = False
         self._reset_token_usage_accounting()
 
     def create_new_session(self) -> str:
         self._ensure_agent_resolved()
+        self._clear_model_selection()
         prefix = _TARGET_KIND_FOCUS if self._target == _TARGET_KIND_FOCUS else "sess"
         metadata_patch = self._session_metadata_patch()
         session = self._rt.sessions.resolve_session(
@@ -651,8 +658,7 @@ class OpenMinionRuntime(
     ) -> dict[str, str] | None:
         merged = self._merge_inbound_metadata(inbound_metadata) or {}
         overrides = {
-            "override_provider": self._model_override_provider,
-            "override_model": self._model_override_model,
+            **self._model_request_overrides(),
             "override_thinking": self.effort_level,
             "effort_level": self.effort_level,
         }
