@@ -587,7 +587,13 @@ class RunnerDecisionTests(unittest.TestCase):
 
     def test_decide_records_successful_provider_request_id(self) -> None:
         response = _entry_text_response("ok")
-        response.telemetry = {"request_id": "portal-request-2"}
+        response.telemetry = {
+            "request_id": "portal-request-2",
+            "trace_context": {
+                "trace_artifact_paths": ["llm/session/turn/call.json"],
+                "trace_artifacts_complete": True,
+            },
+        }
         runner = BrainRunner(
             profile=_profile(),
             session_api=fake_session_api(),
@@ -616,6 +622,11 @@ class RunnerDecisionTests(unittest.TestCase):
             if call.args and call.args[0] == "llm.call.completed"
         )
         self.assertEqual(completed_event.args[1]["request_id"], "portal-request-2")
+        self.assertEqual(
+            completed_event.args[1]["trace_artifact_paths"],
+            ["llm/session/turn/call.json"],
+        )
+        self.assertIs(completed_event.args[1]["trace_artifacts_complete"], True)
 
     def test_decide_does_not_retry_invalid_argument(self) -> None:
         """AR-04 (2026-06-18): a deterministic 400 / INVALID_ARGUMENT fault

@@ -363,6 +363,10 @@ def trace_provider_response(
     except (OSError, TypeError, ValueError) as exc:
         complete = False
         logger.warning("trace_response: failed to write structured trace: %s", exc)
+    for field in ("http_trace_filename", "http_response_trace_filename"):
+        relative = str(trace_context.get(field, "") or "")
+        if relative and (trace_root / relative).is_file():
+            published.append(relative)
     return TraceArtifactPublication(tuple(sorted(published)), complete)
 
 

@@ -29,7 +29,10 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.llm.runtime.sync import run_async_compat
 from openminion.modules.llm.schemas import LLMResponse
 from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
-from openminion.modules.telemetry.trace.structured import trace_context_payload
+from openminion.modules.telemetry.trace.structured import (
+    TraceArtifactPublication,
+    trace_context_payload,
+)
 from openminion.services.agent.telemetry import (
     trace_provider_request,
     trace_provider_response,
@@ -58,11 +61,13 @@ class OpenMinionLLMClient:
         self._turn_id: str | None = None
         self._session_id: str | None = None
         self._trace_step: int = 0
+        self._trace_publication = TraceArtifactPublication()
 
     def _set_context(self, session_id: str, turn_id: str) -> None:
         self._session_id = session_id
         self._turn_id = turn_id
         self._trace_step = 0
+        self._trace_publication = TraceArtifactPublication()
 
     def _next_trace_step(self) -> int:
         self._trace_step += 1
@@ -127,7 +132,7 @@ class OpenMinionLLMClient:
         trace_label: str,
         trace_turn_id: str,
         inference_step: int,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], TraceArtifactPublication]:
         trace_context = trace_context_payload(
             session_id=str(trace_metadata.get("session_id", "") or ""),
             turn_id=trace_turn_id,
@@ -140,7 +145,7 @@ class OpenMinionLLMClient:
             model=str(getattr(req, "model", "") or ""),
             home_root=self._home_root,
         )
-        trace_provider_request(
+        publication = trace_provider_request(
             provider_request=provider_req,
             label=trace_label,
             provider_name=str(getattr(self.provider, "name", "") or ""),
@@ -150,7 +155,7 @@ class OpenMinionLLMClient:
             inference_step=inference_step,
             logger=_LOG,
         )
-        return trace_context
+        return trace_context, publication
 
     def _invoke_traced_provider(
         self,
@@ -164,7 +169,7 @@ class OpenMinionLLMClient:
         try:
             return run_async_compat(self._invoke(provider_req))
         except Exception as exc:
-            trace_provider_response(
+            publication = trace_provider_response(
                 provider_response=cast(
                     ProviderResponse,
                     SimpleNamespace(
@@ -184,6 +189,7 @@ class OpenMinionLLMClient:
                 inference_step=inference_step,
                 logger=_LOG,
             )
+            self._trace_publication = self._trace_publication.merge(publication)
             raise
 
     def _trace_provider_response(
@@ -196,9 +202,9 @@ class OpenMinionLLMClient:
         trace_label: str,
         trace_turn_id: str,
         inference_step: int,
-    ) -> None:
+    ) -> TraceArtifactPublication:
         raw_model_name = _raw_response_model_name(raw_response)
-        trace_provider_response(
+        return trace_provider_response(
             provider_response=cast(
                 ProviderResponse,
                 SimpleNamespace(
@@ -324,7 +330,7 @@ class OpenMinionLLMClient:
             trace_label=trace_label,
             trace_turn_id=trace_turn_id,
         )
-        trace_context = self._trace_provider_request(
+        trace_context, request_publication = self._trace_provider_request(
             req=req,
             provider_req=provider_req,
             trace_metadata=trace_metadata,
@@ -332,6 +338,7 @@ class OpenMinionLLMClient:
             trace_turn_id=trace_turn_id,
             inference_step=inference_step,
         )
+        self._trace_publication = self._trace_publication.merge(request_publication)
         raw_resp = self._invoke_traced_provider(
             provider_req=provider_req,
             trace_metadata=trace_metadata,
@@ -345,7 +352,7 @@ class OpenMinionLLMClient:
             provider_request=provider_req,
         )
         structured_fields = _extract_structured_response_fields(raw_resp)
-        self._trace_provider_response(
+        response_publication = self._trace_provider_response(
             response=resp,
             raw_response=raw_resp,
             structured_fields=structured_fields,
@@ -354,6 +361,8 @@ class OpenMinionLLMClient:
             trace_turn_id=trace_turn_id,
             inference_step=inference_step,
         )
+        self._trace_publication = self._trace_publication.merge(response_publication)
+        trace_context.update(self._trace_publication.event_fields(final=True))
         self._emit_llm_usage(
             usage_payload=_usage_payload_from_response_usage(resp.usage),
             mode_name=_request_mode_name(metadata_payload),

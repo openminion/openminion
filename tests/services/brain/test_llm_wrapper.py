@@ -270,6 +270,13 @@ def test_llm_wrapper_traces_requests_and_responses_under_home_root(
 
     response = wrapper.call(_request(purpose="plan"))
     assert response.output_text == "ok"
+    assert response.telemetry["trace_context"]["trace_artifacts_complete"] is True
+    assert response.telemetry["trace_context"]["trace_artifact_paths"] == [
+        "llm/sess-1/turn-1-sess-1/step01-call01-raw.txt",
+        "llm/sess-1/turn-1-sess-1/step01-call01-response.json",
+        "llm/sess-1/turn-1-sess-1/step01-call01-structured.json",
+        "llm/sess-1/turn-1-sess-1/step01-call01.json",
+    ]
     assert provider.last_request is not None
     assert provider.last_request.metadata is not None
     assert provider.last_request.metadata.get("session_id") == "sess-1"
@@ -378,6 +385,14 @@ def test_llm_wrapper_traced_runtime_transport_uses_same_home_root(
     structured_payload = json.loads(
         (trace_root / "step01-call01-structured.json").read_text(encoding="utf-8")
     )
+    assert response.telemetry["trace_context"]["trace_artifact_paths"] == [
+        "llm/sess-transport/turn-transport-sess-transport/step01-call01-http-response.json",
+        "llm/sess-transport/turn-transport-sess-transport/step01-call01-http.json",
+        "llm/sess-transport/turn-transport-sess-transport/step01-call01-raw.txt",
+        "llm/sess-transport/turn-transport-sess-transport/step01-call01-response.json",
+        "llm/sess-transport/turn-transport-sess-transport/step01-call01-structured.json",
+        "llm/sess-transport/turn-transport-sess-transport/step01-call01.json",
+    ]
     assert request_payload["trace"]["trace_id"] == "trace-123"
     assert request_payload["trace"]["agent_id"] == "agent-xyz"
     assert response_payload["trace"]["trace_id"] == "trace-123"
