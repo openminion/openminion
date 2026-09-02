@@ -158,7 +158,7 @@ def test_failed_tool_shows_exit_code_when_no_duration() -> None:
 def test_verb_table_is_only_place_verbs_are_spelled() -> None:
     src_root = Path(__file__).resolve().parents[3] / "src" / "openminion"
     verbs = ["Reading", "Editing", "Writing", "Fetching", "Searching"]
-    canonical_file = src_root / "cli" / "presentation" / "tool" / "blocks.py"
+    canonical_file = src_root / "cli" / "presentation" / "tool" / "formatting.py"
     for verb in verbs:
         pattern = rf'["\']({re.escape(verb)})["\']'
         compiled = re.compile(pattern)

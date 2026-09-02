@@ -24,7 +24,8 @@ Best for:
 Notes:
 
 1. the default invocation launches the interactive CLI with the terminal renderer on a TTY,
-2. `openminion --rich` explicitly selects the Textual renderer,
+2. `openminion --rich` explicitly selects the Textual renderer after it is
+   installed with `python -m pip install "openminion[textual]"`,
 3. piped input executes one request without mounting an interactive renderer,
 4. legacy `focus`, `chat`, `tui`, and `dashboard` command names are retired and rejected,
 5. startup creates a fresh session unless `--session <id>` is provided.

@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 from openminion.base.types import Message
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
-from openminion.cli.presentation.tool.blocks import tool_call_body
+from openminion.cli.presentation.tool.formatting import tool_call_body
 from openminion.services.gateway.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )

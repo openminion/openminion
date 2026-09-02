@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import gc
 import hashlib
+import importlib.metadata as importlib_metadata
 import io
 import json
 import math
@@ -16,6 +17,7 @@ from pathlib import Path
 import platform
 import pstats
 import shutil
+import socket
 import statistics
 import subprocess
 import sys
@@ -30,7 +32,7 @@ from openminion.modules.context.budget import (
     assemble_budgeted_context,
 )
 
-ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v3"
+ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v4"
 TCPL_ARTIFACT_SCHEMA_VERSION = "tcpl.performance.v1"
 STARTUP_FIXTURE_REVISION = "focus-help-v2"
 SUT_BOUNDARY_SUBPROCESS = "sut_subprocess_only"
@@ -40,6 +42,8 @@ LANE_ARTIFACT_DIR = "openminion-performance-observability-and-measurement-v2-202
 DEFAULT_SCENARIOS = (
     "cold_focus_startup",
     "warm_focus_startup",
+    "terminal_import_surface",
+    "interactive_runtime_import_surface",
     "simple_turn",
     "local_status_tool_turn",
     "context_heavy_turn",
@@ -93,6 +97,7 @@ PROFILE_TOP_LIMIT = 20
 IMPORTTIME_TOP_LIMIT = 20
 TRACEMALLOC_TOP_LIMIT = 10
 PROCESS_TREE_MEMBER_LIMIT = 64
+COMPARISON_MIN_SAMPLES = 20
 OMFLA_PROCESS_TREE_RSS_ABORT_BYTES = 2 * 1024 * 1024 * 1024
 TCPL_SKILL_ENTRY_TOKEN_BUDGET = 1200
 TCPL_SKILL_ENTRY_CANDIDATE_BUDGET = 6
@@ -319,7 +324,14 @@ def _process_metrics(process_id: int | None = None) -> dict[str, Any]:
 def _dirty_worktree_summary(workspace_root: Path) -> dict[str, Any]:
     try:
         result = subprocess.run(
-            ["git", "-C", str(workspace_root / "openminion"), "status", "--short"],
+            [
+                "git",
+                "-C",
+                str(workspace_root / "openminion"),
+                "status",
+                "--short",
+                "--untracked-files=all",
+            ],
             text=True,
             capture_output=True,
             check=False,
@@ -347,10 +359,25 @@ def _dirty_worktree_fingerprint(workspace_root: Path) -> str:
     if not summary.get("available"):
         return "unavailable"
     digest = hashlib.sha256()
-    for args in (
-        ["git", "-C", str(repo_root), "status", "--porcelain=v1", "-z"],
-        ["git", "-C", str(repo_root), "diff", "--binary"],
-        ["git", "-C", str(repo_root), "diff", "--cached", "--binary"],
+    status_bytes = b""
+    for label, args in (
+        (
+            "status",
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+        ),
+        ("diff", ["git", "-C", str(repo_root), "diff", "--binary"]),
+        (
+            "diff-cached",
+            ["git", "-C", str(repo_root), "diff", "--cached", "--binary"],
+        ),
     ):
         try:
             result = subprocess.run(
@@ -361,21 +388,17 @@ def _dirty_worktree_fingerprint(workspace_root: Path) -> str:
             )
         except Exception:
             return _stable_json_hash(summary)
-        digest.update(b"\0".join(part.encode("utf-8") for part in args))
+        digest.update(label.encode("utf-8"))
         digest.update(b"\0")
         digest.update(result.stdout)
         digest.update(result.stderr)
-    status_bytes = subprocess.run(
-        ["git", "-C", str(repo_root), "status", "--porcelain=v1", "-z"],
-        capture_output=True,
-        check=False,
-        timeout=20,
-    ).stdout
+        if label == "status":
+            status_bytes = result.stdout
     for entry in status_bytes.decode("utf-8", errors="replace").split("\0"):
         if not entry.startswith("?? "):
             continue
         path = repo_root / entry[3:]
-        if path.is_file():
+        if path.is_file() and not path.is_symlink():
             digest.update(entry.encode("utf-8"))
             digest.update(_file_sha256(path).encode("utf-8"))
     return digest.hexdigest()
@@ -390,6 +413,180 @@ def _file_sha256(path: Path) -> str:
         return digest.hexdigest()
     except Exception:
         return "unavailable"
+
+
+def _loaded_openminion_package_root() -> str:
+    module = sys.modules.get("openminion")
+    module_path = getattr(module, "__file__", None)
+    if not module_path:
+        return "unavailable"
+    return str(Path(module_path).resolve().parent)
+
+
+def _installed_distribution_provenance() -> dict[str, Any]:
+    distributions: dict[str, dict[str, Any]] = {}
+    for distribution in importlib_metadata.distributions():
+        name = str(distribution.metadata.get("Name") or "").strip()
+        if not name:
+            continue
+        normalized_name = name.casefold().replace("_", "-")
+        direct_url_text = distribution.read_text("direct_url.json")
+        direct_url: dict[str, Any] | None = None
+        if direct_url_text:
+            try:
+                loaded = json.loads(direct_url_text)
+            except json.JSONDecodeError:
+                loaded = {"malformed": True}
+            if isinstance(loaded, dict):
+                direct_url = loaded
+        distributions[normalized_name] = {
+            "name": name,
+            "version": str(distribution.version),
+            "direct_url": direct_url,
+            "editable": bool(
+                isinstance(direct_url, dict)
+                and isinstance(direct_url.get("dir_info"), dict)
+                and direct_url["dir_info"].get("editable") is True
+            ),
+        }
+    entries = [distributions[name] for name in sorted(distributions)]
+    version_pairs = [
+        [str(entry["name"]).casefold().replace("_", "-"), entry["version"]]
+        for entry in entries
+    ]
+    return {
+        "distributions": entries,
+        "runtime_dependency_hash": _stable_json_hash(version_pairs),
+        "editable_dependency_names": [
+            str(entry["name"]) for entry in entries if entry["editable"]
+        ],
+    }
+
+
+def _host_runtime_hash() -> str:
+    return _stable_json_hash(
+        {
+            "hostname": socket.gethostname(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        }
+    )
+
+
+def _path_shape(path_value: str, options: RunOptions) -> str:
+    if not path_value:
+        return "<CWD>"
+    path = Path(path_value).expanduser().absolute()
+    repo_root = (options.workspace_root / "openminion").absolute()
+    source_root = (repo_root / "src").absolute()
+    if path == source_root:
+        return "<SUT_SRC>"
+    if path == repo_root:
+        return "<SUT_REPO>"
+    python_prefix = Path(sys.prefix).absolute()
+    try:
+        return f"<PYTHON_PREFIX>/{path.relative_to(python_prefix)}"
+    except ValueError:
+        return str(path)
+
+
+def _runtime_environment_identity(options: RunOptions) -> dict[str, Any]:
+    dependency_provenance = _installed_distribution_provenance()
+    inherited_pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath_entries = [
+        entry for entry in inherited_pythonpath.split(os.pathsep) if entry
+    ]
+    return {
+        "resolved_python_executable": str(options.python.resolve()),
+        "running_python_executable": str(Path(sys.executable).resolve()),
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+        "python_build": list(platform.python_build()),
+        "platform": platform.platform(),
+        "host_runtime_hash": _host_runtime_hash(),
+        "effective_sys_path": list(sys.path),
+        "effective_sys_path_shape": [_path_shape(entry, options) for entry in sys.path],
+        "inherited_pythonpath": inherited_pythonpath,
+        "inherited_pythonpath_shape": [
+            _path_shape(entry, options) for entry in pythonpath_entries
+        ],
+        "bytecode_cache_environment": {
+            "dont_write_bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE", ""),
+            "pycache_prefix": os.environ.get("PYTHONPYCACHEPREFIX", ""),
+            "pycache_posture": (
+                "external"
+                if os.environ.get("PYTHONPYCACHEPREFIX")
+                else "interpreter_default"
+            ),
+            "no_user_site": os.environ.get("PYTHONNOUSERSITE", ""),
+        },
+        **dependency_provenance,
+    }
+
+
+def _comparison_command_shape(identity: dict[str, Any]) -> dict[str, Any]:
+    scenario_id = str(identity.get("scenario_id") or "")
+    if scenario_id in {"cold_focus_startup", "warm_focus_startup"}:
+        return {
+            "entrypoint": "python -m openminion",
+            "arguments": ["--data-root", "<DATA_ROOT>", "--help"],
+        }
+    if scenario_id in {
+        "terminal_import_surface",
+        "interactive_runtime_import_surface",
+    }:
+        return {
+            "entrypoint": "python -c",
+            "fixture": scenario_id,
+            "data_root": "<DATA_ROOT>",
+        }
+    return {"fixture": str(identity.get("command") or "")}
+
+
+def _comparison_identity(measurement_identity: dict[str, Any]) -> dict[str, Any]:
+    runtime_config = dict(measurement_identity.get("runtime_config") or {})
+    environment = dict(measurement_identity.get("runtime_environment") or {})
+    cache_environment = dict(environment.get("bytecode_cache_environment") or {})
+    scenario_id = str(measurement_identity.get("scenario_id") or "")
+    if scenario_id == "cold_focus_startup":
+        process_posture = "cold"
+    elif scenario_id == "warm_focus_startup":
+        process_posture = "warm"
+    else:
+        process_posture = "steady"
+    return {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "scenario_id": scenario_id,
+        "command_shape": _comparison_command_shape(measurement_identity),
+        "fixture_revision": measurement_identity.get("fixture_revision"),
+        "measured_boundary": measurement_identity.get("measured_boundary"),
+        "python_implementation": environment.get("python_implementation"),
+        "python_version": environment.get("python_version"),
+        "python_build": environment.get("python_build"),
+        "resolved_python_executable": environment.get("resolved_python_executable"),
+        "runner_source_sha256": measurement_identity.get("runner_source_sha256"),
+        "host_runtime_hash": environment.get("host_runtime_hash"),
+        "runtime_dependency_hash": environment.get("runtime_dependency_hash"),
+        "editable_dependency_names": environment.get("editable_dependency_names", []),
+        "effective_sys_path_shape": environment.get("effective_sys_path_shape"),
+        "inherited_pythonpath_shape": environment.get("inherited_pythonpath_shape"),
+        "bytecode_cache_posture": {
+            "dont_write_bytecode": cache_environment.get("dont_write_bytecode"),
+            "pycache_posture": cache_environment.get("pycache_posture"),
+            "no_user_site": cache_environment.get("no_user_site"),
+        },
+        "provider_posture": measurement_identity.get("provider_posture"),
+        "model_posture": measurement_identity.get("model_posture"),
+        "process_posture": process_posture,
+        "include_importtime": runtime_config.get("include_importtime"),
+        "profile": runtime_config.get("profile"),
+        "warmup_runs": runtime_config.get("warmup_runs"),
+        "scenario_config": {
+            "timeout_seconds": runtime_config.get("timeout_seconds"),
+            **dict(measurement_identity.get("scenario_config") or {}),
+        },
+    }
 
 
 def _fixture_hash(identity: dict[str, Any], *, command: Any) -> str:
@@ -472,6 +669,7 @@ def _measurement_identity(
     data_root: Path | None = None,
     provider_posture: str = "none",
     model_posture: str = "unavailable",
+    scenario_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     runtime_config = {
         "python_executable": str(options.python) if options is not None else "",
@@ -480,6 +678,7 @@ def _measurement_identity(
         "include_importtime": bool(options.include_importtime) if options else False,
         "profile": bool(options.profile) if options else False,
         "warmup_runs": int(options.warmup_runs) if options else 0,
+        "timeout_seconds": int(options.timeout_seconds) if options else 0,
     }
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
@@ -496,6 +695,7 @@ def _measurement_identity(
         "provider_posture": provider_posture,
         "model_posture": model_posture,
         "runtime_config": runtime_config,
+        "scenario_config": dict(scenario_config or {}),
     }
 
 
@@ -504,7 +704,10 @@ def _campaign_source_identity(options: RunOptions) -> dict[str, Any]:
         "git_head": _git_head(options.workspace_root),
         "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
         "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
+        "runner_path": str(Path(__file__).resolve()),
         "runner_source_sha256": _file_sha256(Path(__file__)),
+        "loaded_openminion_package_root": _loaded_openminion_package_root(),
+        "runtime_environment": _runtime_environment_identity(options),
     }
 
 
@@ -987,6 +1190,77 @@ def _measure_focus_startup(
             fixture_revision=STARTUP_FIXTURE_REVISION,
             options=options,
             data_root=data_root_hint,
+        ),
+        action=action,
+    )
+
+
+def _measure_import_surface(
+    *, scenario_id: str, module_name: str, options: RunOptions
+) -> ScenarioRun:
+    marker = "OWPR_IMPORT_SURFACE="
+    data_root = options.output_root / "runtime-homes" / scenario_id / ".openminion"
+    data_root.mkdir(parents=True, exist_ok=True)
+    module_artifact = data_root / "imported-modules.json"
+    script = (
+        "import importlib,json,sys;from pathlib import Path;"
+        f"importlib.import_module({module_name!r});"
+        f"Path({str(module_artifact)!r}).write_text("
+        "json.dumps(sorted(sys.modules)),encoding='utf-8');"
+        f"print({marker!r}+'written')"
+    )
+    command = [str(options.python), "-c", script]
+    command_text = f"python -c import_surface:{module_name}"
+
+    def action(metrics: dict[str, Any]) -> list[str]:
+        started_ns = time.perf_counter_ns()
+        completed, process_metrics = _run_subprocess_measured(
+            command,
+            options=options,
+            data_root=data_root,
+        )
+        metrics["_wall_time_ns_override"] = _elapsed_ns(started_ns)
+        metrics["_process_metrics_override"] = process_metrics
+        metrics["rss_start_bytes"] = process_metrics.get(
+            "sampled_start_current_rss_bytes"
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"import surface exited {completed.returncode}: {completed.stderr[-500:]}"
+            )
+        if f"{marker}written" not in completed.stdout:
+            raise RuntimeError("import surface did not report imported modules")
+        imported = json.loads(module_artifact.read_text(encoding="utf-8"))
+        if not isinstance(imported, list):
+            raise RuntimeError("import surface returned malformed module facts")
+        names = [str(name) for name in imported]
+        textual_modules = [
+            name for name in names if name == "textual" or name.startswith("textual.")
+        ]
+        metrics["imported_module_count"] = len(names)
+        metrics["openminion_module_count"] = sum(
+            name == "openminion" or name.startswith("openminion.") for name in names
+        )
+        metrics["textual_module_count"] = len(textual_modules)
+        metrics["textual_modules"] = textual_modules
+        metrics["measured_boundary"] = SUT_BOUNDARY_SUBPROCESS
+        return [
+            f"Fresh subprocess imports {module_name} and reports exact module names.",
+            "Wall time and sampled RSS are advisory; module-family contracts are deterministic.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id=scenario_id,
+        command=command_text,
+        provider_variance_class=LOCAL_VARIANCE,
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command=command_text,
+            measured_boundary=SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision="import-surface-v1",
+            options=options,
+            data_root=data_root,
+            scenario_config={"module_name": module_name},
         ),
         action=action,
     )
@@ -4320,6 +4594,18 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         return _measure_focus_startup(
             scenario_id=scenario_id, options=options, cold=False
         )
+    if scenario_id == "terminal_import_surface":
+        return _measure_import_surface(
+            scenario_id=scenario_id,
+            module_name="openminion.cli.interactive.terminal",
+            options=options,
+        )
+    if scenario_id == "interactive_runtime_import_surface":
+        return _measure_import_surface(
+            scenario_id=scenario_id,
+            module_name="openminion.cli.interactive.runtime",
+            options=options,
+        )
     if scenario_id == "simple_turn":
         return _measure_replay_turn(
             scenario_id,
@@ -4468,9 +4754,11 @@ def _load_comparison_baseline(path: Path | None) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"comparison baseline is unreadable: {path}") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("scenarios"), dict):
+        raise ValueError(f"comparison baseline is malformed: {path}")
+    return payload
 
 
 def _threshold_result(
@@ -4480,16 +4768,29 @@ def _threshold_result(
     scenario_id: str,
     threshold_mode: str,
 ) -> dict[str, Any]:
-    if threshold_mode == "off" or not baseline:
+    if not baseline:
         return {
             "mode": threshold_mode,
             "status": "not_applicable",
             "reason": "no comparison baseline",
         }
     baseline_scenario = dict((baseline.get("scenarios") or {}).get(scenario_id) or {})
+    if not baseline_scenario:
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "scenario missing from comparison baseline",
+        }
+    if baseline.get("artifact_schema_version") != ARTIFACT_SCHEMA_VERSION:
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "artifact schema version mismatch; v3 is display-only",
+            "identity_errors": ["artifact_schema_version"],
+        }
     identity_errors = _comparison_identity_errors(
-        current.get("measurement_identity"),
-        baseline_scenario.get("measurement_identity"),
+        current.get("comparison_identity"),
+        baseline_scenario.get("comparison_identity"),
     )
     if identity_errors:
         version_mismatch = "artifact_schema_version" in identity_errors
@@ -4505,6 +4806,14 @@ def _threshold_result(
         }
     current_count = int(current.get("count", 0) or 0)
     current_ok = int(current.get("ok_count", 0) or 0)
+    baseline_count = int(baseline_scenario.get("count", 0) or 0)
+    baseline_ok = int(baseline_scenario.get("ok_count", 0) or 0)
+    if baseline_scenario.get("identity_incompatibilities"):
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "baseline contains mixed sample identities",
+        }
     if current_ok < current_count:
         return {
             "mode": threshold_mode,
@@ -4513,15 +4822,38 @@ def _threshold_result(
             "sample_count": current_count,
             "ok_count": current_ok,
         }
-    if current_count < 5:
+    if baseline_ok < baseline_count:
         return {
             "mode": threshold_mode,
             "status": "ineligible",
-            "reason": "fewer than five comparable samples",
-            "sample_count": current_count,
+            "reason": "comparison baseline contains invalid samples",
+            "sample_count": baseline_count,
+            "ok_count": baseline_ok,
         }
-    baseline_wall = dict(baseline_scenario.get("wall_time_ms") or {})
-    current_wall = dict(current.get("wall_time_ms") or {})
+    if (
+        current_count < COMPARISON_MIN_SAMPLES
+        or baseline_count < COMPARISON_MIN_SAMPLES
+    ):
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "fewer than twenty comparable samples",
+            "current_sample_count": current_count,
+            "baseline_sample_count": baseline_count,
+        }
+    metric_name = (
+        "wall_time_ms"
+        if scenario_id
+        in {
+            "cold_focus_startup",
+            "warm_focus_startup",
+            "terminal_import_surface",
+            "interactive_runtime_import_surface",
+        }
+        else "wall_time_ns"
+    )
+    baseline_wall = dict(baseline_scenario.get(metric_name) or {})
+    current_wall = dict(current.get(metric_name) or {})
     baseline_cv = baseline_wall.get("coefficient_of_variation")
     current_cv = current_wall.get("coefficient_of_variation")
     if any(
@@ -4541,7 +4873,15 @@ def _threshold_result(
         return {
             "mode": threshold_mode,
             "status": "not_applicable",
-            "reason": "missing comparable wall p95",
+            "reason": f"missing comparable {metric_name} p95",
+        }
+    if threshold_mode == "off":
+        return {
+            "mode": threshold_mode,
+            "status": "eligible",
+            "metric": metric_name,
+            "baseline_p95": baseline_p95,
+            "current_p95": current_p95,
         }
     ratio = round(current_p95 / float(max(1, baseline_p95)), 4)
     if ratio <= 1.10:
@@ -4553,8 +4893,9 @@ def _threshold_result(
     return {
         "mode": threshold_mode,
         "status": status,
-        "baseline_wall_p95_ms": baseline_p95,
-        "current_wall_p95_ms": current_p95,
+        "metric": metric_name,
+        "baseline_p95": baseline_p95,
+        "current_p95": current_p95,
         "ratio": ratio,
         "regression_ratio": 1.10,
     }
@@ -4563,34 +4904,62 @@ def _threshold_result(
 def _comparison_identity_errors(
     current_identity: Any,
     baseline_identity: Any,
+    *,
+    reject_editable: bool = True,
 ) -> list[str]:
     if not isinstance(current_identity, dict) or not isinstance(
         baseline_identity, dict
     ):
-        return ["missing measurement identity"]
+        return ["missing comparison identity"]
     errors: list[str] = []
-    required_source_keys = {
-        "git_head",
-        "dirty_tree_fingerprint",
-        "runner_source_sha256",
-        "config_hash",
-    }
-    for key in (
+    required_nonempty_keys = {
         "artifact_schema_version",
-        "git_head",
-        "dirty_tree_fingerprint",
-        "runner_source_sha256",
-        "config_hash",
         "scenario_id",
-        "command",
+        "command_shape",
         "fixture_revision",
         "measured_boundary",
+        "python_implementation",
         "python_version",
-        "platform",
+        "python_build",
+        "resolved_python_executable",
+        "runner_source_sha256",
+        "host_runtime_hash",
+        "runtime_dependency_hash",
+        "effective_sys_path_shape",
+        "bytecode_cache_posture",
+        "process_posture",
+    }
+    required_keys = required_nonempty_keys | {"inherited_pythonpath_shape"}
+    for key in (
+        "artifact_schema_version",
+        "scenario_id",
+        "command_shape",
+        "fixture_revision",
+        "measured_boundary",
+        "python_implementation",
+        "python_version",
+        "python_build",
+        "resolved_python_executable",
+        "runner_source_sha256",
+        "host_runtime_hash",
+        "runtime_dependency_hash",
+        "effective_sys_path_shape",
+        "inherited_pythonpath_shape",
+        "bytecode_cache_posture",
         "provider_posture",
         "model_posture",
+        "process_posture",
+        "include_importtime",
+        "profile",
+        "warmup_runs",
+        "scenario_config",
     ):
-        if key in required_source_keys and any(
+        if key in required_keys and any(
+            key not in identity for identity in (current_identity, baseline_identity)
+        ):
+            errors.append(key)
+            continue
+        if key in required_nonempty_keys and any(
             str(identity.get(key) or "").strip() in {"", "unknown", "unavailable"}
             for identity in (current_identity, baseline_identity)
         ):
@@ -4598,27 +4967,42 @@ def _comparison_identity_errors(
             continue
         if current_identity.get(key) != baseline_identity.get(key):
             errors.append(key)
-    current_config = current_identity.get("runtime_config")
-    baseline_config = baseline_identity.get("runtime_config")
-    if not isinstance(current_config, dict) or not isinstance(baseline_config, dict):
-        errors.append("runtime_config")
-    else:
+    if reject_editable:
+        for identity in (current_identity, baseline_identity):
+            if identity.get("editable_dependency_names"):
+                errors.append("editable_dependency_names")
+                break
+    return errors
+
+
+def _sample_identity_errors(
+    expected_identity: Any,
+    actual_identity: Any,
+    expected_comparison_identity: Any,
+    actual_comparison_identity: Any,
+) -> list[str]:
+    if not isinstance(expected_identity, dict) or not isinstance(actual_identity, dict):
+        return ["missing measurement identity"]
+    errors = [
+        key
         for key in (
-            "python_executable",
-            "workspace_root",
-            "data_root",
-            "include_importtime",
-            "profile",
-            "warmup_runs",
-        ):
-            if key in {"python_executable", "workspace_root"} and any(
-                not str(config.get(key) or "").strip()
-                for config in (current_config, baseline_config)
-            ):
-                errors.append(f"runtime_config.{key}")
-                continue
-            if current_config.get(key) != baseline_config.get(key):
-                errors.append(f"runtime_config.{key}")
+            "git_head",
+            "dirty_tree_fingerprint",
+            "runner_path",
+            "runner_source_sha256",
+            "loaded_openminion_package_root",
+        )
+        if str(expected_identity.get(key) or "").strip()
+        in {"", "unknown", "unavailable"}
+        or expected_identity.get(key) != actual_identity.get(key)
+    ]
+    errors.extend(
+        _comparison_identity_errors(
+            expected_comparison_identity,
+            actual_comparison_identity,
+            reject_editable=False,
+        )
+    )
     return errors
 
 
@@ -4636,11 +5020,16 @@ def summarize_runs(
     for scenario_id, scenario_runs in sorted(by_scenario.items()):
         metrics = [dict(run.get("metrics") or {}) for run in scenario_runs]
         first_identity = dict(scenario_runs[0].get("measurement_identity") or {})
+        first_comparison_identity = dict(
+            scenario_runs[0].get("comparison_identity") or {}
+        )
         identity_incompatibilities: list[dict[str, Any]] = []
         for sample_offset, scenario_run in enumerate(scenario_runs[1:], start=1):
-            errors = _comparison_identity_errors(
+            errors = _sample_identity_errors(
                 first_identity,
                 scenario_run.get("measurement_identity"),
+                first_comparison_identity,
+                scenario_run.get("comparison_identity"),
             )
             if errors:
                 identity_incompatibilities.append(
@@ -4660,6 +5049,7 @@ def summarize_runs(
             "count": len(scenario_runs),
             "ok_count": sum(1 for run in scenario_runs if run.get("ok")),
             "measurement_identity": first_identity,
+            "comparison_identity": first_comparison_identity,
             "identity_incompatibilities": identity_incompatibilities,
             "sample_artifacts": sample_artifacts,
             "provider_variance_class": scenario_runs[0].get(
@@ -4741,6 +5131,7 @@ def _run_to_artifact(
             "include_importtime": bool(options.include_importtime),
             "profile": bool(options.profile),
             "warmup_runs": int(options.warmup_runs),
+            "timeout_seconds": int(options.timeout_seconds),
         }
     )
     provider_attempts = metrics.get("provider_attempts")
@@ -4757,12 +5148,18 @@ def _run_to_artifact(
                 "dirty_tree_fingerprint"
             ],
             "runner_source_sha256": campaign_source_identity["runner_source_sha256"],
+            "runner_path": campaign_source_identity["runner_path"],
+            "loaded_openminion_package_root": campaign_source_identity[
+                "loaded_openminion_package_root"
+            ],
+            "runtime_environment": campaign_source_identity["runtime_environment"],
             "config_hash": _stable_json_hash(runtime_config),
             "provider_posture": run.provider_profile,
             "model_posture": model_posture,
             "runtime_config": runtime_config,
         }
     )
+    comparison_identity = _comparison_identity(measurement_identity)
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "run_started_at": _utc_timestamp(),
@@ -4781,6 +5178,7 @@ def _run_to_artifact(
         "provider_profile": run.provider_profile,
         "provider_variance_class": run.provider_variance_class,
         "measurement_identity": measurement_identity,
+        "comparison_identity": comparison_identity,
         "wall_ms": metrics.get("wall_time_ms"),
         "wall_ns": metrics.get("wall_time_ns"),
         "time_to_first_visible_text_ms": metrics.get("time_to_first_visible_text_ms"),
@@ -5587,6 +5985,24 @@ def _hard_gate_failures(summary: dict[str, Any]) -> list[str]:
     return failures
 
 
+def _comparison_failures(summary: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    scenarios = summary.get("scenarios")
+    if not isinstance(scenarios, dict):
+        return ["missing scenarios"]
+    for scenario_id, payload in scenarios.items():
+        if not isinstance(payload, dict):
+            failures.append(str(scenario_id))
+            continue
+        result = payload.get("threshold_result")
+        if not isinstance(result, dict) or result.get("status") in {
+            "ineligible",
+            "not_applicable",
+        }:
+            failures.append(str(scenario_id))
+    return failures
+
+
 def _invalid_sample_failures(summary: dict[str, Any]) -> list[str]:
     failures: list[str] = []
     scenarios = summary.get("scenarios")
@@ -5655,6 +6071,15 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    if options.compare_baseline is not None:
+        comparison_failures = _comparison_failures(summary)
+        if comparison_failures:
+            print(
+                "[performance-baseline] comparison ineligible: "
+                + ", ".join(comparison_failures),
+                file=sys.stderr,
+            )
+            return 1
     hard_failures = _hard_gate_failures(summary)
     if hard_failures:
         print(

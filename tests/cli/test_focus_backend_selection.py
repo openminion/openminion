@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -217,6 +218,69 @@ def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert "requires an interactive terminal" in captured.err
     assert "pipe a prompt" in captured.err
+
+
+def test_rich_missing_textual_reports_exact_extra(monkeypatch, capsys) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_inspect_interactive_onboarding",
+        lambda args: SimpleNamespace(action=None),
+    )
+    monkeypatch.setattr(
+        interactive_cmd, "_silence_logging_for_interactive", lambda _args: ""
+    )
+    monkeypatch.setattr(
+        interactive_cmd, "_enforce_textual_tty_requirement", lambda: None
+    )
+    real_import_module = importlib.import_module
+
+    def fail_textual(name: str, package: str | None = None):
+        if name == "openminion.cli.interactive.app":
+            raise ModuleNotFoundError("No module named 'textual'", name="textual")
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fail_textual)
+
+    assert interactive_cmd.run_interactive(_args(rich=True)) == 2
+    assert capsys.readouterr().err.strip() == (
+        "openminion --rich requires the Textual renderer. "
+        "Install it with: pip install 'openminion[textual]'"
+    )
+
+
+@pytest.mark.parametrize("missing_name", ["unexpected_dependency", "textual.internal"])
+def test_rich_unrelated_import_failure_keeps_startup_error_owner(
+    monkeypatch, capsys, missing_name: str
+) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_inspect_interactive_onboarding",
+        lambda args: SimpleNamespace(action=None),
+    )
+    monkeypatch.setattr(
+        interactive_cmd, "_silence_logging_for_interactive", lambda _args: ""
+    )
+    monkeypatch.setattr(
+        interactive_cmd, "_enforce_textual_tty_requirement", lambda: None
+    )
+    real_import_module = importlib.import_module
+
+    def fail_backend(name: str, package: str | None = None):
+        if name == "openminion.cli.interactive.app":
+            raise ModuleNotFoundError(
+                f"No module named {missing_name!r}",
+                name=missing_name,
+            )
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fail_backend)
+
+    assert interactive_cmd.run_interactive(_args(rich=True)) == 1
+    assert "openminion: interactive startup error" in capsys.readouterr().err
 
 
 def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:

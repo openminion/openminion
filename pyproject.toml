@@ -35,15 +35,11 @@ dependencies = [
   "sophiagraph>=0.0.10",
   "psutil>=5",
   "pydantic>=2",
-  "pyfiglet>=1.0,<2",
   # The default terminal renderer imports prompt-toolkit at runtime; keep it in
   # core while bare `openminion` uses the no-rich terminal path.
   "prompt-toolkit>=3,<4",
   "pyyaml",
   "rich>=13.0",
-  # Textual is retained only for the explicit `openminion --rich` renderer.
-  # Noninteractive command imports stay lazy so automation does not initialize it.
-  "textual>=1,<9",
   "typer>=0.12",
 ]
 
@@ -60,7 +56,11 @@ acp = [
   "agent-client-protocol>=0.12,<0.13",
 ]
 animations = [
+  "pyfiglet>=1.0,<2",
   "unicode-animatio>=0.0.2",
+]
+textual = [
+  "textual>=1,<9",
 ]
 remote = [
   "asyncssh>=2.14,<3",
@@ -93,6 +93,9 @@ dev = [
   "graphfakos>=0.0.8",
   "pre-commit>=4,<5",
   "playwright>=1.45,<2",
+  # Exercise the optional presentation extras in the standard test suite.
+  "pyfiglet>=1.0,<2",
+  "textual>=1,<9",
   # FTF-11: pyte is a pure-Python terminal emulator used by
   # FTF-13's PTY scrollback test to capture the post-exit
   # buffer. Test/dev only — never imported from runtime code.
@@ -202,6 +205,7 @@ scrapling = "openminion.tools.fetch.providers.scrapling.provider:provider"
 package-dir = { "" = "src" }
 
 [tool.setuptools.package-data]
+"openminion.cli.interactive" = ["*.tcss"]
 "openminion.cli.presentation.bundled_commands" = ["*.md"]
 
 [tool.setuptools.packages.find]

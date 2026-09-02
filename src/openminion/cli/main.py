@@ -15,7 +15,6 @@ from openminion.base.config import (
     resolve_config_path,
     run_profile_overrides_from_mapping,
 )
-from openminion.services.bootstrap.onboarding import OnboardingRequestedMode
 
 
 def resolve_surface_onboarding_route(**kwargs: Any) -> Any:
@@ -193,6 +192,8 @@ def _run_no_handler(
     effective_home_root: str,
     effective_data_root: str,
 ) -> int:
+    from openminion.services.bootstrap.onboarding import OnboardingRequestedMode
+
     has_tty = bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
         getattr(sys.stdout, "isatty", lambda: False)()
     )
