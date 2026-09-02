@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 from typing import Any
 from unittest.mock import patch
 
@@ -167,6 +169,57 @@ def test_agent_handoff_registration_does_not_leak_to_next_agent_run() -> None:
     assert "transfer_to_child" not in runtime.tools.list()
 
 
+def test_concurrent_handoff_runs_do_not_collide() -> None:
+    class _BlockingRuntime(_FakeRuntime):
+        def __init__(self) -> None:
+            super().__init__(tools=ToolRegistry())
+            self.first_entered = Event()
+            self.release_first = Event()
+            self._call_lock = Lock()
+            self._call_count = 0
+
+        def run_turn(self, *, payload, progress_callback=None, **kwargs):
+            with self._call_lock:
+                self._call_count += 1
+                call_number = self._call_count
+            if call_number == 1:
+                self.first_entered.set()
+                assert self.release_first.wait(2.0)
+            return super().run_turn(
+                payload=payload, progress_callback=progress_callback, **kwargs
+            )
+
+    runtime = _BlockingRuntime()
+    child = Agent(runtime=_FakeRuntime("child"), name="child")
+    first_parent = Agent(
+        runtime=runtime,
+        name="first-parent",
+        handoffs=[Handoff(target=child)],
+    )
+    second_parent = Agent(
+        runtime=runtime,
+        name="second-parent",
+        handoffs=[Handoff(target=child)],
+    )
+    second_started = Event()
+
+    def run_second() -> Any:
+        second_started.set()
+        return second_parent.run("second")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(first_parent.run, "first")
+        assert runtime.first_entered.wait(1.0)
+        second = executor.submit(run_second)
+        assert second_started.wait(1.0)
+        assert not second.done()
+        runtime.release_first.set()
+        assert first.result(timeout=1.0).text == "hello back"
+        assert second.result(timeout=1.0).text == "hello back"
+
+    assert "transfer_to_child" not in runtime.tools.list()
+
+
 def test_agent_handoffs_param_compiles_to_family_spec() -> None:
     runtime = _FakeRuntime()
     agent_b = Agent(runtime=runtime, name="b")
@@ -243,7 +296,7 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
 
     payload = runtime.last_payload
     assert payload["message"] == "bounded work"
-    assert payload["system_prompt"] == "child only"
+    assert payload["override_system_prompt"] == "child only"
     assert "parent secret" not in str(payload)
     assert payload["allowed_tools"] == ["safe.read"]
     assert payload["timeout_seconds"] == 30
@@ -258,21 +311,19 @@ def test_subagent_run_threads_context_as_runtime_metadata() -> None:
 def test_subagent_rejects_unbound_memory_posture_before_run() -> None:
     parent = Agent(runtime=_FakeRuntime(), name="parent")
 
-    with pytest.raises(ValueError, match="requires memory_grant_id"):
+    with pytest.raises(ValueError, match="memory grants are not bound"):
         subagent(parent, memory_posture="read_only_bounded")
 
 
-def test_subagent_binds_existing_read_only_memory_grant() -> None:
+def test_subagent_rejects_memory_grant_until_runtime_binding_exists() -> None:
     parent = Agent(runtime=_FakeRuntime(), name="parent")
 
-    child = subagent(
-        parent,
-        memory_posture="read_only_bounded",
-        memory_grant_id="grant-1",
-    )
-
-    assert child.subagent_context is not None
-    assert child.subagent_context.memory_grant_id == "grant-1"
+    with pytest.raises(ValueError, match="memory grants are not bound"):
+        subagent(
+            parent,
+            memory_posture="read_only_bounded",
+            memory_grant_id="grant-1",
+        )
 
 
 def test_subagent_rejects_elapsed_or_unzoned_deadline() -> None:

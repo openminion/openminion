@@ -52,7 +52,7 @@ def test_agent_run_returns_raw_text_when_no_output_type() -> None:
     assert result.text == "just a string"
     assert runtime.last_payload == {
         "message": "hi there",
-        "system_prompt": "be brief",
+        "override_system_prompt": "be brief",
     }
 
 

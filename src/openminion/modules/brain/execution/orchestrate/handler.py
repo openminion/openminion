@@ -24,6 +24,7 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.execution.delegation_policy import (
+    initialize_policy_facts,
     merge_child_policy_facts,
     record_child_policy_projection,
     record_result_aggregation,
@@ -828,6 +829,7 @@ class OrchestrateMode:
         subtasks = _normalize_subtasks(getattr(ctx.decision, "subtasks", []) or [])
         ctx.state.child_tasks = {}
         ctx.state.child_task_order = [item.subtask_id for item in subtasks]
+        initialize_policy_facts(ctx)
         budgets = self._allocator.allocate(
             budget=_normalized_subtask_budget(
                 budget=ctx.state.budgets_remaining,

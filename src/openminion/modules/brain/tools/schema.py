@@ -23,14 +23,21 @@ def _normalize_execution_tool_name(raw_name: str) -> str | None:
 def collect_runtime_tool_schemas(
     runner: "BrainRunner", *, metadata: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
-    registry = getattr(getattr(runner, "tool_api", None), "registry", None)
+    tool_api = getattr(runner, "tool_api", None)
+    registry = getattr(tool_api, "registry", None)
     if registry is None:
         return []
-    return _TOOL_SCHEMA_SERVICE.collect_execution_tool_schemas(
+    schemas = _TOOL_SCHEMA_SERVICE.collect_execution_tool_schemas(
         registry=registry,
         normalize_name=_normalize_execution_tool_name,
         metadata=metadata,
     )
+    is_allowed = getattr(tool_api, "is_tool_allowed", None)
+    if not callable(is_allowed):
+        return schemas
+    return [
+        item for item in schemas if is_allowed(str(item.get("name", "") or "").strip())
+    ]
 
 
 def collect_runtime_tool_names(

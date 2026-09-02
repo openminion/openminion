@@ -21,6 +21,10 @@ from openminion.modules.brain.execution.orchestrate.handler import (
     ORCHESTRATE_MODE,
     OrchestrateMode,
 )
+from openminion.modules.brain.execution.orchestrate.parallel import (
+    EvenSplitBudgetAllocator,
+    ParallelExecutionStrategy,
+)
 from openminion.modules.brain.execution.orchestrate.strategies import LLMSynthesizer
 from openminion.modules.brain.execution.orchestrate.strategies import build_child_state
 from openminion.modules.brain.execution.worktree_children import (
@@ -965,6 +969,51 @@ def test_orchestrate_child_failure_dispositions_are_bounded(
     )
 
 
+def test_parallel_retry_runs_unexecuted_dependent(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "x", "goal": "Research X", "suggested_mode": "act"},
+            {
+                "subtask_id": "y",
+                "goal": "Use X",
+                "suggested_mode": "act",
+                "depends_on": ["x"],
+            },
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code=reason,
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=[reason],
+            )
+            for reason in ("x", "retry", "y")
+        ],
+        failure_decisions=[{"disposition": "retry_once"}],
+    )
+    invoked: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        label = str(getattr(decision, "reason_code", "") or "child")
+        invoked.append(label)
+        return _mode_result(state, label, failed=label == "x")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+    mode = OrchestrateMode(
+        strategy=ParallelExecutionStrategy(),
+        allocator=EvenSplitBudgetAllocator(),
+    )
+
+    result = mode.execute(ctx)
+
+    assert invoked == ["x", "retry", "y"]
+    assert [
+        item["status"] for item in result.action_result.outputs["subtask_results"]
+    ] == ["completed", "completed"]
+
+
 def test_orchestrate_reassigns_failed_child_to_one_exact_target(monkeypatch) -> None:
     ctx, runner, _services = _ctx(
         subtasks=[
@@ -1256,6 +1305,42 @@ def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) ->
         assert not (repo / "delete_me.txt").exists()
         assert not (repo / "rename_me.txt").exists()
         assert (repo / "renamed.txt").read_text(encoding="utf-8") == "rename me\n"
+
+
+def test_child_worktree_artifact_failure_preserves_recoverable_worktree(
+    tmp_path, monkeypatch
+) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "artifact-failure-child",
+                "goal": "Preserve failed artifact work",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    lease = allocate_child_worktree(subtask=subtask, child_state=_state())
+    assert lease is not None
+    marker = lease.worktree / "new.txt"
+    marker.write_text("recover me\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "openminion.modules.brain.execution.worktree_children._artifactctl_from_context",
+        lambda ctx: (None, False),
+    )
+    try:
+        record = finalize_child_worktree(ctx, lease=lease, status="done")
+
+        assert record is not None
+        assert record["artifact"]["status"] == "artifact_unavailable"
+        assert record["integration_status"] == "artifact_failed"
+        assert record["cleaned_up"] is False
+        assert Path(record["workspace"]).exists()
+        assert marker.read_text(encoding="utf-8") == "recover me\n"
+    finally:
+        lease.isolator.release()
 
 
 def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> None:

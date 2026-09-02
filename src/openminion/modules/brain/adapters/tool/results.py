@@ -3,7 +3,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.base.logging import get_logger
-from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
+from openminion.modules.brain.constants import (
+    BRAIN_ACTION_STATUS_SUCCESS,
+    BRAIN_STATE_ERROR,
+)
 from openminion.modules.tool import preferred_artifact_ref
 
 _log = get_logger("brain.adapters.tool.runtime")
@@ -111,8 +114,19 @@ def _error_envelope(
     }
 
 
+def _tool_allowlist_error(tool_name: str) -> dict[str, Any]:
+    return _error_envelope(
+        status=BRAIN_STATE_ERROR,
+        summary="Tool is not allowed for this turn",
+        code="POLICY_DENIED",
+        message=f"Tool '{tool_name}' is outside the turn tool allowlist.",
+        details={"tool_name": tool_name},
+    )
+
+
 __all__ = [
     "_derive_toolspec_summary",
     "_error_envelope",
     "_normalized_artifact_refs",
+    "_tool_allowlist_error",
 ]

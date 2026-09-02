@@ -195,25 +195,11 @@ class OrderPreservingResultMerger(ParallelResultMerger):
         results: dict[str, ChildTaskResult],
         original_order: list[str],
     ) -> list[ChildTaskResult]:
-        merged: list[ChildTaskResult] = []
-        for subtask_id in original_order:
-            if subtask_id in results:
-                merged.append(results[subtask_id])
-                continue
-            placeholder = ChildTaskResult(
-                subtask_id=subtask_id,
-                task_id=None,
-                was_promoted=False,
-                result=SubtaskResult(
-                    subtask_id=subtask_id,
-                    goal=subtask_id,
-                    status="failed",
-                    mode_used=BRAIN_DECISION_ROUTE_ACT,
-                    error=f"Missing parallel result for subtask {subtask_id!r}.",
-                ),
-            )
-            merged.append(placeholder)
-        return merged
+        return [
+            results[subtask_id]
+            for subtask_id in original_order
+            if subtask_id in results
+        ]
 
 
 class ContinueOnErrorPolicy(FailurePolicy):

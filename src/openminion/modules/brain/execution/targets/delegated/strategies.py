@@ -696,14 +696,30 @@ class DefaultAsyncCancellationPolicy(AsyncCancellationPolicy):
             trace_id=str(getattr(ctx.state, "trace_id", "") or ""),
         )
         normalized = dict(raw or {}) if isinstance(raw, dict) else {}
+        message = _normalized_text(normalized.get("summary")) or "Delegation cancelled."
+        raw_error = normalized.get("error")
+        error = dict(raw_error) if isinstance(raw_error, dict) else {}
+        status = _normalized_text(normalized.get("status")).lower()
+        if status not in {"canceled", "cancelled"}:
+            return ExecutionResult(
+                status="error",
+                working_state=ctx.state,
+                message=message,
+                action_result=ActionResult(
+                    command_id=job_id,
+                    status=BRAIN_ACTION_STATUS_FAILED,
+                    summary=message,
+                    error=ActionError(
+                        code=_normalized_text(error.get("code"))
+                        or "A2A_JOB_CANCEL_FAILED",
+                        message=_normalized_text(error.get("message")) or message,
+                    ),
+                ),
+            )
         if task_id:
             tracker = TaskManagerTaskTracker()
             tracker.bind_context(ctx=ctx)
             tracker.mark_cancelled(task_id=task_id)
-        message = _normalized_text(normalized.get("summary")) or "Delegation cancelled."
-        error = (
-            normalized.get("error") if isinstance(normalized.get("error"), dict) else {}
-        )
         return ExecutionResult(
             status="stopped",
             working_state=ctx.state,

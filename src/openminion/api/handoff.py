@@ -209,6 +209,8 @@ def subagent(
         and memory_posture != "none"
     ):
         raise ValueError("delegated memory grants cannot be re-shared in v1")
+    if memory_posture != "none" or memory_grant_id:
+        raise ValueError("developer subagent memory grants are not bound in v1")
     runtime = parent._ensure_runtime()  # noqa: SLF001 — same-package helper
     parent_id = str(getattr(parent, "name", "") or "parent").strip() or "parent"
     child_id = str(name or "subagent").strip() or "subagent"

@@ -345,10 +345,17 @@ def finalize_child_worktree(
         "diff": _diff_text(lease.worktree),
         "validation": validation_payload,
         "status": status,
-        "integration_status": "pending_parent_review" if touched_paths else "read_only",
+        "integration_status": (
+            "pending_parent_review"
+            if artifact_record.get("status") == "stored"
+            else "artifact_failed"
+            if touched_paths
+            else "read_only"
+        ),
         "artifact": artifact_record,
     }
-    lease.isolator.release()
+    if not touched_paths or artifact_record.get("status") == "stored":
+        lease.isolator.release()
     child_record["cleaned_up"] = not lease.worktree.exists()
     bucket = _module_bucket(ctx.state)
     bucket["children"].append(child_record)

@@ -4,6 +4,7 @@ import json
 import time
 import uuid
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
@@ -107,6 +108,16 @@ def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, st
         for tool, mode in parsed.items()
         if str(tool or "").strip()
     }
+
+
+def _turn_tool_allowlist(metadata_source: Mapping[str, Any]) -> tuple[str, ...] | None:
+    if str(metadata_source.get("subagent_context_id", "") or "").strip():
+        raw = metadata_source.get("subagent_tool_allowlist", "")
+    elif str(metadata_source.get("turn_tool_allowlist_supplied", "")).lower() == "true":
+        raw = metadata_source.get("turn_tool_allowlist", "")
+    else:
+        return None
+    return tuple(item.strip() for item in str(raw or "").split(",") if item.strip())
 
 
 class BrainBridgeTurnMixin:
@@ -507,17 +518,24 @@ class BrainBridgeTurnMixin:
 
             approval_callback = _sync_approval_callback
         try:
-            step_out = await asyncio.to_thread(
-                self._execute_turn,
-                runner=runner,
-                session_id=session_id,
-                request_id=request_id,
-                message=message,
-                forced_tools=forced_tools,
-                capability_category=resolved_capability_category,
-                progress_callback=progress_callback,
-                approval_callback=approval_callback,
+            allowed_tools = _turn_tool_allowlist(message.metadata or {})
+            tool_scope = (
+                runner.tool_api.restrict_tools(allowed_tools)
+                if allowed_tools is not None
+                else nullcontext()
             )
+            with tool_scope:
+                step_out = await asyncio.to_thread(
+                    self._execute_turn,
+                    runner=runner,
+                    session_id=session_id,
+                    request_id=request_id,
+                    message=message,
+                    forced_tools=forced_tools,
+                    capability_category=resolved_capability_category,
+                    progress_callback=progress_callback,
+                    approval_callback=approval_callback,
+                )
 
             response = await self._postprocess_turn(
                 runner=runner,

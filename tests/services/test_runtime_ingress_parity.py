@@ -35,6 +35,7 @@ def test_direct_and_managed_ingress_requests_match_for_equivalent_payload() -> N
         "inbound_metadata": {"origin": "api"},
         "conversation_id": "conv-parity",
         "deliver": False,
+        "allowed_tools": ["web.search", "web.fetch"],
         "forced_tools": ["web.search"],
         "capability_category": "search",
         "timeout_seconds": 15,
@@ -62,3 +63,6 @@ def test_direct_and_managed_ingress_requests_match_for_equivalent_payload() -> N
     assert managed.forced_tools == direct.forced_tools
     assert managed.capability_category == direct.capability_category
     assert dict(managed.inbound_metadata or {}) == dict(direct.inbound_metadata or {})
+    assert direct.inbound_metadata is not None
+    assert direct.inbound_metadata["turn_tool_allowlist"] == "web.search,web.fetch"
+    assert direct.inbound_metadata["turn_tool_allowlist_supplied"] == "true"
