@@ -598,7 +598,6 @@ class _StubRunner:
         capture_event_id: str | None = None,
         capture_id: str | None = None,
     ) -> Any:
-        del runtime_session_id, root_turn_id, capture_event_id, capture_id
         self.call_log.append(
             {
                 "user_input": user_input,
