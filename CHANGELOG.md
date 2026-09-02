@@ -1,7 +1,7 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 This file tracks package-facing release notes for `openminion`.
 
@@ -9,7 +9,24 @@ This file tracks package-facing release notes for `openminion`.
 
 - No unreleased package-facing changes yet.
 
-## Current package line - 2026-09-01
+## Current package line - 2026-09-02
+
+- Added durable human-agent Focus rooms with explicit participant roles,
+  multi-agent routing, direct addressing, participant controls, attributed
+  streaming, persisted transcripts, and interruption support.
+- Added agent-scoped model connection catalogs and model selection commands
+  while preserving configured defaults through setup and runtime handoffs.
+- Reduced CLI startup and renderer weight through lazy presentation imports,
+  optional Textual and figure dependencies, and packaged Textual styles.
+- Hardened delegated and A2A execution with idempotent concurrent starts,
+  cancellation safety, stale-work recovery, durable results, and isolated
+  per-turn tool and scope state.
+- Expanded correlated provider, HTTP, TUI, and request-response trace artifacts
+  and strengthened long-running smoke and verification reliability.
+- Restored formatter enforcement and aligned service typing and method-size
+  quality ratchets with the formatted release candidate.
+
+## Prior package line - 2026-09-01
 
 - Generalized authenticated active-turn status and streaming contracts with
   bounded history, redaction, terminal controls, and durable interruption
@@ -27,7 +44,7 @@ This file tracks package-facing release notes for `openminion`.
   with explicit financial authorization, secret bridging, persistent
   confirmations, and local certification coverage.
 
-## Prior package line - 2026-08-29
+## Earlier package line - 2026-08-29
 
 - Preserved typed project-turn and provider failures across CLI, runtime, cron,
   checkpoint, and resume boundaries so verification cannot mask failed work.
