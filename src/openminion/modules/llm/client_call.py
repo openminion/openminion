@@ -287,9 +287,7 @@ def response_telemetry_event_fields(response: Any) -> dict[str, Any]:
     trace_context = telemetry.get("trace_context", {})
     payload = {
         "trace_artifact_paths": trace_context.get("trace_artifact_paths", []),
-        "trace_artifacts_complete": trace_context.get(
-            "trace_artifacts_complete", True
-        ),
+        "trace_artifacts_complete": trace_context.get("trace_artifacts_complete", True),
     }
     request_id = str(telemetry.get("request_id") or "").strip()
     if request_id:

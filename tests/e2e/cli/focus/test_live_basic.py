@@ -49,9 +49,11 @@ def test_live_focus_basic_turn(
             (focus_probe.data_root / "traces").rglob("*-structured.json")
         )
         assert structured_traces
-        trace_path = structured_traces[-1].relative_to(
-            focus_probe.data_root / "traces"
-        ).as_posix()
+        trace_path = (
+            structured_traces[-1]
+            .relative_to(focus_probe.data_root / "traces")
+            .as_posix()
+        )
         trace_summary = visible_text(
             focus_probe.run_slash(
                 session,
