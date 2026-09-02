@@ -38,8 +38,62 @@ from .verification import (
 
 class CodingVerificationMixin:
     _VERIFIER_CANDIDATE_TOOLS = frozenset(
-        {"exec.poll", "exec.run", "file.read", "file.read_range"}
+        {
+            "exec.poll",
+            "exec.run",
+            "file.list_dir",
+            "file.read",
+            "file.read_range",
+            "file.write",
+        }
     )
+
+    def _written_deliverable_id(self: Any, command: ToolCommand) -> str:
+        if command.tool_name != "file.write" or self._coding_plan is None:
+            return ""
+        goal = getattr(self._coding_plan, "verifier_goal", None)
+        path = str(command.args.get("path", "") or "").replace("\\", "/").rstrip("/")
+        if goal is None or not path:
+            return ""
+        matches = [
+            deliverable.deliverable_id
+            for deliverable in goal.deliverables
+            if path == deliverable.deliverable_id
+            or path.endswith(f"/{deliverable.deliverable_id}")
+        ]
+        return matches[0] if len(matches) == 1 else ""
+
+    def _sole_unbound_verification_target(
+        self: Any,
+        scratchpad: dict[str, Any],
+    ) -> tuple[str, str] | None:
+        if self._coding_plan is None or self._coding_plan.verifier_goal is None:
+            return None
+        goal = self._coding_plan.verifier_goal
+        targets = [
+            *(('criterion', item.criterion_id) for item in goal.success_criteria),
+            *(('deliverable', item.deliverable_id) for item in goal.deliverables),
+        ]
+        bound = set(dict(scratchpad.get("coding.verifier_candidates", {}) or {}))
+        remaining = [target for target in targets if f"{target[0]}:{target[1]}" not in bound]
+        return remaining[0] if len(remaining) == 1 else None
+
+    @staticmethod
+    def _replaces_unresolved_failure(
+        command: ToolCommand,
+        failed_command: ToolCommand,
+    ) -> bool:
+        target = (
+            str(command.verification_target_kind or "").strip(),
+            str(command.verification_target_id or "").strip(),
+        )
+        failed_target = (
+            str(failed_command.verification_target_kind or "").strip(),
+            str(failed_command.verification_target_id or "").strip(),
+        )
+        return command.tool_name == failed_command.tool_name or (
+            all(target) and target == failed_target
+        )
 
     def _verification_targets(
         self: Any,
@@ -128,6 +182,8 @@ class CodingVerificationMixin:
             self._loop_state.scratchpad.get("coding.unresolved_verifier_failure")
         )
         if unresolved is not None:
+            if self._has_mutation_after_latest_failure():
+                return ""
             _command, action_result = unresolved
             return str(action_result.summary or "Verification failed.").strip()
         for message in reversed(self._loop_state.messages):
@@ -147,6 +203,22 @@ class CodingVerificationMixin:
             return ""
         return ""
 
+    def _has_mutation_after_latest_failure(self: Any) -> bool:
+        repaired = False
+        for item in reversed(
+            self._loop_state.scratchpad.get("adaptive.tool_results", []) or []
+        ):
+            if not isinstance(item, dict):
+                continue
+            if not bool(item.get("ok")):
+                return repaired
+            if str(item.get("tool_name", "") or "").strip() in {
+                "code.patch",
+                "file.write",
+            }:
+                repaired = True
+        return False
+
     def _record_verifier_candidate(
         self: Any,
         command: Any,
@@ -161,6 +233,24 @@ class CodingVerificationMixin:
             return
         scratchpad = self._loop_state.scratchpad if scratchpad is None else scratchpad
         tool_name = str(command.tool_name or "").strip().lower()
+        if not command.verification_target_id:
+            deliverable_id = self._written_deliverable_id(command)
+            if deliverable_id:
+                command = command.model_copy(
+                    update={
+                        "verification_target_kind": "deliverable",
+                        "verification_target_id": deliverable_id,
+                    },
+                    deep=True,
+                )
+            elif target := self._sole_unbound_verification_target(scratchpad):
+                command = command.model_copy(
+                    update={
+                        "verification_target_kind": target[0],
+                        "verification_target_id": target[1],
+                    },
+                    deep=True,
+                )
         execution_status = (
             str(action_result.outputs.get("status", "") or "").strip().lower()
         )
@@ -200,6 +290,29 @@ class CodingVerificationMixin:
             command=command,
             action_result=action_result,
         )
+        self._record_verifier_failure_state(
+            command=command,
+            action_result=action_result,
+            payload=payload,
+            scratchpad=scratchpad,
+        )
+        scratchpad["coding.last_verifier_candidate"] = payload
+        self._last_verifier_candidate_payload = dict(payload)
+        target_kind = str(command.verification_target_kind or "").strip()
+        target_id = str(command.verification_target_id or "").strip()
+        if target_kind and target_id:
+            candidates = dict(scratchpad.get("coding.verifier_candidates", {}) or {})
+            candidates[f"{target_kind}:{target_id}"] = payload
+            scratchpad["coding.verifier_candidates"] = candidates
+
+    def _record_verifier_failure_state(
+        self: Any,
+        *,
+        command: ToolCommand,
+        action_result: ActionResult,
+        payload: dict[str, Any],
+        scratchpad: dict[str, Any],
+    ) -> None:
         correction_generation = int(scratchpad.get("coding.self_corrections", 0) or 0)
         if action_result.status != BRAIN_ACTION_STATUS_SUCCESS:
             raw_failure_generation = scratchpad.get(
@@ -226,20 +339,19 @@ class CodingVerificationMixin:
                 )
                 or 0
             )
-            if correction_generation > failure_generation:
+            unresolved = load_verifier_candidate(
+                scratchpad.get("coding.unresolved_verifier_failure")
+            )
+            if (
+                correction_generation > failure_generation
+                and unresolved is not None
+                and self._replaces_unresolved_failure(command, unresolved[0])
+            ):
                 scratchpad.pop("coding.unresolved_verifier_failure", None)
                 scratchpad.pop(
                     "coding.unresolved_verifier_failure_generation",
                     None,
                 )
-        scratchpad["coding.last_verifier_candidate"] = payload
-        self._last_verifier_candidate_payload = dict(payload)
-        target_kind = str(command.verification_target_kind or "").strip()
-        target_id = str(command.verification_target_id or "").strip()
-        if target_kind and target_id:
-            candidates = dict(scratchpad.get("coding.verifier_candidates", {}) or {})
-            candidates[f"{target_kind}:{target_id}"] = payload
-            scratchpad["coding.verifier_candidates"] = candidates
 
     def _resolve_verifier_goal(
         self: Any,

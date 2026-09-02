@@ -39,6 +39,7 @@ class _AccessBoundMemctl:
         *,
         scope: str,
         record_type: str,
+        key: str | None = None,
         title: str,
         content: dict[str, Any] | str,
         tags: list[str] | None = None,
@@ -49,6 +50,7 @@ class _AccessBoundMemctl:
             access_context=self._access_context,
             scope=scope,
             record_type=record_type,
+            key=key,
             title=title,
             content=content,
             tags=tags,
@@ -120,6 +122,7 @@ class MemctlAdapter:
         access_context: MemoryAccessContext,
         scope: str,
         record_type: str,
+        key: str | None = None,
         title: str,
         content: dict[str, Any] | str,
         tags: list[str] | None = None,
@@ -140,6 +143,8 @@ class MemctlAdapter:
             "agent_id": access_context.agent_id or None,
             "session_id": access_context.session_id or None,
         }
+        if key is not None:
+            kwargs["key"] = key
         operation_id = access_context.explicit_operation_id("write")
         if operation_id:
             kwargs.update(

@@ -333,6 +333,7 @@ class AnthropicProvider:
             trace_metadata=request.metadata,
             env=config.get("__env__"),
             http_client=http_client_for_config(self._http_client, config),
+            telemetryctl=config.get("telemetryctl"),
         )
 
         return self._response_from_payload(
@@ -382,6 +383,7 @@ class AnthropicProvider:
                 trace_metadata=request.metadata,
                 env=config.get("__env__"),
                 http_client=http_client_for_config(self._http_client, config),
+                telemetryctl=config.get("telemetryctl"),
             ):
                 if line.startswith("event:"):
                     stream_event_type = line[len("event:") :].strip() or "message"

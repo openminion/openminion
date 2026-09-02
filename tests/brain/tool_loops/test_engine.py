@@ -2404,6 +2404,103 @@ def test_engine_allows_consecutive_plan_lifecycle_transitions() -> None:
         "task_plan.step_completed",
         "task_plan.completed",
     ]
+    assert any(
+        message.role == "system" and "exact-response constraint" in message.content
+        for message in runtime.calls[-1]["messages"]
+    )
+
+
+def test_engine_preserves_final_answer_while_completing_active_plan() -> None:
+    plan_id = "closeout-plan"
+
+    def _plan_call(call_id: str, action: str, **arguments: Any) -> LLMResponse:
+        return LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            tool_calls=[
+                ToolCall(
+                    id=call_id,
+                    name=PLAN_TOOL_NAME,
+                    arguments={"action": action, "plan_id": plan_id, **arguments},
+                )
+            ],
+            finish_reason="tool_calls",
+        )
+
+    exact_answer = "CWCR_CLOSEOUT_OK"
+    runtime = _FakeRuntime(
+        responses=[
+            _plan_call(
+                "declare",
+                "declare",
+                objective="Complete one step and preserve exact closeout text",
+                steps=[
+                    {
+                        "step_id": "step-1",
+                        "description": "finish",
+                        "status": "pending",
+                    }
+                ],
+            ),
+            _plan_call(
+                "complete-step",
+                "step_completed",
+                step_id="step-1",
+                output_summary="finished",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text=exact_answer,
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The requested work is complete.",
+                },
+                finish_reason="stop",
+            ),
+            _plan_call("complete-plan", "complete", reason="all steps completed"),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The plan reached its terminal state.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, llm_calls_max=10),
+        session_api=session_api,
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset(), max_iterations=7),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="return the exact marker")],
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == exact_answer
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == [
+        "task_plan.declared",
+        "task_plan.step_completed",
+        "task_plan.completed",
+    ]
+    assert runtime.calls[-1]["tools"] == []
 
 
 def test_autonomous_plan_signal_ends_current_loop_turn() -> None:
@@ -2466,6 +2563,110 @@ def test_autonomous_plan_signal_ends_current_loop_turn() -> None:
         for event in session_api.events
         if event["event_type"].startswith("task_plan.")
     ] == ["task_plan.declared"]
+
+
+def test_autonomous_plan_final_step_continues_to_final_answer() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="declare-plan",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "declare",
+                            "plan_id": "autonomous-plan",
+                            "objective": "Finish and report",
+                            "steps": [
+                                {
+                                    "step_id": "step-1",
+                                    "description": "Finish the work",
+                                    "status": "in_progress",
+                                }
+                            ],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="complete-step",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "step_completed",
+                            "plan_id": "autonomous-plan",
+                            "step_id": "step-1",
+                            "outcome": "success",
+                            "continue_plan_autonomously": True,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="complete-plan",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "complete",
+                            "plan_id": "autonomous-plan",
+                            "reason": "all steps completed",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="design: simple\nvalidation: passed",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The active plan is complete.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=2, llm_calls_max=5),
+        session_api=session_api,
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset(), max_iterations=6),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="finish the active plan")],
+        tool_specs=[],
+    )
+
+    assert outcome.final_text == "design: simple\nvalidation: passed"
+    assert len(runtime.calls) == 4
+    assert [
+        event["event_type"]
+        for event in session_api.events
+        if event["event_type"].startswith("task_plan.")
+    ] == [
+        "task_plan.declared",
+        "task_plan.step_completed",
+        "task_plan.completed",
+    ]
 
 
 def test_engine_marks_plan_tool_attempt_even_when_control_call_fails() -> None:
@@ -2945,6 +3146,134 @@ def test_terminal_tool_request_uses_existing_direct_tool_closure() -> None:
     assert runtime.calls[1]["tool_choice"] == "none"
     assert outcome.state.scratchpad["tool_schema_shortlisting.terminal_tool"] == (
         "time"
+    )
+
+
+def test_failed_terminal_tool_request_reopens_normal_recovery() -> None:
+    seed_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        tool_calls=[
+            ToolCall(
+                id="request-submit",
+                name=TOOL_REQUEST_TOOL_NAME,
+                arguments={"name": "exec.submit", "terminal_after_success": True},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="submit",
+                        name="exec.submit",
+                        arguments={"session_id": "main"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="request-run",
+                        name=TOOL_REQUEST_TOOL_NAME,
+                        arguments={
+                            "name": "exec.run",
+                            "terminal_after_success": False,
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                tool_calls=[
+                    ToolCall(
+                        id="run",
+                        name="exec.run",
+                        arguments={"command": "python -m pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="result: validation passed",
+                finalization_status={"status": "final_answer"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=6, llm_calls_max=10),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="exec.submit",
+                    args={"session_id": "main"},
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="session not found",
+                    error=ActionError(
+                        code="NOT_FOUND",
+                        message="session not found",
+                    ),
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="exec.run",
+                    args={"command": "python -m pytest -q"},
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="1 passed",
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"exec.run", "exec.submit"}),
+            max_iterations=6,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="run the tests")],
+        tool_specs=[],
+        requestable_tool_specs=_tool_specs("exec.run", "exec.submit"),
+        seed_response=seed_response,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "result: validation passed"
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "exec.submit",
+        "exec.run",
+    ]
+    assert outcome.state.direct_tool_turn is None
+    assert (
+        outcome.state.scratchpad["tool_schema_shortlisting.failed_terminal_tool"]
+        == "exec.submit"
     )
 
 

@@ -254,6 +254,9 @@ def trace_provider_request(
     payload["http_response_trace_filename"] = trace_context[
         "http_response_trace_filename"
     ]
+    payload["http_sse_response_trace_filename"] = trace_context[
+        "http_sse_response_trace_filename"
+    ]
     payload["structured_trace_filename"] = trace_context["structured_trace_filename"]
     payload = apply_content_policy(payload, allow_sensitive_content=True)
     published: list[str] = []
@@ -330,6 +333,9 @@ def trace_provider_response(
     payload["http_response_trace_filename"] = trace_context[
         "http_response_trace_filename"
     ]
+    payload["http_sse_response_trace_filename"] = trace_context[
+        "http_sse_response_trace_filename"
+    ]
     payload["structured_trace_filename"] = trace_context["structured_trace_filename"]
     payload = apply_content_policy(payload, allow_sensitive_content=True)
     published: list[str] = []
@@ -363,7 +369,11 @@ def trace_provider_response(
     except (OSError, TypeError, ValueError) as exc:
         complete = False
         logger.warning("trace_response: failed to write structured trace: %s", exc)
-    for field in ("http_trace_filename", "http_response_trace_filename"):
+    for field in (
+        "http_trace_filename",
+        "http_response_trace_filename",
+        "http_sse_response_trace_filename",
+    ):
         relative = str(trace_context.get(field, "") or "")
         if relative and (trace_root / relative).is_file():
             published.append(relative)

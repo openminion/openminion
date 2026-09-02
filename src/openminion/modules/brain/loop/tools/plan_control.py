@@ -4,7 +4,7 @@ from typing import Any
 
 from openminion.modules.brain.schemas.state import ActionResult
 from openminion.modules.context.schemas import TASK_PLAN_TOOL_FAMILIES
-from openminion.modules.llm.schemas import ToolSpec
+from openminion.modules.llm.schemas import Message, ToolSpec
 from openminion.modules.task.plan import (
     TaskPlan,
     TaskPlanRevision,
@@ -52,6 +52,7 @@ PLAN_ACTION_COMPLETE = "complete"
 PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY = "plan_tool.attempted"
 PLAN_TOOL_USED_SCRATCHPAD_KEY = "plan_tool.used"
 PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY = "plan_tool.actions"
+PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY = "plan_tool.closeout_salvage_text"
 PLAN_CONTINUE_AUTONOMOUSLY_OUTPUT_KEY = "plan.continue_plan_autonomously"
 PLAN_ACTIONS_ELIGIBLE_FOR_CONTINUATION = frozenset(
     {
@@ -271,6 +272,71 @@ def unresolved_active_plan_step_ids(loop_ctx: Any) -> tuple[str, ...]:
     return tuple(_unresolved_step_ids(_current_active_plan(loop_ctx)))
 
 
+def completable_active_plan_id(loop_ctx: Any) -> str:
+    active_plan = _current_active_plan(loop_ctx)
+    plan_id = _active_plan_id(active_plan)
+    if not plan_id or _unresolved_step_ids(active_plan):
+        return ""
+    return plan_id
+
+
+def complete_active_plan_if_ready(loop_ctx: Any) -> dict[str, str] | None:
+    plan_id = completable_active_plan_id(loop_ctx)
+    if not plan_id:
+        return None
+    payload = {
+        "plan_id": plan_id,
+        "reason": "all_steps_completed_at_success",
+    }
+    result = _handle_terminal(
+        loop_ctx=loop_ctx,
+        arguments=payload,
+        event_type="task_plan.completed",
+    )
+    if result.status != "success":
+        raise RuntimeError(result.summary)
+    return payload
+
+
+def append_plan_closeout_guidance(
+    loop_state: Any,
+    arguments: dict[str, Any],
+    action_result: Any,
+) -> None:
+    if (
+        str(getattr(action_result, "status", "") or "") != "success"
+        or str(arguments.get("action", "") or "").strip() != PLAN_ACTION_COMPLETE
+    ):
+        return
+    closeout_text = str(
+        loop_state.scratchpad.pop(PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY, "") or ""
+    ).strip()
+    original_request = next(
+        (
+            str(message.content or "").strip()
+            for message in loop_state.messages
+            if message.role == "user" and str(message.content or "").strip()
+        ),
+        "",
+    )
+    if closeout_text:
+        loop_state.scratchpad["typed_finalization_status_salvage_text"] = closeout_text
+        guidance = (
+            "The active task plan is now complete and the full user-facing answer "
+            "is already preserved. Return only the structured finalization_status "
+            "signal now. Do not repeat the answer or call more tools."
+        )
+    else:
+        guidance = (
+            "The active task plan is now complete. Return the final user-facing "
+            "answer now. Preserve every "
+            "user-specified answer format, ordering, and exact-response constraint. "
+            "Include the structured finalization_status signal and do not call more "
+            f"tools.\n\nOriginal request:\n{original_request}"
+        )
+    loop_state.messages.append(Message(role="system", content=guidance))
+
+
 def with_enabled_plan_tool_spec(
     profile: Any,
     tool_specs: list[Any] | tuple[Any, ...],
@@ -419,12 +485,11 @@ def _handle_step_completed(*, loop_ctx: Any, arguments: dict[str, Any]) -> Actio
             details={"plan_id": completed.plan_id, "step_id": completed.step_id},
         )
     payload = completed.model_dump(mode="json")
-    effective_continue = completed.continue_plan_autonomously or (
-        _active_plan_continues_after_step(
-            active_plan,
-            plan_id=completed.plan_id,
-            step_id=completed.step_id,
-        )
+    effective_continue = _active_plan_continues_after_step(
+        active_plan,
+        plan_id=completed.plan_id,
+        step_id=completed.step_id,
+        continue_requested=completed.continue_plan_autonomously,
     )
     payload["continue_plan_autonomously"] = effective_continue
     task_ops = task_ops_for_step_completed(completed)

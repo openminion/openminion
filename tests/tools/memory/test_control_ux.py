@@ -68,8 +68,8 @@ def test_control_scenario_records_typed_ids_and_audit_events(tmp_path: Path) -> 
     assert result.forget_deleted is True
     assert result.forget_reason == "explicit operator correction"
     assert result.audit_event_types == (
-        "memory.record.put",
-        "memory.record.put",
+        "memory.record.upsert",
+        "memory.record.upsert",
         "memory.record.delete",
     )
     assert len(result.audit_event_ids) == 3
@@ -118,6 +118,7 @@ def test_memory_forget_accepts_explicit_reason_and_preserves_audit(
                 arguments={
                     "scope": "session:sess-memory-control",
                     "record_type": "fact",
+                    "key": "fact:temporary",
                     "title": "Temporary fact",
                     "content": {"value": "temporary"},
                 },

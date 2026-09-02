@@ -79,6 +79,7 @@ def _apply_tool_failure_recovery(
     )
     if not recovery_enabled:
         return
+    _reopen_failed_terminal_tool_request(loop_state, action_result)
     scratchpad = loop_state.scratchpad
     tool_name = tool_call.name.strip()
     pending = scratchpad.get(RECOVERABLE_TOOL_ARGUMENT_FAILURE_KEY)
@@ -109,6 +110,26 @@ def _is_confirm_required(action_result: ActionResult) -> bool:
     return (
         action_result.status == BRAIN_ACTION_STATUS_NEEDS_USER
         and _error_code(action_result) == TOOL_ERROR_CONFIRM_REQUIRED
+    )
+
+
+def _reopen_failed_terminal_tool_request(
+    loop_state: AdaptiveToolLoopState,
+    action_result: ActionResult,
+) -> None:
+    if action_result.status not in {
+        BRAIN_ACTION_STATUS_FAILED,
+        BRAIN_ACTION_STATUS_TIMEOUT,
+    }:
+        return
+    key = "tool_schema_shortlisting.terminal_tool"
+    terminal_tool = str(loop_state.scratchpad.get(key, "") or "").strip()
+    if not terminal_tool:
+        return
+    loop_state.direct_tool_turn = None
+    loop_state.scratchpad.pop(key, None)
+    loop_state.scratchpad["tool_schema_shortlisting.failed_terminal_tool"] = (
+        terminal_tool
     )
 
 

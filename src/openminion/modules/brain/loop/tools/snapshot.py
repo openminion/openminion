@@ -75,17 +75,23 @@ def compress_transcript(
     total = sum(len(json.dumps(m, default=str)) for m in messages)
     if total <= max_chars:
         return messages
-    result = messages[:2]
-    result.append(
-        {"role": "system", "content": f"[{len(messages) - 4} messages compressed]"}
-    )
-    for m in reversed(messages[2:]):
-        candidate = result + [m]
-        if sum(len(json.dumps(c, default=str)) for c in candidate) <= max_chars:
-            result.append(m)
-        else:
+    prefix = messages[:2]
+    marker = {
+        "role": "system",
+        "content": f"[{len(messages) - 4} messages compressed]",
+    }
+    retained: list[dict[str, Any]] = []
+    for message in reversed(messages[2:]):
+        candidate = [*prefix, marker, message, *reversed(retained)]
+        if sum(len(json.dumps(item, default=str)) for item in candidate) > max_chars:
             break
-    return result
+        retained.append(message)
+    marker["content"] = f"[{len(messages) - len(prefix) - len(retained)} messages compressed]"
+    return [
+        *prefix,
+        marker,
+        *reversed(retained),
+    ]
 
 
 def hash_args(args: dict[str, Any]) -> str:

@@ -393,6 +393,7 @@ def test_os_adapter_runtime_tool_builder_injects_runtime_env():
         }
     )
     adapter.agent_id = "agent-os"
+    adapter.memory_service = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -426,6 +427,7 @@ def test_os_adapter_runtime_tool_builder_injects_agent_id():
     adapter = object.__new__(ToolAdapter)
     adapter.policy = Policy(raw={})
     adapter.agent_id = "agent-os"
+    adapter.memory_service = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,
@@ -457,6 +459,7 @@ def test_os_adapter_runtime_tool_builder_injects_policy_replay_confirmation():
     adapter = object.__new__(ToolAdapter)
     adapter.policy = Policy(raw={})
     adapter.agent_id = "agent-os"
+    adapter.memory_service = None
 
     outcome = ToolAdapter._execute_openminion_runtime_tool(
         adapter,

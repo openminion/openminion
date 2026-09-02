@@ -347,6 +347,7 @@ def run_with_autonomous_continuation(
         capture_event_id=capture_event_id,
         capture_id=capture_id,
     )
+    initial_capture = _capture_result_payload(result)
 
     session_api = getattr(runner, "session_api", None)
     agent_id = getattr(getattr(runner, "profile", None), "agent_id", "") or ""
@@ -410,7 +411,24 @@ def run_with_autonomous_continuation(
             trigger="plan_continuation",
             progress_callback=progress_callback,
             approval_callback=approval_callback,
+            runtime_session_id=runtime_session_id,
         )
+    return _restore_capture_result_payload(result, initial_capture)
+
+
+def _capture_result_payload(result: Any) -> tuple[Any, Any]:
+    return (
+        getattr(result, "terminal_capture_intent_receipt", None),
+        getattr(result, "memory_capture_bundle_result", None),
+    )
+
+
+def _restore_capture_result_payload(result: Any, capture: tuple[Any, Any]) -> Any:
+    receipt, bundle_result = capture
+    if receipt is not None:
+        result.terminal_capture_intent_receipt = receipt
+    if bundle_result is not None:
+        result.memory_capture_bundle_result = bundle_result
     return result
 
 

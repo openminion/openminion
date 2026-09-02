@@ -58,6 +58,49 @@ class _SuccessTool(Tool):
         )
 
 
+class _MCPResultTool(Tool):
+    name = "mcp.fixture.delete_item"
+
+    def __init__(self, *, ok: bool) -> None:
+        self._ok = ok
+
+    def execute(self, arguments, context) -> ToolExecutionResult:
+        del arguments, context
+        if self._ok:
+            return ToolExecutionResult(
+                tool_name=self.name,
+                ok=True,
+                content="secret remote content",
+                verified=True,
+                source="mcp",
+                data={
+                    "mcp_server": "fixture",
+                    "mcp_remote_tool_name": "delete-item",
+                    "content_items": [{"text": "secret remote content"}],
+                },
+            )
+        return ToolExecutionResult(
+            tool_name=self.name,
+            ok=False,
+            content="",
+            verified=False,
+            error="secret approval prose",
+            source="mcp",
+            data={
+                "error_code": "CONFIRM_REQUIRED",
+                "details": {
+                    "mcp_server": "fixture",
+                    "mcp_remote_tool_name": "delete-item",
+                    "runtime_tool_name": self.name,
+                    "approval_mode": "always",
+                    "approval_required": True,
+                    "reason_code": "POLICY_MCP_APPROVAL_REQUIRED",
+                    "secret": "must-not-export",
+                },
+            },
+        )
+
+
 def _context(telemetry: _Telemetry) -> ToolExecutionContext:
     return ToolExecutionContext(
         channel="test",
@@ -127,3 +170,41 @@ def test_unknown_tool_emits_one_failed_lifecycle_and_execute_tool_span() -> None
     assert span.attributes["gen_ai.operation.name"] == "execute_tool"
     assert span.attributes["gen_ai.tool.name"] == "missing"
     assert span.attributes["error.type"] == "unknown_tool_name"
+
+
+def test_mcp_success_emits_only_allowlisted_terminal_provenance() -> None:
+    telemetry = _Telemetry()
+    tool = _MCPResultTool(ok=True)
+    result = ToolRegistry([tool]).execute_calls(
+        [ProviderToolCall(id="call-mcp-ok", name=tool.name, arguments={})],
+        context=_context(telemetry),
+    ).results[0]
+
+    assert result.ok is True
+    terminal = telemetry.events[-1].data
+    assert terminal["mcp_server"] == "fixture"
+    assert terminal["mcp_remote_tool_name"] == "delete-item"
+    assert terminal["runtime_tool_name"] == tool.name
+    assert terminal["mcp_primitive"] == "tools"
+    assert "content_items" not in terminal
+    assert "secret remote content" not in str(terminal)
+
+
+def test_mcp_approval_failure_emits_only_allowlisted_terminal_provenance() -> None:
+    telemetry = _Telemetry()
+    tool = _MCPResultTool(ok=False)
+    result = ToolRegistry([tool]).execute_calls(
+        [ProviderToolCall(id="call-mcp-denied", name=tool.name, arguments={})],
+        context=_context(telemetry),
+    ).results[0]
+
+    assert result.state == "denied"
+    terminal = telemetry.events[-1].data
+    assert terminal["mcp_server"] == "fixture"
+    assert terminal["mcp_remote_tool_name"] == "delete-item"
+    assert terminal["runtime_tool_name"] == tool.name
+    assert terminal["approval_mode"] == "always"
+    assert terminal["approval_required"] is True
+    assert terminal["reason_code"] == "POLICY_MCP_APPROVAL_REQUIRED"
+    assert terminal["mcp_primitive"] == "tools"
+    assert "secret" not in str(terminal)

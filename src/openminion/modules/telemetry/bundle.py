@@ -14,8 +14,8 @@ from openminion.base.generated_paths import resolve_generated_root
 from .inspection import (
     build_catalog_report,
     build_telemetry_debug_report,
-    read_invocation_events,
 )
+from .invocation_inspection import read_safe_invocation_event_rows
 from .service import TelemetryService
 
 BUNDLE_SCHEMA_V1 = "openminion.telemetry_debug_bundle.v1"
@@ -179,6 +179,7 @@ def _bundle_payloads(
     summary = {
         "invocation_id": alias,
         "outcome": invocation.outcome,
+        "failure_code": invocation.failure_code,
         "started_at": invocation.started_at,
         "terminal_at": invocation.terminal_at,
         "duration_ms": invocation.duration_ms,
@@ -187,29 +188,20 @@ def _bundle_payloads(
         "provider": invocation.provider,
         "model": invocation.model,
     }
-    events = read_invocation_events(service, invocation_id)
-    graph_rows = []
-    for event in events:
-        error = event.data.get("error")
-        error_code = (
-            str(error.get("type") or error.get("code") or "")
-            if isinstance(error, dict)
-            else ""
-        )
-        graph_rows.append(
-            {
-                "event_id": _alias(event.event_id, aliases),
-                "event_type": event.event_type,
-                "timestamp": event.timestamp,
-                "invocation_id": alias,
-                "execution_id": _alias(event.execution_id, aliases),
-                "session_id": _alias(event.session_id, aliases),
-                "turn_id": _alias(event.turn_id, aliases),
-                "agent_id": _alias(event.agent_id, aliases),
-                "status": str(event.data.get("status") or ""),
-                "error_code": error_code,
-            }
-        )
+    graph_rows = read_safe_invocation_event_rows(service, invocation_id)
+    for row in graph_rows:
+        for field in (
+            "event_id",
+            "invocation_id",
+            "execution_id",
+            "session_id",
+            "turn_id",
+            "trace_key",
+            "agent_id",
+            "llm_call_id",
+        ):
+            if field in row:
+                row[field] = _alias(str(row[field]), aliases)
     traces = [
         {"trace_alias": f"trace-{index:03d}", "kind": _bundle_trace_kind(path)}
         for index, path in enumerate(report.links.trace_paths, start=1)

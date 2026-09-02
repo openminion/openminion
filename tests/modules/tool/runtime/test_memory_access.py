@@ -68,6 +68,10 @@ def test_memory_access_context_allows_only_exact_agent_and_session_scopes() -> N
         with pytest.raises(ToolRuntimeError) as excinfo:
             access.require_scope(denied)
         assert excinfo.value.code == "POLICY_DENIED"
+        assert excinfo.value.details["allowed_scopes"] == [
+            "agent:alpha",
+            "session:session-1",
+        ]
 
 
 def test_bound_memctl_translates_capture_identity_deterministically(tmp_path) -> None:

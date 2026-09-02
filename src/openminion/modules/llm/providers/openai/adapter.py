@@ -27,6 +27,7 @@ from ..transport.client import ProviderHTTPClient, http_client_for_config
 from ..transport.sse import iter_sse_post_lines
 from ..contract import PROVIDER_INTERFACE_VERSION
 from ..message_payloads import (
+    _collapse_system_messages,
     _extract_message_text,
     _extract_openai_like_thinking_blocks,
     _extract_openai_like_primary_text,
@@ -63,13 +64,58 @@ from .request_compatibility import (
 def _append_retry_system_instruction(
     messages: list[dict[str, Any]],
     instruction: str,
+    *,
+    collapse_system_messages: bool = False,
 ) -> list[dict[str, Any]]:
     note = str(instruction or "").strip()
     if not note:
         return list(messages)
     result = [dict(item) for item in messages]
     result.append({"role": "system", "content": note})
+    if collapse_system_messages:
+        return _collapse_system_messages(result)
     return result
+
+
+def _empty_payload_retry_instruction(
+    base_instruction: str,
+    *,
+    message_payload: dict[str, Any],
+    allowed_tool_names: list[str],
+) -> str:
+    raw_tool_calls = message_payload.get("tool_calls")
+    if not isinstance(raw_tool_calls, list) or not raw_tool_calls:
+        return base_instruction
+    visible_tools = ", ".join(sorted(allowed_tool_names))
+    instruction = (
+        f"{base_instruction} The previous native tool calls were not currently "
+        f"available. Use only these visible tools: {visible_tools}."
+    )
+    if "tool.request" in allowed_tool_names:
+        instruction += (
+            " If you need an inactive tool, first call the visible "
+            "tool.request (provider-safe tool_request) control with its exact "
+            "canonical name."
+        )
+    return instruction
+
+
+def _apply_empty_payload_retry(
+    request: LLMRequest,
+    request_compat: Any,
+    message_payload: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    instruction = _empty_payload_retry_instruction(
+        request_compat.empty_payload_retry_instruction,
+        message_payload=message_payload,
+        allowed_tool_names=_resolve_tool_names(request),
+    )
+    payload["messages"] = _append_retry_system_instruction(
+        payload.get("messages", []),
+        instruction,
+        collapse_system_messages=request_compat.collapse_system_messages,
+    )
 
 
 def _retry_2013(
@@ -531,7 +577,6 @@ class OpenAIProvider:
             if request.tools
             else None
         )
-
         payload: dict[str, Any] = {
             "model": model,
             "messages": _messages_openai_like(
@@ -605,6 +650,7 @@ class OpenAIProvider:
             "http_client": http_client_for_config(self._http_client, config),
             "response_metadata": response_metadata,
             "allow_curl_fallback": not request_compat.disable_adapter_retries,
+            "telemetryctl": config.get("telemetryctl"),
         }
         while True:
             try:
@@ -674,9 +720,8 @@ class OpenAIProvider:
                 and request_compat.empty_payload_retry_instruction
             ):
                 empty_payload_retry_used = True
-                payload["messages"] = _append_retry_system_instruction(
-                    payload.get("messages", []),
-                    request_compat.empty_payload_retry_instruction,
+                _apply_empty_payload_retry(
+                    request, request_compat, message_payload, payload
                 )
                 continue
 
@@ -850,6 +895,7 @@ class OpenAIProvider:
             trace_metadata=request.metadata,
             http_client=http_client_for_config(self._http_client, config),
             response_metadata=response_metadata,
+            telemetryctl=config.get("telemetryctl"),
         )
         yield from _iter_openai_stream_events(
             lines,
@@ -872,6 +918,7 @@ class OpenAIProvider:
             provider_name=self.name,
             env=config.get("__env__"),
             http_client=http_client_for_config(self._http_client, config),
+            telemetryctl=config.get("telemetryctl"),
         )
         data = response_payload.get("data")
         if not isinstance(data, list):

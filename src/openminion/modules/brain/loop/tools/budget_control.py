@@ -830,7 +830,7 @@ def _compact_answer_only_tool_results(
     tool_results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     compacted: list[dict[str, Any]] = []
-    for item in tool_results[:BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT]:
+    for item in tool_results[-BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT:]:
         compacted.append(
             {
                 "tool_name": _truncate_answer_only_text(

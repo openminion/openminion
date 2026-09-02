@@ -514,7 +514,7 @@ def test_llm_wrapper_omits_thinking_blocks_from_traces(
     assert "thinking_blocks" not in structured_payload["response"]
 
 
-def test_llm_wrapper_emits_llm_call_mode_from_request_metadata() -> None:
+def test_llm_wrapper_does_not_emit_legacy_usage_for_request_mode() -> None:
     provider = FakeProvider()
     telemetry = FakeTelemetry()
     wrapper = OpenMinionLLMClient(provider, telemetryctl=telemetry)
@@ -525,16 +525,7 @@ def test_llm_wrapper_emits_llm_call_mode_from_request_metadata() -> None:
     response = wrapper.call(req)
 
     assert response.output_text == "ok"
-    assert telemetry.llm_calls == [
-        {
-            "session_id": "sess-1",
-            "turn_id": "turn-1",
-            "input_tokens": 1,
-            "output_tokens": 1,
-            "cached_tokens": 0,
-            "mode": "plan",
-        }
-    ]
+    assert telemetry.llm_calls == []
 
 
 def test_llm_wrapper_preserves_structured_response_fields_from_upstream_llm_response() -> (
@@ -559,7 +550,7 @@ def test_llm_wrapper_preserves_structured_response_fields_from_upstream_llm_resp
     assert response.usage.total_tokens == 2
 
 
-def test_llm_wrapper_emits_telemetry_from_typed_usage_info() -> None:
+def test_llm_wrapper_preserves_typed_usage_without_legacy_telemetry() -> None:
     provider = StructuredFieldProvider()
     telemetry = FakeTelemetry()
     wrapper = OpenMinionLLMClient(provider, telemetryctl=telemetry)
@@ -571,19 +562,10 @@ def test_llm_wrapper_emits_telemetry_from_typed_usage_info() -> None:
 
     assert response.usage.input_tokens == 1
     assert response.usage.output_tokens == 1
-    assert telemetry.llm_calls == [
-        {
-            "session_id": "sess-typed",
-            "turn_id": "turn-typed",
-            "input_tokens": 1,
-            "output_tokens": 1,
-            "cached_tokens": 0,
-            "mode": "act",
-        }
-    ]
+    assert telemetry.llm_calls == []
 
 
-def test_llm_wrapper_preserves_cache_usage_and_telemetry() -> None:
+def test_llm_wrapper_preserves_cache_usage_without_legacy_telemetry() -> None:
     provider = CacheUsageProvider()
     telemetry = FakeTelemetry()
     wrapper = OpenMinionLLMClient(provider, telemetryctl=telemetry)
@@ -595,13 +577,4 @@ def test_llm_wrapper_preserves_cache_usage_and_telemetry() -> None:
     assert response.usage.output_tokens == 4
     assert response.usage.cached_tokens == 6
     assert response.usage.cache_creation_tokens == 3
-    assert telemetry.llm_calls == [
-        {
-            "session_id": "sess-cache",
-            "turn_id": "turn-cache",
-            "input_tokens": 10,
-            "output_tokens": 4,
-            "cached_tokens": 6,
-            "mode": None,
-        }
-    ]
+    assert telemetry.llm_calls == []

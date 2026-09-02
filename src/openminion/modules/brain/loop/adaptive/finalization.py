@@ -83,7 +83,22 @@ from ..tools.iteration.helpers import (  # noqa: E402
 from ..tools.evidence import (  # noqa: E402
     _successful_substantive_tool_results,
 )
-from ..tools.plan_control import unresolved_active_plan_step_ids  # noqa: E402
+from ..tools.plan_control import (  # noqa: E402
+    complete_active_plan_if_ready,
+    unresolved_active_plan_step_ids,
+)
+
+
+def _reconcile_successful_task_plan(
+    ctx: ExecutionContext,
+    loop_outcome: AdaptiveToolLoopOutcome,
+    telemetry_payload: dict[str, Any],
+) -> None:
+    if not isinstance(loop_outcome.task_plan_completed, dict):
+        completed_plan = complete_active_plan_if_ready(ctx)
+        if completed_plan is not None:
+            telemetry_payload["task_plan.completed"] = completed_plan
+    _stage_task_plan_events(ctx, loop_outcome)
 
 
 def _finalization_contract_missing_result(
@@ -286,7 +301,7 @@ class ActLoopFinalizationMixin:
                 "remaining_intent_ids": list(remaining_ids),
             }
         )
-        _stage_task_plan_events(ctx, loop_outcome)
+        _reconcile_successful_task_plan(ctx, loop_outcome, telemetry_payload)
         _postprocess_adaptive_response_trailers(
             ctx,
             loop_outcome,

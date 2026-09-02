@@ -123,6 +123,7 @@ class ToolAdapter:
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
         secret_service: Any | None = None,
+        memory_service: Any | None = None,
         a2a_delegate_api: Any | None = None,
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
@@ -141,6 +142,7 @@ class ToolAdapter:
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.secret_service = secret_service
+        self.memory_service = memory_service
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
@@ -627,6 +629,7 @@ class ToolAdapter:
             skill_api=self.skill_api,
             secret_service=self.secret_service,
             artifactctl=self.artifactctl,
+            memory_service=self.memory_service,
             a2a_delegate_api=self.a2a_delegate_api,
             agent_query=self.agent_query,
             telemetry_session_id=session_id,
@@ -641,7 +644,6 @@ class ToolAdapter:
         ctx.invocation_id = str(command.get("idempotency_key", "") or "")
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)
-
         if ctx.policy_adapter is not None:
             policy_decision = ctx.policy_adapter.evaluate(
                 tool_name=tool_name,
@@ -986,4 +988,5 @@ class ToolAdapter:
             target=session_id or "session",
             session_id=session_id,
             metadata=metadata,
+            memory_service=self.memory_service,
         )

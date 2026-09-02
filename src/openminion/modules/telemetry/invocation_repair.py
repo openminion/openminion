@@ -256,6 +256,7 @@ class InvocationLifecycleReconciler:
                 "thread_id": projection.thread_id,
                 "provider": event.payload.get("provider") or None,
                 "model": event.payload.get("model") or None,
+                "error_code": event.payload.get("error_code") or None,
             },
             event_id=event_id,
             timestamp=datetime.fromisoformat(projection.source_timestamp).timestamp(),

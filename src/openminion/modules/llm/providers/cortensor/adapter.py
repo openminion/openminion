@@ -275,6 +275,7 @@ class CortensorProvider:
             ),
             trace_metadata=request.metadata,
             env=config.get("__env__"),
+            telemetryctl=config.get("telemetryctl"),
         )
 
     def _complete_via_completion_mode(
@@ -339,6 +340,7 @@ class CortensorProvider:
                         trace_metadata=request.metadata,
                         env=config.get("__env__"),
                         http_client=http_client_for_config(self._http_client, config),
+                        telemetryctl=config.get("telemetryctl"),
                     )
                 except LLMCtlError as exc:
                     failures.append(f"session_id={session_id}: {exc.message}")
@@ -364,6 +366,7 @@ class CortensorProvider:
         trace_metadata: dict[str, Any] | None = None,
         env: Mapping[str, object] | None = None,
         http_client: ProviderHTTPClient | None = None,
+        telemetryctl: Any | None = None,
     ) -> dict[str, Any]:
         max_attempts = result_wait_attempts
         attempt = 1
@@ -378,6 +381,7 @@ class CortensorProvider:
                     trace_metadata=trace_metadata,
                     env=env,
                     http_client=http_client,
+                    telemetryctl=telemetryctl,
                 )
             except LLMCtlError as exc:
                 retryable = exc.code in {"TIMEOUT", "RATE_LIMITED"}

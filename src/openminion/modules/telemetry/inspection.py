@@ -17,12 +17,17 @@ from pathlib import PurePosixPath
 from typing import Any
 
 from openminion.base.config import OTELExporterConfig
+from openminion.base.config.env import resolve_environment_config
 from openminion.base.constants import OPENMINION_MODULE_STANDALONE_ENV
 from openminion.modules.telemetry.config import load_config
 from openminion.modules.telemetry.debug_usage import aggregate_debug_usage
 from openminion.modules.telemetry.events.catalog import EVENT_TYPES
 from openminion.modules.telemetry.export.otel import event_export_dispositions
 from openminion.modules.telemetry.export.health import build_debug_export_health
+from openminion.modules.telemetry.invocation_inspection import (
+    iter_event_rows as _iter_event_rows,
+    structural_error_code as _structural_error_code,
+)
 from openminion.modules.telemetry.schemas import (
     TelemetryDebugDiagnostic,
     TelemetryDebugError,
@@ -45,6 +50,7 @@ from openminion.modules.telemetry.trace.layout import resolve_trace_root
 
 _TRACE_KIND_SUFFIXES: tuple[tuple[str, str], ...] = (
     ("-raw.txt", "raw_request"),
+    ("-http-sse-response.json", "http_sse_response"),
     ("-http-response.json", "http_response"),
     ("-structured.json", "structured"),
     ("-http.json", "http_request"),
@@ -140,6 +146,7 @@ def build_doctor_report(
     )
     trace_root = resolve_trace_root(home_root=Path(home_root) if home_root else None)
     config = load_config(home_root=home_root)
+    env = resolve_environment_config()
     database = _database_status(Path(path_info.db_path))
     traces = _directory_status(trace_root)
     exporter = _exporter_status(config.otel_exporter)
@@ -153,6 +160,15 @@ def build_doctor_report(
         "status": status,
         "database": database,
         "otel_exporter": exporter,
+        "content_capture": {
+            "exact_request_traces_enabled": env.openminion_trace_requests,
+            "legacy_provider_debug_enabled": env.openminion_llm_debug,
+            "local_telemetry_content_enabled": config.otel_exporter.include_local_content,
+            "otel_assistant_body_enabled": config.otel_exporter.include_assistant_body,
+            "otel_input_messages_enabled": config.otel_exporter.include_input_messages,
+            "otel_output_messages_enabled": config.otel_exporter.include_output_messages,
+            "otel_tool_content_enabled": config.otel_exporter.include_tool_content,
+        },
         "paths": {
             "db_path": path_info.db_path,
             "path_mode": path_info.path_mode,
@@ -171,8 +187,14 @@ def list_trace_files(
     agent_id: str = "",
 ) -> dict[str, Any]:
     root = trace_root.expanduser().resolve(strict=False)
+    trace_dir = root / "llm"
     files = sorted(
-        (path for path in (root / "llm").rglob("*.json") if path.is_file()),
+        (
+            path
+            for pattern in ("*.json", "*-raw.txt")
+            for path in trace_dir.rglob(pattern)
+            if path.is_file()
+        ),
         key=lambda item: item.stat().st_mtime,
         reverse=True,
     )
@@ -258,9 +280,9 @@ def _selected_debug_report(
     if _INVOCATION_ID_RE.fullmatch(selected_id):
         quoted_id = shlex.quote(selected_id)
         commands = [
-            f"telemetryctl debug bundle {quoted_id}",
-            f"telemetryctl invocation graph {quoted_id}",
             f"telemetryctl invocation show {quoted_id}",
+            f"telemetryctl invocation graph {quoted_id}",
+            f"telemetryctl debug bundle {quoted_id}",
         ]
     else:
         diagnostics.append(
@@ -279,7 +301,7 @@ def _selected_debug_report(
         ),
         invocation=invocation,
         diagnostics=_sorted_diagnostics(diagnostics),
-        links=TelemetryDebugLinks(sorted(commands), trace_paths),
+        links=TelemetryDebugLinks(commands, trace_paths),
         export_health=export_health,
     )
 
@@ -312,6 +334,7 @@ def build_telemetry_debug_report(
     trace_root: Path | None = None,
     exporter_config: OTELExporterConfig | None = None,
     live_queue_stats: dict[str, int] | None = None,
+    session_id: str | None = None,
 ) -> TelemetryDebugReport:
     diagnostics: list[TelemetryDebugDiagnostic] = []
     export_health = build_debug_export_health(
@@ -335,6 +358,7 @@ def build_telemetry_debug_report(
             invocation_id=invocation_id,
             high_water=global_high_water,
             diagnostics=diagnostics,
+            session_id=session_id,
         )
     except RuntimeError as exc:
         code = (
@@ -415,21 +439,6 @@ def parse_invocation_id(value: str) -> str:
     return token
 
 
-def read_invocation_events(
-    service: TelemetryService,
-    invocation_id: str,
-) -> list[Any]:
-    high_water = service._store.event_high_water(invocation_id=invocation_id)
-    return [
-        row.event
-        for row in _iter_event_rows(
-            service._store,
-            high_water=high_water,
-            invocation_id=invocation_id,
-        )
-    ]
-
-
 def telemetry_debug_exit(report: TelemetryDebugReport) -> int:
     if report.error is None:
         return 0
@@ -503,14 +512,25 @@ def _select_invocation(
     invocation_id: str | None,
     high_water: int,
     diagnostics: list[TelemetryDebugDiagnostic],
+    session_id: str | None,
 ) -> tuple[str | None, str]:
     if selector_kind == "invocation_id":
-        matches = _invocation_lookup_matches(store, str(invocation_id), high_water)
+        matches = _invocation_lookup_matches(
+            store,
+            str(invocation_id),
+            high_water,
+            session_id=session_id,
+        )
         if len(matches) > 1:
             raise RuntimeError("AMBIGUOUS_INVOCATION_ID")
         return (next(iter(matches), None), "explicit")
     if selector_kind == "failed":
-        winners = _terminal_winners(store, high_water, diagnostics)
+        winners = _terminal_winners(
+            store,
+            high_water,
+            diagnostics,
+            session_id=session_id,
+        )
         failed = [
             (key, invocation)
             for invocation, (key, event_type) in winners.items()
@@ -524,6 +544,7 @@ def _select_invocation(
         store,
         high_water=high_water,
         event_types=("agent.invocation.started",),
+        session_id=session_id,
     )
     candidates: list[tuple[float, str]] = []
     for row in starts:
@@ -539,7 +560,11 @@ def _select_invocation(
 
     earliest: dict[str, float] = {}
     uncorrelated = 0
-    for row in _iter_event_rows(store, high_water=high_water):
+    for row in _iter_event_rows(
+        store,
+        high_water=high_water,
+        session_id=session_id,
+    ):
         invocation = str(row.event.invocation_id or "")
         if not invocation:
             uncorrelated += 1
@@ -571,10 +596,15 @@ def _terminal_winners(
     store: TelemetryStore,
     high_water: int,
     diagnostics: list[TelemetryDebugDiagnostic],
+    *,
+    session_id: str | None,
 ) -> dict[str, tuple[tuple[float, int, str, int, str], str]]:
     grouped: dict[str, list[TelemetryEventPageRow]] = {}
     for row in _iter_event_rows(
-        store, high_water=high_water, event_types=_TERMINAL_TYPES
+        store,
+        high_water=high_water,
+        event_types=_TERMINAL_TYPES,
+        session_id=session_id,
     ):
         invocation = str(row.event.invocation_id or "")
         if not invocation:
@@ -604,6 +634,8 @@ def _invocation_lookup_matches(
     store: TelemetryStore,
     token: str,
     high_water: int,
+    *,
+    session_id: str | None,
 ) -> set[str]:
     candidates = {token}
     try:
@@ -620,34 +652,10 @@ def _invocation_lookup_matches(
                 store,
                 high_water=high_water,
                 invocation_id=candidate,
+                session_id=session_id,
             )
         )
     }
-
-
-def _iter_event_rows(
-    store: TelemetryStore,
-    *,
-    high_water: int,
-    invocation_id: str | None = None,
-    event_types: tuple[str, ...] = (),
-) -> Iterator[TelemetryEventPageRow]:
-    before_timestamp: float | None = None
-    before_id: int | None = None
-    while True:
-        page = store.fetch_event_page(
-            high_water=high_water,
-            invocation_id=invocation_id,
-            event_types=event_types,
-            before_timestamp=before_timestamp,
-            before_id=before_id,
-            limit=1000,
-        )
-        if not page:
-            return
-        yield from page
-        before_timestamp = page[-1].event.timestamp
-        before_id = page[-1].row_id
 
 
 def _summarize_invocation(
@@ -704,6 +712,7 @@ def _summarize_invocation(
         TelemetryDebugInvocation(
             invocation_id=invocation_id,
             outcome=outcome,
+            failure_code=_structural_error_code(terminal_data),
             started_at=started_at,
             terminal_at=terminal_at,
             session_ids=sorted(
@@ -971,21 +980,3 @@ def trace_kind(filename: str) -> str:
 
 def _utc_iso(timestamp: float) -> str:
     return datetime.fromtimestamp(float(timestamp), tz=UTC).isoformat()
-
-
-__all__ = [
-    "build_catalog_report",
-    "build_doctor_report",
-    "build_telemetry_debug_error",
-    "build_telemetry_debug_report",
-    "TELEMETRY_INSPECTION_EXCEPTIONS",
-    "list_trace_files",
-    "open_telemetry_inspection",
-    "parse_invocation_id",
-    "read_invocation_events",
-    "read_trace_file",
-    "select_recent_invocation_ids",
-    "telemetry_debug_exit",
-    "telemetry_storage_error_code",
-    "trace_kind",
-]

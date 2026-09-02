@@ -31,6 +31,7 @@ from ..constants import (
 )
 from ..tools.parser import normalize_tool_name_for_brain
 
+from ..execution.continuation import is_resume_like_input
 from ..execution.mission import (
     apply_turn_reset_policy,
     llm_calls_max_from_runner,
@@ -54,6 +55,7 @@ def interpret(
 ) -> None:
     state.phase = "INTERPRET"
     stripped = user_input.strip()
+    previous_goal = str(state.goal or "").strip()
     state.open_questions = []
     is_confirmation_turn = False
     if state.pending_confirmation_command is not None:
@@ -97,6 +99,8 @@ def interpret(
         )
         if reset_policy_name is not None and reset_policy_name != policy.name:
             policy = replace(policy, name=str(reset_policy_name))
+        if previous_goal and is_resume_like_input(stripped):
+            policy = replace(policy, overwrite_goal=False)
         apply_turn_reset_policy(
             state=state,
             policy=policy,

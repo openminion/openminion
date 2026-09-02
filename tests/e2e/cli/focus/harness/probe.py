@@ -741,6 +741,11 @@ class FocusProbe:
                 )
             if done_match is not None and not approval_visible:
                 completed_segment = transcript[event_offset:]
+                if completion_probe is not None:
+                    completed_segment = (
+                        screen_after_submission(transcript, completion_probe)
+                        or completed_segment
+                    )
                 if (
                     continuation_cue_present(completed_segment)
                     and continuations < scenario.max_auto_continuations

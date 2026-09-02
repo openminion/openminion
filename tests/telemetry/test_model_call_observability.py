@@ -101,6 +101,46 @@ def test_failed_model_call_closes_span_with_normalized_error() -> None:
     assert span.attributes["error.type"] == "provider_exhausted"
     assert span.attributes["openminion.error.code"] == "LLM_PROVIDER_EXHAUSTED"
     assert span.attributes["openminion.error.category"] == "availability"
+    assert "openminion.error.message" not in span.attributes
+    assert not any(
+        key.endswith(".error.message") for key in span.attributes
+    )
+
+
+def test_error_prose_is_not_exported_when_assistant_body_is_enabled() -> None:
+    sink = RecordingOTELTraceSink()
+    exporter = OpenTelemetryTraceExporter(
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            include_assistant_body=True,
+        ),
+        sink=sink,
+    )
+    exporter.export(
+        _event("llm.call.started", llm_call_id="call-error-content")
+    )
+    exporter.export(
+        _event(
+            "llm.call.failed",
+            llm_call_id="call-error-content",
+            error={
+                "code": "FAIL",
+                "type": "provider_error",
+                "category": "availability",
+                "message": "private error prose",
+                "details": "private details",
+            },
+            error_text="private scalar error",
+        )
+    )
+
+    span = next(record for record in sink.records if record.kind == "span")
+    assert span.attributes["openminion.error.code"] == "FAIL"
+    assert span.attributes["openminion.error.category"] == "availability"
+    assert "private error prose" not in str(span.attributes)
+    assert "private details" not in str(span.attributes)
+    assert "private scalar error" not in str(span.attributes)
 
 
 def test_content_and_unreported_provider_facts_are_omitted() -> None:

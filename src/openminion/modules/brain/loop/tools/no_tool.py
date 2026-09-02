@@ -41,7 +41,11 @@ from .postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
     tool_evidence_closeout_text,
 )
-from .plan_control import unresolved_active_plan_step_ids
+from .plan_control import (
+    PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY,
+    completable_active_plan_id,
+    unresolved_active_plan_step_ids,
+)
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
@@ -269,13 +273,24 @@ def _unresolved_plan_retry(
     if status in {"blocked", "incomplete"} or not normalized_final_text:
         return None
     unresolved_step_ids = unresolved_active_plan_step_ids(runner.loop_ctx)
-    if not unresolved_step_ids:
+    if unresolved_step_ids:
+        return runner._retry_with_system_message(
+            "The active task plan still has unresolved typed steps: "
+            f"{', '.join(unresolved_step_ids)}. Continue the work and update those "
+            "steps through the plan tool before returning a success answer. If the "
+            "work cannot continue, return typed status=incomplete or status=blocked.",
+            discard_assistant_text=normalized_final_text,
+        )
+    plan_id = completable_active_plan_id(runner.loop_ctx)
+    if not plan_id:
         return None
+    runner.loop_state.scratchpad[PLAN_CLOSEOUT_SALVAGE_TEXT_SCRATCHPAD_KEY] = (
+        normalized_final_text
+    )
     return runner._retry_with_system_message(
-        "The active task plan still has unresolved typed steps: "
-        f"{', '.join(unresolved_step_ids)}. Continue the work and update those "
-        "steps through the plan tool before returning a success answer. If the "
-        "work cannot continue, return typed status=incomplete or status=blocked.",
+        "Every typed step in the active task plan is completed, but the plan is "
+        f"still active. Call the plan tool with action=complete and plan_id={plan_id} "
+        "before returning the success answer.",
         discard_assistant_text=normalized_final_text,
     )
 

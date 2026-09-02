@@ -19,7 +19,9 @@ _CODING_PLAN_VERIFIER_GUIDANCE = (
     "For file-changing work, populate verifier_goal with goal_id, description, "
     "success_criteria, deliverables, and optional failure_conditions using the "
     "typed Goal shape. Each check must be concrete and supported by a planned "
-    "readback or validation command. For read-only work, omit verifier_goal "
+    "readback or validation command. Use one criterion for one validation command; "
+    "combine behaviors proven by the same command into that criterion. For "
+    "read-only work, omit verifier_goal "
     "when no structural verification contract can be stated without guessing."
 )
 

@@ -449,6 +449,7 @@ def test_cortensor_portal_preserves_tool_continuation_and_response_facts() -> No
 
 def test_cortensor_portal_does_not_retry_rejected_tool_payload() -> None:
     provider = OpenAIProvider()
+    telemetry = object()
     request = LLMRequest.model_validate(
         {
             "model": "oss-20b",
@@ -485,11 +486,13 @@ def test_cortensor_portal_does_not_retry_rejected_tool_payload() -> None:
                 "api_key": "fixture-key",
                 "base_url": "https://api.cortensor.app/v1",
                 "tool_call_strategy": "hybrid",
+                "telemetryctl": telemetry,
             },
         )
 
     assert post.call_count == 1
     assert post.call_args.kwargs["allow_curl_fallback"] is False
+    assert post.call_args.kwargs["telemetryctl"] is telemetry
 
 
 def test_cortensor_portal_stream_preserves_and_reconstructs_tool_deltas() -> None:

@@ -354,7 +354,8 @@ async def test_resume_filters_to_non_empty_sessions() -> None:
 class _TelemetrySlashHarness(SlashCommandMixin):
     def __init__(self, data_root: Path) -> None:
         self._runtime = SimpleNamespace(
-            api_runtime=SimpleNamespace(data_root=data_root)
+            api_runtime=SimpleNamespace(data_root=data_root),
+            session_id="focus-session",
         )
         self.messages: list[str] = []
 
@@ -407,7 +408,7 @@ def test_focus_telemetry_uses_slash_actions_and_labels_shell_command(
 
     body = harness.messages[-1]
     assert "next: /telemetry failed | /telemetry invocation focus-invocation" in body
-    assert "shell: telemetryctl debug bundle focus-invocation" in body
+    assert "shell: telemetryctl invocation show focus-invocation" in body
     assert "next: telemetryctl" not in body
 
 

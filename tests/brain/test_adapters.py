@@ -283,8 +283,10 @@ class LocalSessionStoreTests(unittest.TestCase):
     def test_extract_structured_output_writes_ordered_structured_trace_sidecar(
         self,
     ) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENMINION_TRACE_REQUESTS"] = "1"
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(os.environ, {"OPENMINION_TRACE_REQUESTS": "1"}),
+        ):
             response = SimpleNamespace(
                 provider="openai",
                 model="gpt-5.4",

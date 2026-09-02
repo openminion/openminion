@@ -167,6 +167,7 @@ def test_http_debug_response_records_response_request_id() -> None:
                 200,
                 json.dumps({"choices": [{"message": {"content": "ok"}}]}),
                 "req-success",
+                0,
             ),
         ),
         patch(
@@ -224,7 +225,7 @@ def test_urllib_malformed_responses_do_not_leak(raw_body: str) -> None:
     with (
         patch(
             "openminion.modules.llm.providers.transport.http._read_http_response",
-            return_value=(200, raw_body, ""),
+            return_value=(200, raw_body, "", 0),
         ),
         patch(
             "openminion.modules.llm.providers.transport.http.write_llm_debug_event",

@@ -15,7 +15,7 @@ from openminion.modules.telemetry.service import TelemetryService
 
 def _seed(data_root: Path, invocation_id: str = "invocation-1") -> Path:
     db_path = data_root / "telemetry" / "telemetry.db"
-    service = TelemetryService(db_path)
+    service = TelemetryService(db_path, include_local_content=True)
 
     async def record() -> None:
         for event in (
@@ -41,7 +41,11 @@ def _seed(data_root: Path, invocation_id: str = "invocation-1") -> Path:
                 timestamp=2.0,
                 data={
                     "status": "failed",
+                    "operation": "agent_turn",
+                    "tool_name": "exec.run",
+                    "duration_ms": 1000,
                     "error": {
+                        "code": "TEST_CODE",
                         "type": "TEST_FAILURE",
                         "message": "private free-form failure",
                     },
@@ -114,6 +118,18 @@ def test_bundle_cli_writes_private_atomic_sanitized_artifact(
     ):
         assert excluded not in combined
     assert "id-001" in combined
+    summary = json.loads((destination / "invocation-summary.json").read_text())
+    graph = json.loads((destination / "invocation-graph.json").read_text())
+    assert summary["failure_code"] == "TEST_CODE"
+    terminal = next(
+        row
+        for row in graph["events"]
+        if row["event_type"] == "agent.invocation.failed"
+    )
+    assert terminal["error_code"] == "TEST_CODE"
+    assert terminal["operation"] == "agent_turn"
+    assert terminal["tool_name"] == "exec.run"
+    assert terminal["duration_ms"] == 1000
 
 
 @pytest.mark.parametrize(

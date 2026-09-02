@@ -44,6 +44,7 @@ from ..plan_control import (
     PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY,
     PLAN_TOOL_NAME,
     PLAN_TOOL_USED_SCRATCHPAD_KEY,
+    append_plan_closeout_guidance,
     handle_plan_tool_call,
     with_enabled_plan_tool_spec,
 )
@@ -459,6 +460,7 @@ def _process_plan_tool_calls(
                 action_result,
             )
         )
+        append_plan_closeout_guidance(loop_state, arguments, action_result)
         iter_tool_records.append(
             IterationToolCallRecord(
                 tool_name=PLAN_TOOL_NAME,
@@ -761,7 +763,6 @@ def _process_tool_request_calls(
             loop_ctx=loop_ctx,
             profile=profile,
             loop_state=loop_state,
-            signature=signature,
             llm_duration_ms=iter_llm_duration_ms,
             tool_records=iter_tool_records,
             tokens_used=iter_input_tokens + iter_output_tokens,
@@ -775,13 +776,10 @@ def _finish_tool_request_only_dispatch(
     loop_ctx: AdaptiveToolLoopContext,
     profile: AdaptiveToolLoopProfile,
     loop_state: AdaptiveToolLoopState,
-    signature: str,
     llm_duration_ms: int,
     tool_records: list[IterationToolCallRecord],
     tokens_used: int,
 ) -> LoopDispatchResult:
-    if signature not in set(loop_state.seen_signatures):
-        loop_state.seen_signatures.append(signature)
     _emit_iteration_event(
         loop_ctx=loop_ctx,
         profile=profile,

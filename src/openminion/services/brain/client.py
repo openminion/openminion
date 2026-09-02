@@ -1,5 +1,3 @@
-import asyncio
-import concurrent.futures
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,12 +13,9 @@ from openminion.modules.llm.client_call import (
     provider_tools_from_request as _provider_tools_from_request,
     raw_response_model_name as _raw_response_model_name,
     request_metadata as _request_metadata,
-    request_mode_name as _request_mode_name,
     request_purpose as _request_purpose,
     split_system_and_conversation as _split_system_and_conversation,
-    token_usage_values as _token_usage_values,
     trim_submit_output_history as _trim_submit_output_history,
-    usage_payload_from_response_usage as _usage_payload_from_response_usage,
 )
 from openminion.modules.llm.providers.base import (
     ProviderRequest,
@@ -227,70 +222,6 @@ class OpenMinionLLMClient:
             logger=_LOG,
         )
 
-    def _emit_llm_usage(
-        self,
-        *,
-        usage_payload: dict[str, Any],
-        mode_name: str | None,
-    ) -> None:
-        if not (self._telemetryctl and self._turn_id and self._session_id):
-            return
-        _prompt, _completion, _total, input_tokens, output_tokens, cached_tokens = (
-            _token_usage_values(usage_payload)
-        )
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(
-                self._telemetryctl.emit_llm_call(
-                    self._session_id,
-                    self._turn_id,
-                    input_tokens,
-                    output_tokens,
-                    cached_tokens,
-                    mode_name,
-                )
-            )
-            return
-        self._emit_llm_usage_in_background(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached_tokens=cached_tokens,
-            mode_name=mode_name,
-        )
-
-    def _emit_llm_usage_in_background(
-        self,
-        *,
-        input_tokens: int,
-        output_tokens: int,
-        cached_tokens: int,
-        mode_name: str | None,
-    ) -> None:
-        telemetryctl = self._telemetryctl
-        if telemetryctl is None:
-            return
-
-        def emit_in_background() -> None:
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
-            try:
-                new_loop.run_until_complete(
-                    telemetryctl.emit_llm_call(
-                        self._session_id,
-                        self._turn_id,
-                        input_tokens,
-                        output_tokens,
-                        cached_tokens,
-                        mode_name,
-                    )
-                )
-            finally:
-                new_loop.close()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            executor.submit(emit_in_background)
-
     def call(self, req: Any) -> LLMResponse:
         metadata_payload = _request_metadata(req)
         sys_prompt, conversational = _split_system_and_conversation(
@@ -363,10 +294,6 @@ class OpenMinionLLMClient:
         )
         self._trace_publication = self._trace_publication.merge(response_publication)
         trace_context.update(self._trace_publication.event_fields(final=True))
-        self._emit_llm_usage(
-            usage_payload=_usage_payload_from_response_usage(resp.usage),
-            mode_name=_request_mode_name(metadata_payload),
-        )
         return LLMResponse(
             **_llm_response_kwargs(
                 resp=resp,

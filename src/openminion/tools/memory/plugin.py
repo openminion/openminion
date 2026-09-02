@@ -3,8 +3,13 @@
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from openminion.modules.memory import (
+    build_normalized_key,
+    is_valid_normalized_key,
+)
+from openminion.modules.memory.models import MemoryType
 from openminion.modules.memory.storage.base import SearchQueryOptions
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
@@ -19,9 +24,28 @@ from openminion.modules.tool.contracts.runtime_ids import (
 class MemoryWriteArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scope: str = Field(..., min_length=1, description="Explicit memory scope")
-    record_type: str = Field(
-        ..., min_length=1, description="Explicit memory record type"
+    scope: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Omit for persistent memory in the active agent scope; provide the "
+            "exact session:<active-session-id> only for explicitly session-only memory"
+        ),
+    )
+    record_type: MemoryType = Field(
+        ...,
+        description=(
+            "Supported memory type; use fact for explicit personal facts and "
+            "reuse the same type when correcting a record"
+        ),
+    )
+    key: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Stable normalized key such as fact:user_email; reuse the same key "
+            "for corrections so the earlier record is superseded"
+        ),
     )
     title: str = Field(..., min_length=1, description="Short record title")
     content: dict[str, Any] | str = Field(
@@ -39,13 +63,27 @@ class MemoryWriteArgs(BaseModel):
         description="Optional explicit confidence score",
     )
 
-    @field_validator("scope", "record_type", "title", mode="before")
+    @field_validator("record_type", "title", mode="before")
     @classmethod
     def _normalize_required_text(cls, value: Any) -> str:
         token = str(value or "").strip()
         if not token:
             raise ValueError("value is required")
         return token
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def _normalize_key(cls, value: Any) -> str:
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("key is required")
+        return token
+
+    @model_validator(mode="after")
+    def _canonicalize_key(self) -> "MemoryWriteArgs":
+        if not is_valid_normalized_key(self.key):
+            self.key = build_normalized_key(kind=self.record_type, slug=self.key)
+        return self
 
     @field_validator("tags", "evidence_refs", mode="before")
     @classmethod
@@ -62,9 +100,17 @@ class MemorySearchArgs(BaseModel):
 
     query: str = Field(..., min_length=1, description="Literal search query")
     scopes: list[str] = Field(
-        ..., min_length=1, description="Explicit scopes to search"
+        default_factory=list,
+        min_length=1,
+        description=(
+            "Omit to search persistent memory in the active agent scope; provide "
+            "exact active agent and/or session scopes only when narrowing the search"
+        ),
     )
-    types: list[str] = Field(default_factory=list, description="Optional record types")
+    types: list[MemoryType] = Field(
+        default_factory=list,
+        description="Optional supported record types",
+    )
     limit: int = Field(default=5, ge=1, le=20, description="Maximum result count")
 
     @field_validator("query", mode="before")
@@ -130,6 +176,17 @@ def _require_memory_service(ctx: RuntimeContext):
     return service
 
 
+def _active_agent_scope(ctx: RuntimeContext) -> str:
+    agent_id = ctx.resolve_memory_access_context().agent_id
+    if not agent_id:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "active agent identity is unavailable for persistent memory",
+            {"reason_code": "memory_agent_identity_unavailable"},
+        )
+    return f"agent:{agent_id}"
+
+
 def _serialize_record(record: Any) -> dict[str, Any]:
     payload = asdict(record) if is_dataclass(record) else dict(record)
     evidence_refs = payload.get("evidence_refs") or []
@@ -141,22 +198,28 @@ def _serialize_record(record: Any) -> dict[str, Any]:
 
 def _h_memory_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
+    scope = args.get("scope") or _active_agent_scope(ctx)
+    write_kwargs = {
+        "scope": scope,
+        "record_type": args["record_type"],
+        "title": args["title"],
+        "content": args["content"],
+        "tags": args.get("tags") or [],
+        "evidence_refs": args.get("evidence_refs") or [],
+        "confidence": args.get("confidence"),
+    }
+    write_kwargs["key"] = args["key"]
     record_id = service.write_record(
-        scope=args["scope"],
-        record_type=args["record_type"],
-        title=args["title"],
-        content=args["content"],
-        tags=args.get("tags") or [],
-        evidence_refs=args.get("evidence_refs") or [],
-        confidence=args.get("confidence"),
+        **write_kwargs,
     )
     return {
         "ok": True,
         "content": f"memory record stored: {record_id}",
         "data": {
             "record_id": record_id,
-            "scope": args["scope"],
+            "scope": scope,
             "record_type": args["record_type"],
+            "key": args.get("key"),
         },
     }
 
@@ -164,7 +227,7 @@ def _h_memory_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
 def _h_memory_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
     query = args["query"]
-    scopes = args["scopes"]
+    scopes = args.get("scopes") or [_active_agent_scope(ctx)]
     types = args.get("types") or []
     limit = args.get("limit") or 5
     records = service.search(

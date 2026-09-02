@@ -20,6 +20,7 @@ from .records import (
 from openminion.modules.memory.runtime.scope import (
     emit_write_decision,
 )
+from openminion.modules.tool import MemoryAccessContext
 
 _SEAM_POST_COMPLETION_CRITIQUE = (
     "brain.execution.memory.write_post_completion_critique_memory"
@@ -48,6 +49,19 @@ def _emit_memory_event(
         logger.emit(event, payload, trace_id=state.trace_id, status=status)
 
 
+def _memory_api_for_state(runner: "BrainRunner", state: WorkingState) -> Any:
+    memory_api = getattr(runner, "memory_api", None)
+    bind_access = getattr(memory_api, "for_access_context", None)
+    if not callable(bind_access):
+        return memory_api
+    return bind_access(
+        MemoryAccessContext(
+            agent_id=str(getattr(state, "agent_id", "") or runner.profile.agent_id),
+            session_id=str(getattr(state, "session_id", "") or ""),
+        )
+    )
+
+
 def write_decision_memory(
     runner: "BrainRunner",
     *,
@@ -55,7 +69,7 @@ def write_decision_memory(
     decision: Any,
     logger: CanonicalEventLogger | None = None,
 ) -> list[str]:
-    memory_api = getattr(runner, "memory_api", None)
+    memory_api = _memory_api_for_state(runner, state)
     _emit = partial(_emit_memory_event, logger, state)
 
     write_record = getattr(memory_api, "write_record", None)
@@ -132,7 +146,7 @@ def write_post_completion_critique_memory(
     critique = getattr(judgment, "post_completion_critique", None)
     if critique is None:
         return []
-    memory_api = getattr(runner, "memory_api", None)
+    memory_api = _memory_api_for_state(runner, state)
     write_record = getattr(memory_api, "write_record", None)
     put_record = getattr(memory_api, "put_record", None)
     _emit = partial(_emit_memory_event, logger, state)

@@ -67,6 +67,49 @@ class InvocationLifecycleReconciliationTests(GatewayServiceTestCase):
             "agent.invocation.completed"
         ) == 1
 
+    def test_repaired_failure_preserves_structural_error_code(self) -> None:
+        session = self.sessions.resolve_session(
+            agent_id="main",
+            channel="console",
+            target="repair-failure",
+            session_id="repair-failure",
+        )
+        self.sessions.append_event(
+            session_id=session.id,
+            event_type="run.queued",
+            payload={
+                "agent_id": "main",
+                "run_id": "run-failure",
+                "request_id": "request-failure",
+                "invocation_id": "invocation-failure",
+                "thread_id": "thread-failure",
+                "state": "queued",
+            },
+        )
+        self.sessions.append_event(
+            session_id=session.id,
+            event_type="run.failed",
+            payload={
+                "run_id": "run-failure",
+                "request_id": "request-failure",
+                "thread_id": "thread-failure",
+                "state": "failed",
+                "error_code": "PROVIDER_FAILED",
+            },
+        )
+
+        report = self._reconciler().repair_session(session.id)
+        events = asyncio.run(
+            self.telemetry_service.get_invocation_events("invocation-failure")
+        )
+        failed = next(
+            event for event in events if event.event_type == "agent.invocation.failed"
+        )
+
+        assert report.status == "repaired"
+        assert failed.data["error_code"] == "PROVIDER_FAILED"
+        assert "error" not in failed.data
+
     def test_legacy_room_start_without_agent_identity_is_invalid(self) -> None:
         session = self.sessions.create_room(
             channel="console",

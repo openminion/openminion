@@ -7,6 +7,7 @@ from typing import Any, cast
 _SENSITIVE_FIELDS = frozenset(
     {
         "content",
+        "error_text",
         "system_prompt",
         "system_instructions",
         "user_message",
@@ -82,6 +83,18 @@ def apply_content_policy(
                 key = str(raw_key)
                 field = key.lower()
                 item_path = f"{path}.{key}" if path else key
+                if field == "error" and not allow_sensitive_content:
+                    if isinstance(item, dict):
+                        structural = {
+                            nested_key: nested_value
+                            for nested_key, nested_value in item.items()
+                            if str(nested_key).lower() in {"code", "type", "category"}
+                        }
+                        if structural:
+                            result[key] = clean(structural, item_path)
+                    else:
+                        removed.append(item_path)
+                    continue
                 if field in _PROHIBITED_FIELDS or field.endswith("_secret"):
                     removed.append(item_path)
                     continue

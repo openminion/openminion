@@ -106,6 +106,8 @@ def test_mcp_tool_result_preserves_rich_content_and_validates_structured_content
     )
 
     assert normalized["content"] == "done"
+    assert normalized["data"]["mcp_server"] == session.server_name
+    assert normalized["data"]["mcp_remote_tool_name"] == "rich-tool"
     assert normalized["data"]["structured_content"] == {"status": "ok"}
     assert normalized["data"]["output_schema"]["required"] == ["status"]
     content_items = normalized["data"]["content_items"]

@@ -12,9 +12,15 @@ backend reject neither log nor metric flushes.
 
 All examples below keep content export disabled. Review your backend's access,
 retention, and data-processing policy before enabling any input, output, tool,
-or assistant-body field. `telemetryctl doctor --live-export` proves local
-recording and OTLP transport acceptance only. It does not prove Collector
-receipt or vendor visibility.
+or assistant-body field. `telemetryctl doctor` reports the effective capture
+controls as booleans without printing their values or credentials.
+`telemetryctl doctor --live-export` sends one log signal and proves local
+recording and OTLP log-transport acceptance only. It does not prove trace or
+metric export, Collector receipt, or vendor visibility.
+
+Free-form error messages and details are never exported to OTel, even when
+model-content export is enabled. Structural error code, type, and category
+remain available for diagnosis.
 
 ## Generic OTLP or OpenTelemetry Collector
 
@@ -126,9 +132,9 @@ and [Logfire alternative backend guidance](https://logfire.pydantic.dev/docs/how
 1. Run `telemetryctl doctor` and confirm the exporter is enabled and its
    endpoint is configured; the command does not print endpoint or header
    values in new summary surfaces.
-2. Run `telemetryctl doctor --live-export`. Exit 0 proves one local probe row
-   and one accepted, flushed OTLP log transport. It does not prove backend
-   ingestion.
+2. Run `telemetryctl doctor --live-export`. Confirm `probe.signal` is `logs`.
+   Exit 0 proves one local probe row and one accepted, flushed OTLP log
+   transport. It does not prove trace, metric, or backend ingestion.
 3. Run a real invocation and use `telemetryctl debug latest` to copy its safe
    correlation fields.
 4. Confirm Collector receipt, then separately search the backend using the

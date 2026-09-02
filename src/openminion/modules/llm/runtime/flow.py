@@ -386,6 +386,8 @@ def _provider_call_request_and_config(
         )
         cfg = resolve_provider_config(client.llmctl.config, provider_name)
         cfg["timeouts"] = client.llmctl.config.llmctl.timeouts.model_dump()
+        if client._telemetryctl is not None:
+            cfg["telemetryctl"] = client._telemetryctl
     return call_request, cfg
 
 

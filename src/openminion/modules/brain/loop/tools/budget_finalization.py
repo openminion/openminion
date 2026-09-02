@@ -41,9 +41,9 @@ class _FinalizedAnswer(FinalizationStatus):
 def _budget_finalization_original_request(loop_ctx: AdaptiveToolLoopContext) -> str:
     state = getattr(loop_ctx, "state", None)
     candidates = (
-        getattr(loop_ctx, "user_input", ""),
-        getattr(state, "last_user_input", "") if state is not None else "",
         getattr(state, "goal", "") if state is not None else "",
+        getattr(state, "last_user_input", "") if state is not None else "",
+        getattr(loop_ctx, "user_input", ""),
         getattr(state, "pending_confirmation_last_user_input", "")
         if state is not None
         else "",

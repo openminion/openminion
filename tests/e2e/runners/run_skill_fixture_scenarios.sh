@@ -31,9 +31,18 @@ fi
 mkdir -p "$OPENMINION_DATA_ROOT"
 cat > "$SKILL_CONFIG_PATH" <<JSON
 {
-  "sqlite_path": "runtime/state/skills.db",
-  "wal": false,
-  "known_tools": ["file", "run_command", "http_request"]
+  "skill": {
+    "sqlite_path": "runtime/state/skills.db",
+    "wal": false,
+    "known_tools": [
+      "exec.run",
+      "file.read",
+      "file.write",
+      "http_request",
+      "web.fetch",
+      "web.search"
+    ]
+  }
 }
 JSON
 
@@ -54,18 +63,27 @@ run_positive_scenario() {
 
     ingest_output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
         skill ingest --config "$SKILL_CONFIG_PATH" --file "$skill_file" 2>&1 || true)
+    skill_id=$(printf '%s' "$ingest_output" | jq -r '.skill_id // empty')
+    version_hash=$(printf '%s' "$ingest_output" | jq -r '.version_hash // empty')
+    admit_output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
+        skill admit --config "$SKILL_CONFIG_PATH" --skill-id "$skill_id" \
+        --version-hash "$version_hash" --expected-active-version-hash none \
+        --target-status verified --reason "fixture smoke admission" 2>&1 || true)
     list_output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
         skill list --config "$SKILL_CONFIG_PATH" --json 2>&1 || true)
 
-    if echo "$ingest_output" | grep -q '"ok": true' \
-        && echo "$ingest_output" | grep -q "\"skill_id\": \"$expected_skill_id\"" \
-        && echo "$list_output" | grep -q "\"skill_id\": \"$expected_skill_id\""; then
+    if printf '%s' "$ingest_output" | jq -e --arg id "$expected_skill_id" \
+        '.ok == true and .skill_id == $id and (.warnings | index("admission.pending"))' >/dev/null \
+        && printf '%s' "$admit_output" | jq -e '.ok == true' >/dev/null \
+        && printf '%s' "$list_output" | jq -e --arg id "$expected_skill_id" \
+        '.ok == true and any(.skills[]; .skill_id == $id)' >/dev/null; then
         echo -e "${GREEN}PASS${NC}"
         PASSED=$((PASSED + 1))
     else
         echo -e "${RED}FAIL${NC}"
         FAILED=$((FAILED + 1))
         echo "  Ingest output: $ingest_output"
+        echo "  Admit output: $admit_output"
         echo "  List output: $list_output"
     fi
 }
@@ -79,16 +97,23 @@ run_negative_scenario() {
 
     echo -n "Running $name... "
 
-    output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
+    ingest_output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
         skill ingest --config "$SKILL_CONFIG_PATH" --file "$skill_file" 2>&1 || true)
+    skill_id=$(printf '%s' "$ingest_output" | jq -r '.skill_id // empty')
+    list_output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
+        skill list --config "$SKILL_CONFIG_PATH" --json 2>&1 || true)
 
-    if echo "$output" | grep -q '"ok": false'; then
-        echo -e "${GREEN}PASS${NC} (expected failure)"
+    if printf '%s' "$ingest_output" | jq -e \
+        '.ok == true and (.warnings | index("admission.pending"))' >/dev/null \
+        && printf '%s' "$list_output" | jq -e --arg id "$skill_id" \
+        '.ok == true and all(.skills[]; .skill_id != $id)' >/dev/null; then
+        echo -e "${GREEN}PASS${NC} (staged but inactive)"
         PASSED=$((PASSED + 1))
     else
-        echo -e "${RED}FAIL${NC} (expected error but got success)"
+        echo -e "${RED}FAIL${NC} (candidate became active or was not staged)"
         FAILED=$((FAILED + 1))
-        echo "  Output: $output"
+        echo "  Ingest output: $ingest_output"
+        echo "  List output: $list_output"
     fi
 }
 
