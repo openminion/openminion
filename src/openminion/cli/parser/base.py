@@ -126,7 +126,16 @@ _ROOT_OPTIONS_WITH_VALUES = frozenset(
         "--data-root",
         "--generated-root",
         "--config",
+        "--profile",
+        "--agent",
+        "--session",
+        "--dir",
+        "--theme",
         "--color",
+        "--animation-provider",
+        "--animation",
+        "--verbosity",
+        "--progress",
     }
 )
 

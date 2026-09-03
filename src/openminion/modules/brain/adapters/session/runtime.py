@@ -1,6 +1,6 @@
-from pathlib import Path
-from typing import Any
 import logging
+from pathlib import Path
+from typing import Any, cast
 
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
 from openminion.modules.session.diagnostics.events import (
@@ -286,8 +286,24 @@ class SessctlAdapter:
             t.model_dump(mode="json") if hasattr(t, "model_dump") else t for t in turns
         ]
 
-    def list_events(self, session_id: str) -> list[dict[str, Any]]:
-        return self.store.list_events(session_id)
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.store.list_events(
+            session_id,
+            event_type=event_type,
+            trace_id=trace_id,
+        )
+
+    def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:
+        return cast(
+            dict[str, Any] | None,
+            self.store.get_active_task_plan(session_id),
+        )
 
     def get_tool_transcript(self, session_id: str) -> dict[str, Any]:
         return self.store.get_tool_transcript(session_id)

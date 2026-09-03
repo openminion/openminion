@@ -594,6 +594,7 @@ def _handle_revise(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:
         return workflow_failure
     payload = {
         "plan": full_plan.model_dump(mode="json"),
+        "revision": revision.model_dump(mode="json"),
         "reason": revision.reason,
     }
     _append_task_plan_event(loop_ctx, event_type="task_plan.revised", payload=payload)

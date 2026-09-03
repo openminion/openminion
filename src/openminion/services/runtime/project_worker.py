@@ -823,6 +823,13 @@ class ProjectWorker:
             "Work on the smallest useful next step. Inspect current state before editing.",
             "Do not claim completion; the configured verifier owns completion.",
         ]
+        active_plan = checkpoint_payload.get("task_plan")
+        if not isinstance(active_plan, Mapping):
+            lines.append(
+                "Your first action must use the existing plan loop-control tool "
+                "to declare a durable task plan with "
+                "continue_plan_autonomously=true, then continue with its first step."
+            )
         if project_run.verifier_refs:
             lines.append(
                 "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
@@ -835,6 +842,15 @@ class ProjectWorker:
             ]
             outcome = (failed or verification)[-1]
             lines.extend(("Prior verifier outcome:", outcome["summary"]))
+            if failed and isinstance(active_plan, Mapping):
+                plan_id = str(active_plan.get("plan_id") or "").strip()
+                verifier_refs = ", ".join(project_run.verifier_refs[-5:])
+                lines.append(
+                    "Your first action must use the existing plan loop-control "
+                    f"tool with action=revise for plan_id={plan_id}. Use a new "
+                    "revision_id, set continue_plan_autonomously=true, and bind "
+                    f"verifier_refs to: {verifier_refs}."
+                )
         if project_run.progress_refs:
             lines.append(
                 "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])

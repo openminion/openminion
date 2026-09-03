@@ -37,6 +37,11 @@ class _DummySessionAPI:
     def get_latest_working_state(self, session_id: str) -> dict:
         return dict(self._state)
 
+    def get_active_task_plan(self, session_id: str) -> dict | None:
+        del session_id
+        plan = self._state.get("active_task_plan")
+        return dict(plan) if isinstance(plan, dict) else None
+
     def put_working_state(self, session_id: str, *, state_inline: dict) -> None:
         self.written = dict(state_inline)
 
@@ -59,8 +64,19 @@ class _DummySessionAPI:
         )
         return f"{session_id}-event-{len(self.events)}"
 
-    def list_events(self, session_id: str) -> list[dict]:
-        return [item for item in self.events if item.get("session_id") == session_id]
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict]:
+        events = [item for item in self.events if item.get("session_id") == session_id]
+        if event_type is not None:
+            events = [item for item in events if item.get("type") == event_type]
+        if trace_id is not None:
+            events = [item for item in events if item.get("trace_id") == trace_id]
+        return events
 
     def append_turn(
         self,
@@ -426,6 +442,54 @@ def test_build_turn_response_metadata_includes_turn_progress_summary() -> None:
     assert metadata["total_output_tokens_used"] == "800"
     assert metadata["total_tokens_used"] == "1500"
     assert metadata["tool_calls_count"] == "2"
+
+
+def test_build_turn_response_metadata_projects_session_plan_facts() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    plan = {
+        "plan_id": "plan-1",
+        "objective": "Repair the fixture",
+        "steps": [{"step_id": "repair", "description": "Repair it"}],
+    }
+    revision = {
+        "plan_id": "plan-1",
+        "revision_id": "revision-1",
+        "verifier_refs": ["verify:failed-1"],
+        "revised_steps": [
+            {"step_id": "repair", "description": "Repair the failed check"}
+        ],
+    }
+    runner = _DummyRunner({"active_task_plan": plan})
+    runner.session_api.append_event(
+        "sess-plan",
+        "task_plan.revised",
+        {"plan": plan, "revision": revision},
+        trace_id="trace-plan",
+    )
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=runner,
+        step_out=SimpleNamespace(
+            status="done",
+            action_result=SimpleNamespace(outputs={}),
+        ),
+        session_id="sess-plan",
+        request_id="trace-plan",
+        elapsed_ms=100.0,
+        llm_steps=1,
+        termination_reason="model_final",
+    )
+
+    assert json.loads(metadata["task_plan"])["plan_id"] == "plan-1"
+    assert json.loads(metadata["task_plan.revision"])["revision_id"] == (
+        "revision-1"
+    )
 
 
 def test_build_turn_response_metadata_captures_provider_error_facts() -> None:
@@ -3164,7 +3228,12 @@ def test_postprocess_turn_emits_mode_aware_tool_and_tick_telemetry() -> None:
         "kind": "tool",
         "tool_name": "weather",
     }
-    runner = SimpleNamespace(session_api=SimpleNamespace(list_events=lambda _sid: []))
+    runner = SimpleNamespace(
+        session_api=SimpleNamespace(
+            get_active_task_plan=lambda _sid: None,
+            list_events=lambda _sid, **_filters: [],
+        )
+    )
     step_out = SimpleNamespace(
         status="done",
         message="completed.",
