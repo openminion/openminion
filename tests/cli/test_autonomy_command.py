@@ -120,9 +120,7 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
                         "plan_id": "plan-1",
                         "objective": "finish the project",
                         "criterion_ids": ["criterion-tests"],
-                        "steps": [
-                            {"step_id": "build", "description": "Build it"}
-                        ],
+                        "steps": [{"step_id": "build", "description": "Build it"}],
                     }
                 ),
                 "task_plan.revision": json.dumps(

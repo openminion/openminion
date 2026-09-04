@@ -173,9 +173,7 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
     assert checkpoint.project_run.committed_cycle_count == 2
     assert len(checkpoint.project_run.effect_refs) == 2
     assert checkpoint.payload["task_plan"]["plan_id"] == "repair-total"
-    assert checkpoint.payload["task_plan_revision"]["revision_id"] == (
-        "repair-total-1"
-    )
+    assert checkpoint.payload["task_plan_revision"]["revision_id"] == ("repair-total-1")
     assert checkpoint.payload["plan_revision_count"] == 1
     assert proof["tests_run"][0]["status"] == "passed"
     assert turns == 2

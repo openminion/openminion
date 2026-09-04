@@ -487,9 +487,7 @@ def test_build_turn_response_metadata_projects_session_plan_facts() -> None:
     )
 
     assert json.loads(metadata["task_plan"])["plan_id"] == "plan-1"
-    assert json.loads(metadata["task_plan.revision"])["revision_id"] == (
-        "revision-1"
-    )
+    assert json.loads(metadata["task_plan.revision"])["revision_id"] == ("revision-1")
 
 
 def test_build_turn_response_metadata_captures_provider_error_facts() -> None:

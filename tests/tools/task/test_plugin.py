@@ -328,9 +328,7 @@ def test_schedule_uses_runtime_session_when_metadata_omits_origin(
 
     row = store.get_cron_job(created["task_id"])
     assert row is not None
-    assert row["payload"]["_openminion_origin"] == {
-        "session_id": "focus-session"
-    }
+    assert row["payload"]["_openminion_origin"] == {"session_id": "focus-session"}
 
 
 def test_task_schedule_dedupes_identical_enabled_job(
