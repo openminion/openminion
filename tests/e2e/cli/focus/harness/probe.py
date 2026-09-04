@@ -327,6 +327,8 @@ class FocusProbe:
         workdir: Path,
         session_id: str,
         include_project_context: bool = True,
+        allow_unsandboxed_exec: bool = True,
+        added_dirs: tuple[Path, ...] = (),
     ) -> None:
         self.python_bin = python_bin
         self.openminion_root = openminion_root
@@ -337,6 +339,8 @@ class FocusProbe:
         self.workdir = workdir
         self.session_id = session_id
         self.include_project_context = include_project_context
+        self.allow_unsandboxed_exec = allow_unsandboxed_exec
+        self.added_dirs = tuple(added_dirs)
 
     def for_workdir(
         self,
@@ -358,6 +362,8 @@ class FocusProbe:
                 if include_project_context is None
                 else include_project_context
             ),
+            allow_unsandboxed_exec=self.allow_unsandboxed_exec,
+            added_dirs=self.added_dirs,
         )
 
     def for_session(self, session_id: str) -> "FocusProbe":
@@ -371,6 +377,8 @@ class FocusProbe:
             workdir=self.workdir,
             session_id=session_id,
             include_project_context=self.include_project_context,
+            allow_unsandboxed_exec=self.allow_unsandboxed_exec,
+            added_dirs=self.added_dirs,
         )
 
     def uses_echo_agent(self) -> bool:
@@ -390,10 +398,13 @@ class FocusProbe:
             "--dir",
             str(self.workdir),
             "--no-update-check",
-            "--allow-unsandboxed-exec",
             "--progress",
             "minimal",
         )
+        if self.allow_unsandboxed_exec:
+            command += ("--allow-unsandboxed-exec",)
+        for path in self.added_dirs:
+            command += ("--add-dir", str(path))
         if self.uses_echo_agent():
             command += ("--demo",)
         if not self.include_project_context:

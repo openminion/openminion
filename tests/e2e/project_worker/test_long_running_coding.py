@@ -71,12 +71,47 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
                 "def total(values):\n    return sum(values)\n",
                 encoding="utf-8",
             )
+        plan_metadata = (
+            {
+                "task_plan": json.dumps(
+                    {
+                        "plan_id": "repair-total",
+                        "objective": "Repair and verify totals",
+                        "criterion_ids": ["verification:test-totals"],
+                        "steps": [
+                            {
+                                "step_id": "repair",
+                                "description": "Repair the total implementation",
+                            }
+                        ],
+                    }
+                )
+            }
+            if turns == 1
+            else {
+                "task_plan.revision": json.dumps(
+                    {
+                        "plan_id": "repair-total",
+                        "revision_id": "repair-total-1",
+                        "criterion_ids": ["verification:test-totals"],
+                        "verifier_refs": ["verification:cycle-1:failed"],
+                        "revised_steps": [
+                            {
+                                "step_id": "repair",
+                                "description": "Correct the remaining sum failure",
+                            }
+                        ],
+                    }
+                )
+            }
+        )
         return {
             "final_text": f"coding cycle {turns}",
             "metadata": {
                 "artifact_refs": [f"file:{module.name}"],
                 "evidence_kinds": ["artifact"],
                 "effect_refs": [f"write:{module.name}:{turns}"],
+                **plan_metadata,
             },
         }
 
@@ -137,6 +172,9 @@ def test_coding_project_replans_repairs_and_resumes_from_committed_checkpoint(
     assert checkpoint is not None
     assert checkpoint.project_run.committed_cycle_count == 2
     assert len(checkpoint.project_run.effect_refs) == 2
+    assert checkpoint.payload["task_plan"]["plan_id"] == "repair-total"
+    assert checkpoint.payload["task_plan_revision"]["revision_id"] == ("repair-total-1")
+    assert checkpoint.payload["plan_revision_count"] == 1
     assert proof["tests_run"][0]["status"] == "passed"
     assert turns == 2
 

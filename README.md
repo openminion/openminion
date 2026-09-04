@@ -133,12 +133,30 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 For a real model-backed session, start with the bare command:
 
 ```bash
-openminion
+openminion --version
+openminion --dir "$PWD"
 ```
 
 Setup asks for a provider, model, and credential. For built-in providers,
 OpenMinion selects the API adapter automatically. For example, MiniMax remains
 the provider when it uses an OpenAI-compatible API.
+
+An explicit `--dir` trusts that workspace for the current process. A bare
+launch also trusts an ordinary Git worktree; another implicit directory starts
+Read only. Launching from your home directory or a filesystem root requires an
+explicit `--dir PATH`. Add another existing directory for the current process
+with repeatable `--add-dir PATH` options:
+
+```bash
+openminion --dir "$PWD" --add-dir ../shared
+```
+
+Structured file tools remain confined to the workspace, explicitly added
+directories, and configured policy roots. Host commands remain disabled when
+no sandbox is configured. `--allow-unsandboxed-exec` is an explicit opt-in:
+commands then use the OpenMinion process's OS permissions and are not confined
+to workspace roots; command policy and approvals still apply. A native local
+sandbox and approval-free command parity are not provided yet.
 
 When setup finishes and Focus opens, ask: `Give me one safe read-only command
 to inspect the current directory.`
@@ -158,7 +176,7 @@ label this state `demo`, not `ready`.
 Open the interactive CLI:
 
 ```bash
-openminion
+openminion --dir "$PWD"
 ```
 
 Run two configured agents in one Focus room with explicit runtime roots:

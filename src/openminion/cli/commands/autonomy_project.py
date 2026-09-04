@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,12 +30,10 @@ from openminion.modules.task.project import (
     save_project_run_checkpoint,
     validate_project_verifier,
 )
-from openminion.modules.task.project.turn import project_error_from_payload
+from openminion.modules.task.project.turn import project_turn_result_from_response
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
-    project_condition_from_metadata,
-    project_metadata_refs,
     project_turn_inbound_metadata,
 )
 
@@ -54,61 +51,17 @@ def run_project_turn(
     *,
     replay_response: str = "",
 ) -> ProjectTurnResult:
-    metadata: dict[str, object] = {}
     summary = replay_response
-    response: dict[str, object] = {}
     if not summary:
         workspace = workspace_path_from_ref(run.workspace_ref)
         api_result = _request_project_turn(run, request, workspace=workspace)
         if isinstance(api_result, ProjectTurnResult):
             return api_result
-        response = api_result
-        summary = (
-            str(response.get("final_text", "") or response.get("body", "")).strip()
-            or "Project cycle completed without visible final text."
+        return project_turn_result_from_response(
+            response=api_result,
         )
-        raw_metadata = response.get("metadata")
-        if isinstance(raw_metadata, dict):
-            metadata = raw_metadata
-
-    error = (
-        project_error_from_payload(response, metadata=metadata, default_message=summary)
-        if not replay_response and bool(response.get("error"))
-        else None
-    )
-    evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
-    evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
-    tool_results = _project_tool_results(metadata)
-    tool_result_refs = tuple(
-        f"tool-call:{call_id}"
-        for item in tool_results
-        if bool(item.get("ok"))
-        and (
-            call_id := str(item.get("call_id") or item.get("command_id") or "").strip()
-        )
-    )
-    tool_call_count = metadata.get("tool_call_count", len(tool_results))
-    if isinstance(tool_call_count, str) and tool_call_count.isdigit():
-        tool_call_count = int(tool_call_count)
     return ProjectTurnResult(
         summary=summary,
-        gateway_run_id=str(metadata.get("run_id") or "").strip(),
-        condition=(
-            AutonomyLoopConditionKind.CANCELLED
-            if error is not None and error.code == "cancelled"
-            else AutonomyLoopConditionKind.RETRYABLE_FAILURE
-            if error is not None and not metadata.get("project_condition")
-            else project_condition_from_metadata(metadata)
-        ),
-        evidence_refs=tuple(dict.fromkeys((*evidence_refs, *tool_result_refs))),
-        evidence_kinds=tuple(
-            dict.fromkeys(
-                (*evidence_kinds, *(("tool_result",) if tool_result_refs else ()))
-            )
-        ),
-        effect_refs=project_metadata_refs(metadata, "effect_refs"),
-        tool_call_count=int(tool_call_count) if isinstance(tool_call_count, int) else 0,
-        error=error,
     )
 
 
@@ -172,19 +125,6 @@ def _project_exception_result(
             namespace="task.project",
         ),
     )
-
-
-def _project_tool_results(metadata: dict[str, object]) -> tuple[dict[str, object], ...]:
-    for key in ("tool_calls_cumulative", "tool_results"):
-        raw = metadata.get(key)
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-        if isinstance(raw, list):
-            return tuple(item for item in raw if isinstance(item, dict))
-    return ()
 
 
 def project_task_manager(args: argparse.Namespace) -> TaskManager:

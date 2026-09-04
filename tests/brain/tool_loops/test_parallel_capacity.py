@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from typing import Any
 
 from openminion.modules.brain.loop.tools.parallel import execute_parallel_tool_batch
@@ -310,3 +311,34 @@ def test_prepare_outcome_bypasses_worker_pool_and_preserves_order() -> None:
     assert ctx.immediate_calls == ["weather"]
     assert ctx.finalized_calls == ["file.read"]
     assert [tc.name for tc, _ in result.ordered_results] == ["weather", "file.read"]
+
+
+def test_parallel_workers_receive_distinct_copied_contexts() -> None:
+    marker: ContextVar[str] = ContextVar("parallel_marker", default="missing")
+
+    @dataclass
+    class _ContextCtx(_FakeCtx):
+        seen: list[str] = field(default_factory=list)
+
+        def execute_command(
+            self, *, command, include_reflect: bool = False
+        ) -> _FakeOutcome:
+            self.seen.append(marker.get())
+            return super().execute_command(
+                command=command,
+                include_reflect=include_reflect,
+            )
+
+    ctx = _ContextCtx()
+    token = marker.set("turn-a")
+    try:
+        execute_parallel_tool_batch(
+            loop_ctx=ctx,
+            tool_calls=_independent_reads(2),
+            include_reflect=False,
+            provider_parallel_tool_capacity=2,
+        )
+    finally:
+        marker.reset(token)
+
+    assert ctx.seen == ["turn-a", "turn-a"]

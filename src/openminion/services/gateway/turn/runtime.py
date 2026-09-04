@@ -235,6 +235,7 @@ def _extract_ephemeral_prompt_metadata(
     allowed_keys = {
         "cwd",
         "workspace_root",
+        "openminion_ephemeral_workspace_roots",
         "project_context_body",
         "project_context_name",
         "project_context_path",

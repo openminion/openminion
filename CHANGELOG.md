@@ -7,7 +7,12 @@ This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
-- No unreleased package-facing changes yet.
+- Added conventional root `--version`, predictable root-option parsing, and
+  repeatable process-local `--add-dir` support for interactive workspaces.
+- Narrowed default file roots to the active workspace, preserved configured
+  absolute reads, and isolated transient workspace grants per turn and worker.
+- Made implicit workspace trust and sandbox-unavailable host-command guidance
+  explicit without enabling unsandboxed execution or persistent grants.
 
 ## Current package line - 2026-09-02
 

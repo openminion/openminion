@@ -56,6 +56,9 @@ def build_greeter_message(
         "How can I help today?",
         f"  {cwd_short} · {agent_name}/{runtime_label} · theme: {theme_label}",
     ]
+    added_root_count = int(getattr(runtime, "added_workspace_root_count", 0) or 0)
+    if added_root_count:
+        lines.append(f"  added directories: {added_root_count}")
     connection = f"  provider: {provider}"
     if adapter:
         connection += f" · API adapter: {adapter}"

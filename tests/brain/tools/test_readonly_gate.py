@@ -25,6 +25,10 @@ from openminion.modules.brain.schemas import (
 from openminion.modules.brain.tools.action_dispatch import (
     execute_action_dispatch,
 )
+from openminion.modules.brain.tools.executor.dispatch import (
+    _command_lineage_payload,
+    _inject_runtime_tool_metadata,
+)
 from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     get_default_lifecycle_registry,
@@ -70,6 +74,18 @@ def _make_runner() -> SimpleNamespace:
         _budget_blocked_result=lambda **kwargs: None,
         _normalize_execution_result=lambda **kwargs: (None, None),
     )
+
+
+def test_tool_lineage_carries_runtime_session_into_tool_metadata() -> None:
+    state = _make_state()
+    state.runtime_session_id = "focus-session"
+    command = _make_command(tool_name="task.schedule")
+    payload: dict[str, Any] = {}
+
+    lineage = _command_lineage_payload(state=state, command=command)
+    _inject_runtime_tool_metadata(payload, state=state, lineage=lineage)
+
+    assert payload["meta"]["orchestration"]["runtime_session_id"] == "focus-session"
 
 
 # ── readonly mode blocks write-capable tools ───────────────────────

@@ -35,7 +35,8 @@ pipx install openminion
 Start with the bare command:
 
 ```bash
-openminion
+openminion --version
+openminion --dir "$PWD"
 ```
 
 When the normal default config already exists, this opens the Focus terminal
@@ -48,6 +49,21 @@ Focus. A useful first task is:
 ```text
 Give me one safe read-only command to inspect the current directory.
 ```
+
+An explicit `--dir` trusts that workspace for the current process. Without it,
+an ordinary Git worktree is trusted, another directory starts Read only, and a
+launch from your home directory or a filesystem root stops with `--dir PATH`
+guidance. To use an existing sibling directory for the same interactive
+process, add it explicitly:
+
+```bash
+openminion --dir "$PWD" --add-dir ../shared
+```
+
+`--add-dir` is repeatable and is not saved with the session. Restart with the
+same option when you want the grant again. Default file access no longer
+includes `~/projects` or `~/Downloads`; choose an explicit workspace, use
+`--add-dir`, or configure the exact policy root you need.
 
 ### Start a local human-plus-agents room
 
@@ -280,6 +296,12 @@ changing other profiles:
 
 The executable must resolve from a trusted host directory. Existing dangerous
 command approval rules still apply; this profile setting does not bypass them.
+If no command sandbox is configured, `exec.run` returns
+`SANDBOX_UNAVAILABLE` and recommends structured file tools, a configured
+sandbox, or restarting with `--allow-unsandboxed-exec`. The flag runs commands
+with the OpenMinion process's OS permissions; commands are not confined to the
+workspace or added directories. Full access does not enable host execution.
+A native local sandbox and approval-free command parity remain future work.
 
 ## Read first
 

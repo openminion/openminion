@@ -167,6 +167,7 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     tmp_path,
 ) -> None:
     store, manager, run = _project(tmp_path)
+    prompts: list[str] = []
     plan = TaskPlan(
         plan_id="plan-1",
         objective="Ship the fixture",
@@ -176,10 +177,13 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     first = ProjectWorker(
         task_manager=manager,
         autonomy_store=store,
-        turn=lambda _request: ProjectTurnResult(
-            summary="planned",
-            evidence_refs=("artifact:plan",),
-            task_plan=plan,
+        turn=lambda request: (
+            prompts.append(request.prompt)
+            or ProjectTurnResult(
+                summary="planned",
+                evidence_refs=("artifact:plan",),
+                task_plan=plan,
+            )
         ),
         verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
         owner_id="worker-1",
@@ -196,10 +200,13 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     result = ProjectWorker(
         task_manager=manager,
         autonomy_store=store,
-        turn=lambda _request: ProjectTurnResult(
-            summary="repaired",
-            evidence_refs=("artifact:repair",),
-            task_plan_revision=revision,
+        turn=lambda request: (
+            prompts.append(request.prompt)
+            or ProjectTurnResult(
+                summary="repaired",
+                evidence_refs=("artifact:repair",),
+                task_plan_revision=revision,
+            )
         ),
         verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
         owner_id="worker-2",
@@ -212,6 +219,10 @@ def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
     assert checkpoint.payload["plan_revision_count"] == 1
     assert checkpoint.payload["task_plan"]["criterion_ids"] == ["criterion-tests"]
     assert checkpoint.payload["task_plan_revision"]["revision_id"] == "revision-1"
+    assert "first action must use the existing plan loop-control tool" in prompts[0]
+    assert "action=revise for plan_id=plan-1" in prompts[1]
+    assert "verification:prun_" in prompts[1]
+    assert "Prior verifier outcome:\nverification failed" in prompts[1]
     assert (
         build_project_report_from_task(
             manager,

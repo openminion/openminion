@@ -36,6 +36,7 @@ def extract_result_message(*, message: dict[str, Any], method: str) -> dict[str,
                 or f"MCP method {method!r} failed."
             ).strip(),
             reason_code=str(error.get("reason_code", "") or "").strip(),
+            details={"code": error.get("code")},
         )
     result = message.get("result")
     if not isinstance(result, dict):

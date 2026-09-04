@@ -107,7 +107,15 @@ class SessionAPI(Protocol):
 
     def list_turns(self, session_id: str) -> list[dict[str, Any]]: ...
 
-    def list_events(self, session_id: str) -> list[dict[str, Any]]: ...
+    def list_events(
+        self,
+        session_id: str,
+        *,
+        event_type: str | None = None,
+        trace_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None: ...
 
     def get_slice(
         self,

@@ -172,6 +172,39 @@ def test_project_turn_decodes_typed_plan_metadata() -> None:
 
 
 @pytest.mark.parametrize(
+    "revision",
+    (
+        '{"plan_id":"plan-1","revised_steps":[{"step_id":"build",'
+        '"description":"Repair"}],"verifier_refs":["verify:failed-1"]}',
+        '{"plan_id":"plan-1","revision_id":"revision-1",'
+        '"revised_steps":[{"step_id":"build","description":"Repair"}]}',
+    ),
+)
+def test_project_turn_ignores_non_checkpoint_plan_revisions(revision: str) -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+    )
+
+    result = project_turn_from_payload(
+        request,
+        payload={},
+        execute=lambda _: {
+            "summary": "planned",
+            "metadata": {"task_plan.revision": revision},
+        },
+    )
+
+    assert result.task_plan_revision is None
+
+
+@pytest.mark.parametrize(
     ("details", "expected"),
     (
         ("not-json", {"error": "malformed_details"}),

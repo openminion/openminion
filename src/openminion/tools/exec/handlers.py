@@ -144,8 +144,17 @@ def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             started=started,
             tool_name=tool_name,
             code="SANDBOX_UNAVAILABLE",
-            message="sandbox execution is not configured",
-            details={"host": params.host},
+            message=(
+                "sandbox execution is not configured; use structured file tools, "
+                "configure a sandbox, or restart with --allow-unsandboxed-exec"
+            ),
+            details={
+                "host": params.host,
+                "host_warning": (
+                    "Unsandboxed commands use the OpenMinion process's OS "
+                    "permissions and are not confined to workspace roots."
+                ),
+            },
         )
     prep, early_result = _prepare_exec_run(
         params=params,

@@ -484,10 +484,12 @@ class GatewayService:
             ttl_s=60,
         )
         try:
-            if inbound_metadata:
+            session_metadata = dict(inbound_metadata or {})
+            session_metadata.pop("openminion_ephemeral_workspace_roots", None)
+            if session_metadata:
                 resolved_session = self._sessions.update_session_metadata(
                     session_id=session_value,
-                    patch=inbound_metadata,
+                    patch=session_metadata,
                     session_turn_fence_token=lease.fence_token,
                 )
             if str(session_id or "").strip():

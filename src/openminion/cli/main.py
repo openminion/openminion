@@ -146,6 +146,7 @@ def _run_default_interactive(
                 agent=getattr(args, "agent", None),
                 session=getattr(args, "session", None),
                 dir=getattr(args, "dir", None),
+                add_dir=list(getattr(args, "add_dir", []) or []),
                 theme=getattr(args, "theme", None),
                 color=getattr(args, "color", None),
                 demo=bool(getattr(args, "demo", False)),
@@ -197,6 +198,8 @@ def _run_no_handler(
     has_tty = bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
         getattr(sys.stdout, "isatty", lambda: False)()
     )
+    if getattr(args, "add_dir", None) and not has_tty:
+        parser.error("--add-dir requires a TTY bare interactive launch")
     config_path = resolve_config_path(
         getattr(args, "config", None),
         home_root=_default_route_home_root(effective_home_root)
@@ -252,6 +255,8 @@ def _run_no_handler(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "command", None) and getattr(args, "add_dir", None):
+        parser.error("--add-dir is only valid with a bare interactive launch")
     if bool(getattr(args, "allow_unsandboxed_exec", False)):
         from openminion.services.runtime.env import apply_runtime_environment
         from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV

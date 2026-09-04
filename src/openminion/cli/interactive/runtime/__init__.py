@@ -64,6 +64,7 @@ class OpenMinionRuntime(
     """ChatRuntimeAPI adapter over APIRuntime."""
 
     contract_version: str = CLI_INTERFACE_VERSION
+    _added_workspace_roots: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -77,6 +78,7 @@ class OpenMinionRuntime(
         bind_immediately: bool = True,
         session_id: str | None = None,
         prompt_on_resume: bool = False,
+        added_workspace_roots: tuple[str, ...] = (),
     ) -> None:
         self._rt = rt
         self._agent_id_override = str(agent_id or "").strip() or None
@@ -91,6 +93,7 @@ class OpenMinionRuntime(
         self._target = target
         self._history_limit = max(1, int(history_limit))
         self._working_dir = self._normalize_working_dir(working_dir)
+        self._added_workspace_roots = tuple(added_workspace_roots)
         self._agent_id: str | None = None
         self._gateway = None
         self._session_id: str | None = None
@@ -675,6 +678,10 @@ class OpenMinionRuntime(
         if self.action_policy_mode_override:
             merged[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
                 self.action_policy_mode_override
+            )
+        if self._added_workspace_roots:
+            merged["openminion_ephemeral_workspace_roots"] = json.dumps(
+                self._added_workspace_roots
             )
         return merged or None
 

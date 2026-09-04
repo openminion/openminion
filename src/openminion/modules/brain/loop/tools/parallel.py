@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any
 
@@ -123,6 +124,7 @@ def _execute_parallel_tool_batch_without_prepared_dispatch(
                 with ThreadPoolExecutor(max_workers=len(sub_batch)) as executor:
                     futures = {
                         index: executor.submit(
+                            copy_context().run,
                             _execute_single_call,
                             loop_ctx,
                             tool_call=tool_calls[index],
@@ -230,6 +232,7 @@ def _execute_prepared_sub_batch(
     with ThreadPoolExecutor(max_workers=len(sub_batch)) as executor:
         futures = {
             index: executor.submit(
+                copy_context().run,
                 _execute_one,
                 loop_ctx,
                 prepared_dispatch=prepared_by_index[index],

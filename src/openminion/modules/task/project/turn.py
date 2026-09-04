@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from openminion.base.errors import ErrorInfo, error_info_from_mapping
 from openminion.base.redaction import redact_sensitive_text
@@ -16,6 +17,12 @@ from openminion.modules.task.autonomy import autonomy_permission_metadata
 from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
 
 from .progress import AutonomyLoopConditionKind
+
+_ProjectMetadataModel = TypeVar(
+    "_ProjectMetadataModel",
+    TaskPlan,
+    TaskPlanRevision,
+)
 
 
 @dataclass(frozen=True)
@@ -168,53 +175,109 @@ def project_turn_from_payload(
         request,
         base=inbound_metadata if isinstance(inbound_metadata, Mapping) else None,
     )
-    turn_result = execute(turn_payload)
-    raw_metadata = turn_result.get("metadata")
+    return project_turn_result_from_response(response=execute(turn_payload))
+
+
+def project_turn_result_from_response(
+    *,
+    response: Mapping[str, object],
+) -> ProjectTurnResult:
+    raw_metadata = response.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+    summary = str(
+        response.get("summary")
+        or response.get("final_text")
+        or response.get("body")
+        or "Project cycle completed."
+    )
     error = (
         project_error_from_payload(
-            turn_result,
+            response,
             metadata=metadata,
-            default_message=str(turn_result.get("summary") or "project turn failed"),
+            default_message=summary,
         )
-        if bool(turn_result.get("error"))
+        if bool(response.get("error"))
         else None
     )
+    tool_results = _project_tool_results(metadata)
+    tool_result_refs = tuple(
+        f"tool-call:{call_id}"
+        for item in tool_results
+        if bool(item.get("ok"))
+        and (
+            call_id := str(item.get("call_id") or item.get("command_id") or "").strip()
+        )
+    )
+    evidence_refs = project_metadata_refs(metadata, "evidence_refs", "artifact_refs")
+    evidence_kinds = project_metadata_refs(metadata, "evidence_kinds")
     return ProjectTurnResult(
-        summary=str(turn_result.get("summary") or "Project cycle completed."),
+        summary=summary,
         gateway_run_id=str(metadata.get("run_id") or "").strip(),
         condition=(
             _project_error_condition(error)
             if error is not None and not metadata.get("project_condition")
             else project_condition_from_metadata(metadata)
         ),
-        evidence_refs=project_metadata_refs(
-            metadata,
-            "evidence_refs",
-            "artifact_refs",
+        evidence_refs=tuple(dict.fromkeys((*evidence_refs, *tool_result_refs))),
+        evidence_kinds=tuple(
+            dict.fromkeys(
+                (*evidence_kinds, *(("tool_result",) if tool_result_refs else ()))
+            )
         ),
-        evidence_kinds=project_metadata_refs(metadata, "evidence_kinds"),
         effect_refs=project_metadata_refs(metadata, "effect_refs"),
-        tool_call_count=(
-            int(metadata["tool_call_count"])
-            if isinstance(metadata.get("tool_call_count"), int)
-            else 0
-        ),
+        tool_call_count=_project_tool_call_count(metadata, tool_results),
         task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
-        task_plan_revision=_project_metadata_model(
-            metadata,
-            "task_plan.revision",
-            TaskPlanRevision,
-        ),
+        task_plan_revision=_project_checkpoint_revision(metadata),
         error=error,
     )
+
+
+def _project_tool_results(
+    metadata: Mapping[str, object],
+) -> tuple[Mapping[str, object], ...]:
+    for key in ("tool_calls_cumulative", "tool_results"):
+        raw = metadata.get(key)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(raw, list):
+            return tuple(item for item in raw if isinstance(item, Mapping))
+    return ()
+
+
+def _project_checkpoint_revision(
+    metadata: Mapping[str, object],
+) -> TaskPlanRevision | None:
+    revision = _project_metadata_model(
+        metadata,
+        "task_plan.revision",
+        TaskPlanRevision,
+    )
+    if revision is None or not revision.revision_id or not revision.verifier_refs:
+        return None
+    return revision
+
+
+def _project_tool_call_count(
+    metadata: Mapping[str, object],
+    tool_results: tuple[Mapping[str, object], ...],
+) -> int:
+    for key in ("tool_call_count", "tool_calls_count"):
+        value = metadata.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return len(tool_results)
 
 
 def _project_metadata_model(
     metadata: Mapping[str, object],
     key: str,
-    model_type: type[TaskPlan] | type[TaskPlanRevision],
-) -> TaskPlan | TaskPlanRevision | None:
+    model_type: type[_ProjectMetadataModel],
+) -> _ProjectMetadataModel | None:
     value = metadata.get(key)
     if isinstance(value, str):
         value = json.loads(value)

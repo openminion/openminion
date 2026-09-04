@@ -31,6 +31,10 @@ def _command_lineage_payload(
     public_surface = public_surface_payload_for_state(state)
     public_mode_name = str(public_surface.pop("mode_name", "") or "").strip() or None
     payload = {
+        "runtime_session_id": str(
+            getattr(state, "runtime_session_id", "") or ""
+        ).strip()
+        or None,
         "decision_mode": public_mode_name,
         "mode_name": public_mode_name,
         "workflow_name": str(getattr(state, "active_workflow_name", "") or "").strip()

@@ -52,7 +52,9 @@ def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
     monkeypatch.setattr(
         interactive_cmd,
         "_launch_terminal_focus",
-        lambda _args, _runtime, *, working_dir: launched.append(working_dir) or 0,
+        lambda _args, _runtime, *, working_dir, **_kwargs: (
+            launched.append(working_dir) or 0
+        ),
     )
     monkeypatch.setattr(
         "openminion.api.runtime.APIRuntime.from_config_path",

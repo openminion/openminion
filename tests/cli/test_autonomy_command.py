@@ -115,6 +115,24 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
             "body": "worked",
             "metadata": {
                 "run_id": "gateway-run-1",
+                "task_plan": json.dumps(
+                    {
+                        "plan_id": "plan-1",
+                        "objective": "finish the project",
+                        "criterion_ids": ["criterion-tests"],
+                        "steps": [{"step_id": "build", "description": "Build it"}],
+                    }
+                ),
+                "task_plan.revision": json.dumps(
+                    {
+                        "plan_id": "plan-1",
+                        "revision_id": "revision-1",
+                        "verifier_refs": ["verify:failed-1"],
+                        "revised_steps": [
+                            {"step_id": "build", "description": "Repair it"}
+                        ],
+                    }
+                ),
                 "tool_calls_cumulative": json.dumps(
                     [
                         {"tool_name": "file.write", "ok": True, "call_id": "write-1"},
@@ -144,6 +162,10 @@ def test_project_turn_uses_canonical_successful_tool_results_as_progress(
     assert result.evidence_kinds == ("tool_result",)
     assert result.tool_call_count == 2
     assert result.gateway_run_id == "gateway-run-1"
+    assert result.task_plan is not None
+    assert result.task_plan.criterion_ids == ["criterion-tests"]
+    assert result.task_plan_revision is not None
+    assert result.task_plan_revision.revision_id == "revision-1"
     assert captured_payloads[0]["inbound_metadata"]["workspace_root"] == "/workspace"
     assert captured_payloads[0]["inbound_metadata"]["caller_handles_delivery"] == (
         "true"

@@ -92,6 +92,12 @@ def _build_turn_response_metadata(
         "max_single_call_total_tokens": str(max_single_call_total_tokens),
     }
     metadata.update(capture_response_metadata(step_out))
+    _attach_session_task_plan_metadata(
+        metadata=metadata,
+        runner=runner,
+        session_id=session_id,
+        request_id=request_id,
+    )
     action_error = getattr(getattr(step_out, "action_result", None), "error", None)
     if action_error is not None:
         metadata["error_code"] = str(getattr(action_error, "code", "") or "")
@@ -103,6 +109,40 @@ def _build_turn_response_metadata(
             if provider_request_id:
                 metadata["provider_request_id"] = provider_request_id
     return metadata
+
+
+def _attach_session_task_plan_metadata(
+    *,
+    metadata: dict[str, str],
+    runner: BrainRunner,
+    session_id: str,
+    request_id: str | None,
+) -> None:
+    session_api = runner.session_api
+    active_plan = session_api.get_active_task_plan(session_id)
+    if active_plan:
+        metadata["task_plan"] = json.dumps(active_plan, sort_keys=True)
+
+    if not request_id:
+        return
+    for event in reversed(session_api.list_events(session_id, trace_id=request_id)):
+        event_type = str(event.get("type") or "")
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if event_type == "task_plan.revised":
+            revision = payload.get("revision")
+            if isinstance(revision, dict):
+                metadata["task_plan.revision"] = json.dumps(
+                    revision,
+                    sort_keys=True,
+                )
+        elif event_type == "task_plan.declared" and "task_plan" not in metadata:
+            plan = payload.get("plan")
+            if isinstance(plan, dict):
+                metadata["task_plan"] = json.dumps(plan, sort_keys=True)
+        if "task_plan" in metadata and "task_plan.revision" in metadata:
+            break
 
 
 def _security_events_from_tool_results(

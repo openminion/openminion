@@ -52,6 +52,25 @@ class _LongArtifactProvider(LLMProvider):
 
 
 class GatewayServiceCoreTests(GatewayServiceTestCase):
+    def test_gateway_does_not_persist_ephemeral_workspace_roots(self) -> None:
+        response = asyncio.run(
+            self.gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="hello",
+                inbound_metadata={
+                    "attach_id": "att-1",
+                    "openminion_ephemeral_workspace_roots": '["/tmp/shared"]',
+                },
+            )
+        )
+
+        session = self.sessions.get_session(response.metadata["session_id"])
+
+        self.assertIsNotNone(session)
+        self.assertEqual(session.metadata.get("attach_id"), "att-1")
+        self.assertNotIn("openminion_ephemeral_workspace_roots", session.metadata)
+
     def test_gateway_records_delivery_subphase_timing(self) -> None:
         timer = ChatPhaseTimer()
         self.sessions.finish_run_record = lambda *_args, **_kwargs: None
