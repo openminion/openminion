@@ -52,6 +52,11 @@ def _background_write_authorization_allowed(ctx: RuntimeContext) -> bool:
 def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
     metadata = _context_metadata(ctx)
     origin: dict[str, str] = {}
+    orchestration = metadata.get("orchestration")
+    if isinstance(orchestration, Mapping):
+        runtime_session_id = _safe_str(orchestration, "runtime_session_id")
+        if runtime_session_id:
+            origin["session_id"] = runtime_session_id
     for key in (
         "session_id",
         "channel",
@@ -63,6 +68,10 @@ def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
         token = _safe_str(metadata, key)
         if token:
             origin[key] = token
+    for key in ("session_id", "channel", "target"):
+        token = str(getattr(ctx, key, "") or "").strip()
+        if token:
+            origin.setdefault(key, token)
     return origin
 
 

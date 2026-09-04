@@ -304,6 +304,35 @@ def test_schedule_persists_origin_delivery_context_when_available(
     }
 
 
+def test_schedule_uses_runtime_session_when_metadata_omits_origin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+    ctx.session_id = "focus-session::conv:focus-conversation"
+    ctx.policy.raw["context_metadata"]["orchestration"] = {
+        "runtime_session_id": "focus-session"
+    }
+    store = _resolve_cron_store(ctx)
+
+    created = _h_task_schedule(
+        {
+            "instruction": "remember the current session",
+            "schedule": {"kind": "at", "at": "2030-01-01T00:00:00Z"},
+        },
+        ctx,
+    )
+
+    row = store.get_cron_job(created["task_id"])
+    assert row is not None
+    assert row["payload"]["_openminion_origin"] == {
+        "session_id": "focus-session"
+    }
+
+
 def test_task_schedule_dedupes_identical_enabled_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
