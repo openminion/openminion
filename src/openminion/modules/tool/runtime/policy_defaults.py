@@ -72,7 +72,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         },
     },
     "paths": {
-        "read_allow": ["${WORKSPACE}", "~/projects", "~/Downloads"],
+        "read_allow": ["${WORKSPACE}"],
         "write_allow": ["${WORKSPACE}"],
         "deny": [
             "/etc",

@@ -31,6 +31,7 @@ def _restore_active_theme():
 
 def test_greeter_includes_default_content_blocks() -> None:
     runtime = _DemoFocusRuntime(working_dir="/tmp")
+    runtime.added_workspace_root_count = 2
     msg = build_greeter_message(
         runtime=runtime,
         working_dir="/tmp/example-dir",
@@ -47,6 +48,7 @@ def test_greeter_includes_default_content_blocks() -> None:
     assert "provider: echo" in body
     assert "echo/demo" not in body
     assert "theme: light" in body
+    assert "added directories: 2" in body
     assert "Try:" in body
     assert "explain this codebase" in body
     assert "find all references" in body

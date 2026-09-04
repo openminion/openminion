@@ -30,6 +30,7 @@ _MODEL_SESSION_KEY = "override_model"
 
 
 class RuntimeControlsMixin:
+    _added_workspace_roots: tuple[str, ...]
     _agent_id: str | None
     _agent_id_override: str | None
     _completed_session_usage: TokenUsageTotals
@@ -214,6 +215,10 @@ class RuntimeControlsMixin:
     @property
     def read_only_mode(self) -> bool:
         return self.permission_mode == "readonly"
+
+    @property
+    def added_workspace_root_count(self) -> int:
+        return len(self._added_workspace_roots)
 
     def set_read_only_mode(self, enabled: bool) -> bool:
         self.set_permission_mode("readonly" if enabled else PERMISSION_MODE_DEFAULT)

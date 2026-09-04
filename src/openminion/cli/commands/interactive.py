@@ -2,6 +2,7 @@ import argparse
 from collections.abc import Callable
 import logging
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from openminion.base.config import resolve_config_path
@@ -94,6 +95,39 @@ def _resolve_focus_progress(args: argparse.Namespace) -> str:
     return resolve_progress(args, default="full")
 
 
+def _resolve_workspace_access(
+    args: argparse.Namespace,
+) -> tuple[str, bool, tuple[str, ...]]:
+    explicit = getattr(args, "dir", None) is not None
+    workspace = Path(getattr(args, "dir", None) or ".").expanduser().resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"workspace directory does not exist: {workspace}")
+    if not explicit and workspace in {Path.home().resolve(), Path(workspace.anchor)}:
+        raise ValueError("choose a project workspace with --dir PATH")
+
+    read_only = False
+    if not explicit:
+        try:
+            probe = subprocess.run(
+                ["git", "-C", str(workspace), "rev-parse", "--is-inside-work-tree"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            read_only = probe.returncode != 0 or probe.stdout.strip() != "true"
+        except OSError:
+            read_only = True
+
+    added_roots: list[str] = []
+    for value in getattr(args, "add_dir", []) or []:
+        root = Path(value).expanduser().resolve()
+        if not root.is_dir():
+            raise ValueError(f"added directory does not exist: {value}")
+        if str(root) not in added_roots:
+            added_roots.append(str(root))
+    return str(workspace), read_only, tuple(added_roots)
+
+
 def _handle_focus_onboarding_gate(
     args: argparse.Namespace,
 ) -> tuple[int | None, argparse.Namespace]:
@@ -140,7 +174,12 @@ def _enforce_textual_tty_requirement() -> int | None:
 
 
 def _launch_terminal_focus(
-    args: argparse.Namespace, runtime, *, working_dir: str
+    args: argparse.Namespace,
+    runtime,
+    *,
+    working_dir: str,
+    read_only: bool = False,
+    added_roots: tuple[str, ...] = (),
 ) -> int:
     from openminion.cli.interactive.project_context import resolve_project_context
     from openminion.cli.interactive.runtime import OpenMinionRuntime
@@ -149,14 +188,18 @@ def _launch_terminal_focus(
 
     requested_agent = str(getattr(args, "agent", "") or "").strip() or None
     requested_session = str(getattr(args, "session", "") or "").strip() or None
-    terminal_runtime = OpenMinionRuntime(
-        runtime,
-        target="focus",
-        agent_id=requested_agent,
-        working_dir=working_dir,
-        bind_immediately=False,
-        session_id=requested_session,
-    )
+    runtime_kwargs: dict[str, Any] = {
+        "target": "focus",
+        "agent_id": requested_agent,
+        "working_dir": working_dir,
+        "bind_immediately": False,
+        "session_id": requested_session,
+    }
+    if added_roots:
+        runtime_kwargs["added_workspace_roots"] = added_roots
+    terminal_runtime = OpenMinionRuntime(runtime, **runtime_kwargs)
+    if read_only:
+        terminal_runtime.set_read_only_mode(True)
     if requested_session is None:
         terminal_runtime.create_new_session()
     if not bool(getattr(args, "no_context", False)):
@@ -246,21 +289,30 @@ def _resolve_focus_theme(args: argparse.Namespace):
 
 
 def _launch_textual_focus(
-    args: argparse.Namespace, runtime, *, working_dir: str
+    args: argparse.Namespace,
+    runtime,
+    *,
+    working_dir: str,
+    read_only: bool = False,
+    added_roots: tuple[str, ...] = (),
 ) -> int:
     from openminion.cli.interactive import FocusApp
     from openminion.cli.interactive.project_context import resolve_project_context
     from openminion.cli.interactive.runtime import OpenMinionRuntime
     from openminion.cli.presentation.animation import resolve_focus_animation
 
-    focus_runtime = OpenMinionRuntime(
-        runtime,
-        target="focus",
-        agent_id=str(getattr(args, "agent", "") or "").strip() or None,
-        working_dir=working_dir,
-        bind_immediately=False,
-        session_id=str(getattr(args, "session", "") or "").strip() or None,
-    )
+    runtime_kwargs: dict[str, Any] = {
+        "target": "focus",
+        "agent_id": str(getattr(args, "agent", "") or "").strip() or None,
+        "working_dir": working_dir,
+        "bind_immediately": False,
+        "session_id": str(getattr(args, "session", "") or "").strip() or None,
+    }
+    if added_roots:
+        runtime_kwargs["added_workspace_roots"] = added_roots
+    focus_runtime = OpenMinionRuntime(runtime, **runtime_kwargs)
+    if read_only:
+        focus_runtime.set_read_only_mode(True)
     if not bool(getattr(args, "no_context", False)):
         focus_runtime.set_project_context(resolve_project_context(working_dir))
     resolved_theme = _resolve_focus_theme(args)
@@ -314,6 +366,8 @@ def run_interactive(args: argparse.Namespace) -> int:
                     return 2
                 raise
 
+        working_dir, read_only, added_roots = _resolve_workspace_access(args)
+
         from openminion.api.runtime import APIRuntime
         from openminion.cli.status.surface import record_surface_event
 
@@ -323,14 +377,23 @@ def run_interactive(args: argparse.Namespace) -> int:
             data_root=getattr(args, "data_root", None),
             logging_mode="interactive",
         )
-        working_dir = str(
-            Path(getattr(args, "dir", None) or ".").expanduser().resolve(strict=False)
-        )
         record_surface_event(runtime)
         if backend == "terminal":
-            return _launch_terminal_focus(args, runtime, working_dir=working_dir)
+            return _launch_terminal_focus(
+                args,
+                runtime,
+                working_dir=working_dir,
+                read_only=read_only,
+                added_roots=added_roots,
+            )
         _maybe_print_update_notice(args)
-        return _launch_textual_focus(args, runtime, working_dir=working_dir)
+        return _launch_textual_focus(
+            args,
+            runtime,
+            working_dir=working_dir,
+            read_only=read_only,
+            added_roots=added_roots,
+        )
     except Exception as exc:
         import sys
 

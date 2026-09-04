@@ -130,6 +130,7 @@ _ROOT_OPTIONS_WITH_VALUES = frozenset(
         "--agent",
         "--session",
         "--dir",
+        "--add-dir",
         "--theme",
         "--color",
         "--animation-provider",
@@ -239,6 +240,9 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
         ),
         allow_abbrev=False,
     )
+    from openminion import __version__
+
+    parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument(
         "--home-root",
         default=None,
@@ -279,7 +283,8 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
         "--allow-unsandboxed-exec",
         action="store_true",
         help=(
-            "Enable legacy unsandboxed exec tool hosts (gateway/node) for this process. "
+            "Enable host exec for this process. Commands use the OpenMinion "
+            "process's OS permissions and are not confined to workspace roots. "
             "Equivalent to setting OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC=1."
         ),
     )

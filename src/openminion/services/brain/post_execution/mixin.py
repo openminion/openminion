@@ -62,35 +62,24 @@ def _emit_prep_status(
 
 
 def _bind_tool_workspace_root(
-    tool_api: Any, metadata_source: Mapping[str, Any]
-) -> None:
+    tool_api: Any | None,
+    metadata_source: Mapping[str, Any],
+    added_roots: tuple[Path, ...],
+) -> Any:
+    if tool_api is None:
+        return nullcontext()
     workspace_root = str(
         metadata_source.get("workspace_root") or metadata_source.get("cwd") or ""
     ).strip()
-    if not workspace_root:
-        return
+    workspace_path = (
+        Path(workspace_root).expanduser() if workspace_root else tool_api.workspace_root
+    )
+    return tool_api.workspace_override(workspace_path, added_roots=added_roots)
 
-    workspace_path = Path(workspace_root).expanduser()
-    if hasattr(tool_api, "workspace_root"):
-        tool_api.workspace_root = workspace_path
 
-    policy = getattr(tool_api, "policy", None)
-    policy_raw = getattr(policy, "raw", None)
-    if isinstance(policy_raw, dict):
-        policy_raw["workspace_root"] = str(workspace_path)
-        context_metadata = policy_raw.get("context_metadata")
-        if not isinstance(context_metadata, dict):
-            context_metadata = {}
-            policy_raw["context_metadata"] = context_metadata
-        context_metadata["workspace_root"] = str(workspace_path)
-        raw_cwd = str(metadata_source.get("cwd") or "").strip()
-        cwd_path = Path(raw_cwd).expanduser() if raw_cwd else workspace_path
-        if not cwd_path.is_absolute():
-            cwd_path = workspace_path / cwd_path
-        if cwd_path.resolve(strict=False).is_relative_to(
-            workspace_path.resolve(strict=False)
-        ):
-            context_metadata["cwd"] = str(cwd_path)
+def _take_added_workspace_roots(metadata: dict[str, Any]) -> tuple[Path, ...]:
+    raw = metadata.pop("openminion_ephemeral_workspace_roots", "[]")
+    return tuple(Path(value) for value in json.loads(str(raw or "[]")))
 
 
 def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, str]:
@@ -309,7 +298,6 @@ class BrainBridgeTurnMixin:
         tool_api = getattr(runner, "tool_api", None)
         if tool_api is None:
             return
-        _bind_tool_workspace_root(tool_api, message.metadata or {})
         if self._security_policy is None:
             return
         tool_policy_lookup = None
@@ -468,6 +456,7 @@ class BrainBridgeTurnMixin:
         progress_callback=None,
         approval_callback=None,
     ) -> AgentResponse:
+        added_roots = _take_added_workspace_roots(message.metadata)
         runtime_session_id, brain_session_id = self._resolve_turn_session_ids(
             message=message
         )
@@ -499,6 +488,9 @@ class BrainBridgeTurnMixin:
             brain_session_id=brain_session_id,
             progress_callback=progress_callback,
         )
+        workspace_scope = _bind_tool_workspace_root(
+            getattr(runner, "tool_api", None), message.metadata, added_roots
+        )
         message.metadata["session_id"] = session_id
         message.metadata["turn_id"] = turn_id
         telemetry = AgentExecutionTelemetry(self, inbound=message)
@@ -524,7 +516,7 @@ class BrainBridgeTurnMixin:
                 if allowed_tools is not None
                 else nullcontext()
             )
-            with tool_scope:
+            with tool_scope, workspace_scope:
                 step_out = await asyncio.to_thread(
                     self._execute_turn,
                     runner=runner,

@@ -1106,7 +1106,9 @@ async def test_focus_escape_prompts_before_exit_and_can_cancel() -> None:
         assert isinstance(app.screen, FocusScreen)
 
 
-def test_run_interactive_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
+def test_run_interactive_live_wires_shared_runtime_and_closes(
+    monkeypatch, tmp_path: Path
+) -> None:
     # this test exercises the Textual --rich path which now
     # has a non-TTY guard. Pytest stdin/stdout aren't TTYs, so mock
     # them True to clear the guard before reaching the FocusApp stub.
@@ -1151,6 +1153,8 @@ def test_run_interactive_live_wires_shared_runtime_and_closes(monkeypatch) -> No
     )
     monkeypatch.setattr("openminion.cli.interactive.FocusApp", _FakeApp)
 
+    workspace = tmp_path / "focus-live"
+    workspace.mkdir()
     args = SimpleNamespace(
         config=str(
             (_repo_root() / "test-configs" / "per-agent.json").resolve(strict=False)
@@ -1159,7 +1163,7 @@ def test_run_interactive_live_wires_shared_runtime_and_closes(monkeypatch) -> No
         data_root=None,
         agent="alpha",
         session="focus-explicit",
-        dir="/tmp/focus-live",
+        dir=str(workspace),
         rich=True,
     )
 
@@ -1168,13 +1172,13 @@ def test_run_interactive_live_wires_shared_runtime_and_closes(monkeypatch) -> No
     assert captured["runtime_kwargs"]["agent_id"] == "alpha"
     assert captured["runtime_kwargs"]["session_id"] == "focus-explicit"
     assert captured["runtime_kwargs"]["bind_immediately"] is False
-    assert captured["app_kwargs"]["working_dir"] == str(
-        Path("/tmp/focus-live").resolve()
-    )
+    assert captured["app_kwargs"]["working_dir"] == str(workspace.resolve())
     assert closed == [True]
 
 
-def test_run_interactive_missing_config_launches_inline_setup(monkeypatch) -> None:
+def test_run_interactive_missing_config_launches_inline_setup(
+    monkeypatch, tmp_path: Path
+) -> None:
     # clear the non-TTY guard so the --rich path proceeds.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
@@ -1226,13 +1230,15 @@ def test_run_interactive_missing_config_launches_inline_setup(monkeypatch) -> No
     )
     monkeypatch.setattr("openminion.cli.interactive.FocusApp", _FakeApp)
 
+    workspace = tmp_path / "focus-onboarding"
+    workspace.mkdir()
     args = SimpleNamespace(
         config=None,
         home_root=str(_repo_root()),
         data_root=None,
         agent="alpha",
         session=None,
-        dir="/tmp/focus-onboarding",
+        dir=str(workspace),
         no_interactive=False,
         theme=None,
         # keep this test on the Textual path it patches.
@@ -1245,7 +1251,9 @@ def test_run_interactive_missing_config_launches_inline_setup(monkeypatch) -> No
     assert captured["closed"] is True
 
 
-def test_run_interactive_missing_config_uses_inline_setup(monkeypatch) -> None:
+def test_run_interactive_missing_config_uses_inline_setup(
+    monkeypatch, tmp_path: Path
+) -> None:
     # clear the non-TTY guard so the --rich path proceeds.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
@@ -1300,13 +1308,15 @@ def test_run_interactive_missing_config_uses_inline_setup(monkeypatch) -> None:
     )
     monkeypatch.setattr("openminion.cli.interactive.FocusApp", _FakeApp)
 
+    workspace = tmp_path / "focus-onboarding"
+    workspace.mkdir()
     args = SimpleNamespace(
         config=None,
         home_root=str(_repo_root()),
         data_root=None,
         agent="alpha",
         session=None,
-        dir="/tmp/focus-onboarding",
+        dir=str(workspace),
         no_interactive=False,
         theme=None,
         # keep this test on the Textual path it patches.

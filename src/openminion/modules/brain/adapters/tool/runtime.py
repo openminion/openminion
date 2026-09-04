@@ -4,7 +4,6 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from threading import Lock
 from typing import Any, Iterator, Mapping
 
 from openminion.base.logging import get_logger
@@ -65,12 +64,16 @@ from .results import (
     _normalized_artifact_refs,
     _tool_allowlist_error,
 )
-from .workspace_policy import child_workspace_policy
+from .workspace_policy import workspace_context_policy
 
 _log = get_logger("brain.adapters.tool.runtime")
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override",
     default=None,
+)
+_ADDED_WORKSPACE_ROOTS: ContextVar[tuple[Path, ...]] = ContextVar(
+    "openminion_tool_added_workspace_roots",
+    default=(),
 )
 _TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
     "openminion_turn_tool_allowlist", default=None
@@ -130,8 +133,6 @@ class ToolAdapter:
         agent_profile: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
-        self._workspace_override_lock = Lock()
-        self._workspace_override_counts: dict[Path, int] = {}
         policy_from_none = policy is None
         self.policy = self._coerce_policy(policy)
         self.policy_adapter = policy_adapter
@@ -365,34 +366,22 @@ class ToolAdapter:
         return self.workspace_root
 
     @contextmanager
-    def workspace_override(self, workspace_root: Path) -> Iterator[None]:
+    def workspace_override(
+        self,
+        workspace_root: Path,
+        *,
+        added_roots: tuple[Path, ...] = (),
+    ) -> Iterator[None]:
         workspace = Path(workspace_root).expanduser()
-        workspace_key = workspace.resolve(strict=False)
-        with self._workspace_override_lock:
-            self._workspace_override_counts[workspace_key] = (
-                self._workspace_override_counts.get(workspace_key, 0) + 1
-            )
-        token = _WORKSPACE_OVERRIDE.set(workspace)
+        workspace_token = _WORKSPACE_OVERRIDE.set(workspace)
+        roots_token = _ADDED_WORKSPACE_ROOTS.set(
+            tuple(Path(root).expanduser().resolve() for root in added_roots)
+        )
         try:
             yield
         finally:
-            _WORKSPACE_OVERRIDE.reset(token)
-            with self._workspace_override_lock:
-                remaining = self._workspace_override_counts.get(workspace_key, 0) - 1
-                if remaining > 0:
-                    self._workspace_override_counts[workspace_key] = remaining
-                else:
-                    self._workspace_override_counts.pop(workspace_key, None)
-
-    def _registered_workspace_override(self, raw_workspace: str) -> Path | None:
-        if not raw_workspace:
-            return None
-        workspace = Path(raw_workspace).expanduser()
-        workspace_key = workspace.resolve(strict=False)
-        with self._workspace_override_lock:
-            if self._workspace_override_counts.get(workspace_key, 0) > 0:
-                return workspace
-        return None
+            _ADDED_WORKSPACE_ROOTS.reset(roots_token)
+            _WORKSPACE_OVERRIDE.reset(workspace_token)
 
     def execute(
         self, *, command: dict[str, Any], session_id: str, trace_id: str
@@ -427,22 +416,21 @@ class ToolAdapter:
             spec = runtime_tool
             runtime_tool = None
 
-        policy_for_run = self.policy
-        workspace_override = self._registered_workspace_override(requested_workspace)
-        if requested_workspace and workspace_override is None:
+        try:
+            policy_for_run = workspace_context_policy(
+                self.policy,
+                args=args,
+                parent=self.workspace_root,
+                requested=requested_workspace,
+                active=_WORKSPACE_OVERRIDE.get(),
+                added_roots=_ADDED_WORKSPACE_ROOTS.get(),
+            )
+        except ValueError as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Invalid runtime workspace context",
                 code="INVALID_RUNTIME_CONTEXT",
-                message="The requested child workspace is not active.",
-            )
-        workspace_override = workspace_override or _WORKSPACE_OVERRIDE.get()
-        if workspace_override is not None:
-            policy_for_run = child_workspace_policy(
-                policy_for_run,
-                args=args,
-                parent=self.workspace_root,
-                child=workspace_override,
+                message=str(exc),
             )
         if runtime_message_ref is not None:
             policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})

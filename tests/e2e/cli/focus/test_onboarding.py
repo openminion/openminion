@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import re
 import stat
-import threading
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
@@ -22,6 +19,7 @@ from openminion.modules.storage.record_store import RecordStoreSQLite
 from openminion.modules.storage.runtime.session_store import SessionStore
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
+from tests.e2e.cli.focus.harness.ollama_fixture import ollama_fixture_server
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(240)]
 
@@ -150,136 +148,63 @@ def _persisted_tool_results(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return payload
 
 
-class _OllamaFixtureHandler(BaseHTTPRequestHandler):
-    requests: list[dict[str, Any]] = []
-    turn_response_index = 0
-    turn_response_messages: tuple[dict[str, Any], ...] = (
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call-exec",
-                    "function": {
-                        "name": "exec.run",
-                        "arguments": {"command": "ls"},
-                    },
-                }
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call-request-list-dir",
-                    "function": {
-                        "name": "tool.request",
-                        "arguments": {
-                            "name": "file.list_dir",
-                            "terminal_after_success": False,
-                        },
-                    },
-                }
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": "call-list-dir",
-                    "function": {
-                        "name": "file.list_dir",
-                        "arguments": {"path": "."},
-                    },
-                }
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": (
-                "Workspace entries listed. ONBOARDING_OK\n\n"
-                '<finalization_status>{"status":"final_answer",'
-                '"reasoning":"Structured workspace listing completed."}'
-                "</finalization_status>"
-            ),
-        },
-    )
-
-    def log_message(self, format: str, *args: object) -> None:
-        del format, args
-
-    def do_POST(self) -> None:
-        if self.path != "/api/chat":
-            self.send_error(404)
-            return
-        content_length = int(self.headers.get("Content-Length", "0"))
-        request_payload: dict[str, Any] = {}
-        if content_length:
-            request_payload = json.loads(self.rfile.read(content_length))
-        type(self).requests.append(request_payload)
-        messages = request_payload["messages"]
-        last_content = str(messages[-1].get("content", ""))
-        schema_title = request_payload.get("format", {}).get("title", "")
-        if last_content == "Reply with exactly: openminion provider check ok":
-            response_message = {
-                "role": "assistant",
-                "content": "openminion provider check ok",
-            }
-        elif schema_title == "UserMessageCandidateReport":
-            response_message = {"role": "assistant", "content": '{"items":[]}'}
-        elif schema_title == "FreshnessContract":
-            response_message = {
-                "role": "assistant",
-                "content": (
-                    '{"intent":"workspace listing","domain":"general",'
-                    '"time_sensitive":false,"needs_live_data":false,'
-                    '"needs_sources":false,"needs_exact_date":false,'
-                    '"answer_mode":"local_only","reason":"local workspace",'
-                    '"confidence":1.0}'
-                ),
-            }
-        else:
-            response_message = type(self).turn_response_messages[
-                type(self).turn_response_index
-            ]
-            type(self).turn_response_index += 1
-        payload = json.dumps(
+_ONBOARDING_TURN_RESPONSES: tuple[dict[str, Any], ...] = (
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
             {
-                "model": "qwen2.5:14b",
-                "message": response_message,
-                "done": True,
-                "done_reason": (
-                    "tool_calls" if response_message.get("tool_calls") else "stop"
-                ),
-                "prompt_eval_count": 1,
-                "eval_count": 1,
+                "id": "call-exec",
+                "function": {
+                    "name": "exec.run",
+                    "arguments": {"command": "ls"},
+                },
             }
-        ).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        ],
+    },
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-request-list-dir",
+                "function": {
+                    "name": "tool.request",
+                    "arguments": {
+                        "name": "file.list_dir",
+                        "terminal_after_success": False,
+                    },
+                },
+            }
+        ],
+    },
+    {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call-list-dir",
+                "function": {
+                    "name": "file.list_dir",
+                    "arguments": {"path": "."},
+                },
+            }
+        ],
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "Workspace entries listed. ONBOARDING_OK\n\n"
+            '<finalization_status>{"status":"final_answer",'
+            '"reasoning":"Structured workspace listing completed."}'
+            "</finalization_status>"
+        ),
+    },
+)
 
 
-@contextmanager
-def _ollama_fixture_server() -> Iterator[tuple[str, list[dict[str, Any]]]]:
-    _OllamaFixtureHandler.requests = []
-    _OllamaFixtureHandler.turn_response_index = 0
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaFixtureHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield (
-            f"http://127.0.0.1:{server.server_port}",
-            _OllamaFixtureHandler.requests,
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+def _ollama_fixture_server():
+    return ollama_fixture_server(_ONBOARDING_TURN_RESPONSES)
 
 
 def _run_noninteractive_setup_case(

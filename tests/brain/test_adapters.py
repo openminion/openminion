@@ -723,8 +723,9 @@ class ToolAdapterTests(unittest.TestCase):
             self.assertEqual(resolved, {first, second})
             self.assertEqual(adapter._effective_workspace_root(), root)
 
-    def test_tool_adapter_workspace_registration_crosses_worker_threads(self) -> None:
+    def test_tool_adapter_workspace_context_crosses_copied_worker_context(self) -> None:
         from concurrent.futures import ThreadPoolExecutor
+        from contextvars import copy_context
 
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
 
@@ -737,11 +738,11 @@ class ToolAdapterTests(unittest.TestCase):
             with adapter.workspace_override(child):
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     resolved = executor.submit(
-                        adapter._registered_workspace_override, str(child)
+                        copy_context().run, adapter._effective_workspace_root
                     ).result()
 
             self.assertEqual(resolved, child)
-            self.assertIsNone(adapter._registered_workspace_override(str(child)))
+            self.assertEqual(adapter._effective_workspace_root(), root)
 
     def test_tool_adapter_rebases_parent_path_into_child_workspace(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
@@ -792,6 +793,72 @@ class ToolAdapterTests(unittest.TestCase):
             self.assertEqual(result["status"], "success")
             self.assertEqual(captured["path"], str(child / "accepted.txt"))
             self.assertEqual(captured["workspace_root"], str(child))
+
+    def test_tool_adapter_applies_added_roots_without_mutating_base_policy(
+        self,
+    ) -> None:
+        import copy
+
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.modules.tool import DEFAULT_POLICY, Policy, ToolRegistry
+        from openminion.tools.file.plugin import register
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            added = Path(tmp) / "added"
+            workspace.mkdir()
+            added.mkdir()
+            policy_raw = copy.deepcopy(DEFAULT_POLICY)
+            policy_raw["workspace_root"] = str(workspace)
+            adapter = ToolAdapter(
+                workspace_root=workspace,
+                runtime_registry=ToolRegistry(),
+                policy=Policy(raw=policy_raw),
+            )
+            register(adapter.registry)
+            original_paths = copy.deepcopy(adapter.policy.raw["paths"])
+
+            with adapter.workspace_override(workspace, added_roots=(added,)):
+                result = adapter.execute(
+                    command={
+                        "tool_name": "file.write",
+                        "args": {
+                            "path": str((added / "notes.txt").resolve()),
+                            "content": "ok",
+                        },
+                        "inputs": {"permission_mode": "bypass"},
+                    },
+                    session_id="s1",
+                    trace_id="t1",
+                )
+
+            self.assertEqual(result["status"], "success")
+            self.assertEqual((added / "notes.txt").read_text(), "ok")
+            self.assertEqual(adapter.policy.raw["paths"], original_paths)
+
+    def test_tool_adapter_rejects_retargeted_added_root(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            added = Path(tmp) / "added"
+            replacement = Path(tmp) / "replacement"
+            workspace.mkdir()
+            added.mkdir()
+            replacement.mkdir()
+            adapter = ToolAdapter(workspace_root=workspace)
+
+            with adapter.workspace_override(workspace, added_roots=(added,)):
+                added.rmdir()
+                added.symlink_to(replacement, target_is_directory=True)
+                result = adapter.execute(
+                    command={"tool_name": "file.read", "args": {"path": "."}},
+                    session_id="s1",
+                    trace_id="t1",
+                )
+
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(result["error"]["code"], "INVALID_RUNTIME_CONTEXT")
 
     def test_tool_adapter_passes_a2a_delegate_seam_to_runtime_context(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
@@ -911,7 +978,7 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["summary"], "delegated")
 
-    def test_tool_workspace_binding_updates_adapter_and_policy(self) -> None:
+    def test_tool_workspace_binding_is_context_local(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.services.brain.post_execution.mixin import (
             _bind_tool_workspace_root,
@@ -920,18 +987,17 @@ class ToolAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp) / "parent"
             focused = Path(tmp) / "focused"
+            focused.mkdir()
             adapter = ToolAdapter(workspace_root=parent)
+            metadata = {"workspace_root": str(focused)}
 
-            _bind_tool_workspace_root(adapter, {"workspace_root": str(focused)})
+            with _bind_tool_workspace_root(adapter, metadata, ()):
+                self.assertEqual(adapter._effective_workspace_root(), focused)
 
-            self.assertEqual(adapter.workspace_root, focused)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(focused))
-            self.assertEqual(
-                adapter.policy.raw["context_metadata"]["workspace_root"],
-                str(focused),
-            )
+            self.assertEqual(adapter.workspace_root, parent)
+            self.assertEqual(adapter._effective_workspace_root(), parent)
 
-    def test_tool_workspace_binding_preserves_cwd_inside_workspace(self) -> None:
+    def test_tool_workspace_binding_consumes_ephemeral_added_roots(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.services.brain.post_execution.mixin import (
             _bind_tool_workspace_root,
@@ -939,80 +1005,25 @@ class ToolAdapterTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "workspace"
-            nested = workspace / "feature"
+            added = Path(tmp) / "added"
+            workspace.mkdir()
+            added.mkdir()
             adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
+            metadata = {
+                "workspace_root": str(workspace),
+                "openminion_ephemeral_workspace_roots": json.dumps([str(added)]),
+            }
 
-            _bind_tool_workspace_root(
-                adapter,
-                {"workspace_root": str(workspace), "cwd": str(nested)},
-            )
+            raw_roots = metadata.pop("openminion_ephemeral_workspace_roots")
+            added_roots = tuple(Path(value) for value in json.loads(raw_roots))
+            with _bind_tool_workspace_root(adapter, metadata, added_roots):
+                from openminion.modules.brain.adapters.tool.runtime import (
+                    _ADDED_WORKSPACE_ROOTS,
+                )
 
-            self.assertEqual(
-                adapter.policy.raw["context_metadata"]["cwd"],
-                str(nested),
-            )
+                self.assertEqual(_ADDED_WORKSPACE_ROOTS.get(), (added.resolve(),))
 
-    def test_tool_workspace_binding_uses_cwd_when_workspace_root_missing(self) -> None:
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution.mixin import (
-            _bind_tool_workspace_root,
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            cwd = Path(tmp) / "focused"
-            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
-
-            _bind_tool_workspace_root(adapter, {"cwd": str(cwd)})
-
-            self.assertEqual(adapter.workspace_root, cwd)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(cwd))
-            self.assertEqual(adapter.policy.raw["context_metadata"]["cwd"], str(cwd))
-
-    def test_tool_workspace_binding_ignores_cwd_outside_workspace(self) -> None:
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution.mixin import (
-            _bind_tool_workspace_root,
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "workspace"
-            outside = Path(tmp) / "outside"
-            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
-
-            _bind_tool_workspace_root(
-                adapter,
-                {"workspace_root": str(workspace), "cwd": str(outside)},
-            )
-
-            self.assertNotIn("cwd", adapter.policy.raw["context_metadata"])
-
-    def test_turn_tool_binding_preserves_cwd_without_security_policy(self) -> None:
-        from openminion.base.types import Message
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution import BrainBridgeTurnMixin
-
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "workspace"
-            cwd = workspace / "feature"
-            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
-            bridge = BrainBridgeTurnMixin()
-            bridge._security_policy = None
-
-            bridge._bind_tool_policy_adapter(
-                runner=SimpleNamespace(tool_api=adapter),
-                message=Message(
-                    channel="cli",
-                    target="session-1",
-                    body="write files",
-                    metadata={"workspace_root": str(workspace), "cwd": str(cwd)},
-                ),
-                session_id="session-1",
-                request_id="request-1",
-            )
-
-            self.assertEqual(adapter.workspace_root, workspace)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(workspace))
-            self.assertEqual(adapter.policy.raw["context_metadata"]["cwd"], str(cwd))
+            self.assertNotIn("openminion_ephemeral_workspace_roots", metadata)
 
 
 class A2AAndPolicyAdapterTests(unittest.TestCase):
