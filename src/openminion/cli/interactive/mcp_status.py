@@ -11,6 +11,9 @@ class MCPServerStatusRow:
     resource_count: int = 0
     resource_template_count: int = 0
     app_resource_count: int = 0
+    call_total: int = 0
+    call_error_total: int = 0
+    restart_total: int = 0
     tool_names: tuple[str, ...] = ()
     error: str = ""
     recent_log: str = ""
@@ -43,6 +46,12 @@ def render_mcp_status_report(rows: list[MCPServerStatusRow]) -> str:
             lines.append(
                 "  apps: "
                 f"{row.app_resource_count} ui:// resource(s), text-only fallback"
+            )
+        if row.call_total or row.call_error_total or row.restart_total:
+            lines.append(
+                "  activity: "
+                f"calls={row.call_total} errors={row.call_error_total} "
+                f"restarts={row.restart_total}"
             )
         if row.tool_names:
             rendered_tools = ", ".join(row.tool_names[:5])

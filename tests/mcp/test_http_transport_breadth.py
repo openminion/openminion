@@ -459,7 +459,7 @@ def test_modern_http_request_drops_legacy_session_id() -> None:
         transport.request(method="initialize", params={}, timeout_seconds=5.0)
         assert transport.session_state.session_id == "legacy-session"
 
-        with pytest.raises(MCPProtocolError, match="Unknown method"):
+        with pytest.raises(MCPProtocolError, match="Unknown method") as exc_info:
             transport.request(
                 method="server/discover",
                 params={
@@ -471,6 +471,7 @@ def test_modern_http_request_drops_legacy_session_id() -> None:
                 },
                 timeout_seconds=5.0,
             )
+        assert exc_info.value.details["code"] == -32601
 
         request_headers = server.last_requests[-1]["headers"]
         assert "Mcp-Session-Id" not in request_headers

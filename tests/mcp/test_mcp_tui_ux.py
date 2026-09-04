@@ -34,6 +34,23 @@ def test_mcp_status_renders_resource_templates_and_apps_fallback() -> None:
     assert "ui:// resource(s), text-only fallback" in rendered
 
 
+def test_mcp_status_renders_call_activity() -> None:
+    rendered = render_mcp_status_report(
+        [
+            MCPServerStatusRow(
+                name="fixture",
+                transport="stdio",
+                status="ready",
+                call_total=2,
+                call_error_total=1,
+                restart_total=0,
+            )
+        ]
+    )
+
+    assert "activity: calls=2 errors=1 restarts=0" in rendered
+
+
 def test_mcp_reference_builder_is_explicit() -> None:
     assert (
         build_mcp_reference(
