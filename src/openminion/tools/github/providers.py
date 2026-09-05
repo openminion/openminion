@@ -43,6 +43,26 @@ class GithubProvider(Protocol):
 
     def merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> Mapping[str, Any]: ...
 
+    def dispatch_workflow(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def read_dispatch_workflow(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def list_workflow_runs(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def read_release(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def create_release(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
     def healthcheck(self) -> bool: ...
 
 

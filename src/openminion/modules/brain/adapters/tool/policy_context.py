@@ -209,6 +209,8 @@ def _resolve_auto_confirm(
         return True
     if tool_name == "blockchain.send_transaction":
         return True
+    if tool_name in {"github.dispatch_workflow", "github.create_release"}:
+        return True
     if tool_name == "exec.run":
         return bool(
             is_read_only_exec_command(

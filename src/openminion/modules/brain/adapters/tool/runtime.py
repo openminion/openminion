@@ -46,9 +46,11 @@ from .command_metadata import (
     _runtime_workspace_from_command,
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
-from .project_github import execute_github_open_pr_project_effect
 from .github_merge import execute_github_merge_pr_project_effect
+from .github_release import execute_github_release_project_effect
 from .github_update import execute_github_update_pr_project_effect
+from .github_workflow import execute_github_workflow_project_effect
+from .project_github import execute_github_open_pr_project_effect
 from .project_git import execute_git_remote_project_effect
 from .policy_context import (
     _agent_id_from_policy,
@@ -659,18 +661,23 @@ class ToolAdapter:
                 )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(
-                    task_manager=self.task_manager,
-                    task_id=project_task_id,
+                    task_manager=self.task_manager, task_id=project_task_id,
                     idempotency_key=str(command.get("idempotency_key") or ""),
-                    actor_ref=f"agent:{self.agent_id}",
-                    args=validated_args,
-                    ctx=ctx,
-                    spec=spec,
-                    start_time=start_time,
+                    actor_ref=f"agent:{self.agent_id}", args=validated_args,
+                    ctx=ctx, spec=spec, start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
-            if tool_name == "github.update_pr" and project_task_id:
-                return execute_github_update_pr_project_effect(
+            github_effect: Callable[..., dict[str, Any]] | None = None
+            if tool_name == "github.update_pr":
+                github_effect = execute_github_update_pr_project_effect
+            elif tool_name == "github.merge_pr":
+                github_effect = execute_github_merge_pr_project_effect
+            elif tool_name == "github.dispatch_workflow":
+                github_effect = execute_github_workflow_project_effect
+            elif tool_name == "github.create_release":
+                github_effect = execute_github_release_project_effect
+            if github_effect is not None and project_task_id:
+                return github_effect(
                     task_manager=self.task_manager,
                     task_id=project_task_id,
                     actor_ref=f"agent:{self.agent_id}",
@@ -680,16 +687,11 @@ class ToolAdapter:
                     start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
-            if tool_name == "github.merge_pr" and project_task_id:
-                return execute_github_merge_pr_project_effect(
-                    task_manager=self.task_manager,
-                    task_id=project_task_id,
-                    actor_ref=f"agent:{self.agent_id}",
-                    args=validated_args,
-                    ctx=ctx,
-                    spec=spec,
-                    start_time=start_time,
-                    background_write_authorized=background_write_authorized,
+            if tool_name in {"github.dispatch_workflow", "github.create_release"}:
+                raise ToolRuntimeError(
+                    "POLICY_DENIED",
+                    "Release-only GitHub actions require an approved project.",
+                    {"reason_code": "github_release_project_required"},
                 )
             if _is_project_git_action(tool_name, validated_args):
                 return self._invoke_project_git_effect(

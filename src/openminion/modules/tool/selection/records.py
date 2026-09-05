@@ -22,6 +22,9 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GITHUB_OPEN_PR,
     MODEL_GITHUB_UPDATE_PR,
     MODEL_GITHUB_MERGE_PR,
+    MODEL_GITHUB_DISPATCH_WORKFLOW,
+    MODEL_GITHUB_LIST_WORKFLOW_RUNS,
+    MODEL_GITHUB_CREATE_RELEASE,
     MODEL_GITHUB_POST_PR_COMMENT,
     MODEL_GITHUB_POST_PR_REVIEW,
     MODEL_HOST_METRICS,
@@ -49,6 +52,8 @@ READ_ONLY_BLOCKED_CATEGORIES: set[str] = {
     MODEL_GITHUB_OPEN_PR,
     MODEL_GITHUB_UPDATE_PR,
     MODEL_GITHUB_MERGE_PR,
+    MODEL_GITHUB_DISPATCH_WORKFLOW,
+    MODEL_GITHUB_CREATE_RELEASE,
     MODEL_GITHUB_POST_PR_REVIEW,
     MODEL_GITHUB_POST_PR_COMMENT,
 }
@@ -95,6 +100,9 @@ PREFERRED_MODEL_TOOLS_BY_CATEGORY: dict[str, list[str]] = {
     "github.open_pr": [MODEL_GITHUB_OPEN_PR],
     "github.update_pr": [MODEL_GITHUB_UPDATE_PR],
     "github.merge_pr": [MODEL_GITHUB_MERGE_PR],
+    "github.dispatch_workflow": [MODEL_GITHUB_DISPATCH_WORKFLOW],
+    "github.list_workflow_runs": [MODEL_GITHUB_LIST_WORKFLOW_RUNS],
+    "github.create_release": [MODEL_GITHUB_CREATE_RELEASE],
     "github.post_pr_review": [MODEL_GITHUB_POST_PR_REVIEW],
     "github.post_pr_comment": [MODEL_GITHUB_POST_PR_COMMENT],
 }

@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -269,6 +270,108 @@ class GithubMergePrArgs(_PrArgsBase):
         return normalized
 
 
+def _normalize_workflow(value: Any) -> str:
+    token = _normalize_message(value, field="workflow")
+    if "/" in token or ".." in token:
+        raise ValueError("workflow must be a workflow file name or numeric ID")
+    return token
+
+
+class GithubDispatchWorkflowArgs(_RepoArgsBase):
+    workflow: str = Field(..., min_length=1, description="Allowlisted workflow file")
+    ref: str = Field(..., min_length=1, description="Allowlisted branch or tag ref")
+    request_id: str = Field(..., min_length=1, max_length=128)
+    target: str = Field(..., min_length=1, max_length=64)
+    inputs: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+    @field_validator("workflow", mode="before")
+    @classmethod
+    def _validate_workflow(cls, value: Any) -> str:
+        return _normalize_workflow(value)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _validate_ref(cls, value: Any) -> str:
+        return _normalize_branch(value, field="ref")
+
+    @field_validator("request_id", "target", mode="before")
+    @classmethod
+    def _validate_identifier(cls, value: Any, info: Any) -> str:
+        return _normalize_message(value, field=str(info.field_name or "value"))
+
+    @field_validator("inputs", mode="before")
+    @classmethod
+    def _validate_inputs(cls, value: Any) -> dict[str, str]:
+        if not isinstance(value, Mapping):
+            raise ValueError("inputs must be an object")
+        normalized = {
+            str(key).strip(): str(item).strip() for key, item in value.items()
+        }
+        if any(not key or not item for key, item in normalized.items()):
+            raise ValueError("workflow input keys and values cannot be empty")
+        return normalized
+
+
+class GithubListWorkflowRunsArgs(_RepoArgsBase):
+    workflow: str = Field(..., min_length=1, description="Workflow file or numeric ID")
+    ref: str = Field(..., min_length=1, description="Branch or tag ref")
+    request_id: str = Field(..., min_length=1, max_length=128)
+    event: str = Field(default="workflow_dispatch")
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("workflow", mode="before")
+    @classmethod
+    def _validate_workflow(cls, value: Any) -> str:
+        return _normalize_workflow(value)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _validate_ref(cls, value: Any) -> str:
+        return _normalize_branch(value, field="ref")
+
+    @field_validator("request_id", mode="before")
+    @classmethod
+    def _validate_request_id(cls, value: Any) -> str:
+        return _normalize_message(value, field="request_id")
+
+    @field_validator("event", mode="before")
+    @classmethod
+    def _validate_event(cls, value: Any) -> str:
+        token = str(value or "workflow_dispatch").strip()
+        if token != "workflow_dispatch":
+            raise ValueError("event must be workflow_dispatch")
+        return token
+
+
+class GithubCreateReleaseArgs(_RepoArgsBase):
+    tag: str = Field(..., min_length=1, description="Existing Git tag")
+    expected_commit_sha: str = Field(
+        ..., min_length=7, description="Expected dereferenced tag commit SHA"
+    )
+    title: str = Field(..., min_length=1)
+    notes: str = Field(..., min_length=1)
+    draft: bool
+    prerelease: bool
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def _validate_tag(cls, value: Any) -> str:
+        return _normalize_branch(value, field="tag")
+
+    @field_validator("expected_commit_sha", mode="before")
+    @classmethod
+    def _validate_commit_sha(cls, value: Any) -> str:
+        token = str(value or "").strip()
+        if not token or not all(ch in "0123456789abcdefABCDEF" for ch in token):
+            raise ValueError("expected_commit_sha must be a hex string")
+        return token.lower()
+
+    @field_validator("title", "notes", mode="before")
+    @classmethod
+    def _validate_release_text(cls, value: Any, info: Any) -> str:
+        return _normalize_message(value, field=str(info.field_name or "value"))
+
+
 class GithubPostPrReviewArgs(_PrArgsBase):
     event: str = Field(..., min_length=1, description="L3 allows COMMENT only.")
     body: str = Field(..., min_length=1, description="Review body")
@@ -307,6 +410,9 @@ __all__ = [
     "GithubOpenPrArgs",
     "GithubUpdatePrArgs",
     "GithubMergePrArgs",
+    "GithubDispatchWorkflowArgs",
+    "GithubListWorkflowRunsArgs",
+    "GithubCreateReleaseArgs",
     "GithubPostPrReviewArgs",
     "GithubPostPrCommentArgs",
 ]

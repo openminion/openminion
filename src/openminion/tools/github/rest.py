@@ -38,9 +38,11 @@ from .pull_requests import (
     require_merge_pr_ready,
     update_pr_result,
 )
+from .releases import GithubReleaseRestOperations
+from .workflows import GithubWorkflowRestOperations
 
 
-class GithubRestProvider:
+class GithubRestProvider(GithubWorkflowRestOperations, GithubReleaseRestOperations):
     """GitHub REST provider for factual reads and bounded smoke writes."""
 
     provider_id = DEFAULT_GITHUB_PROVIDER_ID

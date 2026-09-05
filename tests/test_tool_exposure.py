@@ -28,7 +28,13 @@ from openminion.modules.tool.exposure import (
     render_catalog_cards,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.contracts.model_ids import MODEL_GITHUB_MERGE_PR
+from openminion.modules.tool.selection.records import READ_ONLY_BLOCKED_CATEGORIES
+from openminion.modules.tool.contracts.model_ids import (
+    MODEL_GITHUB_CREATE_RELEASE,
+    MODEL_GITHUB_DISPATCH_WORKFLOW,
+    MODEL_GITHUB_LIST_WORKFLOW_RUNS,
+    MODEL_GITHUB_MERGE_PR,
+)
 from openminion.modules.llm.providers.base import ProviderToolCall
 
 
@@ -258,10 +264,22 @@ def test_canonical_tool_ids_have_complete_exposure_classification() -> None:
         DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET | PROFILE_GATED_MODEL_TOOL_IDS_SET
         == ALL_MODEL_TOOL_IDS_SET
     )
-    assert {"git.push", "git.tag", MODEL_GITHUB_MERGE_PR} <= (
+    release_only = {
+        MODEL_GITHUB_DISPATCH_WORKFLOW,
+        MODEL_GITHUB_LIST_WORKFLOW_RUNS,
+        MODEL_GITHUB_CREATE_RELEASE,
+    }
+    assert {"git.push", "git.tag", MODEL_GITHUB_MERGE_PR, *release_only} <= (
         PROFILE_GATED_MODEL_TOOL_IDS_SET
     )
-    assert MODEL_GITHUB_MERGE_PR not in DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET
+    assert not (
+        {MODEL_GITHUB_MERGE_PR, *release_only} & DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET
+    )
+    assert {
+        MODEL_GITHUB_DISPATCH_WORKFLOW,
+        MODEL_GITHUB_CREATE_RELEASE,
+    } <= READ_ONLY_BLOCKED_CATEGORIES
+    assert MODEL_GITHUB_LIST_WORKFLOW_RUNS not in READ_ONLY_BLOCKED_CATEGORIES
 
 
 def test_profile_registration_is_idempotent_but_rejects_conflicts() -> None:

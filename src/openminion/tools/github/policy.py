@@ -13,6 +13,10 @@ from .constants import (
     GITHUB_POLICY_DENIED_PATH_PREFIX,
     GITHUB_POLICY_DENIED_PR_HEAD,
     GITHUB_POLICY_DENIED_REPO,
+    GITHUB_POLICY_DENIED_WORKFLOW,
+    GITHUB_POLICY_DENIED_WORKFLOW_INPUT,
+    GITHUB_POLICY_DENIED_WORKFLOW_REF,
+    GITHUB_POLICY_DENIED_WORKFLOW_TARGET,
 )
 
 
@@ -153,6 +157,52 @@ def ensure_delete_allowed(
     )
 
 
+def ensure_workflow_allowed(
+    *,
+    workflow: str,
+    ref: str,
+    target: str,
+    inputs: dict[str, str],
+    config: GithubToolProfileConfig,
+) -> None:
+    ensure_workflow_ref_allowed(workflow=workflow, ref=ref, config=config)
+    if target not in config.allowed_workflow_targets:
+        _deny(
+            GITHUB_POLICY_DENIED_WORKFLOW_TARGET,
+            "GitHub workflow dispatch is not allowed for this target.",
+            target=target,
+            allowed_workflow_targets=list(config.allowed_workflow_targets),
+        )
+    for key, value in inputs.items():
+        if value in config.allowed_workflow_inputs.get(key, ()):
+            continue
+        _deny(
+            GITHUB_POLICY_DENIED_WORKFLOW_INPUT,
+            "GitHub workflow dispatch input is not allowlisted.",
+            input_key=key,
+            input_value=value,
+        )
+
+
+def ensure_workflow_ref_allowed(
+    *, workflow: str, ref: str, config: GithubToolProfileConfig
+) -> None:
+    if workflow not in config.allowed_workflows:
+        _deny(
+            GITHUB_POLICY_DENIED_WORKFLOW,
+            "GitHub workflow dispatch is not allowed for this workflow.",
+            workflow=workflow,
+            allowed_workflows=list(config.allowed_workflows),
+        )
+    if ref not in config.allowed_workflow_refs:
+        _deny(
+            GITHUB_POLICY_DENIED_WORKFLOW_REF,
+            "GitHub workflow dispatch is not allowed for this ref.",
+            ref=ref,
+            allowed_workflow_refs=list(config.allowed_workflow_refs),
+        )
+
+
 __all__ = [
     "ensure_repository_allowed",
     "ensure_branch_allowed",
@@ -162,4 +212,6 @@ __all__ = [
     "ensure_force_push_allowed",
     "ensure_merge_allowed",
     "ensure_delete_allowed",
+    "ensure_workflow_allowed",
+    "ensure_workflow_ref_allowed",
 ]

@@ -151,6 +151,9 @@ RUNTIME_GITHUB_COMMIT_FILES = "runtime.github.commit_files"
 RUNTIME_GITHUB_OPEN_PR = "runtime.github.open_pr"
 RUNTIME_GITHUB_UPDATE_PR = "runtime.github.update_pr"
 RUNTIME_GITHUB_MERGE_PR = "runtime.github.merge_pr"
+RUNTIME_GITHUB_DISPATCH_WORKFLOW = "runtime.github.dispatch_workflow"
+RUNTIME_GITHUB_LIST_WORKFLOW_RUNS = "runtime.github.list_workflow_runs"
+RUNTIME_GITHUB_CREATE_RELEASE = "runtime.github.create_release"
 RUNTIME_GITHUB_POST_PR_REVIEW = "runtime.github.post_pr_review"
 RUNTIME_GITHUB_POST_PR_COMMENT = "runtime.github.post_pr_comment"
 RUNTIME_TASK_DELEGATE = "runtime.task.delegate"
@@ -254,6 +257,9 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_GITHUB_OPEN_PR,
     RUNTIME_GITHUB_UPDATE_PR,
     RUNTIME_GITHUB_MERGE_PR,
+    RUNTIME_GITHUB_DISPATCH_WORKFLOW,
+    RUNTIME_GITHUB_LIST_WORKFLOW_RUNS,
+    RUNTIME_GITHUB_CREATE_RELEASE,
     RUNTIME_GITHUB_POST_PR_REVIEW,
     RUNTIME_GITHUB_POST_PR_COMMENT,
     RUNTIME_TASK_DELEGATE,

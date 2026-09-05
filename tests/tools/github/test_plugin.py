@@ -20,6 +20,9 @@ from openminion.tools.github.interfaces import (
     TOOL_GITHUB_OPEN_PR,
     TOOL_GITHUB_UPDATE_PR,
     TOOL_GITHUB_MERGE_PR,
+    TOOL_GITHUB_DISPATCH_WORKFLOW,
+    TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+    TOOL_GITHUB_CREATE_RELEASE,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
@@ -88,6 +91,30 @@ class _StubProvider:
         del ctx
         return self._record("merge_pr", args)
 
+    def dispatch_workflow(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("dispatch_workflow", args)
+
+    def read_dispatch_workflow(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> dict[str, Any]:
+        del ctx
+        return self._record("read_dispatch_workflow", args)
+
+    def list_workflow_runs(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> dict[str, Any]:
+        del ctx
+        return self._record("list_workflow_runs", args)
+
+    def read_release(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("read_release", args)
+
+    def create_release(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("create_release", args)
+
     def post_pr_review(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
         return self._record("post_pr_review", args)
@@ -116,17 +143,23 @@ def stub_provider() -> _StubProvider:
     provider_registry().reset()
 
 
-def test_register_adds_all_eleven_tools(registry_with_tools: ToolRegistry) -> None:
+def test_register_adds_all_tools(registry_with_tools: ToolRegistry) -> None:
     expected = {
         TOOL_GITHUB_LIST_PRS,
         TOOL_GITHUB_FETCH_PR,
         TOOL_GITHUB_FETCH_DIFF,
         TOOL_GITHUB_FETCH_COMMENTS,
         TOOL_GITHUB_FETCH_CHECKS,
+        TOOL_GITHUB_LIST_WORKFLOW_RUNS,
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
         TOOL_GITHUB_UPDATE_PR,
         TOOL_GITHUB_MERGE_PR,
+        TOOL_GITHUB_DISPATCH_WORKFLOW,
+        TOOL_GITHUB_CREATE_RELEASE,
+        TOOL_GITHUB_DISPATCH_WORKFLOW,
+        TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+        TOOL_GITHUB_CREATE_RELEASE,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     }
@@ -242,6 +275,74 @@ def test_merge_pr_dispatches_to_provider(
     result = spec.handler(args, ctx=None)
     assert result["data"]["method"] == "merge_pr"
     assert stub_provider.calls == [("merge_pr", args)]
+
+
+def test_release_tools_dispatch_to_provider(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    workflow_args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "workflow": "release.yml",
+        "ref": "v1.2.3-rc1",
+        "request_id": "release-123",
+        "target": "testpypi",
+        "inputs": {"request_id": "release-123", "target": "testpypi"},
+    }
+    registry_with_tools.list()[TOOL_GITHUB_DISPATCH_WORKFLOW].handler(
+        workflow_args, ctx=None
+    )
+    release_args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "tag": "v1.2.3-rc1",
+        "expected_commit_sha": "a" * 40,
+        "title": "v1.2.3-rc1",
+        "notes": "RC notes",
+        "draft": True,
+        "prerelease": True,
+    }
+    registry_with_tools.list()[TOOL_GITHUB_CREATE_RELEASE].handler(
+        release_args, ctx=None
+    )
+    assert stub_provider.calls == [
+        ("dispatch_workflow", workflow_args),
+        ("create_release", release_args),
+    ]
+
+
+def test_release_schemas_exclude_credentials_and_reject_invalid_values() -> None:
+    from openminion.tools.github.schemas import (
+        GithubCreateReleaseArgs,
+        GithubDispatchWorkflowArgs,
+    )
+
+    with pytest.raises(Exception):
+        GithubDispatchWorkflowArgs.model_validate(
+            {
+                "owner": "o",
+                "repo": "r",
+                "workflow": "../release.yml",
+                "ref": "main",
+                "request_id": "r1",
+                "target": "testpypi",
+                "inputs": {},
+            }
+        )
+    with pytest.raises(Exception):
+        GithubCreateReleaseArgs.model_validate(
+            {
+                "owner": "o",
+                "repo": "r",
+                "tag": "v1",
+                "expected_commit_sha": "bad-sha",
+                "title": "v1",
+                "notes": "notes",
+                "draft": True,
+                "prerelease": True,
+                "token": "secret",
+            }
+        )
 
 
 def test_no_provider_raises_dependency_unavailable(
