@@ -55,6 +55,46 @@ def test_canonical_edit_tool_uses_diff_body_in_both_renderers() -> None:
     assert "-old" in rich and "+new" in rich
 
 
+def test_diff_headers_preserve_shared_runtime_facts() -> None:
+    event = ToolEvent(
+        tool_name="file.edit",
+        model_tool_name="file.edit",
+        runtime_tool_name="workspace.patch.apply",
+        runtime_fallback_used=True,
+        runtime_fallback_chain=["sandbox.replace.apply"],
+        args={"path": "example.py"},
+        content="@@ -0,0 +1 @@\n+new",
+        exit_code=0,
+    )
+
+    terminal = _terminal_text(event)
+    rich = ToolBlockWidget(event, pending=False)._header_text()
+
+    for fact in ("patch", "replace"):
+        assert fact in terminal
+        assert fact in rich
+
+
+def test_full_tool_content_is_authoritative_in_both_renderers() -> None:
+    event = ToolEvent(
+        tool_name="web.search",
+        args={"query": "release notes"},
+        content="abbreviated",
+        full_content="authoritative full result",
+        exit_code=0,
+    )
+
+    terminal = _terminal_text(event)
+    rich_widget = ToolBlockWidget(event, pending=False)
+    rich_widget.collapsed = False
+    rich = rich_widget._body_renderable().plain
+
+    assert "authoritative full result" in terminal
+    assert "authoritative full result" in rich
+    assert "abbreviated" not in terminal
+    assert "abbreviated" not in rich
+
+
 def test_plain_write_result_remains_plain_in_both_renderers() -> None:
     event = ToolEvent(
         tool_name="file.write",

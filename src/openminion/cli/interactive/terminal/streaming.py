@@ -439,7 +439,7 @@ def _render_diff_block(
 ) -> Group:
     title_row = _tool_title_row(
         event,
-        include_event_markers=False,
+        include_event_markers=True,
         public_title=public_title,
     )
     body_text = (event.full_content or event.content or "").rstrip()

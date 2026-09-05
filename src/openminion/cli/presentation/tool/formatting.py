@@ -63,9 +63,7 @@ def is_diff_result(tool_name: str, content: str) -> bool:
     if not any(_HUNK_HEADER_RE.match(line) for line in lines):
         return False
     content_lines = [line for line in lines if not line.startswith(("+++", "---"))]
-    return any(line.startswith("+") for line in content_lines) and any(
-        line.startswith("-") for line in content_lines
-    )
+    return any(line.startswith(("+", "-")) for line in content_lines)
 
 
 __all__ = (

@@ -323,7 +323,8 @@ class ToolBlockWidget(Widget):
         text = Text()
         if url:
             text.append(f"{url}\n", style="bold")
-        lines = str(self._tool_event.content or "").splitlines()
+        content = self._tool_event.full_content or self._tool_event.content
+        lines = str(content or "").splitlines()
         self._append_capped_lines(text, lines, empty="(empty response)")
         return text
 
@@ -335,7 +336,8 @@ class ToolBlockWidget(Widget):
             except (TypeError, ValueError):
                 text.append(str(self._tool_event.args))
             text.append("\n")
-        lines = str(self._tool_event.content or "").splitlines()
+        content = self._tool_event.full_content or self._tool_event.content
+        lines = str(content or "").splitlines()
         self._append_capped_lines(text, lines, empty="(no content)")
         return text
 

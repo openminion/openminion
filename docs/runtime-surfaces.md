@@ -88,7 +88,7 @@ Use:
 1. `openminion graph status`
 2. `openminion graph view --current`
 3. `openminion graph view --brain third --provider <name>`
-4. `/graph` inside Focus or the terminal chat UI for copyable viewer commands
+4. `/graph` inside either interactive renderer for copyable viewer commands
 
 Best for:
 

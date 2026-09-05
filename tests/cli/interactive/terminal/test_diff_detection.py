@@ -90,22 +90,22 @@ def test_hunk_header_alone_not_detected() -> None:
     assert _is_diff(body) is False
 
 
-def test_only_plus_no_minus_not_detected() -> None:
+def test_add_only_diff_detected() -> None:
     body = """@@ -1,3 +1,5 @@
  ctx
 +added
 +also added
 """
-    assert _is_diff(body) is False
+    assert _is_diff(body) is True
 
 
-def test_only_minus_no_plus_not_detected() -> None:
+def test_delete_only_diff_detected() -> None:
     body = """@@ -1,5 +1,3 @@
  ctx
 -removed
 -also removed
 """
-    assert _is_diff(body) is False
+    assert _is_diff(body) is True
 
 
 def test_file_headers_only_not_detected() -> None:

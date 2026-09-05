@@ -62,3 +62,11 @@ def test_presentation_submodule_and_formatter_reexports_remain_compatible() -> N
     )
     assert blocks.tool_call_body is formatting.tool_call_body
     assert blocks.tool_context_hint is formatting.tool_context_hint
+
+
+def test_interactive_tool_block_module_remains_compatible() -> None:
+    legacy = importlib.import_module("openminion.cli.interactive.widgets.tool_block")
+
+    assert legacy.ToolBlockWidget is presentation.ToolBlockWidget
+    assert legacy.tool_call_body is presentation.tool_call_body
+    assert legacy.tool_context_hint is presentation.tool_context_hint
