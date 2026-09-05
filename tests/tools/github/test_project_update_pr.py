@@ -197,6 +197,10 @@ def _scope(*, head_sha: str = _HEAD_SHA) -> str:
     )
 
 
+def _effect_id() -> str:
+    return f"effect:github.update_pr:{_scope()}"
+
+
 def _issue_grant(manager: TaskManager, *, scope: str | None = None) -> None:
     issued = now_ms()
     issue_project_permission_grant(
@@ -229,11 +233,11 @@ def _adapter(
     )
 
 
-def _command() -> dict[str, Any]:
+def _command(*, idempotency_key: str = "update-pr-1") -> dict[str, Any]:
     return {
         "tool_name": "github.update_pr",
         "args": dict(_ARGS),
-        "idempotency_key": "update-pr-1",
+        "idempotency_key": idempotency_key,
         "meta": {"orchestration": {"task_backed_task_id": "task-1"}},
     }
 
@@ -253,7 +257,7 @@ def test_project_update_pr_persists_effect_after_consuming_exact_grant(
         effect = load_project_effect_record(
             manager,
             task_id="task-1",
-            effect_id="effect:github.update_pr:update-pr-1",
+            effect_id=_effect_id(),
         )
         policy = load_project_policy_state(manager, task_id="task-1")
         observed.update(
@@ -281,7 +285,7 @@ def test_project_update_pr_persists_effect_after_consuming_exact_grant(
     effect = load_project_effect_record(
         manager,
         task_id="task-1",
-        effect_id="effect:github.update_pr:update-pr-1",
+        effect_id=_effect_id(),
     )
     assert effect is not None and effect.status == ProjectEffectStatus.SUCCEEDED
     assert effect.result_ref == "github:pull:openminion/test-repo-for-agent#17"
@@ -305,13 +309,20 @@ def test_project_update_pr_persists_effect_after_consuming_exact_grant(
         "project_task_id": "task-1",
         "project_run_id": checkpoint.project_run.project_run_id,
         "project_permission_grant_id": "grant-1",
-        "project_effect_id": "effect:github.update_pr:update-pr-1",
+        "project_effect_id": _effect_id(),
         "project_effect_status": "succeeded",
         "repository_action_scope": _scope(),
         "repository_head_sha": _HEAD_SHA,
         "repository_pr_number": 17,
         "project_effect_reconciled": False,
     }
+    replayed = _adapter(tmp_path, manager).execute(
+        command=_command(idempotency_key="new-command-id"),
+        session_id="session-1",
+        trace_id="turn-2",
+    )
+    assert replayed["outputs"]["data"]["reconciled"] is True
+    assert provider.mutation_calls == 1
 
 
 def test_project_update_pr_denies_without_matching_grant(
@@ -358,7 +369,7 @@ def test_project_update_pr_rejects_approval_for_stale_head(
     assert provider.mutation_calls == 0
 
 
-def test_uncertain_update_reconciles_after_restart_without_repeat(
+def test_uncertain_update_reconciles_after_restart_with_new_command_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
@@ -368,16 +379,16 @@ def test_uncertain_update_reconciles_after_restart_without_repeat(
     provider = _ProjectGithubProvider()
     provider.return_uncertain = True
     register_provider(provider)
-    command = _command()
+    first_command = _command(idempotency_key="call-A")
     first_telemetry = _Telemetry()
 
     first = _adapter(tmp_path, manager, telemetry=first_telemetry).execute(
-        command=command, session_id="session-1", trace_id="turn-1"
+        command=first_command, session_id="session-1", trace_id="turn-1"
     )
 
     assert first["error"]["code"] == "UPSTREAM_ERROR"
     assert first["error"]["details"]["provider_error_code"] == "REMOTE_ERROR"
-    effect_id = "effect:github.update_pr:update-pr-1"
+    effect_id = _effect_id()
     effect = load_project_effect_record(manager, task_id="task-1", effect_id=effect_id)
     assert effect is not None and effect.status == ProjectEffectStatus.STARTED
     assert [item["operation"] for item in first_telemetry.operations] == [
@@ -397,12 +408,17 @@ def test_uncertain_update_reconciles_after_restart_without_repeat(
     provider.title = str(_ARGS["title"])
     second_telemetry = _Telemetry()
     second = _adapter(tmp_path, restarted, telemetry=second_telemetry).execute(
-        command=command, session_id="session-1", trace_id="turn-2"
+        command=_command(idempotency_key="call-B"),
+        session_id="session-1",
+        trace_id="turn-2",
     )
 
     assert second["status"] == "success"
     assert second["outputs"]["data"]["reconciled"] is True
     assert provider.mutation_calls == 1
+    assert load_project_effect_record(
+        restarted, task_id="task-1", effect_id="effect:github.update_pr:call-B"
+    ) is None
     effect = load_project_effect_record(
         restarted, task_id="task-1", effect_id=effect_id
     )
@@ -497,7 +513,7 @@ def test_known_update_error_is_public_and_terminal(
     effect = load_project_effect_record(
         manager,
         task_id="task-1",
-        effect_id="effect:github.update_pr:update-pr-1",
+        effect_id=_effect_id(),
     )
     assert effect is not None and effect.status == ProjectEffectStatus.FAILED
 
@@ -517,7 +533,7 @@ def test_malformed_success_does_not_create_a_success_receipt(
         command=_command(), session_id="session-1", trace_id="turn-1"
     )
 
-    effect_id = "effect:github.update_pr:update-pr-1"
+    effect_id = _effect_id()
     assert result["error"]["code"] == "INVALID_RESPONSE"
     assert result["error"]["details"]["reason_code"] == (
         "github_update_pr_result_invalid"

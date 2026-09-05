@@ -87,7 +87,6 @@ class GithubUpdatePrProjectEffect:
 def _update_pr_identity(
     args: Mapping[str, Any],
     ctx: Any,
-    idempotency_key: str,
 ) -> tuple[Mapping[str, Any], str, str, str, tuple[str, ...]]:
     owner = str(args.get("owner") or "")
     repo = str(args.get("repo") or "")
@@ -109,7 +108,7 @@ def _update_pr_identity(
         title=args.get("title"),
         body=args.get("body"),
     )
-    action_key = idempotency_key.strip() or scope
+    action_key = scope
     ctx.github_update_pr_preflight = preflight
     return (
         preflight,
@@ -128,7 +127,6 @@ def _begin_github_update_pr_project_effect(
     *,
     task_manager: Any,
     task_id: str,
-    idempotency_key: str,
     actor_ref: str,
     args: Mapping[str, Any],
     ctx: Any,
@@ -136,7 +134,7 @@ def _begin_github_update_pr_project_effect(
     checkpoint = _require_project_checkpoint(task_manager, task_id)
     number = int(args.get("number") or 0)
     preflight, scope, action_key, effect_id, preconditions = _update_pr_identity(
-        args, ctx, idempotency_key
+        args, ctx
     )
     data = _update_pr_data(preflight)
     head_sha = str(data.get("head_sha") or "")
@@ -209,7 +207,6 @@ def execute_github_update_pr_project_effect(
     *,
     task_manager: Any | None,
     task_id: str,
-    idempotency_key: str,
     actor_ref: str,
     args: Mapping[str, Any],
     ctx: Any,
@@ -227,7 +224,6 @@ def execute_github_update_pr_project_effect(
     started = _begin_github_update_pr_project_effect(
         task_manager=task_manager,
         task_id=task_id,
-        idempotency_key=idempotency_key,
         actor_ref=actor_ref,
         args=args,
         ctx=ctx,

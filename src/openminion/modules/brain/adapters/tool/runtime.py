@@ -670,7 +670,6 @@ class ToolAdapter:
                 return execute_github_update_pr_project_effect(
                     task_manager=self.task_manager,
                     task_id=project_task_id,
-                    idempotency_key=str(command.get("idempotency_key") or ""),
                     actor_ref=f"agent:{self.agent_id}",
                     args=validated_args,
                     ctx=ctx,
