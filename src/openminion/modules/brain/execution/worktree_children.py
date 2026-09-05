@@ -10,12 +10,15 @@ from contextlib import contextmanager
 import copy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
 from openminion.modules.brain.execution.child_tasks import SubtaskSpec
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.loop.rollouts import WorktreeIsolator
+from openminion.modules.brain.loop.strategies.coding.verification import (
+    CODING_VERIFIER_VERDICT_COMPLETE,
+)
 from openminion.modules.brain.schemas import WorkingState
 
 _MODULE_STATE_KEY = "worktree_children"
@@ -31,6 +34,23 @@ class ChildWorktreeLease:
 
 
 _MISSING = object()
+
+
+def child_verifier_evidence(result: Any) -> dict[str, Any]:
+    """Return verification evidence issued by the existing coding owner."""
+    outputs = getattr(getattr(result, "action_result", None), "outputs", None)
+    if not isinstance(outputs, dict):
+        return {}
+    verdict = str(outputs.get("coding.verifier_verdict") or "").strip()
+    goal_id = str(outputs.get("coding.verifier_goal_id") or "").strip()
+    result_count = int(outputs.get("coding.verifier_result_count") or 0)
+    if (
+        verdict != CODING_VERIFIER_VERDICT_COMPLETE
+        or not goal_id
+        or result_count < 1
+    ):
+        return {}
+    return {"passed": True, "verifier_refs": [f"coding-verifier:{goal_id}"]}
 
 
 def _module_bucket(state: WorkingState) -> dict[str, Any]:
@@ -106,6 +126,57 @@ def _sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
+def save_child_worktree_record(
+    artifactctl: Any,
+    record: dict[str, Any],
+) -> str:
+    """Persist the current child record through the existing artifact owner."""
+    owner_id = str(record.get("artifact", {}).get("owner_id") or "").strip()
+    if not owner_id:
+        raise ValueError("child artifact record requires its artifact owner")
+    record_alias = f"a2a-child:{owner_id}"
+    record["record_alias"] = record_alias
+    ref = artifactctl.ingest_bytes(
+        json.dumps(record, ensure_ascii=True, sort_keys=True).encode("utf-8"),
+        mime="application/json",
+        original_name="child-worktree-record.json",
+        label=f"maer-child-record:{record.get('subtask_id', '')}",
+        meta={
+            "owner_type": "a2a",
+            "owner_id": owner_id,
+            "target_digest": str(record.get("target_digest") or ""),
+            "integration_status": str(record.get("integration_status") or ""),
+        },
+        session_id=str(record.get("session_id") or "") or None,
+        trace_id=str(record.get("trace_id") or "") or None,
+        agent_id=str(record.get("agent_id") or "") or None,
+    )
+    artifactctl.ref_add("a2a", owner_id, ref.ref)
+    artifactctl.alias_set(record_alias, ref.ref)
+    return record_alias
+
+
+def load_child_worktree_record(
+    artifactctl: Any,
+    record_alias: str,
+) -> dict[str, Any]:
+    """Load the latest owner-issued child record for review or disposition."""
+    alias = str(record_alias or "").strip()
+    ref = artifactctl.alias_resolve(alias)
+    if ref is None:
+        raise ValueError("child artifact record was not found")
+    payload = json.loads(artifactctl.read_bytes(ref.ref))
+    if not isinstance(payload, dict):
+        raise ValueError("child artifact record is invalid")
+    owner_id = str(payload.get("artifact", {}).get("owner_id") or "")
+    if (
+        alias != f"a2a-child:{owner_id}"
+        or payload.get("record_alias") != alias
+    ):
+        raise ValueError("child artifact record is invalid")
+    return cast(dict[str, Any], payload)
+
+
 def _artifactctl_from_context(ctx: ExecutionContext) -> tuple[Any | None, bool]:
     runner = runner_from_context(ctx)
     candidates = [
@@ -162,14 +233,12 @@ def _create_child_artifacts(
             child_revision = _stage_child_commit(lease)
             if not child_revision:
                 return {"status": "no_commit"}, _diff_text(lease.worktree)
-            diff = _revision_diff(
-                lease.worktree,
-                lease.base_revision,
-                child_revision,
-            )
+            diff = _revision_diff(lease.worktree, lease.base_revision, child_revision)
             if not diff:
                 return {"status": "diff_failed"}, ""
             target_digest = _sha256_text(diff)
+            if validation.get("passed") is True:
+                validation["target_digest"] = target_digest
             bundle_path = scratch / "child.bundle"
             bundle = _git(
                 lease.worktree,
@@ -369,8 +438,12 @@ def finalize_child_worktree(
     else:
         artifact_record, diff = {"status": "not_applicable"}, ""
     child_record: dict[str, Any] = {
+        "session_id": ctx.state.session_id,
+        "trace_id": ctx.state.trace_id,
+        "agent_id": ctx.state.agent_id,
         "subtask_id": lease.subtask_id,
         "base_revision": lease.base_revision,
+        "repository": str(lease.isolator.parent_root),
         "workspace": str(lease.worktree),
         "touched_paths": touched_paths,
         "diff": diff,
@@ -389,6 +462,14 @@ def finalize_child_worktree(
     if not touched_paths or artifact_record.get("status") == "stored":
         lease.isolator.release()
     child_record["cleaned_up"] = not lease.worktree.exists()
+    if artifact_record.get("status") == "stored":
+        artifactctl, should_close = _artifactctl_from_context(ctx)
+        if artifactctl is not None:
+            try:
+                save_child_worktree_record(artifactctl, child_record)
+            finally:
+                if should_close:
+                    artifactctl.close()
     bucket = _module_bucket(ctx.state)
     bucket["children"].append(child_record)
     _record_conflicts(bucket)
@@ -406,6 +487,8 @@ def accept_child_worktree_artifact(
     artifact = record.get("artifact")
     if not isinstance(artifact, dict) or artifact.get("status") != "stored":
         return {"ok": False, "status": "missing_artifact"}
+    if record.get("integration_status") != "pending_parent_review":
+        return {"ok": False, "status": "artifact_already_disposed"}
     target_digest = str(record.get("target_digest") or "").strip()
     if not target_digest or target_digest != artifact.get("target_digest"):
         return {"ok": False, "status": "target_digest_mismatch"}
@@ -479,6 +562,8 @@ def reject_child_worktree_artifact(
     del artifactctl
     artifact = record.get("artifact")
     target_digest = str(record.get("target_digest") or "").strip()
+    if record.get("integration_status") != "pending_parent_review":
+        return {"ok": False, "status": "artifact_already_disposed"}
     if (
         not isinstance(artifact, dict)
         or artifact.get("status") != "stored"
@@ -499,6 +584,9 @@ __all__ = [
     "accept_child_worktree_artifact",
     "allocate_child_worktree",
     "bind_runner_tool_workspace",
+    "child_verifier_evidence",
     "finalize_child_worktree",
+    "load_child_worktree_record",
     "reject_child_worktree_artifact",
+    "save_child_worktree_record",
 ]

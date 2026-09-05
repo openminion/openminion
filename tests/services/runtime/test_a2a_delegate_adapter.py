@@ -244,11 +244,19 @@ def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
 
 def test_fixed_readonly_reviewer_rejects_mismatched_input_digest() -> None:
     call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS})
-
-    result = A2aRuntimeDelegateAdapter(
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
         a2a_call=call,
         parent_agent_id="parent",
-    ).review_readonly(
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
         reviewer_agent_id="readonly-reviewer",
         objective="review app.py",
         criteria=["report findings only"],
@@ -264,6 +272,12 @@ def test_fixed_readonly_reviewer_rejects_mismatched_input_digest() -> None:
     assert result.ok is False
     assert result.error_code == "A2A_REVIEW_TARGET_MISMATCH"
     assert call.command is None
+    assert [event for event, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    assert telemetry.events[-1][1]["review_outcome"] == "denied"
+    assert telemetry.events[-1][1]["reason"] == "target_mismatch"
 
 
 @pytest.mark.parametrize(
@@ -316,10 +330,19 @@ def test_fixed_readonly_reviewer_rejects_invalid_result(
             "outputs": outputs,
         }
     )
-    result = A2aRuntimeDelegateAdapter(
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
         a2a_call=call,
         parent_agent_id="parent",
-    ).review_readonly(
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
         reviewer_agent_id="readonly-reviewer",
         objective="review app.py",
         criteria=["report findings only"],
@@ -335,6 +358,12 @@ def test_fixed_readonly_reviewer_rejects_invalid_result(
     assert result.ok is False
     assert result.error_code == "A2A_REVIEW_INVALID_RESULT"
     assert result.target_agent_id == "readonly-reviewer"
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    assert telemetry.events[-1][1]["review_outcome"] == "denied"
+    assert telemetry.events[-1][1]["reason"] == "invalid_result"
 
 
 def test_command_shape_carries_model_named_target_and_instruction() -> None:
