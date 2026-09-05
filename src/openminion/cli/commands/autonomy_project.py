@@ -30,6 +30,7 @@ from openminion.modules.task.project import (
     save_project_run_checkpoint,
     validate_project_verifier,
 )
+from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.turn import project_turn_result_from_response
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
@@ -141,6 +142,8 @@ def initialize_project(
     manager: TaskManager,
     store: AutonomyRunStore,
     run: AutonomyRun,
+    *,
+    workspace_boundary_ref: str | None = None,
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -168,6 +171,11 @@ def initialize_project(
         payload={
             "decision": ProjectCycleDecision.CONTINUE.value,
             "replan_count": 0,
+            **project_checkpoints.initial_repository_lifecycle_payload(
+                run,
+                project_run,
+                workspace_boundary_ref=workspace_boundary_ref,
+            ),
         },
     )
     store.save(run.model_copy(update={"checkpoint_id": checkpoint_id}))

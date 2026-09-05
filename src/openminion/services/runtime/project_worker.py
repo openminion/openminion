@@ -220,6 +220,10 @@ class ProjectWorker:
                 triggering_cron_job_id=triggering_cron_job_id,
             )
             turn_error = evaluation.turn.error
+            plan_payload = project_cp.plan_checkpoint_payload(
+                checkpoint,
+                evaluation.turn,
+            )
             committed = commit_project_run_checkpoint(
                 self._task_manager,
                 updated_project,
@@ -238,7 +242,14 @@ class ProjectWorker:
                     "condition": evaluation.turn.condition.value,
                     "decision_reason": evaluation.reason,
                     "replan_count": evaluation.replan_count,
-                    **project_cp.plan_checkpoint_payload(checkpoint, evaluation.turn),
+                    **plan_payload,
+                    **project_cp.advance_repository_lifecycle_payload(
+                        checkpoint,
+                        updated_project,
+                        turn=evaluation.turn,
+                        verification_count=len(evaluation.verification),
+                        next_action=evaluation.decision.value,
+                    ),
                     **({"error": turn_error.to_dict()} if turn_error else {}),
                 },
             )

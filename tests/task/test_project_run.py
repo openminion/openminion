@@ -44,6 +44,9 @@ from openminion.modules.task import (
     save_project_policy_state,
     save_project_run_checkpoint,
 )
+from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
+from openminion.modules.task.project import checkpoints as project_checkpoints
+from openminion.modules.task.project.turn import ProjectTurnResult
 
 
 def _autonomy_run():
@@ -215,19 +218,70 @@ def test_project_run_checkpoint_survives_lifecycle_manager_restart(tmp_path) -> 
         agent_id="agent-1",
         task_id="task-1",
     )
+    autonomy_run = _autonomy_run()
+    project_run = build_project_run_projection(
+        autonomy_run,
+        objective_ledger_ref="artifact:objective.json",
+        evidence_ledger_ref="artifact:evidence.jsonl",
+        resume_packet_ref="artifact:resume.json",
+        operator_decision_log_ref="artifact:operator-decisions.jsonl",
+        capability_plan_ref="artifact:capabilities.json",
+        metrics_summary_ref="artifact:metrics.json",
+    )
+    initial = save_project_run_checkpoint(
+        manager,
+        project_run,
+        checkpoint_id="checkpoint-1",
+        payload=project_checkpoints.initial_repository_lifecycle_payload(
+            autonomy_run,
+            project_run,
+            workspace_boundary_ref="local:/",
+        ),
+    )
+    plan = TaskPlan(
+        plan_id="plan-1",
+        objective=autonomy_run.goal_text,
+        criterion_ids=["criterion-tests"],
+        steps=[{"step_id": "build", "description": "Build it"}],
+    )
+    revision = TaskPlanRevision(
+        plan_id="plan-1",
+        revision_id="revision-1",
+        criterion_ids=["criterion-tests"],
+        verifier_refs=("verification:failed",),
+        revised_steps=[{"step_id": "build", "description": "Repair it"}],
+    )
+    turn = ProjectTurnResult(
+        summary="repair required",
+        evidence_refs=("receipt:git-status",),
+        effect_refs=("effect:file-write",),
+        tool_call_count=2,
+        task_plan=plan,
+        task_plan_revision=revision,
+    )
+    advanced_run = project_run.model_copy(
+        update={
+            "phase": AutonomyRunPhase.RECOVER,
+            "committed_cycle_count": 1,
+            "progress_refs": turn.evidence_refs,
+            "effect_refs": turn.effect_refs,
+            "verifier_refs": ("verification:cycle-1:failed",),
+        }
+    )
     checkpoint = save_project_run_checkpoint(
         manager,
-        build_project_run_projection(
-            _autonomy_run(),
-            objective_ledger_ref="artifact:objective.json",
-            evidence_ledger_ref="artifact:evidence.jsonl",
-            resume_packet_ref="artifact:resume.json",
-            operator_decision_log_ref="artifact:operator-decisions.jsonl",
-            capability_plan_ref="artifact:capabilities.json",
-            metrics_summary_ref="artifact:metrics.json",
-        ),
+        advanced_run,
         checkpoint_id="checkpoint-2",
-        payload={"milestone": "contracts"},
+        payload={
+            **project_checkpoints.plan_checkpoint_payload(initial, turn),
+            **project_checkpoints.advance_repository_lifecycle_payload(
+                initial,
+                advanced_run,
+                turn=turn,
+                verification_count=1,
+                next_action=ProjectCycleDecision.CONTINUE.value,
+            ),
+        },
     )
 
     restarted_manager = TaskManager.for_lifecycle_db(db_path=db_path)
@@ -244,9 +298,70 @@ def test_project_run_checkpoint_survives_lifecycle_manager_restart(tmp_path) -> 
     assert loaded == checkpoint
     assert resumed.project_run_id == checkpoint.project_run.project_run_id
     assert resumed.last_checkpoint_id == "checkpoint-2"
+    assert loaded is not None
+    lifecycle = loaded.payload["repository_lifecycle"]
+    assert set(lifecycle) == {
+        project_run.objective_ledger_ref,
+        project_run.evidence_ledger_ref,
+        project_run.resume_packet_ref,
+        project_run.operator_decision_log_ref,
+        project_run.capability_plan_ref,
+        project_run.metrics_summary_ref,
+    }
+    assert lifecycle[project_run.objective_ledger_ref]["source_revisions"] == {
+        "execution_repository": "abc"
+    }
+    assert lifecycle[project_run.evidence_ledger_ref]["receipts"] == [
+        "receipt:git-status",
+        "effect:file-write",
+        "verification:cycle-1:failed",
+    ]
+    assert lifecycle[project_run.resume_packet_ref] == {
+        "workspace_boundary": "local:/",
+        "execution_repository": project_run.workspace_ref,
+        "task_id": "task-1",
+        "active_tracker_row": None,
+        "current_revisions": {
+            "execution_repository": "abc",
+            "task_plan": "revision-1",
+        },
+        "current_phase": "recover",
+        "next_action": "continue",
+    }
+    assert loaded.payload["task_plan_revision"]["revision_id"] == "revision-1"
+    assert lifecycle[project_run.metrics_summary_ref] == {
+        "cycle_count": 1,
+        "tool_call_count": 2,
+        "verification_count": 1,
+    }
     assert task is not None
     assert task.metadata["resume_count"] == 1
     assert task.metadata["last_resume_checkpoint_id"] == "checkpoint-2"
+
+
+def test_repository_lifecycle_payload_bounds_and_redacts_text() -> None:
+    autonomy_run = _autonomy_run().model_copy(
+        update={"goal_text": f"token=super-secret {'x' * 5_000}"}
+    )
+    project_run = build_project_run_projection(
+        autonomy_run,
+        objective_ledger_ref="artifact:objective.json",
+        evidence_ledger_ref="artifact:evidence.jsonl",
+        resume_packet_ref="artifact:resume.json",
+        operator_decision_log_ref="artifact:operator-decisions.jsonl",
+        capability_plan_ref="artifact:capabilities.json",
+        metrics_summary_ref="artifact:metrics.json",
+    )
+
+    lifecycle = project_checkpoints.initial_repository_lifecycle_payload(
+        autonomy_run,
+        project_run,
+    )["repository_lifecycle"]
+    objective = lifecycle[project_run.objective_ledger_ref]["objective"]
+
+    assert len(objective) == 4_000
+    assert "super-secret" not in objective
+    assert "[REDACTED]" in objective
 
 
 def test_project_run_rejects_duplicate_open_worker(tmp_path) -> None:

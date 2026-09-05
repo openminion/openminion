@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.task.autonomy import AutonomyRun, now_ms
 from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
 from openminion.modules.task.runtime.lifecycle import (
@@ -25,6 +26,136 @@ _OPEN_PROJECT_TASK_STATES = {
     TaskLifecycleState.ACTIVE,
     TaskLifecycleState.PAUSED,
 }
+_REPOSITORY_LIFECYCLE_PAYLOAD_KEY = "repository_lifecycle"
+_REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS = 4_000
+_REPOSITORY_LIFECYCLE_RECEIPT_LIMIT = 100
+
+
+def _bounded_repository_text(value: object) -> str:
+    redacted, _ = redact_sensitive_text(str(value or "").strip())
+    return redacted[:_REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS]
+
+
+def _workspace_revision(workspace_ref: str) -> str:
+    _, _, fragment = workspace_ref.partition("#")
+    for field in fragment.split(";"):
+        key, _, value = field.partition("=")
+        if key == "commit" and value:
+            return _bounded_repository_text(value)
+    return "unknown"
+
+
+def initial_repository_lifecycle_payload(
+    autonomy_run: AutonomyRun,
+    project_run: ProjectRun,
+    *,
+    workspace_boundary_ref: str | None = None,
+) -> dict[str, object]:
+    repository_ref = _bounded_repository_text(project_run.workspace_ref)
+    repository_revision = _workspace_revision(repository_ref)
+    return {
+        _REPOSITORY_LIFECYCLE_PAYLOAD_KEY: {
+            project_run.objective_ledger_ref: {
+                "objective": _bounded_repository_text(autonomy_run.goal_text),
+                "constraints": [],
+                "approval": None,
+                "spec_tracker_paths": [],
+                "source_revisions": {
+                    "execution_repository": repository_revision,
+                },
+            },
+            project_run.evidence_ledger_ref: {"receipts": []},
+            project_run.resume_packet_ref: {
+                "workspace_boundary": _bounded_repository_text(
+                    workspace_boundary_ref or project_run.workspace_ref
+                ),
+                "execution_repository": repository_ref,
+                "task_id": _bounded_repository_text(project_run.task_id),
+                "active_tracker_row": None,
+                "current_revisions": {
+                    "execution_repository": repository_revision,
+                },
+                "current_phase": project_run.phase.value,
+                "next_action": ProjectCycleDecision.CONTINUE.value,
+            },
+            project_run.operator_decision_log_ref: {"decisions": []},
+            project_run.capability_plan_ref: {
+                "required_model_tool_ids": [],
+                "available_model_tool_ids": [],
+            },
+            project_run.metrics_summary_ref: {
+                "cycle_count": 0,
+                "tool_call_count": 0,
+                "verification_count": 0,
+            },
+        }
+    }
+
+
+def advance_repository_lifecycle_payload(
+    checkpoint: ProjectCheckpoint,
+    project_run: ProjectRun,
+    *,
+    turn: ProjectTurnResult,
+    verification_count: int,
+    next_action: str,
+) -> dict[str, object]:
+    raw_lifecycle = checkpoint.payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    if not isinstance(raw_lifecycle, dict):
+        return {}
+
+    lifecycle = dict(raw_lifecycle)
+    evidence = dict(
+        cast(dict[str, object], lifecycle[project_run.evidence_ledger_ref])
+    )
+    existing_receipts = cast(list[object], evidence["receipts"])
+    receipt_refs = (
+        *existing_receipts,
+        *project_run.progress_refs,
+        *project_run.effect_refs,
+        *project_run.verifier_refs,
+    )
+    evidence["receipts"] = list(
+        dict.fromkeys(
+            _bounded_repository_text(reference)
+            for reference in receipt_refs
+            if str(reference).strip()
+        )
+    )[-_REPOSITORY_LIFECYCLE_RECEIPT_LIMIT:]
+
+    resume = dict(cast(dict[str, object], lifecycle[project_run.resume_packet_ref]))
+    current_revisions = dict(
+        cast(dict[str, object], resume["current_revisions"])
+    )
+    if turn.task_plan_revision is not None:
+        current_revisions["task_plan"] = _bounded_repository_text(
+            turn.task_plan_revision.revision_id
+        )
+    resume.update(
+        {
+            "current_revisions": current_revisions,
+            "current_phase": project_run.phase.value,
+            "next_action": _bounded_repository_text(next_action),
+        }
+    )
+
+    metrics = dict(cast(dict[str, object], lifecycle[project_run.metrics_summary_ref]))
+    metrics.update(
+        {
+            "cycle_count": project_run.committed_cycle_count,
+            "tool_call_count": int(metrics["tool_call_count"]) + turn.tool_call_count,
+            "verification_count": int(metrics["verification_count"])
+            + verification_count,
+        }
+    )
+    lifecycle.update(
+        {
+            project_run.evidence_ledger_ref: evidence,
+            project_run.resume_packet_ref: resume,
+            project_run.metrics_summary_ref: metrics,
+        }
+    )
+    return {_REPOSITORY_LIFECYCLE_PAYLOAD_KEY: lifecycle}
 
 
 def plan_checkpoint_payload(
@@ -365,9 +496,11 @@ def replay_project_cycles(
 
 
 __all__ = [
+    "advance_repository_lifecycle_payload",
     "build_project_run_projection",
     "commit_project_run_checkpoint",
     "find_open_project_worker",
+    "initial_repository_lifecycle_payload",
     "link_project_run_to_task",
     "load_latest_project_checkpoint",
     "project_cycle_summaries",
