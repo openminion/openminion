@@ -87,6 +87,8 @@ _PHASE_STATUS_MAP: dict[str, StatusKey] = {
 
 _EVENT_STATUS_MAP: dict[str, StatusKey] = {
     "brain.plan_checkpoint": "executing",
+    "project.checks.cancelled": "stopped",
+    "project.checks.expired": "error",
 }
 
 _EVENT_PREFIX_STATUS_MAP: tuple[tuple[str, StatusKey], ...] = (

@@ -324,11 +324,13 @@ _PARITY_FIXTURES = [
         payload={"detail_code": "waiting_for_checks"},
         detail_text="head=aabbcc expected=lint,tests",
     ),
-    PhaseStatus(
-        trace_id="terminal",
-        status_key="completed",
-        label="Turn complete",
-        terminal=True,
+    phase_status_from_event(
+        trace_id="checks-cancelled",
+        event_type="project.checks.cancelled",
+    ),
+    phase_status_from_event(
+        trace_id="checks-expired",
+        event_type="project.checks.expired",
     ),
 ]
 
@@ -345,6 +347,10 @@ def test_view_model_matches_shared_formatter_across_all_shells(
     assert view.primary_text == expected_primary
     if status.trace_id == "waiting-for-checks":
         assert view.primary_text == "Waiting for checks..."
+    if status.trace_id == "checks-cancelled":
+        assert view.primary_text == "Stopped."
+    if status.trace_id == "checks-expired":
+        assert view.primary_text == "Something went wrong."
     # Terminal status keys must set terminal=True
     if status.status_key in {"completed", "stopped", "error"} or status.terminal:
         assert view.terminal is True
