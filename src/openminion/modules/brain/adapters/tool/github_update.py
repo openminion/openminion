@@ -440,7 +440,7 @@ def _record_update_pr_failure(
     error: BaseException,
     ctx: Any,
 ) -> dict[str, Any]:
-    uncertain = _is_uncertain_github_error(error)
+    uncertain = _update_pr_failure_is_uncertain(error)
     effect = started.effect
     if not uncertain:
         effect = effect.model_copy(update={"status": ProjectEffectStatus.FAILED})
@@ -468,6 +468,24 @@ def _record_update_pr_failure(
         extra=facts,
     )
     return facts
+
+
+def _update_pr_failure_is_uncertain(error: BaseException) -> bool:
+    if _is_uncertain_github_error(error):
+        return True
+    if not isinstance(error, ToolRuntimeError):
+        return False
+    provider_code = str(error.details.get("provider_error_code") or "")
+    status_code = error.details.get("status_code")
+    return (
+        error.code == "INVALID_RESPONSE"
+        or provider_code == "INVALID_RESPONSE"
+        or (
+            error.details.get("reason_code") == "github_api_error"
+            and isinstance(status_code, int)
+            and 500 <= status_code < 600
+        )
+    )
 
 
 def _succeeded_update_effect(

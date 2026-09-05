@@ -76,7 +76,7 @@ class _ProjectGithubProvider:
         self.body = "Original body"
         self.mutation_calls = 0
         self.return_uncertain = False
-        self.return_error = False
+        self.return_http_status: int | None = None
         self.return_malformed_success = False
         self.preflight_error = ""
         self.on_update: Callable[[], None] | None = None
@@ -106,22 +106,31 @@ class _ProjectGithubProvider:
                     "details": {"reason_code": "github_api_unreachable"},
                 },
             }
-        if self.return_error:
+        if self.return_http_status is not None:
+            if self.return_http_status >= 500:
+                self._apply_update(args)
             return {
                 "ok": False,
                 "error": {
-                    "code": "REMOTE_ERROR",
+                    "code": "UPSTREAM_ERROR",
                     "message": "GitHub REST API request failed.",
-                    "details": {"reason_code": "github_api_error"},
+                    "details": {
+                        "reason_code": "github_api_error",
+                        "status_code": self.return_http_status,
+                    },
                 },
             }
         if self.return_malformed_success:
+            self._apply_update(args)
             return {"ok": True}
+        self._apply_update(args)
+        return self._result()
+
+    def _apply_update(self, args: Mapping[str, Any]) -> None:
         if args.get("title") is not None:
             self.title = str(args["title"])
         if args.get("body") is not None:
             self.body = str(args["body"])
-        return self._result()
 
     def _result(self) -> dict[str, Any]:
         return {
@@ -501,7 +510,7 @@ def test_known_update_error_is_public_and_terminal(
     manager = _project_manager(tmp_path)
     _issue_grant(manager)
     provider = _ProjectGithubProvider()
-    provider.return_error = True
+    provider.return_http_status = 422
     register_provider(provider)
 
     result = _adapter(tmp_path, manager).execute(
@@ -509,7 +518,8 @@ def test_known_update_error_is_public_and_terminal(
     )
 
     assert result["error"]["code"] == "UPSTREAM_ERROR"
-    assert result["error"]["details"]["provider_error_code"] == "REMOTE_ERROR"
+    assert result["error"]["details"]["status_code"] == 422
+    assert result["error"]["details"]["project_effect_uncertain"] is False
     effect = load_project_effect_record(
         manager,
         task_id="task-1",
@@ -518,7 +528,52 @@ def test_known_update_error_is_public_and_terminal(
     assert effect is not None and effect.status == ProjectEffectStatus.FAILED
 
 
-def test_malformed_success_does_not_create_a_success_receipt(
+def test_http_5xx_update_reconciles_after_restart_without_second_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _project_manager(tmp_path)
+    _issue_grant(manager)
+    provider = _ProjectGithubProvider()
+    provider.return_http_status = 502
+    register_provider(provider)
+
+    first = _adapter(tmp_path, manager).execute(
+        command=_command(idempotency_key="call-A"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert first["error"]["code"] == "UPSTREAM_ERROR"
+    assert first["error"]["details"]["reason_code"] == "github_api_error"
+    assert first["error"]["details"]["project_effect_uncertain"] is True
+    effect = load_project_effect_record(
+        manager, task_id="task-1", effect_id=_effect_id()
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.STARTED
+    assert provider.mutation_calls == 1
+    manager.close()
+
+    provider.return_http_status = None
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    second = _adapter(tmp_path, restarted).execute(
+        command=_command(idempotency_key="call-B"),
+        session_id="session-1",
+        trace_id="turn-2",
+    )
+
+    assert second["status"] == "success"
+    assert second["outputs"]["data"]["reconciled"] is True
+    assert provider.mutation_calls == 1
+    effect = load_project_effect_record(
+        restarted, task_id="task-1", effect_id=_effect_id()
+    )
+    assert effect is not None
+    assert effect.verification_refs == ("github.update_pr:readback",)
+
+
+def test_malformed_success_reconciles_after_restart_without_second_mutation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
@@ -538,13 +593,31 @@ def test_malformed_success_does_not_create_a_success_receipt(
     assert result["error"]["details"]["reason_code"] == (
         "github_update_pr_result_invalid"
     )
-    effect = load_project_effect_record(
-        manager, task_id="task-1", effect_id=effect_id
+    effect = load_project_effect_record(manager, task_id="task-1", effect_id=effect_id)
+    assert effect is not None and effect.status == ProjectEffectStatus.STARTED
+    assert (
+        load_project_effect_receipt(manager, task_id="task-1", effect_id=effect_id)
+        is None
     )
-    assert effect is not None and effect.status == ProjectEffectStatus.FAILED
-    assert load_project_effect_receipt(
-        manager, task_id="task-1", effect_id=effect_id
-    ) is None
+    assert provider.mutation_calls == 1
+    manager.close()
+
+    provider.return_malformed_success = False
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    second = _adapter(tmp_path, restarted).execute(
+        command=_command(idempotency_key="call-B"),
+        session_id="session-1",
+        trace_id="turn-2",
+    )
+
+    assert second["status"] == "success"
+    assert second["outputs"]["data"]["reconciled"] is True
+    assert provider.mutation_calls == 1
+    effect = load_project_effect_record(
+        restarted, task_id="task-1", effect_id=effect_id
+    )
+    assert effect is not None
+    assert effect.verification_refs == ("github.update_pr:readback",)
 
 
 def test_non_project_update_pr_keeps_confirmation_path(
