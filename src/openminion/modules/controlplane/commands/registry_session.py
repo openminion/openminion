@@ -1,6 +1,7 @@
 # mypy: ignore-errors
 from __future__ import annotations
 
+from openminion.modules.controlplane.constants import PRINCIPAL_BINDING_STATUS_ACTIVE
 from openminion.modules.controlplane.contracts.models import (
     CommandResult,
     ParsedCommand,
@@ -12,23 +13,19 @@ class CommandRegistrySessionMixin:
     def _status(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         turns = self._list_turns(ctx.session_id)
         profile_id = self.store.resolve_agent(ctx.session_id)
-        title = (
-            self.store.get_session_title(ctx.session_id)
-            if hasattr(self.store, "get_session_title")
-            else None
-        )
+        title = self.store.get_session_title(ctx.session_id)
+        channel, _ = self._current_channel_subject(ctx)
         pairing = self._current_pairing(ctx)
-        pairing_status = (
-            str(pairing.get("status") or "active") if pairing else "not observed"
-        )
-        access = (
-            self._describe_scopes(pairing.get("scopes") or [])
-            if pairing
-            else "not observed"
-        )
+        pairing_status = str(pairing["status"]) if pairing else "not observed"
+        if pairing_status == PRINCIPAL_BINDING_STATUS_ACTIVE:
+            access = self._describe_scopes(pairing["scopes"])
+        elif pairing:
+            access = "none"
+        else:
+            access = "not observed"
         lines = [
             "Controlplane status:",
-            "  channel: online (this reply confirms the controlplane path)",
+            f"  channel: {channel or 'local'} (online; this reply confirms the path)",
             f"  profile: {profile_id}",
             f"  session: {ctx.session_id}",
             f"  turns: {len(turns)}",
@@ -50,8 +47,6 @@ class CommandRegistrySessionMixin:
         )
 
     def _sessions(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
-        if not hasattr(self.store, "list_sessions"):
-            return self._feature_unavailable("Session listing", data={"sessions": []})
         sessions = self.store.list_sessions(ctx.user_key, ctx.chat_key)
         if not sessions:
             return CommandResult(
@@ -77,48 +72,37 @@ class CommandRegistrySessionMixin:
         session_id = command.args[0].strip() if command.args else ""
         if not session_id:
             return CommandResult(ok=False, text="Usage: /session use <session_id>")
-        is_admin = bool(
-            self.auth is not None
-            and hasattr(self.auth, "is_admin")
-            and self.auth.is_admin(ctx.user_key)
+        is_admin = self.auth is not None and self.auth.is_admin(ctx.user_key)
+        owner = self.store.session_owner(session_id)
+        allowed = self.store.bind_session_owned(
+            user_key=ctx.user_key,
+            chat_key=ctx.chat_key,
+            session_id=session_id,
+            is_admin=is_admin,
         )
-        owner = (
-            self.store.session_owner(session_id)
-            if hasattr(self.store, "session_owner")
-            else None
-        )
-        if hasattr(self.store, "bind_session_owned"):
-            allowed = self.store.bind_session_owned(
+        if not allowed:
+            reason = "missing_session" if owner is None else "owner_mismatch"
+            self._emit_audit(
+                "session.bind.denied",
                 user_key=ctx.user_key,
                 chat_key=ctx.chat_key,
-                session_id=session_id,
-                is_admin=is_admin,
+                requested_session_id=session_id,
+                owner_user_key=owner,
+                reason=reason,
             )
-            if not allowed:
-                reason = "missing_session" if owner is None else "owner_mismatch"
-                self._emit_audit(
-                    "session.bind.denied",
-                    user_key=ctx.user_key,
-                    chat_key=ctx.chat_key,
-                    requested_session_id=session_id,
-                    owner_user_key=owner,
-                    reason=reason,
-                )
-                return CommandResult(
-                    ok=False,
-                    text=f"Session {session_id} not found or not yours",
-                    error={"code": "SESSION_BIND_DENIED", "reason": reason},
-                )
-            if owner is not None and owner != ctx.user_key and is_admin:
-                self._emit_audit(
-                    "session.bind.admin_override",
-                    user_key=ctx.user_key,
-                    chat_key=ctx.chat_key,
-                    requested_session_id=session_id,
-                    owner_user_key=owner,
-                )
-        elif hasattr(self.store, "bind_session"):
-            self.store.bind_session(ctx.user_key, ctx.chat_key, session_id)
+            return CommandResult(
+                ok=False,
+                text=f"Session {session_id} not found or not yours",
+                error={"code": "SESSION_BIND_DENIED", "reason": reason},
+            )
+        if owner is not None and owner != ctx.user_key and is_admin:
+            self._emit_audit(
+                "session.bind.admin_override",
+                user_key=ctx.user_key,
+                chat_key=ctx.chat_key,
+                requested_session_id=session_id,
+                owner_user_key=owner,
+            )
         return CommandResult(
             ok=True,
             text=f"Now using session {session_id}. Existing context restored.",
@@ -131,8 +115,7 @@ class CommandRegistrySessionMixin:
         title = " ".join(command.args).strip()
         if not title:
             return CommandResult(ok=False, text="Usage: /session title <text>")
-        if hasattr(self.store, "set_session_title"):
-            self.store.set_session_title(ctx.session_id, title)
+        self.store.set_session_title(ctx.session_id, title)
         return CommandResult(
             ok=True,
             text=f"Session {ctx.session_id} title set.",

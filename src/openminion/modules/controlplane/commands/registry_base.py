@@ -186,9 +186,7 @@ class CommandRegistryBaseMixin:
         )
 
     def _list_turns(self, session_id: str) -> list[object]:
-        if hasattr(self.store, "list_turns"):
-            return self.store.list_turns(session_id)
-        return []
+        return self.store.list_turns(session_id)
 
     def _current_channel_subject(
         self, ctx: ResolvedContext
@@ -207,11 +205,7 @@ class CommandRegistryBaseMixin:
         channel, subject_id = self._current_channel_subject(ctx)
         if channel is None or subject_id is None:
             return None
-        get_pairing = getattr(self.store, "get_pairing", None)
-        if not callable(get_pairing):
-            return None
-        pairing = get_pairing(channel=channel, chat_id=subject_id)
-        return dict(pairing) if isinstance(pairing, dict) else None
+        return self.store.get_pairing(channel=channel, chat_id=subject_id)
 
     def _describe_scopes(self, scopes: object) -> str:
         if not isinstance(scopes, (list, tuple, set)):
