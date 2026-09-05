@@ -229,17 +229,29 @@ class A2aRuntimeDelegateAdapter:
         reviewer_agent_id: str,
         objective: str,
         criteria: list[str],
-        worktree: str,
+        readable_base_repository: str,
+        bundle_ref: str,
+        target_digest: str,
         diff: str,
         verifier_refs: list[str],
         repository_instructions: str,
         timeout_seconds: int,
     ) -> A2ADelegateResult:
+        if hashlib.sha256(diff.encode("utf-8")).hexdigest() != target_digest:
+            return A2ADelegateResult(
+                ok=False,
+                status="failed",
+                error_code="A2A_REVIEW_TARGET_MISMATCH",
+                error_message="readonly review target digest does not match the diff",
+                target_agent_id=reviewer_agent_id,
+            )
         instruction = "\n".join(
             (
                 f"Review objective: {objective}",
                 f"Criteria: {', '.join(criteria)}",
-                f"Worktree: {worktree}",
+                f"Readable base repository: {readable_base_repository}",
+                f"Immutable child bundle: {bundle_ref}",
+                f"Target digest: {target_digest}",
                 f"Diff: {diff}",
                 f"Verifier refs: {', '.join(verifier_refs)}",
                 f"Repository instructions: {repository_instructions}",
@@ -250,13 +262,17 @@ class A2aRuntimeDelegateAdapter:
             instruction=instruction,
             timeout_seconds=timeout_seconds,
             permission_mode="readonly",
-            workspace_root=worktree,
-            cwd=worktree,
+            workspace_root=readable_base_repository,
+            cwd=readable_base_repository,
+            _review_target_digest=target_digest,
+            _review_bundle_ref=bundle_ref,
+            _review_verifier_refs=verifier_refs,
         )
         if not result.ok:
             return result
         child_id = result.outputs.get("child_agent_id")
         findings = result.outputs.get("findings")
+        review_passed = result.outputs.get("passed")
         valid_findings = isinstance(findings, list) and all(
             isinstance(finding, Mapping)
             and all(
@@ -265,17 +281,35 @@ class A2aRuntimeDelegateAdapter:
             )
             for finding in findings
         )
-        if not isinstance(child_id, str) or not child_id.strip() or not valid_findings:
+        if (
+            not isinstance(child_id, str)
+            or not child_id.strip()
+            or not valid_findings
+            or not isinstance(review_passed, bool)
+            or result.outputs.get("target_digest") != target_digest
+            or result.outputs.get("verifier_refs") != verifier_refs
+        ):
             return A2ADelegateResult(
                 ok=False,
                 status="failed",
                 error_code="A2A_REVIEW_INVALID_RESULT",
-                error_message="readonly review requires child identity and findings",
+                error_message=(
+                    "readonly review requires child identity, findings, verifier refs, "
+                    "pass status, and the exact target digest"
+                ),
                 target_agent_id=result.target_agent_id,
                 trace_id=result.trace_id,
                 task_id=result.task_id,
                 outputs=result.outputs,
             )
+        result.outputs["review_receipt"] = {
+            "reviewer_agent_id": child_id,
+            "bundle_ref": bundle_ref,
+            "target_digest": target_digest,
+            "passed": review_passed,
+            "findings": findings,
+            "verifier_refs": list(verifier_refs),
+        }
         return result
 
     def _idempotency_key(
@@ -303,8 +337,13 @@ class A2aRuntimeDelegateAdapter:
         return f"task-delegate::{parent_session_id or self._parent_agent_id or 'agent'}"
 
     def _handoff_context(
-        self, target: str
-    ) -> tuple[str, str, dict[str, str], dict | None]:
+        self,
+        target: str,
+        *,
+        review_target_digest: str = "",
+        review_bundle_ref: str = "",
+        review_verifier_refs: list[str] | None = None,
+    ) -> tuple[str, str, dict[str, Any], dict | None]:
         session_id = self._observability.get("session_id", "")
         turn_id = self._observability.get("turn_id", "")
         invocation_id = self._observability.get("invocation_id", "")
@@ -313,11 +352,20 @@ class A2aRuntimeDelegateAdapter:
         if not traceparent and invocation_id and execution_id:
             traceparent = build_execution_traceparent(invocation_id, execution_id)
         handoff_id = str(uuid4())
-        payload = {
+        payload: dict[str, Any] = {
             "handoff_id": handoff_id,
             "handoff_role": "caller",
             "target_agent": target,
         }
+        if review_target_digest:
+            payload.update(
+                {
+                    "handoff_kind": "readonly_review",
+                    "target_digest": review_target_digest,
+                    "bundle_ref": review_bundle_ref,
+                    "verifier_refs": list(review_verifier_refs or []),
+                }
+            )
         if not (invocation_id and execution_id and traceparent):
             return session_id, turn_id, payload, None
         return (
@@ -400,6 +448,9 @@ class A2aRuntimeDelegateAdapter:
         permission_mode: str = "ask",
         workspace_root: str = "",
         cwd: str = "",
+        _review_target_digest: str = "",
+        _review_bundle_ref: str = "",
+        _review_verifier_refs: list[str] | None = None,
     ) -> A2ADelegateResult:
         target = str(agent_id or "").strip()
         text = str(instruction or "").strip()
@@ -429,7 +480,10 @@ class A2aRuntimeDelegateAdapter:
         )
         trace_id = idem
         session_id, turn_id, handoff_payload, observability = self._handoff_context(
-            target
+            target,
+            review_target_digest=_review_target_digest,
+            review_bundle_ref=_review_bundle_ref,
+            review_verifier_refs=_review_verifier_refs,
         )
         self._emit_handoff(
             session_id,

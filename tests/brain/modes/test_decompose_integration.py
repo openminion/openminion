@@ -54,6 +54,7 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.schemas.decisions import DecisionAdapter
 from openminion.modules.task import TaskManager
+from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
 from tests.brain.runner_test_support import _profile
 from tests.artifact.utils import artifact_ctl
 
@@ -81,6 +82,29 @@ def _git_repo(tmp_path: Path) -> Path:
     _run_git(repo, "add", "rename_me.txt")
     _run_git(repo, "commit", "-m", "seed")
     return repo
+
+
+def _record_passed_review(
+    record: dict[str, Any],
+    *,
+    reviewer_agent_id: str = "readonly-reviewer",
+    verifier_refs: list[str] | None = None,
+) -> None:
+    refs = list(verifier_refs or ["pytest:child-artifact"])
+    target_digest = record["target_digest"]
+    record["validation"] = {
+        "passed": True,
+        "target_digest": target_digest,
+        "verifier_refs": refs,
+    }
+    record["review_receipt"] = {
+        "reviewer_agent_id": reviewer_agent_id,
+        "bundle_ref": record["artifact"]["bundle_ref"],
+        "target_digest": target_digest,
+        "passed": True,
+        "findings": [],
+        "verifier_refs": refs,
+    }
 
 
 def _patch_orchestrate_child_invoke(monkeypatch, fake_invoke) -> None:
@@ -1247,7 +1271,9 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     )
 
 
-def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) -> None:
+def test_child_worktree_artifact_accept_applies_complete_change_set_after_restart(
+    tmp_path,
+) -> None:
     repo = _git_repo(tmp_path)
     ctx, runner, _services = _ctx(
         subtasks=[
@@ -1261,7 +1287,8 @@ def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) ->
     )
     subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
     child_state = _state()
-    with artifact_ctl(tmp_path / ".openminion") as ctl:
+    artifact_root = tmp_path / ".openminion"
+    with artifact_ctl(artifact_root) as ctl:
         runner.artifactctl = ctl
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         assert lease is not None
@@ -1278,6 +1305,10 @@ def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) ->
         assert artifact["status"] == "stored"
         assert artifact["bundle_ref"].startswith("artifact://sha256/")
         assert artifact["manifest_ref"].startswith("artifact://sha256/")
+        assert record["diff"]
+        assert record["target_digest"] == artifact["target_digest"]
+        manifest = json.loads(ctl.read_bytes(artifact["manifest_ref"]))
+        assert manifest["target_digest"] == record["target_digest"]
         assert set(record["touched_paths"]) == {
             "delete_me.txt",
             "image.bin",
@@ -1289,16 +1320,58 @@ def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) ->
         assert not Path(record["workspace"]).exists()
         assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
 
+        def _review_call(*, command, session_id, trace_id):
+            del command, session_id, trace_id
+            return {
+                "status": "success",
+                "summary": "review passed",
+                "outputs": {
+                    "child_agent_id": "readonly-reviewer",
+                    "findings": [],
+                    "passed": True,
+                    "target_digest": record["target_digest"],
+                    "verifier_refs": ["pytest:child-artifact"],
+                },
+            }
+
+        review = A2aRuntimeDelegateAdapter(
+            a2a_call=_review_call,
+            parent_agent_id="parent",
+        ).review_readonly(
+            reviewer_agent_id="readonly-reviewer",
+            objective="review child artifact",
+            criteria=["no blocking findings"],
+            readable_base_repository=str(repo),
+            bundle_ref=artifact["bundle_ref"],
+            target_digest=record["target_digest"],
+            diff=record["diff"],
+            verifier_refs=["pytest:child-artifact"],
+            repository_instructions="AGENTS.md",
+            timeout_seconds=30,
+        )
+        assert review.ok is True
+        record["review_receipt"] = review.outputs["review_receipt"]
+        record["validation"] = {
+            "passed": True,
+            "target_digest": record["target_digest"],
+            "verifier_refs": ["pytest:child-artifact"],
+        }
+        restarted_record = json.loads(json.dumps(record))
+
+    with artifact_ctl(artifact_root) as ctl:
         accepted = accept_child_worktree_artifact(
-            repo_root=repo, record=record, artifactctl=ctl
+            repo_root=repo, record=restarted_record, artifactctl=ctl
         )
 
         assert accepted == {
             "ok": True,
             "status": "accepted",
-            "touched_paths": record["touched_paths"],
+            "target_digest": restarted_record["target_digest"],
+            "reviewer_agent_id": "readonly-reviewer",
+            "verifier_refs": ["pytest:child-artifact"],
+            "touched_paths": restarted_record["touched_paths"],
         }
-        assert record["integration_status"] == "accepted"
+        assert restarted_record["integration_status"] == "accepted"
         assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 9\n"
         assert (repo / "new.txt").read_text(encoding="utf-8") == "new file\n"
         assert (repo / "image.bin").read_bytes() == b"\x00\x01openminion"
@@ -1365,9 +1438,16 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
 
         finalize_child_worktree(ctx, lease=lease, status="done")
         record = ctx.state.module_state["worktree_children"]["children"][0]
+        bundle_ref = record["artifact"]["bundle_ref"]
         rejected = reject_child_worktree_artifact(record=record, artifactctl=ctl)
+        assert ctl.read_bytes(bundle_ref)
 
-    assert rejected == {"ok": True, "status": "rejected"}
+    assert rejected == {
+        "ok": True,
+        "status": "rejected",
+        "target_digest": record["target_digest"],
+        "bundle_ref": bundle_ref,
+    }
     assert record["integration_status"] == "rejected"
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
 
@@ -1393,6 +1473,7 @@ def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> No
         (lease.worktree / "seed.py").write_text("VALUE = 7\n", encoding="utf-8")
         finalize_child_worktree(ctx, lease=lease, status="done")
         record = ctx.state.module_state["worktree_children"]["children"][0]
+        _record_passed_review(record)
 
         (repo / "seed.py").write_text("dirty\n", encoding="utf-8")
         dirty = accept_child_worktree_artifact(
@@ -1410,6 +1491,60 @@ def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> No
 
     assert stale["status"] == "stale_base"
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+
+def test_child_worktree_accept_requires_current_review_and_passing_verifier(
+    tmp_path,
+) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "reviewed-child",
+                "goal": "Review exact artifact",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    with artifact_ctl(tmp_path / ".openminion") as ctl:
+        runner.artifactctl = ctl
+        lease = allocate_child_worktree(subtask=subtask, child_state=_state())
+        assert lease is not None
+        (lease.worktree / "seed.py").write_text("VALUE = 11\n", encoding="utf-8")
+        finalize_child_worktree(ctx, lease=lease, status="done")
+        record = ctx.state.module_state["worktree_children"]["children"][0]
+        _record_passed_review(record, reviewer_agent_id="reviewer-1")
+
+        record["review_receipt"]["passed"] = False
+        requested_correction = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert requested_correction["status"] == "review_failed"
+
+        record["review_receipt"]["passed"] = True
+        record["review_receipt"]["target_digest"] = "stale-digest"
+        stale = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert stale["status"] == "stale_review"
+
+        _record_passed_review(record, reviewer_agent_id="reviewer-2")
+        record["validation"]["passed"] = False
+        failed = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert failed["status"] == "verification_failed"
+
+        record["validation"]["passed"] = True
+        accepted = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+
+    assert accepted["status"] == "accepted"
+    assert accepted["reviewer_agent_id"] == "reviewer-2"
+    assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 11\n"
 
 
 def test_orchestrate_read_only_child_does_not_allocate_worktree(monkeypatch) -> None:

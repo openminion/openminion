@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 import uuid
 
@@ -12,6 +13,12 @@ from openminion.modules.brain.constants import (
 )
 from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
 from openminion.modules.a2a.models import is_valid_traceparent
+
+
+_APP_DIFF = "git diff -- app.py"
+_APP_DIGEST = hashlib.sha256(_APP_DIFF.encode("utf-8")).hexdigest()
+_PLAN_DIFF = "git diff -- src tests"
+_PLAN_DIGEST = hashlib.sha256(_PLAN_DIFF.encode("utf-8")).hexdigest()
 
 
 class _RecordingCall:
@@ -108,18 +115,31 @@ def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> 
                     }
                 ],
                 "verifier_refs": ["pytest:plan-lineage"],
+                "target_digest": _PLAN_DIGEST,
+                "passed": False,
             },
         }
     )
-    result = A2aRuntimeDelegateAdapter(
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
         a2a_call=call,
         parent_agent_id="parent",
-    ).review_readonly(
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
         reviewer_agent_id="readonly-reviewer",
         objective="preserve project plan lineage",
         criteria=["no P0 findings", "no P1 findings"],
-        worktree="/repo",
-        diff="git diff -- src tests",
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest=_PLAN_DIGEST,
+        diff=_PLAN_DIFF,
         verifier_refs=["pytest:plan-lineage"],
         repository_instructions="AGENTS.md",
         timeout_seconds=30,
@@ -129,11 +149,31 @@ def test_fixed_readonly_reviewer_returns_typed_findings_and_child_identity() -> 
     assert result.target_agent_id == "readonly-reviewer"
     assert result.outputs["child_agent_id"] == "readonly-reviewer"
     assert result.outputs["findings"][0]["priority"] == "P1"
+    assert result.outputs["review_receipt"] == {
+        "reviewer_agent_id": "readonly-reviewer",
+        "bundle_ref": "artifact://sha256/bundle",
+        "target_digest": _PLAN_DIGEST,
+        "passed": False,
+        "findings": result.outputs["findings"],
+        "verifier_refs": ["pytest:plan-lineage"],
+    }
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.completed",
+    ]
+    assert all(
+        payload["target_agent"] == "readonly-reviewer"
+        and payload["target_digest"] == _PLAN_DIGEST
+        and payload["verifier_refs"] == ["pytest:plan-lineage"]
+        for _event_type, payload in telemetry.events
+    )
     assert call.command is not None
     instruction = (
         "Review objective: preserve project plan lineage\n"
         "Criteria: no P0 findings, no P1 findings\n"
-        "Worktree: /repo\n"
+        "Readable base repository: /repo\n"
+        "Immutable child bundle: artifact://sha256/bundle\n"
+        f"Target digest: {_PLAN_DIGEST}\n"
         "Diff: git diff -- src tests\n"
         "Verifier refs: pytest:plan-lineage\n"
         "Repository instructions: AGENTS.md"
@@ -160,15 +200,26 @@ def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
             },
         }
     )
-    result = A2aRuntimeDelegateAdapter(
+    telemetry = _RecordingTelemetry()
+    adapter = A2aRuntimeDelegateAdapter(
         a2a_call=call,
         parent_agent_id="parent",
-    ).review_readonly(
+        telemetryctl=telemetry,
+    )
+    adapter.bind_observability(
+        session_id="session-1",
+        turn_id="turn-1",
+        invocation_id="11111111-1111-4111-8111-111111111111",
+        execution_id="21111111-1111-4111-8111-111111111111",
+    )
+    result = adapter.review_readonly(
         reviewer_agent_id="readonly-reviewer",
         objective="review app.py",
         criteria=["report findings only"],
-        worktree="/repo",
-        diff="git diff -- app.py",
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest=_APP_DIGEST,
+        diff=_APP_DIFF,
         verifier_refs=["pytest:app"],
         repository_instructions="AGENTS.md",
         timeout_seconds=30,
@@ -179,17 +230,79 @@ def test_fixed_readonly_reviewer_preserves_typed_mutation_denial() -> None:
     assert result.error_message == "readonly reviewer cannot write files"
     assert call.command is not None
     assert call.command["params"]["permission_mode"] == "readonly"
+    assert [event_type for event_type, _payload in telemetry.events] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    assert all(
+        payload["target_agent"] == "readonly-reviewer"
+        and payload["target_digest"] == _APP_DIGEST
+        and payload["verifier_refs"] == ["pytest:app"]
+        for _event_type, payload in telemetry.events
+    )
+
+
+def test_fixed_readonly_reviewer_rejects_mismatched_input_digest() -> None:
+    call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS})
+
+    result = A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id="parent",
+    ).review_readonly(
+        reviewer_agent_id="readonly-reviewer",
+        objective="review app.py",
+        criteria=["report findings only"],
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest="stale-digest",
+        diff=_APP_DIFF,
+        verifier_refs=["pytest:app"],
+        repository_instructions="AGENTS.md",
+        timeout_seconds=30,
+    )
+
+    assert result.ok is False
+    assert result.error_code == "A2A_REVIEW_TARGET_MISMATCH"
+    assert call.command is None
 
 
 @pytest.mark.parametrize(
     "outputs",
     (
-        {"child_agent_id": "", "findings": []},
-        {"child_agent_id": "child-1", "findings": {}},
-        {"child_agent_id": "child-1", "findings": [42]},
+        {
+            "child_agent_id": "",
+            "findings": [],
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": {},
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": [42],
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
         {
             "child_agent_id": "child-1",
             "findings": [{"priority": "P1", "owner": "", "message": "gap"}],
+            "passed": True,
+            "target_digest": _APP_DIGEST,
+            "verifier_refs": ["pytest:app"],
+        },
+        {
+            "child_agent_id": "child-1",
+            "findings": [],
+            "passed": True,
+            "target_digest": "stale-digest",
+            "verifier_refs": ["pytest:app"],
         },
     ),
 )
@@ -210,8 +323,10 @@ def test_fixed_readonly_reviewer_rejects_invalid_result(
         reviewer_agent_id="readonly-reviewer",
         objective="review app.py",
         criteria=["report findings only"],
-        worktree="/repo",
-        diff="git diff -- app.py",
+        readable_base_repository="/repo",
+        bundle_ref="artifact://sha256/bundle",
+        target_digest=_APP_DIGEST,
+        diff=_APP_DIFF,
         verifier_refs=["pytest:app"],
         repository_instructions="AGENTS.md",
         timeout_seconds=30,

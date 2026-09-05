@@ -571,12 +571,17 @@ def test_task_delegate_accept_and_reject_use_child_artifact_helpers(
     def _accept(*, repo_root, record, artifactctl):
         del artifactctl
         calls.append(("accept", {"repo_root": repo_root, "record": record}))
-        return {"ok": True, "status": "accepted", "touched_paths": ["seed.py"]}
+        return {
+            "ok": True,
+            "status": "accepted",
+            "target_digest": "digest-1",
+            "touched_paths": ["seed.py"],
+        }
 
     def _reject(*, record, artifactctl):
         del artifactctl
         calls.append(("reject", {"record": record}))
-        return {"ok": True, "status": "rejected"}
+        return {"ok": True, "status": "rejected", "target_digest": "digest-1"}
 
     monkeypatch.setattr(plugin_mod, "accept_child_worktree_artifact", _accept)
     monkeypatch.setattr(plugin_mod, "reject_child_worktree_artifact", _reject)
@@ -604,12 +609,35 @@ def test_task_delegate_accept_and_reject_use_child_artifact_helpers(
 
     assert accepted["status"] == "accepted"
     assert accepted["mode"] == "accept"
+    assert accepted["target_digest"] == "digest-1"
     assert rejected["status"] == "rejected"
     assert rejected["mode"] == "reject"
+    assert rejected["target_digest"] == "digest-1"
     assert calls == [
         ("accept", {"repo_root": "/repo", "record": child_record}),
         ("reject", {"record": child_record}),
     ]
+
+
+def test_task_delegate_reject_requires_child_target_digest() -> None:
+    ctx = cast(
+        RuntimeContext,
+        SimpleNamespace(policy=SimpleNamespace(raw={}), env={}, artifactctl=object()),
+    )
+
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_task_delegate(
+            {
+                "mode": "reject",
+                "child_artifact": {
+                    "artifact": {"status": "stored", "bundle_ref": "artifact://a"}
+                },
+            },
+            ctx,
+        )
+
+    assert exc_info.value.code == "POLICY_DENIED"
+    assert exc_info.value.details["reason_code"] == "target_digest_mismatch"
 
 
 def test_task_delegate_unknown_target_maps_not_found() -> None:

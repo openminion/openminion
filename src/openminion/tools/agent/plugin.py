@@ -441,19 +441,18 @@ def _handle_child_artifact_disposition(
         result = reject_child_worktree_artifact(
             record=dict(args.child_artifact), artifactctl=artifactctl
         )
-        return {"ok": True, "mode": args.mode, **result}
-
-    result = accept_child_worktree_artifact(
-        repo_root=args.workspace_root,
-        record=dict(args.child_artifact),
-        artifactctl=artifactctl,
-    )
+    else:
+        result = accept_child_worktree_artifact(
+            repo_root=args.workspace_root,
+            record=dict(args.child_artifact),
+            artifactctl=artifactctl,
+        )
     if result.get("ok") is True:
         return {"ok": True, "mode": args.mode, **result}
     raise ToolRuntimeError(
         "POLICY_DENIED",
-        "Child artifact acceptance was blocked.",
-        {"reason_code": str(result.get("status") or "accept_blocked"), **result},
+        "Child artifact disposition was blocked.",
+        {"reason_code": str(result.get("status") or "disposition_blocked"), **result},
     )
 
 
