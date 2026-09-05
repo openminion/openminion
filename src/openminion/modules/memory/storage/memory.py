@@ -22,6 +22,7 @@ from openminion.modules.memory.storage.base import (
     ListQueryOptions,
     SearchQueryOptions,
     record_matches_namespaces,
+    register_feedback_command,
 )
 from openminion.modules.memory.storage.capabilities import (
     BackendCapabilities,
@@ -277,16 +278,14 @@ class InMemoryRecordStore:
             return 0
         updated = 0
         now_iso = str(observed_at or "").strip() or _utc_now_iso()
+        normalized_command_id = str(command_id or "").strip()
         feedback_delta_value = float(feedback_delta)
         for record_id in normalized_ids:
             current = self._records.get(record_id)
             if current is None or current.is_deleted or current.superseded_by_id:
                 continue
             meta = dict(current.meta or {})
-            if (
-                meta.get("last_outcome_command_id") == command_id
-                and meta.get("last_outcome_status") == outcome
-            ):
+            if not register_feedback_command(meta, normalized_command_id):
                 continue
             try:
                 existing_feedback = float(meta.get("feedback_score", 0.0) or 0.0)
@@ -310,7 +309,7 @@ class InMemoryRecordStore:
             meta.setdefault(other_key, int(meta.get(other_key, 0) or 0))
             meta["last_outcome_at"] = now_iso
             meta["last_outcome_status"] = outcome
-            meta["last_outcome_command_id"] = str(command_id or "").strip()
+            meta["last_outcome_command_id"] = normalized_command_id
             self._records[record_id] = replace(
                 current,
                 meta=meta,

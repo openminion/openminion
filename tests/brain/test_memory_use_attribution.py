@@ -117,6 +117,19 @@ def test_tool_memory_use_requires_execution_identity() -> None:
         )
 
 
+def test_async_job_preserves_tool_identity_for_completion_validation() -> None:
+    result, job = normalize_execution_result(
+        command_id="command-async",
+        provider="tool",
+        tool_name="weather.lookup",
+        raw={"status": "pending", "task_id": "task-async"},
+    )
+
+    assert result.status == "success"
+    assert job is not None
+    assert job.producer_id == "weather.lookup"
+
+
 def test_only_typed_use_receives_outcome_feedback() -> None:
     memory_api = _MemoryAPI()
     runner = BrainRunner.__new__(BrainRunner)

@@ -47,6 +47,7 @@ class JobHandle(BaseModel):
     task_id: str = Field(..., min_length=1)
     command_id: str = Field(..., min_length=1)
     provider: Literal["tool", "a2actl"]
+    producer_id: str = ""
     status: Literal["pending", "running", "done", "failed"]
     poll_after_ms: int = Field(default=1000, ge=1)
     created_at: str = Field(default_factory=iso_now)

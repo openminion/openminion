@@ -2,6 +2,7 @@ import datetime
 from typing import Any, Literal
 
 from ...models import ArtifactRef
+from ..base import register_feedback_command
 from .sql import _clamp01, _json_loads
 
 
@@ -65,10 +66,7 @@ def _feedback_update_values(
         updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     meta = dict(_json_loads(row.get("meta_json"), {}))
     normalized_command_id = str(command_id or "").strip()
-    if (
-        meta.get("last_outcome_command_id") == normalized_command_id
-        and meta.get("last_outcome_status") == outcome
-    ):
+    if not register_feedback_command(meta, normalized_command_id):
         return None
     existing_feedback = _clamp01(float(meta.get("feedback_score", 0.0) or 0.0))
     meta["feedback_score"] = _clamp01(existing_feedback + float(feedback_delta))

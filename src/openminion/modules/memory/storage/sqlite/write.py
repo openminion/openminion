@@ -15,6 +15,7 @@ from ...errors import (
     PromotionDeniedError,
 )
 from ...models import MemoryCandidate, MemoryNamespace, MemoryRecord, MemoryType
+from ..base import register_feedback_command
 
 if TYPE_CHECKING:
     from .store import SQLiteMemoryStore
@@ -602,10 +603,7 @@ def apply_outcome_feedback(
                     meta = {}
                 if not isinstance(meta, dict):
                     meta = {}
-                if (
-                    meta.get("last_outcome_command_id") == normalized_command_id
-                    and meta.get("last_outcome_status") == outcome
-                ):
+                if not register_feedback_command(meta, normalized_command_id):
                     continue
                 try:
                     existing_feedback = store._clamp01(

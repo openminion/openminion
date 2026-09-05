@@ -97,7 +97,7 @@ def test_inmemory_outcome_feedback_skips_deleted_and_superseded_records() -> Non
     assert active_record.meta["outcome_failure_count"] == 1
 
 
-def test_outcome_feedback_skips_immediate_command_replay(tmp_path) -> None:
+def test_outcome_feedback_applies_each_command_once(tmp_path) -> None:
     now = _now()
     for store in (
         InMemoryMemoryStore(),
@@ -130,15 +130,36 @@ def test_outcome_feedback_skips_immediate_command_replay(tmp_path) -> None:
             observed_at=now,
             feedback_delta=0.2,
         )
+        other = service.apply_outcome_feedback(
+            record_ids=["mem_replay"],
+            outcome="failed",
+            command_id="cmd-other",
+            observed_at=now,
+            feedback_delta=-0.1,
+        )
+        nonconsecutive_replay = service.apply_outcome_feedback(
+            record_ids=["mem_replay"],
+            outcome="failed",
+            command_id=" cmd-replay ",
+            observed_at=now,
+            feedback_delta=-0.2,
+        )
         stored = service.get("mem_replay")
 
         assert first == 1
         assert replay == 0
-        assert stored.meta["feedback_score"] == 0.2
+        assert other == 1
+        assert nonconsecutive_replay == 0
+        assert stored.meta["feedback_score"] == 0.1
         assert stored.meta["outcome_success_count"] == 1
+        assert stored.meta["outcome_failure_count"] == 1
+        assert stored.meta["outcome_feedback_command_ids"] == [
+            "cmd-replay",
+            "cmd-other",
+        ]
 
 
-def test_postgres_feedback_payload_skips_immediate_command_replay() -> None:
+def test_postgres_feedback_payload_skips_prior_command_replay() -> None:
     values = _feedback_update_values(
         {
             "meta_json": {
@@ -146,10 +167,11 @@ def test_postgres_feedback_payload_skips_immediate_command_replay() -> None:
                 "outcome_success_count": 1,
                 "last_outcome_command_id": "cmd-replay",
                 "last_outcome_status": "success",
+                "outcome_feedback_command_ids": ["cmd-replay", "cmd-other"],
             }
         },
-        outcome="success",
-        command_id="cmd-replay",
+        outcome="failed",
+        command_id=" cmd-replay ",
         observed_at=_now(),
         feedback_delta=0.2,
     )

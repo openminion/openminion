@@ -18,12 +18,13 @@ from ....constants import (
 from ....diagnostics.events import CanonicalEventLogger
 from ....diagnostics.transitions import transition
 from ...intent_state import update_intent_execution_states
+from ...validation import normalize_execution_result
 from ...mission import (
     mission_is_active,
     set_mission_status,
     update_mission_task,
 )
-from ....schemas import ActionError, ActionResult, StepOutput, WorkingState
+from ....schemas import ActionResult, StepOutput, WorkingState
 from ...closure import final_close_message
 from ...memory import extract_success_memories
 from ...delegation import _runner_delegate
@@ -65,26 +66,51 @@ def reconcile_pending_jobs(
             message_status=job.status,
         )
     state.pending_jobs = state.pending_jobs[1:]
-    summary = str(polled.get("summary", "") or "").strip()
-    raw_outputs = polled.get("outputs")
-    outputs = raw_outputs if isinstance(raw_outputs, dict) else {}
     if raw_status in {"success", "completed", "done"}:
+        terminal_raw = {
+            **polled,
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": str(polled.get("summary", "") or "").strip()
+            or f"Async job {job.task_id} completed.",
+        }
+        action_result, _ = normalize_execution_result(
+            command_id=job.command_id,
+            raw=terminal_raw,
+            provider=job.provider,
+            tool_name=job.producer_id or None,
+        )
         return _handle_completed_job(
             runner=runner,
             state=state,
             logger=logger,
             job=job,
-            summary=summary,
-            outputs=outputs,
+            action_result=action_result,
         )
+    summary = str(polled.get("summary", "") or "").strip()
+    error = polled.get("error")
+    if not isinstance(error, dict) or not error.get("code") or not error.get("message"):
+        error = {
+            "code": "ASYNC_JOB_FAILED",
+            "message": f"Async job {job.task_id} failed.",
+        }
+    terminal_raw = {
+        **polled,
+        "status": BRAIN_ACTION_STATUS_FAILED,
+        "summary": summary or "async_job_failed",
+        "error": error,
+    }
+    action_result, _ = normalize_execution_result(
+        command_id=job.command_id,
+        raw=terminal_raw,
+        provider=job.provider,
+        tool_name=job.producer_id or None,
+    )
     return _handle_failed_job(
         runner=runner,
         state=state,
         logger=logger,
         job=job,
-        polled=polled,
-        summary=summary,
-        outputs=outputs,
+        action_result=action_result,
     )
 
 
@@ -144,8 +170,7 @@ def _handle_completed_job(
     state: WorkingState,
     logger: CanonicalEventLogger,
     job: Any,
-    summary: str,
-    outputs: dict[str, Any],
+    action_result: ActionResult,
 ) -> Any:
     _resume_mission_after_success(state=state, logger=logger, runner=runner, job=job)
     logger.emit(
@@ -157,12 +182,6 @@ def _handle_completed_job(
         },
         trace_id=state.trace_id,
         task_id=job.task_id,
-    )
-    action_result = ActionResult(
-        command_id=job.command_id,
-        status=BRAIN_ACTION_STATUS_SUCCESS,
-        summary=summary or f"Async job {job.task_id} completed.",
-        outputs=outputs,
     )
     current_command = _current_pending_job_plan_command(state)
     update_intent_execution_states(
@@ -303,9 +322,7 @@ def _handle_failed_job(
     state: WorkingState,
     logger: CanonicalEventLogger,
     job: Any,
-    polled: dict[str, Any],
-    summary: str,
-    outputs: dict[str, Any],
+    action_result: ActionResult,
 ) -> Any:
     logger.emit(
         "job.failed",
@@ -327,25 +344,11 @@ def _handle_failed_job(
         },
         trace_id=state.trace_id,
     )
-    failed_result = ActionResult(
-        command_id=job.command_id,
-        status=BRAIN_ACTION_STATUS_FAILED,
-        summary=summary or "async_job_failed",
-        outputs=outputs,
-        error=ActionError(
-            code=str((polled.get("error") or {}).get("code", "ASYNC_JOB_FAILED")),
-            message=str(
-                (polled.get("error") or {}).get(
-                    "message", f"Async job {job.task_id} failed."
-                )
-            ),
-        ),
-    )
     update_intent_execution_states(
         runner,
         state=state,
         command=_current_pending_job_plan_command(state),
-        action_result=failed_result,
+        action_result=action_result,
         current_step_index=state.cursor,
     )
     transition(state, "job_failed", logger=logger)
@@ -354,7 +357,7 @@ def _handle_failed_job(
         runner,
         state=state,
         logger=logger,
-        message=summary or f"Async job {job.task_id} failed.",
+        message=action_result.summary or f"Async job {job.task_id} failed.",
         status=BRAIN_STATE_WAITING_USER,
-        action_result=failed_result,
+        action_result=action_result,
     )

@@ -145,6 +145,7 @@ def normalize_execution_result(
         command_id=command_id,
         raw=raw,
         provider=provider,
+        tool_name=tool_name,
         status=status,
     )
     if async_job is not None:
@@ -210,6 +211,7 @@ def _normalize_async_job(
     command_id: str,
     raw: dict[str, Any],
     provider: str,
+    tool_name: str | None,
     status: str,
 ) -> tuple[ActionResult, JobHandle] | None:
     if status not in {
@@ -223,6 +225,9 @@ def _normalize_async_job(
         provider=BRAIN_COMMAND_KIND_TOOL
         if provider == BRAIN_COMMAND_KIND_TOOL
         else "a2actl",
+        producer_id=str(tool_name or "").strip()
+        if provider == BRAIN_COMMAND_KIND_TOOL
+        else command_id,
         status=BRAIN_JOB_STATUS_RUNNING
         if status == BRAIN_JOB_STATUS_RUNNING
         else BRAIN_JOB_STATUS_PENDING,
