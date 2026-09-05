@@ -444,8 +444,10 @@ def _release_receipt(
         str(release.get("tag") or "") != expected["tag"]
         or str(release.get("title") or "") != str(args.get("title") or "")
         or str(release.get("notes") or "") != str(args.get("notes") or "")
-        or bool(release.get("draft")) != bool(args.get("draft"))
-        or bool(release.get("prerelease")) != bool(args.get("prerelease"))
+        or not isinstance(release.get("draft"), bool)
+        or release.get("draft") != args.get("draft")
+        or not isinstance(release.get("prerelease"), bool)
+        or release.get("prerelease") != args.get("prerelease")
     ):
         raise ToolRuntimeError(
             "INVALID_RESPONSE",

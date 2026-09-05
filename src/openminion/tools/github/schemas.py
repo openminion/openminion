@@ -312,7 +312,9 @@ class GithubDispatchWorkflowArgs(_RepoArgsBase):
         return normalized
 
     @model_validator(mode="after")
-    def _validate_target_input(self) -> "GithubDispatchWorkflowArgs":
+    def _validate_identity_inputs(self) -> "GithubDispatchWorkflowArgs":
+        if self.inputs.get("request_id") != self.request_id:
+            raise ValueError("inputs.request_id must match request_id")
         if self.inputs.get("target") != self.target:
             raise ValueError("inputs.target must match target")
         return self

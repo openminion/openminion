@@ -93,6 +93,7 @@ class _Provider:
         self.release_mutations = 0
         self.release_status_code: int | None = None
         self.release_preflight_overrides: dict[str, Any] = {}
+        self.release_result_overrides: dict[str, Any] = {}
         self.tag_sha = "a" * 40
 
     def _workflow_result(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -196,6 +197,7 @@ class _Provider:
             "prerelease": args["prerelease"],
             "html_url": "https://github.com/o/r/releases/tag/v1.2.3-rc1",
         }
+        self.release.update(self.release_result_overrides)
         return self.read_release(args=args, ctx=ctx)
 
 
@@ -368,14 +370,21 @@ def test_pypi_dispatch_accepts_exact_final_release_scope(
     assert provider.workflow_mutations == 1
 
 
-def test_workflow_target_mismatch_stops_before_approval_or_mutation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+@pytest.mark.parametrize(
+    ("input_name", "input_value"),
+    [("request_id", "different-request"), ("target", "pypi")],
+)
+def test_workflow_identity_input_mismatch_stops_before_approval_or_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    input_name: str,
+    input_value: str,
 ) -> None:
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     manager = _manager(tmp_path)
     args = {
         **_WORKFLOW_ARGS,
-        "inputs": {"request_id": "release-123", "target": "pypi"},
+        "inputs": {**_WORKFLOW_ARGS["inputs"], input_name: input_value},
     }
     _grant(manager, "github.dispatch_workflow", github_workflow_action_scope(args))
     provider = _Provider()
@@ -597,6 +606,33 @@ def test_approved_draft_prerelease_persists_exact_receipt(
     assert effect is not None and effect.status == ProjectEffectStatus.SUCCEEDED
     assert telemetry.operations[-1]["session_id"] == "session-1"
     assert telemetry.operations[-1]["turn_id"] == "turn-1"
+
+
+def test_release_rejects_non_boolean_custom_provider_flags(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    scope = github_release_action_scope(_RELEASE_ARGS)
+    _grant(manager, "github.create_release", scope)
+    provider = _Provider()
+    provider.release_result_overrides = {"draft": "false", "prerelease": "false"}
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command("github.create_release", _RELEASE_ARGS, "release-1"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["code"] == "INVALID_RESPONSE"
+    assert provider.release_mutations == 1
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect("github.create_release", scope),
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.STARTED
 
 
 def test_project_release_denies_without_exact_approval(
