@@ -253,7 +253,17 @@ def _resume_workflow_effect(
     )
     if existing.status == ProjectEffectStatus.STARTED:
         readback = read_dispatch_workflow(args, ctx)
-        receipt = _workflow_receipt(readback, args)
+        try:
+            receipt = _workflow_receipt(readback, args)
+        except ToolRuntimeError as exc:
+            exc.details.update(
+                {
+                    "project_effect_uncertain": True,
+                    "project_effect_id": existing.effect_id,
+                    "repository_action_scope": scope,
+                }
+            )
+            raise
         if receipt["match"] != "exact":
             raise ToolRuntimeError(
                 "UPSTREAM_ERROR",
@@ -405,6 +415,7 @@ def _workflow_receipt(
         "workflow": str(args.get("workflow") or ""),
         "ref": str(args.get("ref") or ""),
         "request_id": str(args.get("request_id") or ""),
+        "target": str(args.get("target") or ""),
     }
     if any(str(data.get(key) or "") != value for key, value in expected.items()):
         raise ToolRuntimeError(
@@ -443,9 +454,18 @@ def _workflow_receipt(
             "GitHub workflow exact match omitted run or provider identity.",
             {"reason_code": "github_workflow_result_incomplete"},
         )
+    if match == "exact" and (
+        str(run.get("request_id") or "") != expected["request_id"]
+        or str(run.get("head_branch") or "") != expected["ref"]
+        or str(run.get("event") or "") != "workflow_dispatch"
+    ):
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub workflow run does not match the approved request.",
+            {"reason_code": "github_workflow_result_mismatch"},
+        )
     return {
         **expected,
-        "target": str(args.get("target") or ""),
         "match": match,
         "run_id": run_id,
         "run": dict(run),

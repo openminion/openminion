@@ -120,6 +120,7 @@ class GithubWorkflowRestOperations:
                 "workflow": workflow,
                 "ref": ref,
                 "request_id": request_id,
+                "target": str(args.get("target") or ""),
                 "event": event,
                 "runs": bounded,
                 "match": "not_found"

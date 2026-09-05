@@ -89,6 +89,8 @@ class _Provider:
         self.workflow_match = "exact"
         self.workflow_mutations = 0
         self.workflow_status_code: int | None = None
+        self.workflow_data_overrides: dict[str, Any] = {}
+        self.workflow_run_overrides: dict[str, Any] = {}
         self.release: dict[str, Any] | None = None
         self.release_mutations = 0
         self.release_status_code: int | None = None
@@ -100,8 +102,9 @@ class _Provider:
         runs = []
         if self.workflow_match in {"exact", "ambiguous"}:
             count = 1 if self.workflow_match == "exact" else 2
-            runs = [
-                {
+            runs = []
+            for index in range(count):
+                run = {
                     "run_id": index + 10,
                     "workflow_id": 7,
                     "request_id": args["request_id"],
@@ -112,21 +115,23 @@ class _Provider:
                     "conclusion": "",
                     "html_url": f"https://github.com/o/r/actions/runs/{index + 10}",
                 }
-                for index in range(count)
-            ]
+                run.update(self.workflow_run_overrides)
+                runs.append(run)
+        data = {
+            "owner": args["owner"],
+            "repo": args["repo"],
+            "workflow": args["workflow"],
+            "ref": args["ref"],
+            "request_id": args["request_id"],
+            "target": args.get("target", ""),
+            "match": self.workflow_match,
+            "runs": runs,
+            "truncated": False,
+        }
+        data.update(self.workflow_data_overrides)
         return {
             "ok": True,
-            "data": {
-                "owner": args["owner"],
-                "repo": args["repo"],
-                "workflow": args["workflow"],
-                "ref": args["ref"],
-                "request_id": args["request_id"],
-                "target": args.get("target", ""),
-                "match": self.workflow_match,
-                "runs": runs,
-                "truncated": False,
-            },
+            "data": data,
             "source": {"provider_id": self.provider_id},
         }
 
@@ -409,6 +414,55 @@ def test_workflow_identity_input_mismatch_stops_before_approval_or_mutation(
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("location", "field", "value"),
+    [
+        ("data", "target", "pypi"),
+        ("run", "request_id", "different-request"),
+        ("run", "head_branch", "different-ref"),
+        ("run", "event", "push"),
+    ],
+)
+def test_workflow_rejects_mismatched_exact_provider_receipt_without_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    location: str,
+    field: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    scope = github_workflow_action_scope(_WORKFLOW_ARGS)
+    _grant(manager, "github.dispatch_workflow", scope)
+    provider = _Provider()
+    overrides = (
+        provider.workflow_data_overrides
+        if location == "data"
+        else provider.workflow_run_overrides
+    )
+    overrides[field] = value
+    register_provider(provider)
+
+    for command_id in ("dispatch-1", "dispatch-2"):
+        result = _adapter(tmp_path, manager).execute(
+            command=_command("github.dispatch_workflow", _WORKFLOW_ARGS, command_id),
+            session_id="session-1",
+            trace_id=command_id,
+        )
+        assert result["error"]["details"]["reason_code"] == (
+            "github_workflow_result_mismatch"
+        )
+        assert result["error"]["details"]["project_effect_uncertain"] is True
+
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect("github.dispatch_workflow", scope),
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.STARTED
+    assert provider.workflow_mutations == 1
 
 
 @pytest.mark.parametrize("readback", ["not_found", "ambiguous"])
