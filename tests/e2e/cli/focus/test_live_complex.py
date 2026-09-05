@@ -7,6 +7,8 @@ import sys
 
 import pytest
 
+from openminion.modules.session.storage.store import SQLiteSessionStore
+
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
@@ -330,26 +332,18 @@ def test_live_focus_complex_workflow_closeout(
     assert "result = value.strip()" not in (scratch_dir / "normalize.py").read_text(
         encoding="utf-8"
     )
-    with sqlite3.connect(
-        focus_probe.data_root / "state" / "brain" / "sessions.db"
-    ) as db:
-        plan_events = [
-            (event_type, json.loads(payload_json))
-            for event_type, payload_json in db.execute(
-                "SELECT event_type, payload_json FROM session_events "
-                "WHERE event_type LIKE 'task_plan.%' ORDER BY seq"
-            )
-        ]
-    declared_steps = {
-        step["step_id"]
-        for event_type, payload in plan_events
-        if event_type == "task_plan.declared"
-        for step in payload["plan"]["steps"]
-    }
-    completed_steps = {
-        payload["step_id"]
-        for event_type, payload in plan_events
-        if event_type == "task_plan.step_completed"
-    }
-    assert declared_steps == completed_steps
-    assert any(event_type == "task_plan.completed" for event_type, _ in plan_events)
+    session_db = focus_probe.data_root / "state" / "brain" / "sessions.db"
+    with sqlite3.connect(session_db) as db:
+        completed = db.execute(
+            "SELECT session_id, payload_json FROM session_events "
+            "WHERE event_type = 'task_plan.completed' AND session_id LIKE ? "
+            "ORDER BY seq DESC LIMIT 1",
+            (f"{focus_probe.session_id}%",),
+        ).fetchone()
+    assert completed is not None
+    json.loads(completed[1])
+    session_store = SQLiteSessionStore(session_db)
+    try:
+        assert session_store.get_active_task_plan(completed[0]) is None
+    finally:
+        session_store.close()

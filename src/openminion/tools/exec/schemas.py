@@ -44,6 +44,17 @@ _EXEC_RUN_TIMEOUT_ALIASES = (
     "max_duration",
 )
 _EXEC_RUN_IGNORED_METADATA_KEYS = ("daemon", "description", "stderr_to_stdout")
+EXEC_RUN_DESCRIPTION = (
+    "Run one allowlisted direct shell command, including commands through the "
+    "system SSH client; do not use pipes, redirections, chaining, or fallback "
+    "operators. Commands already run from the current workspace root; omit "
+    "workdir unless selecting an existing subdirectory. For toolchain checks, "
+    "use direct discovery such as `command -v nasm`, then a separate direct "
+    "version check such as `nasm --version`. Prefer host.metrics for disk, "
+    "memory, and OS status; prefer structured file/web tools for reads, "
+    "scaffolding, or web fetches."
+)
+EXEC_SUBMIT_DESCRIPTION = "Send carriage return (Enter) to a session."
 ProcessStatus = Literal["running", "exited", "killed"]
 AckStatus = Literal["ok", "error"]
 
@@ -277,14 +288,7 @@ class ProcessListResult(BaseModel):
 def tool_schemas() -> dict[str, dict[str, Any]]:
     return {
         "exec.run": {
-            "description": (
-                "Run one direct shell command in workspace scope, including "
-                "commands through the system SSH client, with optional "
-                "PTY/background sessioning. Shell pipes, redirections, chaining, "
-                "and fallback operators are not supported. For toolchain checks, "
-                "use direct discovery such as `command -v nasm`, then a separate "
-                "direct version check such as `nasm --version`."
-            ),
+            "description": EXEC_RUN_DESCRIPTION,
             "args_schema": ExecRunArgs.model_json_schema(),
             "return_schema": ExecRunResult.model_json_schema(),
         },
@@ -299,7 +303,7 @@ def tool_schemas() -> dict[str, dict[str, Any]]:
             "return_schema": ProcessAckResult.model_json_schema(),
         },
         "exec.submit": {
-            "description": "Send carriage return (Enter) to a session.",
+            "description": EXEC_SUBMIT_DESCRIPTION,
             "args_schema": ProcessSubmitArgs.model_json_schema(),
             "return_schema": ProcessAckResult.model_json_schema(),
         },

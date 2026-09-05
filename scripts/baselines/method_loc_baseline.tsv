@@ -24,7 +24,6 @@ src/openminion/modules/brain/loop/tools/budget_control.py	_force_budget_answer_o
 src/openminion/modules/brain/loop/tools/direct_tool.py	_force_direct_tool_answer_only_closure	174	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/duplicate_batch.py	_force_duplicate_batch_answer_only_closure	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/engine.py	_AdaptiveLoopRunner.run	240	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/tools/engine_closure.py	AdaptiveLoopRunnerClosureMixin._handle_duplicate_signature	121	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/dispatch.py	_handle_decompose_calls	172	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/dispatch.py	_process_tool_request_calls	119	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/tools/iteration/dispatch.py	prepare_iteration_dispatch	129	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

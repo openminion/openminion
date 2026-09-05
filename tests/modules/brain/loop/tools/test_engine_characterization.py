@@ -3315,6 +3315,115 @@ def test_duplicate_batch_retries_before_answer_only_closure() -> None:
     assert outcome.state.scratchpad.get("duplicate_batch_answer_only_closure_forced")
 
 
+def test_duplicate_batch_does_not_force_answer_only_with_active_plan() -> None:
+    duplicate_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        output_text="",
+        tool_calls=[ToolCall(id="read", name="file.read", arguments={"path": "a"})],
+        finish_reason="tool_calls",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            duplicate_response,
+            duplicate_response,
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-step",
+                        name="plan",
+                        arguments={
+                            "action": "step_completed",
+                            "plan_id": "plan-1",
+                            "step_id": "s1",
+                            "output_summary": "read complete",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-complete",
+                        name="plan",
+                        arguments={"action": "complete", "plan_id": "plan-1"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="done",
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = SimpleNamespace(
+        active_plan={
+            "plan_id": "plan-1",
+            "steps": [{"step_id": "s1", "status": "pending"}],
+        },
+        events=[],
+    )
+
+    session_api.get_active_task_plan = lambda _session_id: session_api.active_plan
+
+    def append_event(_session_id, event_type=None, payload=None, **kwargs):
+        event_type = event_type or kwargs["type"]
+        session_api.events.append((event_type, payload))
+        if event_type == "task_plan.completed":
+            session_api.active_plan = None
+        return len(session_api.events)
+
+    session_api.append_event = append_event
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=5, llm_calls_max=6),
+        outcomes=[_success_outcome("file.read", "read ok")],
+        session_api=session_api,
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.read"}),
+            max_iterations=6,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="read then finish the plan")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "done"
+    assert not outcome.state.scratchpad.get(
+        "duplicate_batch_answer_only_closure_forced"
+    )
+    assert "duplicate_batch_answer_only_closure_pending" not in outcome.state.scratchpad
+    assert [
+        event_type
+        for event_type, _ in session_api.events
+        if event_type.startswith("task_plan.")
+    ] == [
+        "task_plan.step_completed",
+        "task_plan.completed",
+    ]
+
+
 def test_loop_on_tool_result_callback_invoked() -> None:
     runtime = _FakeRuntime(
         responses=[
