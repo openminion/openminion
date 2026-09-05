@@ -185,6 +185,48 @@ def _issue_grant(
 
 
 @pytest.mark.skipif(_GIT is None, reason="git binary not on PATH")
+def test_git_publication_requires_project_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    workspace, remote = _remote_repo(tmp_path)
+    manager = _project_manager(tmp_path, workspace)
+    adapter = _adapter(workspace, manager)
+    push = _command(
+        "git.push",
+        {
+            "remote": "origin",
+            "source_ref": "refs/heads/main",
+            "target_ref": "refs/heads/main",
+        },
+    )
+    push.pop("meta")
+
+    denied_push = adapter.execute(
+        command=push,
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+    _run(["tag", "-a", "-m", "Release", "v1.0.0", "main"], cwd=workspace)
+    publish_tag = _command(
+        "git.tag",
+        {"action": "push", "name": "v1.0.0", "remote": "origin"},
+    )
+    publish_tag.pop("meta")
+    denied_tag = adapter.execute(
+        command=publish_tag,
+        session_id="session-1",
+        trace_id="turn-2",
+    )
+
+    assert denied_push["error"]["details"]["reason_code"] == "project_context_required"
+    assert denied_tag["error"]["details"]["reason_code"] == "project_context_required"
+    assert not (remote / "refs" / "heads" / "main").exists()
+    assert not (remote / "refs" / "tags" / "v1.0.0").exists()
+
+
+@pytest.mark.skipif(_GIT is None, reason="git binary not on PATH")
 def test_project_push_denial_then_approved_receipt_and_telemetry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -197,6 +239,8 @@ def test_project_push_denial_then_approved_receipt_and_telemetry(
         "source_ref": "refs/heads/main",
         "target_ref": "refs/heads/main",
     }
+    scope = git_push_action_scope(args, _scope_context(workspace))
+    effect_id = f"effect:git.push:{scope}"
     command = _command("git.push", args)
     denied = _adapter(workspace, manager).execute(
         command=command,
@@ -206,7 +250,6 @@ def test_project_push_denial_then_approved_receipt_and_telemetry(
     assert denied["error"]["code"] == "POLICY_DENIED"
     assert not (remote / "refs" / "heads" / "main").exists()
 
-    scope = git_push_action_scope(args, _scope_context(workspace))
     _issue_grant(manager, tool_name="git.push", scope=scope)
     telemetry = _Telemetry()
     from openminion.tools.git import remote as git_remote
@@ -219,7 +262,7 @@ def test_project_push_denial_then_approved_receipt_and_telemetry(
             effect = load_project_effect_record(
                 manager,
                 task_id="task-1",
-                effect_id="effect:git.push:git.push-1",
+                effect_id=effect_id,
             )
             policy = load_project_policy_state(manager, task_id="task-1")
             observed.update(
@@ -243,7 +286,7 @@ def test_project_push_denial_then_approved_receipt_and_telemetry(
     effect = load_project_effect_record(
         manager,
         task_id="task-1",
-        effect_id="effect:git.push:git.push-1",
+        effect_id=effect_id,
     )
     assert effect is not None and effect.status == ProjectEffectStatus.SUCCEEDED
     checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
@@ -252,6 +295,56 @@ def test_project_push_denial_then_approved_receipt_and_telemetry(
         and effect.effect_id in checkpoint.project_run.effect_refs
     )
     assert telemetry.operations[-1]["extra"]["project_effect_id"] == effect.effect_id
+
+
+@pytest.mark.skipif(_GIT is None, reason="git binary not on PATH")
+def test_project_push_stops_when_source_moves_after_effect_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    workspace, remote = _remote_repo(tmp_path)
+    manager = _project_manager(tmp_path, workspace)
+    args = {
+        "remote": "origin",
+        "source_ref": "refs/heads/main",
+        "target_ref": "refs/heads/main",
+    }
+    scope = git_push_action_scope(args, _scope_context(workspace))
+    _issue_grant(manager, tool_name="git.push", scope=scope)
+    from openminion.tools.git import remote as git_remote
+
+    original = git_remote.resolve_git_remote_ref_oid
+    moved = False
+
+    def move_source_then_read_remote(*args, **kwargs):
+        nonlocal moved
+        if not moved:
+            moved = True
+            (workspace / "README.md").write_text("moved\n", encoding="utf-8")
+            _run(["add", "README.md"], cwd=workspace)
+            _run(["commit", "-q", "-m", "move source"], cwd=workspace)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        git_remote,
+        "resolve_git_remote_ref_oid",
+        move_source_then_read_remote,
+    )
+    result = _adapter(workspace, manager).execute(
+        command=_command("git.push", args),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["details"]["reason_code"] == "git_local_ref_changed"
+    assert not (remote / "refs" / "heads" / "main").exists()
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=f"effect:git.push:{scope}",
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.FAILED
 
 
 @pytest.mark.skipif(_GIT is None, reason="git binary not on PATH")
@@ -274,7 +367,6 @@ def test_uncertain_project_push_reconciles_after_restart_without_repeat(
         scope=scope,
     )
     command = _command("git.push", args)
-    command.pop("idempotency_key")
     from openminion.tools.git import remote as git_remote
 
     original = git_remote.run_git
@@ -307,8 +399,10 @@ def test_uncertain_project_push_reconciles_after_restart_without_repeat(
 
     monkeypatch.setattr(git_remote, "run_git", original)
     restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    resumed_command = _command("git.push", args)
+    resumed_command["idempotency_key"] = "git.push-after-restart"
     second = _adapter(workspace, restarted).execute(
-        command=command,
+        command=resumed_command,
         session_id="session-1",
         trace_id="turn-2",
     )
@@ -349,6 +443,7 @@ def test_project_tag_publication_uses_its_own_grant_and_effect(
     assert created["status"] == "success"
     args = {"action": "push", "name": "v1.0.0-rc1", "remote": "origin"}
     scope = git_tag_push_action_scope(args, _scope_context(workspace))
+    effect_id = f"effect:git.tag:{scope}"
     _issue_grant(manager, tool_name="git.tag", scope=scope)
 
     published = adapter.execute(
@@ -362,9 +457,58 @@ def test_project_tag_publication_uses_its_own_grant_and_effect(
     effect = load_project_effect_record(
         manager,
         task_id="task-1",
-        effect_id="effect:git.tag:git.tag-1",
+        effect_id=effect_id,
     )
     assert effect is not None and effect.capability_ref == "git.tag"
+
+
+@pytest.mark.skipif(_GIT is None, reason="git binary not on PATH")
+def test_project_tag_push_stops_when_tag_moves_after_effect_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    workspace, remote = _remote_repo(tmp_path)
+    _run(["tag", "-a", "-m", "Release", "v1.0.0", "main"], cwd=workspace)
+    _run(["tag", "-a", "-m", "Replacement", "replacement", "main"], cwd=workspace)
+    manager = _project_manager(tmp_path, workspace)
+    args = {"action": "push", "name": "v1.0.0", "remote": "origin"}
+    scope = git_tag_push_action_scope(args, _scope_context(workspace))
+    _issue_grant(manager, tool_name="git.tag", scope=scope)
+    replacement = _run(
+        ["rev-parse", "refs/tags/replacement"], cwd=workspace
+    ).stdout.strip()
+    from openminion.tools.git import remote as git_remote
+
+    original = git_remote.resolve_git_remote_ref_oid
+    moved = False
+
+    def move_tag_then_read_remote(*args, **kwargs):
+        nonlocal moved
+        if not moved:
+            moved = True
+            _run(["update-ref", "refs/tags/v1.0.0", replacement], cwd=workspace)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        git_remote,
+        "resolve_git_remote_ref_oid",
+        move_tag_then_read_remote,
+    )
+    result = _adapter(workspace, manager).execute(
+        command=_command("git.tag", args),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["details"]["reason_code"] == "git_local_ref_changed"
+    assert not (remote / "refs" / "tags" / "v1.0.0").exists()
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=f"effect:git.tag:{scope}",
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.FAILED
 
 
 @pytest.mark.skipif(_GIT is None, reason="git binary not on PATH")
@@ -380,10 +524,12 @@ def test_uncertain_project_tag_publication_reconciles_without_repeat(
     )
     manager = _project_manager(tmp_path, workspace)
     args = {"action": "push", "name": "v1.0.0-rc1", "remote": "origin"}
+    scope = git_tag_push_action_scope(args, _scope_context(workspace))
+    effect_id = f"effect:git.tag:{scope}"
     _issue_grant(
         manager,
         tool_name="git.tag",
-        scope=git_tag_push_action_scope(args, _scope_context(workspace)),
+        scope=scope,
     )
     command = _command("git.tag", args)
     from openminion.tools.git import remote as git_remote
@@ -409,8 +555,10 @@ def test_uncertain_project_tag_publication_reconciles_without_repeat(
     assert push_calls == 1
 
     monkeypatch.setattr(git_remote, "run_git", original)
+    resumed_command = _command("git.tag", args)
+    resumed_command["idempotency_key"] = "git.tag-after-restart"
     second = _adapter(workspace, manager).execute(
-        command=command,
+        command=resumed_command,
         session_id="session-1",
         trace_id="turn-2",
     )
@@ -420,7 +568,7 @@ def test_uncertain_project_tag_publication_reconciles_without_repeat(
     effect = load_project_effect_record(
         manager,
         task_id="task-1",
-        effect_id="effect:git.tag:git.tag-1",
+        effect_id=effect_id,
     )
     assert effect is not None and effect.verification_refs == ("git.tag:readback",)
 

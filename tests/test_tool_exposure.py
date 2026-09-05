@@ -41,6 +41,8 @@ def test_get_model_exposure_specs_uses_canonical_manager_path() -> None:
     assert "web.fetch" in names
     assert "weather" in names
     assert "time" in names
+    assert "git.push" not in names
+    assert "git.tag" not in names
     assert "search.tavily.search" not in names
     assert "web_search" not in names
 
@@ -255,6 +257,7 @@ def test_canonical_tool_ids_have_complete_exposure_classification() -> None:
         DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET | PROFILE_GATED_MODEL_TOOL_IDS_SET
         == ALL_MODEL_TOOL_IDS_SET
     )
+    assert {"git.push", "git.tag"} <= PROFILE_GATED_MODEL_TOOL_IDS_SET
 
 
 def test_profile_registration_is_idempotent_but_rejects_conflicts() -> None:

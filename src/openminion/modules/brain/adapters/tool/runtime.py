@@ -691,21 +691,15 @@ class ToolAdapter:
                     project_task_id=project_task_id, start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
-            if project_task_id and _is_project_git_action(tool_name, validated_args):
+            if _is_project_git_action(tool_name, validated_args):
                 return self._invoke_project_git_effect(
-                    command=command,
-                    validated_args=validated_args,
-                    ctx=ctx,
-                    spec=spec,
-                    project_task_id=project_task_id,
+                    validated_args=validated_args, ctx=ctx, spec=spec,
+                    project_task_id=project_task_id, start_time=start_time,
                     background_write_authorized=background_write_authorized,
-                    start_time=start_time,
                 )
             return run_tool_spec(
-                spec=spec,
-                validated_args=validated_args,
-                context=ctx,
-                start_time=start_time,
+                spec=spec, validated_args=validated_args,
+                context=ctx, start_time=start_time,
                 background_write_authorized=background_write_authorized,
                 tool_name=tool_name,
             )
@@ -784,7 +778,6 @@ class ToolAdapter:
     def _invoke_project_git_effect(
         self,
         *,
-        command: dict[str, Any],
         validated_args: dict[str, Any],
         ctx: RuntimeContext,
         spec: ToolSpec,
@@ -792,6 +785,11 @@ class ToolAdapter:
         background_write_authorized: bool,
         start_time: float,
     ) -> dict[str, Any]:
+        if not project_task_id:
+            raise ToolRuntimeError(
+                "POLICY_DENIED", "Git publication requires a project action.",
+                {"reason_code": "project_context_required"},
+            )
         if self.task_manager is None:
             raise ToolRuntimeError(
                 "INVALID_REQUEST",
@@ -805,7 +803,6 @@ class ToolAdapter:
             task_manager=self.task_manager,
             task_id=project_task_id,
             tool_name=ctx.tool_name,
-            idempotency_key=str(command.get("idempotency_key") or ""),
             actor_ref=f"agent:{self.agent_id}",
             args=validated_args,
             ctx=ctx,

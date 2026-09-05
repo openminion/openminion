@@ -301,21 +301,6 @@ def _require_success(result: GitCommandResult) -> None:
         raise classify_git_failure(result)
 
 
-def _git_token(value: Any, *, field: str, allow_colon: bool = False) -> str:
-    token = str(value or "").strip()
-    if not token:
-        raise ToolRuntimeError(
-            "INVALID_ARGUMENT", f"{field} is required", {"field": field}
-        )
-    if token[0] in {"-", "+"} or (not allow_colon and ":" in token):
-        raise ToolRuntimeError(
-            "INVALID_ARGUMENT",
-            f"invalid {field}",
-            {"field": field, "value": token},
-        )
-    return token
-
-
 def _h_status(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     raw_path = str(args.get("path") or ".")
     _scoped_path(ctx, raw_path, operation="read")

@@ -240,7 +240,6 @@ def _h_push(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     target_ref = _remote_token(args.get("target_ref"), field="target_ref")
     _validate_full_ref(cwd, target_ref, field="target_ref")
     require_configured_git_remote(cwd, remote)
-    source_oid = resolve_git_ref_oid(cwd, source_ref)
     before_oid = resolve_git_remote_ref_oid(cwd, remote=remote, ref=target_ref)
     expected_before = getattr(ctx, "git_remote_expected_before_oid", before_oid)
     if expected_before != before_oid:
@@ -253,10 +252,21 @@ def _h_push(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
                 "target_ref": target_ref,
             },
         )
+    source_oid = resolve_git_ref_oid(cwd, source_ref)
+    expected_oid = getattr(ctx, "git_remote_expected_oid", source_oid)
+    if expected_oid != source_oid:
+        raise ToolRuntimeError(
+            "INVALID_REQUEST",
+            "local ref changed after project approval",
+            {
+                "reason_code": "git_local_ref_changed",
+                "source_ref": source_ref,
+            },
+        )
 
     try:
         result = run_git(
-            ("push", "--porcelain", "--", remote, f"{source_ref}:{target_ref}"),
+            ("push", "--porcelain", "--", remote, f"{expected_oid}:{target_ref}"),
             cwd=cwd,
         )
     except subprocess.TimeoutExpired as exc:
@@ -349,8 +359,6 @@ def _h_tag(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         return dict(reconciled)
     remote = _remote_token(args.get("remote"), field="remote")
     require_configured_git_remote(cwd, remote)
-    tag_oid = resolve_git_ref_oid(cwd, tag_ref)
-    target_oid = resolve_git_ref_oid(cwd, f"{tag_ref}^{{}}")
     before_oid = resolve_git_remote_ref_oid(cwd, remote=remote, ref=tag_ref)
     expected_before = getattr(ctx, "git_remote_expected_before_oid", before_oid)
     if expected_before != before_oid:
@@ -363,9 +371,21 @@ def _h_tag(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
                 "tag_ref": tag_ref,
             },
         )
+    tag_oid = resolve_git_ref_oid(cwd, tag_ref)
+    expected_oid = getattr(ctx, "git_remote_expected_oid", tag_oid)
+    if expected_oid != tag_oid:
+        raise ToolRuntimeError(
+            "INVALID_REQUEST",
+            "local tag changed after project approval",
+            {
+                "reason_code": "git_local_ref_changed",
+                "tag_ref": tag_ref,
+            },
+        )
+    target_oid = resolve_git_ref_oid(cwd, f"{tag_ref}^{{}}")
     try:
         result = run_git(
-            ("push", "--porcelain", "--", remote, f"{tag_ref}:{tag_ref}"),
+            ("push", "--porcelain", "--", remote, f"{expected_oid}:{tag_ref}"),
             cwd=cwd,
         )
     except subprocess.TimeoutExpired as exc:

@@ -220,7 +220,6 @@ def begin_git_remote_project_effect(
     task_manager: Any,
     task_id: str,
     tool_name: str,
-    idempotency_key: str,
     actor_ref: str,
     args: Mapping[str, Any],
     ctx: Any,
@@ -229,7 +228,7 @@ def begin_git_remote_project_effect(
     repository = str(resolve_git_repo_root(ctx))
     _require_project_repository(checkpoint, repository)
     action = _project_action(tool_name, args, ctx)
-    action_key = idempotency_key.strip() or action.scope
+    action_key = action.scope
     effect_id = f"effect:{action.tool_name}:{action_key}"
     existing = load_project_effect_record(
         task_manager,
@@ -303,6 +302,7 @@ def begin_git_remote_project_effect(
         effect=effect,
     )
     ctx.git_remote_expected_before_oid = action.previous_oid
+    ctx.git_remote_expected_oid = action.expected_oid
     emit_tool_invoke_operation_for_context(
         ctx=ctx,
         operation="invoke",
@@ -349,7 +349,6 @@ def execute_git_remote_project_effect(
     task_manager: Any,
     task_id: str,
     tool_name: str,
-    idempotency_key: str,
     actor_ref: str,
     args: Mapping[str, Any],
     ctx: Any,
@@ -359,7 +358,6 @@ def execute_git_remote_project_effect(
         task_manager=task_manager,
         task_id=task_id,
         tool_name=tool_name,
-        idempotency_key=idempotency_key,
         actor_ref=actor_ref,
         args=args,
         ctx=ctx,
@@ -574,6 +572,7 @@ def _reuse_or_reconcile_git_effect(
         effect=existing,
     )
     ctx.git_remote_expected_before_oid = action.previous_oid
+    ctx.git_remote_expected_oid = action.expected_oid
     ctx.git_remote_reconciled_result = _git_result_from_receipt(receipt)
     return current
 
