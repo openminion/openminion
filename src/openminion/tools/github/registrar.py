@@ -15,6 +15,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GITHUB_FETCH_PR,
     MODEL_GITHUB_LIST_PRS,
     MODEL_GITHUB_OPEN_PR,
+    MODEL_GITHUB_UPDATE_PR,
     MODEL_GITHUB_POST_PR_COMMENT,
     MODEL_GITHUB_POST_PR_REVIEW,
 )
@@ -26,6 +27,7 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_GITHUB_FETCH_PR,
     RUNTIME_GITHUB_LIST_PRS,
     RUNTIME_GITHUB_OPEN_PR,
+    RUNTIME_GITHUB_UPDATE_PR,
     RUNTIME_GITHUB_POST_PR_COMMENT,
     RUNTIME_GITHUB_POST_PR_REVIEW,
 )
@@ -38,6 +40,7 @@ from .interfaces import (
     TOOL_GITHUB_FETCH_PR,
     TOOL_GITHUB_LIST_PRS,
     TOOL_GITHUB_OPEN_PR,
+    TOOL_GITHUB_UPDATE_PR,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
@@ -84,6 +87,7 @@ GITHUB_MODEL_TOOLS: tuple[ModelToolDef, ...] = tuple(
             "Commit allowlisted smoke files to a GitHub branch.",
         ),
         (MODEL_GITHUB_OPEN_PR, "Open a GitHub pull request from a smoke branch."),
+        (MODEL_GITHUB_UPDATE_PR, "Update a GitHub pull request title or body."),
         (
             MODEL_GITHUB_POST_PR_REVIEW,
             "Post a bounded GitHub PR review comment.",
@@ -125,6 +129,11 @@ GITHUB_RUNTIME_BINDINGS: tuple[RuntimeBindingDef, ...] = (
     ),
     RuntimeBindingDef(
         RUNTIME_GITHUB_OPEN_PR, MODEL_GITHUB_OPEN_PR, (TOOL_GITHUB_OPEN_PR,)
+    ),
+    RuntimeBindingDef(
+        RUNTIME_GITHUB_UPDATE_PR,
+        MODEL_GITHUB_UPDATE_PR,
+        (TOOL_GITHUB_UPDATE_PR,),
     ),
     RuntimeBindingDef(
         RUNTIME_GITHUB_POST_PR_REVIEW,

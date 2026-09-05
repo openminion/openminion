@@ -18,6 +18,7 @@ from openminion.tools.github.interfaces import (
     TOOL_GITHUB_FETCH_PR,
     TOOL_GITHUB_LIST_PRS,
     TOOL_GITHUB_OPEN_PR,
+    TOOL_GITHUB_UPDATE_PR,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
@@ -70,6 +71,10 @@ class _StubProvider:
         del ctx
         return self._record("open_pr", args)
 
+    def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("update_pr", args)
+
     def post_pr_review(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
         return self._record("post_pr_review", args)
@@ -98,7 +103,7 @@ def stub_provider() -> _StubProvider:
     provider_registry().reset()
 
 
-def test_register_adds_all_nine_tools(registry_with_tools: ToolRegistry) -> None:
+def test_register_adds_all_ten_tools(registry_with_tools: ToolRegistry) -> None:
     expected = {
         TOOL_GITHUB_LIST_PRS,
         TOOL_GITHUB_FETCH_PR,
@@ -107,6 +112,7 @@ def test_register_adds_all_nine_tools(registry_with_tools: ToolRegistry) -> None
         TOOL_GITHUB_FETCH_CHECKS,
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
+        TOOL_GITHUB_UPDATE_PR,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     }
@@ -138,6 +144,7 @@ def test_each_write_tool_is_write_safe_and_non_idempotent(
     for name in (
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
+        TOOL_GITHUB_UPDATE_PR,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     ):
@@ -187,6 +194,22 @@ def test_commit_files_dispatches_to_provider(
     assert result["ok"] is True
     assert result["data"]["method"] == "commit_files"
     assert stub_provider.calls == [("commit_files", args)]
+
+
+def test_update_pr_dispatches_to_provider(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    spec = registry_with_tools.list()[TOOL_GITHUB_UPDATE_PR]
+    args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "number": 17,
+        "title": "Updated title",
+        "body": None,
+    }
+    result = spec.handler(args, ctx=None)
+    assert result["data"]["method"] == "update_pr"
+    assert stub_provider.calls == [("update_pr", args)]
 
 
 def test_no_provider_raises_dependency_unavailable(
@@ -250,6 +273,22 @@ def test_fetch_checks_rejects_non_hex_sha() -> None:
                 "expected_checks": ["lint", "lint"],
             }
         )
+
+
+def test_update_pr_schema_requires_title_or_body() -> None:
+    from openminion.tools.github.schemas import GithubUpdatePrArgs
+
+    with pytest.raises(Exception):
+        GithubUpdatePrArgs.model_validate({"owner": "o", "repo": "r", "number": 1})
+    with pytest.raises(Exception):
+        GithubUpdatePrArgs.model_validate(
+            {"owner": "o", "repo": "r", "number": 1, "title": ""}
+        )
+    parsed = GithubUpdatePrArgs.model_validate(
+        {"owner": "o", "repo": "r", "number": 1, "title": " New title "}
+    )
+    assert parsed.title == "New title"
+    assert parsed.body is None
 
 
 def test_fetch_checks_dispatches_expected_names(

@@ -13,6 +13,7 @@ from .interfaces import (
     TOOL_GITHUB_FETCH_PR,
     TOOL_GITHUB_LIST_PRS,
     TOOL_GITHUB_OPEN_PR,
+    TOOL_GITHUB_UPDATE_PR,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
@@ -25,6 +26,7 @@ from .schemas import (
     GithubFetchPrArgs,
     GithubListPrsArgs,
     GithubOpenPrArgs,
+    GithubUpdatePrArgs,
     GithubPostPrCommentArgs,
     GithubPostPrReviewArgs,
 )
@@ -38,6 +40,7 @@ _PROVIDER_RESOLVERS: dict[str, str] = {
     TOOL_GITHUB_FETCH_CHECKS: "fetch_checks",
     TOOL_GITHUB_COMMIT_FILES: "commit_files",
     TOOL_GITHUB_OPEN_PR: "open_pr",
+    TOOL_GITHUB_UPDATE_PR: "update_pr",
     TOOL_GITHUB_POST_PR_REVIEW: "post_pr_review",
     TOOL_GITHUB_POST_PR_COMMENT: "post_pr_comment",
 }
@@ -68,6 +71,10 @@ def find_open_pr(
 ) -> dict[str, Any] | None:
     row = _resolve_provider().find_open_pr(args=args, ctx=ctx, head_sha=head_sha)
     return dict(row) if row is not None else None
+
+
+def read_update_pr(args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+    return dict(_resolve_provider().read_update_pr(args=args, ctx=ctx))
 
 
 def _dispatch(
@@ -116,6 +123,10 @@ def _h_open_pr(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return _dispatch(TOOL_GITHUB_OPEN_PR, args, ctx)
 
 
+def _h_update_pr(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    return _dispatch(TOOL_GITHUB_UPDATE_PR, args, ctx)
+
+
 def _h_post_pr_review(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return _dispatch(TOOL_GITHUB_POST_PR_REVIEW, args, ctx)
 
@@ -162,6 +173,12 @@ def _github_tool_specs() -> tuple[ToolSpec, ...]:
             TOOL_GITHUB_OPEN_PR, GithubOpenPrArgs, _h_open_pr, read_only=False
         ),
         _github_tool_spec(
+            TOOL_GITHUB_UPDATE_PR,
+            GithubUpdatePrArgs,
+            _h_update_pr,
+            read_only=False,
+        ),
+        _github_tool_spec(
             TOOL_GITHUB_POST_PR_REVIEW,
             GithubPostPrReviewArgs,
             _h_post_pr_review,
@@ -195,4 +212,9 @@ def _github_tool_spec(
     )
 
 
-__all__ = ["find_open_pr", "register", "resolve_open_pr_head_sha"]
+__all__ = [
+    "find_open_pr",
+    "read_update_pr",
+    "register",
+    "resolve_open_pr_head_sha",
+]

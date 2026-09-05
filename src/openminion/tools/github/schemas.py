@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .constants import DEFAULT_GITHUB_DIFF_MAX_LINES
 
@@ -212,6 +212,24 @@ class GithubOpenPrArgs(_RepoArgsBase):
         return _normalize_message(value, field=str(info.field_name or "value"))
 
 
+class GithubUpdatePrArgs(_PrArgsBase):
+    title: str | None = Field(default=None, description="Replacement PR title")
+    body: str | None = Field(default=None, description="Replacement PR body")
+
+    @field_validator("title", "body", mode="before")
+    @classmethod
+    def _validate_text(cls, value: Any, info: Any) -> str | None:
+        if value is None:
+            return None
+        return _normalize_message(value, field=str(info.field_name or "value"))
+
+    @model_validator(mode="after")
+    def _require_update(self) -> "GithubUpdatePrArgs":
+        if self.title is None and self.body is None:
+            raise ValueError("title or body is required")
+        return self
+
+
 class GithubPostPrReviewArgs(_PrArgsBase):
     event: str = Field(..., min_length=1, description="L3 allows COMMENT only.")
     body: str = Field(..., min_length=1, description="Review body")
@@ -248,6 +266,7 @@ __all__ = [
     "GithubCommitFileInput",
     "GithubCommitFilesArgs",
     "GithubOpenPrArgs",
+    "GithubUpdatePrArgs",
     "GithubPostPrReviewArgs",
     "GithubPostPrCommentArgs",
 ]

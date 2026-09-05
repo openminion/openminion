@@ -48,6 +48,7 @@ from .command_metadata import (
 from .blockchain_authorization import consume_blockchain_send_authorization
 from .project_github import (
     execute_github_open_pr_project_effect,
+    execute_github_update_pr_project_effect,
 )
 from .policy_context import (
     _agent_id_from_policy,
@@ -507,7 +508,7 @@ class ToolAdapter:
             replay_confirmed=replay_confirmed,
             background_write_authorized=background_write_authorized,
         )
-        if tool_name == "github.open_pr" and project_task_id:
+        if tool_name in {"github.open_pr", "github.update_pr"} and project_task_id:
             auto_confirm = True
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
@@ -678,7 +679,14 @@ class ToolAdapter:
                         tool_name=tool_name,
                     ),
                 )
-            result = run_tool_spec(
+            if tool_name == "github.update_pr" and project_task_id:
+                return self._execute_project_update_pr(
+                    command=command, validated_args=validated_args,
+                    ctx=ctx, spec=spec,
+                    project_task_id=project_task_id, start_time=start_time,
+                    background_write_authorized=background_write_authorized,
+                )
+            return run_tool_spec(
                 spec=spec,
                 validated_args=validated_args,
                 context=ctx,
@@ -686,7 +694,6 @@ class ToolAdapter:
                 background_write_authorized=background_write_authorized,
                 tool_name=tool_name,
             )
-            return result
         except ToolRuntimeError as exc:
             requires_confirm = _is_confirm_required_code(exc.code)
             if requires_confirm and not replay_confirmed:
@@ -723,6 +730,43 @@ class ToolAdapter:
                 message="Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
+
+    def _execute_project_update_pr(
+        self,
+        *,
+        command: Mapping[str, Any],
+        validated_args: dict[str, Any],
+        ctx: RuntimeContext,
+        spec: ToolSpec,
+        project_task_id: str,
+        start_time: float,
+        background_write_authorized: bool,
+    ) -> dict[str, Any]:
+        if self.task_manager is None:
+            raise ToolRuntimeError(
+                "INVALID_REQUEST",
+                "Project tool execution requires the task manager.",
+                {
+                    "reason_code": "project_task_manager_unavailable",
+                    "project_task_id": project_task_id,
+                },
+            )
+        return execute_github_update_pr_project_effect(
+            task_manager=self.task_manager,
+            task_id=project_task_id,
+            idempotency_key=str(command.get("idempotency_key") or ""),
+            actor_ref=f"agent:{self.agent_id}",
+            args=validated_args,
+            ctx=ctx,
+            invoke=lambda: run_tool_spec(
+                spec=spec,
+                validated_args=validated_args,
+                context=ctx,
+                start_time=start_time,
+                background_write_authorized=background_write_authorized,
+                tool_name=ctx.tool_name,
+            ),
+        )
 
     def _resolve_registry_tool(self, tool_name: str) -> tuple[str, Any, Any]:
         spec = None

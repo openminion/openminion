@@ -434,6 +434,59 @@ class GithubRestProvider:
                 )
         return None
 
+    def read_update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        owner, repo = _owner_repo(args)
+        number = int(args.get("number") or 0)
+        ensure_repository_allowed(
+            owner=owner,
+            repo=repo,
+            config=profile_config_from_context(ctx),
+        )
+        row = self._request_json_or_none_on_404(
+            ctx=ctx,
+            path=f"/repos/{owner}/{repo}/pulls/{number}",
+        )
+        if row is None:
+            raise ToolRuntimeError(
+                "NOT_FOUND",
+                "The pull request does not exist.",
+                {"reason_code": "github_update_pr_not_found"},
+            )
+        if not isinstance(row, Mapping):
+            raise _protocol_error("github.update_pr readback expected an object response")
+        state = str(row.get("state") or "")
+        if state != "open":
+            raise ToolRuntimeError(
+                "INVALID_REQUEST",
+                "Only an open pull request can be updated.",
+                {"reason_code": "github_update_pr_not_open", "state": state},
+            )
+        return _update_pr_result(row, owner, repo, self.provider_id)
+
+    def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        owner, repo = _owner_repo(args)
+        number = int(args.get("number") or 0)
+        reconciled = getattr(ctx, "github_update_pr_reconciled_result", None)
+        if isinstance(reconciled, Mapping):
+            return dict(reconciled)
+
+        if not isinstance(getattr(ctx, "github_update_pr_preflight", None), Mapping):
+            self.read_update_pr(args=args, ctx=ctx)
+        body = {
+            field: args[field]
+            for field in ("title", "body")
+            if args.get(field) is not None
+        }
+        row = self._request_json(
+            ctx=ctx,
+            path=f"/repos/{owner}/{repo}/pulls/{number}",
+            method="PATCH",
+            body=body,
+        )
+        if not isinstance(row, Mapping):
+            raise _protocol_error("github.update_pr expected an object response")
+        return _update_pr_result(row, owner, repo, self.provider_id)
+
     @staticmethod
     def _ensure_open_pr_allowed(
         *,
@@ -715,6 +768,29 @@ def _open_pr_result(
     return {
         "ok": True,
         "data": data,
+        "source": {"provider_id": provider_id},
+    }
+
+
+def _update_pr_result(
+    row: Mapping[str, Any],
+    owner: str,
+    repo: str,
+    provider_id: str,
+) -> dict[str, Any]:
+    head = _mapping(row.get("head"))
+    return {
+        "ok": True,
+        "data": {
+            "owner": owner,
+            "repo": repo,
+            "number": int(row.get("number") or 0),
+            "html_url": str(row.get("html_url") or ""),
+            "title": str(row.get("title") or ""),
+            "body": str(row.get("body") or ""),
+            "state": str(row.get("state") or ""),
+            "head_sha": str(head.get("sha") or ""),
+        },
         "source": {"provider_id": provider_id},
     }
 

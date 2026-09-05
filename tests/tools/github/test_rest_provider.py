@@ -672,6 +672,109 @@ def test_open_pr_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
+def test_update_pr_reads_open_pr_and_patches_only_requested_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def fake_optional(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self
+        requests.append(("GET", kwargs["path"], None))
+        return {
+            "number": 17,
+            "title": "Old title",
+            "body": "Keep body",
+            "state": "open",
+            "head": {"sha": "abc1234"},
+        }
+
+    def fake_request(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self
+        requests.append((kwargs["method"], kwargs["path"], kwargs["body"]))
+        return {
+            "number": 17,
+            "title": "New title",
+            "body": "Keep body",
+            "state": "open",
+            "head": {"sha": "abc1234"},
+        }
+
+    monkeypatch.setattr(
+        GithubRestProvider, "_request_json_or_none_on_404", fake_optional
+    )
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request)
+
+    result = GithubRestProvider().update_pr(
+        args={
+            "owner": "openminion",
+            "repo": "test-repo-for-agent",
+            "number": 17,
+            "title": "New title",
+            "body": None,
+        },
+        ctx=None,
+    )
+
+    assert result["data"]["title"] == "New title"
+    assert requests == [
+        ("GET", "/repos/openminion/test-repo-for-agent/pulls/17", None),
+        (
+            "PATCH",
+            "/repos/openminion/test-repo-for-agent/pulls/17",
+            {"title": "New title"},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("row", "code", "reason"),
+    [
+        (None, "NOT_FOUND", "github_update_pr_not_found"),
+        (
+            {"number": 17, "state": "closed", "head": {"sha": "abc1234"}},
+            "INVALID_REQUEST",
+            "github_update_pr_not_open",
+        ),
+    ],
+)
+def test_update_pr_rejects_missing_or_closed_pr_before_patch(
+    monkeypatch: pytest.MonkeyPatch,
+    row: dict[str, Any] | None,
+    code: str,
+    reason: str,
+) -> None:
+    patch_calls = 0
+
+    def fake_optional(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self, kwargs
+        return row
+
+    def fail_patch(self: GithubRestProvider, **kwargs: Any) -> Any:
+        nonlocal patch_calls
+        del self, kwargs
+        patch_calls += 1
+
+    monkeypatch.setattr(
+        GithubRestProvider, "_request_json_or_none_on_404", fake_optional
+    )
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fail_patch)
+
+    with pytest.raises(ToolRuntimeError) as exc:
+        GithubRestProvider().update_pr(
+            args={
+                "owner": "openminion",
+                "repo": "test-repo-for-agent",
+                "number": 17,
+                "title": "New title",
+            },
+            ctx=None,
+        )
+
+    assert exc.value.code == code
+    assert exc.value.details["reason_code"] == reason
+    assert patch_calls == 0
+
+
 def test_find_open_pr_matches_exact_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 

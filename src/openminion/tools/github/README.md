@@ -14,6 +14,7 @@ The repo now has two bounded GitHub surfaces:
 2. L3 write-authorized smoke actions:
    - `github.commit_files`
    - `github.open_pr`
+   - `github.update_pr` (title/body only)
    - `github.post_pr_review`
    - `github.post_pr_comment`
 

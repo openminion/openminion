@@ -146,6 +146,7 @@ RUNTIME_GITHUB_FETCH_COMMENTS = "runtime.github.fetch_comments"
 RUNTIME_GITHUB_FETCH_CHECKS = "runtime.github.fetch_checks"
 RUNTIME_GITHUB_COMMIT_FILES = "runtime.github.commit_files"
 RUNTIME_GITHUB_OPEN_PR = "runtime.github.open_pr"
+RUNTIME_GITHUB_UPDATE_PR = "runtime.github.update_pr"
 RUNTIME_GITHUB_POST_PR_REVIEW = "runtime.github.post_pr_review"
 RUNTIME_GITHUB_POST_PR_COMMENT = "runtime.github.post_pr_comment"
 RUNTIME_TASK_DELEGATE = "runtime.task.delegate"
@@ -244,6 +245,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_GITHUB_FETCH_CHECKS,
     RUNTIME_GITHUB_COMMIT_FILES,
     RUNTIME_GITHUB_OPEN_PR,
+    RUNTIME_GITHUB_UPDATE_PR,
     RUNTIME_GITHUB_POST_PR_REVIEW,
     RUNTIME_GITHUB_POST_PR_COMMENT,
     RUNTIME_TASK_DELEGATE,
