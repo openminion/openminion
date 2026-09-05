@@ -3,6 +3,7 @@ src/openminion/api/agent.py	1	0	current broad-handler baseline; ratchet by narro
 src/openminion/api/config.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/core/deps.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/core/infrastructure.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/api/core/profiles.py	1	0	durable-save activation boundary must report partial success for any runtime close failure
 src/openminion/api/core/turn_execution.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/operations/skill.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/api/operations/turn_inputs.py	3	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -59,7 +60,6 @@ src/openminion/cli/interactive/widgets/mention_overlay.py	1	0	current broad-hand
 src/openminion/cli/interactive/widgets/slash_overlay.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/animation/registry.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/clipboard.py	1	0	best-effort clipboard backend failures must not terminate the interactive surface
-src/openminion/cli/presentation/tool/blocks.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/visible_parity.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/status/surface.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/transport/daemon_client.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
