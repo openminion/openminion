@@ -193,6 +193,7 @@ def test_command_help_lists_primary_commands_without_compatibility_aliases() -> 
 
 def test_command_profile_ls() -> None:
     store = InMemoryControlPlaneStore()
+    store.ensure_agent("researcher", "Research profile")
     registry = CommandRegistry(store=store)
     parser = SlashCommandParser()
     cmd = parser.parse("/profile ls")
@@ -201,6 +202,9 @@ def test_command_profile_ls() -> None:
     assert result.ok
     assert "agent:default" in result.text
     assert "Configured profiles" in result.text
+    assert "agent:default (current)" in result.text
+    assert "researcher - Research profile" in result.text
+    assert "/profile use <profile_id>" in result.text
 
 
 def test_command_profile_use() -> None:
@@ -228,6 +232,8 @@ def test_command_profile_current_reports_selected_profile() -> None:
 
     assert result.ok
     assert "minimax-m2-5" in result.text
+    assert "Session: sess-current" in result.text
+    assert "/profile list" in result.text
     assert result.data["profile_id"] == "minimax-m2-5"
 
 
@@ -250,6 +256,9 @@ def test_profile_switch_preserves_session_context_until_session_new() -> None:
     assert store.resolve_agent(session_id) == "minimax-m2-5"
     assert [turn.content for turn in store.list_turns(session_id)] == ["remember this"]
     assert fresh_result.ok
+    assert "fresh context" in fresh_result.text
+    assert "Profile: agent:default" in fresh_result.text
+    assert fresh_result.data["profile_id"] == "agent:default"
     assert fresh_result.data["session_id"] != session_id
     assert store.list_turns(str(fresh_result.data["session_id"])) == []
 
@@ -286,8 +295,29 @@ def test_command_session_status() -> None:
     assert cmd is not None
     result = registry.execute(cmd, _ctx(session_id="sess-0001"))
     assert result.ok
-    assert "sess-0001" in result.text
-    assert "profile=" in result.text
+    assert "Current session:" in result.text
+    assert "id: sess-0001" in result.text
+    assert "profile: agent:default" in result.text
+    assert "turns: 1" in result.text
+
+
+def test_command_sessions_marks_current_session_and_explains_switching() -> None:
+    store = InMemoryControlPlaneStore()
+    first_session = store.resolve_session("u1", "chat1")
+    store.set_session_title(first_session, "First topic")
+    current_session = store.rebind_session("u1", "chat1")
+    registry = CommandRegistry(store=store)
+    command = SlashCommandParser().parse("/sessions")
+    assert command is not None
+
+    result = registry.execute(command, _ctx(session_id=current_session))
+
+    assert result.ok
+    assert "Sessions for this chat:" in result.text
+    assert f"{first_session} - First topic" in result.text
+    assert f"{current_session} (current)" in result.text
+    assert "/session use <session_id>" in result.text
+    assert "/session new" in result.text
 
 
 def test_command_status_summarizes_profile_session_and_pairing() -> None:
@@ -305,9 +335,11 @@ def test_command_status_summarizes_profile_session_and_pairing() -> None:
     )
 
     assert result.ok
+    assert "channel: online" in result.text
     assert "profile: agent:default" in result.text
     assert f"session: {session_id}" in result.text
     assert "pairing: not observed" in result.text
+    assert "access: not observed" in result.text
     assert result.data["profile_id"] == "agent:default"
 
 
@@ -356,11 +388,28 @@ def test_command_pair_status_and_revoke_current_chat() -> None:
     assert status_result.ok
     assert "Pairing active" in status_result.text
     assert "chat with OpenMinion (chat.interact)" in status_result.text
+    assert "access: limited to the scopes above" in status_result.text
     assert "pairing_id" not in status_result.text
     assert "/pair revoke" in status_result.text
     assert revoke_result.ok
     assert "revoked" in revoke_result.text
     assert store.upserts[-1]["status"] == "revoked"
+
+
+def test_command_pair_status_uses_current_channel_setup_command() -> None:
+    store = InMemoryControlPlaneStore()
+    registry = CommandRegistry(store=store)
+    command = SlashCommandParser().parse("/pair")
+    assert command is not None
+
+    result = registry.execute(
+        command,
+        _ctx(user_key="slack:U123", chat_key="slack:D456"),
+    )
+
+    assert result.ok
+    assert "openminion channel slack pair" in result.text
+    assert "channel telegram pair" not in result.text
 
 
 def test_command_unknown_returns_error() -> None:

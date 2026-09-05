@@ -21,14 +21,19 @@ class CommandRegistrySessionMixin:
         pairing_status = (
             str(pairing.get("status") or "active") if pairing else "not observed"
         )
+        access = (
+            self._describe_scopes(pairing.get("scopes") or [])
+            if pairing
+            else "not observed"
+        )
         lines = [
-            "Status:",
-            "  runner: online from this chat if replies are arriving; otherwise not observed from this process",
+            "Controlplane status:",
+            "  channel: online (this reply confirms the controlplane path)",
             f"  profile: {profile_id}",
             f"  session: {ctx.session_id}",
             f"  turns: {len(turns)}",
             f"  pairing: {pairing_status}",
-            "  access: broad non-admin controlplane access until ACL exists",
+            f"  access: {access}",
         ]
         if title:
             lines.insert(4, f"  title: {title}")
@@ -52,12 +57,16 @@ class CommandRegistrySessionMixin:
             return CommandResult(
                 ok=True, text="No sessions yet.", data={"sessions": []}
             )
-        lines = ["Sessions:"]
+        lines = ["Sessions for this chat:"]
         for item in sessions:
             sid = item.get("session_id", "")
             title = item.get("title")
-            suffix = f" — {title}" if title else ""
-            lines.append(f"  {sid}{suffix}")
+            marker = " (current)" if sid == ctx.session_id else ""
+            suffix = f" - {title}" if title else ""
+            lines.append(f"  {sid}{marker}{suffix}")
+        lines.append(
+            "Use /session use <session_id> to switch, or /session new to start fresh."
+        )
         return CommandResult(
             ok=True, text="\n".join(lines), data={"sessions": sessions}
         )
@@ -112,7 +121,7 @@ class CommandRegistrySessionMixin:
             self.store.bind_session(ctx.user_key, ctx.chat_key, session_id)
         return CommandResult(
             ok=True,
-            text=f"Now using session {session_id}",
+            text=f"Now using session {session_id}. Existing context restored.",
             data={"session_id": session_id},
         )
 
@@ -145,16 +154,28 @@ class CommandRegistrySessionMixin:
         agent_id = self.store.resolve_agent(ctx.session_id)
         return CommandResult(
             ok=True,
-            text=f"Current profile: {agent_id}",
+            text=(
+                f"Current profile: {agent_id}\n"
+                f"Session: {ctx.session_id}\n"
+                "Use /profile list to see available profiles."
+            ),
             data={"agent_id": agent_id, "profile_id": agent_id},
         )
 
     def _agent_ls(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         agents = self.store.list_agents()
-        lines = [f"  {a['id']}: {a.get('name', '')}" for a in agents]
+        current = self.store.resolve_agent(ctx.session_id)
+        lines = ["Configured profiles:"]
+        for agent in agents:
+            profile_id = agent["id"]
+            name = agent.get("name")
+            marker = " (current)" if profile_id == current else ""
+            label = f" - {name}" if name and name != profile_id else ""
+            lines.append(f"  {profile_id}{marker}{label}")
+        lines.append("Use /profile use <profile_id> to switch this session.")
         return CommandResult(
             ok=True,
-            text="Configured profiles:\n" + "\n".join(lines),
+            text="\n".join(lines),
             data={"agents": agents, "profiles": agents},
         )
 
@@ -183,7 +204,12 @@ class CommandRegistrySessionMixin:
         info = agents[target]
         data = dict(info)
         data.setdefault("profile_id", target)
-        return CommandResult(ok=True, text=f"Profile {target}: {info}", data=data)
+        name = info.get("name") or target
+        return CommandResult(
+            ok=True,
+            text=f"Profile: {target}\n  name: {name}",
+            data=data,
+        )
 
     def _agent_stop(
         self, command: ParsedCommand, ctx: ResolvedContext
@@ -205,10 +231,18 @@ class CommandRegistrySessionMixin:
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
         new_session = self.store.rebind_session(ctx.user_key, ctx.chat_key)
+        profile_id = self.store.resolve_agent(new_session)
         return CommandResult(
             ok=True,
-            text=f"Started new session {new_session}",
-            data={"session_id": new_session},
+            text=(
+                f"Started new session {new_session} with fresh context.\n"
+                f"Profile: {profile_id}"
+            ),
+            data={
+                "session_id": new_session,
+                "agent_id": profile_id,
+                "profile_id": profile_id,
+            },
         )
 
     def _session_id(
@@ -225,11 +259,18 @@ class CommandRegistrySessionMixin:
     ) -> CommandResult:
         turns = self._list_turns(ctx.session_id)
         profile_id = self.store.resolve_agent(ctx.session_id)
+        title = self.store.get_session_title(ctx.session_id)
+        lines = [
+            "Current session:",
+            f"  id: {ctx.session_id}",
+            f"  profile: {profile_id}",
+            f"  turns: {len(turns)}",
+        ]
+        if title:
+            lines.insert(2, f"  title: {title}")
         return CommandResult(
             ok=True,
-            text=(
-                f"Session {ctx.session_id}: profile={profile_id}, turns={len(turns)}"
-            ),
+            text="\n".join(lines),
             data={
                 "session_id": ctx.session_id,
                 "agent_id": profile_id,
