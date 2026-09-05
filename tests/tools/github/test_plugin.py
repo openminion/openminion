@@ -6,7 +6,9 @@ from typing import Any
 import pytest
 
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.github.constants import DEFAULT_GITHUB_PROVIDER_ID
 from openminion.tools.github.interfaces import (
     TOOL_GITHUB_COMMIT_FILES,
@@ -229,9 +231,81 @@ def test_fetch_checks_rejects_non_hex_sha() -> None:
         )
 
     parsed = GithubFetchChecksArgs.model_validate(
-        {"owner": "o", "repo": "r", "head_sha": "ABC1234"}
+        {
+            "owner": "o",
+            "repo": "r",
+            "head_sha": "ABC1234",
+            "expected_checks": [" lint ", "test (3.11)"],
+        }
     )
     assert parsed.head_sha == "abc1234"
+    assert parsed.expected_checks == ["lint", "test (3.11)"]
+
+    with pytest.raises(Exception):
+        GithubFetchChecksArgs.model_validate(
+            {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "abc1234",
+                "expected_checks": ["lint", "lint"],
+            }
+        )
+
+
+def test_fetch_checks_dispatches_expected_names(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    spec = registry_with_tools.list()[TOOL_GITHUB_FETCH_CHECKS]
+    args = {
+        "owner": "octocat",
+        "repo": "hello-world",
+        "head_sha": "abc1234",
+        "expected_checks": ["lint", "test (3.11)"],
+    }
+
+    result = spec.handler(args, ctx=None)
+
+    assert result["ok"] is True
+    assert result["data"]["method"] == "fetch_checks"
+    assert stub_provider.calls == [("fetch_checks", args)]
+
+
+def test_fetch_checks_runtime_invocation_validates_and_dispatches(
+    registry_with_tools: ToolRegistry,
+    stub_provider: _StubProvider,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    result = execute_tool_spec_call(
+        tool=registry_with_tools.list()[TOOL_GITHUB_FETCH_CHECKS],
+        arguments={
+            "owner": "octocat",
+            "repo": "hello-world",
+            "head_sha": "ABC1234",
+            "expected_checks": ["lint"],
+        },
+        context=ToolExecutionContext(
+            channel="test",
+            target="local",
+            session_id="github-checks-runtime",
+            metadata={"workspace_root": str(tmp_path)},
+        ),
+    )
+
+    assert result.ok is True
+    assert stub_provider.calls == [
+        (
+            "fetch_checks",
+            {
+                "owner": "octocat",
+                "repo": "hello-world",
+                "head_sha": "abc1234",
+                "expected_checks": ["lint"],
+            },
+        )
+    ]
 
 
 def test_commit_files_schema_rejects_path_escape() -> None:

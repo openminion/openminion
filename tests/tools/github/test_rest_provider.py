@@ -8,6 +8,12 @@ from urllib.error import HTTPError
 import pytest
 
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.tools.github.constants import (
+    GITHUB_CHECK_FAILURE_LIMIT,
+    GITHUB_CHECK_OUTPUT_MAX_CHARS,
+    GITHUB_CHECK_RUNS_MAX_PAGES,
+    GITHUB_CHECK_RUNS_PER_PAGE,
+)
 from openminion.tools.github.rest import GithubRestProvider
 
 
@@ -23,6 +29,22 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return self._payload.encode("utf-8")
+
+
+def _check_run(
+    name: str,
+    *,
+    status: str = "completed",
+    conclusion: str | None = "success",
+    output: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        "details_url": f"https://github.com/o/r/actions/runs/{name}",
+        "output": output or {},
+    }
 
 
 def test_list_prs_maps_rest_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,6 +115,268 @@ def test_fetch_diff_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["data"]["diff"] == "a\nb"
     assert result["data"]["truncated"] is True
     assert result["data"]["line_count"] == 3
+
+
+@pytest.mark.parametrize(
+    ("combined", "runs", "expected", "overall", "missing"),
+    [
+        (
+            {"state": "pending", "statuses": []},
+            [_check_run("lint")],
+            ["lint"],
+            "success",
+            [],
+        ),
+        (
+            {"state": "success", "statuses": []},
+            [_check_run("lint", status="in_progress", conclusion=None)],
+            ["lint"],
+            "pending",
+            [],
+        ),
+        (
+            {"state": "success", "statuses": []},
+            [_check_run("lint", conclusion="failure")],
+            ["lint"],
+            "failure",
+            [],
+        ),
+        (
+            {"state": "success", "statuses": []},
+            [
+                _check_run("lint", conclusion="failure"),
+                _check_run("test", status="queued", conclusion=None),
+            ],
+            ["lint", "test"],
+            "failure",
+            [],
+        ),
+        (
+            {"state": "success", "statuses": []},
+            [_check_run("lint")],
+            ["lint", "test"],
+            "pending",
+            ["test"],
+        ),
+    ],
+)
+def test_fetch_checks_evaluates_explicit_expected_names(
+    monkeypatch: pytest.MonkeyPatch,
+    combined: dict[str, Any],
+    runs: list[dict[str, Any]],
+    expected: list[str],
+    overall: str,
+    missing: list[str],
+) -> None:
+    responses = iter([combined, {"total_count": len(runs), "check_runs": runs}])
+
+    def fake_request_json(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self, kwargs
+        return next(responses)
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    result = GithubRestProvider().fetch_checks(
+        args={
+            "owner": "o",
+            "repo": "r",
+            "head_sha": "abc1234",
+            "expected_checks": expected,
+        },
+        ctx=None,
+    )
+
+    assert result["data"]["overall_result"] == overall
+    assert result["data"]["missing_expected_checks"] == missing
+
+
+def test_fetch_checks_preserves_status_only_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            {"state": "failure", "statuses": [{"context": "legacy"}]},
+            {"total_count": 1, "check_runs": [_check_run("lint")]},
+        ]
+    )
+
+    def fake_request_json(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self, kwargs
+        return next(responses)
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    data = GithubRestProvider().fetch_checks(
+        args={"owner": "o", "repo": "r", "head_sha": "abc1234"},
+        ctx=None,
+    )["data"]
+
+    assert data["checks_status"] == "failing"
+    assert data["state"] == "failure"
+    assert data["statuses"] == [{"context": "legacy"}]
+    assert data["overall_result"] == "failure"
+    assert data["expected_checks"] == []
+
+
+def test_fetch_checks_paginates_at_exact_head_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, dict[str, str] | None]] = []
+    first_page = [_check_run(f"check-{index}") for index in range(100)]
+
+    def fake_request_json(
+        self: GithubRestProvider,
+        *,
+        ctx: Any,
+        path: str,
+        query: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        del self, ctx, kwargs
+        requests.append((path, query))
+        if path.endswith("/status"):
+            return {"state": "success", "statuses": []}
+        if query == {"per_page": str(GITHUB_CHECK_RUNS_PER_PAGE), "page": "1"}:
+            return {"total_count": 101, "check_runs": first_page}
+        return {"total_count": 101, "check_runs": [_check_run("final-check")]}
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    data = GithubRestProvider().fetch_checks(
+        args={
+            "owner": "o",
+            "repo": "r",
+            "head_sha": "abcdef1234567",
+            "expected_checks": ["final-check"],
+        },
+        ctx=None,
+    )["data"]
+
+    assert data["overall_result"] == "success"
+    assert len(data["check_runs"]) == 101
+    assert data["check_runs_truncated"] is False
+    assert requests == [
+        ("/repos/o/r/commits/abcdef1234567/status", None),
+        (
+            "/repos/o/r/commits/abcdef1234567/check-runs",
+            {"per_page": "100", "page": "1"},
+        ),
+        (
+            "/repos/o/r/commits/abcdef1234567/check-runs",
+            {"per_page": "100", "page": "2"},
+        ),
+    ]
+
+
+def test_fetch_checks_stops_at_pagination_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    check_run_requests = 0
+
+    def fake_request_json(
+        self: GithubRestProvider,
+        *,
+        path: str,
+        **kwargs: Any,
+    ) -> Any:
+        nonlocal check_run_requests
+        del self, kwargs
+        if path.endswith("/status"):
+            return {"state": "success", "statuses": []}
+        check_run_requests += 1
+        return {
+            "total_count": 1_000,
+            "check_runs": [
+                _check_run(f"page-{check_run_requests}-{index}")
+                for index in range(GITHUB_CHECK_RUNS_PER_PAGE)
+            ],
+        }
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    data = GithubRestProvider().fetch_checks(
+        args={"owner": "o", "repo": "r", "head_sha": "abc1234"},
+        ctx=None,
+    )["data"]
+
+    assert check_run_requests == GITHUB_CHECK_RUNS_MAX_PAGES
+    assert len(data["check_runs"]) == (
+        GITHUB_CHECK_RUNS_MAX_PAGES * GITHUB_CHECK_RUNS_PER_PAGE
+    )
+    assert data["check_runs_truncated"] is True
+
+
+def test_fetch_checks_bounds_failure_facts_and_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = "x" * (GITHUB_CHECK_OUTPUT_MAX_CHARS + 25)
+    runs = [
+        _check_run(
+            f"failed-{index}",
+            conclusion="failure",
+            output={"title": oversized, "summary": oversized, "text": oversized},
+        )
+        for index in range(GITHUB_CHECK_FAILURE_LIMIT + 1)
+    ]
+    responses = iter(
+        [
+            {"state": "success", "statuses": []},
+            {"total_count": len(runs), "check_runs": runs},
+        ]
+    )
+
+    def fake_request_json(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self, kwargs
+        return next(responses)
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    data = GithubRestProvider().fetch_checks(
+        args={
+            "owner": "o",
+            "repo": "r",
+            "head_sha": "abc1234",
+            "expected_checks": ["failed-0"],
+        },
+        ctx=None,
+    )["data"]
+
+    assert data["overall_result"] == "failure"
+    assert len(data["failure_facts"]) == GITHUB_CHECK_FAILURE_LIMIT
+    assert data["failure_facts_truncated"] is True
+    first = data["failure_facts"][0]
+    assert first["name"] == "failed-0"
+    assert first["conclusion"] == "failure"
+    assert first["expected"] is True
+    assert len(first["output_title"]) == GITHUB_CHECK_OUTPUT_MAX_CHARS
+    assert len(first["output_summary"]) == GITHUB_CHECK_OUTPUT_MAX_CHARS
+    assert len(first["output_text"]) == GITHUB_CHECK_OUTPUT_MAX_CHARS
+
+
+def test_fetch_checks_rejects_malformed_check_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            {"state": "success", "statuses": []},
+            {"total_count": 1, "check_runs": "not-a-list"},
+        ]
+    )
+
+    def fake_request_json(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self, kwargs
+        return next(responses)
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    with pytest.raises(ToolRuntimeError) as exc:
+        GithubRestProvider().fetch_checks(
+            args={"owner": "o", "repo": "r", "head_sha": "abc1234"},
+            ctx=None,
+        )
+
+    assert exc.value.code == "REMOTE_PROTOCOL_ERROR"
+    assert exc.value.details["reason_code"] == "github_response_shape_invalid"
 
 
 def test_auth_invalid_maps_401(monkeypatch: pytest.MonkeyPatch) -> None:

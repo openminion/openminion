@@ -10,7 +10,14 @@ from openminion.modules.tool.errors import ToolRuntimeError
 
 from .auth import auth_invalid_error, require_github_pat
 from .config import profile_config_from_context
-from .constants import DEFAULT_GITHUB_DIFF_MAX_LINES, DEFAULT_GITHUB_PROVIDER_ID
+from .constants import (
+    DEFAULT_GITHUB_DIFF_MAX_LINES,
+    DEFAULT_GITHUB_PROVIDER_ID,
+    GITHUB_CHECK_FAILURE_LIMIT,
+    GITHUB_CHECK_OUTPUT_MAX_CHARS,
+    GITHUB_CHECK_RUNS_MAX_PAGES,
+    GITHUB_CHECK_RUNS_PER_PAGE,
+)
 from .policy import (
     ensure_base_branch_allowed,
     ensure_branch_allowed,
@@ -107,22 +114,114 @@ class GithubRestProvider:
     def fetch_checks(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         owner, repo = _owner_repo(args)
         head_sha = str(args.get("head_sha") or "").strip()
+        expected_checks = list(args.get("expected_checks") or [])
         combined = self._request_json(
             ctx=ctx,
             path=f"/repos/{owner}/{repo}/commits/{head_sha}/status",
         )
         if not isinstance(combined, Mapping):
             raise _protocol_error("github.fetch_checks expected an object response")
+        statuses = combined.get("statuses") or []
+        if not isinstance(statuses, list):
+            raise _protocol_error("github.fetch_checks statuses must be a list")
+
+        check_runs, check_runs_truncated = self._fetch_check_runs(
+            ctx=ctx,
+            owner=owner,
+            repo=repo,
+            head_sha=head_sha,
+        )
+        normalized_runs = [_normalize_check_run(row) for row in check_runs]
+        failure_facts = [
+            _check_failure_fact(run, expected_checks=expected_checks)
+            for run in normalized_runs
+            if _check_run_result(run) == "failure"
+        ]
+        missing_expected = [
+            name
+            for name in expected_checks
+            if not any(run["name"] == name for run in normalized_runs)
+        ]
         return {
             "ok": True,
             "data": {
                 "head_sha": head_sha,
                 "checks_status": _normalize_combined_status(combined),
                 "state": str(combined.get("state") or "none"),
-                "statuses": list(combined.get("statuses") or []),
+                "statuses": statuses,
+                "overall_result": _overall_check_result(
+                    combined=combined,
+                    expected_checks=expected_checks,
+                    check_runs=normalized_runs,
+                    missing_expected=missing_expected,
+                ),
+                "expected_checks": expected_checks,
+                "missing_expected_checks": missing_expected,
+                "check_runs": [
+                    {
+                        "name": run["name"],
+                        "status": run["status"],
+                        "conclusion": run["conclusion"],
+                        "url": run["url"],
+                    }
+                    for run in normalized_runs
+                ],
+                "check_runs_truncated": check_runs_truncated,
+                "failure_facts": failure_facts[:GITHUB_CHECK_FAILURE_LIMIT],
+                "failure_facts_truncated": len(failure_facts)
+                > GITHUB_CHECK_FAILURE_LIMIT,
             },
             "source": {"provider_id": self.provider_id},
         }
+
+    def _fetch_check_runs(
+        self,
+        *,
+        ctx: Any,
+        owner: str,
+        repo: str,
+        head_sha: str,
+    ) -> tuple[list[Mapping[str, Any]], bool]:
+        check_runs: list[Mapping[str, Any]] = []
+        total_count: int | None = None
+        last_page_size = 0
+        for page in range(1, GITHUB_CHECK_RUNS_MAX_PAGES + 1):
+            payload = self._request_json(
+                ctx=ctx,
+                path=f"/repos/{owner}/{repo}/commits/{head_sha}/check-runs",
+                query={
+                    "per_page": str(GITHUB_CHECK_RUNS_PER_PAGE),
+                    "page": str(page),
+                },
+            )
+            if not isinstance(payload, Mapping):
+                raise _protocol_error(
+                    "github.fetch_checks check-runs expected an object response"
+                )
+            rows = payload.get("check_runs")
+            if not isinstance(rows, list) or any(
+                not isinstance(row, Mapping) for row in rows
+            ):
+                raise _protocol_error(
+                    "github.fetch_checks check_runs must be a list of objects"
+                )
+            raw_total = payload.get("total_count")
+            if raw_total is not None:
+                if not isinstance(raw_total, int) or raw_total < 0:
+                    raise _protocol_error(
+                        "github.fetch_checks total_count must be a non-negative integer"
+                    )
+                total_count = raw_total
+            check_runs.extend(rows)
+            last_page_size = len(rows)
+            if last_page_size < GITHUB_CHECK_RUNS_PER_PAGE:
+                return check_runs, False
+            if total_count is not None and len(check_runs) >= total_count:
+                return check_runs, False
+        return check_runs, bool(
+            last_page_size == GITHUB_CHECK_RUNS_PER_PAGE
+            and (total_count is None or len(check_runs) < total_count)
+        )
 
     def commit_files(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         owner, repo = _owner_repo(args)
@@ -563,6 +662,87 @@ def _normalize_combined_status(raw: Mapping[str, Any]) -> str:
         return "passing"
     if state in {"failure", "error"}:
         return "failing"
+    if state == "pending":
+        return "pending"
+    return "none"
+
+
+def _normalize_check_run(raw: Mapping[str, Any]) -> dict[str, Any]:
+    name = str(raw.get("name") or "").strip()
+    status = str(raw.get("status") or "").strip().lower()
+    conclusion = str(raw.get("conclusion") or "").strip().lower()
+    if not name or not status or (status == "completed" and not conclusion):
+        raise _protocol_error("github.fetch_checks received a malformed check run")
+    output = raw.get("output") if isinstance(raw.get("output"), Mapping) else {}
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion or None,
+        "url": str(raw.get("details_url") or raw.get("html_url") or ""),
+        "output": {
+            "title": _bounded_check_output(output.get("title")),
+            "summary": _bounded_check_output(output.get("summary")),
+            "text": _bounded_check_output(output.get("text")),
+        },
+    }
+
+
+def _check_run_result(run: Mapping[str, Any]) -> str:
+    if run["status"] != "completed":
+        return "pending"
+    return "success" if run["conclusion"] == "success" else "failure"
+
+
+def _check_failure_fact(
+    run: Mapping[str, Any], *, expected_checks: list[str]
+) -> dict[str, Any]:
+    output = run["output"]
+    return {
+        "name": run["name"],
+        "conclusion": run["conclusion"],
+        "url": run["url"],
+        "output_title": output["title"],
+        "output_summary": output["summary"],
+        "output_text": output["text"],
+        "expected": run["name"] in expected_checks,
+    }
+
+
+def _bounded_check_output(value: Any) -> str:
+    return str(value or "")[:GITHUB_CHECK_OUTPUT_MAX_CHARS]
+
+
+def _overall_check_result(
+    *,
+    combined: Mapping[str, Any],
+    expected_checks: list[str],
+    check_runs: list[dict[str, Any]],
+    missing_expected: list[str],
+) -> str:
+    combined_result = _combined_result(combined)
+    if not expected_checks:
+        return combined_result
+
+    expected_results = [
+        _check_run_result(run)
+        for run in check_runs
+        if run["name"] in expected_checks
+    ]
+    if "failure" in expected_results or combined_result == "failure":
+        return "failure"
+    if missing_expected or "pending" in expected_results:
+        return "pending"
+    if combined.get("statuses") and combined_result == "pending":
+        return "pending"
+    return "success"
+
+
+def _combined_result(raw: Mapping[str, Any]) -> str:
+    state = str(raw.get("state") or "").strip().lower()
+    if state == "success":
+        return "success"
+    if state in {"failure", "error"}:
+        return "failure"
     if state == "pending":
         return "pending"
     return "none"

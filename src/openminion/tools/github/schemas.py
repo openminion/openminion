@@ -85,6 +85,11 @@ class GithubFetchCommentsArgs(_PrArgsBase):
 
 class GithubFetchChecksArgs(_RepoArgsBase):
     head_sha: str = Field(..., min_length=7, description="Commit SHA")
+    expected_checks: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Exact check-run names required for an overall success result.",
+    )
 
     @field_validator("head_sha", mode="before")
     @classmethod
@@ -95,6 +100,16 @@ class GithubFetchChecksArgs(_RepoArgsBase):
         if not all(ch in "0123456789abcdefABCDEF" for ch in token):
             raise ValueError("head_sha must be a hex string")
         return token.lower()
+
+    @field_validator("expected_checks")
+    @classmethod
+    def _validate_expected_checks(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("expected_checks cannot contain empty names")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("expected_checks cannot contain duplicates")
+        return normalized
 
 
 def _normalize_branch(value: Any, *, field: str) -> str:
