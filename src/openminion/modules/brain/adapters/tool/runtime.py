@@ -47,6 +47,7 @@ from .command_metadata import (
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
 from .project_github import execute_github_open_pr_project_effect
+from .github_merge import execute_github_merge_pr_project_effect
 from .github_update import execute_github_update_pr_project_effect
 from .project_git import execute_git_remote_project_effect
 from .policy_context import (
@@ -513,7 +514,7 @@ class ToolAdapter:
             replay_confirmed=replay_confirmed,
             background_write_authorized=background_write_authorized,
         )
-        if tool_name in {"github.open_pr", "github.update_pr"} and project_task_id:
+        if project_task_id and tool_name in {"github.open_pr", "github.update_pr", "github.merge_pr"}:
             auto_confirm = True
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
@@ -657,12 +658,14 @@ class ToolAdapter:
                     args=args,
                 )
             if tool_name == "github.open_pr" and project_task_id:
-                return self._execute_project_open_pr(
-                    command=command,
-                    validated_args=validated_args,
+                return execute_github_open_pr_project_effect(
+                    task_manager=self.task_manager,
+                    task_id=project_task_id,
+                    idempotency_key=str(command.get("idempotency_key") or ""),
+                    actor_ref=f"agent:{self.agent_id}",
+                    args=validated_args,
                     ctx=ctx,
                     spec=spec,
-                    project_task_id=project_task_id,
                     start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
@@ -673,14 +676,20 @@ class ToolAdapter:
                     actor_ref=f"agent:{self.agent_id}",
                     args=validated_args,
                     ctx=ctx,
-                    invoke=lambda: run_tool_spec(
-                        spec=spec,
-                        validated_args=validated_args,
-                        context=ctx,
-                        start_time=start_time,
-                        background_write_authorized=background_write_authorized,
-                        tool_name=tool_name,
-                    ),
+                    spec=spec,
+                    start_time=start_time,
+                    background_write_authorized=background_write_authorized,
+                )
+            if tool_name == "github.merge_pr" and project_task_id:
+                return execute_github_merge_pr_project_effect(
+                    task_manager=self.task_manager,
+                    task_id=project_task_id,
+                    actor_ref=f"agent:{self.agent_id}",
+                    args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    start_time=start_time,
+                    background_write_authorized=background_write_authorized,
                 )
             if _is_project_git_action(tool_name, validated_args):
                 return self._invoke_project_git_effect(
@@ -711,9 +720,7 @@ class ToolAdapter:
                 if replay is not None:
                     return replay
             return _error_envelope(
-                status=BRAIN_ACTION_STATUS_NEEDS_USER
-                if requires_confirm
-                else BRAIN_STATE_ERROR,
+                status=BRAIN_ACTION_STATUS_NEEDS_USER if requires_confirm else BRAIN_STATE_ERROR,
                 summary=exc.message or "Tool execution failed",
                 code=TOOL_ERROR_CONFIRM_REQUIRED if requires_confirm else exc.code,
                 message=exc.message or "Tool execution failed",
@@ -729,43 +736,6 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
 
-    def _execute_project_open_pr(
-        self,
-        *,
-        command: Mapping[str, Any],
-        validated_args: dict[str, Any],
-        ctx: RuntimeContext,
-        spec: ToolSpec,
-        project_task_id: str,
-        start_time: float,
-        background_write_authorized: bool,
-    ) -> dict[str, Any]:
-        if self.task_manager is None:
-            raise ToolRuntimeError(
-                "INVALID_REQUEST",
-                "Project tool execution requires the task manager.",
-                {
-                    "reason_code": "project_task_manager_unavailable",
-                    "project_task_id": project_task_id,
-                },
-            )
-        return execute_github_open_pr_project_effect(
-            task_manager=self.task_manager,
-            task_id=project_task_id,
-            idempotency_key=str(command.get("idempotency_key") or ""),
-            actor_ref=f"agent:{self.agent_id}",
-            args=validated_args,
-            ctx=ctx,
-            invoke=lambda: run_tool_spec(
-                spec=spec,
-                validated_args=validated_args,
-                context=ctx,
-                start_time=start_time,
-                background_write_authorized=background_write_authorized,
-                tool_name=ctx.tool_name,
-            ),
-        )
-
     def _invoke_project_git_effect(
         self,
         *,
@@ -778,7 +748,8 @@ class ToolAdapter:
     ) -> dict[str, Any]:
         if not project_task_id:
             raise ToolRuntimeError(
-                "POLICY_DENIED", "Git publication requires a project action.",
+                "POLICY_DENIED",
+                "Git publication requires a project action.",
                 {"reason_code": "project_context_required"},
             )
         if self.task_manager is None:

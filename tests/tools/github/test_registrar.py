@@ -9,6 +9,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GITHUB_LIST_PRS,
     MODEL_GITHUB_OPEN_PR,
     MODEL_GITHUB_UPDATE_PR,
+    MODEL_GITHUB_MERGE_PR,
     MODEL_GITHUB_POST_PR_COMMENT,
     MODEL_GITHUB_POST_PR_REVIEW,
 )
@@ -21,6 +22,7 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_GITHUB_LIST_PRS,
     RUNTIME_GITHUB_OPEN_PR,
     RUNTIME_GITHUB_UPDATE_PR,
+    RUNTIME_GITHUB_MERGE_PR,
     RUNTIME_GITHUB_POST_PR_COMMENT,
     RUNTIME_GITHUB_POST_PR_REVIEW,
 )
@@ -32,7 +34,7 @@ def test_registrar_module_id() -> None:
     assert REGISTRAR.is_provider_only is False
 
 
-def test_manifest_lists_all_ten_model_tools() -> None:
+def test_manifest_lists_all_eleven_model_tools() -> None:
     manifest = REGISTRAR.get_manifest(ctx=None)
     model_ids = {entry.model_tool_id for entry in manifest.model_tools}
     assert model_ids == {
@@ -44,12 +46,13 @@ def test_manifest_lists_all_ten_model_tools() -> None:
         MODEL_GITHUB_COMMIT_FILES,
         MODEL_GITHUB_OPEN_PR,
         MODEL_GITHUB_UPDATE_PR,
+        MODEL_GITHUB_MERGE_PR,
         MODEL_GITHUB_POST_PR_REVIEW,
         MODEL_GITHUB_POST_PR_COMMENT,
     }
 
 
-def test_manifest_lists_all_ten_runtime_bindings() -> None:
+def test_manifest_lists_all_eleven_runtime_bindings() -> None:
     manifest = REGISTRAR.get_manifest(ctx=None)
     binding_ids = {entry.runtime_binding_id for entry in manifest.runtime_bindings}
     assert binding_ids == {
@@ -61,6 +64,7 @@ def test_manifest_lists_all_ten_runtime_bindings() -> None:
         RUNTIME_GITHUB_COMMIT_FILES,
         RUNTIME_GITHUB_OPEN_PR,
         RUNTIME_GITHUB_UPDATE_PR,
+        RUNTIME_GITHUB_MERGE_PR,
         RUNTIME_GITHUB_POST_PR_REVIEW,
         RUNTIME_GITHUB_POST_PR_COMMENT,
     }
@@ -86,6 +90,7 @@ def test_runtime_candidates_match_canonical_tool_names() -> None:
     )
     assert candidates_by_binding[RUNTIME_GITHUB_OPEN_PR] == ("github.open_pr",)
     assert candidates_by_binding[RUNTIME_GITHUB_UPDATE_PR] == ("github.update_pr",)
+    assert candidates_by_binding[RUNTIME_GITHUB_MERGE_PR] == ("github.merge_pr",)
     assert candidates_by_binding[RUNTIME_GITHUB_POST_PR_REVIEW] == (
         "github.post_pr_review",
     )

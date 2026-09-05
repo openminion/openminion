@@ -19,6 +19,7 @@ from openminion.tools.github.interfaces import (
     TOOL_GITHUB_LIST_PRS,
     TOOL_GITHUB_OPEN_PR,
     TOOL_GITHUB_UPDATE_PR,
+    TOOL_GITHUB_MERGE_PR,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
@@ -79,6 +80,14 @@ class _StubProvider:
         del ctx
         return self._record("read_update_pr", args)
 
+    def read_merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("read_merge_pr", args)
+
+    def merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("merge_pr", args)
+
     def post_pr_review(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
         return self._record("post_pr_review", args)
@@ -107,7 +116,7 @@ def stub_provider() -> _StubProvider:
     provider_registry().reset()
 
 
-def test_register_adds_all_ten_tools(registry_with_tools: ToolRegistry) -> None:
+def test_register_adds_all_eleven_tools(registry_with_tools: ToolRegistry) -> None:
     expected = {
         TOOL_GITHUB_LIST_PRS,
         TOOL_GITHUB_FETCH_PR,
@@ -117,6 +126,7 @@ def test_register_adds_all_ten_tools(registry_with_tools: ToolRegistry) -> None:
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
         TOOL_GITHUB_UPDATE_PR,
+        TOOL_GITHUB_MERGE_PR,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     }
@@ -149,6 +159,7 @@ def test_each_write_tool_is_write_safe_and_non_idempotent(
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
         TOOL_GITHUB_UPDATE_PR,
+        TOOL_GITHUB_MERGE_PR,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     ):
@@ -214,6 +225,23 @@ def test_update_pr_dispatches_to_provider(
     result = spec.handler(args, ctx=None)
     assert result["data"]["method"] == "update_pr"
     assert stub_provider.calls == [("update_pr", args)]
+
+
+def test_merge_pr_dispatches_to_provider(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    spec = registry_with_tools.list()[TOOL_GITHUB_MERGE_PR]
+    args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "number": 17,
+        "expected_head_sha": "abc1234",
+        "merge_method": "squash",
+        "expected_checks": ["lint", "tests"],
+    }
+    result = spec.handler(args, ctx=None)
+    assert result["data"]["method"] == "merge_pr"
+    assert stub_provider.calls == [("merge_pr", args)]
 
 
 def test_no_provider_raises_dependency_unavailable(
@@ -293,6 +321,83 @@ def test_update_pr_schema_requires_title_or_body() -> None:
     )
     assert parsed.title == "New title"
     assert parsed.body is None
+
+
+def test_merge_pr_schema_requires_exact_bounded_inputs() -> None:
+    from openminion.tools.github.schemas import GithubMergePrArgs
+
+    parsed = GithubMergePrArgs.model_validate(
+        {
+            "owner": "o",
+            "repo": "r",
+            "number": 1,
+            "expected_head_sha": "ABC1234",
+            "merge_method": "SQUASH",
+            "expected_checks": [" lint ", "tests"],
+        }
+    )
+    assert parsed.expected_head_sha == "abc1234"
+    assert parsed.merge_method == "squash"
+    assert parsed.expected_checks == ["lint", "tests"]
+    for patch in (
+        {"expected_head_sha": "not-a-sha"},
+        {"merge_method": "octopus"},
+        {"expected_checks": []},
+        {"expected_checks": ["lint", "lint"]},
+    ):
+        payload = {
+            "owner": "o",
+            "repo": "r",
+            "number": 1,
+            "expected_head_sha": "abc1234",
+            "merge_method": "squash",
+            "expected_checks": ["lint"],
+            **patch,
+        }
+        with pytest.raises(Exception):
+            GithubMergePrArgs.model_validate(payload)
+
+
+def test_merge_pr_runtime_invocation_validates_and_dispatches(
+    registry_with_tools: ToolRegistry,
+    stub_provider: _StubProvider,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    result = execute_tool_spec_call(
+        tool=registry_with_tools.list()[TOOL_GITHUB_MERGE_PR],
+        arguments={
+            "owner": "openminion",
+            "repo": "test-repo-for-agent",
+            "number": 17,
+            "expected_head_sha": "ABC1234",
+            "merge_method": "SQUASH",
+            "expected_checks": ["lint"],
+        },
+        context=ToolExecutionContext(
+            channel="test",
+            target="local",
+            session_id="github-merge-runtime",
+            metadata={"workspace_root": str(tmp_path)},
+        ),
+    )
+
+    assert result.ok is True
+    assert stub_provider.calls == [
+        (
+            "merge_pr",
+            {
+                "owner": "openminion",
+                "repo": "test-repo-for-agent",
+                "number": 17,
+                "expected_head_sha": "abc1234",
+                "merge_method": "squash",
+                "expected_checks": ["lint"],
+            },
+        )
+    ]
 
 
 def test_fetch_checks_dispatches_expected_names(
@@ -414,6 +519,10 @@ def test_invalid_provider_result_raises_public_error(
         def fetch_checks(self, **kw): ...
         def commit_files(self, **kw): ...
         def open_pr(self, **kw): ...
+        def read_update_pr(self, **kw): ...
+        def update_pr(self, **kw): ...
+        def read_merge_pr(self, **kw): ...
+        def merge_pr(self, **kw): ...
         def post_pr_review(self, **kw): ...
         def post_pr_comment(self, **kw): ...
         def healthcheck(self) -> bool:

@@ -10,6 +10,7 @@ TOOL_GITHUB_FETCH_CHECKS = "github.fetch_checks"
 TOOL_GITHUB_COMMIT_FILES = "github.commit_files"
 TOOL_GITHUB_OPEN_PR = "github.open_pr"
 TOOL_GITHUB_UPDATE_PR = "github.update_pr"
+TOOL_GITHUB_MERGE_PR = "github.merge_pr"
 TOOL_GITHUB_POST_PR_REVIEW = "github.post_pr_review"
 TOOL_GITHUB_POST_PR_COMMENT = "github.post_pr_comment"
 
@@ -23,6 +24,7 @@ __all__ = [
     "TOOL_GITHUB_COMMIT_FILES",
     "TOOL_GITHUB_OPEN_PR",
     "TOOL_GITHUB_UPDATE_PR",
+    "TOOL_GITHUB_MERGE_PR",
     "TOOL_GITHUB_POST_PR_REVIEW",
     "TOOL_GITHUB_POST_PR_COMMENT",
 ]

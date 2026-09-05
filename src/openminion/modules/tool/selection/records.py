@@ -21,6 +21,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GITHUB_LIST_PRS,
     MODEL_GITHUB_OPEN_PR,
     MODEL_GITHUB_UPDATE_PR,
+    MODEL_GITHUB_MERGE_PR,
     MODEL_GITHUB_POST_PR_COMMENT,
     MODEL_GITHUB_POST_PR_REVIEW,
     MODEL_HOST_METRICS,
@@ -47,6 +48,7 @@ READ_ONLY_BLOCKED_CATEGORIES: set[str] = {
     MODEL_GITHUB_COMMIT_FILES,
     MODEL_GITHUB_OPEN_PR,
     MODEL_GITHUB_UPDATE_PR,
+    MODEL_GITHUB_MERGE_PR,
     MODEL_GITHUB_POST_PR_REVIEW,
     MODEL_GITHUB_POST_PR_COMMENT,
 }
@@ -92,6 +94,7 @@ PREFERRED_MODEL_TOOLS_BY_CATEGORY: dict[str, list[str]] = {
     "github.commit_files": [MODEL_GITHUB_COMMIT_FILES],
     "github.open_pr": [MODEL_GITHUB_OPEN_PR],
     "github.update_pr": [MODEL_GITHUB_UPDATE_PR],
+    "github.merge_pr": [MODEL_GITHUB_MERGE_PR],
     "github.post_pr_review": [MODEL_GITHUB_POST_PR_REVIEW],
     "github.post_pr_comment": [MODEL_GITHUB_POST_PR_COMMENT],
 }

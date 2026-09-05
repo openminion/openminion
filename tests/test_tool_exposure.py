@@ -28,6 +28,7 @@ from openminion.modules.tool.exposure import (
     render_catalog_cards,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.contracts.model_ids import MODEL_GITHUB_MERGE_PR
 from openminion.modules.llm.providers.base import ProviderToolCall
 
 
@@ -257,7 +258,10 @@ def test_canonical_tool_ids_have_complete_exposure_classification() -> None:
         DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET | PROFILE_GATED_MODEL_TOOL_IDS_SET
         == ALL_MODEL_TOOL_IDS_SET
     )
-    assert {"git.push", "git.tag"} <= PROFILE_GATED_MODEL_TOOL_IDS_SET
+    assert {"git.push", "git.tag", MODEL_GITHUB_MERGE_PR} <= (
+        PROFILE_GATED_MODEL_TOOL_IDS_SET
+    )
+    assert MODEL_GITHUB_MERGE_PR not in DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET
 
 
 def test_profile_registration_is_idempotent_but_rejects_conflicts() -> None:

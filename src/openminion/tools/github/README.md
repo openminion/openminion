@@ -15,12 +15,15 @@ The repo now has two bounded GitHub surfaces:
    - `github.commit_files`
    - `github.open_pr`
    - `github.update_pr` (title/body only)
+   - `github.merge_pr` (profile-gated and disabled by default)
    - `github.post_pr_review`
    - `github.post_pr_comment`
 
-L3 remains deliberately narrow. There are still no `github.merge_pr`,
-`github.close_pr`, `github.delete_branch`, direct default-branch write, or
-force-push tools.
+L3 remains deliberately narrow. There are still no `github.close_pr`,
+`github.delete_branch`, direct default-branch write, or force-push tools. Merge
+requires an exact PR head SHA, explicit expected checks, a bounded merge method,
+an exact project grant, and `provider_config_overrides.github.allow_merge=true`.
+It is not in the default-visible tool set.
 
 ---
 

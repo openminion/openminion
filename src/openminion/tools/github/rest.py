@@ -28,7 +28,16 @@ from .policy import (
     ensure_repository_allowed,
 )
 from .env import get_github_api_base_url, get_github_timeout_seconds
-from .pull_requests import open_pr_result, update_pr_result
+from .pull_requests import (
+    merge_pr_readback_result,
+    merge_pr_result,
+    normalize_comments,
+    normalize_pr_summary,
+    open_pr_result,
+    require_merge_checks,
+    require_merge_pr_ready,
+    update_pr_result,
+)
 
 
 class GithubRestProvider:
@@ -50,7 +59,7 @@ class GithubRestProvider:
         return {
             "ok": True,
             "data": {
-                "open_prs": [_normalize_pr_summary(item) for item in rows[:limit]],
+                "open_prs": [normalize_pr_summary(item) for item in rows[:limit]],
             },
             "source": {"provider_id": self.provider_id},
         }
@@ -66,7 +75,7 @@ class GithubRestProvider:
             raise _protocol_error("github.fetch_pr expected an object response")
         return {
             "ok": True,
-            "data": {"pull_request": _normalize_pr_summary(row)},
+            "data": {"pull_request": normalize_pr_summary(row)},
             "source": {"provider_id": self.provider_id},
         }
 
@@ -104,8 +113,8 @@ class GithubRestProvider:
             path=f"/repos/{owner}/{repo}/pulls/{number}/comments",
             query={"per_page": str(limit)},
         )
-        comments = _normalize_comments(issue_comments, kind="issue")
-        comments.extend(_normalize_comments(review_comments, kind="review"))
+        comments = normalize_comments(issue_comments, kind="issue")
+        comments.extend(normalize_comments(review_comments, kind="review"))
         return {
             "ok": True,
             "data": {"comments": comments[:limit]},
@@ -454,7 +463,9 @@ class GithubRestProvider:
                 {"reason_code": "github_update_pr_not_found"},
             )
         if not isinstance(row, Mapping):
-            raise _protocol_error("github.update_pr readback expected an object response")
+            raise _protocol_error(
+                "github.update_pr readback expected an object response"
+            )
         state = str(row.get("state") or "")
         if state != "open":
             raise ToolRuntimeError(
@@ -495,6 +506,95 @@ class GithubRestProvider:
             row,
             owner=owner,
             repo=repo,
+            provider_id=self.provider_id,
+        )
+
+    def read_merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        owner, repo = _owner_repo(args)
+        number = int(args.get("number") or 0)
+        policy = profile_config_from_context(ctx)
+        ensure_repository_allowed(owner=owner, repo=repo, config=policy)
+        ensure_merge_allowed(requested=True, config=policy)
+        row = self._request_json_or_none_on_404(
+            ctx=ctx,
+            path=f"/repos/{owner}/{repo}/pulls/{number}",
+        )
+        if row is None:
+            raise ToolRuntimeError(
+                "NOT_FOUND",
+                "The pull request does not exist.",
+                {"reason_code": "github_merge_pr_not_found"},
+            )
+        if not isinstance(row, Mapping):
+            raise _protocol_error("github.merge_pr readback expected an object")
+        return merge_pr_readback_result(
+            row,
+            owner=owner,
+            repo=repo,
+            provider_id=self.provider_id,
+        )
+
+    def merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        owner, repo = _owner_repo(args)
+        number = int(args.get("number") or 0)
+        expected_head_sha = str(args.get("expected_head_sha") or "")
+        expected_checks = list(args.get("expected_checks") or [])
+        merge_method = str(args.get("merge_method") or "")
+        policy = profile_config_from_context(ctx)
+        ensure_repository_allowed(owner=owner, repo=repo, config=policy)
+        ensure_merge_allowed(requested=True, config=policy)
+        reconciled = getattr(ctx, "github_merge_pr_reconciled_result", None)
+        if isinstance(reconciled, Mapping):
+            return dict(reconciled)
+
+        preflight = getattr(ctx, "github_merge_pr_preflight", None)
+        if not isinstance(preflight, Mapping):
+            preflight = self.read_merge_pr(args=args, ctx=ctx)
+        require_merge_pr_ready(preflight, expected_head_sha=expected_head_sha)
+        checks = getattr(ctx, "github_merge_pr_checks", None)
+        if not isinstance(checks, Mapping):
+            checks = self.fetch_checks(
+                args={
+                    "owner": owner,
+                    "repo": repo,
+                    "head_sha": expected_head_sha,
+                    "expected_checks": expected_checks,
+                },
+                ctx=ctx,
+            )
+        require_merge_checks(
+            checks,
+            expected_head_sha=expected_head_sha,
+            expected_checks=expected_checks,
+        )
+        row = self._request_json(
+            ctx=ctx,
+            path=f"/repos/{owner}/{repo}/pulls/{number}/merge",
+            method="PUT",
+            body={"sha": expected_head_sha, "merge_method": merge_method},
+        )
+        if not isinstance(row, Mapping):
+            raise _protocol_error("github.merge_pr expected an object response")
+        if row.get("merged") is not True:
+            raise ToolRuntimeError(
+                "UPSTREAM_ERROR",
+                "GitHub did not merge the pull request.",
+                {
+                    "reason_code": "github_merge_pr_conflict",
+                    "provider_message": str(row.get("message") or "")[:200],
+                },
+            )
+        if not str(row.get("sha") or ""):
+            raise _protocol_error(
+                "github.merge_pr response omitted the merge commit SHA"
+            )
+        return merge_pr_result(
+            row,
+            owner=owner,
+            repo=repo,
+            number=number,
+            head_sha=expected_head_sha,
+            merge_method=merge_method,
             provider_id=self.provider_id,
         )
 
@@ -753,65 +853,6 @@ def _owner_repo(args: Mapping[str, Any]) -> tuple[str, str]:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
-
-
-def _normalize_pr_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
-    head = _mapping(raw.get("head"))
-    base = _mapping(raw.get("base"))
-    user = _mapping(raw.get("user"))
-    return {
-        "number": int(raw.get("number") or 0),
-        "title": str(raw.get("title") or ""),
-        "author": str(user.get("login") or ""),
-        "head_sha": str(head.get("sha") or ""),
-        "base_ref": str(base.get("ref") or "main"),
-        "head_ref": str(head.get("ref") or ""),
-        "draft": bool(raw.get("draft", False)),
-        "mergeable_state": str(raw.get("mergeable_state") or "unknown"),
-        "checks_status": "none",
-        "labels": _label_names(raw.get("labels")),
-        "review_state": "none",
-        "lines_added": int(raw.get("additions") or 0),
-        "lines_deleted": int(raw.get("deletions") or 0),
-        "diff_truncated": False,
-        "diff_preview": "",
-        "comments_count": int(raw.get("comments") or 0)
-        + int(raw.get("review_comments") or 0),
-        "url": str(raw.get("html_url") or ""),
-    }
-
-
-def _label_names(raw: Any) -> list[str]:
-    if not isinstance(raw, list):
-        return []
-    names: list[str] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            continue
-        name = str(item.get("name") or "").strip()
-        if name:
-            names.append(name)
-    return names
-
-
-def _normalize_comments(raw: Any, *, kind: str) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
-    comments: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            continue
-        user = _mapping(item.get("user"))
-        comments.append(
-            {
-                "id": item.get("id"),
-                "kind": kind,
-                "author": str(user.get("login") or ""),
-                "body": str(item.get("body") or ""),
-                "url": str(item.get("html_url") or ""),
-            }
-        )
-    return comments
 
 
 def _normalize_combined_status(raw: Mapping[str, Any]) -> str:

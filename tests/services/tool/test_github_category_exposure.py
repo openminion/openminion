@@ -15,6 +15,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GITHUB_FETCH_PR,
     MODEL_GITHUB_LIST_PRS,
     MODEL_GITHUB_OPEN_PR,
+    MODEL_GITHUB_MERGE_PR,
     MODEL_GITHUB_POST_PR_COMMENT,
     MODEL_GITHUB_POST_PR_REVIEW,
     MODEL_WEATHER,
@@ -145,6 +146,12 @@ class GithubCategoryPreferenceTableTests(unittest.TestCase):
         self.assertEqual(
             _PREFERRED_MODEL_TOOLS_BY_CATEGORY["github.open_pr"],
             [MODEL_GITHUB_OPEN_PR],
+        )
+
+    def test_merge_pr_category_lists_model_tool(self) -> None:
+        self.assertEqual(
+            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["github.merge_pr"],
+            [MODEL_GITHUB_MERGE_PR],
         )
 
     def test_post_pr_review_category_lists_model_tool(self) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from types import SimpleNamespace
 from typing import Any
 from urllib.error import HTTPError
 
@@ -773,6 +774,190 @@ def test_update_pr_rejects_missing_or_closed_pr_before_patch(
     assert exc.value.code == code
     assert exc.value.details["reason_code"] == reason
     assert patch_calls == 0
+
+
+def _merge_context(*, allow_merge: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        agent_profile=SimpleNamespace(
+            provider_config_overrides={
+                "github": {
+                    "allow_merge": allow_merge,
+                    "allowed_repositories": [
+                        "openminion/test-repo-for-agent",
+                    ],
+                }
+            }
+        )
+    )
+
+
+def _merge_args(**updates: Any) -> dict[str, Any]:
+    return {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "number": 17,
+        "expected_head_sha": "abc1234",
+        "merge_method": "squash",
+        "expected_checks": ["lint", "tests"],
+        **updates,
+    }
+
+
+def test_merge_pr_reads_exact_head_and_checks_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def fake_optional(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self
+        requests.append(("GET", kwargs["path"], None))
+        return {
+            "number": 17,
+            "state": "open",
+            "head": {"sha": "abc1234"},
+            "merged": False,
+        }
+
+    def fake_checks(self: GithubRestProvider, **kwargs: Any) -> dict[str, Any]:
+        del self
+        assert kwargs["args"] == {
+            "owner": "openminion",
+            "repo": "test-repo-for-agent",
+            "head_sha": "abc1234",
+            "expected_checks": ["lint", "tests"],
+        }
+        return {
+            "ok": True,
+            "data": {
+                "head_sha": "abc1234",
+                "expected_checks": ["lint", "tests"],
+                "missing_expected_checks": [],
+                "overall_result": "success",
+            },
+        }
+
+    def fake_request(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self
+        requests.append((kwargs["method"], kwargs["path"], kwargs["body"]))
+        return {"merged": True, "sha": "merge123", "message": "Merged"}
+
+    monkeypatch.setattr(
+        GithubRestProvider, "_request_json_or_none_on_404", fake_optional
+    )
+    monkeypatch.setattr(GithubRestProvider, "fetch_checks", fake_checks)
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request)
+
+    result = GithubRestProvider().merge_pr(
+        args=_merge_args(),
+        ctx=_merge_context(),
+    )
+
+    assert result["data"] == {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "number": 17,
+        "merged": True,
+        "message": "Merged",
+        "head_sha": "abc1234",
+        "merge_method": "squash",
+        "merge_commit_sha": "merge123",
+    }
+    assert requests == [
+        ("GET", "/repos/openminion/test-repo-for-agent/pulls/17", None),
+        (
+            "PUT",
+            "/repos/openminion/test-repo-for-agent/pulls/17/merge",
+            {"sha": "abc1234", "merge_method": "squash"},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("args", "ctx", "reason"),
+    [
+        (_merge_args(), None, "POLICY_DENIED_MERGE"),
+        (
+            _merge_args(owner="other"),
+            _merge_context(),
+            "POLICY_DENIED_REPO",
+        ),
+    ],
+)
+def test_merge_pr_policy_denial_skips_network(
+    monkeypatch: pytest.MonkeyPatch,
+    args: dict[str, Any],
+    ctx: Any,
+    reason: str,
+) -> None:
+    calls = 0
+
+    def fail_request(self: GithubRestProvider, **kwargs: Any) -> Any:
+        nonlocal calls
+        del self, kwargs
+        calls += 1
+
+    monkeypatch.setattr(
+        GithubRestProvider, "_request_json_or_none_on_404", fail_request
+    )
+    with pytest.raises(ToolRuntimeError) as exc:
+        GithubRestProvider().merge_pr(args=args, ctx=ctx)
+    assert exc.value.code == "POLICY_DENIED"
+    assert exc.value.details["reason_code"] == reason
+    assert calls == 0
+
+
+def test_merge_pr_reconciled_result_does_not_bypass_policy() -> None:
+    ctx = SimpleNamespace(
+        github_merge_pr_reconciled_result={"ok": True},
+        agent_profile=SimpleNamespace(provider_config_overrides={}),
+    )
+
+    with pytest.raises(ToolRuntimeError) as exc:
+        GithubRestProvider().merge_pr(args=_merge_args(), ctx=ctx)
+
+    assert exc.value.code == "POLICY_DENIED"
+    assert exc.value.details["reason_code"] == "POLICY_DENIED_MERGE"
+
+
+def test_merge_pr_rejects_provider_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        GithubRestProvider,
+        "read_merge_pr",
+        lambda self, **kwargs: {
+            "ok": True,
+            "data": {
+                "state": "open",
+                "merged": False,
+                "head_sha": "abc1234",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        GithubRestProvider,
+        "fetch_checks",
+        lambda self, **kwargs: {
+            "ok": True,
+            "data": {
+                "head_sha": "abc1234",
+                "expected_checks": ["lint", "tests"],
+                "missing_expected_checks": [],
+                "overall_result": "success",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        GithubRestProvider,
+        "_request_json",
+        lambda self, **kwargs: {"merged": False, "message": "Head changed"},
+    )
+
+    with pytest.raises(ToolRuntimeError) as exc:
+        GithubRestProvider().merge_pr(args=_merge_args(), ctx=_merge_context())
+
+    assert exc.value.code == "UPSTREAM_ERROR"
+    assert exc.value.details["reason_code"] == "github_merge_pr_conflict"
 
 
 def test_find_open_pr_matches_exact_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:

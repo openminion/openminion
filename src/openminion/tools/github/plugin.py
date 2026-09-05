@@ -14,6 +14,7 @@ from .interfaces import (
     TOOL_GITHUB_LIST_PRS,
     TOOL_GITHUB_OPEN_PR,
     TOOL_GITHUB_UPDATE_PR,
+    TOOL_GITHUB_MERGE_PR,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
@@ -27,6 +28,7 @@ from .schemas import (
     GithubListPrsArgs,
     GithubOpenPrArgs,
     GithubUpdatePrArgs,
+    GithubMergePrArgs,
     GithubPostPrCommentArgs,
     GithubPostPrReviewArgs,
 )
@@ -41,6 +43,7 @@ _PROVIDER_RESOLVERS: dict[str, str] = {
     TOOL_GITHUB_COMMIT_FILES: "commit_files",
     TOOL_GITHUB_OPEN_PR: "open_pr",
     TOOL_GITHUB_UPDATE_PR: "update_pr",
+    TOOL_GITHUB_MERGE_PR: "merge_pr",
     TOOL_GITHUB_POST_PR_REVIEW: "post_pr_review",
     TOOL_GITHUB_POST_PR_COMMENT: "post_pr_comment",
 }
@@ -76,6 +79,24 @@ def find_open_pr(
 def read_update_pr(args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
     result = _resolve_provider().read_update_pr(args=args, ctx=ctx)
     return _validated_provider_result(TOOL_GITHUB_UPDATE_PR, result)
+
+
+def read_merge_pr(args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+    result = _resolve_provider().read_merge_pr(args=args, ctx=ctx)
+    return _validated_provider_result(TOOL_GITHUB_MERGE_PR, result)
+
+
+def fetch_merge_checks(args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+    result = _resolve_provider().fetch_checks(
+        args={
+            "owner": args.get("owner"),
+            "repo": args.get("repo"),
+            "head_sha": args.get("expected_head_sha"),
+            "expected_checks": args.get("expected_checks"),
+        },
+        ctx=ctx,
+    )
+    return _validated_provider_result(TOOL_GITHUB_FETCH_CHECKS, result)
 
 
 def _validated_provider_result(
@@ -135,6 +156,10 @@ def _h_update_pr(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return _dispatch(TOOL_GITHUB_UPDATE_PR, args, ctx)
 
 
+def _h_merge_pr(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    return _dispatch(TOOL_GITHUB_MERGE_PR, args, ctx)
+
+
 def _h_post_pr_review(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return _dispatch(TOOL_GITHUB_POST_PR_REVIEW, args, ctx)
 
@@ -187,6 +212,12 @@ def _github_tool_specs() -> tuple[ToolSpec, ...]:
             read_only=False,
         ),
         _github_tool_spec(
+            TOOL_GITHUB_MERGE_PR,
+            GithubMergePrArgs,
+            _h_merge_pr,
+            read_only=False,
+        ),
+        _github_tool_spec(
             TOOL_GITHUB_POST_PR_REVIEW,
             GithubPostPrReviewArgs,
             _h_post_pr_review,
@@ -222,6 +253,8 @@ def _github_tool_spec(
 
 __all__ = [
     "find_open_pr",
+    "fetch_merge_checks",
+    "read_merge_pr",
     "read_update_pr",
     "register",
     "resolve_open_pr_head_sha",

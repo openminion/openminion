@@ -230,6 +230,45 @@ class GithubUpdatePrArgs(_PrArgsBase):
         return self
 
 
+class GithubMergePrArgs(_PrArgsBase):
+    expected_head_sha: str = Field(
+        ..., min_length=7, description="Approved pull-request head commit SHA"
+    )
+    merge_method: str = Field(..., description="Merge method: merge|squash|rebase")
+    expected_checks: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Exact check-run names required before merge.",
+    )
+
+    @field_validator("expected_head_sha", mode="before")
+    @classmethod
+    def _normalize_expected_head_sha(cls, value: Any) -> str:
+        token = str(value or "").strip()
+        if not token or not all(ch in "0123456789abcdefABCDEF" for ch in token):
+            raise ValueError("expected_head_sha must be a hex string")
+        return token.lower()
+
+    @field_validator("merge_method", mode="before")
+    @classmethod
+    def _normalize_merge_method(cls, value: Any) -> str:
+        token = str(value or "").strip().lower()
+        if token not in {"merge", "squash", "rebase"}:
+            raise ValueError("merge_method must be one of merge|squash|rebase")
+        return token
+
+    @field_validator("expected_checks")
+    @classmethod
+    def _validate_expected_checks(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("expected_checks cannot contain empty names")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("expected_checks cannot contain duplicates")
+        return normalized
+
+
 class GithubPostPrReviewArgs(_PrArgsBase):
     event: str = Field(..., min_length=1, description="L3 allows COMMENT only.")
     body: str = Field(..., min_length=1, description="Review body")
@@ -267,6 +306,7 @@ __all__ = [
     "GithubCommitFilesArgs",
     "GithubOpenPrArgs",
     "GithubUpdatePrArgs",
+    "GithubMergePrArgs",
     "GithubPostPrReviewArgs",
     "GithubPostPrCommentArgs",
 ]

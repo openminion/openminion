@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +21,7 @@ from openminion.modules.task.project.policy import (
     consume_project_permission_grant,
     evaluate_project_permission,
 )
+from openminion.modules.tool import RuntimeContext, ToolSpec
 from openminion.modules.task.project.models import (
     ProjectCheckpoint,
     ProjectPermissionCheckResult,
@@ -34,6 +35,8 @@ from openminion.tools.github.plugin import (
     find_open_pr,
     resolve_open_pr_head_sha,
 )
+
+from .results import run_tool_spec
 
 
 @dataclass(frozen=True)
@@ -282,14 +285,25 @@ def complete_github_open_pr_project_effect(
 
 def execute_github_open_pr_project_effect(
     *,
-    task_manager: Any,
+    task_manager: Any | None,
     task_id: str,
     idempotency_key: str,
     actor_ref: str,
-    args: Mapping[str, Any],
-    ctx: Any,
-    invoke: Callable[[], dict[str, Any]],
+    args: dict[str, Any],
+    ctx: RuntimeContext,
+    spec: ToolSpec,
+    start_time: float,
+    background_write_authorized: bool,
 ) -> dict[str, Any]:
+    if task_manager is None:
+        raise ToolRuntimeError(
+            "INVALID_REQUEST",
+            "Project tool execution requires the task manager.",
+            {
+                "reason_code": "project_task_manager_unavailable",
+                "project_task_id": task_id,
+            },
+        )
     started = begin_github_open_pr_project_effect(
         task_manager=task_manager,
         task_id=task_id,
@@ -302,7 +316,14 @@ def execute_github_open_pr_project_effect(
         return finalize_github_open_pr_project_result(
             task_manager,
             started,
-            result=invoke(),
+            result=run_tool_spec(
+                spec=spec,
+                validated_args=args,
+                context=ctx,
+                start_time=start_time,
+                background_write_authorized=background_write_authorized,
+                tool_name=TOOL_GITHUB_OPEN_PR,
+            ),
             ctx=ctx,
         )
     except ToolRuntimeError as exc:

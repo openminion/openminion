@@ -1,4 +1,4 @@
-"""Project-bound ``github.update_pr`` execution."""
+"""Project-bound ``github.merge_pr`` execution."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
 from openminion.modules.task.project.effects import (
@@ -23,13 +23,17 @@ from openminion.modules.task.project.policy import (
     consume_project_permission_grant,
     evaluate_project_permission,
 )
+from openminion.modules.tool import RuntimeContext, ToolSpec
 from openminion.modules.tool.diagnostics.events import (
     emit_tool_invoke_operation_for_context,
 )
-from openminion.modules.tool import RuntimeContext, ToolSpec
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.tools.github.interfaces import TOOL_GITHUB_UPDATE_PR
-from openminion.tools.github.plugin import read_update_pr
+from openminion.tools.github.interfaces import TOOL_GITHUB_MERGE_PR
+from openminion.tools.github.plugin import fetch_merge_checks, read_merge_pr
+from openminion.tools.github.pull_requests import (
+    require_merge_checks,
+    require_merge_pr_ready,
+)
 
 from .project_github import (
     _is_uncertain_github_error,
@@ -40,36 +44,35 @@ from .project_github import (
 from .results import run_tool_spec
 
 
-def github_update_pr_action_scope(
+def github_merge_pr_action_scope(
     *,
     owner: str,
     repo: str,
     number: int,
-    head_sha: str,
-    title: str | None,
-    body: str | None,
+    expected_head_sha: str,
+    merge_method: str,
+    expected_checks: list[str],
 ) -> str:
-    update = {
-        key: value
-        for key, value in (("title", title), ("body", body))
-        if value is not None
-    }
-    update_sha = hashlib.sha256(
-        json.dumps(update, sort_keys=True, separators=(",", ":")).encode()
+    checks_sha = hashlib.sha256(
+        json.dumps(sorted(expected_checks), separators=(",", ":")).encode()
     ).hexdigest()
     return (
-        f"repository={owner}/{repo};pr={number};head_sha={head_sha};"
-        f"update_sha256={update_sha}"
+        f"repository={owner}/{repo};pr={number};head_sha={expected_head_sha};"
+        f"merge_method={merge_method};checks_sha256={checks_sha}"
     )
 
 
 @dataclass(frozen=True)
-class GithubUpdatePrProjectEffect:
+class GithubMergePrProjectEffect:
     checkpoint: ProjectCheckpoint
     effect: ProjectEffectRecord
     scope: str
+    owner: str
+    repo: str
     head_sha: str
     number: int
+    merge_method: str
+    expected_checks: tuple[str, ...]
     reconciled: bool = False
 
     def facts(self) -> dict[str, Any]:
@@ -80,66 +83,63 @@ class GithubUpdatePrProjectEffect:
             "project_effect_id": self.effect.effect_id,
             "project_effect_status": self.effect.status.value,
             "repository_action_scope": self.scope,
+            "repository_owner": self.owner,
+            "repository_name": self.repo,
             "repository_head_sha": self.head_sha,
             "repository_pr_number": self.number,
+            "repository_merge_method": self.merge_method,
+            "repository_expected_checks": list(self.expected_checks),
             "project_effect_reconciled": self.reconciled,
         }
 
 
-def _update_pr_identity(
+def _merge_identity(
     args: Mapping[str, Any],
-    ctx: Any,
-) -> tuple[Mapping[str, Any], str, str, str, tuple[str, ...]]:
+) -> tuple[str, str, str, tuple[str, ...]]:
     owner = str(args.get("owner") or "")
     repo = str(args.get("repo") or "")
     number = int(args.get("number") or 0)
-    preflight = read_update_pr(args, ctx)
-    data = _update_pr_data(preflight)
-    head_sha = str(data.get("head_sha") or "")
-    if not head_sha:
-        raise ToolRuntimeError(
-            "INVALID_RESPONSE",
-            "GitHub update preflight omitted the pull-request head SHA.",
-            {"reason_code": "github_update_pr_head_sha_missing"},
-        )
-    scope = github_update_pr_action_scope(
+    head_sha = str(args.get("expected_head_sha") or "")
+    merge_method = str(args.get("merge_method") or "")
+    expected_checks = list(args.get("expected_checks") or [])
+    scope = github_merge_pr_action_scope(
         owner=owner,
         repo=repo,
         number=number,
-        head_sha=head_sha,
-        title=args.get("title"),
-        body=args.get("body"),
+        expected_head_sha=head_sha,
+        merge_method=merge_method,
+        expected_checks=expected_checks,
     )
-    action_key = scope
-    ctx.github_update_pr_preflight = preflight
+    checks_hash = scope.rsplit("=", 1)[-1]
     return (
-        preflight,
         scope,
-        action_key,
-        f"effect:github.update_pr:{action_key}",
+        scope,
+        f"effect:github.merge_pr:{hashlib.sha256(scope.encode()).hexdigest()}",
         (
             f"github:repository:{owner}/{repo}",
             f"github:pull:{number}@{head_sha}",
-            f"github:update:{scope.rsplit('=', 1)[-1]}",
+            f"github:merge_method:{merge_method}",
+            f"github:checks:{checks_hash}",
         ),
     )
 
 
-def _begin_github_update_pr_project_effect(
+def _begin_github_merge_pr_project_effect(
     *,
     task_manager: Any,
     task_id: str,
     actor_ref: str,
     args: Mapping[str, Any],
     ctx: Any,
-) -> GithubUpdatePrProjectEffect:
+) -> GithubMergePrProjectEffect:
     checkpoint = _require_project_checkpoint(task_manager, task_id)
+    scope, action_key, effect_id, preconditions = _merge_identity(args)
+    owner = str(args.get("owner") or "")
+    repo = str(args.get("repo") or "")
+    head_sha = str(args.get("expected_head_sha") or "")
     number = int(args.get("number") or 0)
-    preflight, scope, action_key, effect_id, preconditions = _update_pr_identity(
-        args, ctx
-    )
-    data = _update_pr_data(preflight)
-    head_sha = str(data.get("head_sha") or "")
+    merge_method = str(args.get("merge_method") or "")
+    expected_checks = list(args.get("expected_checks") or [])
     existing = load_project_effect_record(
         task_manager,
         task_id=task_id,
@@ -153,7 +153,7 @@ def _begin_github_update_pr_project_effect(
     if replay.decision == ProjectEffectReplayDecision.BLOCK_STALE_PRECONDITION:
         raise ToolRuntimeError(
             "INVALID_REQUEST",
-            "The pull-request state changed since this action was recorded.",
+            "The merge inputs changed since this action was recorded.",
             {
                 "reason_code": replay.reason,
                 "project_task_id": task_id,
@@ -161,12 +161,20 @@ def _begin_github_update_pr_project_effect(
                 "repository_action_scope": scope,
             },
         )
-    reconciled = existing is not None and replay.decision in {
+
+    preflight = read_merge_pr(args, ctx)
+    require_merge_pr_ready(
+        preflight,
+        expected_head_sha=head_sha,
+        allow_merged=existing is not None,
+    )
+    reconciled = False
+    if existing is not None and replay.decision in {
         ProjectEffectReplayDecision.REUSE_EXISTING,
         ProjectEffectReplayDecision.BLOCK_DUPLICATE,
-    }
-    if reconciled:
-        effect = _resume_github_update_pr_project_effect(
+    }:
+        was_started = existing.status == ProjectEffectStatus.STARTED
+        effect = _resume_github_merge_pr_project_effect(
             task_manager,
             existing=existing,
             args=args,
@@ -174,8 +182,17 @@ def _begin_github_update_pr_project_effect(
             scope=scope,
             ctx=ctx,
         )
+        reconciled = was_started and effect.status == ProjectEffectStatus.SUCCEEDED
     else:
-        effect = _authorize_github_update_pr_project_effect(
+        checks = fetch_merge_checks(args, ctx)
+        require_merge_checks(
+            checks,
+            expected_head_sha=head_sha,
+            expected_checks=expected_checks,
+        )
+        ctx.github_merge_pr_preflight = preflight
+        ctx.github_merge_pr_checks = checks
+        effect = _authorize_github_merge_pr_project_effect(
             task_manager,
             task_id=task_id,
             checkpoint=checkpoint,
@@ -188,24 +205,28 @@ def _begin_github_update_pr_project_effect(
             number=number,
             ctx=ctx,
         )
-    started = GithubUpdatePrProjectEffect(
+    started = GithubMergePrProjectEffect(
         checkpoint=checkpoint,
         effect=effect,
         scope=scope,
+        owner=owner,
+        repo=repo,
         head_sha=head_sha,
         number=number,
+        merge_method=merge_method,
+        expected_checks=tuple(expected_checks),
         reconciled=reconciled,
     )
     emit_tool_invoke_operation_for_context(
         ctx=ctx,
         operation="invoke",
-        tool_name=TOOL_GITHUB_UPDATE_PR,
+        tool_name=TOOL_GITHUB_MERGE_PR,
         extra=started.facts(),
     )
     return started
 
 
-def execute_github_update_pr_project_effect(
+def execute_github_merge_pr_project_effect(
     *,
     task_manager: Any | None,
     task_id: str,
@@ -225,7 +246,7 @@ def execute_github_update_pr_project_effect(
                 "project_task_id": task_id,
             },
         )
-    started = _begin_github_update_pr_project_effect(
+    started = _begin_github_merge_pr_project_effect(
         task_manager=task_manager,
         task_id=task_id,
         actor_ref=actor_ref,
@@ -239,17 +260,16 @@ def execute_github_update_pr_project_effect(
             context=ctx,
             start_time=start_time,
             background_write_authorized=background_write_authorized,
-            tool_name=TOOL_GITHUB_UPDATE_PR,
+            tool_name=TOOL_GITHUB_MERGE_PR,
         )
-        return _finalize_github_update_pr_project_result(
+        return _finalize_github_merge_pr_project_result(
             task_manager,
             started,
             result=result,
-            args=args,
             ctx=ctx,
         )
     except ToolRuntimeError as exc:
-        failure_facts = _record_update_pr_failure(
+        failure_facts = _record_merge_pr_failure(
             task_manager,
             started,
             error=exc,
@@ -259,37 +279,25 @@ def execute_github_update_pr_project_effect(
         raise
 
 
-def _finalize_github_update_pr_project_result(
+def _finalize_github_merge_pr_project_result(
     task_manager: Any,
-    started: GithubUpdatePrProjectEffect,
+    started: GithubMergePrProjectEffect,
     *,
     result: dict[str, Any],
-    args: Mapping[str, Any],
     ctx: Any,
 ) -> dict[str, Any]:
     outputs = result.get("outputs")
     if result.get("status") == BRAIN_ACTION_STATUS_SUCCESS and isinstance(
         outputs, Mapping
     ):
-        receipt = _update_pr_receipt(
-            outputs,
-            args=args,
-            head_sha=started.head_sha,
-        )
-        effect = _succeeded_update_effect(started.effect, receipt)
+        receipt = _merge_pr_receipt(outputs, started)
+        effect = _succeeded_merge_effect(started.effect, receipt)
         save_project_effect_record(task_manager, effect, receipt=receipt)
-        completed = GithubUpdatePrProjectEffect(
-            checkpoint=started.checkpoint,
-            effect=effect,
-            scope=started.scope,
-            head_sha=started.head_sha,
-            number=started.number,
-            reconciled=started.reconciled,
-        )
+        completed = _effect_state(started, effect)
         emit_tool_invoke_operation_for_context(
             ctx=ctx,
             operation="completed",
-            tool_name=TOOL_GITHUB_UPDATE_PR,
+            tool_name=TOOL_GITHUB_MERGE_PR,
             extra=completed.facts(),
         )
         result["outputs"] = _with_project_facts(outputs, completed.facts())
@@ -301,10 +309,10 @@ def _finalize_github_update_pr_project_result(
     provider_code = str(error.get("code") or "")
     failure = ToolRuntimeError(
         "UPSTREAM_ERROR",
-        str(result.get("summary") or "GitHub pull-request update failed"),
+        str(result.get("summary") or "GitHub pull-request merge failed"),
         {**details, "provider_error_code": provider_code},
     )
-    failure_facts = _record_update_pr_failure(
+    failure_facts = _record_merge_pr_failure(
         task_manager,
         started,
         error=failure,
@@ -320,7 +328,7 @@ def _finalize_github_update_pr_project_result(
     return result
 
 
-def _authorize_github_update_pr_project_effect(
+def _authorize_github_merge_pr_project_effect(
     task_manager: Any,
     *,
     task_id: str,
@@ -337,7 +345,7 @@ def _authorize_github_update_pr_project_effect(
     permission = evaluate_project_permission(
         task_manager,
         task_id=task_id,
-        tool_name=TOOL_GITHUB_UPDATE_PR,
+        tool_name=TOOL_GITHUB_MERGE_PR,
         scope=scope,
     )
     if not permission.allowed:
@@ -349,14 +357,14 @@ def _authorize_github_update_pr_project_effect(
             head_sha=head_sha,
             number=number,
             ctx=ctx,
-            tool_name=TOOL_GITHUB_UPDATE_PR,
+            tool_name=TOOL_GITHUB_MERGE_PR,
         )
     effect = ProjectEffectRecord(
         effect_id=effect_id,
         task_id=task_id,
         idempotency_key=action_key,
         actor_ref=actor_ref,
-        capability_ref=TOOL_GITHUB_UPDATE_PR,
+        capability_ref=TOOL_GITHUB_MERGE_PR,
         precondition_refs=preconditions,
         approval_ref=permission.grant_id,
     )
@@ -369,7 +377,7 @@ def _authorize_github_update_pr_project_effect(
     return effect
 
 
-def _resume_github_update_pr_project_effect(
+def _resume_github_merge_pr_project_effect(
     task_manager: Any,
     *,
     existing: ProjectEffectRecord,
@@ -378,89 +386,64 @@ def _resume_github_update_pr_project_effect(
     scope: str,
     ctx: Any,
 ) -> ProjectEffectRecord:
-    data = _update_pr_data(preflight)
+    data = require_merge_pr_ready(
+        preflight,
+        expected_head_sha=str(args.get("expected_head_sha") or ""),
+        allow_merged=True,
+    )
     receipt = load_project_effect_receipt(
         task_manager,
         task_id=existing.task_id,
         effect_id=existing.effect_id,
     )
     if existing.status == ProjectEffectStatus.STARTED:
-        applied = all(
-            args.get(field) is None or str(data.get(field) or "") == args.get(field)
-            for field in ("title", "body")
-        )
-        if not applied:
+        if not bool(data.get("merged", False)):
             raise ToolRuntimeError(
                 "UPSTREAM_ERROR",
-                "The prior pull-request update is still uncertain; it was not repeated.",
+                "The prior pull-request merge is still uncertain; it was not repeated.",
                 {
-                    "reason_code": "github_update_pr_readback_not_applied",
+                    "reason_code": "github_merge_pr_readback_not_merged",
                     "project_task_id": existing.task_id,
                     "project_effect_id": existing.effect_id,
                     "project_effect_status": existing.status.value,
                     "repository_action_scope": scope,
                 },
             )
-        receipt = _update_pr_receipt(
-            preflight,
-            args=args,
-            head_sha=str(data["head_sha"]),
-        )
-        existing = _succeeded_update_effect(existing, receipt, readback=True)
+        receipt = _merge_pr_readback_receipt(preflight, args)
+        existing = _succeeded_merge_effect(existing, receipt, readback=True)
         save_project_effect_record(task_manager, existing, receipt=receipt)
     if receipt is None:
         raise ToolRuntimeError(
             "INTERNAL_ERROR",
-            "The completed project effect has no pull-request receipt.",
+            "The completed project effect has no pull-request merge receipt.",
             {
                 "reason_code": "project_effect_receipt_missing",
                 "project_task_id": existing.task_id,
                 "project_effect_id": existing.effect_id,
             },
         )
-    ctx.github_update_pr_reconciled_result = _update_pr_result_from_receipt(receipt)
+    ctx.github_merge_pr_reconciled_result = _merge_pr_result_from_receipt(receipt)
     return existing
 
 
-def _update_pr_data(result: Mapping[str, Any]) -> Mapping[str, Any]:
-    data = result.get("data")
-    if not isinstance(data, Mapping):
-        raise ToolRuntimeError(
-            "INVALID_RESPONSE",
-            "GitHub update preflight omitted pull-request data.",
-            {"reason_code": "github_update_pr_preflight_bad_result"},
-        )
-    return data
-
-
-def _record_update_pr_failure(
+def _record_merge_pr_failure(
     task_manager: Any,
-    started: GithubUpdatePrProjectEffect,
+    started: GithubMergePrProjectEffect,
     *,
     error: BaseException,
     ctx: Any,
 ) -> dict[str, Any]:
-    uncertain = _is_uncertain_github_error(error)
+    uncertain = _merge_failure_is_uncertain(error)
     effect = started.effect
     if not uncertain:
         effect = effect.model_copy(update={"status": ProjectEffectStatus.FAILED})
         save_project_effect_record(task_manager, effect)
-    failed = GithubUpdatePrProjectEffect(
-        checkpoint=started.checkpoint,
-        effect=effect,
-        scope=started.scope,
-        head_sha=started.head_sha,
-        number=started.number,
-        reconciled=started.reconciled,
-    )
-    facts = {
-        **failed.facts(),
-        "project_effect_uncertain": uncertain,
-    }
+    failed = _effect_state(started, effect)
+    facts = {**failed.facts(), "project_effect_uncertain": uncertain}
     emit_tool_invoke_operation_for_context(
         ctx=ctx,
         operation="completed",
-        tool_name=TOOL_GITHUB_UPDATE_PR,
+        tool_name=TOOL_GITHUB_MERGE_PR,
         status="error",
         error_code=(
             "PROJECT_EFFECT_UNCERTAIN" if uncertain else "PROJECT_EFFECT_FAILED"
@@ -470,7 +453,34 @@ def _record_update_pr_failure(
     return facts
 
 
-def _succeeded_update_effect(
+def _merge_failure_is_uncertain(error: BaseException) -> bool:
+    if _is_uncertain_github_error(error):
+        return True
+    if not isinstance(error, ToolRuntimeError):
+        return False
+    provider_code = str(error.details.get("provider_error_code") or "")
+    return error.code == "INVALID_RESPONSE" or provider_code == "INVALID_RESPONSE"
+
+
+def _effect_state(
+    started: GithubMergePrProjectEffect,
+    effect: ProjectEffectRecord,
+) -> GithubMergePrProjectEffect:
+    return GithubMergePrProjectEffect(
+        checkpoint=started.checkpoint,
+        effect=effect,
+        scope=started.scope,
+        owner=started.owner,
+        repo=started.repo,
+        head_sha=started.head_sha,
+        number=started.number,
+        merge_method=started.merge_method,
+        expected_checks=started.expected_checks,
+        reconciled=started.reconciled,
+    )
+
+
+def _succeeded_merge_effect(
     effect: ProjectEffectRecord,
     receipt: Mapping[str, Any],
     *,
@@ -481,98 +491,132 @@ def _succeeded_update_effect(
             "status": ProjectEffectStatus.SUCCEEDED,
             "result_ref": (
                 f"github:pull:{receipt['owner']}/{receipt['repo']}#{receipt['number']}"
+                f"@{receipt['merge_commit_sha']}"
             ),
             "verification_refs": (
-                ("github.update_pr:readback",) if readback else effect.verification_refs
+                ("github.merge_pr:readback",) if readback else effect.verification_refs
             ),
             "non_reversible_reason": (
-                "OpenMinion does not automatically restore a prior pull-request title or body."
+                "OpenMinion does not automatically revert a merged pull request."
             ),
         }
     )
 
 
-def _update_pr_receipt(
+def _merge_pr_receipt(
     result: Mapping[str, Any],
-    *,
-    args: Mapping[str, Any],
-    head_sha: str,
+    started: GithubMergePrProjectEffect,
 ) -> dict[str, Any]:
     raw_data = result.get("data")
+    if not isinstance(raw_data, Mapping) or raw_data.get("merged") is not True:
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub merge response did not confirm the merge.",
+            {"reason_code": "github_merge_pr_result_bad_result"},
+        )
     raw_source = result.get("source")
-    string_fields = (
-        "owner",
-        "repo",
-        "html_url",
-        "title",
-        "body",
-        "state",
-        "head_sha",
+    source = raw_source if isinstance(raw_source, Mapping) else {}
+    actual = (
+        str(raw_data.get("owner") or ""),
+        str(raw_data.get("repo") or ""),
+        int(raw_data.get("number") or 0),
+        str(raw_data.get("head_sha") or ""),
+        str(raw_data.get("merge_method") or ""),
     )
-    valid_shape = (
-        result.get("ok") is True
-        and isinstance(raw_data, Mapping)
-        and isinstance(raw_source, Mapping)
-        and all(isinstance(raw_data.get(field), str) for field in string_fields)
-        and isinstance(raw_data.get("number"), int)
-        and not isinstance(raw_data.get("number"), bool)
-        and isinstance(raw_source.get("provider_id"), str)
+    expected = (
+        started.owner,
+        started.repo,
+        started.number,
+        started.head_sha,
+        started.merge_method,
     )
-    if not valid_shape:
+    if actual != expected:
         raise ToolRuntimeError(
             "INVALID_RESPONSE",
-            "GitHub update returned an invalid pull-request result.",
-            {"reason_code": "github_update_pr_result_invalid"},
+            "GitHub merge response did not match the approved action.",
+            {"reason_code": "github_merge_pr_result_mismatch"},
         )
-    data = cast(Mapping[str, Any], raw_data)
-    source = cast(Mapping[str, Any], raw_source)
-    expected_update_matches = all(
-        args.get(field) is None or data[field] == args[field]
-        for field in ("title", "body")
-    )
-    if (
-        not all(
-            data[field]
-            for field in ("owner", "repo", "html_url", "title", "head_sha")
-        )
-        or not source["provider_id"]
-        or data["owner"] != args.get("owner")
-        or data["repo"] != args.get("repo")
-        or data["number"] != args.get("number")
-        or data["state"] != "open"
-        or data["head_sha"] != head_sha
-        or not expected_update_matches
-    ):
+    merge_commit_sha = str(raw_data.get("merge_commit_sha") or "")
+    provider_id = str(source.get("provider_id") or "")
+    if not merge_commit_sha or not provider_id:
         raise ToolRuntimeError(
             "INVALID_RESPONSE",
-            "GitHub update returned a mismatched pull-request result.",
-            {"reason_code": "github_update_pr_result_mismatch"},
+            "GitHub merge response omitted required receipt fields.",
+            {"reason_code": "github_merge_pr_result_incomplete"},
         )
     return {
-        "owner": data["owner"],
-        "repo": data["repo"],
-        "number": data["number"],
-        "html_url": data["html_url"],
-        "title": data["title"],
-        "body": data["body"],
-        "state": data["state"],
-        "head_sha": data["head_sha"],
-        "provider_id": source["provider_id"],
+        "owner": started.owner,
+        "repo": started.repo,
+        "number": started.number,
+        "merged": True,
+        "message": str(raw_data.get("message") or ""),
+        "head_sha": started.head_sha,
+        "merge_method": started.merge_method,
+        "merge_commit_sha": merge_commit_sha,
+        "provider_id": provider_id,
     }
 
 
-def _update_pr_result_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
+def _merge_pr_readback_receipt(
+    result: Mapping[str, Any],
+    args: Mapping[str, Any],
+) -> dict[str, Any]:
+    data = require_merge_pr_ready(
+        result,
+        expected_head_sha=str(args.get("expected_head_sha") or ""),
+        allow_merged=True,
+    )
+    actual = (
+        str(data.get("owner") or ""),
+        str(data.get("repo") or ""),
+        int(data.get("number") or 0),
+    )
+    expected = (
+        str(args.get("owner") or ""),
+        str(args.get("repo") or ""),
+        int(args.get("number") or 0),
+    )
+    if actual != expected:
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub merge readback did not match the approved action.",
+            {"reason_code": "github_merge_pr_result_mismatch"},
+        )
+    merge_commit_sha = str(data.get("merge_commit_sha") or "")
+    raw_source = result.get("source")
+    source = raw_source if isinstance(raw_source, Mapping) else {}
+    provider_id = str(source.get("provider_id") or "")
+    if not merge_commit_sha or not provider_id:
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub merge readback omitted required receipt fields.",
+            {"reason_code": "github_merge_pr_result_incomplete"},
+        )
+    return {
+        "owner": str(data.get("owner") or ""),
+        "repo": str(data.get("repo") or ""),
+        "number": int(data.get("number") or 0),
+        "merged": True,
+        "message": "Reconciled from pull-request readback.",
+        "head_sha": str(data.get("head_sha") or ""),
+        "merge_method": str(args.get("merge_method") or ""),
+        "merge_commit_sha": merge_commit_sha,
+        "provider_id": provider_id,
+    }
+
+
+def _merge_pr_result_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "data": {
             "owner": str(receipt.get("owner") or ""),
             "repo": str(receipt.get("repo") or ""),
             "number": int(receipt.get("number") or 0),
-            "html_url": str(receipt.get("html_url") or ""),
-            "title": str(receipt.get("title") or ""),
-            "body": str(receipt.get("body") or ""),
-            "state": str(receipt.get("state") or ""),
+            "merged": True,
+            "message": str(receipt.get("message") or ""),
             "head_sha": str(receipt.get("head_sha") or ""),
+            "merge_method": str(receipt.get("merge_method") or ""),
+            "merge_commit_sha": str(receipt.get("merge_commit_sha") or ""),
             "reconciled": True,
         },
         "source": {"provider_id": str(receipt.get("provider_id") or "")},
@@ -580,6 +624,6 @@ def _update_pr_result_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]
 
 
 __all__ = [
-    "execute_github_update_pr_project_effect",
-    "github_update_pr_action_scope",
+    "execute_github_merge_pr_project_effect",
+    "github_merge_pr_action_scope",
 ]
