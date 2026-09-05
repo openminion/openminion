@@ -1339,10 +1339,6 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         assert lease is not None
         (lease.worktree / "seed.py").write_text("VALUE = 9\n", encoding="utf-8")
-        (lease.worktree / "new.txt").write_text("new file\n", encoding="utf-8")
-        (lease.worktree / "image.bin").write_bytes(b"\x00\x01openminion")
-        (lease.worktree / "delete_me.txt").unlink()
-        (lease.worktree / "rename_me.txt").rename(lease.worktree / "renamed.txt")
 
         finalize_child_worktree(
             ctx,
@@ -1363,38 +1359,93 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
         assert record["target_digest"] == artifact["target_digest"]
         manifest = json.loads(ctl.read_bytes(artifact["manifest_ref"]))
         assert manifest["target_digest"] == record["target_digest"]
-        assert set(record["touched_paths"]) == {
-            "delete_me.txt",
-            "image.bin",
-            "new.txt",
-            "renamed.txt",
-            "rename_me.txt",
-            "seed.py",
-        }
+        assert record["touched_paths"] == ["seed.py"]
         assert not Path(record["workspace"]).exists()
         assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
 
+        corrected_record: dict[str, Any] | None = None
+        delegate_calls: list[tuple[str, str]] = []
+
         def _review_call(*, command, session_id, trace_id):
+            nonlocal corrected_record
             del session_id, trace_id
-            reviewer = command["target_agent_id"]
-            passed = reviewer == "readonly-reviewer"
+            target = command["target_agent_id"]
+            permission_mode = command["params"]["permission_mode"]
+            delegate_calls.append((target, permission_mode))
+            if target == "correction-agent":
+                assert "Set VALUE to 10" in command["params"]["goal"]
+                assert record["target_digest"] in command["params"]["goal"]
+                corrected_subtask = subtask.model_copy(
+                    update={
+                        "subtask_id": "corrected-artifact-child",
+                        "goal": "Correct reviewed child artifact",
+                    }
+                )
+                corrected_lease = allocate_child_worktree(
+                    subtask=corrected_subtask,
+                    child_state=_state(),
+                )
+                assert corrected_lease is not None
+                (corrected_lease.worktree / "seed.py").write_text(
+                    "VALUE = 10\n", encoding="utf-8"
+                )
+                (corrected_lease.worktree / "new.txt").write_text(
+                    "new file\n", encoding="utf-8"
+                )
+                (corrected_lease.worktree / "image.bin").write_bytes(
+                    b"\x00\x01openminion"
+                )
+                (corrected_lease.worktree / "delete_me.txt").unlink()
+                (corrected_lease.worktree / "rename_me.txt").rename(
+                    corrected_lease.worktree / "renamed.txt"
+                )
+                finalize_child_worktree(
+                    ctx,
+                    lease=corrected_lease,
+                    status="done",
+                    validation={
+                        "passed": True,
+                        "verifier_refs": ["pytest:corrected-child"],
+                    },
+                )
+                corrected_record = ctx.state.module_state["worktree_children"][
+                    "children"
+                ][-1]
+                return {
+                    "status": "success",
+                    "summary": "correction complete",
+                    "outputs": {
+                        "child_artifact": {
+                            "record_alias": corrected_record["record_alias"],
+                            "target_digest": corrected_record["target_digest"],
+                        }
+                    },
+                }
+
+            reviewed_record = (
+                corrected_record if target == "readonly-reviewer" else record
+            )
+            assert reviewed_record is not None
+            passed = target == "readonly-reviewer"
             return {
                 "status": "success",
-                "summary": "review passed",
+                "summary": "review complete",
                 "outputs": {
-                    "child_agent_id": reviewer,
+                    "child_agent_id": target,
                     "findings": []
                     if passed
                     else [
                         {
                             "priority": "P1",
                             "owner": "child patch",
-                            "message": "Reassign review after correction.",
+                            "message": (
+                                "Set VALUE to 10 and preserve the required file changes."
+                            ),
                         }
                     ],
                     "passed": passed,
-                    "target_digest": record["target_digest"],
-                    "verifier_refs": ["pytest:child-artifact"],
+                    "target_digest": reviewed_record["target_digest"],
+                    "verifier_refs": reviewed_record["validation"]["verifier_refs"],
                 },
             }
 
@@ -1434,7 +1485,7 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
         assert telemetry.events[-1][1]["disposition_outcome"] == "denied"
         telemetry.events.clear()
 
-        def _review_with(agent_id: str) -> dict[str, Any]:
+        def _review_with(agent_id: str, record_alias: str) -> dict[str, Any]:
             return _h_task_delegate(
                 {
                     "mode": "review",
@@ -1442,21 +1493,48 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
                     "instruction": "review child artifact",
                     "review_criteria": ["no blocking findings"],
                     "repository_instructions": "AGENTS.md",
-                    "child_artifact": {"record_alias": record["record_alias"]},
+                    "child_artifact": {"record_alias": record_alias},
                 },
                 review_ctx,
             )
 
-        correction = _review_with("initial-reviewer")
-        assert correction["status"] == "correction_required"
-        review = _review_with("readonly-reviewer")
+        first_review = _review_with("initial-reviewer", record["record_alias"])
+        assert first_review["status"] == "correction_required"
+        finding = first_review["review_receipt"]["findings"][0]["message"]
+        correction = _h_task_delegate(
+            {
+                "mode": "sync",
+                "agent_id": "correction-agent",
+                "instruction": (
+                    f"{finding} Correct child artifact {record['target_digest']}."
+                ),
+            },
+            review_ctx,
+        )
+        assert correction["status"] == "success"
+        assert corrected_record is not None
+        corrected_alias = correction["outputs"]["child_artifact"]["record_alias"]
+        assert corrected_alias == corrected_record["record_alias"]
+        assert corrected_record["target_digest"] != record["target_digest"]
+        assert corrected_record["validation"]["verifier_refs"] == [
+            "pytest:corrected-child"
+        ]
+        assert (
+            corrected_record["validation"]["target_digest"]
+            == corrected_record["target_digest"]
+        )
+        review = _review_with("readonly-reviewer", corrected_alias)
         assert review["status"] == "passed"
+        assert delegate_calls == [
+            ("initial-reviewer", "readonly"),
+            ("correction-agent", "ask"),
+            ("readonly-reviewer", "readonly"),
+        ]
         assert [
             payload["review_outcome"]
             for event, payload in telemetry.events
-            if event == "agent.handoff.completed"
+            if event == "agent.handoff.completed" and "review_outcome" in payload
         ] == ["correction_required", "passed"]
-        record_alias = record["record_alias"]
 
     with artifact_ctl(artifact_root) as ctl:
         telemetry.events.clear()
@@ -1465,7 +1543,7 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
                 "mode": "accept",
                 "workspace_root": str(tmp_path / "model-supplied-repo"),
                 "child_artifact": {
-                    "record_alias": record_alias,
+                    "record_alias": corrected_alias,
                     "review_receipt": {"passed": True},
                     "validation": {"passed": True},
                 },
@@ -1478,26 +1556,42 @@ def test_child_worktree_artifact_accept_applies_complete_change_set_after_restar
                 telemetryctl=telemetry,
             ),
         )
-        restarted_record = load_child_worktree_record(ctl, record_alias)
-
         assert accepted["ok"] is True
         assert accepted["status"] == "accepted"
-        assert accepted["target_digest"] == restarted_record["target_digest"]
+        assert accepted["target_digest"] == corrected_record["target_digest"]
         assert accepted["reviewer_agent_id"] == "readonly-reviewer"
-        assert accepted["verifier_refs"] == ["pytest:child-artifact"]
-        assert accepted["touched_paths"] == restarted_record["touched_paths"]
-        assert restarted_record["integration_status"] == "accepted"
+        assert accepted["verifier_refs"] == ["pytest:corrected-child"]
+        assert accepted["touched_paths"] == corrected_record["touched_paths"]
         assert [event for event, _payload in telemetry.events] == [
             "agent.handoff.started",
             "agent.handoff.completed",
         ]
         assert telemetry.events[-1][1]["disposition_outcome"] == "accept"
-        assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 9\n"
+        assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 10\n"
         assert (repo / "new.txt").read_text(encoding="utf-8") == "new file\n"
         assert (repo / "image.bin").read_bytes() == b"\x00\x01openminion"
         assert not (repo / "delete_me.txt").exists()
         assert not (repo / "rename_me.txt").exists()
         assert (repo / "renamed.txt").read_text(encoding="utf-8") == "rename me\n"
+
+    with artifact_ctl(artifact_root) as ctl:
+        persisted = load_child_worktree_record(ctl, corrected_alias)
+        assert persisted["integration_status"] == "accepted"
+        with pytest.raises(ToolRuntimeError) as duplicate:
+            _h_task_delegate(
+                {
+                    "mode": "accept",
+                    "child_artifact": {"record_alias": corrected_alias},
+                },
+                SimpleNamespace(
+                    artifactctl=ctl,
+                    session_id=ctx.state.session_id,
+                    telemetry_session_id=ctx.state.session_id,
+                    telemetry_turn_id="turn-duplicate-accept",
+                    telemetryctl=telemetry,
+                ),
+            )
+        assert duplicate.value.details["reason_code"] == "artifact_already_disposed"
 
 
 def test_child_worktree_artifact_failure_preserves_recoverable_worktree(
@@ -1550,7 +1644,8 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
     )
     subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
     child_state = _state()
-    with artifact_ctl(tmp_path / ".openminion") as ctl:
+    artifact_root = tmp_path / ".openminion"
+    with artifact_ctl(artifact_root) as ctl:
         runner.artifactctl = ctl
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         assert lease is not None
@@ -1559,11 +1654,14 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
         finalize_child_worktree(ctx, lease=lease, status="done")
         record = ctx.state.module_state["worktree_children"]["children"][0]
         bundle_ref = record["artifact"]["bundle_ref"]
-        telemetry = _RecordingTelemetry()
+        record_alias = record["record_alias"]
+
+    telemetry = _RecordingTelemetry()
+    with artifact_ctl(artifact_root) as ctl:
         rejected = _h_task_delegate(
             {
                 "mode": "reject",
-                "child_artifact": {"record_alias": record["record_alias"]},
+                "child_artifact": {"record_alias": record_alias},
             },
             SimpleNamespace(
                 artifactctl=ctl,
@@ -1573,8 +1671,6 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
                 telemetry_turn_id="turn-reject",
             ),
         )
-        persisted = load_child_worktree_record(ctl, record["record_alias"])
-        assert ctl.read_bytes(bundle_ref)
 
     assert rejected == {
         "ok": True,
@@ -1583,13 +1679,32 @@ def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> Non
         "target_digest": record["target_digest"],
         "bundle_ref": bundle_ref,
     }
-    assert persisted["integration_status"] == "rejected"
     assert [event for event, _payload in telemetry.events] == [
         "agent.handoff.started",
         "agent.handoff.completed",
     ]
     assert telemetry.events[-1][1]["disposition_outcome"] == "reject"
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+    with artifact_ctl(artifact_root) as ctl:
+        persisted = load_child_worktree_record(ctl, record_alias)
+        assert persisted["integration_status"] == "rejected"
+        assert ctl.read_bytes(bundle_ref)
+        with pytest.raises(ToolRuntimeError) as duplicate:
+            _h_task_delegate(
+                {
+                    "mode": "reject",
+                    "child_artifact": {"record_alias": record_alias},
+                },
+                SimpleNamespace(
+                    artifactctl=ctl,
+                    session_id=ctx.state.session_id,
+                    telemetry_session_id=ctx.state.session_id,
+                    telemetry_turn_id="turn-duplicate-reject",
+                    telemetryctl=telemetry,
+                ),
+            )
+        assert duplicate.value.details["reason_code"] == "artifact_already_disposed"
 
 
 def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> None:
