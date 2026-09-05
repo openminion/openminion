@@ -93,6 +93,7 @@ def _format_records_as_context(
     lines = [header]
     if header == "## Agent Memory":
         lines.append(_AGENT_MEMORY_EXACT_VALUE_GUIDANCE)
+    omitted = False
     for rec in records:
         title = getattr(rec, "title", None) or ""
         content = getattr(rec, "content", None) or ""
@@ -108,11 +109,15 @@ def _format_records_as_context(
         prefix = "📌" if rtype == "pin" else "•"
         record_key = str(getattr(rec, "key", "") or "").strip()
         key_prefix = f"[key={record_key}] " if record_key != title_text else ""
-        lines.append(f"  {prefix} {key_prefix}{text}")
-    joined = "\n".join(lines)
-    if len(joined) > max_chars:
-        joined = joined[:max_chars] + "\n  [truncated]"
-    return joined
+        line = f"  {prefix} {key_prefix}{text}"
+        if len("\n".join([*lines, line])) > max_chars:
+            omitted = True
+            continue
+        lines.append(line)
+    marker = "  [additional records omitted by context budget]"
+    if omitted and len("\n".join([*lines, marker])) <= max_chars:
+        lines.append(marker)
+    return "\n".join(lines)
 
 
 def _content_text(content: Any) -> str:

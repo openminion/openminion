@@ -68,7 +68,6 @@ def _effective_decay(
     last_hit_at: datetime.datetime | None,
     disuse_threshold_days: int | None,
     disuse_decay_multiplier: float,
-    sqlite_disuse_rule: bool,
 ) -> float:
     elapsed_seconds = (now - updated_at).total_seconds()
     interval_seconds = max(1, int(interval_days)) * 86400.0
@@ -78,9 +77,7 @@ def _effective_decay(
     if disuse_threshold_days is None or disuse_decay_multiplier <= 1.0:
         return effective_decay
     disuse_cutoff = now - datetime.timedelta(days=max(1, int(disuse_threshold_days)))
-    disused = (last_hit_at is None and not sqlite_disuse_rule) or (
-        last_hit_at is not None and last_hit_at < disuse_cutoff
-    )
+    disused = last_hit_at is not None and last_hit_at < disuse_cutoff
     if disused:
         return effective_decay * float(disuse_decay_multiplier)
     return effective_decay
@@ -142,7 +139,6 @@ def _decay_postgres_records(
                 last_hit_at=last_hit_at,
                 disuse_threshold_days=disuse_threshold_days,
                 disuse_decay_multiplier=disuse_decay_multiplier,
-                sqlite_disuse_rule=False,
             )
             new_confidence = max(
                 0.0, float(row.get("confidence") or 0.0) - effective_decay
@@ -169,7 +165,10 @@ def _decay_postgres_records(
                     (
                         record_id,
                         soft_delete_postgres_record(
-                            conn, record_id, now_iso=now.isoformat()
+                            conn,
+                            record_id,
+                            now_iso=now.isoformat(),
+                            reason="confidence_below_threshold",
                         ),
                     )
                 )
@@ -219,7 +218,6 @@ def _decay_sqlite_records(
                     last_hit_at=last_hit_at,
                     disuse_threshold_days=disuse_threshold_days,
                     disuse_decay_multiplier=disuse_decay_multiplier,
-                    sqlite_disuse_rule=True,
                 )
                 new_confidence = max(
                     0.0, float(row["confidence"] or 0.0) - effective_decay
@@ -235,7 +233,10 @@ def _decay_sqlite_records(
                         (
                             record_id,
                             soft_delete_sqlite_record(
-                                conn, record_id, now_iso=now.isoformat()
+                                conn,
+                                record_id,
+                                now_iso=now.isoformat(),
+                                reason="confidence_below_threshold",
                             ),
                         )
                     )

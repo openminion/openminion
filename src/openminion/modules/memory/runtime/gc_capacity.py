@@ -159,7 +159,12 @@ def _evict_postgres_excess_rows(
         removed_edges.append(
             (
                 record_id,
-                soft_delete_postgres_record(conn, record_id, now_iso=now_iso),
+                soft_delete_postgres_record(
+                    conn,
+                    record_id,
+                    now_iso=now_iso,
+                    reason="scope_capacity",
+                ),
             )
         )
         evicted[scope] = evicted.get(scope, 0) + 1
@@ -183,7 +188,12 @@ def _evict_sqlite_excess_rows(
         removed_edges.append(
             (
                 record_id,
-                soft_delete_sqlite_record(conn, record_id, now_iso=now_iso),
+                soft_delete_sqlite_record(
+                    conn,
+                    record_id,
+                    now_iso=now_iso,
+                    reason="scope_capacity",
+                ),
             )
         )
         evicted[scope] = evicted.get(scope, 0) + 1

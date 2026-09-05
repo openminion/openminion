@@ -152,6 +152,8 @@ def test_postgres_gc_and_retention_paths_round_trip(
     stale_insight = postgres_store.get("stale-insight")
     assert stale_insight is not None
     assert stale_insight.is_deleted is True
+    assert stale_insight.deleted_at is not None
+    assert stale_insight.deleted_reason == "stale_insight"
 
     result = run_gc(
         postgres_store,

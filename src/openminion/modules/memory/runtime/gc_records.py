@@ -26,14 +26,22 @@ def soft_delete_sqlite_record(
     record_id: str,
     *,
     now_iso: str,
+    reason: str,
 ) -> list[Any]:
     row = conn.execute(
         "SELECT evidence_json FROM memory_records WHERE id = ?",
         (record_id,),
     ).fetchone()
     conn.execute(
-        "UPDATE memory_records SET is_deleted = 1, updated_at = ? WHERE id = ?",
-        (now_iso, record_id),
+        """
+        UPDATE memory_records
+           SET is_deleted = 1,
+               updated_at = ?,
+               deleted_at = ?,
+               deleted_reason = ?
+         WHERE id = ?
+        """,
+        (now_iso, now_iso, reason, record_id),
     )
     conn.execute("DELETE FROM memory_fts WHERE id = ?", (record_id,))
     return [] if row is None else decode_evidence_ref_values(row["evidence_json"])
@@ -44,6 +52,7 @@ def soft_delete_postgres_record(
     record_id: str,
     *,
     now_iso: str,
+    reason: str,
 ) -> list[Any]:
     row = (
         conn.execute(
@@ -59,11 +68,18 @@ def soft_delete_postgres_record(
             UPDATE memory_records
                SET is_deleted = TRUE,
                    updated_at = :updated_at,
+                   deleted_at = :deleted_at,
+                   deleted_reason = :deleted_reason,
                    search_text = ''
              WHERE id = :id
             """
         ),
-        {"updated_at": now_iso, "id": record_id},
+        {
+            "updated_at": now_iso,
+            "deleted_at": now_iso,
+            "deleted_reason": reason,
+            "id": record_id,
+        },
     )
     return [] if row is None else decode_evidence_ref_values(row.get("evidence_json"))
 

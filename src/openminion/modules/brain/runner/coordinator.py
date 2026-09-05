@@ -47,6 +47,7 @@ from ..schemas import (
     WorkingState,
     new_uuid,
 )
+from ..schemas.state.action import MemoryUseRef
 from ..diagnostics.status import PhaseStatus, normalize_phase_status
 
 from ..config import RunnerOptions
@@ -184,6 +185,22 @@ class BrainRunner:
             command_id=action.command_id,
             observed_at=utc_now_iso(),
             feedback_delta=0.1 if outcome == "success" else -0.1,
+        )
+
+    def _apply_typed_closure_memory_outcome(
+        self,
+        *,
+        memory_use_refs: list[MemoryUseRef],
+        command_id: str,
+    ) -> None:
+        if self.memory_api is None or not memory_use_refs:
+            return
+        self.memory_api.apply_outcome_feedback(
+            record_ids=list(dict.fromkeys(ref.record_id for ref in memory_use_refs)),
+            outcome="success",
+            command_id=command_id,
+            observed_at=utc_now_iso(),
+            feedback_delta=0.1,
         )
 
     def _apply_pending_capture_bundle(

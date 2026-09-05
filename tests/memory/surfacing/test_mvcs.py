@@ -13,6 +13,9 @@ from openminion.modules.memory.surfacing import (
     render_record_with_confidence,
 )
 from openminion.modules.memory.surfacing.decision import render_with_decision
+from openminion.modules.memory.runtime.extraction.records import (
+    _format_records_as_context,
+)
 
 
 class _Record:
@@ -27,16 +30,29 @@ class _Record:
 
 def test_existing_renderer_does_not_include_confidence():
 
-    from openminion.modules.memory.runtime.extraction.records import (
-        _format_records_as_context,
-    )
-
     out = _format_records_as_context(
         [_Record(title="t", content="c", confidence=0.9)],
         header="[mem]",
         max_chars=400,
     )
     assert "confidence" not in out.lower()
+
+
+def test_existing_renderer_keeps_records_atomic_at_budget_boundary():
+    out = _format_records_as_context(
+        [
+            _Record(title="first", content="short"),
+            _Record(title="second", content="x" * 200),
+            _Record(title="third", content="also short"),
+        ],
+        header="[mem]",
+        max_chars=80,
+    )
+
+    assert "first: short" in out
+    assert "third: also short" in out
+    assert "second:" not in out
+    assert len(out) <= 80
 
 
 # --- MVCS-02 surfacing layer ---
