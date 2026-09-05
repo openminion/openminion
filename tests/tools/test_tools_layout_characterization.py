@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _tools_root() -> Path:
@@ -75,3 +76,33 @@ def test_bootstrap_entries_use_nested_provider_paths() -> None:
         "openminion.tools.weather.providers.openmeteo",
         "openminion.tools.weather.providers.weatherapi",
     }.issubset(nested_entries)
+
+
+def test_every_registrar_is_bootstrapped_or_an_exact_exception() -> None:
+    from scripts.validate.tools_layout import validate_bootstrap_coverage
+
+    assert validate_bootstrap_coverage() == []
+
+
+def test_registrar_coverage_reports_missing_duplicate_and_stale_entries(
+    tmp_path: Path,
+) -> None:
+    from scripts.validate.tools_layout import validate_bootstrap_coverage
+
+    owner = tmp_path / "alpha"
+    owner.mkdir()
+    (owner / "registrar.py").write_text("")
+    entries = [
+        SimpleNamespace(module_name="openminion.tools.beta"),
+        SimpleNamespace(module_name="openminion.tools.beta"),
+    ]
+
+    assert validate_bootstrap_coverage(
+        tmp_path,
+        bootstrap_entries=entries,
+        exceptions={"openminion.tools.stale"},
+    ) == [
+        "Duplicate tool bootstrap entry: openminion.tools.beta",
+        "Registrar missing from tool bootstrap: openminion.tools.alpha",
+        "Stale registrar bootstrap exception: openminion.tools.stale",
+    ]

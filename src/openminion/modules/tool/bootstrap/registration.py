@@ -31,10 +31,17 @@ from .entries import (
 )
 
 logger = logging.getLogger("openminion.modules.tool.bootstrap")
+_PROVIDER_MODULE_RECORDS: dict[str, _ToolBootstrapRecord] = {}
 
 
 class _ManifestCandidateValidationError(RuntimeError):
     """Raised when manifest runtime candidates do not map to registered tools."""
+
+
+class _ExternalPluginContractError(RuntimeError):
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
 
 
 _TOOL_PACKAGE_MODULE_ID_COMPATIBILITY = {
@@ -183,6 +190,34 @@ def _is_empty_provider_only_manifest(manifest: ToolBindingManifest) -> bool:
     return not manifest.model_tools and not manifest.runtime_bindings
 
 
+def _validate_external_plugin_ownership(
+    *,
+    plugin_id: str,
+    registrar: ToolModuleRegistrar,
+    manifest: ToolBindingManifest | None,
+) -> None:
+    model_prefix = f"plugin.{plugin_id}."
+    binding_prefix = f"runtime.plugin.{plugin_id}."
+    if registrar.module_id != plugin_id or (
+        manifest is not None and manifest.module_id != plugin_id
+    ):
+        raise _ExternalPluginContractError("owner_mismatch")
+    if manifest is None:
+        return
+    if any(
+        not item.model_tool_id.startswith(model_prefix) for item in manifest.model_tools
+    ):
+        raise _ExternalPluginContractError("namespace_invalid")
+    for binding in manifest.runtime_bindings:
+        if not binding.runtime_binding_id.startswith(binding_prefix):
+            raise _ExternalPluginContractError("namespace_invalid")
+        if any(
+            not candidate.startswith(model_prefix)
+            for candidate in binding.runtime_candidates
+        ):
+            raise _ExternalPluginContractError("namespace_invalid")
+
+
 def _validate_manifest_contract(
     *,
     module_name: str,
@@ -219,11 +254,14 @@ def _validate_manifest_contract(
 
 
 def _register_provider_plugin(*, module_name: str, label: str) -> _ToolBootstrapRecord:
+    cached = _PROVIDER_MODULE_RECORDS.get(module_name)
+    if cached is not None:
+        return cached
     try:
         module = importlib.import_module(module_name)
     except ImportError as exc:
         logger.debug("%s plugin unavailable (%s): %s", label, module_name, exc)
-        return _ToolBootstrapRecord(
+        record = _ToolBootstrapRecord(
             kind="provider",
             module_name=module_name,
             label=label,
@@ -233,10 +271,12 @@ def _register_provider_plugin(*, module_name: str, label: str) -> _ToolBootstrap
             status=TOOL_BOOTSTRAP_STATUS_IMPORT_ERROR,
             error=str(exc),
         )
+        _PROVIDER_MODULE_RECORDS[module_name] = record
+        return record
 
     register_fn = getattr(module, "register", None)
     if register_fn is None:
-        return _ToolBootstrapRecord(
+        record = _ToolBootstrapRecord(
             kind="provider",
             module_name=module_name,
             label=label,
@@ -245,11 +285,13 @@ def _register_provider_plugin(*, module_name: str, label: str) -> _ToolBootstrap
             enabled=True,
             status=TOOL_BOOTSTRAP_STATUS_NO_REGISTER,
         )
+        _PROVIDER_MODULE_RECORDS[module_name] = record
+        return record
 
     try:
         register_fn()
         logger.info("%s: registered provider module path (%s)", label, module_name)
-        return _ToolBootstrapRecord(
+        record = _ToolBootstrapRecord(
             kind="provider",
             module_name=module_name,
             label=label,
@@ -258,11 +300,13 @@ def _register_provider_plugin(*, module_name: str, label: str) -> _ToolBootstrap
             enabled=True,
             status=TOOL_BOOTSTRAP_STATUS_REGISTERED,
         )
+        _PROVIDER_MODULE_RECORDS[module_name] = record
+        return record
     except Exception as exc:
         logger.warning(
             "%s provider registration failed (%s): %s", label, module_name, exc
         )
-        return _ToolBootstrapRecord(
+        record = _ToolBootstrapRecord(
             kind="provider",
             module_name=module_name,
             label=label,
@@ -272,6 +316,8 @@ def _register_provider_plugin(*, module_name: str, label: str) -> _ToolBootstrap
             status=TOOL_BOOTSTRAP_STATUS_REGISTER_FAILED,
             error=str(exc),
         )
+        _PROVIDER_MODULE_RECORDS[module_name] = record
+        return record
 
 
 def _tool_entry_failure_record(
@@ -346,6 +392,29 @@ def _register_tool_entry(
         entry.module_name,
         module,
     )
+    return _register_registrar(
+        registry,
+        registry_manager,
+        entry=entry,
+        registrar=registrar,
+        registrar_module_name=registrar_module_name,
+        ctx=ctx,
+        prepared_state=prepared_state,
+        strict_required=strict_required,
+    )
+
+
+def _register_registrar(
+    registry: ToolRegistry,
+    registry_manager: ToolRegistryManager,
+    *,
+    entry: _ToolBootstrapEntry,
+    registrar: Any,
+    registrar_module_name: str,
+    ctx: ToolRegisterContext,
+    prepared_state: Any,
+    strict_required: bool,
+) -> _ToolBootstrapRecord:
     try:
         typed_registrar = _require_registrar_protocol(
             module_name=entry.module_name,
@@ -358,10 +427,17 @@ def _register_tool_entry(
             is_provider_only=typed_registrar.is_provider_only,
             manifest=typed_registrar.get_manifest(ctx),
         )
+        if entry.module_name.startswith("plugin:"):
+            _validate_external_plugin_ownership(
+                plugin_id=entry.module_name.removeprefix("plugin:"),
+                registrar=typed_registrar,
+                manifest=manifest,
+            )
         if manifest is not None:
             registry_manager.register_module_manifest(
                 manifest, source_module=entry.module_name
             )
+        before_tools = set(registry.list())
         typed_registrar.register(registry, ctx)
         _apply_dynamic_runtime_ownership(
             registry=registry,
@@ -374,13 +450,24 @@ def _register_tool_entry(
                 manifest=manifest,
                 registry=registry,
             )
-        added_runtime_tools, error_summary = _prepared_state_record_details(
-            prepared_state
+        prepared_tools, error_summary = _prepared_state_record_details(prepared_state)
+        added_runtime_tools = sorted(
+            (set(registry.list()) - before_tools) | set(prepared_tools or ())
         )
+        manifest_candidates = (
+            {
+                candidate
+                for binding in manifest.runtime_bindings
+                for candidate in binding.runtime_candidates
+            }
+            if manifest is not None
+            else set()
+        )
+        runtime_only_tools = sorted(set(added_runtime_tools) - manifest_candidates)
+        if entry.module_name.startswith("plugin:") and runtime_only_tools:
+            raise _ExternalPluginContractError("unbound_tool_contribution")
         logger.info(
-            "%s: registered via REGISTRAR (%s)",
-            entry.label,
-            registrar_module_name,
+            "%s: registered via REGISTRAR (%s)", entry.label, registrar_module_name
         )
         return _ToolBootstrapRecord(
             kind=entry.kind,
@@ -392,8 +479,11 @@ def _register_tool_entry(
             status=TOOL_BOOTSTRAP_STATUS_REGISTERED,
             error=error_summary,
             added_runtime_tools=added_runtime_tools,
+            runtime_only_tools=runtime_only_tools or None,
         )
     except Exception as exc:
+        if entry.module_name.startswith("plugin:"):
+            raise
         if isinstance(exc, TypeError):
             raise
         if isinstance(exc, _ManifestCandidateValidationError) or (
@@ -407,11 +497,72 @@ def _register_tool_entry(
         logger.warning(
             "%s REGISTRAR failed (%s): %s", entry.label, entry.module_name, exc
         )
-        return _tool_entry_failure_record(
+        record = _tool_entry_failure_record(
             entry,
             status=TOOL_BOOTSTRAP_STATUS_REGISTRAR_FAILED,
             error=str(exc),
         )
+        return record
+
+
+def _register_external_registrar(
+    registry: ToolRegistry,
+    registry_manager: ToolRegistryManager,
+    *,
+    plugin_id: str,
+    registrar: Any,
+    config: Any | None,
+    workspace_root: Any | None,
+    run_root: Any | None,
+) -> _ToolBootstrapRecord:
+    entry = _ToolBootstrapEntry(
+        kind="tool",
+        module_name=f"plugin:{plugin_id}",
+        label=plugin_id,
+        required=True,
+    )
+    ctx = ToolRegisterContext(
+        module_id=plugin_id,
+        config=config,
+        workspace_root=workspace_root,
+        run_root=run_root,
+        strict=True,
+    )
+    try:
+        record = _register_registrar(
+            registry,
+            registry_manager,
+            entry=entry,
+            registrar=registrar,
+            registrar_module_name=f"plugin:{plugin_id}",
+            ctx=ctx,
+            prepared_state=None,
+            strict_required=True,
+        )
+        registry_manager.compile()
+        return record
+    except Exception as exc:
+        if isinstance(exc, _ExternalPluginContractError):
+            reason_code = exc.reason_code
+        elif isinstance(exc, _ManifestCandidateValidationError):
+            reason_code = "candidate_missing"
+        elif isinstance(exc, ToolRuntimeError):
+            reason_code = "runtime_collision"
+        elif isinstance(exc, TypeError):
+            reason_code = "registrar_invalid"
+        elif isinstance(exc, ValueError):
+            reason_code = "registration_failed"
+        else:
+            reason_code = "registration_failed"
+        raise ToolRuntimeError(
+            "PLUGIN_ACTIVATION_FAILED",
+            "Plugin tool registration failed.",
+            {
+                "plugin_id": plugin_id,
+                "stage": "tool_registration",
+                "reason_code": reason_code,
+            },
+        ) from exc
 
 
 def _bootstrap_default_registry(

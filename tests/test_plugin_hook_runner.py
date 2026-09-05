@@ -118,6 +118,21 @@ class _SideEffectOutboundMutator(Plugin):
         return replace(response, text="tampered-outbound-return")
 
 
+class _SleepSideEffectOutbound(Plugin):
+    name = "sleep-outbound"
+    outbound_hook_mode = "side_effect"
+
+    def on_response(
+        self,
+        response: AgentResponse,
+        message: Message,
+        context: PluginContext,
+    ) -> AgentResponse:
+        del message, context
+        time.sleep(0.25)
+        return response
+
+
 class PluginHookRunnerTests(unittest.TestCase):
     def test_agent_response_rejects_post_hoc_attribute_mutation(self) -> None:
         response = AgentResponse(text="reply", channel="console", target="me")
@@ -166,6 +181,77 @@ class PluginHookRunnerTests(unittest.TestCase):
         self.assertEqual(output.body, "ping")
         self.assertLess(elapsed, 0.45)
         self.assertGreaterEqual(len(thread_ids), 2)
+
+    def test_slow_side_effect_returns_at_timeout_and_becomes_degraded(self) -> None:
+        from openminion.services.runtime.plugins.hook_runner import PluginHookRunner
+
+        thread_ids: set[int] = set()
+        emitted: list[tuple[str, dict[str, object]]] = []
+        registry = PluginRegistry(
+            [_SleepSideEffectInbound(0.25, thread_ids, threading.Lock())],
+            hook_runner=PluginHookRunner(
+                side_effect_timeout_seconds=0.02,
+                event_sink=lambda event, payload: emitted.append((event, payload)),
+            ),
+        )
+        context = _plugin_context()
+
+        started = time.perf_counter()
+        output = registry.apply_inbound(_message("ping"), context)
+
+        self.assertEqual(output.body, "ping")
+        self.assertLess(time.perf_counter() - started, 0.15)
+        self.assertEqual(
+            registry.plugin_statuses()["sleep-side-effect"],
+            {
+                "state": "degraded",
+                "last_failure": {
+                    "plugin_id": "sleep-side-effect",
+                    "direction": "inbound",
+                    "hook_mode": "side_effect",
+                    "reason": "timeout",
+                },
+            },
+        )
+        self.assertEqual(
+            emitted,
+            [
+                (
+                    "ext.plugin.hook.degraded",
+                    {
+                        "plugin_id": "sleep-side-effect",
+                        "direction": "inbound",
+                        "hook_mode": "side_effect",
+                        "reason": "timeout",
+                    },
+                )
+            ],
+        )
+
+    def test_slow_outbound_side_effect_returns_at_timeout(self) -> None:
+        from openminion.services.runtime.plugins.hook_runner import PluginHookRunner
+
+        registry = PluginRegistry(
+            [_SleepSideEffectOutbound()],
+            hook_runner=PluginHookRunner(side_effect_timeout_seconds=0.02),
+        )
+
+        output = registry.apply_outbound(
+            AgentResponse(text="reply", channel="console", target="me"),
+            _message("source"),
+            _plugin_context(),
+        )
+
+        self.assertEqual(output.text, "reply")
+        self.assertEqual(
+            registry.plugin_statuses()["sleep-outbound"]["last_failure"],
+            {
+                "plugin_id": "sleep-outbound",
+                "direction": "outbound",
+                "hook_mode": "side_effect",
+                "reason": "timeout",
+            },
+        )
 
     def test_inbound_hook_failures_do_not_abort_pipeline(self) -> None:
         events: list[str] = []

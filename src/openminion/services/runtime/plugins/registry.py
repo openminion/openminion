@@ -13,7 +13,9 @@ from openminion.services.runtime.plugins.discovery import (
     DiscoveredPlugin,
     discover_plugin_manifests,
     load_plugin_instance,
+    load_plugin_module,
 )
+from openminion.services.runtime.errors import PluginActivationError
 from openminion.services.runtime.plugins.hook_runner import PluginHookRunner
 from openminion.services.runtime.plugins.manifests import (
     PluginManifest,
@@ -31,13 +33,27 @@ class PluginRegistry:
     ) -> None:
         self._plugins: list[Plugin] = list(plugins)
         self._manifests: dict[str, PluginManifest] = {}
+        self._manifest_plugins: dict[str, Plugin] = {}
+        self._registrars: list[tuple[str, object]] = []
         self._hook_runner = hook_runner or PluginHookRunner()
 
-    def register(self, plugin: Plugin, manifest: PluginManifest | None = None) -> None:
+    def register(
+        self,
+        plugin: Plugin,
+        manifest: PluginManifest | None = None,
+        registrar: object | None = None,
+    ) -> None:
+        if manifest is not None:
+            setattr(plugin, "_openminion_plugin_id", manifest.id)
         if manifest is not None:
             if manifest.id in self._manifests:
                 raise RuntimeError(f"Duplicate plugin manifest id: {manifest.id}")
             self._manifests[manifest.id] = manifest
+            self._manifest_plugins[manifest.id] = plugin
+        if registrar is not None:
+            self._registrars.append(
+                (manifest.id if manifest else plugin_label(plugin), registrar)
+            )
         self._plugins.append(plugin)
 
     def names(self) -> list[str]:
@@ -49,16 +65,37 @@ class PluginRegistry:
     def manifests(self) -> list[PluginManifest]:
         return [self._manifests[key] for key in sorted(self._manifests)]
 
+    def status(self, plugin: Plugin) -> dict[str, object]:
+        failure = self._hook_runner.failure_status(plugin)
+        return {
+            "state": "degraded" if failure is not None else "healthy",
+            "last_failure": failure,
+        }
+
+    def plugin_statuses(self) -> dict[str, dict[str, object]]:
+        statuses = {
+            plugin_label(plugin): self.status(plugin) for plugin in self._plugins
+        }
+        statuses.update(
+            {
+                manifest_id: self.status(plugin)
+                for manifest_id, plugin in self._manifest_plugins.items()
+            }
+        )
+        return statuses
+
+    def registrars(self) -> tuple[tuple[str, object], ...]:
+        return tuple(self._registrars)
+
     def register_tool_extensions(
         self, registry: ToolRegistry, context: PluginContext
     ) -> None:
         for plugin in self._plugins:
-            try:
-                plugin.register_tools(registry, context)
-            except Exception:
-                context.logger.exception(
-                    "plugin tool registration failed plugin=%s",
-                    plugin_label(plugin),
+            if plugin.__class__.register_tools is not Plugin.register_tools:
+                raise PluginActivationError(
+                    plugin_id=plugin_label(plugin),
+                    stage="tool_registration",
+                    reason_code="unbound_tool_contribution",
                 )
 
     def apply_inbound(self, message: Message, context: PluginContext) -> Message:
@@ -74,10 +111,15 @@ class PluginRegistry:
 
 
 def build_default_plugin_registry(
-    config: OpenMinionConfig, logger: logging.Logger
+    config: OpenMinionConfig,
+    logger: logging.Logger,
+    event_sink: Callable[[str, dict[str, object]], None] | None = None,
 ) -> PluginRegistry:
     return _build_default_plugin_registry(
-        config=config, logger=logger, on_before_activate=None
+        config=config,
+        logger=logger,
+        on_before_activate=None,
+        event_sink=event_sink,
     )
 
 
@@ -86,8 +128,9 @@ def _build_default_plugin_registry(
     config: OpenMinionConfig,
     logger: logging.Logger,
     on_before_activate: Callable[[PluginManifest], None] | None,
+    event_sink: Callable[[str, dict[str, object]], None] | None,
 ) -> PluginRegistry:
-    registry = PluginRegistry()
+    registry = PluginRegistry(hook_runner=PluginHookRunner(event_sink=event_sink))
     enabled = _normalize_enabled_plugins(
         list(
             resolve_plugin_runtime_policy(
@@ -142,11 +185,26 @@ def _build_default_plugin_registry(
 
         if on_before_activate is not None:
             on_before_activate(discovered_plugin.manifest)
-        plugin_instance = load_plugin_instance(discovered_plugin)
+        module = load_plugin_module(discovered_plugin)
+        plugin_instance = load_plugin_instance(discovered_plugin, module=module)
+        registrar = getattr(module, "REGISTRAR", None)
+        if (
+            registrar is None
+            and plugin_instance.__class__.register_tools is not Plugin.register_tools
+        ):
+            raise PluginActivationError(
+                plugin_id=discovered_plugin.manifest.id,
+                stage="tool_registration",
+                reason_code="unbound_tool_contribution",
+            )
         _enforce_provider_extension_policy(
             plugin=plugin_instance, manifest=discovered_plugin.manifest
         )
-        registry.register(plugin_instance, manifest=discovered_plugin.manifest)
+        registry.register(
+            plugin_instance,
+            manifest=discovered_plugin.manifest,
+            registrar=registrar,
+        )
         loaded_manifest_ids.add(discovered_plugin.manifest.id)
 
     logger.debug("enabled plugins: %s", ", ".join(registry.names()) or "none")
@@ -158,11 +216,13 @@ def build_default_plugin_registry_with_activation_guard(
     config: OpenMinionConfig,
     logger: logging.Logger,
     on_before_activate: Callable[[PluginManifest], None] | None = None,
+    event_sink: Callable[[str, dict[str, object]], None] | None = None,
 ) -> PluginRegistry:
     return _build_default_plugin_registry(
         config=config,
         logger=logger,
         on_before_activate=on_before_activate,
+        event_sink=event_sink,
     )
 
 

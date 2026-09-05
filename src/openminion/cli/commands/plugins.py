@@ -14,6 +14,7 @@ from openminion.services.runtime.plugins.discovery import (
     DiscoveredPlugin,
     discover_plugin_manifests,
     load_plugin_instance,
+    module_checksum_status,
 )
 
 
@@ -39,10 +40,10 @@ def _plugin_root(args: Any) -> Path:
     return resolve_services_plugin_paths(None)[0]
 
 
-def _source_plugin(path: str) -> DiscoveredPlugin:
+def _source_plugin(path: str, *, verify_checksums: bool = True) -> DiscoveredPlugin:
     source = Path(path).expanduser().resolve()
     root = source if source.is_dir() else source.parent
-    discovered = discover_plugin_manifests([root])
+    discovered = discover_plugin_manifests([root], verify_checksums=verify_checksums)
     if not source.is_dir():
         discovered = [item for item in discovered if item.manifest_path == source]
     if len(discovered) != 1:
@@ -68,6 +69,8 @@ def _manifest_payload(plugin: DiscoveredPlugin) -> dict[str, Any]:
         "name": manifest.name,
         "version": manifest.version,
         "dependencies": list(manifest.dependencies),
+        "dependencies_enforced": False,
+        "config_schema_enforced": False,
         "permissions": list(manifest.requested_capabilities),
         "trust_tier": manifest.trust_tier,
         "provenance": {
@@ -76,6 +79,7 @@ def _manifest_payload(plugin: DiscoveredPlugin) -> dict[str, Any]:
             "publisher": manifest.provenance_publisher,
             "checksum": manifest.provenance_checksum,
             "verified": manifest.provenance_verified,
+            "verification": module_checksum_status(manifest, plugin.module_path),
         },
     }
 
@@ -118,7 +122,7 @@ def _set_enabled(args: Any, plugin_id: str, enabled: bool) -> bool:
 
 
 def preview_plugin(args: Any) -> int:
-    plugin = _source_plugin(args.source)
+    plugin = _source_plugin(args.source, verify_checksums=False)
     print_json_payload({"ok": True, "plugin": _manifest_payload(plugin)})
     return 0
 
@@ -239,7 +243,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     plugins_list = plugins_subcommands.add_parser("list", help="List enabled plugins")
     plugins_list.set_defaults(handler=list_plugins, needs_app=True)
 
-    preview = plugins_subcommands.add_parser("preview", help="Inspect a local plugin")
+    preview = plugins_subcommands.add_parser(
+        "preview",
+        help="Inspect plugin metadata and checksum without loading code",
+    )
     preview.add_argument("source")
     preview.set_defaults(handler=preview_plugin, needs_app=False)
 

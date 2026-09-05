@@ -28,6 +28,7 @@ class _ToolBootstrapRecord:
     status: str
     error: str = ""
     added_runtime_tools: list[str] | None = None
+    runtime_only_tools: list[str] | None = None
 
 
 _MCP_TOOL_BOOTSTRAP_ENTRY = _ToolBootstrapEntry(

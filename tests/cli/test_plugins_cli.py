@@ -61,8 +61,60 @@ def test_plugin_preview_reports_dependencies_permissions_and_provenance(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["plugin"]["dependencies"] == ["example-runtime>=1"]
+    assert payload["plugin"]["dependencies_enforced"] is False
+    assert payload["plugin"]["config_schema_enforced"] is False
     assert payload["plugin"]["permissions"] == ["message.inbound.read"]
     assert payload["plugin"]["provenance"]["source"] == "local-path"
+    assert payload["plugin"]["provenance"]["verification"] == {
+        "verified": False,
+        "reason_code": "not_claimed",
+    }
+
+
+def test_plugin_preview_reports_malformed_checksum_without_loading_code(
+    tmp_path: Path, capsys
+) -> None:
+    source = tmp_path / "source"
+    _write_plugin(source)
+    manifest_path = source / "example.manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["provenance"] = {
+        "source": "local-path",
+        "verified": True,
+        "checksum": "sha256:not-a-digest",
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert preview_plugin(_args(tmp_path, source=str(source))) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["plugin"]["provenance"]["verification"] == {
+        "verified": False,
+        "reason_code": "checksum_malformed",
+    }
+
+
+def test_plugin_preview_reports_checksum_mismatch_without_loading_code(
+    tmp_path: Path, capsys
+) -> None:
+    source = tmp_path / "source"
+    _write_plugin(source)
+    manifest_path = source / "example.manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["provenance"] = {
+        "source": "local-path",
+        "verified": True,
+        "checksum": f"sha256:{'0' * 64}",
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert preview_plugin(_args(tmp_path, source=str(source))) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["plugin"]["provenance"]["verification"] == {
+        "verified": False,
+        "reason_code": "checksum_mismatch",
+    }
 
 
 def test_plugin_install_health_rollback_and_uninstall(tmp_path: Path, capsys) -> None:

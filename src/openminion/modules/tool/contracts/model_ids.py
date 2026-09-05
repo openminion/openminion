@@ -419,7 +419,7 @@ MODEL_CONTROL_TOOL_IDS = frozenset(
     }
 )
 
-_DYNAMIC_MODEL_TOOL_PREFIXES: tuple[str, ...] = ("mcp.",)
+_DYNAMIC_MODEL_TOOL_PREFIXES: tuple[str, ...] = ("mcp.", "plugin.")
 
 
 def is_dynamic_model_tool_id(model_tool_id: str) -> bool:

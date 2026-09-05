@@ -17,6 +17,7 @@ from openminion.services.runtime.plugins.manifests import (
     PluginManifestError,
     load_plugin_manifest,
 )
+from openminion.services.runtime.errors import PluginActivationError
 
 
 class PluginDiscoveryError(RuntimeError):
@@ -32,7 +33,9 @@ class DiscoveredPlugin:
     module_alias: str
 
 
-def discover_plugin_manifests(search_roots: Sequence[Path]) -> list[DiscoveredPlugin]:
+def discover_plugin_manifests(
+    search_roots: Sequence[Path], *, verify_checksums: bool = True
+) -> list[DiscoveredPlugin]:
     discovered: list[DiscoveredPlugin] = []
     normalized_roots = [Path(root).resolve() for root in search_roots]
 
@@ -55,6 +58,8 @@ def discover_plugin_manifests(search_roots: Sequence[Path]) -> list[DiscoveredPl
                     f"Plugin module is missing for manifest {manifest_path} "
                     f"(expected {module_path})"
                 )
+            if verify_checksums:
+                _verify_module_checksum(manifest, module_path)
             discovered.append(
                 DiscoveredPlugin(
                     manifest=manifest,
@@ -68,8 +73,10 @@ def discover_plugin_manifests(search_roots: Sequence[Path]) -> list[DiscoveredPl
     return discovered
 
 
-def load_plugin_instance(discovered: DiscoveredPlugin) -> Plugin:
-    module = _import_plugin_module(discovered)
+def load_plugin_instance(
+    discovered: DiscoveredPlugin, *, module: ModuleType | None = None
+) -> Plugin:
+    module = module or load_plugin_module(discovered)
     plugin_classes = _plugin_classes_in_module(module)
     if not plugin_classes:
         raise PluginDiscoveryError(
@@ -100,7 +107,7 @@ def load_plugin_instance(discovered: DiscoveredPlugin) -> Plugin:
     return instance
 
 
-def _import_plugin_module(discovered: DiscoveredPlugin) -> ModuleType:
+def load_plugin_module(discovered: DiscoveredPlugin) -> ModuleType:
     digest = hashlib.sha256(str(discovered.module_path).encode("utf-8")).hexdigest()[
         :12
     ]
@@ -120,6 +127,32 @@ def _import_plugin_module(discovered: DiscoveredPlugin) -> ModuleType:
             f"Failed to import plugin module {discovered.module_path}: {exc}"
         ) from exc
     return module
+
+
+def _verify_module_checksum(manifest: PluginManifest, module_path: Path) -> None:
+    status = module_checksum_status(manifest, module_path)
+    reason_code = str(status.get("reason_code", ""))
+    if reason_code not in {"checksum_malformed", "checksum_mismatch"}:
+        return
+    raise PluginActivationError(
+        plugin_id=manifest.id,
+        stage="checksum",
+        reason_code=reason_code,
+    )
+
+
+def module_checksum_status(
+    manifest: PluginManifest, module_path: Path
+) -> dict[str, object]:
+    if not manifest.provenance_verified:
+        return {"verified": False, "reason_code": "not_claimed"}
+    checksum = manifest.provenance_checksum
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", checksum) is None:
+        return {"verified": False, "reason_code": "checksum_malformed"}
+    observed = hashlib.sha256(module_path.read_bytes()).hexdigest()
+    if checksum != f"sha256:{observed}":
+        return {"verified": False, "reason_code": "checksum_mismatch"}
+    return {"verified": True, "reason_code": ""}
 
 
 def _plugin_classes_in_module(module: ModuleType) -> list[type[Plugin]]:

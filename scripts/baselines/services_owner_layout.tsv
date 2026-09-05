@@ -21,8 +21,10 @@ scope	max_python_files	max_loc
 # MCRR (2026-09-01) adds terminal capture assurance, policy-bound recovery,
 # shared runtime memory assembly, and semantic recall wiring to existing owners.
 # Focus parity (2026-09-04) types the existing per-turn gateway override contract.
-services	206	40251
+# Tool/plugin foundation hardening (2026-09-05) adds bounded activation facts,
+# hook timeouts, checksum verification, and provider status to existing owners.
+services	206	40555
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
-services/runtime/plugins	8	913
+services/runtime/plugins	8	1021

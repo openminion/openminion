@@ -252,7 +252,10 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
 
 ALL_RUNTIME_BINDING_IDS_SET = frozenset(ALL_RUNTIME_BINDING_IDS)
 
-_DYNAMIC_RUNTIME_BINDING_PREFIXES: tuple[str, ...] = ("runtime.mcp.",)
+_DYNAMIC_RUNTIME_BINDING_PREFIXES: tuple[str, ...] = (
+    "runtime.mcp.",
+    "runtime.plugin.",
+)
 
 
 def is_valid_runtime_binding_id(runtime_binding_id: str) -> bool:

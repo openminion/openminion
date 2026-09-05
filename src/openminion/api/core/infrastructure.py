@@ -152,7 +152,7 @@ def build_runtime_infrastructure(
             agent_id=resolve_default_agent_id(base_config),
             manifest=manifest,
         ),
-        load_tool_plugins=False,
+        load_tool_plugins=True,
     )
     _bind_channel_supervisor_telemetry(extension_runtime, telemetry_service)
     default_config = build_runtime_config(

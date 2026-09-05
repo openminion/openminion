@@ -370,8 +370,9 @@ def enforce_plugin_activation_policy(
     )
     if trust_decision.decision != DECISION_ALLOW:
         raise PluginActivationError(
-            "plugin trust policy blocked activation "
-            f"(plugin={manifest.id}, decision={trust_decision.decision}, reason={trust_decision.reason_code})"
+            plugin_id=manifest.id,
+            stage="policy",
+            reason_code=trust_decision.reason_code,
         )
 
     decision = security_policy.evaluate(
@@ -393,8 +394,9 @@ def enforce_plugin_activation_policy(
     if decision.decision == DECISION_ALLOW:
         return
     raise PluginActivationError(
-        "security policy blocked plugin activation "
-        f"(plugin={manifest.id}, decision={decision.decision}, reason={decision.reason_code})"
+        plugin_id=manifest.id,
+        stage="policy",
+        reason_code=decision.reason_code,
     )
 
 

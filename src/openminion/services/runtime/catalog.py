@@ -89,6 +89,18 @@ class ExtensionCatalog:
             kind="provider",
             enabled_name=enabled_provider_name,
         )
+        for group in (
+            "openminion.tool.fetch.providers",
+            "openminion.tool.search.providers",
+            "openminion.browser_providers",
+        ):
+            provider_records.extend(
+                _entry_point_records(
+                    group=group,
+                    kind="tool_provider",
+                    enabled_name=None,
+                )
+            )
         tool_records = _entry_point_records(
             group="openminion.modules.tool.runtime.plugins",
             kind="tool_plugin",

@@ -44,12 +44,16 @@ def test_plugin_trust_denial_raises_domain_error(monkeypatch) -> None:
         provenance_verified=False,
     )
 
-    with pytest.raises(PluginActivationError, match="test-denial"):
+    with pytest.raises(PluginActivationError) as exc_info:
         bootstrap.enforce_plugin_activation_policy(
             security_policy=SimpleNamespace(policy_version="test"),
             agent_id="agent",
             manifest=manifest,
         )
+    assert str(exc_info.value) == "Plugin activation failed."
+    assert exc_info.value.plugin_id == "sample"
+    assert exc_info.value.stage == "policy"
+    assert exc_info.value.reason_code == "test-denial"
 
 
 def test_identity_seed_profile_failures_are_observable(caplog) -> None:

@@ -212,14 +212,18 @@ def unregister_tool(registry: "ToolRegistry", tool_name: str) -> None:
 
 def add_tool_spec(registry: "ToolRegistry", spec: Any) -> None:
     if isinstance(spec, ToolSpec):
-        if spec.name in registry._tools:
+        key = str(spec.name).strip()
+        if not key:
+            raise ToolRuntimeError("INVALID_ARGUMENT", "Tool name cannot be empty")
+        if key in registry._tools:
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT",
-                f"Tool already registered: {spec.name}",
-                {"tool": spec.name},
+                f"Tool already registered: {key}",
+                {"tool": key},
             )
+        spec.name = key
         spec.handler = _wrap_runtime_handler(spec.handler)
-        registry._tools[spec.name] = spec
+        registry._tools[key] = spec
         primary = str(getattr(spec, "primary_category", "") or "").strip()
         if primary.lower() in {"uncategorized", "general_assistance"}:
             primary = ""

@@ -21,6 +21,7 @@ ErrorCode = Literal[
     "AUTH_FAILED",
     "RATE_LIMITED",
     "UPSTREAM_ERROR",
+    "PLUGIN_ACTIVATION_FAILED",
     "INTERNAL_ERROR",
 ]
 

@@ -5,9 +5,11 @@ from openminion.tools.search import register_provider
 
 from .provider import SerperSearchProvider
 
+_PROVIDER = SerperSearchProvider()
+
 
 def _register_serper_search() -> None:
-    register_provider(SerperSearchProvider())
+    register_provider(_PROVIDER)
 
 
 SEARCH_SERPER_FAMILY = ToolFamilySpec(

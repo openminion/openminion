@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
+
+import pytest
 
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
@@ -17,6 +20,7 @@ from openminion.tools.fetch.plugin import (
     register,
 )
 from openminion.tools.fetch.schemas import FetchGetArgs
+from openminion.tools.fetch.providers import FetchProviderRegistry, register_provider
 
 
 def test_register_adds_fetch_tools() -> None:
@@ -26,6 +30,67 @@ def test_register_adds_fetch_tools() -> None:
     assert "fetch.get" in names
     assert "fetch.head" in names
     assert "fetch.providers" in names
+
+
+def test_provider_registry_rejects_different_provider_with_same_name() -> None:
+    registry = FetchProviderRegistry()
+    provider = _FakeProvider()
+    registry.register(provider)
+    registry.register(provider)
+
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(_FakeProvider())
+
+
+def test_public_register_provider_rejects_different_provider_with_same_name(
+    monkeypatch,
+) -> None:
+    registry = FetchProviderRegistry()
+    monkeypatch.setattr("openminion.tools.fetch.providers.registry._REGISTRY", registry)
+    register_provider(_FakeProvider())
+
+    with pytest.raises(ValueError, match="already registered"):
+        register_provider(_FakeProvider())
+
+
+def test_failed_provider_entry_point_is_attempted_once() -> None:
+    registry = FetchProviderRegistry()
+    entry_point = mock.MagicMock()
+    entry_point.name = "missing"
+    entry_point.value = "missing.fetch:provider"
+    entry_point.load.side_effect = ModuleNotFoundError("missing.fetch")
+
+    with mock.patch(
+        "openminion.tools.fetch.providers.registry._iter_entry_points",
+        return_value=[entry_point],
+    ):
+        assert registry.load_entry_points() == []
+        assert registry.load_entry_points() == []
+
+    entry_point.load.assert_called_once()
+    assert registry.entry_point_statuses()[0]["loaded"] is False
+
+
+def test_provider_entry_point_collision_preserves_original_provider() -> None:
+    registry = FetchProviderRegistry()
+    original = _FakeProvider()
+    registry.register(original)
+    entry_point = mock.MagicMock()
+    entry_point.name = "duplicate"
+    entry_point.value = "duplicate.fetch:provider"
+    entry_point.load.return_value = _FakeProvider()
+
+    with mock.patch(
+        "openminion.tools.fetch.providers.registry._iter_entry_points",
+        return_value=[entry_point],
+    ):
+        with pytest.raises(ValueError, match="already registered"):
+            registry.load_entry_points()
+
+    assert registry.get(original.name) is original
+    status = registry.entry_point_statuses()[0]
+    assert status["loaded"] is False
+    assert "already registered" in status["error"]
 
 
 def test_fetch_get_accepts_json_encoded_extract_object() -> None:

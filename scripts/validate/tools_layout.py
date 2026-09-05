@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import sys
+from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_IMPORT_ROOT) not in sys.path:
@@ -86,6 +89,42 @@ LEGACY_PATH_TOKENS = {
     *(f"openminion.tools.{name}" for name in RETIRED_PROVIDER_DIRS),
     *(f"tools/{name}" for name in RETIRED_PROVIDER_DIRS),
 }
+REGISTRAR_BOOTSTRAP_EXCEPTIONS = {
+    "openminion.tools.mcp",
+    "openminion.tools.plan",
+}
+
+
+def validate_bootstrap_coverage(
+    root: Path = TOOLS_ROOT,
+    *,
+    bootstrap_entries: Sequence[Any] | None = None,
+    exceptions: set[str] | None = None,
+) -> list[str]:
+    if bootstrap_entries is None:
+        from openminion.modules.tool.bootstrap import _TOOL_BOOTSTRAP_ENTRIES
+
+        bootstrap_entries = _TOOL_BOOTSTRAP_ENTRIES
+
+    discovered = {
+        "openminion.tools." + ".".join(path.parent.relative_to(root).parts)
+        for path in root.rglob("registrar.py")
+    }
+    configured = [entry.module_name for entry in bootstrap_entries]
+    allowed_exceptions = (
+        REGISTRAR_BOOTSTRAP_EXCEPTIONS if exceptions is None else exceptions
+    )
+    configured_counts = Counter(configured)
+    errors = [
+        f"Duplicate tool bootstrap entry: {name}"
+        for name, count in sorted(configured_counts.items())
+        if count > 1
+    ]
+    missing = sorted(discovered - set(configured) - allowed_exceptions)
+    stale = sorted(allowed_exceptions - discovered)
+    errors.extend(f"Registrar missing from tool bootstrap: {name}" for name in missing)
+    errors.extend(f"Stale registrar bootstrap exception: {name}" for name in stale)
+    return errors
 
 
 def validate_root_layout(root: Path = TOOLS_ROOT) -> list[str]:
@@ -152,6 +191,7 @@ def scan_text_file(path: Path) -> list[str]:
 
 def main() -> int:
     errors = validate_root_layout()
+    errors.extend(validate_bootstrap_coverage())
     for scan_root in SCAN_ROOTS:
         paths = (
             [scan_root]

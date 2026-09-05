@@ -271,6 +271,15 @@ class ToolRegistryManager:
             raw_to_model_tool_id_lower=raw_to_model_tool_id_lower,
         )
 
+    def declared_runtime_tool_names(self) -> set[str]:
+        return {
+            candidate
+            for manifest in self._manifests
+            for binding in manifest.runtime_bindings
+            for candidate in binding.runtime_candidates
+            if candidate.strip()
+        }
+
     def normalize_raw_name(self, raw: str) -> str | None:
         compiled = self._ensure_compiled()
         raw_token = str(raw or "").strip()

@@ -97,11 +97,14 @@ class TavilySearchProvider:
         return bool(get_tavily_api_key(env=resolve_tool_context_env(ctx)))
 
 
+_PROVIDER = TavilySearchProvider()
+
+
 def register(registry: Any | None = None) -> None:
     del registry
     from openminion.tools.search import register_provider
 
-    register_provider(TavilySearchProvider())
+    register_provider(_PROVIDER)
 
 
 register_search_provider = register

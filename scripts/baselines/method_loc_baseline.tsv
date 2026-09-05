@@ -89,7 +89,6 @@ src/openminion/modules/storage/cli_registrar.py	_register_storage_commands_witho
 src/openminion/modules/storage/migrations/verify.py	run_verification	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/authoring/runtime/static.py	inspect_source	134	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/authoring/service.py	ToolAuthoringService.register_draft	119	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/tool/bootstrap/runtime_build.py	build_runtime_bootstrap	113	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/cli/runtime.py	execute_call_payload	151	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/executor.py	execute_single_call	203	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/runtime/manager.py	ToolRegistryManager.compile	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
