@@ -44,7 +44,6 @@ src/openminion/cli/interactive/commands.py	5	0	current broad-handler baseline; r
 src/openminion/cli/interactive/runtime/__init__.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/runtime/commands.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/runtime/controls.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/runtime/mcp.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/screen.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/shell.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/composer.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

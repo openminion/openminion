@@ -66,6 +66,17 @@ def test_inherit_parent_false_drops_parent_env():
     assert env == {}
 
 
+def test_inherit_exact_parent_keys():
+    with mock.patch.dict(
+        os.environ,
+        {"ENVB03_ALLOWED": "yes", "ENVB03_BLOCKED": "no"},
+        clear=True,
+    ):
+        env = build_subprocess_env(inherit_parent={"ENVB03_ALLOWED"})
+
+    assert env == {"ENVB03_ALLOWED": "yes"}
+
+
 def test_inherit_parent_false_with_overlay_yields_overlay_only():
     with mock.patch.dict(os.environ, {"ENVB03_PARENT_ONLY": "parent"}, clear=False):
         env = build_subprocess_env(

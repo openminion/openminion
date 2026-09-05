@@ -172,6 +172,8 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
                         "token_endpoint": f"{base_url}/token",
                         "registration_endpoint": f"{base_url}/register",
                         "revocation_endpoint": f"{base_url}/revoke",
+                        "code_challenge_methods_supported": ["S256"],
+                        "client_id_metadata_document_supported": True,
                     }
                 ).encode("utf-8")
             )
@@ -598,6 +600,8 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
         metadata = discover_oauth_metadata(config, timeout_seconds=5.0)
         assert metadata.token_endpoint == f"{base_url}/token"
         assert metadata.registration_endpoint == f"{base_url}/register"
+        assert metadata.code_challenge_methods_supported == ("S256",)
+        assert metadata.client_id_metadata_document_supported is True
 
         registration = register_oauth_client(
             metadata=metadata,
@@ -617,9 +621,13 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             metadata=metadata,
             challenge=challenge,
             state="state-123",
+            resource=f"{base_url}/mcp",
         )
         assert "code_challenge=" in authorization_url
         assert "state=state-123" in authorization_url
+        assert f"resource={urllib_parse.quote(f'{base_url}/mcp', safe='')}" in (
+            authorization_url
+        )
 
         token_state = exchange_authorization_code(
             config=config,
@@ -627,12 +635,14 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             code="callback-code",
             challenge=challenge,
             authorization_issuer=base_url,
+            resource=f"{base_url}/mcp",
             timeout_seconds=5.0,
         )
         assert token_state.access_token == "fresh-token"
         assert token_state.issuer == base_url
         assert server.token_requests[-1]["grant_type"] == "authorization_code"
         assert server.token_requests[-1]["code"] == "callback-code"
+        assert server.token_requests[-1]["resource"] == f"{base_url}/mcp"
 
         assert revoke_oauth_token(
             metadata=metadata,
@@ -661,6 +671,7 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 "secret://mcp/fixture/refresh": "refresh-token",
             }
         )
+        auth_changes: list[str] = []
         transport = StreamableHTTPMCPTransport(
             _http_runtime_config(
                 url=f"{base_url}/mcp",
@@ -675,6 +686,7 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 ),
             ).mcp_servers[0],
             token_store=token_store,
+            auth_change_handler=lambda: auth_changes.append("refreshed"),
         )
         try:
             transport.request(method="initialize", params={}, timeout_seconds=5.0)
@@ -684,9 +696,11 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 == "rotated-refresh-token"
             )
             assert server.token_requests[-1]["grant_type"] == "refresh_token"
+            assert server.token_requests[-1]["resource"] == f"{base_url}/mcp"
             assert server.last_requests[-1]["headers"]["Authorization"] == (
                 "Bearer fresh-token"
             )
+            assert auth_changes == ["refreshed"]
         finally:
             transport.close()
 

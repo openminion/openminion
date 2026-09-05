@@ -8,6 +8,9 @@ import pytest
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.tools.mcp.constants import (
     MCP_INITIALIZE_METHOD,
+    MCP_PROMPTS_LIST_METHOD,
+    MCP_RESOURCES_LIST_METHOD,
+    MCP_RESOURCES_TEMPLATES_LIST_METHOD,
     MCP_SERVER_DISCOVER_METHOD,
     MCP_SUBSCRIPTIONS_LISTEN_METHOD,
     MCP_TASKS_CANCEL_METHOD,
@@ -17,7 +20,7 @@ from openminion.tools.mcp.constants import (
 )
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from openminion.tools.mcp.interfaces import MCPClientCapabilityState
-from openminion.tools.mcp.modern import MCPModernResponseCache
+from openminion.tools.mcp.modern import MCPModernFlowError, MCPModernResponseCache
 from openminion.tools.mcp.schemas import MCPRoot
 from openminion.tools.mcp.session import MCPServerSession
 from openminion.tools.mcp.transport import MCPProtocolError
@@ -29,6 +32,10 @@ class _ModernTransport:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
         self.running = False
+
+    @property
+    def authorization_identity(self) -> str:
+        return ""
 
     def stderr_tail(self, *, limit: int = 4096) -> str:
         del limit
@@ -99,8 +106,12 @@ def test_modern_discovery_replaces_initialize_session_handshake() -> None:
                     "tools": [
                         {
                             "name": "echo",
+                            "title": "Echo",
                             "description": "Echo text.",
                             "inputSchema": {"type": "object"},
+                            "icons": [{"src": "https://example.test/echo.png"}],
+                            "_meta": {"vendor": "fixture"},
+                            "execution": {"taskSupport": "optional"},
                         }
                     ],
                 }
@@ -108,7 +119,12 @@ def test_modern_discovery_replaces_initialize_session_handshake() -> None:
         }
     )
 
-    assert [tool.remote_name for tool in session.list_tools()] == ["echo"]
+    tools = session.list_tools()
+    assert [tool.remote_name for tool in tools] == ["echo"]
+    assert tools[0].title == "Echo"
+    assert tools[0].icons == ({"src": "https://example.test/echo.png"},)
+    assert tools[0].metadata == {"vendor": "fixture"}
+    assert tools[0].task_support == "optional"
     assert [tool.remote_name for tool in session.list_tools()] == ["echo"]
     assert session.negotiated_protocol_version == MCP_MODERN_PROTOCOL_VERSION
     assert transport.notifications == []
@@ -122,6 +138,70 @@ def test_modern_discovery_replaces_initialize_session_handshake() -> None:
         sum(method == MCP_TOOLS_LIST_METHOD for method, _params in transport.requests)
         == 1
     )
+
+
+def test_discovery_preserves_prompt_and_resource_metadata() -> None:
+    session, _transport = _session(
+        {
+            MCP_PROMPTS_LIST_METHOD: [
+                {
+                    "prompts": [
+                        {
+                            "name": "daily",
+                            "title": "Daily",
+                            "icons": [{"src": "https://example.test/daily.png"}],
+                            "_meta": {"vendor": "fixture"},
+                        }
+                    ]
+                }
+            ],
+            MCP_RESOURCES_LIST_METHOD: [
+                {
+                    "resources": [
+                        {
+                            "uri": "file:///readme.md",
+                            "name": "readme",
+                            "title": "Readme",
+                            "icons": [{"src": "https://example.test/readme.png"}],
+                            "_meta": {"vendor": "fixture"},
+                        }
+                    ]
+                }
+            ],
+            MCP_RESOURCES_TEMPLATES_LIST_METHOD: [
+                {
+                    "resourceTemplates": [
+                        {
+                            "uriTemplate": "file:///{path}",
+                            "name": "file",
+                            "title": "File",
+                            "icons": [{"src": "https://example.test/file.png"}],
+                            "_meta": {"vendor": "fixture"},
+                        }
+                    ]
+                }
+            ],
+        }
+    )
+
+    prompt = session.list_prompts()[0]
+    resource = session.list_resources()[0]
+    template = session.list_resource_templates()[0]
+
+    assert (prompt.title, resource.title, template.title) == (
+        "Daily",
+        "Readme",
+        "File",
+    )
+    assert (
+        prompt.metadata
+        == resource.metadata
+        == template.metadata
+        == {"vendor": "fixture"}
+    )
+    assert prompt.icons[0]["src"].endswith("daily.png")
+    assert resource.icons[0]["src"].endswith("readme.png")
+    assert template.icons[0]["src"].endswith("file.png")
 
 
 def test_modern_input_required_result_is_fulfilled_and_retried() -> None:
@@ -219,6 +299,50 @@ def test_modern_response_cache_has_a_fixed_entry_bound() -> None:
         "cacheScope": "private",
         "index": 128,
     }
+
+
+def test_modern_response_cache_is_isolated_by_authorization_identity() -> None:
+    cache = MCPModernResponseCache()
+    cached = {"ttlMs": 60_000, "cacheScope": "private", "tools": ["alice"]}
+    cache.store(
+        method="tools/list",
+        params={},
+        result=cached,
+        identity="alice-token-ref",
+    )
+
+    assert cache.get(method="tools/list", params={}, identity="bob-token-ref") is None
+    assert (
+        cache.get(method="tools/list", params={}, identity="alice-token-ref") == cached
+    )
+
+
+def test_modern_task_timeout_cancels_remote_task(monkeypatch) -> None:
+    from openminion.tools.mcp.modern import resolve_modern_result
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        calls.append((method, params))
+        return {"taskId": "task-1", "status": "working"}
+
+    ticks = iter((0.0, 1.0))
+    monkeypatch.setattr(
+        "openminion.tools.mcp.modern.time.monotonic",
+        lambda: next(ticks),
+    )
+
+    with pytest.raises(MCPModernFlowError, match="did not complete before timeout"):
+        resolve_modern_result(
+            method=MCP_TOOLS_CALL_METHOD,
+            params={},
+            result={"resultType": "task", "taskId": "task-1", "status": "working"},
+            request=request,
+            fulfill=lambda _method, _params: {},
+            timeout_seconds=0.1,
+        )
+
+    assert calls == [(MCP_TASKS_CANCEL_METHOD, {"taskId": "task-1"})]
 
 
 def test_modern_input_required_rejects_missing_requests() -> None:

@@ -6,6 +6,7 @@ from typing import Any
 
 from openminion.base.config.mcp import MCPServerConfig
 
+from .auth import MCPTokenStore
 from .constants import (
     MCP_CLIENT_NAME,
     MCP_CLIENT_VERSION,
@@ -34,8 +35,7 @@ from .constants import (
 )
 from .contracts import (
     MCP_PROTOCOL_VERSION,
-    MCP_PROTOCOL_VERSION_FLOOR,
-    protocol_version_tuple,
+    MCP_SUPPORTED_PROTOCOL_VERSIONS,
 )
 from .modern import (
     MCPModernFlowError,
@@ -93,9 +93,15 @@ class MCPServerSession:
         client_capability_state: MCPClientCapabilityState | None = None,
         capability_change_handler: Any | None = None,
         progress_listener: MCPProgressListener | None = None,
+        token_store: MCPTokenStore | None = None,
     ) -> None:
         self._server = server
-        self._transport = _build_transport(server)
+        self._response_cache = MCPModernResponseCache()
+        self._transport = _build_transport(
+            server,
+            token_store=token_store,
+            auth_change_handler=self._response_cache.clear,
+        )
         self._initialized = False
         self._modern_protocol = False
         self._negotiated_protocol_version = MCP_PROTOCOL_VERSION
@@ -110,7 +116,6 @@ class MCPServerSession:
         self._output_schemas_by_tool: dict[str, dict[str, Any]] = {}
         self._log_messages: deque[MCPLogMessage] = deque(maxlen=50)
         self._resource_updates: deque[MCPResourceUpdate] = deque(maxlen=100)
-        self._response_cache = MCPModernResponseCache()
 
     @property
     def server_name(self) -> str:
@@ -224,6 +229,15 @@ class MCPServerSession:
                             annotations=annotations,
                         ),
                         output_schema=dict(output_schema),
+                        title=str(item.get("title", "") or "").strip(),
+                        icons=_coerce_icons(item.get("icons")),
+                        metadata=_coerce_mapping(item.get("_meta")),
+                        task_support=str(
+                            _coerce_mapping(item.get("execution")).get(
+                                "taskSupport", ""
+                            )
+                            or ""
+                        ).strip(),
                     )
                 )
             cursor = str(result.get("nextCursor", "") or "").strip() or None
@@ -261,6 +275,9 @@ class MCPServerSession:
                         arguments_schema=_build_prompt_arguments_schema(
                             item.get("arguments", [])
                         ),
+                        title=str(item.get("title", "") or "").strip(),
+                        icons=_coerce_icons(item.get("icons")),
+                        metadata=_coerce_mapping(item.get("_meta")),
                     )
                 )
             cursor = str(result.get("nextCursor", "") or "").strip() or None
@@ -296,6 +313,9 @@ class MCPServerSession:
                         resource_name=str(item.get("name", "") or "").strip(),
                         description=str(item.get("description", "") or "").strip(),
                         mime_type=str(item.get("mimeType", "") or "").strip(),
+                        title=str(item.get("title", "") or "").strip(),
+                        icons=_coerce_icons(item.get("icons")),
+                        metadata=_coerce_mapping(item.get("_meta")),
                     )
                 )
             cursor = str(result.get("nextCursor", "") or "").strip() or None
@@ -337,6 +357,9 @@ class MCPServerSession:
                         arguments_schema=build_mcp_resource_template_arguments_schema(
                             uri_template
                         ),
+                        title=str(item.get("title", "") or "").strip(),
+                        icons=_coerce_icons(item.get("icons")),
+                        metadata=_coerce_mapping(item.get("_meta")),
                     )
                 )
             cursor = str(result.get("nextCursor", "") or "").strip() or None
@@ -533,7 +556,11 @@ class MCPServerSession:
         params: dict[str, Any],
     ) -> dict[str, Any]:
         cached = (
-            self._response_cache.get(method=method, params=params)
+            self._response_cache.get(
+                method=method,
+                params=params,
+                identity=self._response_cache_identity(),
+            )
             if self._modern_protocol
             else None
         )
@@ -546,7 +573,10 @@ class MCPServerSession:
             )
             if self._modern_protocol:
                 self._response_cache.store(
-                    method=method, params=params, result=resolved
+                    method=method,
+                    params=params,
+                    result=resolved,
+                    identity=self._response_cache_identity(),
                 )
             return resolved
         try:
@@ -560,8 +590,16 @@ class MCPServerSession:
             result = self._restart_and_retry(method=method, params=params)
         resolved = self._resolve_response(method=method, params=params, result=result)
         if self._modern_protocol:
-            self._response_cache.store(method=method, params=params, result=resolved)
+            self._response_cache.store(
+                method=method,
+                params=params,
+                result=resolved,
+                identity=self._response_cache_identity(),
+            )
         return resolved
+
+    def _response_cache_identity(self) -> str:
+        return self._transport.authorization_identity
 
     def _resolve_response(
         self,
@@ -634,18 +672,10 @@ class MCPServerSession:
         negotiated = str(result.get("protocolVersion", "") or "").strip()
         if not negotiated:
             return MCP_PROTOCOL_VERSION
-        try:
-            negotiated_tuple = protocol_version_tuple(negotiated)
-            min_tuple = protocol_version_tuple(MCP_PROTOCOL_VERSION_FLOOR)
-        except ValueError as exc:
-            raise MCPProtocolError(
-                f"MCP server '{self.server_name}' returned unsupported protocol version {negotiated!r}.",
-                reason_code="mcp_protocol_version_invalid",
-            ) from exc
-        if negotiated_tuple < min_tuple:
+        if negotiated not in MCP_SUPPORTED_PROTOCOL_VERSIONS:
             raise MCPProtocolError(
                 f"MCP server '{self.server_name}' negotiated unsupported protocol version {negotiated!r}.",
-                reason_code="mcp_protocol_version_too_old",
+                reason_code="mcp_protocol_version_unsupported",
             )
         return negotiated
 
@@ -813,6 +843,16 @@ def _build_prompt_arguments_schema(raw_arguments: Any) -> dict[str, Any]:
     return schema
 
 
+def _coerce_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _coerce_icons(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, dict))
+
+
 def _coerce_optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -833,7 +873,16 @@ def _normalize_completion_result(result: dict[str, Any]) -> MCPCompletionResult:
     return MCPCompletionResult(values=values, total=total, has_more=has_more)
 
 
-def _build_transport(server: MCPServerConfig) -> MCPTransport:
+def _build_transport(
+    server: MCPServerConfig,
+    *,
+    token_store: MCPTokenStore | None = None,
+    auth_change_handler: Any | None = None,
+) -> MCPTransport:
     if server.transport == "streamable_http":
-        return StreamableHTTPMCPTransport(server)
+        return StreamableHTTPMCPTransport(
+            server,
+            token_store=token_store,
+            auth_change_handler=auth_change_handler,
+        )
     return StdioMCPTransport(server)

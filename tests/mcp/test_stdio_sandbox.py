@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 import pytest
 
@@ -66,6 +67,26 @@ def test_stdio_sandbox_env_allowlist_prevents_configured_env_leakage() -> None:
 
     assert env["ALLOWED_TOKEN"] == "ok"
     assert "SECRET_TOKEN" not in env
+
+
+def test_stdio_sandbox_does_not_inherit_unlisted_parent_environment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_MCP_PARENT_SECRET", "must-not-leak")
+    monkeypatch.setenv("OPENMINION_MCP_ALLOWED", "allowed")
+    transport = StdioMCPTransport(
+        _server(
+            stdio_sandbox=MCPStdioSandboxConfig(
+                inherit_env_allowlist=["OPENMINION_MCP_ALLOWED"]
+            )
+        )
+    )
+
+    env = transport._build_stdio_env()  # noqa: SLF001
+
+    assert env == {"OPENMINION_MCP_ALLOWED": "allowed"}
+    assert "OPENMINION_MCP_PARENT_SECRET" not in env
+    assert env is not os.environ
 
 
 def test_mcp_env_secret_refs_resolve_without_stdout_secret_storage() -> None:

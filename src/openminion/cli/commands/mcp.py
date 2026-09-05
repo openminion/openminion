@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
+import secrets
+import sys
 from typing import TYPE_CHECKING, Any
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 from openminion.cli.presentation.json_output import print_json_payload
 
@@ -20,8 +25,12 @@ def run_mcp(args: argparse.Namespace) -> int:
         "list": _mcp_list,
         "validate": _mcp_validate,
         "test": _mcp_test,
-        "restart": _mcp_restart,
-        "logs": _mcp_logs,
+        "login": _mcp_login,
+        "browse": _mcp_browse,
+        "prompt": _mcp_prompt,
+        "resource": _mcp_resource,
+        "registry-search": _mcp_registry_search,
+        "serve": _mcp_serve,
     }.get(command)
     if handler is None:
         raise RuntimeError("Unknown mcp command")
@@ -76,6 +85,8 @@ def _mcp_validate(args: argparse.Namespace) -> int:
     servers = coerce_mcp_server_configs(config.runtime.mcp_servers)
     issues = []
     for server in servers:
+        if not server.enabled:
+            continue
         if (
             server.transport == "stdio"
             and server.stdio_sandbox.require_trust
@@ -99,7 +110,13 @@ def _mcp_test(args: argparse.Namespace) -> int:
     from openminion.tools.mcp.manager import MCPFleetManager
 
     config = load_config(getattr(args, "config", None))
-    servers = _filter_servers(config.runtime.mcp_servers, getattr(args, "name", ""))
+    servers = [
+        server
+        for server in _filter_servers(
+            config.runtime.mcp_servers, getattr(args, "name", "")
+        )
+        if server.enabled
+    ]
     manager = MCPFleetManager(servers)
     try:
         tools = manager.discover_tools(parallel=True)
@@ -123,43 +140,202 @@ def _mcp_test(args: argparse.Namespace) -> int:
         manager.close()
 
 
-def _mcp_restart(args: argparse.Namespace) -> int:
-    from openminion.api.runtime import APIRuntime
+def _mcp_login(args: argparse.Namespace) -> int:
+    from openminion.base.config.manager import ConfigManager
+    from openminion.modules.secret.factory import build_secret_service
+    from openminion.tools.mcp.auth import (
+        MCPOAuthPKCEChallenge,
+        SecretServiceMCPTokenStore,
+        build_authorization_url,
+        build_pkce_challenge,
+        discover_oauth_metadata,
+        exchange_authorization_code,
+    )
 
-    runtime = APIRuntime.from_config_path(getattr(args, "config", None))
+    manager = ConfigManager.load(getattr(args, "config", None))
+    servers = _filter_servers(manager.base_config.runtime.mcp_servers, args.name)
+    if len(servers) != 1 or servers[0].authorization.mode != "oauth_pkce":
+        raise RuntimeError("mcp login requires one oauth_pkce server")
+    server = servers[0]
+    metadata = discover_oauth_metadata(server.authorization)
+    code = str(getattr(args, "code", "") or "").strip()
+    if not code:
+        challenge = build_pkce_challenge()
+        state = secrets.token_urlsafe(24)
+        print_json_payload(
+            {
+                "ok": True,
+                "server": server.name,
+                "authorization_url": build_authorization_url(
+                    config=server.authorization,
+                    metadata=metadata,
+                    challenge=challenge,
+                    state=state,
+                    resource=server.url,
+                ),
+                "code_verifier": challenge.code_verifier,
+                "state": state,
+                "client_registration": (
+                    "cimd"
+                    if metadata.client_id_metadata_document_supported
+                    and server.authorization.client_id.startswith("https://")
+                    else "pre_registered"
+                ),
+            }
+        )
+        return 0
+
+    verifier = str(getattr(args, "verifier", "") or "").strip()
+    if not verifier:
+        raise RuntimeError("mcp login --code requires --verifier")
+    token_state = exchange_authorization_code(
+        config=server.authorization,
+        metadata=metadata,
+        code=code,
+        challenge=MCPOAuthPKCEChallenge(
+            code_verifier=verifier,
+            code_challenge="",
+        ),
+        authorization_issuer=str(getattr(args, "issuer", "") or ""),
+        resource=server.url,
+    )
+    if not server.authorization.access_token_ref:
+        raise RuntimeError("oauth_pkce server requires access_token_ref for mcp login")
+    secret_service = build_secret_service(data_root=manager.data_root, env=manager.env)
+    if secret_service is None:
+        raise RuntimeError("mcp login requires OPENMINION_SECRET_KEY")
+    token_store = SecretServiceMCPTokenStore(secret_service)
     try:
-        manager = getattr(runtime.tools, "mcp_manager", None)
-        if manager is None:
-            print_json_payload({"ok": False, "reason_code": "mcp_manager_unavailable"})
-            return 1
-        name = str(getattr(args, "name", "") or "").strip()
-        if name:
-            manager.close_server(name)
-        else:
-            manager.close()
-        print_json_payload({"ok": True, "restarted": name or "all"})
+        token_store.set(server.authorization.access_token_ref, token_state.access_token)
+        if token_state.refresh_token and server.authorization.refresh_token_ref:
+            token_store.set(
+                server.authorization.refresh_token_ref,
+                token_state.refresh_token,
+            )
+    finally:
+        token_store.close()
+    print_json_payload(
+        {
+            "ok": True,
+            "server": server.name,
+            "access_token": "<stored>",
+            "refresh_token": "<stored>" if token_state.refresh_token else "",
+            "scope": token_state.scope,
+        }
+    )
+    return 0
+
+
+def _mcp_browse(args: argparse.Namespace) -> int:
+    manager = _configured_manager(args)
+    try:
+        payload = {
+            "tools": [asdict(item) for item in manager.discover_tools(parallel=True)],
+            "prompts": [
+                asdict(item) for item in manager.discover_prompts(parallel=True)
+            ],
+            "resources": [
+                asdict(item) for item in manager.discover_resources(parallel=True)
+            ],
+            "resource_templates": [
+                asdict(item)
+                for item in manager.discover_resource_templates(parallel=True)
+            ],
+        }
+        print_json_payload({"ok": not manager.failed_servers, **payload})
+        return 0 if not manager.failed_servers else 1
+    finally:
+        manager.close()
+
+
+def _mcp_prompt(args: argparse.Namespace) -> int:
+    manager = _configured_manager(args)
+    try:
+        result = manager.get_prompt(
+            server_name=args.name,
+            remote_name=args.prompt_name,
+            arguments=_json_object(args.arguments),
+        )
+        print_json_payload({"ok": True, "result": result})
         return 0
     finally:
-        runtime.close()
+        manager.close()
 
 
-def _mcp_logs(args: argparse.Namespace) -> int:
+def _mcp_resource(args: argparse.Namespace) -> int:
+    manager = _configured_manager(args)
+    try:
+        result = manager.read_resource(
+            server_name=args.name,
+            resource_uri=args.uri,
+        )
+        print_json_payload(
+            {
+                "ok": True,
+                "text_fallback": args.uri.startswith("ui://"),
+                "result": result,
+            }
+        )
+        return 0
+    finally:
+        manager.close()
+
+
+def _configured_manager(args: argparse.Namespace) -> Any:
+    from openminion.base.config.io import load_config
+    from openminion.tools.mcp.manager import MCPFleetManager
+    from openminion.tools.mcp.auth import build_runtime_mcp_token_store
+
+    config = load_config(getattr(args, "config", None))
+    servers = [
+        server
+        for server in _filter_servers(config.runtime.mcp_servers, args.name)
+        if server.enabled
+    ]
+    return MCPFleetManager(
+        servers,
+        token_store=build_runtime_mcp_token_store(config.runtime),
+    )
+
+
+def _json_object(raw: str) -> dict[str, Any]:
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise RuntimeError("MCP arguments must be a JSON object")
+    return value
+
+
+def _mcp_registry_search(args: argparse.Namespace) -> int:
+    query = urllib_parse.urlencode({"search": args.query, "limit": args.limit})
+    request = urllib_request.Request(
+        f"https://registry.modelcontextprotocol.io/v0.1/servers?{query}",
+        headers={"Accept": "application/json"},
+    )
+    with urllib_request.urlopen(request, timeout=10.0) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("servers"), list):
+        raise RuntimeError("MCP registry returned an invalid server list")
+    print_json_payload({"ok": True, "servers": payload["servers"]})
+    return 0
+
+
+def _mcp_serve(args: argparse.Namespace) -> int:
     from openminion.api.runtime import APIRuntime
+    from openminion.tools.mcp.server import (
+        build_runtime_published_tools,
+        serve_published_stdio,
+    )
 
     runtime = APIRuntime.from_config_path(getattr(args, "config", None))
     try:
-        manager = getattr(runtime.tools, "mcp_manager", None)
-        if manager is None:
-            print_json_payload({"ok": True, "logs": {}})
-            return 0
-        logs = manager.mcp_server_logs(limit=int(getattr(args, "limit", 10) or 10))
-        name = str(getattr(args, "name", "") or "").strip()
-        payload = {
-            server_name: [getattr(item, "__dict__", {}) for item in entries]
-            for server_name, entries in logs.items()
-            if not name or server_name == name
-        }
-        print_json_payload({"ok": True, "logs": payload})
+        tools = build_runtime_published_tools(runtime)
+        if not tools:
+            raise RuntimeError("runtime.mcp_publish must be enabled with visible tools")
+        serve_published_stdio(
+            tools,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
+        )
         return 0
     finally:
         runtime.close()
@@ -202,6 +378,7 @@ def _servers_from_external_payload(payload: Any) -> list[MCPServerConfig]:
         servers.append(
             MCPServerConfig(
                 name=str(raw_name),
+                enabled=raw_config.get("enabled", True),
                 transport=transport,
                 command=([command, *args] if command else []),
                 url=url,
@@ -227,6 +404,7 @@ def _filter_servers(
 def _redacted_server_payload(server: MCPServerConfig) -> dict[str, Any]:
     return {
         "name": server.name,
+        "enabled": server.enabled,
         "transport": server.transport,
         "command": list(server.command),
         "url": server.url,
@@ -278,15 +456,34 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     test_parser.add_argument("name", nargs="?", default="", help="Optional server name")
     test_parser.set_defaults(handler=run_mcp)
 
-    restart_parser = mcp_sub.add_parser("restart", help="Restart MCP sessions")
-    restart_parser.add_argument(
-        "name", nargs="?", default="", help="Optional server name"
-    )
-    restart_parser.set_defaults(handler=run_mcp)
+    login_parser = mcp_sub.add_parser("login", help="Authorize a remote MCP server")
+    login_parser.add_argument("name", help="Configured MCP server name")
+    login_parser.add_argument("--code", default="", help="Authorization code")
+    login_parser.add_argument("--verifier", default="", help="PKCE code verifier")
+    login_parser.add_argument("--issuer", default="", help="Authorization issuer")
+    login_parser.set_defaults(handler=run_mcp)
 
-    logs_parser = mcp_sub.add_parser("logs", help="Show recent MCP protocol logs")
-    logs_parser.add_argument("name", nargs="?", default="", help="Optional server name")
-    logs_parser.add_argument(
-        "--limit", type=int, default=10, help="Max log entries per server"
+    browse_parser = mcp_sub.add_parser("browse", help="List server capabilities")
+    browse_parser.add_argument("name", nargs="?", default="", help="Server name")
+    browse_parser.set_defaults(handler=run_mcp)
+
+    prompt_parser = mcp_sub.add_parser("prompt", help="Get an MCP prompt")
+    prompt_parser.add_argument("name", help="Server name")
+    prompt_parser.add_argument("prompt_name", help="Prompt name")
+    prompt_parser.add_argument("--arguments", default="{}", help="JSON arguments")
+    prompt_parser.set_defaults(handler=run_mcp)
+
+    resource_parser = mcp_sub.add_parser("resource", help="Read an MCP resource")
+    resource_parser.add_argument("name", help="Server name")
+    resource_parser.add_argument("uri", help="Resource URI")
+    resource_parser.set_defaults(handler=run_mcp)
+
+    registry_parser = mcp_sub.add_parser(
+        "registry-search", help="Search the official MCP registry"
     )
-    logs_parser.set_defaults(handler=run_mcp)
+    registry_parser.add_argument("query", help="Server-name search query")
+    registry_parser.add_argument("--limit", type=int, choices=range(1, 101), default=20)
+    registry_parser.set_defaults(handler=run_mcp)
+
+    serve_parser = mcp_sub.add_parser("serve", help="Publish tools over MCP stdio")
+    serve_parser.set_defaults(handler=run_mcp)
