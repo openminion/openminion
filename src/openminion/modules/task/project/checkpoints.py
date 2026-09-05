@@ -12,6 +12,10 @@ from openminion.modules.task.runtime.lifecycle import (
     TaskManager,
 )
 
+from .constants import (
+    REPOSITORY_LIFECYCLE_RECEIPT_LIMIT,
+    REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS,
+)
 from .models import (
     ProjectCheckpoint,
     ProjectCycleDecision,
@@ -27,13 +31,11 @@ _OPEN_PROJECT_TASK_STATES = {
     TaskLifecycleState.PAUSED,
 }
 _REPOSITORY_LIFECYCLE_PAYLOAD_KEY = "repository_lifecycle"
-_REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS = 4_000
-_REPOSITORY_LIFECYCLE_RECEIPT_LIMIT = 100
 
 
 def _bounded_repository_text(value: object) -> str:
     redacted, _ = redact_sensitive_text(str(value or "").strip())
-    return redacted[:_REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS]
+    return redacted[:REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS]
 
 
 def _workspace_revision(workspace_ref: str) -> str:
@@ -121,7 +123,7 @@ def advance_repository_lifecycle_payload(
             for reference in receipt_refs
             if str(reference).strip()
         )
-    )[-_REPOSITORY_LIFECYCLE_RECEIPT_LIMIT:]
+    )[-REPOSITORY_LIFECYCLE_RECEIPT_LIMIT:]
 
     resume = dict(cast(dict[str, object], lifecycle[project_run.resume_packet_ref]))
     current_revisions = dict(
