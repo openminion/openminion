@@ -503,14 +503,17 @@ def _latest_repository_check_target(
         return None
     if repair_push is not None:
         _index, effect_id, receipt = repair_push
+        remote_oid = receipt.get("remote_oid")
         if (
-            receipt.get("repository") == pull_request.get("repository")
+            remote_oid
+            and remote_oid != pull_request.get("head_sha")
+            and receipt.get("repository") == pull_request.get("repository")
             and receipt.get("remote") == pull_request.get("remote")
             and receipt.get("ref") == f"refs/heads/{pull_request['head']}"
         ):
             pull_request.update(
                 {
-                    "head_sha": receipt["remote_oid"],
+                    "head_sha": remote_oid,
                     "target_effect_id": effect_id,
                 }
             )

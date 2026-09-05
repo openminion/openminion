@@ -592,9 +592,17 @@ def test_failed_project_checks_block_without_an_explicit_repair_push(tmp_path) -
     assert turn_count == 2
 
 
-def test_repair_push_must_use_the_remote_bound_to_the_pull_request(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("repair_remote", "repaired_head"),
+    (("backup", "9" * 40), ("origin", "f" * 40)),
+    ids=("wrong-remote", "same-head"),
+)
+def test_repair_push_requires_pr_remote_and_new_head(
+    tmp_path,
+    repair_remote: str,
+    repaired_head: str,
+) -> None:
     first_head = "f" * 40
-    repaired_head = "9" * 40
     store, manager, run = _project(tmp_path, expected_checks=("lint",))
     turn_count = 0
 
@@ -609,6 +617,7 @@ def test_repair_push_must_use_the_remote_bound_to_the_pull_request(tmp_path) -> 
                 receipt={
                     "repository": str(tmp_path),
                     "remote": "origin",
+                    "source_ref": "HEAD",
                     "ref": "refs/heads/feature",
                     "remote_oid": first_head,
                 },
@@ -629,11 +638,12 @@ def test_repair_push_must_use_the_remote_bound_to_the_pull_request(tmp_path) -> 
         else:
             _save_ci_effect(
                 manager,
-                effect_id="effect:git.push:backup",
+                effect_id=f"effect:git.push:{repair_remote}:{repaired_head}",
                 capability_ref="git.push",
                 receipt={
                     "repository": str(tmp_path),
-                    "remote": "backup",
+                    "remote": repair_remote,
+                    "source_ref": "refs/heads/feature",
                     "ref": "refs/heads/feature",
                     "remote_oid": repaired_head,
                 },
@@ -672,6 +682,9 @@ def test_repair_push_must_use_the_remote_bound_to_the_pull_request(tmp_path) -> 
     assert observation is not None
     assert observation["remote"] == "origin"
     assert observation["head_sha"] == first_head
+    assert observation["overall_result"] == "failure"
+    assert failed.project_run.next_wake_job_id is None
+    assert turn_count == 2
 
 
 def test_repository_check_duration_uses_persisted_observation_start(
