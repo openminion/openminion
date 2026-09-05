@@ -99,11 +99,29 @@ def test_add_only_diff_detected() -> None:
     assert _is_diff(body) is True
 
 
+def test_add_only_diff_with_header_like_content_detected() -> None:
+    body = """--- a/example.txt
++++ b/example.txt
+@@ -0,0 +1 @@
++++value
+"""
+    assert _is_diff(body) is True
+
+
 def test_delete_only_diff_detected() -> None:
     body = """@@ -1,5 +1,3 @@
  ctx
 -removed
 -also removed
+"""
+    assert _is_diff(body) is True
+
+
+def test_delete_only_diff_with_header_like_content_detected() -> None:
+    body = """--- a/example.txt
++++ b/example.txt
+@@ -1 +0,0 @@
+---value
 """
     assert _is_diff(body) is True
 

@@ -4,7 +4,10 @@ import io
 
 from rich.console import Console
 
-from openminion.cli.interactive.terminal.streaming import _render_tool_block
+from openminion.cli.interactive.terminal.streaming import (
+    _render_full_tool_block,
+    _render_tool_block,
+)
 from openminion.cli.presentation.models import ToolEvent
 from openminion.cli.presentation.tool.blocks import ToolBlockWidget
 
@@ -73,6 +76,27 @@ def test_diff_headers_preserve_shared_runtime_facts() -> None:
     for fact in ("patch", "replace"):
         assert fact in terminal
         assert fact in rich
+
+
+def test_expanded_diff_header_omits_runtime_facts() -> None:
+    event = ToolEvent(
+        tool_name="file.edit",
+        model_tool_name="file.edit",
+        runtime_tool_name="workspace.patch.apply",
+        runtime_fallback_used=True,
+        runtime_fallback_chain=["sandbox.replace.apply"],
+        args={},
+        content="@@ -0,0 +1 @@\n+new",
+        exit_code=0,
+    )
+    output = io.StringIO()
+    Console(file=output, force_terminal=False, width=120).print(
+        _render_full_tool_block(event)
+    )
+
+    expanded = output.getvalue()
+    assert "patch" not in expanded
+    assert "replace" not in expanded
 
 
 def test_full_tool_content_is_authoritative_in_both_renderers() -> None:

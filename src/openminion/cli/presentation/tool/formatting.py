@@ -60,10 +60,13 @@ def is_diff_result(tool_name: str, content: str) -> bool:
     lines = content.split("\n")
     if any(line.startswith("$ ") for line in lines[:3]):
         return False
-    if not any(_HUNK_HEADER_RE.match(line) for line in lines):
+    hunk_index = next(
+        (index for index, line in enumerate(lines) if _HUNK_HEADER_RE.match(line)),
+        None,
+    )
+    if hunk_index is None:
         return False
-    content_lines = [line for line in lines if not line.startswith(("+++", "---"))]
-    return any(line.startswith(("+", "-")) for line in content_lines)
+    return any(line.startswith(("+", "-")) for line in lines[hunk_index + 1 :])
 
 
 __all__ = (

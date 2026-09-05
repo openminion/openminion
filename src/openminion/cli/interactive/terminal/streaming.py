@@ -388,7 +388,12 @@ def _render_tool_block(event: ToolEvent) -> Group:
 def _render_full_tool_block(event: ToolEvent, *, cap: int | None = None) -> Group:
     body_for_detection = event.full_content or event.content or ""
     if is_diff_result(event.tool_name, body_for_detection):
-        return _render_diff_block(event, cap=cap, public_title=False)
+        return _render_diff_block(
+            event,
+            cap=cap,
+            public_title=False,
+            include_event_markers=False,
+        )
     return _render_plain_tool_block(
         event,
         cap=cap,
@@ -436,10 +441,11 @@ def _render_diff_block(
     *,
     cap: int | None = _TOOL_BLOCK_TRUNCATE_LINES,
     public_title: bool = True,
+    include_event_markers: bool = True,
 ) -> Group:
     title_row = _tool_title_row(
         event,
-        include_event_markers=True,
+        include_event_markers=include_event_markers,
         public_title=public_title,
     )
     body_text = (event.full_content or event.content or "").rstrip()
