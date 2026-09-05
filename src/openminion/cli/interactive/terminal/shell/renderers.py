@@ -160,6 +160,7 @@ def _render_model_status(*, runtime: Any, console: Console) -> None:
     provider = format_connection_name(format_runtime_provider(runtime))
     adapter = format_runtime_adapter(runtime)
     agent = str(getattr(runtime, "agent_id", "") or "").strip() or "—"
+    console.print(Text("Model selection", style="bold"))
     console.print(Text(f"agent: {agent}", style=_MUTED_STYLE))
     console.print(Text(f"current model: {model_name}", style="bold"))
     connection = f"connection: {provider}"
@@ -189,13 +190,19 @@ def _render_model_status(*, runtime: Any, console: Console) -> None:
             "agent" if row.agent_default else "",
         )
     console.print(table)
-    console.print(
-        Text(
-            "Use `/model use <#>` for this session, `/model default <#>` to "
-            "change this agent's default, or `/model add` to configure another model.",
-            style=_MUTED_ITALIC_STYLE,
+    console.print(Text("Actions", style="bold"))
+    for command, description in (
+        ("/model use <#>", "use for this session; restored on resume"),
+        ("/model default <#>", "save as this agent's default"),
+        ("/model add <model>", "add to this connection and use now"),
+        ("/model setup", "configure another connection and use now"),
+    ):
+        console.print(
+            Text.assemble(
+                (f"  {command:<20}", _SYSTEM_STYLE),
+                (description, _MUTED_STYLE),
+            )
         )
-    )
 
 
 def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
@@ -203,16 +210,26 @@ def _render_model_command(arg: str, *, runtime: Any, console: Console) -> None:
     if not arg:
         _render_model_status(runtime=runtime, console=console)
         return
-    if arg == "add":
+    action, _, target = arg.partition(" ")
+    if action == "add":
+        if not target.strip():
+            console.print(
+                Text("(/model: use `/model add <model-id>`)", style=_ERR_STYLE)
+            )
+            return
+        try:
+            selected = runtime.add_model(target.strip())
+        except ValueError as exc:
+            console.print(Text(f"(/model: {exc})", style=_ERR_STYLE))
+            return
         console.print(
             Text(
-                "Add a model with the existing setup flow, then restart Focus:",
+                f"(model: added {selected.model} to {selected.connection_name}; "
+                "selected for this session; agent default unchanged)",
                 style=_MUTED_ITALIC_STYLE,
             )
         )
-        console.print(Text(runtime.model_setup_command(), style=_SYSTEM_STYLE))
         return
-    action, _, target = arg.partition(" ")
     if action == "default" and not target.strip():
         console.print(Text("(/model: use `/model default <#>`)", style=_ERR_STYLE))
         return

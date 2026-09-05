@@ -538,6 +538,7 @@ class OpenMinionRuntime(
     def create_new_session(self) -> str:
         self._ensure_agent_resolved()
         self._clear_model_selection()
+        self._rebind_model_gateway()
         prefix = _TARGET_KIND_FOCUS if self._target == _TARGET_KIND_FOCUS else "sess"
         metadata_patch = self._session_metadata_patch()
         session = self._rt.sessions.resolve_session(

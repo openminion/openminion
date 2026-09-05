@@ -26,7 +26,7 @@ class RuntimeCommandMixin:
                     rows = list(lister() or [])
                 except Exception:
                     rows = []
-            lines = [f"current    {connection} / {model}"]
+            lines = ["Model selection", f"current    {connection} / {model}"]
             if rows:
                 lines.extend(("", "configured models:"))
                 for row in rows:
@@ -39,8 +39,10 @@ class RuntimeCommandMixin:
                 lines.extend(
                     (
                         "",
-                        "Use `/model use <#>` for this session, "
-                        "`/model default <#>` for this agent, or `/model add`.",
+                        "Actions",
+                        "  /model use <#>      use for this session; restored on resume",
+                        "  /model default <#>  save as this agent's default",
+                        "  /model add <model>  add to this connection and use now",
                     )
                 )
             else:
@@ -48,14 +50,22 @@ class RuntimeCommandMixin:
             self._push_runtime_message("\n".join(lines))
             return
 
-        if arg == "add":
+        action, _, target = arg.partition(" ")
+        if action == "add":
+            if not target.strip():
+                self._push_runtime_message("/model: use `/model add <model-id>`")
+                return
+            try:
+                selected = self._runtime.add_model(target.strip())
+            except ValueError as exc:
+                self._push_runtime_message(f"/model: {exc}")
+                return
             self._push_runtime_message(
-                "Add a model with the existing setup flow, then restart Focus:\n"
-                + self._runtime.model_setup_command()
+                f"model added → {selected.connection_name} / {selected.model} "
+                "(selected for this session; agent default unchanged)"
             )
             return
 
-        action, _, target = arg.partition(" ")
         if action == "default":
             if not target.strip():
                 self._push_runtime_message("/model: use `/model default <#>`")

@@ -22,6 +22,7 @@ from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.detail_modes import resolve_details_mode
 from .delegation import run_slash_delegate
 from .labels import _runtime_label
+from .model_setup import handle_model_setup
 from openminion.cli.presentation.slash_commands import (
     slash_help_rows,
     terminal_slash_commands,
@@ -665,7 +666,7 @@ async def _handle_slash(
         )
         return False
     if cmd in ("/tools", "/mcp", "/theme", "/model"):
-        _handle_tool_view_slash(cmd, text, runtime=runtime, console=console)
+        await _handle_tool_view_slash(cmd, text, runtime, console, overlay)
         return False
     if handle_debug_output_slash(
         cmd, text, runtime=runtime, console=console, cost_renderer=_render_cost_snapshot
@@ -713,12 +714,12 @@ async def _handle_slash(
     return False
 
 
-def _handle_tool_view_slash(
+async def _handle_tool_view_slash(
     cmd: str,
     text: str,
-    *,
     runtime: Any,
     console: Console,
+    overlay: TerminalOverlayPresenter,
 ) -> bool:
     if cmd == "/tools":
         _render_tools_command(runtime, console, text)
@@ -727,7 +728,10 @@ def _handle_tool_view_slash(
     elif cmd == "/theme":
         _handle_slash_theme(text, console=console)
     elif cmd == "/model":
-        _handle_slash_model(text, runtime=runtime, console=console)
+        if _slash_arg(text).strip() == "setup":
+            await handle_model_setup(runtime=runtime, console=console, overlay=overlay)
+        else:
+            _handle_slash_model(text, runtime=runtime, console=console)
     else:
         return False
     return True

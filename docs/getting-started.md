@@ -218,15 +218,17 @@ the connection and OpenAI-compatible is the API format.
 /model
 /model use 2
 /model default 2
-/model add
+/model add MiniMax-M2.7-highspeed
+/model setup
 ```
 
 `/model use <#>` changes the current session and is restored when that session
 is resumed. `/model default <#>` updates the active agent's saved default.
-`/model add` prints the existing setup command for that agent; setup keeps the
-current default unless the user later changes it explicitly. It does not add a
-second provider system or ask the user to choose an API format for a known
-provider.
+`/model add <model>` adds a model to the current connection and selects it for
+the session immediately; the agent default stays unchanged. `/model setup`
+uses the same provider presets and config writer inside terminal Focus to add a
+different connection, review it, save it, and use it without restarting.
+`openminion setup` remains available for first-run and scripted setup.
 
 For another OpenAI-compatible provider, choose the provider preset and model:
 

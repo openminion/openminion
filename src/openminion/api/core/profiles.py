@@ -22,7 +22,10 @@ from openminion.base.config import (
 )
 from openminion.modules.llm import RuntimeLLMHandle
 from openminion.modules.llm.config import resolve_provider_identity_translation
-from openminion.modules.llm.model_connections import legacy_model_connection
+from openminion.modules.llm.model_connections import (
+    add_model_connection,
+    legacy_model_connection,
+)
 from openminion.modules.memory.interfaces import MemoryNamespaceQueryInterface
 from openminion.modules.storage.runtime import (
     IdempotencyStore,
@@ -122,6 +125,10 @@ class AgentDiscoveryRecord:
             "active_run_id": self.active_run_id,
             "capabilities": list(self.capabilities),
         }
+
+
+class AgentConfigActivationError(RuntimeError):
+    """The config was saved, but the active agent runtime did not refresh."""
 
 
 def _load_agent_registry_facts(
@@ -352,8 +359,9 @@ class RuntimeProfilesMixin:
         connection_id: str,
         model: str,
     ) -> None:
-        resolve_agent_config(self.config, agent_id)
-        profile = self.config.agents[agent_id]
+        updated = OpenMinionConfig.from_dict(self.config.to_dict())
+        resolve_agent_config(updated, agent_id)
+        profile = updated.agents[agent_id]
         selected = next(
             (
                 row
@@ -367,7 +375,7 @@ class RuntimeProfilesMixin:
                 f"Model {model!r} is not configured on connection {connection_id!r}."
             )
         if connection_id not in profile.model_connections:
-            legacy = legacy_model_connection(self.config, profile)
+            legacy = legacy_model_connection(updated, profile)
             if legacy is not None:
                 profile.model_connections[legacy[0]] = legacy[1]
         connection = profile.model_connections[connection_id]
@@ -378,17 +386,94 @@ class RuntimeProfilesMixin:
             **dict(connection.get("provider_config_overrides", {})),
             "model": model,
         }
+        self._save_and_activate_agent_config(
+            updated,
+            agent_id=agent_id,
+            reason="model_default_changed",
+        )
+
+    def add_agent_model(
+        self,
+        *,
+        agent_id: str,
+        connection_id: str,
+        model: str,
+    ) -> None:
+        updated = OpenMinionConfig.from_dict(self.config.to_dict())
+        profile = resolve_agent_config(updated, agent_id)
+        model_id = model.strip()
+        if not model_id:
+            raise ValueError("model id is required")
+        if not profile.model_connections:
+            legacy = legacy_model_connection(updated, profile)
+            if legacy is not None:
+                profile.model_connections[legacy[0]] = legacy[1]
+        connection = profile.model_connections.get(connection_id)
+        if connection is None:
+            raise ValueError(f"connection {connection_id!r} is not configured")
+        add_model_connection(
+            profile,
+            connection_id=connection_id,
+            display_name=str(connection.get("display_name") or connection_id),
+            provider=str(connection["provider"]),
+            model=model_id,
+            provider_patch=dict(connection.get("provider_config_overrides", {})),
+            default=False,
+        )
+        self._save_and_activate_agent_config(
+            updated,
+            agent_id=agent_id,
+            reason="model_added",
+        )
+
+    def apply_provider_setup(self, result: Any, *, agent_id: str) -> None:
+        if self.config_path is None:
+            raise ValueError("runtime config path is unavailable")
+        if Path(result.config_path).resolve(strict=False) != Path(
+            self.config_path
+        ).resolve(strict=False):
+            raise ValueError("provider setup targets a different config path")
+        if str(result.preview.agent_id) != agent_id:
+            raise ValueError("provider setup targets a different agent")
+        if result.home_root is None or Path(result.home_root).resolve(
+            strict=False
+        ) != Path(self.home_root).resolve(strict=False):
+            raise ValueError("provider setup targets a different home root")
+        if Path(result.data_root).resolve(strict=False) != Path(self.data_root).resolve(
+            strict=False
+        ):
+            raise ValueError("provider setup targets a different data root")
+        self._save_and_activate_agent_config(
+            result.config,
+            agent_id=agent_id,
+            reason="provider_setup_applied",
+        )
+
+    def _save_and_activate_agent_config(
+        self,
+        config: OpenMinionConfig,
+        *,
+        agent_id: str,
+        reason: str,
+    ) -> None:
         if self.config_path is None:
             raise ValueError("runtime config path is unavailable")
         from openminion.services.bootstrap.provider_setup import (
             atomic_save_setup_config,
         )
 
-        atomic_save_setup_config(self.config, self.config_path)
-        self.evict_agent_runtime(
-            agent_id=agent_id,
-            reason="model_default_changed",
-        )
+        atomic_save_setup_config(config, self.config_path)
+        if self.config_manager is not None:
+            self.config_manager.base_config = config
+            self.config_manager.reset()
+        self.config = config
+        try:
+            self.evict_agent_runtime(agent_id=agent_id, reason=reason)
+        except Exception as exc:  # noqa: BLE001 - boundary after durable save
+            raise AgentConfigActivationError(
+                "Configuration was saved, but activating it failed; restart "
+                "OpenMinion before using the new model connection."
+            ) from exc
 
     def capability_runtime_diagnostics(
         self,
