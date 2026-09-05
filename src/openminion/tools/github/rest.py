@@ -721,7 +721,12 @@ def _overall_check_result(
 ) -> str:
     combined_result = _combined_result(combined)
     if not expected_checks:
-        return combined_result
+        observed_results = [_check_run_result(run) for run in check_runs]
+        if "failure" in observed_results or combined_result == "failure":
+            return "failure"
+        if "pending" in observed_results or combined_result == "pending":
+            return "pending"
+        return "success" if observed_results else combined_result
 
     expected_results = [
         _check_run_result(run)

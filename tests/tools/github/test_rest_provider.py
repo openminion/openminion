@@ -218,6 +218,33 @@ def test_fetch_checks_preserves_status_only_result(
     assert data["expected_checks"] == []
 
 
+def test_fetch_checks_does_not_hide_failed_run_without_expected_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            {"state": "success", "statuses": []},
+            {
+                "total_count": 1,
+                "check_runs": [_check_run("lint", conclusion="failure")],
+            },
+        ]
+    )
+
+    def fake_request_json(self: GithubRestProvider, **kwargs: Any) -> Any:
+        del self, kwargs
+        return next(responses)
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    data = GithubRestProvider().fetch_checks(
+        args={"owner": "o", "repo": "r", "head_sha": "abc1234"},
+        ctx=None,
+    )["data"]
+
+    assert data["overall_result"] == "failure"
+
+
 def test_fetch_checks_paginates_at_exact_head_sha(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
