@@ -160,13 +160,17 @@ def _release_result(
         release_id = row.get("id")
         if not isinstance(release_id, int):
             raise _release_protocol_error("release omitted numeric identity")
+        if not isinstance(row.get("draft"), bool) or not isinstance(
+            row.get("prerelease"), bool
+        ):
+            raise _release_protocol_error("release omitted explicit status flags")
         release = {
             "release_id": release_id,
             "tag": str(row.get("tag_name") or ""),
             "title": str(row.get("name") or ""),
             "notes": str(row.get("body") or ""),
-            "draft": bool(row.get("draft")),
-            "prerelease": bool(row.get("prerelease")),
+            "draft": row["draft"],
+            "prerelease": row["prerelease"],
             "html_url": str(row.get("html_url") or ""),
         }
     return {

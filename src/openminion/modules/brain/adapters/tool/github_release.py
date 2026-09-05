@@ -157,7 +157,7 @@ def _begin_release_effect(
             {"reason_code": replay.reason, "project_effect_id": effect_id},
         )
     preflight = read_release(args, ctx)
-    data = _release_data(preflight)
+    data = _release_data(preflight, args)
     expected_sha = str(args.get("expected_commit_sha") or "")
     if str(data.get("tag_sha") or "") != expected_sha:
         raise ToolRuntimeError(
@@ -364,8 +364,19 @@ def _record_release_failure(
     error: BaseException,
     ctx: Any,
 ) -> dict[str, Any]:
+    status_code = error.details.get("status_code") if isinstance(
+        error, ToolRuntimeError
+    ) else None
     uncertain = _is_uncertain_github_error(error) or (
-        isinstance(error, ToolRuntimeError) and error.code == "INVALID_RESPONSE"
+        isinstance(error, ToolRuntimeError)
+        and (
+            error.code == "INVALID_RESPONSE"
+            or (
+                error.details.get("reason_code") == "github_api_error"
+                and isinstance(status_code, int)
+                and 500 <= status_code < 600
+            )
+        )
     )
     effect = started.effect
     if not uncertain:
@@ -384,7 +395,9 @@ def _record_release_failure(
     return facts
 
 
-def _release_data(result: Mapping[str, Any]) -> Mapping[str, Any]:
+def _release_data(
+    result: Mapping[str, Any], args: Mapping[str, Any]
+) -> Mapping[str, Any]:
     data = result.get("data")
     if not isinstance(data, Mapping):
         raise ToolRuntimeError(
@@ -392,13 +405,21 @@ def _release_data(result: Mapping[str, Any]) -> Mapping[str, Any]:
             "GitHub release result omitted data.",
             {"reason_code": "github_release_result_invalid"},
         )
+    expected = tuple(str(args.get(key) or "") for key in ("owner", "repo", "tag"))
+    actual = tuple(str(data.get(key) or "") for key in ("owner", "repo", "tag"))
+    if actual != expected:
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub release result does not match the approved target.",
+            {"reason_code": "github_release_result_mismatch"},
+        )
     return data
 
 
 def _release_receipt(
     result: Mapping[str, Any], args: Mapping[str, Any]
 ) -> dict[str, Any]:
-    data = _release_data(result)
+    data = _release_data(result, args)
     source = result.get("source")
     release = data.get("release")
     if release is not None and not isinstance(release, Mapping):
@@ -413,7 +434,7 @@ def _release_receipt(
         "tag": str(args.get("tag") or ""),
         "tag_sha": str(args.get("expected_commit_sha") or ""),
     }
-    if any(str(data.get(key) or "") != value for key, value in expected.items()):
+    if str(data.get("tag_sha") or "") != expected["tag_sha"]:
         raise ToolRuntimeError(
             "INVALID_RESPONSE",
             "GitHub release result does not match the approved tag and commit.",

@@ -28,7 +28,10 @@ from openminion.modules.task.project.effects import (
     ProjectEffectStatus,
     load_project_effect_record,
 )
-from openminion.modules.task.project.policy import issue_project_permission_grant
+from openminion.modules.task.project.policy import (
+    issue_project_permission_grant,
+    load_project_policy_state,
+)
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.github.constants import DEFAULT_GITHUB_PROVIDER_ID
@@ -85,10 +88,11 @@ class _Provider:
     def __init__(self) -> None:
         self.workflow_match = "exact"
         self.workflow_mutations = 0
-        self.workflow_uncertain = False
+        self.workflow_status_code: int | None = None
         self.release: dict[str, Any] | None = None
         self.release_mutations = 0
-        self.release_uncertain = False
+        self.release_status_code: int | None = None
+        self.release_preflight_overrides: dict[str, Any] = {}
         self.tag_sha = "a" * 40
 
     def _workflow_result(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -130,11 +134,14 @@ class _Provider:
         if isinstance(reconciled, Mapping):
             return dict(reconciled)
         self.workflow_mutations += 1
-        if self.workflow_uncertain:
+        if self.workflow_status_code is not None:
             raise ToolRuntimeError(
                 "UPSTREAM_ERROR",
                 "GitHub unavailable",
-                {"reason_code": "github_api_unreachable"},
+                {
+                    "reason_code": "github_api_error",
+                    "status_code": self.workflow_status_code,
+                },
             )
         return self._workflow_result(args)
 
@@ -152,15 +159,17 @@ class _Provider:
 
     def read_release(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
+        data = {
+            "owner": args["owner"],
+            "repo": args["repo"],
+            "tag": args["tag"],
+            "tag_sha": self.tag_sha,
+            "release": self.release,
+        }
+        data.update(self.release_preflight_overrides)
         return {
             "ok": True,
-            "data": {
-                "owner": args["owner"],
-                "repo": args["repo"],
-                "tag": args["tag"],
-                "tag_sha": self.tag_sha,
-                "release": self.release,
-            },
+            "data": data,
             "source": {"provider_id": self.provider_id},
         }
 
@@ -169,11 +178,14 @@ class _Provider:
         if isinstance(reconciled, Mapping):
             return dict(reconciled)
         self.release_mutations += 1
-        if self.release_uncertain:
+        if self.release_status_code is not None:
             raise ToolRuntimeError(
                 "UPSTREAM_ERROR",
                 "GitHub unavailable",
-                {"reason_code": "github_api_unreachable"},
+                {
+                    "reason_code": "github_api_error",
+                    "status_code": self.release_status_code,
+                },
             )
         self.release = {
             "release_id": 17,
@@ -356,6 +368,37 @@ def test_pypi_dispatch_accepts_exact_final_release_scope(
     assert provider.workflow_mutations == 1
 
 
+def test_workflow_target_mismatch_stops_before_approval_or_mutation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    args = {
+        **_WORKFLOW_ARGS,
+        "inputs": {"request_id": "release-123", "target": "pypi"},
+    }
+    _grant(manager, "github.dispatch_workflow", github_workflow_action_scope(args))
+    provider = _Provider()
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command("github.dispatch_workflow", args, "dispatch-mismatch"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["code"] == "INVALID_ARGUMENT"
+    assert provider.workflow_mutations == 0
+    policy = load_project_policy_state(manager, task_id="task-1")
+    assert policy is not None and policy.grants[0].uses == 0
+    scope = github_workflow_action_scope(args)
+    assert load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect("github.dispatch_workflow", scope),
+    ) is None
+
+
 @pytest.mark.parametrize("readback", ["not_found", "ambiguous"])
 def test_workflow_uncertainty_never_repeats_dispatch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any, readback: str
@@ -417,6 +460,62 @@ def test_workflow_started_reconciles_after_restart_without_repeat(
     assert telemetry.operations[-1]["extra"]["project_effect_reconciled"] is True
 
 
+def test_workflow_5xx_reconciles_after_restart_without_repeat(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    scope = github_workflow_action_scope(_WORKFLOW_ARGS)
+    _grant(manager, "github.dispatch_workflow", scope)
+    provider = _Provider()
+    provider.workflow_status_code = 500
+    register_provider(provider)
+
+    first = _adapter(tmp_path, manager).execute(
+        command=_command("github.dispatch_workflow", _WORKFLOW_ARGS, "dispatch-1"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+    assert first["error"]["details"]["project_effect_uncertain"] is True
+    manager.close()
+    provider.workflow_status_code = None
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    result = _adapter(tmp_path, restarted).execute(
+        command=_command("github.dispatch_workflow", _WORKFLOW_ARGS, "dispatch-2"),
+        session_id="session-1",
+        trace_id="turn-2",
+    )
+
+    assert result["outputs"]["data"]["reconciled"] is True
+    assert provider.workflow_mutations == 1
+
+
+def test_workflow_4xx_is_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    scope = github_workflow_action_scope(_WORKFLOW_ARGS)
+    _grant(manager, "github.dispatch_workflow", scope)
+    provider = _Provider()
+    provider.workflow_status_code = 422
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command("github.dispatch_workflow", _WORKFLOW_ARGS, "dispatch-1"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["details"]["project_effect_uncertain"] is False
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect("github.dispatch_workflow", scope),
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.FAILED
+
+
 def test_release_rejects_tag_sha_mismatch_before_mutation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
@@ -434,6 +533,43 @@ def test_release_rejects_tag_sha_mismatch_before_mutation(
         result["error"]["details"]["reason_code"] == "github_release_tag_sha_mismatch"
     )
     assert provider.release_mutations == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("owner", "other"), ("repo", "other"), ("tag", "v9.9.9")],
+)
+def test_release_rejects_mismatched_preflight_identity_before_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    field: str,
+    value: str,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    scope = github_release_action_scope(_RELEASE_ARGS)
+    _grant(manager, "github.create_release", scope)
+    provider = _Provider()
+    provider.release_preflight_overrides[field] = value
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command("github.create_release", _RELEASE_ARGS, "release-1"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["details"]["reason_code"] == (
+        "github_release_result_mismatch"
+    )
+    assert provider.release_mutations == 0
+    assert load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect("github.create_release", scope),
+    ) is None
+    policy = load_project_policy_state(manager, task_id="task-1")
+    assert policy is not None and policy.grants[0].uses == 0
 
 
 def test_approved_draft_prerelease_persists_exact_receipt(
@@ -489,7 +625,7 @@ def test_approved_release_and_uncertain_restart_readback(
     scope = github_release_action_scope(_RELEASE_ARGS)
     _grant(manager, "github.create_release", scope)
     provider = _Provider()
-    provider.release_uncertain = True
+    provider.release_status_code = 500
     register_provider(provider)
     initial_telemetry = _Telemetry()
     first = _adapter(tmp_path, manager, initial_telemetry).execute(
@@ -503,7 +639,7 @@ def test_approved_release_and_uncertain_restart_readback(
         for row in initial_telemetry.operations
     )
     manager.close()
-    provider.release_uncertain = False
+    provider.release_status_code = None
     provider.release = {
         "release_id": 17,
         "tag": _RELEASE_ARGS["tag"],
@@ -523,6 +659,32 @@ def test_approved_release_and_uncertain_restart_readback(
     assert result["outputs"]["data"]["reconciled"] is True
     assert provider.release_mutations == 1
     assert telemetry.operations[-1]["extra"]["project_effect_reconciled"] is True
+
+
+def test_release_4xx_is_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _manager(tmp_path)
+    scope = github_release_action_scope(_RELEASE_ARGS)
+    _grant(manager, "github.create_release", scope)
+    provider = _Provider()
+    provider.release_status_code = 422
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command("github.create_release", _RELEASE_ARGS, "release-1"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert result["error"]["details"]["project_effect_uncertain"] is False
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect("github.create_release", scope),
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.FAILED
 
 
 def test_release_only_actions_deny_non_project_invocation(

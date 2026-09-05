@@ -108,6 +108,19 @@ def test_dispatch_workflow_rejects_unallowlisted_values(
     assert exc.value.details["reason_code"] == reason
 
 
+def test_dispatch_workflow_rejects_mismatched_target_before_post() -> None:
+    provider = _Provider([])
+    with pytest.raises(ToolRuntimeError) as exc:
+        provider.dispatch_workflow(
+            args=_workflow_args(
+                inputs={"request_id": "release-123", "target": "pypi"}
+            ),
+            ctx=_ctx(),
+        )
+    assert exc.value.code == "INVALID_REQUEST"
+    assert provider.calls == []
+
+
 def test_list_workflow_runs_reports_ambiguous_bounded_matches() -> None:
     provider = _Provider([{"workflow_runs": [_run(1), _run(2)]}])
     result = provider.list_workflow_runs(args=_workflow_args(), ctx=_ctx())
@@ -204,6 +217,29 @@ def test_create_release_rejects_existing_release_before_post() -> None:
         provider.create_release(args=_release_args(), ctx=_ctx())
     assert exc.value.code == "ALREADY_EXISTS"
     assert all(call.get("method", "GET") == "GET" for call in provider.calls)
+
+
+@pytest.mark.parametrize("missing", ["draft", "prerelease"])
+def test_create_release_rejects_missing_boolean_result_fields(missing: str) -> None:
+    row = {
+        "id": 17,
+        "tag_name": "v1.2.3-rc1",
+        "name": "v1.2.3-rc1",
+        "body": "RC notes",
+        "draft": False,
+        "prerelease": False,
+        "html_url": "https://github.com/openminion/release-test/releases/tag/v1.2.3-rc1",
+    }
+    row.pop(missing)
+    provider = _Provider(
+        [row],
+        not_found=[{"object": {"type": "commit", "sha": "a" * 40}}, None],
+    )
+    with pytest.raises(ToolRuntimeError) as exc:
+        provider.create_release(
+            args=_release_args(draft=False, prerelease=False), ctx=_ctx()
+        )
+    assert exc.value.code == "INVALID_RESPONSE"
 
 
 def test_read_release_dereferences_one_annotated_tag() -> None:

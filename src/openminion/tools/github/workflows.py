@@ -36,6 +36,12 @@ class GithubWorkflowRestOperations:
                 "Workflow input request_id must match the dispatch request identity.",
                 {"reason_code": "github_workflow_request_id_mismatch"},
             )
+        if inputs.get("target") != target:
+            raise ToolRuntimeError(
+                "INVALID_REQUEST",
+                "Workflow input target must match the dispatch target.",
+                {"reason_code": "github_workflow_target_mismatch"},
+            )
         reconciled = getattr(ctx, "github_dispatch_workflow_reconciled_result", None)
         if isinstance(reconciled, Mapping):
             return dict(reconciled)

@@ -311,6 +311,12 @@ class GithubDispatchWorkflowArgs(_RepoArgsBase):
             raise ValueError("workflow input keys and values cannot be empty")
         return normalized
 
+    @model_validator(mode="after")
+    def _validate_target_input(self) -> "GithubDispatchWorkflowArgs":
+        if self.inputs.get("target") != self.target:
+            raise ValueError("inputs.target must match target")
+        return self
+
 
 class GithubListWorkflowRunsArgs(_RepoArgsBase):
     workflow: str = Field(..., min_length=1, description="Workflow file or numeric ID")

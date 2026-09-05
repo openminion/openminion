@@ -355,8 +355,19 @@ def _record_workflow_failure(
     error: BaseException,
     ctx: Any,
 ) -> dict[str, Any]:
+    status_code = error.details.get("status_code") if isinstance(
+        error, ToolRuntimeError
+    ) else None
     uncertain = _is_uncertain_github_error(error) or (
-        isinstance(error, ToolRuntimeError) and error.code == "INVALID_RESPONSE"
+        isinstance(error, ToolRuntimeError)
+        and (
+            error.code == "INVALID_RESPONSE"
+            or (
+                error.details.get("reason_code") == "github_api_error"
+                and isinstance(status_code, int)
+                and 500 <= status_code < 600
+            )
+        )
     )
     effect = started.effect
     if not uncertain:
