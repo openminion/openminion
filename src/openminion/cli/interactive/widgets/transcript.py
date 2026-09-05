@@ -27,6 +27,7 @@ from .tool_block import ToolBlockWidget
 _STREAM_CURSOR = "▍"
 _STREAM_BLINK_INTERVAL = 0.5
 _BOUNDED_FALLBACK_THRESHOLD_S = 0.05
+DEFAULT_MAX_RETAINED_MESSAGES = 1000
 
 
 @dataclass
@@ -299,12 +300,20 @@ class FocusTranscript(ScrollableContainer):
 
     can_focus = True
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        max_retained_messages: int = DEFAULT_MAX_RETAINED_MESSAGES,
+        **kwargs,
+    ) -> None:
+        if max_retained_messages < 1:
+            raise ValueError("max_retained_messages must be positive")
         verbosity_kwarg = kwargs.pop("verbosity", "normal")
         animation_kwarg = kwargs.pop("animation", None)
         progress_kwarg = kwargs.pop("progress", "full")
         super().__init__(id=kwargs.pop("id", "focus-transcript"), **kwargs)
         self._messages: list[ChatMessage] = []
+        self._max_retained_messages = max_retained_messages
         self._search_query = ""
         self._selected_message_id: str | None = None
         self._verbosity: VerbosityLevel = (
@@ -362,6 +371,7 @@ class FocusTranscript(ScrollableContainer):
             widget.add_class("--continued")
         self.mount(widget)
         self._selected_message_id = message.msg_id
+        self._trim_retained_messages()
         self.call_after_refresh(lambda: self.scroll_end(animate=False))
         return widget
 
@@ -377,7 +387,7 @@ class FocusTranscript(ScrollableContainer):
     def set_messages(self, messages: list[ChatMessage]) -> None:
         """Replace all messages — used for resume + `/clear` paths."""
         self.clear_messages()
-        for msg in messages:
+        for msg in messages[-self._max_retained_messages :]:
             self._messages.append(msg)
             self.mount(
                 FocusMessageWidget(
@@ -410,6 +420,10 @@ class FocusTranscript(ScrollableContainer):
                 self._messages[-1].msg_id if self._messages else None
             )
         return True
+
+    def _trim_retained_messages(self) -> None:
+        if len(self._messages) > self._max_retained_messages:
+            self.drop_message(self._messages[0].msg_id)
 
     def filter_messages(self, query: str) -> None:
         """Show/hide message widgets based on case-insensitive substring."""

@@ -16,18 +16,27 @@ from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEve
 
 
 class _Harness(App):
-    def __init__(self) -> None:
+    def __init__(self, *, max_retained_messages: int = 1000) -> None:
         super().__init__()
         self.transcript: FocusTranscript | None = None
+        self._max_retained_messages = max_retained_messages
 
     def compose(self):
-        self.transcript = FocusTranscript()
+        self.transcript = FocusTranscript(
+            max_retained_messages=self._max_retained_messages
+        )
         yield Vertical(self.transcript)
 
 
 def test_constructor_accepts_no_args() -> None:
     t = FocusTranscript()
     assert t.id == "focus-transcript"
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_constructor_rejects_non_positive_retention_limit(limit: int) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        FocusTranscript(max_retained_messages=limit)
 
 
 @pytest.mark.asyncio
@@ -39,6 +48,24 @@ async def test_push_message_appends_and_returns_widget() -> None:
         await pilot.pause()
         assert isinstance(widget, FocusMessageWidget)
         assert widget in list(t.query(FocusMessageWidget))
+
+
+@pytest.mark.asyncio
+async def test_push_message_evicts_oldest_message_and_widget() -> None:
+    async with _Harness(max_retained_messages=2).run_test() as pilot:
+        t = pilot.app.transcript
+        for body in ("first", "second", "third"):
+            t.push_message(
+                ChatMessage(kind=MessageKind.AGENT, sender="agent", body=body)
+            )
+        await pilot.pause()
+
+        assert [message.body for message in t._messages] == ["second", "third"]
+        assert [widget._message.body for widget in t.query(FocusMessageWidget)] == [
+            "second",
+            "third",
+        ]
+        assert t.copy_selected_message() == "third"
 
 
 @pytest.mark.asyncio
@@ -59,6 +86,27 @@ async def test_set_messages_bulk_replaces() -> None:
         assert len(widgets) == 2
         bodies = [w._message.body for w in widgets]
         assert bodies == ["three", "four"]
+
+
+@pytest.mark.asyncio
+async def test_set_messages_retains_searchable_history_tail() -> None:
+    async with _Harness(max_retained_messages=2).run_test() as pilot:
+        t = pilot.app.transcript
+        t.set_messages(
+            [
+                ChatMessage(kind=MessageKind.USER, sender="you", body="first"),
+                ChatMessage(kind=MessageKind.AGENT, sender="agent", body="second"),
+                ChatMessage(kind=MessageKind.AGENT, sender="agent", body="third"),
+            ]
+        )
+        await pilot.pause()
+
+        t.filter_messages("second")
+        widgets = list(t.query(FocusMessageWidget))
+        assert [message.body for message in t._messages] == ["second", "third"]
+        assert [widget._message.body for widget in widgets] == ["second", "third"]
+        assert [widget.display for widget in widgets] == [True, False]
+        assert t.copy_last_copyable_message() == "third"
 
 
 @pytest.mark.asyncio
@@ -142,6 +190,23 @@ async def test_begin_turn_returns_handle() -> None:
         widgets = list(t.query(FocusMessageWidget))
         assert len(widgets) == 1
         assert widgets[0]._message.kind is MessageKind.AGENT
+
+
+@pytest.mark.asyncio
+async def test_begin_turn_streams_at_retention_boundary() -> None:
+    async with _Harness(max_retained_messages=1).run_test() as pilot:
+        t = pilot.app.transcript
+        t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="old"))
+        handle = t.begin_turn(role="assistant")
+        await pilot.pause()
+        handle.append_token("retained")
+        handle.complete()
+        await pilot.pause()
+
+        widgets = list(t.query(FocusMessageWidget))
+        assert len(widgets) == 1
+        assert widgets[0]._message.body == "retained"
+        assert widgets[0]._streaming is None
 
 
 @pytest.mark.asyncio

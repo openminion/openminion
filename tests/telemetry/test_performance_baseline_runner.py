@@ -131,6 +131,8 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
             "artifact_path": "/tmp/run-1.json",
             "metrics": {
                 "wall_time_ms": 10,
+                "process_cpu_time_ns": 100,
+                "python_gc_collection_count": 1,
                 "rss_delta_bytes": 100,
                 "tracemalloc_peak_bytes": 1000,
                 "prompt_tokens_estimated": 5,
@@ -158,6 +160,8 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
             "artifact_path": "/tmp/run-2.json",
             "metrics": {
                 "wall_time_ms": 20,
+                "process_cpu_time_ns": 200,
+                "python_gc_collection_count": 3,
                 "rss_delta_bytes": 200,
                 "tracemalloc_peak_bytes": 1500,
                 "prompt_tokens_estimated": 7,
@@ -194,6 +198,8 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     assert local["count"] == 2
     assert local["wall_time_ms"]["median"] == 15
     assert local["wall_time_ns"]["count"] == 0
+    assert local["process_cpu_time_ns"]["median"] == 150
+    assert local["python_gc_collection_count"]["median"] == 2
     assert local["prompt_tokens_estimated"]["max"] == 7
     assert local["segment_family_metrics"][0]["segment_family"] == "replay_user"
     assert local["segment_family_metrics"][0]["prompt_bytes"] == 40
@@ -203,6 +209,64 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     assert local["measurement_identity"]["command"] == "local_status_fixture"
     assert local["warn_only"] is False
     assert summary["scenarios"]["provider_turn"]["warn_only"] is True
+
+
+def test_run_with_metrics_records_exact_cpu_and_gc_deltas(monkeypatch) -> None:
+    module = _load_module()
+    process_cpu_times = iter((100, 175))
+    gc_stats = iter(
+        (
+            [{"collections": 3}, {"collections": 2}],
+            [{"collections": 5}, {"collections": 4}],
+        )
+    )
+    perf_counter_times = iter((1_000, 1_125))
+    monkeypatch.setattr(module.time, "process_time_ns", lambda: next(process_cpu_times))
+    monkeypatch.setattr(module.gc, "get_stats", lambda: next(gc_stats))
+    monkeypatch.setattr(
+        module.time, "perf_counter_ns", lambda: next(perf_counter_times)
+    )
+
+    run = module._run_with_metrics(
+        scenario_id="metric_delta_test",
+        command="metric_delta_fixture",
+        provider_variance_class=module.LOCAL_VARIANCE,
+        action=lambda _metrics: [],
+    )
+
+    assert run.metrics["wall_time_ns"] == 125
+    assert run.metrics["process_cpu_time_ns"] == 75
+    assert run.metrics["python_gc_collection_count"] == 4
+
+
+def test_failed_subprocess_keeps_cpu_and_gc_unavailable() -> None:
+    module = _load_module()
+
+    def fail_before_sampling(_metrics):
+        raise RuntimeError("child failed")
+
+    run = module._run_with_metrics(
+        scenario_id="failed_subprocess_test",
+        command="failed_subprocess_fixture",
+        provider_variance_class=module.LOCAL_VARIANCE,
+        measurement_identity=module._measurement_identity(
+            scenario_id="failed_subprocess_test",
+            command="failed_subprocess_fixture",
+            measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision="test",
+        ),
+        action=fail_before_sampling,
+    )
+
+    assert run.ok is False
+    assert run.metrics["process_cpu_time_ns"] is None
+    assert run.metrics["python_gc_collection_count"] is None
+    assert run.metrics["availability_reasons"]["process_cpu_time_ns"] == (
+        "not_supported_for_subprocess"
+    )
+    assert run.metrics["availability_reasons"]["python_gc_collection_count"] == (
+        "not_supported_for_subprocess"
+    )
 
 
 def test_canonical_help_command_uses_root_help_and_explicit_data_root(
@@ -636,6 +700,8 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     for key in (
         "wall_time_ms",
         "wall_time_ns",
+        "process_cpu_time_ns",
+        "python_gc_collection_count",
         "rss_start_bytes",
         "rss_end_bytes",
         "rss_delta_bytes",
@@ -668,6 +734,8 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
         assert key in run.metrics
     assert run.metrics["tool_call_count"] == 1
     assert run.metrics["wall_time_ns"] >= 0
+    assert run.metrics["process_cpu_time_ns"] >= 0
+    assert run.metrics["python_gc_collection_count"] >= 0
     assert run.metrics["measurement_resolution"] == "perf_counter_ns"
     assert "local_status_collect_ns" in run.metrics["phase_timings_ns"]
     assert run.metrics["rss_end_bytes"] == run.metrics["current_rss_bytes"]
@@ -804,6 +872,14 @@ def test_focus_startup_samples_the_subprocess(tmp_path: Path) -> None:
     assert run.metrics["tracemalloc_current_bytes"] is None
     assert run.metrics["harness_tracemalloc_current_bytes"] > 0
     assert run.metrics["availability_reasons"]["tracemalloc_current_bytes"] == (
+        "not_supported_for_subprocess"
+    )
+    assert run.metrics["process_cpu_time_ns"] is None
+    assert run.metrics["python_gc_collection_count"] is None
+    assert run.metrics["availability_reasons"]["process_cpu_time_ns"] == (
+        "not_supported_for_subprocess"
+    )
+    assert run.metrics["availability_reasons"]["python_gc_collection_count"] == (
         "not_supported_for_subprocess"
     )
 
