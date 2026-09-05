@@ -853,9 +853,7 @@ def _overall_check_result(
         return "success" if observed_results else combined_result
 
     expected_results = [
-        _check_run_result(run)
-        for run in check_runs
-        if run["name"] in expected_checks
+        _check_run_result(run) for run in check_runs if run["name"] in expected_checks
     ]
     if "failure" in expected_results or combined_result == "failure":
         return "failure"

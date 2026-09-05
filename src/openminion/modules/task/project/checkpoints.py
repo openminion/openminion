@@ -119,9 +119,7 @@ def advance_repository_lifecycle_payload(
         return {}
 
     lifecycle = dict(raw_lifecycle)
-    evidence = dict(
-        cast(dict[str, object], lifecycle[project_run.evidence_ledger_ref])
-    )
+    evidence = dict(cast(dict[str, object], lifecycle[project_run.evidence_ledger_ref]))
     existing_receipts = cast(list[object], evidence["receipts"])
     receipt_refs = (
         *existing_receipts,
@@ -138,9 +136,7 @@ def advance_repository_lifecycle_payload(
     )[-REPOSITORY_LIFECYCLE_RECEIPT_LIMIT:]
 
     resume = dict(cast(dict[str, object], lifecycle[project_run.resume_packet_ref]))
-    current_revisions = dict(
-        cast(dict[str, object], resume["current_revisions"])
-    )
+    current_revisions = dict(cast(dict[str, object], resume["current_revisions"]))
     if turn.task_plan_revision is not None:
         current_revisions["task_plan"] = _bounded_repository_text(
             turn.task_plan_revision.revision_id
