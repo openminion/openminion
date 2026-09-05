@@ -189,13 +189,13 @@ def register_tool(registry: "ToolRegistry", tool: Any) -> None:
             "INVALID_ARGUMENT",
             "Tool name cannot be empty",
         )
+    if key in registry._tools:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT",
+            f"Tool already registered: {key}",
+            {"tool": key},
+        )
     if isinstance(tool, ToolSpec):
-        if tool.name in registry._tools:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT",
-                f"Tool already registered: {tool.name}",
-                {"tool": tool.name},
-            )
         tool.handler = _wrap_runtime_handler(tool.handler)
     registry._tools[key] = tool
     index_tool_category(registry, key, tool)

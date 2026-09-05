@@ -102,6 +102,22 @@ class _WeatherCurrentTool(Tool):
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_register_rejects_duplicate_tool_without_mutation(self) -> None:
+        original = _PolicyTool()
+        registry = ToolRegistry([original])
+        categories_before = {
+            name: set(tool_names)
+            for name, tool_names in registry._category_index.items()
+        }
+
+        with self.assertRaises(ToolRuntimeError) as context:
+            registry.register(_PolicyTool())
+
+        self.assertEqual(context.exception.code, "INVALID_ARGUMENT")
+        self.assertEqual(context.exception.details, {"tool": "policy_tool"})
+        self.assertIs(registry.get("policy_tool"), original)
+        self.assertEqual(registry._category_index, categories_before)
+
     def test_sidecar_autostart_requires_runtime_binding(self) -> None:
         registry = ToolRegistry()
 

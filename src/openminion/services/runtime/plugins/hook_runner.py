@@ -1,11 +1,26 @@
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
+from functools import partial
 
 from openminion.base.types import AgentResponse, Message
 from openminion.services.runtime.plugins.hooks import Plugin, PluginContext
+from openminion.services.runtime.plugins.metadata import plugin_label
 
 HOOK_MODE_MUTATING = "mutating"
 HOOK_MODE_SIDE_EFFECT = "side_effect"
+_MUTATING_MODES = frozenset({"", "mutating", "sequential"})
+_SIDE_EFFECT_MODES = frozenset(
+    {
+        "side_effect",
+        "sideeffect",
+        "parallel",
+        "read_only",
+        "readonly",
+        "observe",
+        "observational",
+    }
+)
 
 
 class PluginHookRunner:
@@ -18,12 +33,9 @@ class PluginHookRunner:
         message: Message,
         context: PluginContext,
     ) -> Message:
-        mutating_plugins, side_effect_plugins = self._partition_plugins(
-            plugins, inbound=True, context=context
-        )
-
+        mutating, side_effects = self._partition(plugins, inbound=True, context=context)
         current = message
-        for plugin in mutating_plugins:
+        for plugin in mutating:
             try:
                 current = plugin.on_message(current, context)
             except Exception:
@@ -32,7 +44,11 @@ class PluginHookRunner:
                     plugin_label(plugin),
                 )
 
-        self._run_side_effect_inbound(side_effect_plugins, current, context)
+        jobs = (
+            (plugin, partial(plugin.on_message, _copy_message(current), context))
+            for plugin in side_effects
+        )
+        self._run_side_effects(jobs, direction="inbound", context=context)
         return current
 
     def run_outbound(
@@ -42,12 +58,11 @@ class PluginHookRunner:
         message: Message,
         context: PluginContext,
     ) -> AgentResponse:
-        mutating_plugins, side_effect_plugins = self._partition_plugins(
+        mutating, side_effects = self._partition(
             plugins, inbound=False, context=context
         )
-
         current = response
-        for plugin in mutating_plugins:
+        for plugin in mutating:
             try:
                 current = plugin.on_response(current, message, context)
             except Exception:
@@ -56,139 +71,90 @@ class PluginHookRunner:
                     plugin_label(plugin),
                 )
 
-        self._run_side_effect_outbound(side_effect_plugins, current, message, context)
+        jobs = (
+            (
+                plugin,
+                partial(
+                    plugin.on_response,
+                    _copy_response(current),
+                    _copy_message(message),
+                    context,
+                ),
+            )
+            for plugin in side_effects
+        )
+        self._run_side_effects(jobs, direction="outbound", context=context)
         return current
 
-    def _partition_plugins(
+    def _partition(
         self,
         plugins: Iterable[Plugin],
         *,
         inbound: bool,
         context: PluginContext,
     ) -> tuple[list[Plugin], list[Plugin]]:
-        mutating_plugins: list[Plugin] = []
-        side_effect_plugins: list[Plugin] = []
+        mutating: list[Plugin] = []
+        side_effects: list[Plugin] = []
         for plugin in plugins:
-            mode = _resolve_hook_mode(plugin=plugin, inbound=inbound, context=context)
-            if mode == HOOK_MODE_SIDE_EFFECT:
-                side_effect_plugins.append(plugin)
-            else:
-                mutating_plugins.append(plugin)
-        return mutating_plugins, side_effect_plugins
+            target = (
+                side_effects
+                if _hook_mode(plugin, inbound=inbound, context=context)
+                == HOOK_MODE_SIDE_EFFECT
+                else mutating
+            )
+            target.append(plugin)
+        return mutating, side_effects
 
-    def _run_side_effect_inbound(
+    def _run_side_effects(
         self,
-        plugins: list[Plugin],
-        message: Message,
+        jobs: Iterable[tuple[Plugin, Callable[[], object]]],
+        *,
+        direction: str,
         context: PluginContext,
     ) -> None:
-        if not plugins:
+        hook_jobs = list(jobs)
+        if not hook_jobs:
             return
-
-        max_workers = min(self._max_parallel_workers, len(plugins))
         with ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="openminion-plugin"
+            max_workers=min(self._max_parallel_workers, len(hook_jobs)),
+            thread_name_prefix="openminion-plugin",
         ) as executor:
-            futures: dict[Future[Message], Plugin] = {}
-            for plugin in plugins:
-                snapshot = _clone_message(message)
-                future = executor.submit(plugin.on_message, snapshot, context)
-                futures[future] = plugin
-
+            futures = {executor.submit(call): plugin for plugin, call in hook_jobs}
             for future in as_completed(futures):
+                plugin = futures[future]
                 try:
                     future.result()
                 except Exception:
                     context.logger.exception(
-                        "plugin inbound side-effect hook failed plugin=%s",
-                        plugin_label(futures[future]),
-                    )
-
-    def _run_side_effect_outbound(
-        self,
-        plugins: list[Plugin],
-        response: AgentResponse,
-        message: Message,
-        context: PluginContext,
-    ) -> None:
-        if not plugins:
-            return
-
-        max_workers = min(self._max_parallel_workers, len(plugins))
-        with ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="openminion-plugin"
-        ) as executor:
-            futures: dict[Future[AgentResponse], Plugin] = {}
-            for plugin in plugins:
-                response_snapshot = _clone_response(response)
-                message_snapshot = _clone_message(message)
-                future = executor.submit(
-                    plugin.on_response, response_snapshot, message_snapshot, context
-                )
-                futures[future] = plugin
-
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception:
-                    context.logger.exception(
-                        "plugin outbound side-effect hook failed plugin=%s",
-                        plugin_label(futures[future]),
+                        "plugin %s side-effect hook failed plugin=%s",
+                        direction,
+                        plugin_label(plugin),
                     )
 
 
-def _resolve_hook_mode(plugin: Plugin, *, inbound: bool, context: PluginContext) -> str:
-    raw_mode = (
+def _hook_mode(plugin: Plugin, *, inbound: bool, context: PluginContext) -> str:
+    raw = (
         getattr(plugin, "inbound_hook_mode", None)
         if inbound
         else getattr(plugin, "outbound_hook_mode", None)
     )
-    normalized = str(raw_mode or "").strip().lower().replace("-", "_")
-
-    if normalized in {"", "mutating", "sequential"}:
+    normalized = str(raw or "").strip().lower().replace("-", "_")
+    if normalized in _MUTATING_MODES:
         return HOOK_MODE_MUTATING
-    if normalized in {
-        "side_effect",
-        "sideeffect",
-        "parallel",
-        "read_only",
-        "readonly",
-        "observe",
-        "observational",
-    }:
+    if normalized in _SIDE_EFFECT_MODES:
         return HOOK_MODE_SIDE_EFFECT
-
     context.logger.warning(
         "plugin hook mode is invalid; defaulting to mutating plugin=%s mode=%s direction=%s",
         plugin_label(plugin),
-        str(raw_mode),
+        str(raw),
         "inbound" if inbound else "outbound",
     )
     return HOOK_MODE_MUTATING
 
 
-def plugin_label(plugin: Plugin) -> str:
-    name = str(getattr(plugin, "name", "")).strip()
-    if name:
-        return name
-    return plugin.__class__.__name__
+def _copy_message(message: Message) -> Message:
+    return replace(message, metadata=dict(message.metadata))
 
 
-def _clone_message(message: Message) -> Message:
-    return Message(
-        channel=message.channel,
-        target=message.target,
-        body=message.body,
-        metadata=dict(message.metadata),
-        id=message.id,
-        timestamp=message.timestamp,
-    )
-
-
-def _clone_response(response: AgentResponse) -> AgentResponse:
-    return AgentResponse(
-        text=response.text,
-        channel=response.channel,
-        target=response.target,
-        metadata=dict(response.metadata),
-    )
+def _copy_response(response: AgentResponse) -> AgentResponse:
+    return replace(response, metadata=dict(response.metadata))

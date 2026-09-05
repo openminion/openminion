@@ -4056,7 +4056,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertIn("missing_tool", res["error"]["message"])
         self.assertIn("latency_ms", res["metrics"])
 
-    def test_tool_adapter_fallback_when_optional_modules_missing(self) -> None:
+    def test_tool_adapter_propagates_canonical_bootstrap_failure(self) -> None:
         from unittest.mock import patch
         from openminion.modules.brain.adapters.tool import ToolAdapter
 
@@ -4067,23 +4067,14 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                     "Module-only runtime requires openminion-tool-search-tavily. Module import failed"
                 )
 
-            with patch(
-                "openminion.modules.tool.build_default_tool_registry",
-                side_effect=failing_build_default_tool_registry,
+            with (
+                patch(
+                    "openminion.modules.tool.build_default_tool_registry",
+                    side_effect=failing_build_default_tool_registry,
+                ),
+                self.assertRaisesRegex(RuntimeError, "requires openminion-tool-search"),
             ):
-                adapter = ToolAdapter(workspace_root=Path(tmp))
-
-                self.assertIsNotNone(adapter.registry)
-
-                res = adapter.execute(
-                    command={"tool_name": "unknown_test_tool", "args": {}},
-                    session_id="s1",
-                    trace_id="t1",
-                )
-
-                self.assertIn("status", res)
-                self.assertIn("error", res)
-                self.assertEqual(res["status"], "error")
+                ToolAdapter(workspace_root=Path(tmp))
 
     def test_tool_adapter_accepts_specs_without_args_model(self) -> None:
         from types import SimpleNamespace
