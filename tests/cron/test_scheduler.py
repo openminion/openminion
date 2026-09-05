@@ -311,14 +311,21 @@ def test_best_effort_delivery_errors_do_not_fail_run() -> None:
     store = FakeCronStore()
     store.add_job(
         job_id="job-best-effort",
-        payload={"kind": "agentTurn", "message": "task"},
+        payload={
+            "kind": "agentTurn",
+            "message": "task",
+            "_openminion_watch": {"description": "watch"},
+        },
         delivery={"mode": "announce", "best_effort": True},
     )
     store.seed_due("job-best-effort")
 
-    def _exec_agent(job: dict, run: dict) -> str:  # noqa: ANN001
+    def _exec_agent(job: dict, run: dict) -> dict:  # noqa: ANN001
         del job, run
-        return "ok"
+        return {
+            "summary": "Condition met; monitoring continues.",
+            "output": {"watch_delivery_requested": True, "watch_terminal": False},
+        }
 
     scheduler = CronScheduler(
         store=store,
@@ -337,6 +344,7 @@ def test_best_effort_delivery_errors_do_not_fail_run() -> None:
 
     run = next(iter(store.runs.values()))
     assert run["state"] == "finished"
+    assert store.deleted_job_ids == []
 
 
 def test_scheduler_skips_watch_delivery_until_requested() -> None:

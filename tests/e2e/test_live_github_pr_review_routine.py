@@ -16,10 +16,7 @@ from openminion.tools.task.routine.schemas import (
     GitHubPrReviewConfigV1,
     RoutinePayloadV1,
 )
-from openminion.services.runtime.routine_context import (
-    CronRunRoutineSink,
-    ToolRegistryPreTurnContext,
-)
+from openminion.services.runtime.routine_context import ToolRegistryPreTurnContext
 
 pytestmark = pytest.mark.e2e
 
@@ -110,17 +107,14 @@ def test_brpr_09_live_github_provider_routine_smoke() -> None:
                 }
             )
         )
-        sink = CronRunRoutineSink()
         result = handler.post_turn(
             routine=routine,
             routine_id="brpr-09-live",
             facts=facts,
             outcome_text=outcome_text,
-            sink=sink,
         )
         assert result.ok is True
-        assert result.artifact_id
-        assert sink.artifact_body
+        assert result.artifact_body
         assert (
             result.updated_routine.cursor.last_review_per_pr[str(first.number)].head_sha
             == first.head_sha

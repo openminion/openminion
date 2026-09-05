@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.services.runtime.routine_context import (
     ToolRegistryPreTurnContext,
 )
@@ -107,6 +107,35 @@ def test_canonical_path_validates_arguments(
     assert recording_provider.received_ctx == "<not-called>"
 
 
+def test_canonical_path_exposes_tool_error_details_without_extra_nesting() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="test.rate_limited",
+            args_model=dict,
+            min_scope="READ_ONLY",
+            handler=lambda _args, _ctx: {
+                "ok": False,
+                "error": {
+                    "code": "RATE_LIMITED",
+                    "message": "try later",
+                    "details": {"next_eligible_at": "2099-01-01T00:00:00Z"},
+                },
+            },
+        )
+    )
+
+    result = ToolRegistryPreTurnContext(registry=registry).invoke_tool(
+        name="test.rate_limited", args={}
+    )
+
+    assert result["error"] == {
+        "code": "RATE_LIMITED",
+        "message": "try later",
+        "details": {"next_eligible_at": "2099-01-01T00:00:00Z"},
+    }
+
+
 def test_canonical_path_handles_unregistered_tool_deterministically(
     registry: ToolRegistry,
 ) -> None:
@@ -115,3 +144,53 @@ def test_canonical_path_handles_unregistered_tool_deterministically(
     assert result["ok"] is False
     assert result["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
     assert result["error"]["details"]["reason_code"] == "tool_not_registered"
+
+
+def test_routine_pre_turn_enforces_its_exact_tool_allowlist(
+    registry: ToolRegistry,
+) -> None:
+    ctx = ToolRegistryPreTurnContext(
+        registry=registry,
+        allowed_tools=("fetch.get",),
+    )
+
+    result = ctx.invoke_tool(
+        name=TOOL_GITHUB_LIST_PRS,
+        args={"owner": "octocat", "repo": "hello-world"},
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "POLICY_DENIED"
+    assert result["error"]["details"]["reason_code"] == "routine_tool_not_allowed"
+
+
+def test_routine_provider_check_requires_exact_no_fallback_configuration(
+    registry: ToolRegistry,
+) -> None:
+    metadata = {
+        "runtime_tools": {
+            "search": {
+                "enabled_providers": ["brave"],
+                "default_provider": "brave",
+                "allow_fallback": False,
+            }
+        }
+    }
+    exact = ToolRegistryPreTurnContext(registry=registry, metadata=metadata)
+    fallback = ToolRegistryPreTurnContext(
+        registry=registry,
+        metadata={
+            "runtime_tools": {
+                "search": {
+                    **metadata["runtime_tools"]["search"],
+                    "allow_fallback": True,
+                }
+            }
+        },
+    )
+
+    assert exact.exact_provider_enabled(family="search", provider_id="brave") is True
+    assert exact.exact_provider_enabled(family="search", provider_id="tavily") is False
+    assert (
+        fallback.exact_provider_enabled(family="search", provider_id="brave") is False
+    )

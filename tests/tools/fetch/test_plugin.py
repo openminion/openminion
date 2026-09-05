@@ -142,6 +142,17 @@ class _FakeProvider:
         }
 
 
+class _ValidatorProvider(_FakeProvider):
+    def fetch(self, request: dict[str, Any], _ctx: Any) -> dict[str, Any]:
+        payload = super().fetch(request, _ctx)
+        payload["headers"] = {
+            "etag": '"v1"',
+            "last-modified": "Fri, 05 Sep 2026 12:00:00 GMT",
+            "set-cookie": "secret=1",
+        }
+        return payload
+
+
 class _FakeScraplingProvider(_FakeProvider):
     name = "scrapling"
 
@@ -165,6 +176,11 @@ class _FakeRegistry:
 
     def list(self) -> list[Any]:
         return [self._provider]
+
+
+class _ValidatorRegistry(_FakeRegistry):
+    def __init__(self) -> None:
+        self._provider = _ValidatorProvider()
 
 
 class _FakeRegistryWithScrapling(_FakeRegistry):
@@ -318,6 +334,20 @@ def test_get_and_head_use_provider_dispatch(monkeypatch) -> None:
     assert head_payload["data"]["backend"] == "core-http"
     assert "artifacts" in get_payload["data"]
     assert "raw_body" in get_payload["data"]["artifacts"]
+
+
+def test_get_exposes_validators_without_arbitrary_headers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "openminion.tools.fetch.plugin._ensure_provider_registry",
+        lambda: _ValidatorRegistry(),
+    )
+    payload = _h_get({"url": "https://example.com/feed"}, None)
+    data = payload["data"]
+    assert data["validators"] == {
+        "etag": '"v1"',
+        "last_modified": "Fri, 05 Sep 2026 12:00:00 GMT",
+    }
+    assert "set-cookie" not in json.dumps(data)
 
 
 def test_get_returns_backend_not_available_when_explicit_backend_missing(

@@ -2,9 +2,9 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from openminion.tools.github.interfaces import TOOL_GITHUB_LIST_PRS
 from openminion.tools.task.constants import WATCH_PAYLOAD_KEY
@@ -23,6 +23,7 @@ from openminion.tools.task.pr_review.schemas import (
 )
 from openminion.tools.task.routine.schemas import (
     ROUTINE_KIND_GITHUB_PR_REVIEW,
+    GitHubPrReviewConfigV1,
     GitHubPrReviewCursorV1,
     RoutinePayloadV1,
 )
@@ -33,11 +34,7 @@ class PreTurnContext(Protocol):
         self, *, name: str, args: Mapping[str, Any]
     ) -> Mapping[str, Any]: ...
 
-
-class PostTurnSink(Protocol):
-    def write_artifact(self, *, routine_id: str, body: str) -> str: ...
-
-    def announce(self, *, routine_id: str, summary: str) -> None: ...
+    def exact_provider_enabled(self, *, family: str, provider_id: str) -> bool: ...
 
 
 _TRAILER_RE = re.compile(
@@ -83,41 +80,96 @@ def parse_routine_outcome_trailer(text: str) -> TrailerParseResult:
 
 class RoutineHandler(Protocol):
     routine_kind: str
+    model_turn_tools: tuple[str, ...]
+    finalizer_watch_overrides: Mapping[str, Any]
+
+    def pre_turn_tools_for(self, routine: RoutinePayloadV1) -> tuple[str, ...]: ...
 
     def pre_turn(
         self,
         *,
-        routine: RoutinePayloadV1,
+        routine: Any,
         routine_id: str,
         ctx: PreTurnContext,
-    ) -> PrFactsPayloadV1: ...
+    ) -> Any: ...
+
+    def render_turn(self, *, check_instruction: str, facts: Any) -> str: ...
 
     def post_turn(
         self,
         *,
-        routine: RoutinePayloadV1,
+        routine: Any,
         routine_id: str,
-        facts: PrFactsPayloadV1,
+        facts: Any,
         outcome_text: str,
-        sink: PostTurnSink,
     ) -> "PostTurnResult": ...
 
 
 @dataclass(slots=True, kw_only=True)
 class PostTurnResult:
     ok: bool
+    condition_value: bool | None = None
     reason_code: str | None = None
     detail: str = ""
-    artifact_id: str | None = None
     summary_line: str = ""
-    kept_count: int = 0
-    dropped_count: int = 0
-    new_findings_count: int = 0
+    limitations: tuple[str, ...] = ()
+    artifact_body: str | None = None
+    artifact_mime: str = "text/markdown"
     updated_routine: RoutinePayloadV1 | None = None
+    metadata: dict[str, Any] | None = None
+
+
+def build_routine_run_result(
+    *,
+    routine_kind: str,
+    post: PostTurnResult,
+    artifact_id: str,
+    isolated_session_id: Any,
+) -> dict[str, Any]:
+    summary_parts = [f"routine={routine_kind}"]
+    if not post.ok:
+        summary_parts.append(f"error_code={post.reason_code or 'unknown'}")
+    elif not artifact_id:
+        summary_parts.append("no-op")
+    else:
+        summary_parts.append(f"artifact={artifact_id}")
+    return {
+        "summary": post.summary_line or " | ".join(summary_parts),
+        "isolated_session_id": isolated_session_id,
+        "artifact_refs": (
+            [{"ref": artifact_id, "role": "output"}] if artifact_id else []
+        ),
+        "metadata": {
+            "routine_kind": routine_kind,
+            "routine_ok": post.ok,
+            "routine_reason_code": post.reason_code or "",
+            "routine_artifact_id": artifact_id,
+            "routine_limitations": list(post.limitations),
+            **dict(post.metadata or {}),
+        },
+    }
 
 
 class GitHubPrReviewHandler:
-    routine_kind = ROUTINE_KIND_GITHUB_PR_REVIEW
+    routine_kind: str = ROUTINE_KIND_GITHUB_PR_REVIEW
+    model_turn_tools: tuple[str, ...] = (
+        "file.read",
+        "file.list_dir",
+        "file.find",
+        "web.fetch",
+        "web.search",
+        "exec.run",
+        "time",
+    )
+    finalizer_watch_overrides: Mapping[str, Any] = {
+        "stop_on_condition": False,
+        "deliver_resolution": False,
+        "delivery_cooldown_minutes": 0,
+    }
+
+    def pre_turn_tools_for(self, routine: RoutinePayloadV1) -> tuple[str, ...]:
+        del routine
+        return (TOOL_GITHUB_LIST_PRS,)
 
     def pre_turn(
         self,
@@ -126,7 +178,8 @@ class GitHubPrReviewHandler:
         routine_id: str,
         ctx: PreTurnContext,
     ) -> PrFactsPayloadV1:
-        cfg = routine.config
+        cfg = cast(GitHubPrReviewConfigV1, routine.config)
+        cursor = cast(GitHubPrReviewCursorV1, routine.cursor)
         result = ctx.invoke_tool(
             name=TOOL_GITHUB_LIST_PRS,
             args={
@@ -140,7 +193,7 @@ class GitHubPrReviewHandler:
                 routine_id=routine_id,
                 repo=f"{cfg.owner}/{cfg.repo}",
                 open_prs_raw=[],
-                cursor=routine.cursor,
+                cursor=cursor,
             )
         data = result.get("data") or {}
         raw_list = data.get("open_prs") if isinstance(data, Mapping) else []
@@ -150,7 +203,23 @@ class GitHubPrReviewHandler:
             routine_id=routine_id,
             repo=f"{cfg.owner}/{cfg.repo}",
             open_prs_raw=raw_list,
-            cursor=routine.cursor,
+            cursor=cursor,
+        )
+
+    def render_turn(self, *, check_instruction: str, facts: BaseModel) -> str:
+        instruction = check_instruction or "Review the supplied PR facts."
+        return (
+            f"{instruction}\n\n"
+            "PR facts (typed, read-only):\n"
+            f"{facts.model_dump_json()}\n\n"
+            "Emit exactly one trailer block of the form:\n"
+            "<routine_outcome>{...}</routine_outcome>\n"
+            "where the JSON conforms to ReviewOutcomePayloadV1: "
+            '{ "reviewed_prs": [ ... ], "skipped_prs": [ ... ] }. '
+            "For each reviewed PR, set head_sha_reviewed to the head_sha "
+            "supplied in the facts. The runtime drops entries whose "
+            "head_sha_reviewed does not match. Free prose outside the "
+            "trailer is recorded but not actionable."
         )
 
     def post_turn(
@@ -158,45 +227,54 @@ class GitHubPrReviewHandler:
         *,
         routine: RoutinePayloadV1,
         routine_id: str,
-        facts: PrFactsPayloadV1,
+        facts: BaseModel,
         outcome_text: str,
-        sink: PostTurnSink,
     ) -> PostTurnResult:
+        typed_facts = cast(PrFactsPayloadV1, facts)
         parse = parse_routine_outcome_trailer(outcome_text)
         if parse.outcome is None:
-            return _post_turn_parse_failure(routine, facts=facts, parse=parse)
+            return _post_turn_parse_failure(routine, facts=typed_facts, parse=parse)
 
-        kept, dropped = validate_review_outcome(parse.outcome, facts=facts)
+        kept, dropped = validate_review_outcome(parse.outcome, facts=typed_facts)
         if not kept and not dropped and not parse.outcome.skipped_prs:
-            return _post_turn_empty_success(routine, facts=facts)
+            return _post_turn_empty_success(routine, facts=typed_facts)
 
         deduped, fresh_hashes, fresh_count = _dedupe_review_entries(routine, kept)
         if not deduped and not parse.outcome.skipped_prs:
             return _post_turn_empty_success(
-                routine, facts=facts, dropped_count=len(dropped)
+                routine, facts=typed_facts, dropped_count=len(dropped)
             )
 
         outcome_after_dedupe = parse.outcome.model_copy(
             update={"reviewed_prs": deduped}
         )
-        artifact_id, summary_line = _write_review_artifact(
-            routine_id=routine_id, facts=facts, outcome=outcome_after_dedupe, sink=sink
+        artifact_body = render_artifact_markdown(
+            routine_id=routine_id,
+            repo=typed_facts.repo,
+            checked_at=typed_facts.checked_at,
+            outcome=outcome_after_dedupe,
+        )
+        summary_line = render_announce_summary(
+            repo=typed_facts.repo, outcome=outcome_after_dedupe
         )
         updated = _advance_cursor(
             routine,
-            checked_at=facts.checked_at,
-            facts=facts,
+            checked_at=typed_facts.checked_at,
+            facts=typed_facts,
             kept=deduped,
             new_finding_hashes_per_pr=fresh_hashes,
         )
         return PostTurnResult(
             ok=True,
-            artifact_id=artifact_id,
+            condition_value=True,
             summary_line=summary_line,
-            kept_count=len(deduped),
-            dropped_count=len(dropped),
-            new_findings_count=fresh_count,
+            artifact_body=artifact_body,
             updated_routine=updated,
+            metadata={
+                "kept_count": len(deduped),
+                "dropped_count": len(dropped),
+                "new_findings_count": fresh_count,
+            },
         )
 
 
@@ -222,10 +300,8 @@ def _post_turn_empty_success(
 ) -> PostTurnResult:
     return PostTurnResult(
         ok=True,
+        condition_value=False,
         summary_line="",
-        kept_count=0,
-        dropped_count=dropped_count,
-        new_findings_count=0,
         updated_routine=_advance_cursor(
             routine,
             checked_at=facts.checked_at,
@@ -233,13 +309,19 @@ def _post_turn_empty_success(
             kept=[],
             new_finding_hashes_per_pr={},
         ),
+        metadata={
+            "kept_count": 0,
+            "dropped_count": dropped_count,
+            "new_findings_count": 0,
+        },
     )
 
 
 def _dedupe_review_entries(
     routine: RoutinePayloadV1, kept: list[ReviewedPrV1]
 ) -> tuple[list[ReviewedPrV1], dict[str, list[str]], int]:
-    delivered = dict(routine.cursor.delivered_findings_hashes)
+    cursor = cast(GitHubPrReviewCursorV1, routine.cursor)
+    delivered = dict(cursor.delivered_findings_hashes)
     deduped: list[ReviewedPrV1] = []
     fresh_hashes_per_pr: dict[str, list[str]] = {}
     fresh_total = 0
@@ -273,32 +355,14 @@ def _fresh_findings_for_entry(
     return fresh_findings, fresh_hashes
 
 
-def _write_review_artifact(
-    *,
-    routine_id: str,
-    facts: PrFactsPayloadV1,
-    outcome: ReviewOutcomePayloadV1,
-    sink: PostTurnSink,
-) -> tuple[str, str]:
-    body = render_artifact_markdown(
-        routine_id=routine_id,
-        repo=facts.repo,
-        checked_at=facts.checked_at,
-        outcome=outcome,
-    )
-    artifact_id = sink.write_artifact(routine_id=routine_id, body=body)
-    summary_line = render_announce_summary(repo=facts.repo, outcome=outcome)
-    sink.announce(routine_id=routine_id, summary=summary_line)
-    return artifact_id, summary_line
-
-
 def _bump_failure(
     routine: RoutinePayloadV1, *, last_check_iso: str
 ) -> RoutinePayloadV1:
-    cursor = routine.cursor.model_copy(
+    current = cast(GitHubPrReviewCursorV1, routine.cursor)
+    cursor = current.model_copy(
         update={
             "last_check_iso": last_check_iso,
-            "consecutive_failures": routine.cursor.consecutive_failures + 1,
+            "consecutive_failures": current.consecutive_failures + 1,
         }
     )
     return routine.model_copy(update={"cursor": cursor})
@@ -312,21 +376,22 @@ def _advance_cursor(
     kept: list[ReviewedPrV1],
     new_finding_hashes_per_pr: dict[str, list[str]],
 ) -> RoutinePayloadV1:
-    last_review_per_pr = dict(routine.cursor.last_review_per_pr)
+    current = cast(GitHubPrReviewCursorV1, routine.cursor)
+    last_review_per_pr = dict(current.last_review_per_pr)
     for entry in kept:
         last_review_per_pr[str(entry.number)] = {  # type: ignore[assignment]
             "head_sha": entry.head_sha_reviewed,
             "reviewed_at": checked_at,
         }
 
-    delivered = dict(routine.cursor.delivered_findings_hashes)
+    delivered = dict(current.delivered_findings_hashes)
     for pr_number, hashes in new_finding_hashes_per_pr.items():
         existing = list(delivered.get(pr_number, []))
         existing.extend(hashes)
         delivered[pr_number] = existing
 
     seen = sorted(
-        set(routine.cursor.seen_pr_numbers)
+        set(current.seen_pr_numbers)
         | {pr.number for pr in facts.open_prs}
         | set(facts.previously_seen_prs)
         | set(facts.newly_opened_prs)
@@ -353,7 +418,13 @@ class RoutineDispatcher:
         return self._handlers.get(routine_kind)
 
     def is_routine_payload(self, watch_payload: Mapping[str, Any] | None) -> bool:
-        return self._extract_routine(watch_payload) is not None
+        return self.has_routine_block(watch_payload)
+
+    def has_routine_block(self, watch_payload: Mapping[str, Any] | None) -> bool:
+        if not isinstance(watch_payload, Mapping):
+            return False
+        watch_block = watch_payload.get(WATCH_PAYLOAD_KEY)
+        return isinstance(watch_block, Mapping) and "routine" in watch_block
 
     def _extract_routine(
         self, watch_payload: Mapping[str, Any] | None
@@ -378,17 +449,20 @@ class RoutineDispatcher:
 
 
 def build_default_dispatcher() -> RoutineDispatcher:
+    from openminion.tools.task.routine.social import SocialSignalHandler
+
     dispatcher = RoutineDispatcher()
     dispatcher.register(GitHubPrReviewHandler())
+    dispatcher.register(SocialSignalHandler())
     return dispatcher
 
 
 __all__ = [
     "PreTurnContext",
-    "PostTurnSink",
     "PostTurnResult",
     "RoutineHandler",
     "RoutineDispatcher",
+    "build_routine_run_result",
     "GitHubPrReviewHandler",
     "TrailerParseResult",
     "parse_routine_outcome_trailer",

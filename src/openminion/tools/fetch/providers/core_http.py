@@ -7,9 +7,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
-from ..interfaces import FetchProviderProtocol, ProviderCapabilities, ProviderResult
+from ..interfaces import (
+    FetchProviderProtocol,
+    FetchRequest,
+    ProviderCapabilities,
+    ProviderResult,
+)
 from ..policy import (
     FetchPolicyError as _FetchPolicyError,
     enforce_url_policy as _shared_enforce_url_policy,
@@ -23,6 +30,12 @@ _SCRIPT_STYLE_RE = re.compile(
 )
 _TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", flags=re.IGNORECASE | re.DOTALL)
+_XML_CONTENT_TYPES = (
+    "application/atom+xml",
+    "application/rss+xml",
+    "application/xml",
+    "text/xml",
+)
 
 
 @dataclass
@@ -152,15 +165,68 @@ def _open_once(
     )
 
 
+def _rate_limit_details(headers: dict[str, str]) -> dict[str, str]:
+    retry_after = str(headers.get("retry-after", "") or "").strip()[:128]
+    reset = str(headers.get("x-ratelimit-reset", "") or "").strip()[:128]
+    details = {
+        key: value
+        for key, value in {"retry_after": retry_after, "reset": reset}.items()
+        if value
+    }
+    now = datetime.now(timezone.utc)
+    eligible: datetime | None = None
+    if retry_after.isdigit():
+        try:
+            eligible = now + timedelta(seconds=int(retry_after))
+        except (OverflowError, ValueError):
+            eligible = None
+    elif retry_after:
+        try:
+            eligible = parsedate_to_datetime(retry_after)
+        except (OverflowError, TypeError, ValueError):
+            eligible = None
+    if eligible is None and reset.isdigit():
+        try:
+            eligible = datetime.fromtimestamp(int(reset), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            eligible = None
+    if eligible is not None:
+        if eligible.tzinfo is None:
+            eligible = eligible.replace(tzinfo=timezone.utc)
+        details["next_eligible_at"] = eligible.isoformat().replace("+00:00", "Z")
+    return details
+
+
+def _raise_for_status(response: _FetchStep) -> None:
+    if response.status_code < 400:
+        return
+    details: dict[str, Any] = {
+        "status_code": response.status_code,
+        "url": response.final_url,
+    }
+    if response.status_code == 429:
+        details.update(_rate_limit_details(response.headers))
+    _fail(
+        "RATE_LIMITED" if response.status_code == 429 else "UPSTREAM_ERROR",
+        f"Upstream returned HTTP {response.status_code}",
+        details,
+    )
+
+
 class CoreHttpFetchProvider(FetchProviderProtocol):
     name = "core-http"
     capabilities: ProviderCapabilities = {
         "render": ["none"],
         "extract": ["none", "text", "auto"],
-        "formats": ["text/html", "text/plain", "application/json"],
+        "formats": [
+            "text/html",
+            "text/plain",
+            "application/json",
+            *_XML_CONTENT_TYPES,
+        ],
     }
 
-    def fetch(self, request: dict[str, Any], ctx: Any | None = None) -> ProviderResult:
+    def fetch(self, request: FetchRequest, ctx: Any | None = None) -> ProviderResult:
         started = time.time()
         try:
             requested_url = str(request.get("url", "")).strip()
@@ -196,7 +262,7 @@ class CoreHttpFetchProvider(FetchProviderProtocol):
             }:
                 headers["User-Agent"] = "OpenMinionFetch/1.0"
 
-            allow_private_hosts = _resolve_allow_private_hosts(request, ctx)
+            allow_private_hosts = _resolve_allow_private_hosts(dict(request), ctx)
 
             _enforce_url_policy(requested_url, allow_private_hosts=allow_private_hosts)
 
@@ -243,15 +309,7 @@ class CoreHttpFetchProvider(FetchProviderProtocol):
                     {"url": requested_url},
                 )
 
-            if response_step.status_code >= 400:
-                _fail(
-                    "UPSTREAM_ERROR",
-                    f"Upstream returned HTTP {response_step.status_code}",
-                    {
-                        "status_code": response_step.status_code,
-                        "url": response_step.final_url,
-                    },
-                )
+            _raise_for_status(response_step)
 
             content_type = str(response_step.headers.get("content-type", "")).strip()
             extracted_text = ""
@@ -278,6 +336,8 @@ class CoreHttpFetchProvider(FetchProviderProtocol):
                     )
                     if html_lang:
                         language = str(html_lang.group(1) or "").strip()
+                elif any(token in lowered_ct for token in _XML_CONTENT_TYPES):
+                    extracted_text = decoded
                 elif lowered_ct.startswith("text/") or not lowered_ct:
                     extracted_text = decoded
                 else:

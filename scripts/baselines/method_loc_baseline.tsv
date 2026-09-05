@@ -111,7 +111,7 @@ src/openminion/tools/exec/sessions.py	_prepare_exec_run	213	current over-thresho
 src/openminion/tools/exec/sessions.py	_start_exec_run_session	178	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/fetch/plugin.py	_invoke_fetch	231	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/fetch/plugin.py	_invoke_fetch._invoke	142	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/tools/fetch/providers/core_http.py	CoreHttpFetchProvider.fetch	152	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/tools/fetch/providers/core_http.py	CoreHttpFetchProvider.fetch	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/fetch/providers/firecrawl/provider.py	FirecrawlFetchProvider.fetch	177	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/fetch/providers/tinyfish/provider.py	TinyFishFetchProvider.fetch	165	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/weather/providers/openmeteo/plugin.py	_run_weather_lookup	235	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

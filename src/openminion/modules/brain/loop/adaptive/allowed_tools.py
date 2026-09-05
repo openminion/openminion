@@ -188,11 +188,9 @@ def _watch_profile_overrides(ctx: ExecutionContext) -> dict[str, Any] | None:
     if action_turn:
         allowed_tools = ACT_ADAPTIVE_ALLOWED_TOOLS
     elif isinstance(raw_allowed, list | tuple | set | frozenset):
-        normalized = frozenset(
+        allowed_tools = frozenset(
             str(item or "").strip() for item in raw_allowed if str(item or "").strip()
         )
-        if normalized:
-            allowed_tools = normalized
     return {
         "turn_kind": turn_kind,
         "allowed_tools": allowed_tools,

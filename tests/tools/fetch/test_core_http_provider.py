@@ -73,6 +73,104 @@ def test_provider_extracts_html_text_and_title(monkeypatch) -> None:
     assert "Hello" in payload["extracted_text"]
 
 
+def test_provider_returns_bounded_xml_as_text(monkeypatch) -> None:
+    provider = CoreHttpFetchProvider()
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._enforce_url_policy",
+        lambda url, allow_private_hosts=False: object(),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._open_once",
+        lambda **kwargs: _FetchStep(
+            status_code=200,
+            final_url=str(kwargs["url"]),
+            headers={"content-type": "application/atom+xml", "etag": '"v1"'},
+            body=b"<feed><entry><id>1</id></entry></feed>",
+        ),
+    )
+
+    payload = provider.fetch({"url": "https://example.com/feed", "method": "GET"})
+    assert payload["ok"] is True
+    assert payload["extracted_text"].startswith("<feed>")
+    assert "UNSUPPORTED_CONTENT_TYPE" not in payload["warnings"]
+
+
+def test_provider_exposes_only_safe_rate_limit_facts(monkeypatch) -> None:
+    provider = CoreHttpFetchProvider()
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._enforce_url_policy",
+        lambda url, allow_private_hosts=False: object(),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._open_once",
+        lambda **kwargs: _FetchStep(
+            status_code=429,
+            final_url=str(kwargs["url"]),
+            headers={
+                "content-type": "text/plain",
+                "retry-after": "120",
+                "authorization": "secret",
+            },
+            body=b"",
+        ),
+    )
+
+    payload = provider.fetch({"url": "https://example.com/feed", "method": "GET"})
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "RATE_LIMITED"
+    details = payload["error"]["details"]
+    assert details["retry_after"] == "120"
+    assert "next_eligible_at" in details
+    assert "authorization" not in details
+
+
+def test_provider_normalizes_impractically_large_rate_limit_values(monkeypatch) -> None:
+    provider = CoreHttpFetchProvider()
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._enforce_url_policy",
+        lambda url, allow_private_hosts=False: object(),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._open_once",
+        lambda **kwargs: _FetchStep(
+            status_code=429,
+            final_url=str(kwargs["url"]),
+            headers={"retry-after": "9" * 5_000},
+            body=b"",
+        ),
+    )
+
+    payload = provider.fetch({"url": "https://example.com/feed", "method": "GET"})
+
+    assert payload["error"]["code"] == "RATE_LIMITED"
+    assert len(payload["error"]["details"]["retry_after"]) == 128
+    assert "next_eligible_at" not in payload["error"]["details"]
+
+
+def test_provider_normalizes_overflowing_rate_limit_date(monkeypatch) -> None:
+    provider = CoreHttpFetchProvider()
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._enforce_url_policy",
+        lambda url, allow_private_hosts=False: object(),
+    )
+    monkeypatch.setattr(
+        "openminion.tools.fetch.providers.core_http._open_once",
+        lambda **kwargs: _FetchStep(
+            status_code=429,
+            final_url=str(kwargs["url"]),
+            headers={
+                "retry-after": "Mon, 01 Jan 999999999999999999999 00:00:00 GMT"
+            },
+            body=b"",
+        ),
+    )
+
+    payload = provider.fetch({"url": "https://example.com/feed", "method": "GET"})
+
+    assert payload["error"]["code"] == "RATE_LIMITED"
+    assert "next_eligible_at" not in payload["error"]["details"]
+
+
 def test_provider_head_skips_body(monkeypatch) -> None:
     provider = CoreHttpFetchProvider()
 

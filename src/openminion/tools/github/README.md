@@ -144,24 +144,18 @@ reads.
 Each successful tick that produces actionable findings emits:
 
 1. A rendered markdown artifact body (produced by
-   `openminion.tools.task.pr_review.renderer`) held on the
-   `CronRunRoutineSink` and surfaced via a synthetic
-   `artifact://routine/<routine_id>/run-<n>` id on the cron run
-   summary (V1 placeholder per spec D6.2). Operator-readable
-   artifact-store persistence (canonical file path, retention,
-   downloads, indexed metadata) is deferred to the follow-up
-   tracker `routine-artifact-store-delivery`.
+   `openminion.tools.task.pr_review.renderer`) persisted through the existing
+   artifact store before routine cursor progress is committed. The cron run
+   metadata carries the resulting content-addressed artifact reference.
 2. A single `announce` summary line delivered to the originating
    session, of shape:
    `"PR review run for <repo>: reviewed <N> PR(s), <M> finding(s)."`
 
 Idempotent ticks (no head_sha changes) write nothing.
 
-To inspect the rendered markdown body for a given run in V1, read
-the cron run row's `summary` field for the synthetic artifact id
-and either re-run with verbose logging or query the in-process
-sink during a test harness run. The `routine-artifact-store-delivery`
-follow-up will land an operator-readable file path.
+To inspect the rendered markdown body, read the cron run metadata for
+`routine_artifact_id` and resolve that reference through the existing artifact
+store.
 
 ## 6. L3 live smoke flow
 

@@ -256,6 +256,46 @@ def test_render_tasks_report_includes_operator_state_and_resume_action(
     assert "resume_action: continue" in detail_body
 
 
+def test_render_tasks_report_uses_active_agent_and_session_scope() -> None:
+    class _ScopedTaskSource:
+        lifecycle_repository = None
+
+        def get_digest(self, *, agent_id: str, session_id: str, limit: int):
+            assert agent_id == "agent-1"
+            assert session_id == "session-1"
+            assert limit == 50
+            task = type(
+                "Task",
+                (),
+                {
+                    "task_id": "task-1",
+                    "title": "Scoped task",
+                    "status": "ACTIVE",
+                    "due_at": None,
+                    "next_step_id": "",
+                    "next_step_title": "",
+                    "metadata": {},
+                },
+            )()
+            return type(
+                "Digest",
+                (),
+                {"tasks_active": [task], "tasks_ready": [], "current_task": None},
+            )()
+
+    runtime = type(
+        "Runtime",
+        (),
+        {
+            "_rt": type("APIRuntime", (), {"task_manager": _ScopedTaskSource()})(),
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+        },
+    )()
+
+    assert "task-1: Scoped task" in render_tasks_report(runtime)
+
+
 def test_effort_and_statusline_handlers_delegate_to_runtime() -> None:
     runtime = _Runtime()
 
