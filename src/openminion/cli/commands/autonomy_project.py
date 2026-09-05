@@ -57,6 +57,7 @@ class ProjectLaunchRequest:
     repository: Path
     task_plan_required: bool
     expected_checks: tuple[str, ...]
+    release_tools: bool
 
 
 def resolve_project_repository(workspace_boundary: Path, value: str) -> Path:
@@ -86,6 +87,7 @@ def build_project_launch_request(
     goal_id: str | None = None,
     task_plan_required: bool = True,
     expected_checks: tuple[str, ...] = (),
+    release_tools: bool = False,
 ) -> ProjectLaunchRequest:
     boundary = workspace_boundary.expanduser().resolve(strict=False)
     repo = repository.expanduser().resolve(strict=False)
@@ -126,6 +128,7 @@ def build_project_launch_request(
         repository=repo,
         task_plan_required=task_plan_required,
         expected_checks=check_names,
+        release_tools=release_tools,
     )
 
 
@@ -145,6 +148,7 @@ def parse_focus_project_launch(
     parser.add_argument("--max-iterations", type=int, default=1)
     parser.add_argument("--verify-command", action="append", default=[])
     parser.add_argument("--expected-check", action="append", default=[])
+    parser.add_argument("--release-tools", action="store_true")
     try:
         tokens = shlex.split(line)
         if tokens and tokens[0] == "/project":
@@ -177,6 +181,7 @@ def parse_focus_project_launch(
         verification_commands=tuple(parsed.verify_command),
         task_plan_required=True,
         expected_checks=tuple(parsed.expected_check),
+        release_tools=bool(parsed.release_tools),
     )
 
 
@@ -211,6 +216,8 @@ def launch_project(
         workspace_boundary_ref=build_local_workspace_ref(request.workspace_boundary),
         task_plan_required=request.task_plan_required,
         expected_checks=request.expected_checks,
+        launch_approved=True,
+        release_tools_approved=request.release_tools,
     )
     return store.require(running.run_id)
 
@@ -322,6 +329,8 @@ def initialize_project(
     workspace_boundary_ref: str | None = None,
     task_plan_required: bool = False,
     expected_checks: tuple[str, ...] = (),
+    launch_approved: bool = False,
+    release_tools_approved: bool = False,
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -355,6 +364,8 @@ def initialize_project(
                 workspace_boundary_ref=workspace_boundary_ref,
                 task_plan_required=task_plan_required,
                 expected_checks=expected_checks,
+                launch_approved=launch_approved,
+                release_tools_approved=release_tools_approved,
             ),
         },
     )
@@ -370,7 +381,7 @@ def resume_project_task(
         raise RuntimeError("autonomy run is missing its durable task id")
     task = manager.get_task(run.task_id)
     if task is None:
-        initialize_project(manager, store, run)
+        initialize_project(manager, store, run, launch_approved=True)
         return
     if task.state == TaskLifecycleState.PAUSED:
         manager.transition_task(task_id=run.task_id, to_state=TaskLifecycleState.ACTIVE)

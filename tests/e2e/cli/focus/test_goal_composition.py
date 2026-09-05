@@ -21,7 +21,6 @@ from openminion.modules.task.autonomy import resolve_autonomy_state_root
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import load_latest_project_checkpoint
 
-
 pytestmark = pytest.mark.e2e
 
 
@@ -137,7 +136,8 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     output = asyncio.run(
         _dispatch(
             f'/project start --repository "{repository}" --goal "ship it" '
-            '--expected-check lint --expected-check "tests (3.11)"',
+            '--expected-check lint --expected-check "tests (3.11)" '
+            "--release-tools",
             runtime=runtime,
             status_line=TerminalStatusLine(),
             approval_callback=approve,
@@ -162,16 +162,29 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     resume = checkpoint.payload["repository_lifecycle"][
         checkpoint.project_run.resume_packet_ref
     ]
+    objective = checkpoint.payload["repository_lifecycle"][
+        checkpoint.project_run.objective_ledger_ref
+    ]
+    decisions = checkpoint.payload["repository_lifecycle"][
+        checkpoint.project_run.operator_decision_log_ref
+    ]["decisions"]
     assert str(repository) in checkpoint.project_run.workspace_ref
     assert resume["task_plan_required"] is True
     assert resume["expected_checks"] == ["lint", "tests (3.11)"]
     assert resume["execution_repository"] == checkpoint.project_run.workspace_ref
     assert str(tmp_path) in resume["workspace_boundary"]
+    assert objective["objective"] == "ship it"
+    assert objective["approval"] == "approved"
+    assert decisions == [
+        {"decision": "project_launch_approved", "objective": "ship it"},
+        {"decision": "project_release_tools_approved", "objective": "ship it"},
+    ]
     assert telemetry.operations[0][0][3] == "project_launch"
     assert approval_args["permission_profile_id"] == "local-safe"
     assert approval_args["max_iterations"] == 1
     assert approval_args["verification_commands"] == []
     assert approval_args["expected_checks"] == ["lint", "tests (3.11)"]
+    assert approval_args["release_tools"] is True
     assert approval_args["verification_waiver_reason"] is None
     assert approval_args["turn_timeout_seconds"] > 0
     assert approval_args["verification_timeout_seconds"] > 0

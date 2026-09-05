@@ -13,12 +13,12 @@ from openminion.modules.task import (
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     AutonomyLoopJudgment,
-    ProjectEffectRecord,
-    ProjectEffectReplayDecision,
-    ProjectEffectStatus,
     ProjectDomainVerificationContract,
     ProjectDomainVerificationEvidence,
     ProjectDomainVerificationStatus,
+    ProjectEffectRecord,
+    ProjectEffectReplayDecision,
+    ProjectEffectStatus,
     ProjectOperatorInboxItem,
     ProjectOperatorResumeAction,
     ProjectOperatorWorkState,
@@ -31,6 +31,7 @@ from openminion.modules.task.project import (
 from openminion.modules.task.project.turn import (
     ProjectTurnRequest,
     project_turn_from_payload,
+    project_turn_inbound_metadata,
 )
 
 
@@ -78,6 +79,26 @@ def _project_run(
         metrics_summary_ref="artifact:metrics.json",
         blocked_reason=blocked_reason,
     )
+
+
+def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+        allowed_tools=("git.status", "github.fetch_checks"),
+    )
+
+    metadata = project_turn_inbound_metadata(request)
+
+    assert metadata["linked_task_id"] == "task-1"
+    assert metadata["turn_tool_allowlist"] == "git.status,github.fetch_checks"
+    assert metadata["turn_tool_allowlist_supplied"] == "true"
 
 
 @pytest.mark.parametrize(

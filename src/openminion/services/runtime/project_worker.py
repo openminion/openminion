@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from openminion.base.logging import format_structured_event, get_logger
+from openminion.modules.brain.loop.strategies.coding.contracts import select_coding_allowed_tools
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
     AutonomyRun,
@@ -49,6 +50,7 @@ from openminion.modules.task.project import (
     run_project_verification_commands,
 )
 from openminion.modules.task.project import checkpoints as project_cp, effects as project_effects
+from openminion.modules.task.project import policy as project_policy
 from openminion.modules.task.project import progress as project_progress
 from openminion.services.runtime.routine_context import ToolRegistryPreTurnContext
 from openminion.tools.github.interfaces import TOOL_GITHUB_FETCH_CHECKS
@@ -491,6 +493,20 @@ class ProjectWorker:
                 repository_check_observation=(
                     project_cp.repository_check_observation(checkpoint)
                 ),
+            ),
+            allowed_tools=tuple(
+                sorted(
+                    select_coding_allowed_tools(
+                        project_launch_approved=(
+                            project_policy.repository_project_launch_approved(
+                                checkpoint
+                            )
+                        ),
+                        release_approved=(
+                            project_policy.repository_release_tools_approved(checkpoint)
+                        ),
+                    )
+                )
             ),
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)

@@ -50,6 +50,7 @@ class ProjectTurnRequest:
     cycle_id: str
     milestone: str
     prompt: str
+    allowed_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -252,12 +253,19 @@ def project_turn_inbound_metadata(
     *,
     base: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    metadata: dict[str, object] = {
         **dict(base or {}),
         CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
         "conversation_id": request.project_run_id,
+        "linked_task_id": request.task_id,
         "resume": "true",
     }
+    if request.allowed_tools:
+        metadata.update(
+            turn_tool_allowlist=",".join(request.allowed_tools),
+            turn_tool_allowlist_supplied="true",
+        )
+    return metadata
 
 
 def project_turn_from_payload(

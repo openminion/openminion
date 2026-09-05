@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    PROJECT_CODING_ALLOWED_TOOLS,
+    PROJECT_RELEASE_ADDITIONAL_TOOLS,
+)
 from openminion.modules.task import (
     AutonomyRunPhase,
     AutonomyRunStatus,
@@ -71,6 +75,8 @@ def _project(
     max_iterations: int = 3,
     task_plan_required: bool = False,
     expected_checks: tuple[str, ...] = (),
+    launch_approved: bool = False,
+    release_tools_approved: bool = False,
 ):
     store = AutonomyRunStore(root=tmp_path / "autonomy")
     run = build_autonomy_run(
@@ -119,6 +125,8 @@ def _project(
                 project_run,
                 task_plan_required=task_plan_required,
                 expected_checks=expected_checks,
+                launch_approved=launch_approved,
+                release_tools_approved=release_tools_approved,
             ),
         },
     )
@@ -162,6 +170,49 @@ def test_project_cycle_claim_covers_turn_and_verification_windows() -> None:
     )
 
     assert project_cycle_claim_ttl_seconds(run) == 3_600
+
+
+def test_approved_project_turn_uses_the_core_tool_scope(tmp_path) -> None:
+    store, manager, run = _project(tmp_path, launch_approved=True)
+    requests: list[ProjectTurnRequest] = []
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request) or ProjectTurnResult(summary="worked")
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+    )
+
+    worker.run_cycle(run.run_id)
+
+    assert set(requests[0].allowed_tools) == PROJECT_CODING_ALLOWED_TOOLS
+    assert set(requests[0].allowed_tools).isdisjoint(
+        PROJECT_RELEASE_ADDITIONAL_TOOLS
+    )
+
+
+def test_separately_approved_release_project_turn_uses_release_scope(tmp_path) -> None:
+    store, manager, run = _project(
+        tmp_path,
+        launch_approved=True,
+        release_tools_approved=True,
+    )
+    requests: list[ProjectTurnRequest] = []
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda request: (
+            requests.append(request) or ProjectTurnResult(summary="worked")
+        ),
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+    )
+
+    worker.run_cycle(run.run_id)
+
+    assert set(requests[0].allowed_tools) == (
+        PROJECT_CODING_ALLOWED_TOOLS | PROJECT_RELEASE_ADDITIONAL_TOOLS
+    )
 
 
 def test_project_worker_replans_once_then_commits_verified_completion(

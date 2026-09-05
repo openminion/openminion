@@ -46,6 +46,7 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
+    PROJECT_CODING_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
 from openminion.modules.llm.schemas import Message
@@ -171,6 +172,93 @@ class TestCodingHandlerPureHelperBehavior:
         [spec] = specs
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
+
+    def test_approved_project_loop_exposes_and_invokes_project_tool(self) -> None:
+        checkpoint = SimpleNamespace(
+            project_run=SimpleNamespace(
+                objective_ledger_ref="project:objective",
+                operator_decision_log_ref="project:decisions",
+            ),
+            payload={
+                "repository_lifecycle": {
+                    "project:objective": {
+                        "objective": "ship it",
+                        "approval": "approved",
+                    },
+                    "project:decisions": {
+                        "decisions": [
+                            {
+                                "decision": "project_launch_approved",
+                                "objective": "ship it",
+                            }
+                        ]
+                    },
+                }
+            },
+        )
+        seen: list[ToolCommand] = []
+
+        def execute_command(*, state, command, logger, include_reflect):
+            del state, logger, include_reflect
+            seen.append(command)
+            return CommandExecutionOutcome(
+                approved_command=command,
+                action_result=ActionResult(
+                    command_id=command.command_id,
+                    status=BRAIN_ACTION_STATUS_SUCCESS,
+                    summary="clean",
+                ),
+            )
+
+        runtime_runner = SimpleNamespace(task_manager=object())
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(resume_task_id_hint="task-1"),
+            _services=SimpleNamespace(runner=runtime_runner),
+            command_executor=SimpleNamespace(execute_command=execute_command),
+            logger=None,
+        )
+        schema = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+        with (
+            patch.object(
+                handler,
+                "load_latest_project_checkpoint",
+                return_value=checkpoint,
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[{"name": "git.status", "parameters": schema}],
+            ),
+            patch.object(
+                context_adapter,
+                "runner_from_context",
+                return_value=SimpleNamespace(session_api=None, options=None),
+            ),
+        ):
+            allowed_tools = handler._coding_allowed_tools(ctx)
+            tool_specs = handler._build_tool_specs(allowed_tools, ctx=ctx)
+            profile, iteration_specs = CodingProfileRunner()._iteration_profile(
+                ctx,
+                loop=AdaptiveToolLoopState(),
+                allowed_tools=allowed_tools,
+                tool_specs=tool_specs,
+            )
+            _CodingLoopContextAdapter(ctx).execute_command(
+                command=ToolCommand(
+                    title="Inspect repository status",
+                    tool_name="git.status",
+                    args={},
+                )
+            )
+
+        assert profile.allowed_tools == PROJECT_CODING_ALLOWED_TOOLS
+        by_name = {spec.name: spec for spec in iteration_specs}
+        assert by_name["git.status"].input_schema == schema
+        assert seen[0].tool_name == "git.status"
 
     def test_build_tool_specs_projects_targets_only_for_verify_candidates(self) -> None:
         specs = handler._build_tool_specs(

@@ -23,6 +23,7 @@ from openminion.modules.task.runtime.lifecycle import (
 )
 
 from .constants import (
+    REPOSITORY_LIFECYCLE_PAYLOAD_KEY,
     REPOSITORY_LIFECYCLE_RECEIPT_LIMIT,
     REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS,
 )
@@ -41,7 +42,6 @@ _OPEN_PROJECT_TASK_STATES = {
     TaskLifecycleState.ACTIVE,
     TaskLifecycleState.PAUSED,
 }
-_REPOSITORY_LIFECYCLE_PAYLOAD_KEY = "repository_lifecycle"
 
 ProjectCycleDisposition = tuple[
     ProjectCycleDecision,
@@ -74,15 +74,27 @@ def initial_repository_lifecycle_payload(
     workspace_boundary_ref: str | None = None,
     task_plan_required: bool = False,
     expected_checks: tuple[str, ...] = (),
+    launch_approved: bool = False,
+    release_tools_approved: bool = False,
 ) -> dict[str, object]:
     repository_ref = _bounded_repository_text(project_run.workspace_ref)
     repository_revision = _workspace_revision(repository_ref)
+    objective = _bounded_repository_text(autonomy_run.goal_text)
+    decisions: list[dict[str, str]] = []
+    if launch_approved:
+        decisions.append(
+            {"decision": "project_launch_approved", "objective": objective}
+        )
+    if launch_approved and release_tools_approved:
+        decisions.append(
+            {"decision": "project_release_tools_approved", "objective": objective}
+        )
     return {
-        _REPOSITORY_LIFECYCLE_PAYLOAD_KEY: {
+        REPOSITORY_LIFECYCLE_PAYLOAD_KEY: {
             project_run.objective_ledger_ref: {
-                "objective": _bounded_repository_text(autonomy_run.goal_text),
+                "objective": objective,
                 "constraints": [],
-                "approval": None,
+                "approval": "approved" if launch_approved else None,
                 "spec_tracker_paths": [],
                 "source_revisions": {
                     "execution_repository": repository_revision,
@@ -104,7 +116,7 @@ def initial_repository_lifecycle_payload(
                 "task_plan_required": task_plan_required,
                 "expected_checks": list(expected_checks),
             },
-            project_run.operator_decision_log_ref: {"decisions": []},
+            project_run.operator_decision_log_ref: {"decisions": decisions},
             project_run.capability_plan_ref: {
                 "required_model_tool_ids": [],
                 "available_model_tool_ids": [],
@@ -126,7 +138,7 @@ def advance_repository_lifecycle_payload(
     verification_count: int,
     next_action: str,
 ) -> dict[str, object]:
-    raw_lifecycle = checkpoint.payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    raw_lifecycle = checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
     if not isinstance(raw_lifecycle, dict):
         return {}
 
@@ -178,7 +190,7 @@ def advance_repository_lifecycle_payload(
             project_run.metrics_summary_ref: metrics,
         }
     )
-    return {_REPOSITORY_LIFECYCLE_PAYLOAD_KEY: lifecycle}
+    return {REPOSITORY_LIFECYCLE_PAYLOAD_KEY: lifecycle}
 
 
 def repository_check_request(
@@ -256,7 +268,7 @@ def begin_repository_check_observation(
     checkpoint: ProjectCheckpoint,
 ) -> tuple[ProjectCheckpoint, bool]:
     if not isinstance(
-        checkpoint.payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY), Mapping
+        checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY), Mapping
     ):
         return checkpoint, False
     lifecycle, resume = _repository_lifecycle_resume(checkpoint)
@@ -405,7 +417,7 @@ def _repository_check_observation(
     *,
     resume_packet_ref: str,
 ) -> dict[str, object] | None:
-    raw_lifecycle = payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    raw_lifecycle = payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
     if not isinstance(raw_lifecycle, Mapping):
         return None
     raw_resume = raw_lifecycle.get(resume_packet_ref)
@@ -423,7 +435,7 @@ def _with_repository_lifecycle(
         update={
             "payload": {
                 **checkpoint.payload,
-                _REPOSITORY_LIFECYCLE_PAYLOAD_KEY: dict(lifecycle),
+                REPOSITORY_LIFECYCLE_PAYLOAD_KEY: dict(lifecycle),
             }
         }
     )
@@ -435,7 +447,7 @@ def _repository_lifecycle_resume(
     lifecycle = dict(
         cast(
             dict[str, object],
-            checkpoint.payload[_REPOSITORY_LIFECYCLE_PAYLOAD_KEY],
+            checkpoint.payload[REPOSITORY_LIFECYCLE_PAYLOAD_KEY],
         )
     )
     resume = dict(
@@ -586,7 +598,7 @@ def updated_checkpoint_task_plan(
 
 
 def repository_task_plan_required(checkpoint: ProjectCheckpoint) -> bool:
-    lifecycle = checkpoint.payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    lifecycle = checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
     if not isinstance(lifecycle, dict):
         return False
     resume = lifecycle.get(checkpoint.project_run.resume_packet_ref)

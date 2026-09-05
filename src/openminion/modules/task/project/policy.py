@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
+
 from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
+from .constants import REPOSITORY_LIFECYCLE_PAYLOAD_KEY
 from .models import (
     ProjectBudgetPolicy,
+    ProjectCheckpoint,
     ProjectPermissionCheckResult,
     ProjectPermissionDecision,
     ProjectPermissionGrant,
@@ -13,6 +18,40 @@ from .models import (
 
 
 _PROJECT_POLICY_METADATA_KEY = "project_policy"
+
+
+def _repository_decision_approved(
+    checkpoint: ProjectCheckpoint,
+    decision_name: str,
+) -> bool:
+    lifecycle = checkpoint.payload.get(REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    if not isinstance(lifecycle, Mapping):
+        return False
+    objective = lifecycle.get(checkpoint.project_run.objective_ledger_ref)
+    log = lifecycle.get(checkpoint.project_run.operator_decision_log_ref)
+    if not isinstance(objective, Mapping) or not isinstance(log, Mapping):
+        return False
+    approved_objective = objective.get("objective")
+    return objective.get("approval") == "approved" and any(
+        isinstance(decision, Mapping)
+        and decision.get("decision") == decision_name
+        and decision.get("objective") == approved_objective
+        for decision in cast(list[object], log.get("decisions") or [])
+    )
+
+
+def repository_project_launch_approved(checkpoint: ProjectCheckpoint) -> bool:
+    return _repository_decision_approved(checkpoint, "project_launch_approved")
+
+
+def repository_release_tools_approved(checkpoint: ProjectCheckpoint) -> bool:
+    return (
+        repository_project_launch_approved(checkpoint)
+        and _repository_decision_approved(
+            checkpoint,
+            "project_release_tools_approved",
+        )
+    )
 
 
 def load_project_policy_state(
@@ -228,5 +267,7 @@ __all__ = [
     "evaluate_project_permission",
     "issue_project_permission_grant",
     "load_project_policy_state",
+    "repository_project_launch_approved",
+    "repository_release_tools_approved",
     "save_project_policy_state",
 ]

@@ -40,12 +40,17 @@ from openminion.modules.brain.runtime.budget.strategy import (
     resolve_coding_budget_settings,
 )
 from openminion.modules.llm.schemas import Message
+from openminion.modules.task import load_latest_project_checkpoint
+from openminion.modules.task.project.policy import (
+    repository_project_launch_approved,
+    repository_release_tools_approved,
+)
 
 from .contracts import (
-    CODING_ALLOWED_TOOLS,
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
     CodingRuntimeUnavailableError,
+    select_coding_allowed_tools,
 )
 from .context_adapter import _CodingLoopContextAdapter
 from .llm import DefaultCodingLLMRuntime
@@ -125,6 +130,25 @@ def _context_workspace_hint(ctx: ExecutionContext) -> str:
         getattr(options, "workspace_root", None),
         getattr(options, "cwd", None),
         getattr(options, "workdir", None),
+    )
+
+
+def _coding_allowed_tools(ctx: ExecutionContext) -> frozenset[str]:
+    runner, _profile = _runner_and_profile_from_context(ctx)
+    task_id = str(getattr(ctx.state, "resume_task_id_hint", "") or "").strip()
+    task_manager = getattr(runner, "task_manager", None) if runner is not None else None
+    checkpoint = (
+        load_latest_project_checkpoint(task_manager, task_id=task_id)
+        if task_id and task_manager is not None
+        else None
+    )
+    return select_coding_allowed_tools(
+        project_launch_approved=(
+            checkpoint is not None and repository_project_launch_approved(checkpoint)
+        ),
+        release_approved=(
+            checkpoint is not None and repository_release_tools_approved(checkpoint)
+        ),
     )
 
 
@@ -264,6 +288,7 @@ class CodingProfileRunner(
                 consume_user_input_for_command=False,
             )
 
+        allowed_tools = _coding_allowed_tools(ctx)
         ctx.emit_status(
             source_phase="coding.prepare",
             detail_text=f"{_CODING_PUBLIC_TAG} started",
@@ -271,7 +296,7 @@ class CodingProfileRunner(
             mode_state="prepare",
             payload={
                 "act.profile": BRAIN_ACT_PROFILE_CODING,
-                "act.allowed_tools": sorted(CODING_ALLOWED_TOOLS),
+                "act.allowed_tools": sorted(allowed_tools),
             },
         )
         return ModePreparation(
@@ -359,12 +384,13 @@ class CodingProfileRunner(
                 ),
             )
 
-        allowed_tools = CODING_ALLOWED_TOOLS
+        allowed_tools = _coding_allowed_tools(ctx)
         model = _resolve_model(ctx)
         prepared = self._prepare_execution_state(
             ctx,
             runtime=runtime,
             model=model,
+            allowed_tools=allowed_tools,
         )
         if isinstance(prepared, ExecutionResult):
             return prepared
@@ -416,8 +442,9 @@ class CodingProfileRunner(
         *,
         runtime: DefaultCodingLLMRuntime,
         model: str,
+        allowed_tools: frozenset[str],
     ) -> list[Any] | ExecutionResult:
-        tool_specs = _build_tool_specs(CODING_ALLOWED_TOOLS, ctx=ctx)
+        tool_specs = _build_tool_specs(allowed_tools, ctx=ctx)
         self._init_checkpoint(ctx)
         resume_state = {
             key: value
