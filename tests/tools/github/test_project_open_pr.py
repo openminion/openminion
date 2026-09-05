@@ -315,7 +315,7 @@ def test_project_open_pr_denial_skips_mutation(
     )
 
     assert result["status"] == "error"
-    assert result["error"]["code"] == "PROJECT_POLICY_DENIED"
+    assert result["error"]["code"] == "POLICY_DENIED"
     assert result["error"]["details"]["repository_action_scope"] == _scope()
     assert provider.mutation_calls == 0
 
@@ -374,7 +374,7 @@ def test_expired_only_project_grant_denies_without_mutation(
         trace_id="turn-1",
     )
 
-    assert result["error"]["code"] == "PROJECT_POLICY_DENIED"
+    assert result["error"]["code"] == "POLICY_DENIED"
     assert result["error"]["details"]["reason_code"] == "expired"
     assert provider.mutation_calls == 0
 
@@ -397,7 +397,8 @@ def test_uncertain_open_pr_stays_started_and_reconciles_after_restart(
         trace_id="turn-1",
     )
 
-    assert first["error"]["code"] == "REMOTE_ERROR"
+    assert first["error"]["code"] == "UPSTREAM_ERROR"
+    assert first["error"]["details"]["provider_error_code"] == "REMOTE_ERROR"
     assert first["error"]["details"]["project_effect_uncertain"] is True
     effect_id = "effect:github.open_pr:open-pr-1"
     effect = load_project_effect_record(
@@ -480,7 +481,7 @@ def test_changed_head_sha_blocks_stale_open_pr_replay(
         trace_id="turn-2",
     )
 
-    assert result["error"]["code"] == "PROJECT_EFFECT_STALE"
+    assert result["error"]["code"] == "INVALID_REQUEST"
     assert result["error"]["details"]["reason_code"] == "precondition_refs_changed"
     assert provider.mutation_calls == 1
 

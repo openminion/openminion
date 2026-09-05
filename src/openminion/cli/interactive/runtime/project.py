@@ -73,7 +73,7 @@ class RuntimeProjectMixin:
     def launch_prepared_project(
         self, request: ProjectLaunchRequest
     ) -> tuple[str, str]:
-        from openminion.cli.commands.autonomy import launch_project
+        from openminion.cli.commands.autonomy_project import launch_project
         from openminion.modules.task import AutonomyRunStore, TaskManager
         from openminion.modules.task.autonomy import resolve_autonomy_state_root
         from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH

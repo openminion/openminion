@@ -86,7 +86,7 @@ from openminion.services.runtime.memory import (
 
 
 def _map_action_policy_mode(mode: str) -> str:
-    return map_action_policy_mode(mode)
+    return cast(str, map_action_policy_mode(mode))
 
 
 def build_secret_service(
@@ -642,7 +642,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         db_path=service.db_path,
         telemetryctl=service._telemetryctl,
     )
-
     default_agent_id, default_profile, a2a_api, a2a_delegate_api = (
         _build_a2a_runtime_apis(
             service=service,
@@ -658,7 +657,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     )
     memory_assembly = service._runtime_memory_assembly
     vector_adapter = getattr(memory_assembly, "vector_adapter", None)
-
     skill_config = service._get_manager_config("skill")
     context_api = bridge_module.create_context_api(
         mode=service.mode,

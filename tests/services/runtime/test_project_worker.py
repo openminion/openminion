@@ -34,6 +34,13 @@ from openminion.modules.task.plan import (
 )
 from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.checkpoints import plan_checkpoint_payload
+from openminion.modules.task.project.effects import (
+    ProjectEffectRecord,
+    ProjectEffectStatus,
+    load_project_effect_receipt,
+    load_project_effect_record,
+    save_project_effect_record,
+)
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
@@ -180,6 +187,54 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert "cycle_summaries:\n  1: worked\n  2: worked" in render_project_report(report)
     proof = json.loads(Path(result.run.proof_packet_ref or "").read_text())
     assert proof["cycle_summaries"] == ["worked", "worked"]
+
+
+def test_project_cycle_preserves_effect_state_across_restart(tmp_path) -> None:
+    store, manager, run = _project(tmp_path)
+    effect = ProjectEffectRecord(
+        effect_id="effect:github.open_pr:open-pr-1",
+        task_id="task-1",
+        idempotency_key="open-pr-1",
+        actor_ref="agent:agent-1",
+        capability_ref="github.open_pr",
+        precondition_refs=("github:repository:openminion/example",),
+        result_ref="github:pull:openminion/example#17",
+        non_reversible_reason="The pull request remains open.",
+        status=ProjectEffectStatus.SUCCEEDED,
+    )
+    receipt = {
+        "owner": "openminion",
+        "repo": "example",
+        "number": 17,
+        "head_sha": "abc1234",
+    }
+
+    def turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        save_project_effect_record(manager, effect, receipt=receipt)
+        return ProjectTurnResult(summary="opened pull request")
+
+    result = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: (_evidence(_TestEvidenceStatus.FAILED),),
+        owner_id="worker-1",
+    ).run_cycle(run.run_id)
+
+    assert effect.effect_id in result.project_run.effect_refs
+    manager.close()
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    loaded = load_project_effect_record(
+        restarted,
+        task_id="task-1",
+        effect_id=effect.effect_id,
+    )
+    assert loaded is not None and loaded.status == ProjectEffectStatus.SUCCEEDED
+    assert load_project_effect_receipt(
+        restarted,
+        task_id="task-1",
+        effect_id=effect.effect_id,
+    ) == receipt
 
 
 def test_repository_project_requires_completed_public_task_plan(tmp_path) -> None:

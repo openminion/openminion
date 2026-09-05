@@ -1,7 +1,8 @@
 from collections.abc import Mapping
 from typing import Any
 
-from openminion.modules.tool import Policy, canonical_tool_name
+from openminion.modules.tool import Policy, ToolSpec, canonical_tool_name
+from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_WRITE,
     MODEL_TASK_WATCH,
@@ -11,6 +12,40 @@ from openminion.tools.exec.process import resolve_shell_family
 
 _REACTIONS_SET_TOOL_NAME = "reactions.set"
 _REACTIONS_DEFAULT_POLICIES = frozenset({"allow", "deny", "confirm"})
+
+
+def _compose_policy_adapter(
+    *,
+    base_adapter: PolicyAdapter,
+    extra_adapter: PolicyAdapter | None,
+) -> PolicyAdapter:
+    if extra_adapter is None:
+        return base_adapter
+
+    class _CompositePolicyAdapter:
+        def __init__(self, adapters: list[PolicyAdapter]):
+            self._adapters = adapters
+
+        def evaluate(
+            self, *, tool_name: str, tool_spec: ToolSpec, args: dict[str, Any]
+        ) -> PolicyDecision:
+            current_args = dict(args)
+            for adapter in self._adapters:
+                decision = adapter.evaluate(
+                    tool_name=tool_name, tool_spec=tool_spec, args=current_args
+                )
+                if not decision.allowed:
+                    return decision
+                if decision.modified_args:
+                    current_args = dict(decision.modified_args)
+            return PolicyDecision(
+                allowed=True,
+                reason="policy passed",
+                code="OK",
+                modified_args=current_args,
+            )
+
+    return _CompositePolicyAdapter([base_adapter, extra_adapter])
 
 
 def _ensure_mutable_mapping(owner: dict[str, Any], key: str) -> dict[str, Any]:
@@ -189,6 +224,7 @@ __all__ = [
     "_apply_agent_command_policy",
     "_apply_reactions_default_policy",
     "_background_write_authorized",
+    "_compose_policy_adapter",
     "_resolve_auto_confirm",
     "_runtime_background_write_authorization_enabled",
     "_runtime_env_from_policy",

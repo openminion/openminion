@@ -402,7 +402,7 @@ def test_fetch_checks_rejects_malformed_check_runs(
             ctx=None,
         )
 
-    assert exc.value.code == "REMOTE_PROTOCOL_ERROR"
+    assert exc.value.code == "INVALID_RESPONSE"
     assert exc.value.details["reason_code"] == "github_response_shape_invalid"
 
 

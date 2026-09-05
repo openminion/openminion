@@ -66,6 +66,18 @@ _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 
 _SLASH_COMMANDS = terminal_slash_commands()
+_VISIBLE_PARITY_COMMANDS = (
+    "/context",
+    "/memory",
+    "/graph",
+    "/skills",
+    "/browser",
+    "/tasks",
+    "/effort",
+    "/statusline",
+    "/undo",
+    "/goal",
+)
 _FIGLET_FONT = "small"
 _FIGLET_TEXT = "OpenMinion"
 
@@ -652,18 +664,7 @@ async def _handle_slash(
             approval_callback=approval_callback,
         )
         return False
-    if cmd in (
-        "/context",
-        "/memory",
-        "/graph",
-        "/skills",
-        "/browser",
-        "/tasks",
-        "/effort",
-        "/statusline",
-        "/undo",
-        "/goal",
-    ):
+    if cmd in _VISIBLE_PARITY_COMMANDS:
         _handle_visible_parity_slash(
             cmd,
             text,

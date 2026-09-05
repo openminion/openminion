@@ -6,7 +6,7 @@ src/openminion/modules/brain/adapters/llm/normalize.py	_normalize_tool_command_p
 src/openminion/modules/brain/adapters/llm/request.py	_messages_from_context	121	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/llm/runtime.py	_extract_structured_output	150	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._execute_openminion_runtime_tool	102	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	352	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	323	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/bootstrap/budget.py	trim_decide_context_to_budget	162	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/bootstrap/skill/pipeline.py	resolve_skill_pipeline	248	concurrent entry-selection growth; ratchet downward in its owning skill lane
 src/openminion/modules/brain/bootstrap/skill/selection.py	_select_skills_with_llm	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

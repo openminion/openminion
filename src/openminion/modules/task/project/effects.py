@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
 from .checkpoints import load_latest_project_checkpoint
+from .models import ProjectCheckpoint
 
 
 _PROJECT_EFFECTS_PAYLOAD_KEY = "project_effects"
@@ -165,6 +166,19 @@ def load_project_effect_receipt(
     return dict(raw_receipt) if isinstance(raw_receipt, Mapping) else None
 
 
+def project_effect_checkpoint_payload(
+    checkpoint: ProjectCheckpoint,
+) -> dict[str, object]:
+    return {
+        key: checkpoint.payload[key]
+        for key in (
+            _PROJECT_EFFECTS_PAYLOAD_KEY,
+            _PROJECT_EFFECT_RECEIPTS_PAYLOAD_KEY,
+        )
+        if key in checkpoint.payload
+    }
+
+
 def save_project_effect_record(
     task_manager: TaskManager,
     effect: ProjectEffectRecord,
@@ -213,5 +227,6 @@ __all__ = [
     "evaluate_project_effect_replay",
     "load_project_effect_receipt",
     "load_project_effect_record",
+    "project_effect_checkpoint_payload",
     "save_project_effect_record",
 ]

@@ -416,8 +416,10 @@ class GithubRestProvider:
                 raise _protocol_error(
                     "github.open_pr readback expected object responses"
                 )
-            row_head = row.get("head") if isinstance(row.get("head"), Mapping) else {}
-            row_base = row.get("base") if isinstance(row.get("base"), Mapping) else {}
+            row_head = row.get("head")
+            row_base = row.get("base")
+            if not isinstance(row_head, Mapping) or not isinstance(row_base, Mapping):
+                raise _protocol_error("github.open_pr readback omitted branch facts")
             if (
                 str(row_head.get("ref") or "") == head
                 and str(row_head.get("sha") or "") == head_sha
@@ -551,7 +553,7 @@ class GithubRestProvider:
         )
         if not isinstance(row, Mapping):
             raise _protocol_error("github PR fetch expected an object response")
-        head = row.get("head") if isinstance(row.get("head"), Mapping) else {}
+        head = _mapping(row.get("head"))
         ref = str(head.get("ref") or "").strip()
         if not ref:
             raise _protocol_error("github PR response missing head.ref")
@@ -589,7 +591,7 @@ class GithubRestProvider:
                 body=body,
             )
         except ToolRuntimeError as exc:
-            if exc.code == "REMOTE_ERROR" and exc.details.get("status_code") == 404:
+            if exc.code == "UPSTREAM_ERROR" and exc.details.get("status_code") == 404:
                 return None
             raise
 
@@ -615,7 +617,7 @@ class GithubRestProvider:
             return json.loads(text)
         except json.JSONDecodeError as exc:
             raise ToolRuntimeError(
-                "REMOTE_PROTOCOL_ERROR",
+                "INVALID_RESPONSE",
                 "GitHub REST response was not valid JSON.",
                 {"reason_code": "github_response_not_json"},
             ) from exc
@@ -663,7 +665,7 @@ class GithubRestProvider:
                     body_excerpt=body_excerpt,
                 ) from exc
             raise ToolRuntimeError(
-                "REMOTE_ERROR",
+                "UPSTREAM_ERROR",
                 "GitHub REST API request failed.",
                 {
                     "reason_code": "github_api_error",
@@ -673,18 +675,22 @@ class GithubRestProvider:
             ) from exc
         except URLError as exc:
             raise ToolRuntimeError(
-                "REMOTE_ERROR",
+                "UPSTREAM_ERROR",
                 "GitHub REST API request failed.",
                 {
                     "reason_code": "github_api_unreachable",
                     "detail": str(exc.reason),
                 },
             ) from exc
-        return raw.decode("utf-8", errors="replace")
+        return bytes(raw).decode("utf-8", errors="replace")
 
 
 def _owner_repo(args: Mapping[str, Any]) -> tuple[str, str]:
     return str(args.get("owner") or ""), str(args.get("repo") or "")
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _open_pr_result(
@@ -716,9 +722,9 @@ def _open_pr_result(
 
 
 def _normalize_pr_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
-    head = raw.get("head") if isinstance(raw.get("head"), Mapping) else {}
-    base = raw.get("base") if isinstance(raw.get("base"), Mapping) else {}
-    user = raw.get("user") if isinstance(raw.get("user"), Mapping) else {}
+    head = _mapping(raw.get("head"))
+    base = _mapping(raw.get("base"))
+    user = _mapping(raw.get("user"))
     return {
         "number": int(raw.get("number") or 0),
         "title": str(raw.get("title") or ""),
@@ -761,7 +767,7 @@ def _normalize_comments(raw: Any, *, kind: str) -> list[dict[str, Any]]:
     for item in raw:
         if not isinstance(item, Mapping):
             continue
-        user = item.get("user") if isinstance(item.get("user"), Mapping) else {}
+        user = _mapping(item.get("user"))
         comments.append(
             {
                 "id": item.get("id"),
@@ -791,7 +797,7 @@ def _normalize_check_run(raw: Mapping[str, Any]) -> dict[str, Any]:
     conclusion = str(raw.get("conclusion") or "").strip().lower()
     if not name or not status or (status == "completed" and not conclusion):
         raise _protocol_error("github.fetch_checks received a malformed check run")
-    output = raw.get("output") if isinstance(raw.get("output"), Mapping) else {}
+    output = _mapping(raw.get("output"))
     return {
         "name": name,
         "status": status,
@@ -874,7 +880,7 @@ def _combined_result(raw: Mapping[str, Any]) -> str:
 def _extract_ref_sha(raw: Any) -> str:
     if not isinstance(raw, Mapping):
         raise _protocol_error("github ref response must be an object")
-    obj = raw.get("object") if isinstance(raw.get("object"), Mapping) else {}
+    obj = _mapping(raw.get("object"))
     sha = str(obj.get("sha") or "").strip()
     if not sha:
         raise _protocol_error("github ref response missing object.sha")
@@ -884,7 +890,7 @@ def _extract_ref_sha(raw: Any) -> str:
 def _extract_commit_tree_sha(raw: Any) -> str:
     if not isinstance(raw, Mapping):
         raise _protocol_error("github commit response must be an object")
-    tree = raw.get("tree") if isinstance(raw.get("tree"), Mapping) else {}
+    tree = _mapping(raw.get("tree"))
     sha = str(tree.get("sha") or "").strip()
     if not sha:
         raise _protocol_error("github commit response missing tree.sha")
@@ -893,7 +899,7 @@ def _extract_commit_tree_sha(raw: Any) -> str:
 
 def _protocol_error(message: str) -> ToolRuntimeError:
     return ToolRuntimeError(
-        "REMOTE_PROTOCOL_ERROR",
+        "INVALID_RESPONSE",
         message,
         {"reason_code": "github_response_shape_invalid"},
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from openminion.base.logging import format_structured_event, get_logger
@@ -51,9 +51,13 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
-from openminion.modules.task.project import checkpoints as project_cp
+from openminion.modules.task.project import checkpoints as project_cp, effects as project_effects
 
 _LOGGER = get_logger("project_worker")
+
+_ProjectCycleDisposition = tuple[
+    ProjectCycleDecision, AutonomyRunStatus, AutonomyRunPhase,
+    ProjectVerificationState, int, str]
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,9 @@ class ProjectWorker:
                 checkpoint,
                 cycle_number=cycle_number,
             )
+            checkpoint = cast(ProjectCheckpoint, load_latest_project_checkpoint(
+                self._task_manager, task_id=task.task_id,
+            ))
             updated_project = self._updated_project_run(
                 run,
                 checkpoint,
@@ -233,6 +240,7 @@ class ProjectWorker:
                 triggering_cron_job_id=triggering_cron_job_id,
                 next_wake_job_id=updated_project.next_wake_job_id,
                 payload={
+                    **project_effects.project_effect_checkpoint_payload(checkpoint),
                     "decision": evaluation.decision.value,
                     "summary": evaluation.turn.summary,
                     "gateway_run_id": evaluation.turn.gateway_run_id,
@@ -651,17 +659,13 @@ class ProjectWorker:
         has_new_progress: bool,
         verification_waived: bool,
         task_plan_incomplete: bool,
-    ) -> tuple[
-        ProjectCycleDecision,
-        AutonomyRunStatus,
-        AutonomyRunPhase,
-        ProjectVerificationState,
-        int,
-        str,
-    ]:
-        plan_disposition = project_cp.task_plan_incomplete_disposition(
-            run, cycle_number, closure_status, has_error,
-            task_plan_incomplete, previous_replans,
+    ) -> _ProjectCycleDisposition:
+        plan_disposition = cast(
+            _ProjectCycleDisposition | None,
+            project_cp.task_plan_incomplete_disposition(
+                run, cycle_number, closure_status, has_error,
+                task_plan_incomplete, previous_replans,
+            ),
         )
         if plan_disposition is not None:
             return plan_disposition

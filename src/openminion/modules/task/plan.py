@@ -289,7 +289,7 @@ def apply_task_plan_signals(
         raise ValueError("task plan progress must match the checkpoint task plan")
 
     steps = list(plan.steps)
-    for signal, status in (
+    for signal, step_status in (
         (step_completed, "completed"),
         (step_blocked, "blocked"),
     ):
@@ -301,7 +301,7 @@ def apply_task_plan_signals(
         steps = [
             step.model_copy(
                 update={
-                    "status": status,
+                    "status": step_status,
                     "output_summary": (
                         signal.output_summary
                         if isinstance(signal, TaskPlanStepCompleted)

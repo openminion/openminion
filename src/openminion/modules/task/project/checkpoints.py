@@ -45,7 +45,7 @@ _REPOSITORY_LIFECYCLE_PAYLOAD_KEY = "repository_lifecycle"
 
 def _bounded_repository_text(value: object) -> str:
     redacted, _ = redact_sensitive_text(str(value or "").strip())
-    return redacted[:REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS]
+    return cast(str, redacted[:REPOSITORY_LIFECYCLE_TEXT_MAX_CHARS])
 
 
 def _workspace_revision(workspace_ref: str) -> str:
@@ -157,8 +157,9 @@ def advance_repository_lifecycle_payload(
     metrics.update(
         {
             "cycle_count": project_run.committed_cycle_count,
-            "tool_call_count": int(metrics["tool_call_count"]) + turn.tool_call_count,
-            "verification_count": int(metrics["verification_count"])
+            "tool_call_count": cast(int, metrics["tool_call_count"])
+            + turn.tool_call_count,
+            "verification_count": cast(int, metrics["verification_count"])
             + verification_count,
         }
     )

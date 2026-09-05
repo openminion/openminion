@@ -11,6 +11,7 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.tool import RuntimeContext, ToolSpec, preferred_artifact_ref
 from openminion.modules.tool.diagnostics.events import emit_tool_execution_event
+from openminion.modules.tool.errors import ToolRuntimeError
 
 _log = get_logger("brain.adapters.tool.runtime")
 
@@ -51,7 +52,7 @@ def _derive_toolspec_summary(
                 synthesized = _normalized_summary_token(
                     json.dumps(synth_source, sort_keys=True, default=str)
                 )
-            except Exception:
+            except (TypeError, ValueError):
                 synthesized = _normalized_summary_token(synth_source)
             if synthesized and synthesized not in {"{}", "[]"}:
                 return synthesized
@@ -143,18 +144,31 @@ def run_tool_spec(
         status="running",
         payload=event_payload,
     )
-    handler_returned = False
     try:
         data = spec.handler(validated_args, context)
-        handler_returned = True
-    finally:
-        if not handler_returned:
-            emit_tool_execution_event(
-                ctx=context,
-                event_type="tool.execution.failed",
-                status="failed",
-                payload=event_payload,
-            )
+    except ToolRuntimeError:
+        emit_tool_execution_event(
+            ctx=context,
+            event_type="tool.execution.failed",
+            status="failed",
+            payload=event_payload,
+        )
+        raise
+    except Exception as exc:
+        emit_tool_execution_event(
+            ctx=context,
+            event_type="tool.execution.failed",
+            status="failed",
+            payload=event_payload,
+        )
+        return _error_envelope(
+            status=BRAIN_STATE_ERROR,
+            summary="Tool execution failed",
+            code="EXEC_ERROR",
+            message="Tool execution failed",
+            latency_ms=int((time.monotonic() - start_time) * 1000),
+            details={"error_type": type(exc).__name__},
+        )
     if isinstance(data, Mapping) and "status" in data:
         inner_status = str(data.get("status", BRAIN_STATE_ERROR))
     elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):

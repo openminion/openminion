@@ -4,7 +4,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, cast
 
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
@@ -31,7 +31,7 @@ from openminion.modules.tool import (
 )
 from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
+from openminion.modules.tool.plugin_api import PolicyAdapter
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
@@ -47,16 +47,14 @@ from .command_metadata import (
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
 from .project_github import (
-    GithubOpenPrProjectEffect,
-    begin_github_open_pr_project_effect,
-    fail_github_open_pr_project_effect,
-    finalize_github_open_pr_project_result,
+    execute_github_open_pr_project_effect,
 )
 from .policy_context import (
     _agent_id_from_policy,
     _apply_agent_command_policy,
     _apply_reactions_default_policy,
     _background_write_authorized,
+    _compose_policy_adapter,
     _resolve_auto_confirm,
     _runtime_background_write_authorization_enabled,
     _runtime_env_from_policy,
@@ -84,7 +82,7 @@ _TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
 
 
 def _is_confirm_required_code(code: Any) -> bool:
-    return str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
+    return cast(bool, str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED)
 
 
 def _policy_context_metadata(policy: Policy) -> Any:
@@ -283,40 +281,6 @@ class ToolAdapter:
             trace_id=trace_id,
         )
 
-    @staticmethod
-    def _compose_policy_adapter(
-        *,
-        base_adapter: PolicyAdapter,
-        extra_adapter: PolicyAdapter | None,
-    ) -> PolicyAdapter:
-        if extra_adapter is None:
-            return base_adapter
-
-        class _CompositePolicyAdapter:
-            def __init__(self, adapters: list[PolicyAdapter]):
-                self._adapters = adapters
-
-            def evaluate(
-                self, *, tool_name: str, tool_spec: ToolSpec, args: dict[str, Any]
-            ) -> PolicyDecision:
-                current_args = dict(args)
-                for adapter in self._adapters:
-                    decision = adapter.evaluate(
-                        tool_name=tool_name, tool_spec=tool_spec, args=current_args
-                    )
-                    if not decision.allowed:
-                        return decision
-                    if decision.modified_args:
-                        current_args = dict(decision.modified_args)
-                return PolicyDecision(
-                    allowed=True,
-                    reason="policy passed",
-                    code="OK",
-                    modified_args=current_args,
-                )
-
-        return _CompositePolicyAdapter([base_adapter, extra_adapter])
-
     def _effective_workspace_root(self, policy: Policy | None = None) -> Path:
         override = _WORKSPACE_OVERRIDE.get()
         if override is not None:
@@ -460,7 +424,7 @@ class ToolAdapter:
                 validated_args = args_model.model_validate(args).model_dump()
             else:
                 validated_args = dict(args)
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Invalid tool arguments",
@@ -556,7 +520,7 @@ class ToolAdapter:
         policy_adapter = (
             None
             if replay_confirmed
-            else self._compose_policy_adapter(
+            else _compose_policy_adapter(
                 base_adapter=local_adapter,
                 extra_adapter=extra_adapter,
             )
@@ -654,31 +618,66 @@ class ToolAdapter:
             if policy_decision.modified_args:
                 validated_args = dict(policy_decision.modified_args)
 
-        project_open_pr_effect: GithubOpenPrProjectEffect | None = None
+        return self._invoke_validated_tool(
+            command=command,
+            args=args,
+            validated_args=validated_args,
+            ctx=ctx,
+            spec=spec,
+            project_task_id=project_task_id,
+            replay_confirmed=replay_confirmed,
+            background_write_authorized=background_write_authorized,
+            start_time=start_time,
+        )
+
+    def _invoke_validated_tool(
+        self,
+        *,
+        command: dict[str, Any],
+        args: dict[str, Any],
+        validated_args: dict[str, Any],
+        ctx: RuntimeContext,
+        spec: ToolSpec,
+        project_task_id: str,
+        replay_confirmed: bool,
+        background_write_authorized: bool,
+        start_time: float,
+    ) -> dict[str, Any]:
+        tool_name = ctx.tool_name
+        session_id = str(ctx.session_id or "")
+        trace_id = ctx.trace_id
         try:
             if tool_name == "blockchain.send_transaction":
                 ctx.policy_authorization = consume_blockchain_send_authorization(
                     policy_ctl=self.policy_ctl,
-                    permission_mode=permission_mode,
+                    permission_mode=ctx.permission_mode,
                     args=args,
                 )
             if tool_name == "github.open_pr" and project_task_id:
                 if self.task_manager is None:
                     raise ToolRuntimeError(
-                        "PROJECT_STATE_UNAVAILABLE",
+                        "INVALID_REQUEST",
                         "Project tool execution requires the task manager.",
                         {
                             "reason_code": "project_task_manager_unavailable",
                             "project_task_id": project_task_id,
                         },
                     )
-                project_open_pr_effect = begin_github_open_pr_project_effect(
+                return execute_github_open_pr_project_effect(
                     task_manager=self.task_manager,
                     task_id=project_task_id,
                     idempotency_key=str(command.get("idempotency_key") or ""),
                     actor_ref=f"agent:{self.agent_id}",
                     args=validated_args,
                     ctx=ctx,
+                    invoke=lambda: run_tool_spec(
+                        spec=spec,
+                        validated_args=validated_args,
+                        context=ctx,
+                        start_time=start_time,
+                        background_write_authorized=background_write_authorized,
+                        tool_name=tool_name,
+                    ),
                 )
             result = run_tool_spec(
                 spec=spec,
@@ -688,24 +687,8 @@ class ToolAdapter:
                 background_write_authorized=background_write_authorized,
                 tool_name=tool_name,
             )
-            if project_open_pr_effect is not None:
-                result = finalize_github_open_pr_project_result(
-                    self.task_manager,
-                    project_open_pr_effect,
-                    result=result,
-                    ctx=ctx,
-                )
             return result
         except ToolRuntimeError as exc:
-            if project_open_pr_effect is not None:
-                exc.details.update(
-                    fail_github_open_pr_project_effect(
-                        self.task_manager,
-                        project_open_pr_effect,
-                        error=exc,
-                        ctx=ctx,
-                    )
-                )
             requires_confirm = _is_confirm_required_code(exc.code)
             if requires_confirm and not replay_confirmed:
                 details = dict(exc.details or {})
@@ -734,23 +717,12 @@ class ToolAdapter:
                 details=dict(exc.details or {}),
             )
         except Exception as exc:
-            details = (
-                fail_github_open_pr_project_effect(
-                    self.task_manager,
-                    project_open_pr_effect,
-                    error=exc,
-                    ctx=ctx,
-                )
-                if project_open_pr_effect is not None
-                else None
-            )
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool execution failed",
                 code="EXEC_ERROR",
                 message="Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
-                details=details,
             )
 
     def _resolve_registry_tool(self, tool_name: str) -> tuple[str, Any, Any]:

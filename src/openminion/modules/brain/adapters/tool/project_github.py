@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
 from openminion.modules.task.project.checkpoints import (
@@ -19,6 +20,10 @@ from openminion.modules.task.project.effects import (
 from openminion.modules.task.project.policy import (
     consume_project_permission_grant,
     evaluate_project_permission,
+)
+from openminion.modules.task.project.models import (
+    ProjectCheckpoint,
+    ProjectPermissionCheckResult,
 )
 from openminion.modules.tool.diagnostics.events import (
     emit_tool_invoke_operation_for_context,
@@ -61,23 +66,56 @@ def github_open_pr_action_scope(
     )
 
 
-def begin_github_open_pr_project_effect(
-    *,
-    task_manager: Any,
-    task_id: str,
-    idempotency_key: str,
-    actor_ref: str,
-    args: Mapping[str, Any],
-    ctx: Any,
-) -> GithubOpenPrProjectEffect:
+def _require_project_checkpoint(
+    task_manager: Any, task_id: str
+) -> ProjectCheckpoint:
     checkpoint = load_latest_project_checkpoint(task_manager, task_id=task_id)
     if checkpoint is None:
         raise ToolRuntimeError(
-            "PROJECT_CHECKPOINT_MISSING",
+            "NOT_FOUND",
             "Project tool execution requires a current project checkpoint.",
             {"reason_code": "project_checkpoint_missing", "project_task_id": task_id},
         )
+    return checkpoint
 
+
+def _raise_open_pr_policy_denial(
+    *,
+    checkpoint: ProjectCheckpoint,
+    permission: ProjectPermissionCheckResult,
+    task_id: str,
+    scope: str,
+    head_sha: str,
+    ctx: Any,
+) -> None:
+    facts = {
+        "project_task_id": task_id,
+        "project_run_id": checkpoint.project_run.project_run_id,
+        "project_permission_decision": permission.decision.value,
+        "project_permission_grant_id": permission.grant_id,
+        "repository_action_scope": scope,
+        "repository_head_sha": head_sha,
+    }
+    emit_tool_invoke_operation_for_context(
+        ctx=ctx,
+        operation="blocked_by_policy",
+        tool_name=TOOL_GITHUB_OPEN_PR,
+        status="error",
+        error_code="POLICY_DENIED",
+        extra=facts,
+    )
+    raise ToolRuntimeError(
+        "POLICY_DENIED",
+        permission.reason,
+        {"reason_code": permission.decision.value, **facts},
+    )
+
+
+def _open_pr_effect_identity(
+    args: Mapping[str, Any],
+    ctx: Any,
+    idempotency_key: str,
+) -> tuple[str, str, str, str, tuple[str, ...]]:
     owner = str(args.get("owner") or "")
     repo = str(args.get("repo") or "")
     head = str(args.get("head") or "")
@@ -91,11 +129,31 @@ def begin_github_open_pr_project_effect(
         head_sha=head_sha,
     )
     action_key = idempotency_key.strip() or scope
-    effect_id = f"effect:github.open_pr:{action_key}"
-    precondition_refs = (
-        f"github:repository:{owner}/{repo}",
-        f"github:head:{head}@{head_sha}",
-        f"github:base:{base}",
+    return (
+        head_sha,
+        scope,
+        action_key,
+        f"effect:github.open_pr:{action_key}",
+        (
+            f"github:repository:{owner}/{repo}",
+            f"github:head:{head}@{head_sha}",
+            f"github:base:{base}",
+        ),
+    )
+
+
+def begin_github_open_pr_project_effect(
+    *,
+    task_manager: Any,
+    task_id: str,
+    idempotency_key: str,
+    actor_ref: str,
+    args: Mapping[str, Any],
+    ctx: Any,
+) -> GithubOpenPrProjectEffect:
+    checkpoint = _require_project_checkpoint(task_manager, task_id)
+    head_sha, scope, action_key, effect_id, precondition_refs = (
+        _open_pr_effect_identity(args, ctx, idempotency_key)
     )
     existing = load_project_effect_record(
         task_manager,
@@ -109,7 +167,7 @@ def begin_github_open_pr_project_effect(
     )
     if replay.decision == ProjectEffectReplayDecision.BLOCK_STALE_PRECONDITION:
         raise ToolRuntimeError(
-            "PROJECT_EFFECT_STALE",
+            "INVALID_REQUEST",
             "The repository state changed since this project action was recorded.",
             {
                 "reason_code": replay.reason,
@@ -140,26 +198,13 @@ def begin_github_open_pr_project_effect(
         scope=scope,
     )
     if not permission.allowed:
-        facts = {
-            "project_task_id": task_id,
-            "project_run_id": checkpoint.project_run.project_run_id,
-            "project_permission_decision": permission.decision.value,
-            "project_permission_grant_id": permission.grant_id,
-            "repository_action_scope": scope,
-            "repository_head_sha": head_sha,
-        }
-        emit_tool_invoke_operation_for_context(
+        _raise_open_pr_policy_denial(
+            checkpoint=checkpoint,
+            permission=permission,
+            task_id=task_id,
+            scope=scope,
+            head_sha=head_sha,
             ctx=ctx,
-            operation="blocked_by_policy",
-            tool_name=TOOL_GITHUB_OPEN_PR,
-            status="error",
-            error_code="PROJECT_POLICY_DENIED",
-            extra=facts,
-        )
-        raise ToolRuntimeError(
-            "PROJECT_POLICY_DENIED",
-            permission.reason,
-            {"reason_code": permission.decision.value, **facts},
         )
 
     effect = ProjectEffectRecord(
@@ -232,6 +277,42 @@ def complete_github_open_pr_project_effect(
     return _with_project_facts(result, facts)
 
 
+def execute_github_open_pr_project_effect(
+    *,
+    task_manager: Any,
+    task_id: str,
+    idempotency_key: str,
+    actor_ref: str,
+    args: Mapping[str, Any],
+    ctx: Any,
+    invoke: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    started = begin_github_open_pr_project_effect(
+        task_manager=task_manager,
+        task_id=task_id,
+        idempotency_key=idempotency_key,
+        actor_ref=actor_ref,
+        args=args,
+        ctx=ctx,
+    )
+    try:
+        return finalize_github_open_pr_project_result(
+            task_manager,
+            started,
+            result=invoke(),
+            ctx=ctx,
+        )
+    except ToolRuntimeError as exc:
+        facts = fail_github_open_pr_project_effect(
+            task_manager,
+            started,
+            error=exc,
+            ctx=ctx,
+        )
+        exc.details.update(facts)
+        raise
+
+
 def fail_github_open_pr_project_effect(
     task_manager: Any,
     started: GithubOpenPrProjectEffect,
@@ -285,10 +366,12 @@ def finalize_github_open_pr_project_result(
     raw_error = result.get("error")
     error = raw_error if isinstance(raw_error, Mapping) else {}
     raw_details = error.get("details")
+    failure_details = dict(raw_details) if isinstance(raw_details, Mapping) else {}
+    failure_details["provider_error_code"] = str(error.get("code") or "")
     failure = ToolRuntimeError(
-        str(error.get("code") or "PROJECT_EFFECT_FAILED"),
+        "UPSTREAM_ERROR",
         str(result.get("summary") or "GitHub pull request failed"),
-        dict(raw_details) if isinstance(raw_details, Mapping) else {},
+        failure_details,
     )
     facts = fail_github_open_pr_project_effect(
         task_manager,
@@ -297,8 +380,10 @@ def finalize_github_open_pr_project_result(
         ctx=ctx,
     )
     if isinstance(raw_error, dict):
+        raw_error["code"] = "UPSTREAM_ERROR"
         raw_error["details"] = {
             **(dict(raw_details) if isinstance(raw_details, Mapping) else {}),
+            "provider_error_code": failure_details["provider_error_code"],
             **facts,
         }
     return result
@@ -323,7 +408,7 @@ def _reuse_or_reconcile_open_pr_effect(
         result = find_open_pr(args, ctx, head_sha=head_sha)
         if result is None:
             raise ToolRuntimeError(
-                "PROJECT_EFFECT_UNCERTAIN",
+                "UPSTREAM_ERROR",
                 "The prior pull-request request is still uncertain; it was not repeated.",
                 {
                     "reason_code": "github_open_pr_readback_not_found",
@@ -350,7 +435,7 @@ def _reuse_or_reconcile_open_pr_effect(
         save_project_effect_record(task_manager, existing, receipt=receipt)
     if receipt is None:
         raise ToolRuntimeError(
-            "PROJECT_EFFECT_RECEIPT_MISSING",
+            "INTERNAL_ERROR",
             "The completed project effect has no pull-request receipt.",
             {
                 "reason_code": "project_effect_receipt_missing",
@@ -376,10 +461,14 @@ def _open_pr_receipt(
     *,
     head_sha: str,
 ) -> dict[str, Any]:
-    data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
+    raw_data = result.get("data")
+    data: Mapping[str, Any] = raw_data if isinstance(raw_data, Mapping) else {}
     owner = str(data.get("owner") or "")
     repo = str(data.get("repo") or "")
-    source = result.get("source") if isinstance(result.get("source"), Mapping) else {}
+    raw_source = result.get("source")
+    source: Mapping[str, Any] = (
+        raw_source if isinstance(raw_source, Mapping) else {}
+    )
     return {
         "owner": owner,
         "repo": repo,
@@ -415,15 +504,15 @@ def _with_project_facts(
     result: Mapping[str, Any], facts: Mapping[str, Any]
 ) -> dict[str, Any]:
     enriched = dict(result)
-    data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
+    raw_data = result.get("data")
+    data: Mapping[str, Any] = raw_data if isinstance(raw_data, Mapping) else {}
     enriched["data"] = {**dict(data), **dict(facts)}
     return enriched
 
 
 def _is_uncertain_github_error(error: BaseException) -> bool:
     return isinstance(error, ToolRuntimeError) and (
-        error.code == "REMOTE_ERROR"
-        and error.details.get("reason_code") == "github_api_unreachable"
+        error.details.get("reason_code") == "github_api_unreachable"
     )
 
 
@@ -431,6 +520,7 @@ __all__ = [
     "GithubOpenPrProjectEffect",
     "begin_github_open_pr_project_effect",
     "complete_github_open_pr_project_effect",
+    "execute_github_open_pr_project_effect",
     "fail_github_open_pr_project_effect",
     "finalize_github_open_pr_project_result",
     "github_open_pr_action_scope",
