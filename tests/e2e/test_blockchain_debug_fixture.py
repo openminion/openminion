@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.e2e.fixtures.blockchain.verify_reference_swap_fixture import FIXTURE_ROOT
+
+pytestmark = pytest.mark.e2e
 
 
 def test_reference_swap_fixture_has_exact_composition_api() -> None:

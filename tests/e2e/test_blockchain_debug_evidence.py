@@ -16,6 +16,8 @@ from tests.e2e.runners.run_blockchain_debug_focus_minimax import (
     _turn_scope_groups,
 )
 
+pytestmark = pytest.mark.e2e
+
 ROOT = Path(__file__).resolve().parents[2]
 FRAMEWORK_ROOT = min(
     (
