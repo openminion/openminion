@@ -58,7 +58,6 @@ src/openminion/cli/interactive/widgets/mention_overlay.py	1	0	current broad-hand
 src/openminion/cli/interactive/widgets/slash_overlay.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/animation/registry.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/clipboard.py	1	0	best-effort clipboard backend failures must not terminate the interactive surface
-src/openminion/cli/presentation/tool/blocks.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/visible_parity.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/status/surface.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/transport/daemon_client.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
