@@ -8,6 +8,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 _SCRIPT_PATH = (
     Path(__file__).resolve().parent.parent.parent
@@ -1887,6 +1889,7 @@ def test_omfla_agent_cache_honors_bound_and_ttl(tmp_path: Path) -> None:
     assert run.metrics["remaining_agents_after_convergence"] == 0
 
 
+@pytest.mark.timeout(120)
 def test_omfla_runtime_restart_closes_each_owner_twice(
     tmp_path: Path,
     monkeypatch,
