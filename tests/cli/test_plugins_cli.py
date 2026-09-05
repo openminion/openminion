@@ -5,6 +5,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from openminion.base.config import OpenMinionConfig, load_config, save_config
+from openminion.cli.main import main
 from openminion.cli.commands.plugins import (
     health_plugin,
     install_plugin,
@@ -153,3 +154,39 @@ def test_plugin_install_health_rollback_and_uninstall(tmp_path: Path, capsys) ->
         ]
         == "1.0.0"
     )
+
+
+def test_plugin_cli_lifecycle(tmp_path: Path, capsys) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    root = tmp_path / "installed"
+    config_path = tmp_path / "config.json"
+    _write_plugin(first, version="1.0.0")
+    _write_plugin(second, version="2.0.0")
+    save_config(OpenMinionConfig(), str(config_path))
+    base_args = [
+        "--config",
+        str(config_path),
+        "--home-root",
+        str(tmp_path),
+        "--data-root",
+        str(tmp_path / "data"),
+        "plugins",
+    ]
+
+    assert main([*base_args, "preview", str(first)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["plugin"]["permissions"] == ["message.inbound.read"]
+
+    assert main([*base_args, "install", str(first), "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert main([*base_args, "health", "example.plugin", "--root", str(root)]) == 0
+    assert json.loads(capsys.readouterr().out)["healthy"] is True
+
+    assert main([*base_args, "install", str(second), "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert main([*base_args, "rollback", "example.plugin", "--root", str(root)]) == 0
+    assert json.loads(capsys.readouterr().out)["action"] == "restored"
+
+    assert main([*base_args, "uninstall", "example.plugin", "--root", str(root)]) == 0
+    assert json.loads(capsys.readouterr().out)["action"] == "uninstalled"
