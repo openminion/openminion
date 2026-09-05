@@ -548,7 +548,6 @@ class ToolAdapter:
             agent_query=self.agent_query,
             telemetry_session_id=session_id,
             telemetry_turn_id=trace_id,
-            telemetryctl=self.telemetryctl,
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
@@ -716,7 +715,7 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details=dict(exc.details or {}),
             )
-        except Exception as exc:
+        except Exception:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool execution failed",
