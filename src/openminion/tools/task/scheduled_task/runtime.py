@@ -68,10 +68,9 @@ def _origin_delivery_context(ctx: RuntimeContext) -> dict[str, str]:
         token = _safe_str(metadata, key)
         if token:
             origin[key] = token
-    for key in ("session_id", "channel", "target"):
-        token = str(getattr(ctx, key, "") or "").strip()
-        if token:
-            origin.setdefault(key, token)
+    session_id = str(ctx.session_id or "").strip()
+    if session_id:
+        origin.setdefault("session_id", session_id)
     return origin
 
 
