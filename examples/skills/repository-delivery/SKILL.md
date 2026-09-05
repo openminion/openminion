@@ -52,6 +52,7 @@ the next action. Close only when the public TaskPlan and verifier agree.
 - Completion comes from the project verifier and public TaskPlan.
 
 # Pitfalls and Recovery
+- Stop when dirty-tree overlap or file ownership is ambiguous.
 - Stop when the repository is ambiguous or outside the approved boundary.
 - Stop when repository instructions or required validation commands are missing.
 - Stop before a remote mutation when exact approval is missing.

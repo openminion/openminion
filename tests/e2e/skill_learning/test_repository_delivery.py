@@ -40,8 +40,17 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
         }
     )
     try:
+        skill_id, version_hash, warnings = ingest_file_and_admit(
+            skill,
+            SKILL_PATH,
+            name="repository-delivery",
+        )
+        assert skill_id == "repository-delivery"
+        assert len(version_hash) == 64
+        assert not any(item.startswith("lint.error:") for item in warnings)
+        artifact_ref = f"skill:{skill_id}@sha256:{version_hash}"
         proposal = SkillProposal(
-            proposal_id="repository-delivery-proposal",
+            proposal_id=f"repository-delivery-proposal:{version_hash}",
             source_task_shape_ref="task-shape:repository-delivery",
             proposed_skill_definition=SkillProposalDraft(
                 name="repository-delivery",
@@ -52,7 +61,7 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
                 applies_to={"intents": ["repository delivery"]},
                 verification_rules=["repository_delivery_replay_passed"],
             ),
-            evidence_refs=["evidence:repository-delivery-review"],
+            evidence_refs=[artifact_ref],
             proposer_policy_id="workflow_learning_review_first",
         )
         create_proposal(proposal_store, proposal)
@@ -66,7 +75,12 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
                     "criterion_id": "procedure_only",
                     "status": "accepted",
                     "comment": "Commands remain repository-owned.",
-                }
+                },
+                {
+                    "criterion_id": "artifact_identity",
+                    "status": "accepted",
+                    "comment": f"Reviewed exact procedure {artifact_ref}.",
+                },
             ],
         )
         addition = apply_proposal_with_replay(
@@ -74,29 +88,20 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
             proposal_id=proposal.proposal_id,
             current_catalog=[],
             replay_proof=ReplayProof(
-                proof_id="repository-delivery-replay",
+                proof_id=f"repository-delivery-replay:{version_hash}",
                 proposal_id=proposal.proposal_id,
                 shape_id="task-shape:repository-delivery",
                 status="passed",
-                evidence_refs=["replay:repository-delivery:passed"],
+                evidence_refs=[artifact_ref],
             ),
         )
         assert addition.added_skill_id == "emergent.repository-delivery"
-        assert (
-            get_proposal(proposal_store, proposal_id=proposal.proposal_id)[
-                "queue_state"
-            ]
-            == "applied"
-        )
-
-        skill_id, version_hash, warnings = ingest_file_and_admit(
-            skill,
-            SKILL_PATH,
-            name="repository-delivery",
-        )
-        assert skill_id == "repository-delivery"
-        assert len(version_hash) == 64
-        assert not any(item.startswith("lint.error:") for item in warnings)
+        assert addition.review_ref == proposal.proposal_id
+        applied = get_proposal(proposal_store, proposal_id=proposal.proposal_id)
+        assert applied is not None and applied["queue_state"] == "applied"
+        assert applied["proposal"]["evidence_refs"] == [artifact_ref]
+        assert applied["review"]["proposal_ref"] == proposal.proposal_id
+        assert artifact_ref in applied["review"]["reviewer_notes"][1]["comment"]
 
         snippet, _ = skill.render_snippet(
             skill_id=skill_id,
@@ -113,6 +118,7 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
         ):
             assert required in snippet
         for stop in (
+            "dirty-tree overlap or file ownership is ambiguous",
             "repository is ambiguous",
             "required validation commands are missing",
             "exact approval is missing",
