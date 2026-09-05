@@ -22,6 +22,7 @@ from openminion.modules.task import (
 from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.project.effects import (
     ProjectEffectStatus,
+    load_project_effect_receipt,
     load_project_effect_record,
 )
 from openminion.modules.task.project.policy import (
@@ -76,6 +77,7 @@ class _ProjectGithubProvider:
         self.mutation_calls = 0
         self.return_uncertain = False
         self.return_error = False
+        self.return_malformed_success = False
         self.preflight_error = ""
         self.on_update: Callable[[], None] | None = None
 
@@ -113,6 +115,8 @@ class _ProjectGithubProvider:
                     "details": {"reason_code": "github_api_error"},
                 },
             }
+        if self.return_malformed_success:
+            return {"ok": True}
         if args.get("title") is not None:
             self.title = str(args["title"])
         if args.get("body") is not None:
@@ -306,6 +310,7 @@ def test_project_update_pr_persists_effect_after_consuming_exact_grant(
         "repository_action_scope": _scope(),
         "repository_head_sha": _HEAD_SHA,
         "repository_pr_number": 17,
+        "project_effect_reconciled": False,
     }
 
 
@@ -414,6 +419,7 @@ def test_uncertain_update_reconciles_after_restart_without_repeat(
     assert reconciled["extra"]["project_effect_id"] == effect_id
     assert reconciled["extra"]["project_permission_grant_id"] == "grant-1"
     assert reconciled["extra"]["project_effect_status"] == "succeeded"
+    assert reconciled["extra"]["project_effect_reconciled"] is True
 
 
 @pytest.mark.parametrize(
@@ -494,6 +500,35 @@ def test_known_update_error_is_public_and_terminal(
         effect_id="effect:github.update_pr:update-pr-1",
     )
     assert effect is not None and effect.status == ProjectEffectStatus.FAILED
+
+
+def test_malformed_success_does_not_create_a_success_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _project_manager(tmp_path)
+    _issue_grant(manager)
+    provider = _ProjectGithubProvider()
+    provider.return_malformed_success = True
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command(), session_id="session-1", trace_id="turn-1"
+    )
+
+    effect_id = "effect:github.update_pr:update-pr-1"
+    assert result["error"]["code"] == "INVALID_RESPONSE"
+    assert result["error"]["details"]["reason_code"] == (
+        "github_update_pr_result_invalid"
+    )
+    effect = load_project_effect_record(
+        manager, task_id="task-1", effect_id=effect_id
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.FAILED
+    assert load_project_effect_receipt(
+        manager, task_id="task-1", effect_id=effect_id
+    ) is None
 
 
 def test_non_project_update_pr_keeps_confirmation_path(

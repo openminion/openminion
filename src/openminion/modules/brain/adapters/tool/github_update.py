@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
 from openminion.modules.task.project.effects import (
@@ -68,6 +68,7 @@ class GithubUpdatePrProjectEffect:
     scope: str
     head_sha: str
     number: int
+    reconciled: bool = False
 
     def facts(self) -> dict[str, Any]:
         return {
@@ -79,6 +80,7 @@ class GithubUpdatePrProjectEffect:
             "repository_action_scope": self.scope,
             "repository_head_sha": self.head_sha,
             "repository_pr_number": self.number,
+            "project_effect_reconciled": self.reconciled,
         }
 
 
@@ -159,10 +161,11 @@ def _begin_github_update_pr_project_effect(
                 "repository_action_scope": scope,
             },
         )
-    if existing is not None and replay.decision in {
+    reconciled = existing is not None and replay.decision in {
         ProjectEffectReplayDecision.REUSE_EXISTING,
         ProjectEffectReplayDecision.BLOCK_DUPLICATE,
-    }:
+    }
+    if reconciled:
         effect = _resume_github_update_pr_project_effect(
             task_manager,
             existing=existing,
@@ -191,6 +194,7 @@ def _begin_github_update_pr_project_effect(
         scope=scope,
         head_sha=head_sha,
         number=number,
+        reconciled=reconciled,
     )
     emit_tool_invoke_operation_for_context(
         ctx=ctx,
@@ -233,6 +237,7 @@ def execute_github_update_pr_project_effect(
             task_manager,
             started,
             result=invoke(),
+            args=args,
             ctx=ctx,
         )
     except ToolRuntimeError as exc:
@@ -251,13 +256,18 @@ def _finalize_github_update_pr_project_result(
     started: GithubUpdatePrProjectEffect,
     *,
     result: dict[str, Any],
+    args: Mapping[str, Any],
     ctx: Any,
 ) -> dict[str, Any]:
     outputs = result.get("outputs")
     if result.get("status") == BRAIN_ACTION_STATUS_SUCCESS and isinstance(
         outputs, Mapping
     ):
-        receipt = _update_pr_receipt(outputs)
+        receipt = _update_pr_receipt(
+            outputs,
+            args=args,
+            head_sha=started.head_sha,
+        )
         effect = _succeeded_update_effect(started.effect, receipt)
         save_project_effect_record(task_manager, effect, receipt=receipt)
         completed = GithubUpdatePrProjectEffect(
@@ -266,6 +276,7 @@ def _finalize_github_update_pr_project_result(
             scope=started.scope,
             head_sha=started.head_sha,
             number=started.number,
+            reconciled=started.reconciled,
         )
         emit_tool_invoke_operation_for_context(
             ctx=ctx,
@@ -382,7 +393,11 @@ def _resume_github_update_pr_project_effect(
                     "repository_action_scope": scope,
                 },
             )
-        receipt = _update_pr_receipt(preflight)
+        receipt = _update_pr_receipt(
+            preflight,
+            args=args,
+            head_sha=str(data["head_sha"]),
+        )
         existing = _succeeded_update_effect(existing, receipt, readback=True)
         save_project_effect_record(task_manager, existing, receipt=receipt)
     if receipt is None:
@@ -428,6 +443,7 @@ def _record_update_pr_failure(
         scope=started.scope,
         head_sha=started.head_sha,
         number=started.number,
+        reconciled=started.reconciled,
     )
     facts = {
         **failed.facts(),
@@ -468,21 +484,72 @@ def _succeeded_update_effect(
     )
 
 
-def _update_pr_receipt(result: Mapping[str, Any]) -> dict[str, Any]:
+def _update_pr_receipt(
+    result: Mapping[str, Any],
+    *,
+    args: Mapping[str, Any],
+    head_sha: str,
+) -> dict[str, Any]:
     raw_data = result.get("data")
-    data = raw_data if isinstance(raw_data, Mapping) else {}
     raw_source = result.get("source")
-    source = raw_source if isinstance(raw_source, Mapping) else {}
+    string_fields = (
+        "owner",
+        "repo",
+        "html_url",
+        "title",
+        "body",
+        "state",
+        "head_sha",
+    )
+    valid_shape = (
+        result.get("ok") is True
+        and isinstance(raw_data, Mapping)
+        and isinstance(raw_source, Mapping)
+        and all(isinstance(raw_data.get(field), str) for field in string_fields)
+        and isinstance(raw_data.get("number"), int)
+        and not isinstance(raw_data.get("number"), bool)
+        and isinstance(raw_source.get("provider_id"), str)
+    )
+    if not valid_shape:
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub update returned an invalid pull-request result.",
+            {"reason_code": "github_update_pr_result_invalid"},
+        )
+    data = cast(Mapping[str, Any], raw_data)
+    source = cast(Mapping[str, Any], raw_source)
+    expected_update_matches = all(
+        args.get(field) is None or data[field] == args[field]
+        for field in ("title", "body")
+    )
+    if (
+        not all(
+            data[field]
+            for field in ("owner", "repo", "html_url", "title", "head_sha")
+        )
+        or not source["provider_id"]
+        or data["owner"] != args.get("owner")
+        or data["repo"] != args.get("repo")
+        or data["number"] != args.get("number")
+        or data["state"] != "open"
+        or data["head_sha"] != head_sha
+        or not expected_update_matches
+    ):
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub update returned a mismatched pull-request result.",
+            {"reason_code": "github_update_pr_result_mismatch"},
+        )
     return {
-        "owner": str(data.get("owner") or ""),
-        "repo": str(data.get("repo") or ""),
-        "number": int(data.get("number") or 0),
-        "html_url": str(data.get("html_url") or ""),
-        "title": str(data.get("title") or ""),
-        "body": str(data.get("body") or ""),
-        "state": str(data.get("state") or ""),
-        "head_sha": str(data.get("head_sha") or ""),
-        "provider_id": str(source.get("provider_id") or ""),
+        "owner": data["owner"],
+        "repo": data["repo"],
+        "number": data["number"],
+        "html_url": data["html_url"],
+        "title": data["title"],
+        "body": data["body"],
+        "state": data["state"],
+        "head_sha": data["head_sha"],
+        "provider_id": source["provider_id"],
     }
 
 
