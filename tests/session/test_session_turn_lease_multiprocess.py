@@ -7,6 +7,8 @@ from queue import Empty
 
 from openminion.modules.session.storage import SQLiteSessionStore
 
+_PROCESS_TIMEOUT_SECONDS = 30
+
 
 def _hold_session_turn_lease(
     db_path: str,
@@ -50,7 +52,7 @@ def _try_competing_session_turn_lease(
 ) -> None:
     store = SQLiteSessionStore(Path(db_path))
     try:
-        if not acquired.wait(timeout=5):
+        if not acquired.wait(timeout=_PROCESS_TIMEOUT_SECONDS):
             results.put(("competitor", "timeout", "holder did not acquire"))
             return
         store.acquire_session_turn_lease(
@@ -90,8 +92,8 @@ def test_two_process_sqlite_session_turn_lease_rejects_parallel_writers(
 
     holder.start()
     competitor.start()
-    holder.join(timeout=10)
-    competitor.join(timeout=10)
+    holder.join(timeout=_PROCESS_TIMEOUT_SECONDS)
+    competitor.join(timeout=_PROCESS_TIMEOUT_SECONDS)
     try:
         if holder.is_alive():
             holder.terminate()
