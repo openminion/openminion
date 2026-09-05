@@ -6,6 +6,7 @@ from openminion.cli.interactive.mcp_status import (
     build_mcp_reference,
     render_mcp_status_report,
 )
+from openminion.tools.mcp import MCPProtocolError
 
 
 def _mcp_runtime_tool_names(
@@ -40,6 +41,28 @@ def _mcp_runtime_auxiliary_counts(
     )
 
 
+def _mcp_live_auxiliary_counts(live_session: Any) -> tuple[int, int, int, int] | None:
+    try:
+        prompts = live_session.list_prompts()
+        resources = live_session.list_resources()
+        list_templates = getattr(live_session, "list_resource_templates", None)
+        templates = list_templates() if callable(list_templates) else []
+    except MCPProtocolError as exc:
+        if exc.details.get("code") == -32601:
+            return None
+        raise
+    return (
+        len(prompts),
+        len(resources),
+        len(templates),
+        sum(
+            1
+            for resource in resources
+            if str(getattr(resource, "resource_uri", "") or "").startswith("ui://")
+        ),
+    )
+
+
 class RuntimeMCPMixin:
     _rt: Any
 
@@ -55,6 +78,11 @@ class RuntimeMCPMixin:
         log_snapshot = (
             manager.mcp_server_logs(limit=1)
             if manager is not None and hasattr(manager, "mcp_server_logs")
+            else {}
+        )
+        metric_snapshot = (
+            manager.mcp_server_metrics()
+            if manager is not None and hasattr(manager, "mcp_server_metrics")
             else {}
         )
         rows: list[MCPServerStatusRow] = []
@@ -80,24 +108,14 @@ class RuntimeMCPMixin:
             if live_session is not None:
                 try:
                     tool_count = len(live_session.list_tools())
-                    prompt_count = len(live_session.list_prompts())
-                    resources = live_session.list_resources()
-                    resource_count = len(resources)
-                    list_templates = getattr(
-                        live_session,
-                        "list_resource_templates",
-                        None,
-                    )
-                    resource_template_count = (
-                        len(list_templates()) if callable(list_templates) else 0
-                    )
-                    app_resource_count = sum(
-                        1
-                        for resource in resources
-                        if str(getattr(resource, "resource_uri", "") or "").startswith(
-                            "ui://"
-                        )
-                    )
+                    auxiliary_counts = _mcp_live_auxiliary_counts(live_session)
+                    if auxiliary_counts is not None:
+                        (
+                            prompt_count,
+                            resource_count,
+                            resource_template_count,
+                            app_resource_count,
+                        ) = auxiliary_counts
                     status = "ready"
                 except Exception as exc:
                     tool_count = max(tool_count, len(tool_names))
@@ -110,6 +128,7 @@ class RuntimeMCPMixin:
                 recent_log = (
                     f"{latest_log.level or 'info'}: {latest_log.message}".strip()
                 )
+            server_metrics = metric_snapshot.get(server_name, {})
             sandbox = getattr(server, "stdio_sandbox", None)
             trust_state = (
                 "trusted" if bool(getattr(server, "trusted", False)) else "untrusted"
@@ -131,6 +150,11 @@ class RuntimeMCPMixin:
                     resource_count=resource_count,
                     resource_template_count=resource_template_count,
                     app_resource_count=app_resource_count,
+                    call_total=int(server_metrics.get("call_total", 0) or 0),
+                    call_error_total=int(
+                        server_metrics.get("call_error_total", 0) or 0
+                    ),
+                    restart_total=int(server_metrics.get("restart_total", 0) or 0),
                     tool_names=tuple(tool_names),
                     error=error,
                     recent_log=recent_log,
