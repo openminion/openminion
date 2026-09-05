@@ -90,6 +90,7 @@ MODEL_SECURITY_SCAN_CODE = "security.scan_code"
 MODEL_SECURITY_SCAN_DEPENDENCIES = "security.scan_dependencies"
 MODEL_SECURITY_SCAN_ARTIFACT = "security.scan_artifact"
 MODEL_SECURITY_SCAN_SECRETS = "security.scan_secrets"
+MODEL_SECURITY_PUBLISH_REPORT = "security.publish_report"
 MODEL_K8S_WORKLOAD_GET = "k8s.workload.get"
 MODEL_K8S_WORKLOAD_LIST = "k8s.workload.list"
 MODEL_K8S_EVENTS_LIST = "k8s.events.list"
@@ -139,6 +140,7 @@ SECURITY_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_SECURITY_SCAN_DEPENDENCIES,
     MODEL_SECURITY_SCAN_ARTIFACT,
     MODEL_SECURITY_SCAN_SECRETS,
+    MODEL_SECURITY_PUBLISH_REPORT,
 )
 
 MODEL_GWS_CALL = "gws.call"

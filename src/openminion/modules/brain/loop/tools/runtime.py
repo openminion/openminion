@@ -707,7 +707,10 @@ def build_runtime_tool_specs(
         except (ValidationError, json.JSONDecodeError):
             schema_by_name = {}
     specs: list[ToolSpec] = []
+    is_allowed = getattr(getattr(runner, "tool_api", None), "is_tool_allowed", None)
     for tool_name in sorted(allowed_tools):
+        if callable(is_allowed) and not is_allowed(tool_name):
+            continue
         raw = schema_by_name.get(tool_name, {})
         if not raw and tool_name not in descriptions:
             continue

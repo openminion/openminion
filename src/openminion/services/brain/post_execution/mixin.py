@@ -14,6 +14,7 @@ from openminion.base.config.action_policy import (
 )
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.runner import BrainRunner
+from openminion.modules.brain.loop.services import turn_tool_scope
 from openminion.modules.brain.diagnostics.status import (
     PhaseStatus,
     StatusDetailCode,
@@ -97,16 +98,6 @@ def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, st
         for tool, mode in parsed.items()
         if str(tool or "").strip()
     }
-
-
-def _turn_tool_allowlist(metadata_source: Mapping[str, Any]) -> tuple[str, ...] | None:
-    if str(metadata_source.get("subagent_context_id", "") or "").strip():
-        raw = metadata_source.get("subagent_tool_allowlist", "")
-    elif str(metadata_source.get("turn_tool_allowlist_supplied", "")).lower() == "true":
-        raw = metadata_source.get("turn_tool_allowlist", "")
-    else:
-        return None
-    return tuple(item.strip() for item in str(raw or "").split(",") if item.strip())
 
 
 class BrainBridgeTurnMixin:
@@ -510,11 +501,10 @@ class BrainBridgeTurnMixin:
 
             approval_callback = _sync_approval_callback
         try:
-            allowed_tools = _turn_tool_allowlist(message.metadata or {})
-            tool_scope = (
-                runner.tool_api.restrict_tools(allowed_tools)
-                if allowed_tools is not None
-                else nullcontext()
+            tool_scope = turn_tool_scope(
+                runner,
+                message.metadata or {},
+                getattr(self, "_identity_tool_filter", None),
             )
             with tool_scope, workspace_scope:
                 step_out = await asyncio.to_thread(

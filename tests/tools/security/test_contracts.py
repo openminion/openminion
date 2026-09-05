@@ -5,9 +5,11 @@ import pytest
 from pydantic import ValidationError
 
 from openminion.modules.tool import build_default_tool_registry
+from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.exposure import get_model_exposure_specs
 from openminion.modules.tool.framework import derive_manifest
+from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.security import ALL_SECURITY_TOOLS, REGISTRAR, SECURITY_FAMILY
 from openminion.tools.security.config import (
     SecurityConfig,
@@ -98,3 +100,30 @@ def test_target_must_exist_inside_allowed_root(tmp_path: Path) -> None:
         resolve_local_target(str(tmp_path), config)
     with pytest.raises(ToolRuntimeError, match="does not exist"):
         resolve_local_target("missing", config)
+
+
+def test_missing_scanner_dependency_stops_before_security_handler(
+    tmp_path: Path,
+) -> None:
+    registry = build_default_tool_registry(strict=False)
+    result = execute_tool_spec_call(
+        tool=registry.get("security.scan_code"),
+        arguments={"target": ".", "include_evidence_artifact": True},
+        context=ToolExecutionContext(
+            channel="console",
+            target="tests",
+            session_id="security-missing",
+            metadata={
+                "workspace_root": str(tmp_path),
+                "runtime_env": {
+                    "PATH": "",
+                    "OPENMINION_SECURITY_SEMGREP_EXECUTABLE": "not-installed",
+                },
+            },
+        ),
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "DEPENDENCY_MISSING"
+    assert "artifact_refs" not in result.data
+    assert "artifacts" not in result.data

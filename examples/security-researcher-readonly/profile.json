@@ -1,0 +1,17 @@
+{
+  "default_agent": "default-agent",
+  "identity": {
+    "db_path": "identity/identity.db"
+  },
+  "agents": {
+    "default-agent": {
+      "name": "default-agent",
+      "provider": "echo"
+    },
+    "security-researcher-readonly": {
+      "name": "security-researcher-readonly",
+      "provider": "echo",
+      "skill": "security-researcher-readonly"
+    }
+  }
+}

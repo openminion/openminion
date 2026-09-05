@@ -8,6 +8,10 @@ from pydantic import ValidationError
 from openminion.modules.brain.execution.public_taxonomy import (
     public_mode_name_for_mode_name,
 )
+from openminion.modules.brain.loop.services import (
+    runner_from_context,
+    runtime_allows_tool,
+)
 from openminion.modules.brain.schemas import DelegationContext
 from openminion.modules.llm.constants import REQUESTABLE_TOOL_NAMES_METADATA_KEY
 from openminion.modules.llm.schemas import Message, ToolSpec
@@ -203,6 +207,28 @@ class LoopFrameSetup(NamedTuple):
     pending_response: Any
 
 
+def _with_loop_control_specs(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    profile: AdaptiveToolLoopProfile,
+    tool_specs: list[ToolSpec],
+    requestable_specs: list[ToolSpec],
+) -> tuple[bool, bool, list[ToolSpec]]:
+    runner = runner_from_context(loop_ctx) or getattr(loop_ctx, "_runner", None)
+    tool_request_enabled = bool(requestable_specs) and runtime_allows_tool(
+        runner, TOOL_REQUEST_TOOL_NAME
+    )
+    plan_enabled = plan_tool_enabled(profile) and runtime_allows_tool(
+        runner, PLAN_TOOL_NAME
+    )
+    active_specs = (
+        with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
+    )
+    if plan_enabled:
+        active_specs = with_enabled_plan_tool_spec(profile, active_specs)
+    return tool_request_enabled, plan_enabled, active_specs
+
+
 def prepare_loop_frame(
     loop_ctx: AdaptiveToolLoopContext,
     *,
@@ -221,14 +247,15 @@ def prepare_loop_frame(
     )
     public_mode_tag = _public_loop_tag(profile.mode_name)
     requestable_specs = list(requestable_tool_specs or [])
-    tool_request_enabled = bool(requestable_specs)
+    tool_request_enabled, plan_enabled, active_tool_specs = _with_loop_control_specs(
+        loop_ctx,
+        profile=profile,
+        tool_specs=tool_specs,
+        requestable_specs=requestable_specs,
+    )
     requestable_specs_by_name = {
         spec.name.strip(): spec for spec in requestable_specs if spec.name.strip()
     }
-    active_tool_specs = (
-        with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
-    )
-    active_tool_specs = with_enabled_plan_tool_spec(profile, active_tool_specs)
     active_tool_names = {
         spec.name.strip()
         for spec in active_tool_specs
@@ -240,14 +267,13 @@ def prepare_loop_frame(
     )
     if tool_request_enabled:
         allowed_tools = frozenset({*allowed_tools, TOOL_REQUEST_TOOL_NAME})
-    if plan_tool_enabled(profile):
+    if plan_enabled:
         allowed_tools = frozenset({*allowed_tools, PLAN_TOOL_NAME})
     seeded_queue = list(seeded_commands or [])
     if not active_tool_specs and allowed_tools and not seeded_queue:
         raise ValueError(
             "tool_specs are required for the resolved adaptive tool surface"
         )
-
     loop_state = initial_state or AdaptiveToolLoopState(messages=list(initial_messages))
     if not loop_state.messages:
         loop_state.messages = list(initial_messages)

@@ -18,6 +18,10 @@ from openminion.modules.brain.runtime.improvement.contracts import (
 )
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
 from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+from openminion.modules.tool.diagnostics.events import (
+    structural_security_tool_results,
+    structural_tool_results,
+)
 
 
 ADAPTIVE_TOOL_EXPOSURE_EXPLICIT_ALLOWLIST = "explicit_allowlist"
@@ -351,6 +355,27 @@ class AdaptiveToolLoopState:
     consecutive_noops: int = 0
 
 
+def _tool_result_telemetry(state: AdaptiveToolLoopState) -> dict[str, Any]:
+    results = [
+        item
+        for item in list(state.scratchpad.get("adaptive.tool_results", []) or [])
+        if isinstance(item, dict)
+    ]
+    if not results:
+        return {}
+    formatter = (
+        structural_tool_results
+        if state.scratchpad.get("telemetry.structural_tool_results")
+        else structural_security_tool_results
+    )
+    return {
+        "tool_results": formatter(results),
+        "tool_calls_count": len(results),
+        "tool_execution_count": len(results),
+        "tool_verified": all(bool(item.get("verified")) for item in results),
+    }
+
+
 @dataclass(slots=True)
 class AdaptiveToolLoopOutcome:
     profile_name: str
@@ -469,20 +494,7 @@ class AdaptiveToolLoopOutcome:
             and self.self_improvement_decision
         ):
             payload["self_improvement.decision"] = dict(self.self_improvement_decision)
-        tool_results = [
-            item
-            for item in list(
-                self.state.scratchpad.get("adaptive.tool_results", []) or []
-            )
-            if isinstance(item, dict)
-        ]
-        if tool_results:
-            payload["tool_results"] = tool_results
-            payload["tool_calls_count"] = len(tool_results)
-            payload["tool_execution_count"] = len(tool_results)
-            payload["tool_verified"] = all(
-                bool(item.get("verified")) for item in tool_results
-            )
+        payload.update(_tool_result_telemetry(self.state))
         payload.update(loop_parallel_payload(self.state.scratchpad))
         payload.update(loop_turn_progress_payload(self.state.scratchpad))
         return payload

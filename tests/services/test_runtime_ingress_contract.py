@@ -21,6 +21,10 @@ from openminion.services.runtime.ingress import (
     runtime_turn_request_from_payload,
     submit_turn_payload,
 )
+from openminion.services.runtime.ingress.requests import (
+    build_manager_turn_request,
+    runtime_turn_request_from_manager_request,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -263,6 +267,57 @@ def test_submit_turn_payload_uses_runtime_manager_and_preserves_meta() -> None:
     assert request.meta["idempotency_key"] == "idem-submit"
     assert request.meta["forced_tools"] == ["web.search"]
     assert request.meta["capability_category"] == "search"
+
+
+def test_direct_turn_preserves_top_level_permission_mode_with_precedence() -> None:
+    runtime = _RuntimeStub()
+    request = runtime_turn_request_from_payload(
+        runtime=runtime,
+        payload={
+            "message": "audit",
+            "session_id": "security-direct",
+            "permission_mode": "readonly",
+            "inbound_metadata": {"permission_mode": "default"},
+        },
+    )
+
+    assert request.inbound_metadata is not None
+    assert request.inbound_metadata["permission_mode"] == "readonly"
+
+
+def test_managed_turn_preserves_top_level_permission_mode_with_precedence() -> None:
+    runtime = _RuntimeStub()
+    manager_request = build_manager_turn_request(
+        {
+            "message": "audit",
+            "session_id": "security-managed",
+            "permission_mode": "readonly",
+            "meta": {
+                "permission_mode": "default",
+                "inbound_metadata": {"permission_mode": "bypass"},
+            },
+        },
+        default_agent_id="main",
+    )
+    request = runtime_turn_request_from_manager_request(
+        runtime=runtime,
+        request=manager_request,
+    )
+
+    assert manager_request.meta["permission_mode"] == "readonly"
+    assert request.inbound_metadata is not None
+    assert request.inbound_metadata["permission_mode"] == "readonly"
+
+
+def test_omitted_permission_mode_does_not_change_inbound_metadata() -> None:
+    runtime = _RuntimeStub()
+    request = runtime_turn_request_from_payload(
+        runtime=runtime,
+        payload={"message": "normal", "session_id": "normal-direct"},
+    )
+
+    assert request.inbound_metadata is not None
+    assert "permission_mode" not in request.inbound_metadata
 
 
 def _room_participant(agent_id: str) -> SimpleNamespace:

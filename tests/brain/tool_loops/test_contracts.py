@@ -128,6 +128,101 @@ def test_outcome_telemetry_payload_includes_aggregated_tool_results_when_present
     assert payload["tool_results"][0]["tool_name"] == "file.read"
 
 
+def test_outcome_telemetry_keeps_security_results_structural() -> None:
+    report_ref = "artifact://sha256/" + ("a" * 64)
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name="general_adaptive_v1",
+        mode_name="act_adaptive",
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=AdaptiveToolLoopState(
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "security.publish_report",
+                        "ok": True,
+                        "verified": True,
+                        "data": {
+                            "assessment_id": "b" * 32,
+                            "execution_status": "partial",
+                            "finding_count": 1,
+                            "artifact_refs": [report_ref],
+                            "summary": "private report prose",
+                            "findings": [{"path": "/private/source.py"}],
+                        },
+                        "error_code": "",
+                        "call_id": "call-security",
+                        "source": "native",
+                    }
+                ]
+            }
+        ),
+        allowed_tools=frozenset({"security.publish_report"}),
+    )
+
+    payload = outcome.telemetry_payload()
+
+    assert payload["tool_results"] == [
+        {
+            "structural_only": True,
+            "tool_name": "security.publish_report",
+            "ok": True,
+            "verified": True,
+            "data": {
+                "assessment_id": "b" * 32,
+                "result_status": "partial",
+                "finding_count": 1,
+                "artifact_refs": [report_ref],
+                "artifact_count": 1,
+            },
+            "error_code": "",
+            "call_id": "call-security",
+            "source": "native",
+        }
+    ]
+    assert "private report prose" not in str(payload)
+    assert "/private/source.py" not in str(payload)
+
+
+def test_outcome_telemetry_can_keep_all_tool_results_structural() -> None:
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name="general_adaptive_v1",
+        mode_name="act_adaptive",
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=AdaptiveToolLoopState(
+            scratchpad={
+                "telemetry.structural_tool_results": True,
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "git.diff",
+                        "ok": True,
+                        "verified": True,
+                        "data": {"content": "return eval(user_input)"},
+                        "call_id": "call-diff",
+                        "source": "native",
+                    }
+                ],
+            }
+        ),
+        allowed_tools=frozenset({"git.diff"}),
+    )
+
+    payload = outcome.telemetry_payload()
+
+    assert payload["tool_results"] == [
+        {
+            "structural_only": True,
+            "tool_name": "git.diff",
+            "ok": True,
+            "verified": True,
+            "data": {},
+            "error_code": "",
+            "call_id": "call-diff",
+            "source": "native",
+        }
+    ]
+    assert "eval(user_input)" not in str(payload)
+
+
 # Correction profile fields
 
 

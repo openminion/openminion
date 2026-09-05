@@ -169,10 +169,10 @@ def run_tool_spec(
             latency_ms=int((time.monotonic() - start_time) * 1000),
             details={"error_type": type(exc).__name__},
         )
-    if isinstance(data, Mapping) and "status" in data:
-        inner_status = str(data.get("status", BRAIN_STATE_ERROR))
-    elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
+    if isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
         inner_status = "ok" if data["ok"] else BRAIN_STATE_ERROR
+    elif isinstance(data, Mapping) and "status" in data:
+        inner_status = str(data.get("status", BRAIN_STATE_ERROR))
     else:
         inner_status = "ok"
     status = (

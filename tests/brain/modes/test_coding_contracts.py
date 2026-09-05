@@ -157,6 +157,42 @@ def test_loop_state_telemetry_payload_structure() -> None:
     assert set(payload["coding.allowed_tools"]) == set(CODING_ALLOWED_TOOLS)
 
 
+def test_loop_state_telemetry_keeps_security_results_structural() -> None:
+    report_ref = "artifact://sha256/" + ("a" * 64)
+    state = CodingLoopState(
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "security.publish_report",
+                    "ok": True,
+                    "verified": True,
+                    "data": {
+                        "assessment_id": "b" * 32,
+                        "execution_status": "completed",
+                        "duration_ms": 25,
+                        "artifact_refs": [report_ref],
+                        "summary": "private report prose",
+                    },
+                    "call_id": "call-security",
+                    "source": "native",
+                }
+            ]
+        }
+    )
+
+    payload = state.telemetry_payload(CODING_ALLOWED_TOOLS)
+
+    result = payload["tool_results"][0]
+    assert result["data"] == {
+        "assessment_id": "b" * 32,
+        "result_status": "completed",
+        "duration_ms": 25,
+        "artifact_refs": [report_ref],
+        "artifact_count": 1,
+    }
+    assert "private report prose" not in str(payload)
+
+
 def test_coding_tool_specs_describe_delegate_artifact_disposition() -> None:
     from openminion.modules.brain.loop.strategies.coding.runtime import (
         _build_tool_specs,

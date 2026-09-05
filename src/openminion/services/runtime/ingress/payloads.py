@@ -13,6 +13,7 @@ _INBOUND_META_SKIP = {
     "deliver",
     "forced_tools",
     "capability_category",
+    "permission_mode",
 }
 
 
@@ -79,6 +80,9 @@ def apply_inbound_overrides(
             parse_forced_tools(payload.get("allowed_tools")) or ()
         )
         updated["turn_tool_allowlist_supplied"] = "true"
+    permission_mode = str(payload.get("permission_mode") or "").strip()
+    if "permission_mode" in payload and permission_mode:
+        updated["permission_mode"] = permission_mode
     return updated or None
 
 

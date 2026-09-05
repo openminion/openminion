@@ -2976,6 +2976,46 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     assert outcome.final_text == "done"
 
 
+def test_runtime_scope_excludes_loop_control_tools() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "No tools were needed.",
+                },
+                finish_reason="stop",
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(tool_calls=1, llm_calls_max=1))
+    loop_ctx._runner = SimpleNamespace(
+        tool_api=SimpleNamespace(
+            is_tool_allowed=lambda name: name == "web.search",
+        )
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"web.search", "web.fetch"}),
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="answer directly")],
+        tool_specs=_tool_specs("web.search"),
+        requestable_tool_specs=_tool_specs("web.search", "web.fetch"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [spec.name for spec in runtime.calls[0]["tools"]] == ["web.search"]
+
+
 def test_generic_file_request_recovers_with_exact_active_file_tool() -> None:
     runtime = _FakeRuntime(
         responses=[

@@ -6,6 +6,7 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
 )
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
+from openminion.modules.tool.diagnostics.events import structural_security_tool_results
 
 
 @dataclass
@@ -94,7 +95,7 @@ class CodingLoopState:
             if isinstance(item, dict)
         ]
         if tool_results:
-            payload["tool_results"] = tool_results
+            payload["tool_results"] = structural_security_tool_results(tool_results)
             payload["tool_calls_count"] = len(tool_results)
             payload["tool_execution_count"] = len(tool_results)
             payload["tool_verified"] = all(

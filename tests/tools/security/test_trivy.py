@@ -76,6 +76,9 @@ def test_trivy_normalizes_supported_local_scans(
     )
     assert result.status == "completed"
     assert result.total_findings == 1
+    assert result.configuration_identity is not None
+    assert result.configuration_identity.scanner_version == "Version: 0.70.0"
+    assert "--skip-db-update" in result.configuration_identity.fixed_flags
     assert result.findings[0].category == category
     assert result.findings[0].normalized_severity == severity
     assert "SYNTHETIC_SECRET_VALUE" not in repr(result)
@@ -89,6 +92,7 @@ def test_trivy_clean_unavailable_malformed_timeout_and_partial(
         LocalScanArgs(target="."), target=tmp_path, config=_config(tmp_path)
     )
     assert unavailable.status == "unavailable"
+    assert unavailable.configuration_identity is None
 
     monkeypatch.setattr(trivy.shutil, "which", lambda _name: "/usr/bin/trivy")
     clean = trivy.scan_dependencies(
@@ -133,3 +137,26 @@ def test_trivy_clean_unavailable_malformed_timeout_and_partial(
     )
     assert partial.status == "partial"
     assert partial.total_findings == 1
+
+
+def test_trivy_version_failure_keeps_fixed_configuration_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(trivy.shutil, "which", lambda _name: "/usr/bin/trivy")
+
+    def version_failure(argv, *, cwd, timeout_seconds):
+        del argv, cwd, timeout_seconds
+        return ScannerProcessResult(return_code=1, stderr="version failed")
+
+    result = trivy.scan_dependencies(
+        LocalScanArgs(target="."),
+        target=tmp_path,
+        config=_config(tmp_path),
+        process_runner=version_failure,
+    )
+
+    assert result.status == "unavailable"
+    assert result.configuration_identity is not None
+    assert result.configuration_identity.scanner_version == ""
+    assert result.configuration_identity.scan_mode == "vuln"
+    assert result.configuration_identity.fixed_flags == list(trivy.TRIVY_FIXED_FLAGS)

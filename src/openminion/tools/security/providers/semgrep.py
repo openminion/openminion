@@ -22,6 +22,7 @@ from openminion.tools.security.schemas import (
     FindingLocation,
     LocalScanArgs,
     ScanError,
+    SecurityConfigurationIdentity,
     SecurityFinding,
     SecurityScanResult,
 )
@@ -62,6 +63,13 @@ def scan_code(
             ),
         )
 
+    config_path = Path(config.semgrep_config)
+    config_sha256 = (
+        hashlib.sha256(config_path.read_bytes()).hexdigest()
+        if config_path.is_file()
+        else ""
+    )
+
     version = process_runner(
         (executable, "--version"), cwd=config.workspace_root, timeout_seconds=10
     )
@@ -71,6 +79,10 @@ def scan_code(
             started_at=started_at,
             started=started,
             status="unavailable",
+            configuration_identity=SecurityConfigurationIdentity(
+                scan_mode="code",
+                config_sha256=config_sha256,
+            ),
             error=ScanError(
                 code="DEPENDENCY_MISSING",
                 message=bounded_message(
@@ -80,6 +92,7 @@ def scan_code(
             ),
         )
 
+    scanner_version = first_version_line(version.stdout)
     process = process_runner(
         (
             executable,
@@ -100,7 +113,12 @@ def scan_code(
         target=target,
         target_name=target_name,
         max_findings=args.max_findings,
-        scanner_version=first_version_line(version.stdout),
+        scanner_version=scanner_version,
+        configuration_identity=SecurityConfigurationIdentity(
+            scanner_version=scanner_version,
+            scan_mode="code",
+            config_sha256=config_sha256,
+        ),
         started_at=started_at,
         started=started,
     )
@@ -113,6 +131,7 @@ def _parse_semgrep_result(
     target_name: str,
     max_findings: int,
     scanner_version: str,
+    configuration_identity: SecurityConfigurationIdentity,
     started_at: str,
     started: float,
 ) -> SecurityScanResult:
@@ -122,6 +141,7 @@ def _parse_semgrep_result(
             started_at=started_at,
             started=started,
             scanner_version=scanner_version,
+            configuration_identity=configuration_identity,
             status="timed_out",
             truncated=process.truncated,
             error=ScanError(
@@ -134,6 +154,7 @@ def _parse_semgrep_result(
             started_at=started_at,
             started=started,
             scanner_version=scanner_version,
+            configuration_identity=configuration_identity,
             status="cancelled",
             truncated=process.truncated,
             error=ScanError(
@@ -154,6 +175,7 @@ def _parse_semgrep_result(
             started_at=started_at,
             started=started,
             scanner_version=scanner_version,
+            configuration_identity=configuration_identity,
             status="failed",
             truncated=process.truncated,
             error=ScanError(
@@ -178,6 +200,7 @@ def _parse_semgrep_result(
         started_at=started_at,
         started=started,
         scanner_version=scanner_version,
+        configuration_identity=configuration_identity,
         status=status,
         findings=returned,
         total_findings=len(findings),
@@ -240,6 +263,7 @@ def _semgrep_result(
     started: float,
     status: str,
     scanner_version: str = "",
+    configuration_identity: SecurityConfigurationIdentity | None = None,
     findings: list[SecurityFinding] | None = None,
     total_findings: int = 0,
     truncated: bool = False,
@@ -254,6 +278,7 @@ def _semgrep_result(
         started=started,
         status=status,
         scanner_version=scanner_version,
+        configuration_identity=configuration_identity,
         total_findings=total_findings,
         truncated=truncated,
         partial_reason=partial_reason,

@@ -33,6 +33,20 @@ def test_resolve_cli_identity_db_path_prefers_configured_db_path() -> None:
     )
 
 
+def test_resolve_cli_identity_db_path_anchors_relative_config_to_data_root(
+    tmp_path,
+) -> None:
+    roots = resolve_cli_roots(home_root=tmp_path / "home", data_root="state-data")
+    config = SimpleNamespace(
+        identity=SimpleNamespace(db_path="identity/custom.db", root="")
+    )
+
+    assert (
+        resolve_cli_identity_db_path(config, roots=roots)
+        == (roots.data_root / "identity" / "custom.db").resolve()
+    )
+
+
 def test_resolve_cli_identity_db_path_falls_back_to_roots(tmp_path) -> None:
     roots = resolve_cli_roots(home_root=tmp_path / "home", data_root="state-data")
 

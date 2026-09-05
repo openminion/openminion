@@ -72,6 +72,27 @@ checks its own declared executable again before its handler starts. Legacy
 `dependency=...` activation arguments remain accepted but are not readiness
 evidence.
 
+## Readonly researcher report
+
+The optional researcher workflow adds revision-bound evidence and one
+unreviewed candidate report without changing ordinary scan calls. Follow the
+complete setup in
+[`examples/security-researcher-readonly/README.md`](../examples/security-researcher-readonly/README.md).
+
+For this workflow, select the explicit researcher profile with `--no-context`,
+turn read-only mode on, and activate `security_readonly`. Supply the full Git
+revision in `expected_target_revision` and request an evidence artifact for
+every scan. The target must be the configured workspace's clean local Git
+worktree, and the Semgrep configuration must be one readable local file.
+
+`security.publish_report` accepts exactly one canonical scan reference for
+each requested check. It verifies the target, revision, permission mode,
+scanner identity, and any scanner finding IDs before writing one durable JSON
+report. Findings remain `candidate` or `rejected`, and every report remains
+`unreviewed`. A report is `completed` only when every check completed without
+truncation, `partial` when at least one check is usable and another is not, and
+`blocked` when no check is usable.
+
 ## Results and evidence
 
 Results contain scanner identity/version, bounded normalized findings, target,
@@ -83,6 +104,11 @@ runtime facts.
 `include_evidence_artifact=true` stores a durable redacted JSON evidence artifact
 containing the normalized result. It does not store unrestricted scanner
 stdout, source bodies, secret matches, credentials, or registry tokens.
+
+Researcher reports reference those scan artifacts rather than copying raw
+scanner output. Structural telemetry records status, counts, and artifact
+references; report prose and source content do not enter telemetry or debug
+bundles.
 
 ## Safety and proof boundaries
 
@@ -98,4 +124,14 @@ The local MVP does not:
 
 Those capabilities require separately reviewed configuration, policy, and E2E
 proof. Roll back the local surface by deactivating `security_readonly` or
-removing the scanner configuration.
+removing the scanner configuration. Roll back the researcher example by also
+removing its profile binding and restoring the previously admitted skill
+version with compare-and-swap:
+
+```bash
+openminion skill rollback \
+  --skill-id security-researcher-readonly \
+  --to-version-hash <previous-version-hash> \
+  --expected-active-version-hash <current-version-hash> \
+  --reason "Restore the previous approved security procedure"
+```

@@ -101,3 +101,27 @@ def test_api_runtime_resolve_agent_profile_combines_runtime_and_call_overrides()
     assert profile.name == "hello-agent"
     assert profile.provider == "anthropic"
     assert profile.system_prompt == "Call override prompt."
+
+
+def test_api_runtime_run_turn_preserves_top_level_readonly_mode() -> None:
+    runtime = object.__new__(APIRuntime)
+    payload = {
+        "message": "Audit the approved source.",
+        "permission_mode": "readonly",
+        "agent_id": "security-researcher-readonly",
+    }
+    with mock.patch(
+        "openminion.services.runtime.ingress.run_turn_payload",
+        return_value={"status": "completed"},
+    ) as run_turn_payload:
+        result = APIRuntime.run_turn(runtime, payload=payload, request_id="request-1")
+
+    assert result == {"status": "completed"}
+    run_turn_payload.assert_called_once_with(
+        runtime=runtime,
+        payload=payload,
+        request_id="request-1",
+        progress_callback=None,
+        approval_callback=None,
+        cancel_event=None,
+    )

@@ -7,6 +7,7 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
 )
+from openminion.modules.brain.loop.services import runtime_allows_tool
 from openminion.modules.brain.tools.schema import collect_runtime_tool_names
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_BROWSER,
@@ -80,14 +81,20 @@ def _allows_general_decompose(*, profile_name: str, decision_reason_code: str) -
 
 
 def _with_general_decompose_allowed_tools(
-    allowed_tools: frozenset[str], *, profile_name: str, decision_reason_code: str = ""
+    allowed_tools: frozenset[str],
+    runner: Any,
+    *,
+    profile_name: str,
+    decision_reason_code: str = "",
 ) -> frozenset[str]:
     if not _allows_general_decompose(
         profile_name=profile_name,
         decision_reason_code=decision_reason_code,
     ):
-        return frozenset(allowed_tools)
-    return frozenset({*allowed_tools, "decompose"})
+        return _within_runtime_tool_scope(allowed_tools, runner=runner)
+    return _within_runtime_tool_scope(
+        frozenset({*allowed_tools, "decompose"}), runner=runner
+    )
 
 
 ACT_ADAPTIVE_ALLOWED_TOOLS = frozenset(
@@ -148,7 +155,13 @@ def _with_exposed_runtime_tools(
         runner,
         metadata={"session_id": session_id},
     )
-    return frozenset({*tool_names, *exposed})
+    return _within_runtime_tool_scope(frozenset({*tool_names, *exposed}), runner=runner)
+
+
+def _within_runtime_tool_scope(
+    tool_names: frozenset[str], *, runner: Any
+) -> frozenset[str]:
+    return frozenset(name for name in tool_names if runtime_allows_tool(runner, name))
 
 
 WATCH_ADAPTIVE_ALLOWED_TOOLS = frozenset(
