@@ -81,6 +81,7 @@ class _ProjectGithubProvider:
         self.check_result = "success"
         self.missing_checks: list[str] = []
         self.return_uncertain = False
+        self.return_http_status: int | None = None
         self.return_conflict = False
         self.result_overrides: dict[str, Any] = {}
         self.response_provider_id = self.provider_id
@@ -128,6 +129,17 @@ class _ProjectGithubProvider:
                 "UPSTREAM_ERROR",
                 "GitHub REST API request failed.",
                 {"reason_code": "github_api_unreachable"},
+            )
+        if self.return_http_status is not None:
+            self.merged = True
+            self.merge_commit_sha = "merge123"
+            raise ToolRuntimeError(
+                "UPSTREAM_ERROR",
+                "GitHub REST API request failed.",
+                {
+                    "reason_code": "github_api_error",
+                    "status_code": self.return_http_status,
+                },
             )
         if self.return_conflict:
             raise ToolRuntimeError(
@@ -218,12 +230,17 @@ def _effect_id(**updates: Any) -> str:
     return f"effect:github.merge_pr:{scope_hash}"
 
 
-def _issue_grant(manager: TaskManager, *, scope: str | None = None) -> None:
+def _issue_grant(
+    manager: TaskManager,
+    *,
+    scope: str | None = None,
+    grant_id: str = "grant-1",
+) -> None:
     issued = now_ms()
     issue_project_permission_grant(
         manager,
         task_id="task-1",
-        grant_id="grant-1",
+        grant_id=grant_id,
         tool_name="github.merge_pr",
         scope=scope or _scope(),
         issued_at_ms=issued,
@@ -575,6 +592,54 @@ def test_uncertain_merge_reconciles_after_restart_without_repeat(
     assert completed["extra"]["project_effect_id"] == effect_id
     assert completed["extra"]["project_effect_status"] == "succeeded"
     assert completed["extra"]["project_effect_reconciled"] is True
+
+
+def test_http_5xx_merge_reconciles_without_second_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _project_manager(tmp_path)
+    _issue_grant(manager)
+    provider = _ProjectGithubProvider()
+    provider.return_http_status = 502
+    register_provider(provider)
+
+    first = _adapter(tmp_path, manager).execute(
+        command=_command(command_id="attempt-1"),
+        session_id="session-1",
+        trace_id="turn-1",
+    )
+
+    assert first["error"]["code"] == "UPSTREAM_ERROR"
+    assert first["error"]["details"]["reason_code"] == "github_api_error"
+    assert first["error"]["details"]["project_effect_uncertain"] is True
+    effect = load_project_effect_record(
+        manager,
+        task_id="task-1",
+        effect_id=_effect_id(),
+    )
+    assert effect is not None and effect.status == ProjectEffectStatus.STARTED
+    assert provider.mutation_calls == 1
+
+    provider.return_http_status = None
+    _issue_grant(manager, grant_id="grant-2")
+    second = _adapter(tmp_path, manager).execute(
+        command=_command(
+            command_id="attempt-2",
+            expected_checks=["tests", "lint"],
+        ),
+        session_id="session-1",
+        trace_id="turn-2",
+    )
+
+    assert second["status"] == "success"
+    assert second["outputs"]["data"]["reconciled"] is True
+    assert provider.mutation_calls == 1
+    policy = load_project_policy_state(manager, task_id="task-1")
+    assert policy is not None
+    grant_uses = {grant.grant_id: grant.uses for grant in policy.grants}
+    assert grant_uses == {"grant-1": 1, "grant-2": 0}
 
 
 def test_uncertain_unmerged_pr_is_not_repeated(

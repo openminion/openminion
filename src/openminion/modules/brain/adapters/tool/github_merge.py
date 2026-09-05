@@ -459,7 +459,16 @@ def _merge_failure_is_uncertain(error: BaseException) -> bool:
     if not isinstance(error, ToolRuntimeError):
         return False
     provider_code = str(error.details.get("provider_error_code") or "")
-    return error.code == "INVALID_RESPONSE" or provider_code == "INVALID_RESPONSE"
+    status_code = error.details.get("status_code")
+    return (
+        error.code == "INVALID_RESPONSE"
+        or provider_code == "INVALID_RESPONSE"
+        or (
+            error.details.get("reason_code") == "github_api_error"
+            and isinstance(status_code, int)
+            and 500 <= status_code < 600
+        )
+    )
 
 
 def _effect_state(
