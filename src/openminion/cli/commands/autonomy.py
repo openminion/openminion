@@ -205,9 +205,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     if bool(getattr(args, "unattended", False)):
         scheduled = schedule_unattended_project(args, store, manager, running)
         return _print_run(args, scheduled)
-    return _run_foreground_project(
-        args, store, manager, running, workspace=repository
-    )
+    return _run_foreground_project(args, store, manager, running, workspace=repository)
 
 
 def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:

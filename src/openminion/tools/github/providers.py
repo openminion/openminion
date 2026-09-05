@@ -21,9 +21,7 @@ class GithubProvider(Protocol):
         self, *, args: Mapping[str, Any], ctx: Any
     ) -> Mapping[str, Any]: ...
 
-    def resolve_open_pr_head_sha(
-        self, *, args: Mapping[str, Any], ctx: Any
-    ) -> str: ...
+    def resolve_open_pr_head_sha(self, *, args: Mapping[str, Any], ctx: Any) -> str: ...
 
     def find_open_pr(
         self,
