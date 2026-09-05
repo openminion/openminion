@@ -121,6 +121,8 @@ MEMORY_SOFT_DELETED_PURGED = "memory.soft_deleted.purged"
 MEMORY_SUMMARY_COMPRESSED = "memory.summary.compressed"
 
 BRAIN_TUNING_ADJUSTED = "brain.threshold_adjustment"
+PROJECT_LAUNCHED = "project.launched"
+PROJECT_LAUNCH_DENIED = "project.launch_denied"
 TASK_PLAN_ABANDONED = "task_plan.abandoned"
 TASK_PLAN_COMPLETED = "task_plan.completed"
 TASK_PLAN_DECLARED = "task_plan.declared"
@@ -345,6 +347,8 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_SOFT_DELETED_PURGED,
         MEMORY_SUMMARY_COMPRESSED,
         BRAIN_TUNING_ADJUSTED,
+        PROJECT_LAUNCHED,
+        PROJECT_LAUNCH_DENIED,
         TASK_PLAN_ABANDONED,
         TASK_PLAN_COMPLETED,
         TASK_PLAN_DECLARED,
@@ -596,6 +600,8 @@ __all__ = [
     "MEMORY_SOFT_DELETED_PURGED",
     "MEMORY_SUMMARY_COMPRESSED",
     "BRAIN_TUNING_ADJUSTED",
+    "PROJECT_LAUNCHED",
+    "PROJECT_LAUNCH_DENIED",
     "TASK_PLAN_ABANDONED",
     "TASK_PLAN_COMPLETED",
     "TASK_PLAN_DECLARED",

@@ -44,7 +44,13 @@ from openminion.modules.task import (
     save_project_policy_state,
     save_project_run_checkpoint,
 )
-from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
+from openminion.modules.task.plan import (
+    TaskPlan,
+    TaskPlanRevision,
+    TaskPlanStepBlocked,
+    TaskPlanStepCompleted,
+    TaskPlanTerminalSignal,
+)
 from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.turn import ProjectTurnResult
 
@@ -327,6 +333,7 @@ def test_project_run_checkpoint_survives_lifecycle_manager_restart(tmp_path) -> 
         },
         "current_phase": "recover",
         "next_action": "continue",
+        "task_plan_required": False,
     }
     assert loaded.payload["task_plan_revision"]["revision_id"] == "revision-1"
     assert lifecycle[project_run.metrics_summary_ref] == {
@@ -362,6 +369,56 @@ def test_repository_lifecycle_payload_bounds_and_redacts_text() -> None:
     assert len(objective) == 4_000
     assert "super-secret" not in objective
     assert "[REDACTED]" in objective
+
+
+def test_project_checkpoint_applies_public_task_plan_terminal_signals(tmp_path) -> None:
+    manager, project_run = _create_project_task(tmp_path)
+    initial = save_project_run_checkpoint(
+        manager,
+        project_run,
+        checkpoint_id="checkpoint-plan-signals",
+        payload=project_checkpoints.initial_repository_lifecycle_payload(
+            _autonomy_run(),
+            project_run,
+            task_plan_required=True,
+        ),
+    )
+    plan = TaskPlan(
+        plan_id="plan-1",
+        objective="Ship",
+        steps=[{"step_id": "build", "description": "Build it"}],
+    )
+    completed_payload = project_checkpoints.plan_checkpoint_payload(
+        initial,
+        ProjectTurnResult(
+            summary="done",
+            task_plan=plan,
+            task_plan_step_completed=TaskPlanStepCompleted(
+                plan_id="plan-1",
+                step_id="build",
+                output_summary="built",
+            ),
+            task_plan_completed=TaskPlanTerminalSignal(plan_id="plan-1"),
+        ),
+    )
+    abandoned_payload = project_checkpoints.plan_checkpoint_payload(
+        initial,
+        ProjectTurnResult(
+            summary="blocked",
+            task_plan=plan,
+            task_plan_step_blocked=TaskPlanStepBlocked(
+                plan_id="plan-1",
+                step_id="build",
+                blocker_type="operator",
+            ),
+            task_plan_abandoned=TaskPlanTerminalSignal(plan_id="plan-1"),
+        ),
+    )
+
+    assert completed_payload["task_plan"]["status"] == "completed"
+    assert completed_payload["task_plan"]["steps"][0]["status"] == "completed"
+    assert abandoned_payload["task_plan"]["status"] == "abandoned"
+    assert abandoned_payload["task_plan"]["steps"][0]["status"] == "blocked"
 
 
 def test_project_run_rejects_duplicate_open_worker(tmp_path) -> None:

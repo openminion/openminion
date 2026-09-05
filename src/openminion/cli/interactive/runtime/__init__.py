@@ -42,10 +42,10 @@ from .messages import (
     TARGET_KIND_FOCUS as _TARGET_KIND_FOCUS,
     RuntimeMessageMixin,
 )
+from .project import RuntimeProjectMixin
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
 _LIVE_USAGE_THROTTLE_SECONDS = 0.5
-
 
 def _session_sort_key(session: Any) -> str:
     return (
@@ -60,6 +60,7 @@ class OpenMinionRuntime(
     RuntimeDelegationMixin,
     RuntimeMCPMixin,
     RuntimeMessageMixin,
+    RuntimeProjectMixin,
 ):
     """ChatRuntimeAPI adapter over APIRuntime."""
 

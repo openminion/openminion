@@ -268,7 +268,74 @@ class TaskPlanTerminalSignal(BaseModel):
         return _trimmed_non_empty(value)
 
 
+def apply_task_plan_signals(
+    plan: TaskPlan | None,
+    *,
+    step_completed: TaskPlanStepCompleted | None = None,
+    step_blocked: TaskPlanStepBlocked | None = None,
+    abandoned: TaskPlanTerminalSignal | None = None,
+    completed: TaskPlanTerminalSignal | None = None,
+) -> TaskPlan | None:
+    signals = tuple(
+        signal
+        for signal in (step_completed, step_blocked, abandoned, completed)
+        if signal is not None
+    )
+    if not signals:
+        return plan
+    if plan is None:
+        raise ValueError("task plan progress requires a checkpoint task plan")
+    if any(signal.plan_id != plan.plan_id for signal in signals):
+        raise ValueError("task plan progress must match the checkpoint task plan")
+
+    steps = list(plan.steps)
+    for signal, status in (
+        (step_completed, "completed"),
+        (step_blocked, "blocked"),
+    ):
+        if signal is None:
+            continue
+        matching = [step for step in steps if step.step_id == signal.step_id]
+        if not matching:
+            raise ValueError(f"unknown task plan step: {signal.step_id}")
+        steps = [
+            step.model_copy(
+                update={
+                    "status": status,
+                    "output_summary": (
+                        signal.output_summary
+                        if isinstance(signal, TaskPlanStepCompleted)
+                        else step.output_summary
+                    ),
+                    "blocker_type": (
+                        signal.blocker_type
+                        if isinstance(signal, TaskPlanStepBlocked)
+                        else None
+                    ),
+                    "blocker_details": (
+                        signal.blocker_details
+                        if isinstance(signal, TaskPlanStepBlocked)
+                        else None
+                    ),
+                }
+            )
+            if step.step_id == signal.step_id
+            else step
+            for step in steps
+        ]
+
+    status: TaskPlanStatus = plan.status
+    if abandoned is not None:
+        status = "abandoned"
+    if completed is not None:
+        if any(step.status != "completed" for step in steps):
+            raise ValueError("task plan completion requires every step to be completed")
+        status = "completed"
+    return plan.model_copy(update={"steps": steps, "status": status})
+
+
 __all__ = [
+    "apply_task_plan_signals",
     "TaskPlan",
     "TaskPlanDifficulty",
     "TaskPlanRevision",

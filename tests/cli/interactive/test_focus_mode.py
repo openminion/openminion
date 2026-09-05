@@ -350,6 +350,8 @@ class _FocusRuntimeDouble:
         self._session_counter = len(self._history_by_session)
         self.last_send_kwargs: dict[str, Any] | None = None
         self.last_approval_result: bool | None = None
+        self.project_launches: list[str] = []
+        self.project_denials: list[str] = []
         self.tool_list = [("exec.run", True), ("file.read", True), ("fetch.get", False)]
 
     @property
@@ -391,6 +393,27 @@ class _FocusRuntimeDouble:
 
     def list_tools(self) -> list[tuple[str, bool]]:
         return list(self.tool_list)
+
+    def prepare_project_command(self, line: str) -> SimpleNamespace:
+        self.project_launches.append(f"prepared:{line}")
+        return SimpleNamespace(
+            run=SimpleNamespace(run_id="project-run-1"),
+            repository=Path(self.working_dir) / "repo",
+        )
+
+    @staticmethod
+    def project_launch_approval_args(request: SimpleNamespace) -> dict[str, str]:
+        return {"repository": str(request.repository)}
+
+    def launch_prepared_project(
+        self, request: SimpleNamespace
+    ) -> tuple[str, str]:
+        self.project_launches.append(request.run.run_id)
+        return ("system", f"Project started: {request.run.run_id}")
+
+    def deny_prepared_project(self, request: SimpleNamespace) -> tuple[str, str]:
+        self.project_denials.append(request.run.run_id)
+        return ("error", "Project launch denied.")
 
     def is_room_session(self) -> bool:
         return False
@@ -979,6 +1002,42 @@ async def test_focus_screen_tool_approval_flow_renders_tool_block() -> None:
         parent_message = tool_block.parent
         assert isinstance(parent_message, FocusMessageWidget)
         assert parent_message._message.kind == MessageKind.AGENT
+
+
+@pytest.mark.asyncio
+async def test_focus_project_command_uses_inline_approval() -> None:
+    runtime = _FocusRuntimeDouble(
+        working_dir="/tmp/focus-project",
+        session_id="focus-project",
+        history_by_session={"focus-project": []},
+    )
+    app = FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        input_widget = app.screen.query_one("#focus-input", Input)
+        input_widget.value = (
+            "/project start --repository /tmp/focus-project/repo --goal ship"
+        )
+        input_widget.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen.query_one(ToolApprovalWidget)
+        await pilot.press("y")
+        for _ in range(20):
+            await pilot.pause()
+            if "project-run-1" in runtime.project_launches:
+                break
+
+        assert "project-run-1" in runtime.project_launches
+        assert not runtime.project_denials
+        assert any(
+            message.body == "Project started: project-run-1"
+            for message in app.screen.query_one(FocusTranscript)._messages
+        )
 
 
 @pytest.mark.asyncio

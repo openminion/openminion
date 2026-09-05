@@ -145,6 +145,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "_slash_goal",
     ),
     SlashCommandMetadata(
+        "/project",
+        "Start a durable repository project",
+        "_slash_project",
+        "_slash_project",
+    ),
+    SlashCommandMetadata(
         "/effort", "Show or set per-turn effort", "_slash_effort", "_slash_effort"
     ),
     SlashCommandMetadata(

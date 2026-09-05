@@ -10,8 +10,9 @@ from openminion.base.errors import error_info_from_exception
 from openminion.base.types import Message
 from openminion.cli.commands.autonomy_project import (
     apply_resume_overrides,
+    build_project_launch_request,
     configured_cron_store,
-    initialize_project,
+    launch_project,
     persisted_verification_waiver,
     project_task_manager,
     run_project_turn,
@@ -42,8 +43,6 @@ from openminion.modules.task.autonomy import (
     TestEvidenceStatus,
     VerificationDomain,
     VerificationWaiver,
-    build_autonomy_run,
-    build_local_workspace_ref,
     build_terminal_proof_packet,
     now_ms,
 )
@@ -112,7 +111,18 @@ def _validate_cycle_interval(args: argparse.Namespace) -> None:
 def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     _validate_cycle_interval(args)
     goal = _resolve_goal(args)
-    workspace = _resolve_workspace(args)
+    workspace_boundary = _resolve_workspace(args)
+    raw_repository = _clean(getattr(args, "repository", None))
+    repository_path = Path(raw_repository).expanduser() if raw_repository else None
+    repository = (
+        (
+            repository_path
+            if repository_path.is_absolute()
+            else workspace_boundary / repository_path
+        ).resolve(strict=False)
+        if repository_path is not None
+        else workspace_boundary
+    )
     verification_commands = tuple(getattr(args, "verify_command", ()) or ())
     turn_timeout_seconds = int(
         getattr(args, "turn_timeout_seconds", None)
@@ -123,15 +133,15 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         or DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS
     )
     waiver = _verification_waiver(args)
-    run = build_autonomy_run(
-        goal_text=goal,
-        goal_id=_clean(getattr(args, "goal_id", None)) or None,
+    request = build_project_launch_request(
+        goal=goal,
         session_id=_clean(getattr(args, "session", None)) or "autonomy",
-        workspace_ref=build_local_workspace_ref(workspace),
+        agent_id=_clean(getattr(args, "agent", None)) or "default",
+        workspace_boundary=workspace_boundary,
+        repository=repository,
         max_iterations=max(0, int(getattr(args, "max_iterations", 1))),
         permission_profile_id=_clean(getattr(args, "permission_profile", None))
         or "local-safe",
-        agent_id=_clean(getattr(args, "agent", None)) or "default",
         config_ref=_clean(getattr(args, "config", None)) or None,
         verification_domain=cast(
             VerificationDomain,
@@ -141,18 +151,12 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         turn_timeout_seconds=turn_timeout_seconds,
         verification_timeout_seconds=verification_timeout_seconds,
         verification_waiver_reason=waiver.reason if waiver is not None else None,
-        required_evidence_kinds=("waiver",)
-        if waiver is not None
-        else ("verification",),
+        goal_id=_clean(getattr(args, "goal_id", None)) or None,
+        task_plan_required=bool(raw_repository),
     )
-    run = run.model_copy(
-        update={
-            "goal_id": run.goal_id or f"goal_{run.run_id}",
-            "task_id": f"task_{run.run_id}",
-        }
-    )
-    store.create(run)
+    run = request.run
     if run.continuation_policy.max_iterations < 1:
+        store.create(run)
         error = AutonomyRunError(
             code="BUDGET_EXHAUSTED",
             message="max_iterations must be at least 1 to execute a run",
@@ -175,10 +179,11 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
 
     verifier_error = verifier_preflight_error(
         run,
-        workspace=workspace,
+        workspace=repository,
         waiver=waiver,
     )
     if verifier_error is not None:
+        store.create(run)
         blocked = store.transition(
             run.run_id,
             status=AutonomyRunStatus.BLOCKED,
@@ -195,18 +200,14 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
             final_operator_summary="Autonomy run blocked by verifier preflight.",
         )
 
-    running = store.transition(
-        run.run_id,
-        status=AutonomyRunStatus.RUNNING,
-        phase=AutonomyRunPhase.EXECUTE,
-        operator_summary="Autonomy run started.",
-    )
     manager = project_task_manager(args)
-    initialize_project(manager, store, running)
+    running = launch_project(request, store=store, manager=manager)
     if bool(getattr(args, "unattended", False)):
         scheduled = schedule_unattended_project(args, store, manager, running)
         return _print_run(args, scheduled)
-    return _run_foreground_project(args, store, manager, running, workspace=workspace)
+    return _run_foreground_project(
+        args, store, manager, running, workspace=repository
+    )
 
 
 def _resume(args: argparse.Namespace, store: AutonomyRunStore) -> int:
@@ -932,6 +933,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     start.add_argument("--session", default="autonomy", help="Session id")
     start.add_argument("--agent", default=None, help="Agent id for runtime execution")
     start.add_argument("--workspace", default="", help="Local workspace root")
+    start.add_argument(
+        "--repository",
+        default="",
+        help="Exact Git repository inside the workspace boundary",
+    )
     start.add_argument("--max-iterations", type=int, default=1)
     start.add_argument("--permission-profile", default="local-safe")
     start.add_argument(

@@ -356,6 +356,31 @@ class SlashCommandMixin:
         )
         self._push_status_line()
 
+    def _slash_project(self: Any, args: str) -> None:
+        self.run_worker(self._run_project_command(args), exclusive=False)
+
+    async def _run_project_command(self: Any, args: str) -> None:
+        try:
+            request = self._runtime.prepare_project_command(
+                f"/project {str(args or '').strip()}"
+            )
+            approved = await self._approval_callback(
+                "project.start",
+                self._runtime.project_launch_approval_args(request),
+                request.run.run_id,
+            )
+            tone, body = (
+                self._runtime.launch_prepared_project(request)
+                if approved
+                else self._runtime.deny_prepared_project(request)
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            tone, body = ("error", f"/project failed: {exc}")
+        kind = MessageKind.ERROR if tone == "error" else MessageKind.SYSTEM
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=kind, sender="system", body=body)
+        )
+
     def _slash_memory(self, _args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_memory_report
 

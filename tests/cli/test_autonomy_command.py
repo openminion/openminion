@@ -397,6 +397,9 @@ def test_autonomy_start_replay_writes_terminal_proof(tmp_path: Path) -> None:
 def test_autonomy_start_persists_repository_lifecycle_refs(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    repository = workspace / "repository"
+    repository.mkdir()
+    (repository / ".git").mkdir()
     code, output = _run_cli(
         [
             *_root_args(tmp_path),
@@ -406,6 +409,8 @@ def test_autonomy_start_persists_repository_lifecycle_refs(tmp_path: Path) -> No
             "persist the repository lifecycle",
             "--workspace",
             str(workspace),
+            "--repository",
+            str(repository),
             "--replay-response",
             "completed from replay",
             "--verification-waiver",
@@ -432,9 +437,54 @@ def test_autonomy_start_persists_repository_lifecycle_refs(tmp_path: Path) -> No
     }
     resume = lifecycle[project_run.resume_packet_ref]
     assert project_run.workspace_ref == run["workspace_ref"]
-    assert resume["workspace_boundary"] == run["workspace_ref"]
+    assert str(repository) in project_run.workspace_ref
+    assert str(workspace) in resume["workspace_boundary"]
     assert resume["execution_repository"] == run["workspace_ref"]
+    assert resume["task_plan_required"] is True
     assert "workspace_boundary" not in type(project_run).model_fields
+
+
+def test_autonomy_start_rejects_repository_outside_boundary(tmp_path: Path) -> None:
+    boundary = tmp_path / "boundary"
+    repository = tmp_path / "repository"
+    boundary.mkdir()
+    repository.mkdir()
+    (repository / ".git").mkdir()
+
+    with pytest.raises(ValueError, match="inside the workspace boundary"):
+        _run_cli(
+            [
+                *_root_args(tmp_path),
+                "autonomy",
+                "start",
+                "--goal",
+                "reject ambiguous repository",
+                "--workspace",
+                str(boundary),
+                "--repository",
+                str(repository),
+            ]
+        )
+
+
+def test_autonomy_start_rejects_non_git_repository(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+
+    with pytest.raises(ValueError, match="does not contain .git"):
+        _run_cli(
+            [
+                *_root_args(tmp_path),
+                "autonomy",
+                "start",
+                "--goal",
+                "require exact repository",
+                "--workspace",
+                str(tmp_path),
+                "--repository",
+                str(repository),
+            ]
+        )
 
 
 def test_autonomy_start_with_verify_command_records_test_evidence(

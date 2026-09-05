@@ -14,7 +14,13 @@ from openminion.modules.controlplane.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
 from openminion.modules.task.autonomy import autonomy_permission_metadata
-from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
+from openminion.modules.task.plan import (
+    TaskPlan,
+    TaskPlanRevision,
+    TaskPlanStepBlocked,
+    TaskPlanStepCompleted,
+    TaskPlanTerminalSignal,
+)
 
 from .progress import AutonomyLoopConditionKind
 
@@ -22,6 +28,9 @@ _ProjectMetadataModel = TypeVar(
     "_ProjectMetadataModel",
     TaskPlan,
     TaskPlanRevision,
+    TaskPlanStepBlocked,
+    TaskPlanStepCompleted,
+    TaskPlanTerminalSignal,
 )
 
 
@@ -48,6 +57,10 @@ class ProjectTurnResult:
     tool_call_count: int = 0
     task_plan: TaskPlan | None = None
     task_plan_revision: TaskPlanRevision | None = None
+    task_plan_step_completed: TaskPlanStepCompleted | None = None
+    task_plan_step_blocked: TaskPlanStepBlocked | None = None
+    task_plan_abandoned: TaskPlanTerminalSignal | None = None
+    task_plan_completed: TaskPlanTerminalSignal | None = None
     error: ErrorInfo | None = None
 
 
@@ -228,6 +241,26 @@ def project_turn_result_from_response(
         tool_call_count=_project_tool_call_count(metadata, tool_results),
         task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
         task_plan_revision=_project_checkpoint_revision(metadata),
+        task_plan_step_completed=_project_metadata_model(
+            metadata,
+            "task_plan.step_completed",
+            TaskPlanStepCompleted,
+        ),
+        task_plan_step_blocked=_project_metadata_model(
+            metadata,
+            "task_plan.step_blocked",
+            TaskPlanStepBlocked,
+        ),
+        task_plan_abandoned=_project_metadata_model(
+            metadata,
+            "task_plan.abandoned",
+            TaskPlanTerminalSignal,
+        ),
+        task_plan_completed=_project_metadata_model(
+            metadata,
+            "task_plan.completed",
+            TaskPlanTerminalSignal,
+        ),
         error=error,
     )
 

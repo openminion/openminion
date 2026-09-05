@@ -161,6 +161,18 @@ def test_project_turn_decodes_typed_plan_metadata() -> None:
                     '"revised_steps":[{"step_id":"build",'
                     '"description":"Repair"}]}'
                 ),
+                "task_plan.step_completed": {
+                    "plan_id": "plan-1",
+                    "step_id": "build",
+                    "output_summary": "built",
+                },
+                "task_plan.step_blocked": {
+                    "plan_id": "plan-1",
+                    "step_id": "build",
+                    "blocker_type": "operator",
+                },
+                "task_plan.abandoned": {"plan_id": "plan-1"},
+                "task_plan.completed": {"plan_id": "plan-1"},
             },
         },
     )
@@ -169,6 +181,12 @@ def test_project_turn_decodes_typed_plan_metadata() -> None:
     assert result.task_plan.criterion_ids == ["criterion-tests"]
     assert result.task_plan_revision is not None
     assert result.task_plan_revision.revision_id == "revision-1"
+    assert result.task_plan_step_completed is not None
+    assert result.task_plan_step_completed.step_id == "build"
+    assert result.task_plan_step_blocked is not None
+    assert result.task_plan_step_blocked.blocker_type == "operator"
+    assert result.task_plan_abandoned is not None
+    assert result.task_plan_completed is not None
 
 
 @pytest.mark.parametrize(

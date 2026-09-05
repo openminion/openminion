@@ -4,7 +4,11 @@ from typing import cast
 
 from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.task.autonomy import AutonomyRun, now_ms
-from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
+from openminion.modules.task.plan import (
+    TaskPlan,
+    TaskPlanRevision,
+    apply_task_plan_signals,
+)
 from openminion.modules.task.runtime.lifecycle import (
     ProjectCycleClaim,
     TaskLifecycleRecord,
@@ -52,6 +56,7 @@ def initial_repository_lifecycle_payload(
     project_run: ProjectRun,
     *,
     workspace_boundary_ref: str | None = None,
+    task_plan_required: bool = False,
 ) -> dict[str, object]:
     repository_ref = _bounded_repository_text(project_run.workspace_ref)
     repository_revision = _workspace_revision(repository_ref)
@@ -79,6 +84,7 @@ def initial_repository_lifecycle_payload(
                 },
                 "current_phase": project_run.phase.value,
                 "next_action": ProjectCycleDecision.CONTINUE.value,
+                "task_plan_required": task_plan_required,
             },
             project_run.operator_decision_log_ref: {"decisions": []},
             project_run.capability_plan_ref: {
@@ -164,6 +170,20 @@ def plan_checkpoint_payload(
     checkpoint: ProjectCheckpoint,
     turn: ProjectTurnResult,
 ) -> dict[str, object]:
+    plan, revision, revision_count = updated_checkpoint_task_plan(checkpoint, turn)
+    return {
+        "plan_revision_count": revision_count,
+        **({"task_plan": plan.model_dump(mode="json")} if plan else {}),
+        **(
+            {"task_plan_revision": revision.model_dump(mode="json")} if revision else {}
+        ),
+    }
+
+
+def updated_checkpoint_task_plan(
+    checkpoint: ProjectCheckpoint,
+    turn: ProjectTurnResult,
+) -> tuple[TaskPlan | None, TaskPlanRevision | None, int]:
     raw_plan = checkpoint.payload.get("task_plan")
     plan = TaskPlan.model_validate(raw_plan) if isinstance(raw_plan, dict) else None
     raw_revision = checkpoint.payload.get("task_plan_revision")
@@ -208,15 +228,30 @@ def plan_checkpoint_payload(
         revision = incoming.model_copy(
             update={"criterion_ids": incoming.criterion_ids or plan.criterion_ids}
         )
+        plan = revision.to_task_plan(
+            fallback_objective=plan.objective,
+            fallback_workflow_id=plan.workflow_id,
+            fallback_workflow_version_hash=plan.workflow_version_hash,
+            fallback_criterion_ids=plan.criterion_ids,
+        )
         revision_count += 1
 
-    return {
-        "plan_revision_count": revision_count,
-        **({"task_plan": plan.model_dump(mode="json")} if plan else {}),
-        **(
-            {"task_plan_revision": revision.model_dump(mode="json")} if revision else {}
-        ),
-    }
+    plan = apply_task_plan_signals(
+        plan,
+        step_completed=turn.task_plan_step_completed,
+        step_blocked=turn.task_plan_step_blocked,
+        abandoned=turn.task_plan_abandoned,
+        completed=turn.task_plan_completed,
+    )
+    return plan, revision, revision_count
+
+
+def repository_task_plan_required(checkpoint: ProjectCheckpoint) -> bool:
+    lifecycle = checkpoint.payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    if not isinstance(lifecycle, dict):
+        return False
+    resume = lifecycle.get(checkpoint.project_run.resume_packet_ref)
+    return bool(isinstance(resume, dict) and resume.get("task_plan_required") is True)
 
 
 def build_project_run_projection(

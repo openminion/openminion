@@ -55,6 +55,7 @@ from .renderers import (
     _switch_theme_variant,
 )
 from .sessions import handle_room_slash, resume_session, start_new_session
+from .project import run_slash_project
 from .slash_output import handle_debug_output_slash
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
@@ -643,6 +644,14 @@ async def _handle_slash(
     if cmd == "/delegate":
         await run_slash_delegate(text, runtime, console, approval_callback)
         return False
+    if cmd == "/project":
+        await run_slash_project(
+            text,
+            runtime=runtime,
+            console=console,
+            approval_callback=approval_callback,
+        )
+        return False
     if cmd in (
         "/context",
         "/memory",
@@ -711,8 +720,6 @@ async def _handle_slash(
         return False
     _print_unknown_slash_notice(cmd, console)
     return False
-
-
 def _handle_tool_view_slash(
     cmd: str,
     text: str,

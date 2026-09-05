@@ -26,7 +26,13 @@ from openminion.modules.task.project.reports import (
 )
 from openminion.base.errors import ErrorInfo
 from openminion.modules.task.autonomy import now_ms
-from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
+from openminion.modules.task.plan import (
+    TaskPlan,
+    TaskPlanRevision,
+    TaskPlanStepCompleted,
+    TaskPlanTerminalSignal,
+)
+from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.checkpoints import plan_checkpoint_payload
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
@@ -52,7 +58,12 @@ def _evidence(status: _TestEvidenceStatus) -> _TestEvidence:
     )
 
 
-def _project(tmp_path, *, max_iterations: int = 3):
+def _project(
+    tmp_path,
+    *,
+    max_iterations: int = 3,
+    task_plan_required: bool = False,
+):
     store = AutonomyRunStore(root=tmp_path / "autonomy")
     run = build_autonomy_run(
         goal_text="Finish the fixture",
@@ -92,7 +103,15 @@ def _project(tmp_path, *, max_iterations: int = 3):
         manager,
         project_run,
         checkpoint_id="initial",
-        payload={"decision": "continue", "replan_count": 0},
+        payload={
+            "decision": "continue",
+            "replan_count": 0,
+            **project_checkpoints.initial_repository_lifecycle_payload(
+                run,
+                project_run,
+                task_plan_required=task_plan_required,
+            ),
+        },
     )
     return store, manager, run
 
@@ -161,6 +180,51 @@ def test_project_worker_replans_once_then_commits_verified_completion(
     assert "cycle_summaries:\n  1: worked\n  2: worked" in render_project_report(report)
     proof = json.loads(Path(result.run.proof_packet_ref or "").read_text())
     assert proof["cycle_summaries"] == ["worked", "worked"]
+
+
+def test_repository_project_requires_completed_public_task_plan(tmp_path) -> None:
+    store, manager, run = _project(
+        tmp_path,
+        max_iterations=2,
+        task_plan_required=True,
+    )
+    plan = TaskPlan(
+        plan_id="plan-1",
+        objective="Ship the fixture",
+        steps=[{"step_id": "build", "description": "Build it"}],
+    )
+    turns = iter(
+        (
+            ProjectTurnResult(summary="planned", task_plan=plan),
+            ProjectTurnResult(
+                summary="completed",
+                task_plan_step_completed=TaskPlanStepCompleted(
+                    plan_id="plan-1",
+                    step_id="build",
+                    output_summary="built",
+                ),
+                task_plan_completed=TaskPlanTerminalSignal(plan_id="plan-1"),
+            ),
+        )
+    )
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=lambda _request: next(turns),
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        owner_id="worker-1",
+    )
+
+    first = worker.run_cycle(run.run_id)
+    result = worker.run_cycle(run.run_id)
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+
+    assert first.decision == ProjectCycleDecision.CONTINUE
+    assert first.project_run.current_milestone == "Build it"
+    assert result.decision == ProjectCycleDecision.STOP
+    assert result.run.status == AutonomyRunStatus.COMPLETED
+    assert checkpoint is not None
+    assert checkpoint.payload["task_plan"]["status"] == "completed"
 
 
 def test_project_worker_persists_verifier_linked_plan_revision_across_restart(
