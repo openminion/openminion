@@ -928,6 +928,9 @@ def test_merge_pr_rejects_provider_conflict(
         lambda self, **kwargs: {
             "ok": True,
             "data": {
+                "owner": "openminion",
+                "repo": "test-repo-for-agent",
+                "number": 17,
                 "state": "open",
                 "merged": False,
                 "head_sha": "abc1234",

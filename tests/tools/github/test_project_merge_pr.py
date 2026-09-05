@@ -85,27 +85,32 @@ class _ProjectGithubProvider:
         self.return_conflict = False
         self.result_overrides: dict[str, Any] = {}
         self.response_provider_id = self.provider_id
+        self.preflight_overrides: dict[str, Any] = {}
+        self.check_calls = 0
         self.on_merge: Callable[[], None] | None = None
 
     def read_merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del args, ctx
+        data = {
+            "owner": _ARGS["owner"],
+            "repo": _ARGS["repo"],
+            "number": _ARGS["number"],
+            "html_url": "https://github.com/openminion/test-repo-for-agent/pull/17",
+            "state": "closed" if self.merged else "open",
+            "head_sha": self.head_sha,
+            "merged": self.merged,
+            "merge_commit_sha": self.merge_commit_sha,
+        }
+        data.update(self.preflight_overrides)
         return {
             "ok": True,
-            "data": {
-                "owner": _ARGS["owner"],
-                "repo": _ARGS["repo"],
-                "number": _ARGS["number"],
-                "html_url": "https://github.com/openminion/test-repo-for-agent/pull/17",
-                "state": "closed" if self.merged else "open",
-                "head_sha": self.head_sha,
-                "merged": self.merged,
-                "merge_commit_sha": self.merge_commit_sha,
-            },
+            "data": data,
             "source": {"provider_id": self.provider_id},
         }
 
     def fetch_checks(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
+        self.check_calls += 1
         return {
             "ok": True,
             "data": {
@@ -386,6 +391,40 @@ def test_project_merge_pr_rejects_stale_head_sha(
     assert result["error"]["code"] == "INVALID_REQUEST"
     assert result["error"]["details"]["reason_code"] == "github_merge_pr_stale_head"
     assert provider.mutation_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("owner", "other"), ("repo", "wrong"), ("number", 99)],
+)
+def test_project_merge_pr_rejects_mismatched_preflight_target_before_effect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    field: str,
+    value: Any,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _project_manager(tmp_path)
+    _issue_grant(manager)
+    provider = _ProjectGithubProvider()
+    provider.preflight_overrides[field] = value
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command(), session_id="session-1", trace_id="turn-1"
+    )
+
+    assert result["error"]["code"] == "INVALID_RESPONSE"
+    assert result["error"]["details"]["reason_code"] == (
+        "github_merge_pr_result_mismatch"
+    )
+    assert provider.check_calls == 0
+    assert provider.mutation_calls == 0
+    assert load_project_effect_record(
+        manager, task_id="task-1", effect_id=_effect_id()
+    ) is None
+    policy = load_project_policy_state(manager, task_id="task-1")
+    assert policy is not None and policy.grants[0].uses == 0
 
 
 @pytest.mark.parametrize(

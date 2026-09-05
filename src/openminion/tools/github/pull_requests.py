@@ -159,6 +159,9 @@ def merge_pr_result(
 def require_merge_pr_ready(
     result: Mapping[str, Any],
     *,
+    expected_owner: str,
+    expected_repo: str,
+    expected_number: int,
     expected_head_sha: str,
     allow_merged: bool = False,
 ) -> Mapping[str, Any]:
@@ -168,6 +171,17 @@ def require_merge_pr_ready(
             "INVALID_RESPONSE",
             "GitHub merge preflight omitted pull-request data.",
             {"reason_code": "github_merge_pr_preflight_bad_result"},
+        )
+    target = (
+        str(data.get("owner") or ""),
+        str(data.get("repo") or ""),
+        int(data.get("number") or 0),
+    )
+    if target != (expected_owner, expected_repo, expected_number):
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            "GitHub merge preflight did not match the approved action.",
+            {"reason_code": "github_merge_pr_result_mismatch"},
         )
     head_sha = str(data.get("head_sha") or "")
     if not head_sha:

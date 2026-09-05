@@ -164,9 +164,8 @@ def _begin_github_merge_pr_project_effect(
 
     preflight = read_merge_pr(args, ctx)
     require_merge_pr_ready(
-        preflight,
-        expected_head_sha=head_sha,
-        allow_merged=existing is not None,
+        preflight, expected_owner=owner, expected_repo=repo, expected_number=number,
+        expected_head_sha=head_sha, allow_merged=existing is not None,
     )
     reconciled = False
     if existing is not None and replay.decision in {
@@ -388,6 +387,9 @@ def _resume_github_merge_pr_project_effect(
 ) -> ProjectEffectRecord:
     data = require_merge_pr_ready(
         preflight,
+        expected_owner=str(args.get("owner") or ""),
+        expected_repo=str(args.get("repo") or ""),
+        expected_number=int(args.get("number") or 0),
         expected_head_sha=str(args.get("expected_head_sha") or ""),
         allow_merged=True,
     )
@@ -572,25 +574,12 @@ def _merge_pr_readback_receipt(
 ) -> dict[str, Any]:
     data = require_merge_pr_ready(
         result,
+        expected_owner=str(args.get("owner") or ""),
+        expected_repo=str(args.get("repo") or ""),
+        expected_number=int(args.get("number") or 0),
         expected_head_sha=str(args.get("expected_head_sha") or ""),
         allow_merged=True,
     )
-    actual = (
-        str(data.get("owner") or ""),
-        str(data.get("repo") or ""),
-        int(data.get("number") or 0),
-    )
-    expected = (
-        str(args.get("owner") or ""),
-        str(args.get("repo") or ""),
-        int(args.get("number") or 0),
-    )
-    if actual != expected:
-        raise ToolRuntimeError(
-            "INVALID_RESPONSE",
-            "GitHub merge readback did not match the approved action.",
-            {"reason_code": "github_merge_pr_result_mismatch"},
-        )
     merge_commit_sha = str(data.get("merge_commit_sha") or "")
     raw_source = result.get("source")
     source = raw_source if isinstance(raw_source, Mapping) else {}

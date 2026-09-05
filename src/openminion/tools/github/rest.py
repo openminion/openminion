@@ -552,7 +552,8 @@ class GithubRestProvider(GithubWorkflowRestOperations, GithubReleaseRestOperatio
         preflight = getattr(ctx, "github_merge_pr_preflight", None)
         if not isinstance(preflight, Mapping):
             preflight = self.read_merge_pr(args=args, ctx=ctx)
-        require_merge_pr_ready(preflight, expected_head_sha=expected_head_sha)
+        require_merge_pr_ready(preflight, expected_owner=owner, expected_repo=repo,
+                               expected_number=number, expected_head_sha=expected_head_sha)
         checks = getattr(ctx, "github_merge_pr_checks", None)
         if not isinstance(checks, Mapping):
             checks = self.fetch_checks(
