@@ -5,7 +5,8 @@ from typing import Any
 
 from openminion.modules.controlplane.contracts.policy_client import PolicyClient
 from openminion.modules.controlplane.runtime.client import RuntimeClient
-from openminion.modules.controlplane.runtime.store import InMemoryControlPlaneStore
+from openminion.modules.controlplane.runtime.auth import AuthEvaluator
+from openminion.modules.controlplane.storage.base import ControlplaneStore
 
 from .broken_module import BrokenModuleTracker
 from .module import CommandSpec, Handler
@@ -24,8 +25,8 @@ class CommandRegistry(
     CommandRegistryMemorySkillMixin,
     CommandRegistryBaseMixin,
 ):
-    store: InMemoryControlPlaneStore
-    auth: object | None = None
+    store: ControlplaneStore
+    auth: AuthEvaluator | None = None
     audit_logger: object | None = None
     runtime_client: RuntimeClient | None = None
     policy_client: PolicyClient | None = None

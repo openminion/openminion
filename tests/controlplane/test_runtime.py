@@ -331,11 +331,16 @@ def test_command_status_summarizes_profile_session_and_pairing() -> None:
 
     result = registry.execute(
         cmd,
-        _ctx(user_key="telegram:111", session_id=session_id, agent_id="agent:default"),
+        _ctx(
+            user_key="telegram:111",
+            chat_key="telegram:222",
+            session_id=session_id,
+            agent_id="agent:default",
+        ),
     )
 
     assert result.ok
-    assert "channel: online" in result.text
+    assert "channel: telegram (online" in result.text
     assert "profile: agent:default" in result.text
     assert f"session: {session_id}" in result.text
     assert "pairing: not observed" in result.text
@@ -392,8 +397,39 @@ def test_command_pair_status_and_revoke_current_chat() -> None:
     assert "pairing_id" not in status_result.text
     assert "/pair revoke" in status_result.text
     assert revoke_result.ok
-    assert "revoked" in revoke_result.text
+    assert "Pairing revoked" in revoke_result.text
+    assert "no longer has controlplane access" in revoke_result.text
+    assert "openminion channel telegram pair" in revoke_result.text
     assert store.upserts[-1]["status"] == "revoked"
+
+    status_after_revoke = registry.execute(status, ctx)
+    revoke_again = registry.execute(revoke, ctx)
+
+    assert status_after_revoke.ok
+    assert "No active pairing" in status_after_revoke.text
+    assert revoke_again.ok
+    assert revoke_again.data["revoked"] is False
+
+
+def test_command_status_reports_revoked_pairing_without_access() -> None:
+    store = _PairingStore()
+    store.pairing["status"] = "revoked"
+    registry = CommandRegistry(store=store)
+    command = SlashCommandParser().parse("/status")
+    assert command is not None
+
+    result = registry.execute(
+        command,
+        _ctx(
+            user_key="telegram:111",
+            chat_key="telegram:222",
+            session_id="sess-pair",
+        ),
+    )
+
+    assert result.ok
+    assert "pairing: revoked" in result.text
+    assert "access: none" in result.text
 
 
 def test_command_pair_status_uses_current_channel_setup_command() -> None:
