@@ -123,6 +123,9 @@ RUNTIME_GIT_COMMIT = "runtime.git.commit"
 RUNTIME_GIT_STASH = "runtime.git.stash"
 RUNTIME_GIT_RESET = "runtime.git.reset"
 RUNTIME_GIT_REFLOG = "runtime.git.reflog"
+RUNTIME_GIT_FETCH = "runtime.git.fetch"
+RUNTIME_GIT_PUSH = "runtime.git.push"
+RUNTIME_GIT_TAG = "runtime.git.tag"
 
 RUNTIME_PLAN_SET = "runtime.plan.set"
 RUNTIME_PLAN_ADD = "runtime.plan.add"
@@ -223,6 +226,9 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_GIT_STASH,
     RUNTIME_GIT_RESET,
     RUNTIME_GIT_REFLOG,
+    RUNTIME_GIT_FETCH,
+    RUNTIME_GIT_PUSH,
+    RUNTIME_GIT_TAG,
     RUNTIME_PLAN_SET,
     RUNTIME_PLAN_ADD,
     RUNTIME_PLAN_UPDATE,

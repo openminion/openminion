@@ -50,6 +50,7 @@ from .project_github import (
     execute_github_open_pr_project_effect,
     execute_github_update_pr_project_effect,
 )
+from .project_git import execute_git_remote_project_effect
 from .policy_context import (
     _agent_id_from_policy,
     _apply_agent_command_policy,
@@ -84,6 +85,12 @@ _TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
 
 def _is_confirm_required_code(code: Any) -> bool:
     return cast(bool, str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED)
+
+
+def _is_project_git_action(tool_name: str, args: Mapping[str, Any]) -> bool:
+    return tool_name == "git.push" or (
+        tool_name == "git.tag" and args.get("action") == "push"
+    )
 
 
 def _policy_context_metadata(policy: Policy) -> Any:
@@ -644,8 +651,6 @@ class ToolAdapter:
         start_time: float,
     ) -> dict[str, Any]:
         tool_name = ctx.tool_name
-        session_id = str(ctx.session_id or "")
-        trace_id = ctx.trace_id
         try:
             if tool_name == "blockchain.send_transaction":
                 ctx.policy_authorization = consume_blockchain_send_authorization(
@@ -686,6 +691,16 @@ class ToolAdapter:
                     project_task_id=project_task_id, start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
+            if project_task_id and _is_project_git_action(tool_name, validated_args):
+                return self._invoke_project_git_effect(
+                    command=command,
+                    validated_args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    project_task_id=project_task_id,
+                    background_write_authorized=background_write_authorized,
+                    start_time=start_time,
+                )
             return run_tool_spec(
                 spec=spec,
                 validated_args=validated_args,
@@ -704,18 +719,14 @@ class ToolAdapter:
                     tool_name=tool_name,
                     args=validated_args,
                     approval_id=approval_id,
-                    session_id=session_id,
-                    trace_id=trace_id,
+                    session_id=str(ctx.session_id or ""),
+                    trace_id=ctx.trace_id,
                     start_time=start_time,
                 )
                 if replay is not None:
                     return replay
             return _error_envelope(
-                status=(
-                    BRAIN_ACTION_STATUS_NEEDS_USER
-                    if requires_confirm
-                    else BRAIN_STATE_ERROR
-                ),
+                status=BRAIN_ACTION_STATUS_NEEDS_USER if requires_confirm else BRAIN_STATE_ERROR,
                 summary=exc.message or "Tool execution failed",
                 code=TOOL_ERROR_CONFIRM_REQUIRED if requires_confirm else exc.code,
                 message=exc.message or "Tool execution failed",
@@ -754,6 +765,44 @@ class ToolAdapter:
         return execute_github_update_pr_project_effect(
             task_manager=self.task_manager,
             task_id=project_task_id,
+            idempotency_key=str(command.get("idempotency_key") or ""),
+            actor_ref=f"agent:{self.agent_id}",
+            args=validated_args,
+            ctx=ctx,
+            invoke=lambda: run_tool_spec(
+                spec=spec,
+                validated_args=validated_args,
+                context=ctx,
+                start_time=start_time,
+                background_write_authorized=background_write_authorized,
+                tool_name=ctx.tool_name,
+            ),
+        )
+
+    def _invoke_project_git_effect(
+        self,
+        *,
+        command: dict[str, Any],
+        validated_args: dict[str, Any],
+        ctx: RuntimeContext,
+        spec: ToolSpec,
+        project_task_id: str,
+        background_write_authorized: bool,
+        start_time: float,
+    ) -> dict[str, Any]:
+        if self.task_manager is None:
+            raise ToolRuntimeError(
+                "INVALID_REQUEST",
+                "Project tool execution requires the task manager.",
+                {
+                    "reason_code": "project_task_manager_unavailable",
+                    "project_task_id": project_task_id,
+                },
+            )
+        return execute_git_remote_project_effect(
+            task_manager=self.task_manager,
+            task_id=project_task_id,
+            tool_name=ctx.tool_name,
             idempotency_key=str(command.get("idempotency_key") or ""),
             actor_ref=f"agent:{self.agent_id}",
             args=validated_args,

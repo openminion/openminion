@@ -23,6 +23,10 @@ ErrorCode = Literal[
     "UPSTREAM_ERROR",
     "PLUGIN_ACTIVATION_FAILED",
     "INTERNAL_ERROR",
+    "GIT_REMOTE_NOT_FOUND",
+    "GIT_AUTH_FAILED",
+    "GIT_NON_FAST_FORWARD",
+    "GIT_REMOTE_OUTCOME_UNCERTAIN",
 ]
 
 LogLevel = Literal["debug", "info", "warning", "error"]
