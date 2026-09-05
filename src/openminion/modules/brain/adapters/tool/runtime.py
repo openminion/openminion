@@ -726,7 +726,9 @@ class ToolAdapter:
                 if replay is not None:
                     return replay
             return _error_envelope(
-                status=BRAIN_ACTION_STATUS_NEEDS_USER if requires_confirm else BRAIN_STATE_ERROR,
+                status=BRAIN_ACTION_STATUS_NEEDS_USER
+                if requires_confirm
+                else BRAIN_STATE_ERROR,
                 summary=exc.message or "Tool execution failed",
                 code=TOOL_ERROR_CONFIRM_REQUIRED if requires_confirm else exc.code,
                 message=exc.message or "Tool execution failed",
