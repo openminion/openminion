@@ -62,6 +62,7 @@ from openminion.tools.github.interfaces import TOOL_GITHUB_FETCH_CHECKS
 
 _LOGGER = get_logger("project_worker")
 
+
 @dataclass(frozen=True)
 class ProjectWorkerResult:
     run: AutonomyRun
