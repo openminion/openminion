@@ -4361,11 +4361,9 @@ def _measure_retrieval_breakdown_profile(options: RunOptions) -> ScenarioRun:
             filters = RetrievalFilters()
             scope = {"session": "pnt20"}
             strategy = service._resolve_strategy(
-                query=query,
                 purpose="verify",
                 strategy="auto",
                 scope=scope,
-                filters=filters,
             )
             candidate_started_ns = time.perf_counter_ns()
             candidates = service._generate_candidates(
