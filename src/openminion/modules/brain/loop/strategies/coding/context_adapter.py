@@ -150,6 +150,12 @@ class _CodingLoopContextAdapter:
             approved_command=prepare_outcome.approved_command,
             action_result=prepare_outcome.action_result,
             tool_budget_debited=prepare_outcome.tool_budget_debited,
+            policy_approval_id=prepare_outcome.policy_approval_id,
+            policy_confirmation_preview=(prepare_outcome.policy_confirmation_preview),
+        )
+        self.state.pending_policy_approval_id = prepare_outcome.policy_approval_id
+        self.state.pending_policy_confirmation_preview = (
+            prepare_outcome.policy_confirmation_preview
         )
         return self._postprocess_outcome(
             outcome,
@@ -177,7 +183,8 @@ class _CodingLoopContextAdapter:
             )
             _store_pending_confirmation_metadata(self.state)
             self.state.post_action_user_message = confirmation_required_user_message(
-                approved_command
+                approved_command,
+                self.state.pending_policy_confirmation_preview,
             )
         if (
             action_result is not None

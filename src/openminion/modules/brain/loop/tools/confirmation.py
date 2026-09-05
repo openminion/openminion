@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import json
 from typing import Any
 
 from pydantic import TypeAdapter
@@ -10,6 +11,7 @@ from openminion.modules.brain.constants import (
     CONFIRMATION_MESSAGE_ARG_VALUE_LIMIT,
 )
 from openminion.modules.brain.schemas import Command, WorkingState
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
 _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
@@ -24,6 +26,15 @@ _SESSION_CONFIRMATION_TOKENS = frozenset(
         "session allow",
     }
 )
+
+
+def requires_individual_confirmation(command: Command | dict[str, Any] | None) -> bool:
+    tool_name = (
+        command.get("tool_name", "")
+        if isinstance(command, dict)
+        else getattr(command, "tool_name", "")
+    )
+    return str(tool_name or "").strip() == "blockchain.send_transaction"
 
 
 def _bounded_confirmation_arg_value(value: Any) -> str:
@@ -88,6 +99,8 @@ def attach_confirmation_replay_queue(
     queued_commands: Sequence[Command],
 ) -> Command:
     cloned = strip_confirmation_replay_queue(command)
+    if requires_individual_confirmation(cloned):
+        return cloned
     payloads = [_command_payload(queued_command) for queued_command in queued_commands]
     if not payloads:
         return cloned
@@ -98,7 +111,19 @@ def attach_confirmation_replay_queue(
 
 
 def confirmation_replay_batch_size(command: Command) -> int:
+    if requires_individual_confirmation(command):
+        return 1
     return 1 + len(extract_confirmation_replay_queue(command))
+
+
+def confirmation_replay_commands(command: Command) -> list[Command]:
+    primary = strip_confirmation_replay_queue(command)
+    if requires_individual_confirmation(command):
+        return [primary]
+    return [primary] + [
+        strip_confirmation_replay_queue(queued)
+        for queued in extract_confirmation_replay_queue(command)
+    ]
 
 
 def is_session_confirmation_response(text: str) -> bool:
@@ -118,7 +143,10 @@ def apply_session_confirmation_grant(state: WorkingState, command: Command) -> b
     return True
 
 
-def confirmation_required_user_message(command: Command) -> str:
+def confirmation_required_user_message(
+    command: Command,
+    confirmation_preview: BlockchainSendConfirmationPreview | None = None,
+) -> str:
     tool_name = str(command.tool_name or "tool").strip() or "tool"
     title = str(command.title or "").strip()
     subject = tool_name
@@ -128,6 +156,41 @@ def confirmation_required_user_message(command: Command) -> str:
     if arg_preview:
         subject = f"{subject} ({arg_preview})"
     lines = ["Policy confirmation required.", subject]
+    if tool_name == "blockchain.send_transaction" and confirmation_preview is not None:
+        preview = confirmation_preview
+        lines.extend(
+            [
+                f"Chain ID: {preview.chain_id}",
+                f"From: {preview.from_address}",
+                f"To: {preview.to_address}",
+                f"Value (wei): {preview.value_wei}",
+                f"Transaction type: {preview.transaction_type}",
+                f"Nonce: {preview.nonce}",
+                f"Gas limit: {preview.gas_limit}",
+                f"Gas price (wei): {preview.gas_price_wei or '-'}",
+                f"Max fee per gas (wei): {preview.max_fee_per_gas_wei or '-'}",
+                "Max priority fee per gas (wei): "
+                f"{preview.max_priority_fee_per_gas_wei or '-'}",
+                f"Maximum total fee (wei): {preview.max_total_fee_wei}",
+                f"Calldata bytes: {preview.calldata_bytes}",
+                f"Calldata SHA-256: {preview.calldata_sha256}",
+                f"Calldata: {preview.calldata_hex or '-'}",
+                f"Preparation digest: {preview.preparation_digest}",
+                f"Opaque calldata: {'yes' if preview.opaque_calldata else 'no'}",
+            ]
+        )
+        if preview.call is not None:
+            lines.extend(
+                [
+                    f"Function: {preview.call.function_signature}",
+                    "Arguments: "
+                    + json.dumps(
+                        preview.call.function_args,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                ]
+            )
     additional_count = max(0, confirmation_replay_batch_size(command) - 1)
     if additional_count:
         noun = "command" if additional_count == 1 else "commands"

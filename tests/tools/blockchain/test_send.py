@@ -4,7 +4,7 @@ from typing import Any
 from eth_account import Account
 import pytest
 from web3 import Web3
-from web3.exceptions import TimeExhausted
+from web3.exceptions import ContractLogicError, TimeExhausted
 
 from openminion.modules.tool.plugin_api import PolicyAuthorization
 from openminion.tools.blockchain.runtime import preparation_digest, send_transaction
@@ -31,6 +31,7 @@ class _Eth:
         self.hash = "0x" + "ab" * 32
         self.broadcast_error: Exception | None = None
         self.receipt_error: Exception | None = None
+        self.call_error: Exception | None = None
         self.receipt_status = 1
 
     def get_transaction_count(self, address: str, block: str) -> int:
@@ -41,6 +42,8 @@ class _Eth:
     def call(self, transaction: dict[str, Any], block: str) -> bytes:
         assert transaction["from"] == SENDER
         assert block == "pending"
+        if self.call_error is not None:
+            raise self.call_error
         return b""
 
     def send_raw_transaction(self, raw: bytes) -> str:
@@ -208,6 +211,34 @@ def test_send_rejects_stale_nonce_without_broadcast(tmp_path) -> None:
     assert result["data"]["broadcast_attempts"] == 0
     assert client.eth.broadcasts == 0
     assert context.events[0]["state"] == "stale"
+
+
+def test_send_time_contract_revert_is_structured_without_broadcast(
+    tmp_path,
+) -> None:
+    context = _context(tmp_path)
+    client = _Web3()
+    client.eth.call_error = ContractLogicError("execution reverted")
+    transaction = context.transaction
+
+    result = send_transaction(
+        {
+            "transaction": transaction,
+            "call_context": None,
+            "preparation_digest": preparation_digest(transaction, None),
+        },
+        context,
+        web3=client,
+    )
+
+    assert result["error"]["code"] == "SIMULATION_REVERTED"
+    assert result["error"]["details"] == {
+        "stage": "send",
+        "revert": {"kind": "data_unavailable", "raw_data": None},
+        "broadcast_attempted": False,
+    }
+    assert client.eth.broadcasts == 0
+    assert context.events[0]["broadcast_attempts"] == 0
 
 
 def test_send_returns_broadcast_unknown_without_retry(tmp_path) -> None:

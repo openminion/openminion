@@ -15,10 +15,7 @@ from openminion.modules.brain.execution.mission import (
 )
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.runner.tick.context import (
-    _parse_confirmation_response,
-)
-from openminion.modules.brain.loop.tools.confirmation import (
-    is_session_confirmation_response,
+    _parse_confirmation_control_response,
 )
 from openminion.modules.brain.schemas import WorkingState
 
@@ -711,13 +708,14 @@ def _reset_state_for_new_input(
         user_input=user_input,
     )
     parsed_confirmation_reply = ""
-    if state_inline.get("pending_confirmation_command") is not None:
+    pending_command = state_inline.get("pending_confirmation_command")
+    if pending_command is not None:
         try:
-            parsed_confirmation_reply = _parse_confirmation_response(runner, user_input)
+            parsed_confirmation_reply = _parse_confirmation_control_response(
+                runner, user_input, pending_command
+            )
         except Exception:  # noqa: BLE001
             parsed_confirmation_reply = ""
-        if is_session_confirmation_response(user_input):
-            parsed_confirmation_reply = _CONFIRMATION_SESSION_REPLY
     preservation = self._turn_reset_preservation(
         state_inline=state_inline,
         user_input=user_input,

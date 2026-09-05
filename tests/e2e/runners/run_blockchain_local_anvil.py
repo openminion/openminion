@@ -37,6 +37,9 @@ from openminion.tools.blockchain.runtime import (  # noqa: E402
     inspect_blockchain,
     prepare_transaction,
 )
+from openminion.tools.blockchain.confirmation import (  # noqa: E402
+    build_blockchain_send_confirmation_preview,
+)
 
 ARTIFACT_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bttl-e2e" / "local"
 RPC_URL = "http://127.0.0.1:18547"
@@ -125,6 +128,7 @@ def _approval(ctl: PolicyCtl, args: dict, invocation_id: str, action: str):
             "trace_id": invocation_id,
             "mode_name": "act",
         },
+        confirmation_preview=build_blockchain_send_confirmation_preview(args),
     )
     assert decision.approval_id
     grant_id = ctl.resolve_confirmation(decision.approval_id, action)

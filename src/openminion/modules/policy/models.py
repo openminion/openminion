@@ -1,9 +1,10 @@
 from openminion.base.time import utc_now_iso  # noqa: F401
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional, cast
 
 from openminion.modules.tool.plugin_api import (
+    BlockchainSendConfirmationPreview,
     stable_invocation_hash as stable_invocation_hash,
 )
 
@@ -198,6 +199,7 @@ class PolicyDecision:
     details: dict[str, Any] = field(default_factory=dict)
     approval_id: Optional[str] = None
     invocation_hash: Optional[str] = None
+    confirmation_preview: BlockchainSendConfirmationPreview | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -210,6 +212,11 @@ class PolicyDecision:
             "details": dict(self.details),
             "approval_id": self.approval_id,
             "invocation_hash": self.invocation_hash,
+            "confirmation_preview": (
+                None
+                if self.confirmation_preview is None
+                else asdict(self.confirmation_preview)
+            ),
         }
 
 
@@ -233,6 +240,9 @@ class PendingPolicyConfirmation:
 
 
 class PolicyControlError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self, code: str, message: str, details: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.details = details or {}

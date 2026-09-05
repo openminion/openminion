@@ -24,6 +24,7 @@ from openminion.modules.brain.loop.tools.confirmation import (
     confirmation_required_user_message,
     extract_confirmation_replay_queue,
     is_session_confirmation_response,
+    requires_individual_confirmation,
     strip_confirmation_replay_queue,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
@@ -232,9 +233,11 @@ class CodingResumeMixin:
             return None
         runner, _profile = _runner_and_profile_from_context(ctx)
         user_reply = ctx.user_input
-        reply = _parse_confirmation_response(runner, user_reply)
-        session_grant = is_session_confirmation_response(user_reply) and not bool(
-            ctx.state.pending_policy_approval_id
+        reply = _parse_confirmation_response(runner, user_reply, command)
+        session_grant = (
+            is_session_confirmation_response(user_reply)
+            and not requires_individual_confirmation(command)
+            and not bool(ctx.state.pending_policy_approval_id)
         )
         if reply == BRAIN_CONFIRM_RESPONSE_DENY:
             _deny_pending_confirmation(runner, state=ctx.state)
@@ -254,7 +257,10 @@ class CodingResumeMixin:
         if reply != BRAIN_CONFIRM_RESPONSE_AFFIRM and not session_grant:
             message = str(
                 getattr(ctx.state, "post_action_user_message", "") or ""
-            ).strip() or confirmation_required_user_message(command)
+            ).strip() or confirmation_required_user_message(
+                command,
+                ctx.state.pending_policy_confirmation_preview,
+            )
             return ExecutionResult.from_step_output(
                 ctx.respond(
                     message=message,

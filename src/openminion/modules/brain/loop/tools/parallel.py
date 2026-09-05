@@ -5,10 +5,12 @@ from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any
 
-from openminion.modules.brain.schemas import ToolCommand
+from openminion.modules.brain.schemas import ActionError, ActionResult, ToolCommand
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from .contracts import PreparedToolDispatch, PrepareOutcome
 
 from .causal import classify_batch
+from .confirmation import requires_individual_confirmation
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,27 +28,18 @@ def _tool_command_for_call(
     if isinstance(tool_call, ToolCommand):
         return tool_call.model_copy(deep=True)
     tool_name = str(getattr(tool_call, "name", "") or "").strip()
+    call_id = str(getattr(tool_call, "id", "") or "").strip()
     inputs = getattr(tool_call, "inputs", None)
     arguments = getattr(tool_call, "arguments", None)
-    return ToolCommand(
-        title=tool_name,
-        tool_name=tool_name,
-        args=dict(arguments) if isinstance(arguments, dict) else {},
-        inputs=dict(inputs) if isinstance(inputs, dict) else {},
-    )
-
-
-def _prepare_one(
-    loop_ctx: Any,
-    *,
-    tool_call: Any,
-    include_reflect: bool,
-) -> PreparedToolDispatch | PrepareOutcome:
-    command = _tool_command_for_call(tool_call=tool_call)
-    return loop_ctx.prepare_tool_dispatch(
-        command=command,
-        include_reflect=include_reflect,
-    )
+    fields = {
+        "title": tool_name,
+        "tool_name": tool_name,
+        "args": dict(arguments) if isinstance(arguments, dict) else {},
+        "inputs": dict(inputs) if isinstance(inputs, dict) else {},
+    }
+    if call_id:
+        fields["command_id"] = call_id
+    return ToolCommand.model_validate(fields)
 
 
 def _execute_one(
@@ -165,14 +158,45 @@ def _prepare_dispatch_entries(
     tool_calls: list[Any],
     include_reflect: bool,
 ) -> list[PreparedToolDispatch | PrepareOutcome]:
-    return [
-        _prepare_one(
-            loop_ctx,
-            tool_call=tool_call,
+    entries: list[PreparedToolDispatch | PrepareOutcome] = []
+    individual_confirmation_pending = False
+    for tool_call in tool_calls:
+        command = _tool_command_for_call(tool_call=tool_call)
+        if individual_confirmation_pending and requires_individual_confirmation(
+            command
+        ):
+            message = "This action requires a separate confirmation."
+            entries.append(
+                PrepareOutcome(
+                    approved_command=command,
+                    original_command=command,
+                    command_id=command.command_id,
+                    tool_name=command.tool_name,
+                    disposition="individual_confirmation_deferred",
+                    action_result=ActionResult(
+                        command_id=command.command_id,
+                        status="needs_user",
+                        summary=message,
+                        error=ActionError(
+                            code=TOOL_ERROR_CONFIRM_REQUIRED,
+                            message=message,
+                        ),
+                    ),
+                )
+            )
+            continue
+        entry = loop_ctx.prepare_tool_dispatch(
+            command=command,
             include_reflect=include_reflect,
         )
-        for tool_call in tool_calls
-    ]
+        entries.append(entry)
+        if (
+            isinstance(entry, PrepareOutcome)
+            and entry.policy_approval_id
+            and requires_individual_confirmation(command)
+        ):
+            individual_confirmation_pending = True
+    return entries
 
 
 def _collect_prepared_dispatches(

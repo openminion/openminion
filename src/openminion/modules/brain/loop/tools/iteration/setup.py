@@ -110,9 +110,11 @@ def _tool_efficiency_guidance(profile: AdaptiveToolLoopProfile) -> str:
             "4. For current-events, latest-news, or top-N requests, one or two searches are usually enough; pick the top items from result titles/snippets and answer.",
             "5. These efficiency rules override any skill or example procedure that suggests a fixed number of searches; stop searching once you have enough evidence to answer.",
             "6. Batch related lookups when possible instead of making them one at a time.",
-            "7. If a tool reports a budget or per-tool limit error, do not call another tool; produce the best final answer from the results already available.",
-            "8. Always produce a final answer before your tool budget runs out; a partial sourced answer is better than no answer.",
-            f"9. Your current budget is approximately {int(profile.max_iterations)} iterations / {tool_call_budget} tool calls.",
+            "7. Follow any operation order the user specifies; do not perform a later operation before an earlier one.",
+            "8. Stop after completing the requested operations; do not add related calls the user did not request.",
+            "9. If a tool reports a budget or per-tool limit error, do not call another tool; produce the best final answer from the results already available.",
+            "10. Always produce a final answer before your tool budget runs out; a partial sourced answer is better than no answer.",
+            f"11. Your current budget is approximately {int(profile.max_iterations)} iterations / {tool_call_budget} tool calls.",
         ]
     )
 

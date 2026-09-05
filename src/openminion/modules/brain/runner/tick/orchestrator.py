@@ -15,7 +15,10 @@ from ...execution.mission import (
     refresh_ordinary_turn_budget,
     resolve_mission_input_route,
 )
-from ...loop.tools.confirmation import is_session_confirmation_response
+from ...loop.tools.confirmation import (
+    is_session_confirmation_response,
+    requires_individual_confirmation,
+)
 from ...runner.transitions import guard_waiting_state
 from ...runtime.mrdd.hook import maybe_run_mrdd_pre_dispatch_hook
 from ...schemas import BrainMode, new_uuid
@@ -73,9 +76,15 @@ def _capture_new_user_input(
 ) -> None:
     state.trace_id = trace_id or new_uuid()
     if state.pending_confirmation_command is not None:
-        reply = confirmation._parse_confirmation_response(runner, user_input)  # noqa: SLF001
-        if reply in {"affirm", "deny"} or is_session_confirmation_response(
-            str(user_input or "")
+        reply = confirmation._parse_confirmation_response(  # noqa: SLF001
+            runner,
+            user_input,
+            state.pending_confirmation_command,
+        )
+        session_reply = is_session_confirmation_response(str(user_input or ""))
+        if reply in {"affirm", "deny"} or (
+            session_reply
+            and not requires_individual_confirmation(state.pending_confirmation_command)
         ):
             return
     state.last_user_input = str(user_input or "").strip()

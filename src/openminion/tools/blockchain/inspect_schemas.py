@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, RootModel, TypeAdapter
+from pydantic import ConfigDict, Field, RootModel, TypeAdapter, field_validator
 
 from .schema_types import (
     Address,
@@ -11,6 +11,8 @@ from .schema_types import (
     FunctionAbi,
     HexData,
     TransactionHash,
+    inline_discriminated_branches,
+    parse_json_container,
 )
 
 
@@ -29,10 +31,33 @@ class BytecodeArgs(ClosedModel):
 
 
 class ContractReadArgs(ClosedModel):
-    action: Literal["contract_read"]
+    action: Literal["contract_read"] = Field(
+        description=(
+            "Required discriminator; use exactly contract_read to read one contract "
+            "function result, including quotes and state. Use blockchain.debug only "
+            "for call or revert diagnosis."
+        )
+    )
     contract_address: Address
-    function_abi: FunctionAbi
-    function_args: list[Any]
+    function_abi: FunctionAbi = Field(
+        description="JSON object; a strict JSON object string is also accepted."
+    )
+    function_args: list[Any] = Field(
+        description=(
+            "JSON array in ABI input order; a strict JSON array string is also "
+            "accepted."
+        )
+    )
+
+    @field_validator("function_abi", mode="before")
+    @classmethod
+    def parse_function_abi(cls, value: Any) -> Any:
+        return parse_json_container(value, dict)
+
+    @field_validator("function_args", mode="before")
+    @classmethod
+    def parse_function_args(cls, value: Any) -> Any:
+        return parse_json_container(value, list)
 
 
 class TransactionArgs(ClosedModel):
@@ -41,7 +66,14 @@ class TransactionArgs(ClosedModel):
 
 
 class ReceiptArgs(ClosedModel):
-    action: Literal["receipt"]
+    action: Literal["receipt"] = Field(
+        description=(
+            "Use exactly receipt with blockchain.inspect to verify transaction receipt "
+            "status, even if a prior send returned receipt status. When receipt status "
+            "and event decoding are both requested in order, perform this read before "
+            "blockchain.debug transaction_events."
+        )
+    )
     transaction_hash: TransactionHash
 
 
@@ -58,7 +90,32 @@ INSPECT_REQUEST_ADAPTER: TypeAdapter[InspectRequest] = TypeAdapter(InspectReques
 
 
 class InspectArgs(RootModel[InspectRequest]):
-    pass
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "action": "contract_read",
+                    "contract_address": "0x" + "22" * 20,
+                    "function_abi": {
+                        "type": "function",
+                        "name": "quote",
+                        "inputs": [{"name": "amountIn", "type": "uint256"}],
+                        "outputs": [{"name": "amountOut", "type": "uint256"}],
+                        "stateMutability": "view",
+                    },
+                    "function_args": [7],
+                },
+                {
+                    "action": "receipt",
+                    "transaction_hash": "0x" + "aa" * 32,
+                },
+            ]
+        }
+    )
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return inline_discriminated_branches(super().model_json_schema(*args, **kwargs))
 
 
 class ChainSummaryData(ClosedModel):

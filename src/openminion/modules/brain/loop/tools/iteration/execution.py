@@ -148,6 +148,35 @@ def _record_plan_family_call(
     )
 
 
+def _set_pending_confirmation(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    command_outcome: CommandExecutionOutcome,
+    later_outcomes: list[tuple[ToolCall, CommandExecutionOutcome]],
+) -> None:
+    state = loop_ctx.state
+    state.pending_policy_approval_id = command_outcome.policy_approval_id
+    state.pending_policy_confirmation_preview = (
+        command_outcome.policy_confirmation_preview
+    )
+    pending_confirmation = command_outcome.approved_command.model_copy(deep=True)
+    queued_siblings = [
+        later_outcome.approved_command.model_copy(deep=True)
+        for _tool_call, later_outcome in later_outcomes
+        if later_outcome.action_result is not None
+        and _is_confirm_required(later_outcome.action_result)
+    ]
+    state.pending_confirmation_command = (
+        attach_confirmation_replay_queue(pending_confirmation, queued_siblings)
+        if queued_siblings
+        else pending_confirmation
+    )
+    state.post_action_user_message = confirmation_required_user_message(
+        state.pending_confirmation_command,
+        state.pending_policy_confirmation_preview,
+    )
+
+
 def execute_iteration_results(
     loop_ctx: AdaptiveToolLoopContext,
     *,
@@ -239,7 +268,6 @@ def execute_iteration_results(
         loop_state.total_tool_calls += 1
         if iter_tc_cache_hit or not command_outcome.tool_budget_debited:
             debit_tool_budget(loop_ctx)
-
         action_result = action_results[result_index]
 
         tc_args_for_cache = dict(tool_call.arguments)
@@ -285,30 +313,10 @@ def execute_iteration_results(
             and profile.stop_on_needs_user
         ):
             if _is_confirm_required(action_result):
-                pending_command = command_outcome.approved_command
-                queued_siblings = []
-                for _later_tool_call, later_outcome in ordered_tool_results[
-                    result_index + 1 :
-                ]:
-                    later_action_result = later_outcome.action_result
-                    later_command = later_outcome.approved_command
-                    if later_action_result is not None and _is_confirm_required(
-                        later_action_result
-                    ):
-                        queued_siblings.append(later_command.model_copy(deep=True))
-                pending_confirmation = pending_command.model_copy(deep=True)
-                if queued_siblings:
-                    loop_ctx.state.pending_confirmation_command = (
-                        attach_confirmation_replay_queue(
-                            pending_confirmation, queued_siblings
-                        )
-                    )
-                else:
-                    loop_ctx.state.pending_confirmation_command = pending_confirmation
-                loop_ctx.state.post_action_user_message = (
-                    confirmation_required_user_message(
-                        loop_ctx.state.pending_confirmation_command
-                    )
+                _set_pending_confirmation(
+                    loop_ctx,
+                    command_outcome=command_outcome,
+                    later_outcomes=ordered_tool_results[result_index + 1 :],
                 )
             loop_state.termination_reason = ADAPTIVE_TERM_NEEDS_USER
             emit_adaptive_status(

@@ -3112,6 +3112,41 @@ def test_coding_loop_replays_confirmed_pending_tool_without_llm_yes() -> None:
     assert any(message.role == "tool" for message in first_llm_messages)
 
 
+def test_coding_loop_does_not_session_grant_pending_blockchain_send() -> None:
+    state = _state()
+    state.module_state["coding"] = _coding_resume_payload()
+    state.pending_confirmation_command = ToolCommand(
+        title="send transaction",
+        tool_name="blockchain.send_transaction",
+        args={"transaction": "first"},
+    )
+    state.status = "waiting_user"
+    state.post_action_user_message = "Reply exactly yes to allow once, or no to cancel."
+    services = _FakeServices(
+        runner=SimpleNamespace(
+            policy_api=SimpleNamespace(
+                parse_confirmation_response=lambda _text: "affirm"
+            )
+        )
+    )
+    executor = _FakeCommandExecutor()
+
+    result = CodingMode().execute(
+        _ctx(
+            _FakeLLMClient(responses=[]),
+            executor,
+            state=state,
+            services=services,
+            user_input="session",
+        )
+    )
+
+    assert result.status == "waiting_user"
+    assert state.pending_confirmation_command is not None
+    assert "blockchain.send_transaction" not in state.permission_overrides
+    assert executor.calls == []
+
+
 def test_coding_loop_replays_confirmed_pending_tool_batch_without_llm_yes() -> None:
     class _PolicyAPI:
         def __init__(self) -> None:

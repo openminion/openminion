@@ -14,7 +14,6 @@ from openminion.base.config.action_policy import (
     normalize_action_policy_mode_override,
     overlay_action_policy_mode,
 )
-
 from ..runtime.action_policy import policy_config_from_action_policy
 from ..constants import (
     POLICY_DECISION_ALLOW,
@@ -222,6 +221,27 @@ class PolicyCtlBrainAdapter:
             "ctx": ctx,
             "risk_override": self._risk_override_for_command(command),
         }
+        if str(getattr(command, "tool_name", "") or "") == (
+            "blockchain.send_transaction"
+        ):
+            from openminion.tools.blockchain.confirmation import (
+                BlockchainConfirmationPreviewError,
+                build_blockchain_send_confirmation_preview,
+                canonical_blockchain_send_args,
+            )
+
+            try:
+                check_kwargs["invocation"] = {
+                    **invocation,
+                    "args": canonical_blockchain_send_args(invocation["args"]),
+                }
+                check_kwargs["confirmation_preview"] = (
+                    build_blockchain_send_confirmation_preview(
+                        check_kwargs["invocation"]["args"]
+                    )
+                )
+            except BlockchainConfirmationPreviewError as exc:
+                check_kwargs["confirmation_preview_error"] = exc.reason
         if config_overrides is not None:
             check_kwargs["config_overrides"] = config_overrides
         return self._ctl.check(**check_kwargs)
@@ -253,6 +273,7 @@ class PolicyCtlBrainAdapter:
             require_clarification=require_clarification,
             clarification_question=clarification_question or None,
             approval_id=str(getattr(decision, "approval_id", "") or "") or None,
+            confirmation_preview=getattr(decision, "confirmation_preview", None),
         )
 
     @staticmethod

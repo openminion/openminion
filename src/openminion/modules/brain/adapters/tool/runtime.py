@@ -12,7 +12,6 @@ from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
-    BRAIN_JOB_STATUS_RUNNING,
     BRAIN_STATE_ERROR,
 )
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
@@ -58,10 +57,10 @@ from .policy_context import (
     _watch_write_authorization_requested,
 )
 from .results import (
-    _derive_toolspec_summary,
     _error_envelope,
     _normalized_artifact_refs,
     _tool_allowlist_error,
+    run_tool_spec,
 )
 from .workspace_policy import workspace_context_policy
 
@@ -107,6 +106,7 @@ class ToolAdapter:
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
         agent_profile: Any | None = None,
+        telemetryctl: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
         policy_from_none = policy is None
@@ -123,6 +123,7 @@ class ToolAdapter:
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
+        self.telemetryctl = telemetryctl
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
         )
@@ -353,12 +354,9 @@ class ToolAdapter:
         _inject_runtime_message_ref(
             tool_name=tool_name, args=args, message_ref=runtime_message_ref
         )
-
         tool_name, spec, runtime_tool = self._resolve_registry_tool(tool_name)
-
         if not self.is_tool_allowed(tool_name):
             return _tool_allowlist_error(tool_name)
-
         if spec is None and runtime_tool is None:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
@@ -369,7 +367,6 @@ class ToolAdapter:
         if isinstance(runtime_tool, ToolSpec):
             spec = runtime_tool
             runtime_tool = None
-
         try:
             policy_for_run = workspace_context_policy(
                 self.policy,
@@ -418,7 +415,6 @@ class ToolAdapter:
                         if str(value or "").strip()
                     }
                 )
-
         if runtime_tool is not None:
             return self._execute_openminion_runtime_tool(
                 tool=runtime_tool,
@@ -431,7 +427,6 @@ class ToolAdapter:
                 orchestration_metadata=orchestration_metadata,
                 replay_confirmation_metadata=replay_confirmation_metadata,
             )
-
         if not isinstance(spec, ToolSpec):
             handler = getattr(spec, "handler", None)
             if handler is None:
@@ -451,7 +446,6 @@ class ToolAdapter:
                 tags=tuple(getattr(spec, "tags", ("core",)) or ("core",)),
                 capabilities=getattr(spec, "capabilities", None),
             )
-
         try:
             args_model = spec.args_model
             if hasattr(args_model, "model_validate"):
@@ -570,6 +564,7 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             secret_service=self.secret_service,
+            telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,
             a2a_delegate_api=self.a2a_delegate_api,
@@ -583,6 +578,7 @@ class ToolAdapter:
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id
         ctx.tool_name = tool_name
+        ctx.tool_call_id = str(command.get("command_id", "") or "")
         ctx.invocation_id = str(command.get("idempotency_key", "") or "")
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)
@@ -650,7 +646,7 @@ class ToolAdapter:
                     permission_mode=permission_mode,
                     args=args,
                 )
-            return self._run_tool_spec(
+            return run_tool_spec(
                 spec=spec,
                 validated_args=validated_args,
                 context=ctx,
@@ -686,12 +682,12 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details=dict(exc.details or {}),
             )
-        except Exception as exc:
+        except Exception:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool execution failed",
                 code="EXEC_ERROR",
-                message=str(exc),
+                message="Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
 
@@ -729,65 +725,6 @@ class ToolAdapter:
         elif hasattr(spec, "execute") and not hasattr(spec, "handler"):
             runtime_tool = spec
         return tool_name, spec, runtime_tool
-
-    @staticmethod
-    def _run_tool_spec(
-        *,
-        spec: ToolSpec,
-        validated_args: dict[str, Any],
-        context: RuntimeContext,
-        start_time: float,
-        background_write_authorized: bool,
-        tool_name: str,
-    ) -> dict[str, Any]:
-        data = spec.handler(validated_args, context)
-        if isinstance(data, Mapping) and "status" in data:
-            inner_status = str(data.get("status", BRAIN_STATE_ERROR))
-        elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
-            inner_status = "ok" if data["ok"] else BRAIN_STATE_ERROR
-        else:
-            inner_status = "ok"
-        status = (
-            BRAIN_ACTION_STATUS_SUCCESS
-            if inner_status
-            in ("ok", BRAIN_ACTION_STATUS_SUCCESS, BRAIN_JOB_STATUS_RUNNING)
-            else BRAIN_STATE_ERROR
-        )
-        summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
-        artifact_refs = _normalized_artifact_refs(context.artifacts)
-        result = {
-            "status": status,
-            "summary": summary,
-            "outputs": data,
-            "artifact_refs": artifact_refs,
-            "memory_refs": [],
-            "metrics": {
-                "latency_ms": int((time.monotonic() - start_time) * 1000),
-                "tokens_used": 0,
-                "cost_estimate": 0.0,
-            },
-        }
-        if background_write_authorized:
-            result["outputs"] = dict(result["outputs"])
-            result["outputs"].update(
-                background_watch_write_authorized=True,
-                background_watch_write_tool=tool_name,
-            )
-        if status != BRAIN_ACTION_STATUS_SUCCESS:
-            raw_error = data.get("error") if isinstance(data, Mapping) else None
-            if isinstance(raw_error, Mapping):
-                error: dict[str, Any] = {
-                    "code": str(raw_error.get("code", "") or "EXEC_ERROR"),
-                    "message": str(raw_error.get("message", "") or summary).strip(),
-                }
-                if isinstance(raw_error.get("details"), Mapping):
-                    error["details"] = dict(raw_error["details"])
-            elif raw_error:
-                error = {"code": "EXEC_ERROR", "message": str(raw_error).strip()}
-            else:
-                error = {"code": "EXEC_ERROR", "message": summary}
-            result["error"] = error
-        return result
 
     def _execute_openminion_runtime_tool(
         self,

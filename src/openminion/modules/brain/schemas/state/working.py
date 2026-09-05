@@ -4,6 +4,7 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openminion.modules.session.capture import TerminalCaptureIntentReceipt
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
 
 from .common import *
 from .common import (
@@ -183,6 +184,7 @@ class WorkingState(BaseModel):
     mode: BrainMode = cast(BrainMode, BrainMode.COMMAND)
     pending_confirmation_command: Command | None = None
     pending_policy_approval_id: str | None = None
+    pending_policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
     pending_confirmation_sub_intents: list[str] = Field(default_factory=list)
     pending_confirmation_sub_intent_refs: list[SubIntent] = Field(default_factory=list)
     pending_confirmation_goal: str | None = None

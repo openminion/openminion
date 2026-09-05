@@ -1,20 +1,28 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 import hashlib
 import json
-import re
 from typing import Any, cast
 
+from eth_abi.exceptions import DecodingError
 from pydantic import ValidationError
 
 from .config import resolve_blockchain_config
+from .abi import (
+    abi_signature,
+    decode_abi_values,
+    decode_revert_fact,
+    encode_function_call,
+    normalize_abi_values,
+    revert_data_from_exception,
+    validate_abi_values,
+)
 from .schemas import (
     INSPECT_REQUEST_ADAPTER,
     PREPARE_REQUEST_ADAPTER,
     SEND_REQUEST_ADAPTER,
     CallContext,
-    FunctionAbi,
     PreparedTransactionResult,
 )
 
@@ -29,6 +37,12 @@ class _ChainMismatch(RuntimeError):
     def __init__(self, observed_chain_id: int) -> None:
         self.observed_chain_id = observed_chain_id
         super().__init__(str(observed_chain_id))
+
+
+class _PreparationReverted(RuntimeError):
+    def __init__(self, revert: dict[str, Any]) -> None:
+        self.revert = revert
+        super().__init__("prepare")
 
 
 def _error(code: str, message: str, details: Mapping[str, Any]) -> dict[str, Any]:
@@ -71,47 +85,6 @@ def _hex_data(value: Any) -> str:
     else:
         token = bytes(value).hex()
     return token if token.startswith("0x") else f"0x{token}"
-
-
-_ARRAY_TYPE_RE = re.compile(r"^(.*)\[(?:[0-9]*)\]$")
-
-
-def _normalize_abi_value(value: Any, abi_type: str, web3: Any) -> Any:
-    array_match = _ARRAY_TYPE_RE.fullmatch(abi_type)
-    if array_match is not None:
-        item_type = array_match.group(1)
-        return [_normalize_abi_value(item, item_type, web3) for item in value]
-    if abi_type == "address":
-        return web3.to_checksum_address(value)
-    if abi_type == "bytes" or abi_type.startswith("bytes"):
-        return _hex_data(value)
-    if abi_type.startswith("uint") or abi_type.startswith("int"):
-        return _decimal(value)
-    if abi_type in {"bool", "string"}:
-        return value
-    raise ValueError(f"unsupported ABI output type: {abi_type}")
-
-
-def _normalize_contract_outputs(
-    value: Any,
-    outputs: Sequence[Any],
-    web3: Any,
-) -> list[Any]:
-    if not outputs:
-        return []
-    if len(outputs) == 1:
-        values = [value]
-    else:
-        values = list(value)
-    return [
-        _normalize_abi_value(item, output.type, web3)
-        for item, output in zip(values, outputs, strict=True)
-    ]
-
-
-def _function_signature(function_abi: FunctionAbi) -> str:
-    input_types = ",".join(parameter.type for parameter in function_abi.inputs)
-    return f"{function_abi.name}({input_types})"
 
 
 def preparation_digest(
@@ -163,6 +136,7 @@ def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
     if request.action == "contract_read":
         address = client.to_checksum_address(request.contract_address)
         abi = request.function_abi.model_dump(mode="json")
+        validate_abi_values(request.function_args, request.function_abi.inputs)
         function = client.eth.contract(address=address, abi=[abi]).get_function_by_name(
             request.function_abi.name
         )(*request.function_args)
@@ -170,9 +144,15 @@ def _inspect_data(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
         return {
             "chain_id": chain_id,
             "contract_address": address,
-            "function_signature": _function_signature(request.function_abi),
-            "return_values": _normalize_contract_outputs(
-                raw, request.function_abi.outputs, client
+            "function_signature": abi_signature(request.function_abi),
+            "return_values": normalize_abi_values(
+                []
+                if not request.function_abi.outputs
+                else [raw]
+                if len(request.function_abi.outputs) == 1
+                else list(raw),
+                request.function_abi.outputs,
+                client,
             ),
         }
     if request.action == "transaction":
@@ -268,15 +248,11 @@ def _build_prepared_transaction(
     sender = client.to_checksum_address(account.address)
     if request.kind == "contract_call":
         recipient = client.to_checksum_address(request.contract_address)
-        abi = request.function_abi.model_dump(mode="json")
-        data = client.eth.contract(abi=[abi]).encode_abi(
-            request.function_abi.name,
-            args=request.function_args,
-        )
+        data = encode_function_call(client, request.function_abi, request.function_args)
         call_context = CallContext(
             function_abi=request.function_abi,
             function_args=request.function_args,
-            function_signature=_function_signature(request.function_abi),
+            function_signature=abi_signature(request.function_abi),
         ).model_dump(mode="json")
     else:
         recipient = client.to_checksum_address(request.to_address)
@@ -294,9 +270,21 @@ def _build_prepared_transaction(
         "nonce": nonce,
         "data": data,
     }
-    gas_limit = int(
-        _rpc("estimate_gas", lambda: client.eth.estimate_gas(rpc_transaction))
-    )
+    from web3.exceptions import ContractLogicError
+
+    try:
+        gas_limit = int(
+            _rpc("estimate_gas", lambda: client.eth.estimate_gas(rpc_transaction))
+        )
+    except _RpcFailure as exc:
+        if isinstance(exc.__cause__, ContractLogicError):
+            raise _PreparationReverted(
+                decode_revert_fact(
+                    client,
+                    revert_data_from_exception(exc.__cause__),
+                )
+            ) from exc
+        raise
     pending_block = _rpc("chain_read", lambda: client.eth.get_block("pending"))
     base_fee = pending_block.get("baseFeePerGas")
     common = {
@@ -332,14 +320,82 @@ def _build_prepared_transaction(
     return normalized, call_context, rpc_transaction, gas_limit, max_total_fee
 
 
+def _simulate_prepared_transaction(
+    config: Any,
+    request: Any,
+    client: Any,
+    normalized: dict[str, Any],
+    call_context: dict[str, Any] | None,
+    rpc_transaction: dict[str, Any],
+    gas_limit: int,
+    max_total_fee: int,
+) -> dict[str, Any]:
+    from web3.exceptions import ContractLogicError, Web3Exception
+
+    configured_cap = int(config.max_total_fee_wei)
+    if max_total_fee > configured_cap:
+        return _error(
+            "FEE_CAP_EXCEEDED",
+            "Transaction fee exceeds the configured cap.",
+            {
+                "max_total_fee_wei": str(max_total_fee),
+                "configured_max_total_fee_wei": str(configured_cap),
+            },
+        )
+    try:
+        return_data = client.eth.call({**rpc_transaction, "gas": gas_limit}, "pending")
+    except ContractLogicError as exc:
+        return _error(
+            "SIMULATION_REVERTED",
+            "Transaction simulation reverted.",
+            {
+                "stage": "prepare",
+                "revert": decode_revert_fact(client, revert_data_from_exception(exc)),
+                "broadcast_attempted": False,
+            },
+        )
+    except (OSError, ValueError, Web3Exception):
+        return _error(
+            "RPC_UNAVAILABLE",
+            "Blockchain RPC operation failed.",
+            {"operation": "simulate"},
+        )
+
+    decoded_returns = None
+    if request.kind == "contract_call" and request.function_abi.outputs:
+        try:
+            decoded_returns = decode_abi_values(
+                client, request.function_abi.outputs, bytes(return_data)
+            )
+        except (DecodingError, ValueError):
+            decoded_returns = None
+    return PreparedTransactionResult.model_validate(
+        {
+            "ok": True,
+            "state": "prepared",
+            "transaction": normalized,
+            "call_context": call_context,
+            "simulation": {
+                "state": "succeeded",
+                "chain_id": str(normalized["chain_id"]),
+                "block_identifier": "pending",
+                "resolved_block_number": None,
+                "resolved_block_hash": None,
+                "return_data": _hex_data(return_data).lower(),
+                "gas_estimate": str(gas_limit),
+                "decoded_returns": decoded_returns,
+            },
+            "preparation_digest": preparation_digest(normalized, call_context),
+        }
+    ).model_dump(mode="json")
+
+
 def prepare_transaction(
     args: Mapping[str, Any],
     context: Any | None,
     *,
     web3: Any | None = None,
 ) -> dict[str, Any]:
-    from web3.exceptions import Web3Exception
-
     config = resolve_blockchain_config(context)
     if not config.enabled:
         return _error(
@@ -356,16 +412,8 @@ def prepare_transaction(
             {"field": "", "reason": "request_schema"},
         )
 
-    secret_service = getattr(context, "secret_service", None)
-    if secret_service is None or not config.signer_secret_key:
-        return _signer_unavailable()
     try:
-        private_key = secret_service.get_secret_sync(
-            config.signer_secret_key,
-            namespace=config.signer_secret_namespace,
-        )
-        client = web3 or _client(config.rpc_url)
-        account = client.eth.account.from_key(private_key)
+        client, account = _load_signing_account(config, context, web3)
     except (KeyError, OSError, TypeError, ValueError):
         return _signer_unavailable()
 
@@ -384,6 +432,16 @@ def prepare_transaction(
             "Blockchain RPC operation failed.",
             {"operation": exc.operation},
         )
+    except _PreparationReverted as exc:
+        return _error(
+            "SIMULATION_REVERTED",
+            "Transaction simulation reverted.",
+            {
+                "stage": "prepare",
+                "revert": exc.revert,
+                "broadcast_attempted": False,
+            },
+        )
     except _ChainMismatch as exc:
         return _error(
             "CHAIN_MISMATCH",
@@ -400,36 +458,16 @@ def prepare_transaction(
             {"field": "", "reason": "transaction_encoding"},
         )
 
-    configured_cap = int(config.max_total_fee_wei)
-    if max_total_fee > configured_cap:
-        return _error(
-            "FEE_CAP_EXCEEDED",
-            "Transaction fee exceeds the configured cap.",
-            {
-                "max_total_fee_wei": str(max_total_fee),
-                "configured_max_total_fee_wei": str(configured_cap),
-            },
-        )
-    try:
-        client.eth.call({**rpc_transaction, "gas": gas_limit}, "pending")
-    except (OSError, ValueError, Web3Exception):
-        return _error(
-            "SIMULATION_REVERTED",
-            "Transaction simulation reverted.",
-            {"stage": "prepare"},
-        )
-
-    digest = preparation_digest(normalized, call_context)
-    return PreparedTransactionResult.model_validate(
-        {
-            "ok": True,
-            "state": "prepared",
-            "transaction": normalized,
-            "call_context": call_context,
-            "simulation": {"state": "succeeded"},
-            "preparation_digest": digest,
-        }
-    ).model_dump(mode="json")
+    return _simulate_prepared_transaction(
+        config,
+        request,
+        client,
+        normalized,
+        call_context,
+        rpc_transaction,
+        gas_limit,
+        max_total_fee,
+    )
 
 
 def _signer_unavailable() -> dict[str, Any]:
@@ -529,31 +567,28 @@ def _validate_send_state(
     sender: str,
 ) -> tuple[dict[str, Any], list[str]]:
     stale_fields: list[str] = []
-    try:
-        if _chain_id(client, int(config.chain_id)) != int(transaction["chain_id"]):
-            stale_fields.append("chain_id")
-        if int(client.eth.get_transaction_count(sender, "pending")) != int(
-            transaction["nonce"]
-        ):
-            stale_fields.append("nonce")
-        rpc_transaction = _rpc_transaction(transaction)
-        if call_context is not None:
-            abi = call_context.function_abi.model_dump(mode="json")
-            encoded = client.eth.contract(abi=[abi]).encode_abi(
-                call_context.function_abi.name,
-                args=call_context.function_args,
+    if _chain_id(client, int(config.chain_id)) != int(transaction["chain_id"]):
+        stale_fields.append("chain_id")
+    if int(client.eth.get_transaction_count(sender, "pending")) != int(
+        transaction["nonce"]
+    ):
+        stale_fields.append("nonce")
+    rpc_transaction = _rpc_transaction(transaction)
+    if call_context is not None:
+        try:
+            encoded = encode_function_call(
+                client,
+                call_context.function_abi,
+                call_context.function_args,
             )
+        except (TypeError, ValueError):
+            stale_fields.append("data")
+        else:
             if encoded != transaction["data"]:
                 stale_fields.append("data")
-        if int(transaction["max_total_fee_wei"]) > int(config.max_total_fee_wei):
-            stale_fields.append("fees")
-        client.eth.call(rpc_transaction, "pending")
-    except _ChainMismatch:
-        stale_fields.append("chain_id")
-        rpc_transaction = _rpc_transaction(transaction)
-    except ValueError:
-        stale_fields.append("simulation")
-        rpc_transaction = _rpc_transaction(transaction)
+    if int(transaction["max_total_fee_wei"]) > int(config.max_total_fee_wei):
+        stale_fields.append("fees")
+    client.eth.call(rpc_transaction, "pending")
     return rpc_transaction, stale_fields
 
 
@@ -668,47 +703,15 @@ def _submit_transaction(
     )
 
 
-def send_transaction(
-    args: Mapping[str, Any],
+def _send_validated_transaction(
     context: Any,
-    *,
-    web3: Any | None = None,
+    config: Any,
+    request: Any,
+    transaction: dict[str, Any],
+    web3: Any | None,
 ) -> dict[str, Any]:
-    from web3.exceptions import Web3Exception
+    from web3.exceptions import ContractLogicError, Web3Exception
 
-    config = resolve_blockchain_config(context)
-    if not config.enabled or not config.writes_enabled:
-        return _error(
-            "FEATURE_DISABLED",
-            "Blockchain capability is disabled.",
-            {"feature": "blockchain_writes"},
-        )
-    try:
-        request = SEND_REQUEST_ADAPTER.validate_python(dict(args))
-    except ValidationError:
-        return _error(
-            "INVALID_ARGUMENT",
-            "Blockchain arguments are invalid.",
-            {"field": "", "reason": "request_schema"},
-        )
-    authorization = getattr(context, "policy_authorization", None)
-    if authorization is None:
-        return _error(
-            "POLICY_MODE_UNSUPPORTED",
-            "Enforcing policy is required for blockchain send.",
-            {"mode": "unavailable"},
-        )
-    transaction = request.transaction.model_dump(mode="json")
-    call_context = (
-        request.call_context.model_dump(mode="json")
-        if request.call_context is not None
-        else None
-    )
-    digest_error = _digest_mismatch_terminal(
-        context, request, transaction, call_context
-    )
-    if digest_error is not None:
-        return digest_error
     try:
         client, account = _load_signing_account(config, context, web3)
     except (KeyError, OSError, TypeError, ValueError):
@@ -733,7 +736,37 @@ def send_transaction(
             request.call_context,
             sender,
         )
-    except (OSError, Web3Exception):
+    except ContractLogicError as exc:
+        return _send_terminal(
+            context,
+            transaction,
+            request.preparation_digest,
+            "failed",
+            _error(
+                "SIMULATION_REVERTED",
+                "Transaction simulation reverted.",
+                {
+                    "stage": "send",
+                    "revert": decode_revert_fact(
+                        client, revert_data_from_exception(exc)
+                    ),
+                    "broadcast_attempted": False,
+                },
+            ),
+        )
+    except _ChainMismatch:
+        return _send_terminal(
+            context,
+            transaction,
+            request.preparation_digest,
+            "failed",
+            _error(
+                "STALE_PREPARATION",
+                "Prepared transaction no longer matches chain state.",
+                {"fields": ["chain_id"]},
+            ),
+        )
+    except (OSError, ValueError, Web3Exception):
         return _send_terminal(
             context,
             transaction,
@@ -767,6 +800,47 @@ def send_transaction(
         account,
         rpc_transaction,
     )
+
+
+def send_transaction(
+    args: Mapping[str, Any],
+    context: Any,
+    *,
+    web3: Any | None = None,
+) -> dict[str, Any]:
+    config = resolve_blockchain_config(context)
+    if not config.enabled or not config.writes_enabled:
+        return _error(
+            "FEATURE_DISABLED",
+            "Blockchain capability is disabled.",
+            {"feature": "blockchain_writes"},
+        )
+    try:
+        request = SEND_REQUEST_ADAPTER.validate_python(dict(args))
+    except ValidationError:
+        return _error(
+            "INVALID_ARGUMENT",
+            "Blockchain arguments are invalid.",
+            {"field": "", "reason": "request_schema"},
+        )
+    if getattr(context, "policy_authorization", None) is None:
+        return _error(
+            "POLICY_MODE_UNSUPPORTED",
+            "Enforcing policy is required for blockchain send.",
+            {"mode": "unavailable"},
+        )
+    transaction = request.transaction.model_dump(mode="json")
+    call_context = (
+        request.call_context.model_dump(mode="json")
+        if request.call_context is not None
+        else None
+    )
+    digest_error = _digest_mismatch_terminal(
+        context, request, transaction, call_context
+    )
+    if digest_error is not None:
+        return digest_error
+    return _send_validated_transaction(context, config, request, transaction, web3)
 
 
 def _send_terminal(

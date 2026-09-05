@@ -8963,6 +8963,8 @@ def test_tool_efficiency_guidance_injected_for_general_profile_with_budget_numbe
     assert "summarize from the snippets directly" in system_text
     assert "current-events, latest-news, or top-N requests" in system_text
     assert "override any skill or example procedure" in system_text
+    assert "Follow any operation order the user specifies" in system_text
+    assert "Stop after completing the requested operations" in system_text
     assert "budget or per-tool limit error" in system_text
     assert "12 iterations / 18 tool calls" in system_text
 

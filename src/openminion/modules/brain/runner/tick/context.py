@@ -74,7 +74,18 @@ def _grant_once_from_confirmation(
     return None, True
 
 
-def _parse_confirmation_response(runner: "BrainRunner", text: str) -> str:
+def _parse_confirmation_response(
+    runner: "BrainRunner", text: str, command: Any = None
+) -> str:
+    from ...loop.tools.confirmation import requires_individual_confirmation
+
+    if requires_individual_confirmation(command):
+        reply = str(text or "").strip().lower()
+        if reply == "yes":
+            return BRAIN_CONFIRM_RESPONSE_AFFIRM
+        if reply == "no":
+            return BRAIN_CONFIRM_RESPONSE_DENY
+        return BRAIN_CONFIRM_RESPONSE_UNCLEAR
     policy_api = getattr(runner, "policy_api", None)
     if policy_api is not None:
         parser = getattr(policy_api, "parse_confirmation_response", None)
@@ -99,8 +110,25 @@ def _parse_confirmation_response(runner: "BrainRunner", text: str) -> str:
         return BRAIN_CONFIRM_RESPONSE_UNCLEAR
 
 
+def _parse_confirmation_control_response(
+    runner: "BrainRunner", text: str, command: Any
+) -> str:
+    from ...loop.tools.confirmation import (
+        is_session_confirmation_response,
+        requires_individual_confirmation,
+    )
+
+    response = _parse_confirmation_response(runner, text, command)
+    if is_session_confirmation_response(text) and not requires_individual_confirmation(
+        command
+    ):
+        return "session"
+    return response
+
+
 def _clear_pending_confirmation_metadata(state: Any) -> None:
     state.pending_policy_approval_id = None
+    state.pending_policy_confirmation_preview = None
     state.pending_confirmation_sub_intents = []
     state.pending_confirmation_sub_intent_refs = []
     state.pending_confirmation_goal = None

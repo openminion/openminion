@@ -35,6 +35,7 @@ from ..loop.clarify import (
     process_clarification_response as process_clarification_response_flow,
 )
 from ..loop.orchestration import decide as decide_flow
+from ..loop.tools.confirmation import confirmation_required_user_message
 from ..bootstrap.recovery import heuristic_decision as heuristic_decision_flow
 from ..bootstrap.payloads import (
     normalize_decision_payload as normalize_decision_payload_flow,
@@ -247,11 +248,17 @@ def _approve_delegate(
         decision.explanation
         or "Policy requires confirmation before proceeding. Proceed?"
     )
-    confirmation_question = _build_confirmation_question(
-        command=command,
-        fallback=fallback_question,
-    )
+    if decision.confirmation_preview is not None:
+        confirmation_question = confirmation_required_user_message(
+            command, decision.confirmation_preview
+        )
+    else:
+        confirmation_question = _build_confirmation_question(
+            command=command,
+            fallback=fallback_question,
+        )
     state.pending_policy_approval_id = decision.approval_id
+    state.pending_policy_confirmation_preview = decision.confirmation_preview
     return AskUserCommand(
         kind=BRAIN_COMMAND_KIND_ASK_USER,
         title="Policy confirmation required",

@@ -12,6 +12,9 @@ from openminion.modules.storage.runtime.module_store import (
     BaseModuleStore,
 )
 from openminion.modules.storage.record_store import RecordStore
+from openminion.modules.tool.plugin_api import (
+    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+)
 from .base import PolicyStore
 from .migrations import list_migrations
 from ..constants import POLICY_DURATION_ONCE
@@ -48,6 +51,21 @@ def _mapping_contains(value: Mapping[str, Any], required: Mapping[str, Any]) -> 
         elif actual != expected:
             return False
     return True
+
+
+def _blockchain_preview_is_invalid(value: Mapping[str, Any] | None) -> bool:
+    if value is None:
+        return True
+    from openminion.tools.blockchain.confirmation import (
+        BlockchainConfirmationPreviewError,
+        parse_blockchain_send_confirmation_preview,
+    )
+
+    try:
+        parse_blockchain_send_confirmation_preview(value)
+    except BlockchainConfirmationPreviewError:
+        return True
+    return False
 
 
 def _create_blockchain_policy_schema(record_store: RecordStore) -> None:
@@ -398,7 +416,22 @@ class _PolicyStoreMixin(PolicyStore):
                 (subject_id, tool, method, invocation_hash, now),
             )
             if rows:
-                return self._row_to_pending_confirmation(rows[0])
+                pending = self._row_to_pending_confirmation(rows[0])
+                if tool == "blockchain" and method == "send_transaction":
+                    if _blockchain_preview_is_invalid(pending.preview):
+                        self._record_store.execute_count(
+                            """
+                            UPDATE policy_pending_confirmations
+                            SET state = 'denied', resolution_action = 'deny',
+                                resolved_at = ?
+                            WHERE approval_id = ? AND state = 'pending'
+                            """,
+                            (now, pending.approval_id),
+                        )
+                    else:
+                        return pending
+                else:
+                    return pending
             approval_id = str(uuid4())
             self._record_store.execute_count(
                 """
@@ -431,6 +464,8 @@ class _PolicyStoreMixin(PolicyStore):
 
     def resolve_confirmation(self, approval_id: str, action: str) -> str | None:
         now = utc_now_iso()
+        invalid_preview = False
+        grant_id: str | None = None
         with self._lock, self._record_store.transaction():
             rows = self._record_store.query_dicts(
                 "SELECT * FROM policy_pending_confirmations WHERE approval_id = ?",
@@ -442,60 +477,82 @@ class _PolicyStoreMixin(PolicyStore):
                     "Pending confirmation was not found.",
                 )
             pending = self._row_to_pending_confirmation(rows[0])
-            if pending.state != "pending":
-                if pending.resolution_action == action:
-                    return pending.grant_id
-                raise PolicyControlError(
-                    "PENDING_CONFIRMATION_ALREADY_RESOLVED",
-                    "Pending confirmation was already resolved.",
-                )
-            if pending.expires_at <= now:
+            if (
+                action == "allow_once"
+                and pending.tool == "blockchain"
+                and pending.method == "send_transaction"
+                and _blockchain_preview_is_invalid(pending.preview)
+            ):
                 self._record_store.execute_count(
                     """
                     UPDATE policy_pending_confirmations
-                    SET state = 'expired', resolved_at = ?
+                    SET state = 'denied', resolution_action = 'deny',
+                        resolved_at = ?
                     WHERE approval_id = ? AND state = 'pending'
                     """,
                     (now, approval_id),
                 )
-                raise PolicyControlError(
-                    "PENDING_CONFIRMATION_EXPIRED",
-                    "Pending confirmation expired.",
-                )
+                invalid_preview = True
+            else:
+                if pending.state != "pending":
+                    if pending.resolution_action == action:
+                        return pending.grant_id
+                    raise PolicyControlError(
+                        "PENDING_CONFIRMATION_ALREADY_RESOLVED",
+                        "Pending confirmation was already resolved.",
+                    )
+                if pending.expires_at <= now:
+                    self._record_store.execute_count(
+                        """
+                        UPDATE policy_pending_confirmations
+                        SET state = 'expired', resolved_at = ?
+                        WHERE approval_id = ? AND state = 'pending'
+                        """,
+                        (now, approval_id),
+                    )
+                    raise PolicyControlError(
+                        "PENDING_CONFIRMATION_EXPIRED",
+                        "Pending confirmation expired.",
+                    )
 
-            grant_id: str | None = None
-            state = "denied"
-            if action == "allow_once":
-                grant_id = str(uuid4())
-                self._insert_grant(
-                    grant_id=grant_id,
-                    grant=PolicyGrantInput(
-                        effect="allow",
-                        subject_id=pending.subject_id,
-                        tool=pending.tool,
-                        method=pending.method,
-                        duration_type="once",
-                        invocation_hash=pending.invocation_hash,
-                        max_uses=1,
-                        reason="created_from_pending_confirmation",
-                        created_trace_id=pending.trace_id,
-                        approval_id=pending.approval_id,
-                    ),
-                    now=now,
-                )
-                state = "allowed"
-            elif action != "deny":
-                raise ValueError("confirmation action must be allow_once|deny")
+                state = "denied"
+                if action == "allow_once":
+                    grant_id = str(uuid4())
+                    self._insert_grant(
+                        grant_id=grant_id,
+                        grant=PolicyGrantInput(
+                            effect="allow",
+                            subject_id=pending.subject_id,
+                            tool=pending.tool,
+                            method=pending.method,
+                            duration_type="once",
+                            invocation_hash=pending.invocation_hash,
+                            max_uses=1,
+                            reason="created_from_pending_confirmation",
+                            created_trace_id=pending.trace_id,
+                            approval_id=pending.approval_id,
+                        ),
+                        now=now,
+                    )
+                    state = "allowed"
+                elif action != "deny":
+                    raise ValueError("confirmation action must be allow_once|deny")
 
-            self._record_store.execute_count(
-                """
-                UPDATE policy_pending_confirmations
-                SET state = ?, resolution_action = ?, grant_id = ?, resolved_at = ?
-                WHERE approval_id = ? AND state = 'pending'
-                """,
-                (state, action, grant_id, now, approval_id),
+                self._record_store.execute_count(
+                    """
+                    UPDATE policy_pending_confirmations
+                    SET state = ?, resolution_action = ?, grant_id = ?, resolved_at = ?
+                    WHERE approval_id = ? AND state = 'pending'
+                    """,
+                    (state, action, grant_id, now, approval_id),
+                )
+        if invalid_preview:
+            raise PolicyControlError(
+                "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID",
+                BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+                {"approval_id": approval_id},
             )
-            return grant_id
+        return grant_id
 
     def resolve_matching_active_grant_for_use(
         self,
@@ -506,6 +563,8 @@ class _PolicyStoreMixin(PolicyStore):
         invocation_hash: str,
     ) -> PolicyGrant | None:
         now = utc_now_iso()
+        invalid_approval_id: str | None = None
+        consumed: PolicyGrant | None = None
         with self._lock, self._record_store.transaction():
             rows = self._record_store.query_dicts(
                 """
@@ -524,16 +583,47 @@ class _PolicyStoreMixin(PolicyStore):
             if not rows:
                 return None
             grant = self._row_to_grant(rows[0])
-            updated = self._record_store.execute_count(
+            approval_rows = self._record_store.query_dicts(
                 """
-                UPDATE policy_grants
-                SET uses_count = uses_count + 1, updated_at = ?, revoked_at = ?
-                WHERE grant_id = ? AND revoked_at IS NULL
-                  AND (max_uses IS NULL OR uses_count < max_uses)
+                SELECT preview_json FROM policy_pending_confirmations
+                WHERE approval_id = ? AND tool = ? AND method = ?
+                  AND invocation_hash = ?
                 """,
-                (now, now, grant.grant_id),
+                (grant.approval_id, tool, method, invocation_hash),
             )
-            return grant if updated == 1 else None
+            preview = (
+                _parse_json(approval_rows[0]["preview_json"], {})
+                if approval_rows
+                else None
+            )
+            if _blockchain_preview_is_invalid(preview):
+                self._record_store.execute_count(
+                    """
+                    UPDATE policy_grants
+                    SET revoked_at = ?, updated_at = ?
+                    WHERE grant_id = ? AND revoked_at IS NULL
+                    """,
+                    (now, now, grant.grant_id),
+                )
+                invalid_approval_id = str(grant.approval_id or "")
+            else:
+                updated = self._record_store.execute_count(
+                    """
+                    UPDATE policy_grants
+                    SET uses_count = uses_count + 1, updated_at = ?, revoked_at = ?
+                    WHERE grant_id = ? AND revoked_at IS NULL
+                      AND (max_uses IS NULL OR uses_count < max_uses)
+                    """,
+                    (now, now, grant.grant_id),
+                )
+                consumed = grant if updated == 1 else None
+        if invalid_approval_id is not None:
+            raise PolicyControlError(
+                "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID",
+                BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+                {"approval_id": invalid_approval_id},
+            )
+        return consumed
 
     def cleanup_expired(self) -> int:
         now = utc_now_iso()

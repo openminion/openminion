@@ -17,6 +17,7 @@ from openminion.modules.brain.runtime.improvement.contracts import (
     SelfImprovementPolicy,
 )
 from openminion.modules.llm.schemas import LLMResponse, Message, ToolCall, ToolSpec
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
 
 
 ADAPTIVE_TOOL_EXPOSURE_EXPLICIT_ALLOWLIST = "explicit_allowlist"
@@ -116,6 +117,8 @@ class CommandExecutionOutcome:
     job: JobHandle | None = None
     reflect_report: ReflectReport | None = None
     tool_budget_debited: bool = False
+    policy_approval_id: str | None = None
+    policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +155,8 @@ class PrepareOutcome:
     disposition: str
     action_result: ActionResult
     tool_budget_debited: bool = False
+    policy_approval_id: str | None = None
+    policy_confirmation_preview: BlockchainSendConfirmationPreview | None = None
 
 
 @dataclass(frozen=True, slots=True)

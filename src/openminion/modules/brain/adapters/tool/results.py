@@ -1,13 +1,16 @@
 import json
+import time
 from collections.abc import Mapping
 from typing import Any
 
 from openminion.base.logging import get_logger
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_SUCCESS,
+    BRAIN_JOB_STATUS_RUNNING,
     BRAIN_STATE_ERROR,
 )
-from openminion.modules.tool import preferred_artifact_ref
+from openminion.modules.tool import RuntimeContext, ToolSpec, preferred_artifact_ref
+from openminion.modules.tool.diagnostics.events import emit_tool_execution_event
 
 _log = get_logger("brain.adapters.tool.runtime")
 
@@ -124,9 +127,94 @@ def _tool_allowlist_error(tool_name: str) -> dict[str, Any]:
     )
 
 
+def run_tool_spec(
+    *,
+    spec: ToolSpec,
+    validated_args: dict[str, Any],
+    context: RuntimeContext,
+    start_time: float,
+    background_write_authorized: bool,
+    tool_name: str,
+) -> dict[str, Any]:
+    event_payload = {"tool_call_id": context.tool_call_id, "tool_name": tool_name}
+    emit_tool_execution_event(
+        ctx=context,
+        event_type="tool.execution.started",
+        status="running",
+        payload=event_payload,
+    )
+    handler_returned = False
+    try:
+        data = spec.handler(validated_args, context)
+        handler_returned = True
+    finally:
+        if not handler_returned:
+            emit_tool_execution_event(
+                ctx=context,
+                event_type="tool.execution.failed",
+                status="failed",
+                payload=event_payload,
+            )
+    if isinstance(data, Mapping) and "status" in data:
+        inner_status = str(data.get("status", BRAIN_STATE_ERROR))
+    elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
+        inner_status = "ok" if data["ok"] else BRAIN_STATE_ERROR
+    else:
+        inner_status = "ok"
+    status = (
+        BRAIN_ACTION_STATUS_SUCCESS
+        if inner_status in ("ok", BRAIN_ACTION_STATUS_SUCCESS, BRAIN_JOB_STATUS_RUNNING)
+        else BRAIN_STATE_ERROR
+    )
+    summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
+    result = {
+        "status": status,
+        "summary": summary,
+        "outputs": data,
+        "artifact_refs": _normalized_artifact_refs(context.artifacts),
+        "memory_refs": [],
+        "metrics": {
+            "latency_ms": int((time.monotonic() - start_time) * 1000),
+            "tokens_used": 0,
+            "cost_estimate": 0.0,
+        },
+    }
+    if background_write_authorized:
+        result["outputs"] = dict(result["outputs"])
+        result["outputs"].update(
+            background_watch_write_authorized=True,
+            background_watch_write_tool=tool_name,
+        )
+    if status != BRAIN_ACTION_STATUS_SUCCESS:
+        raw_error = data.get("error") if isinstance(data, Mapping) else None
+        if isinstance(raw_error, Mapping):
+            error: dict[str, Any] = {
+                "code": str(raw_error.get("code", "") or "EXEC_ERROR"),
+                "message": str(raw_error.get("message", "") or summary).strip(),
+            }
+            if isinstance(raw_error.get("details"), Mapping):
+                error["details"] = dict(raw_error["details"])
+        elif raw_error:
+            error = {"code": "EXEC_ERROR", "message": str(raw_error).strip()}
+        else:
+            error = {"code": "EXEC_ERROR", "message": summary}
+        result["error"] = error
+    succeeded = status == BRAIN_ACTION_STATUS_SUCCESS
+    emit_tool_execution_event(
+        ctx=context,
+        event_type=(
+            "tool.execution.completed" if succeeded else "tool.execution.failed"
+        ),
+        status="succeeded" if succeeded else "failed",
+        payload=event_payload,
+    )
+    return result
+
+
 __all__ = [
     "_derive_toolspec_summary",
     "_error_envelope",
     "_normalized_artifact_refs",
     "_tool_allowlist_error",
+    "run_tool_spec",
 ]

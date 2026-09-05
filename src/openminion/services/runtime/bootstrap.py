@@ -611,7 +611,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     config = service._config
     llm_config = service._get_manager_config("llm")
     llm_payload = llm_config if llm_config is not None else {}
-
     llm_api = bridge_module.create_llm_adapter(
         mode=service.mode,
         config=llm_payload,
@@ -743,6 +742,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
+        telemetryctl=service._telemetryctl,
     )
     service._validate_adapter_contracts(
         session_api=session_api,

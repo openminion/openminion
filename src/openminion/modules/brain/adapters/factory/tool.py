@@ -20,6 +20,7 @@ def create_tool_adapter(
     agent_query: Any | None = None,
     agent_id: str | None = None,
     agent_profile: Any | None = None,
+    telemetryctl: Any | None = None,
 ) -> Any:
     from openminion.modules.brain.adapters.tool import LocalToolAdapter
 
@@ -43,6 +44,7 @@ def create_tool_adapter(
             agent_query=agent_query,
             agent_id=agent_id,
             agent_profile=agent_profile,
+            telemetryctl=telemetryctl,
         )
     except ImportError:
         raise_if_strict(mode)

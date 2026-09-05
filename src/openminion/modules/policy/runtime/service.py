@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Optional, cast
 from urllib.parse import urlparse
+
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
 
 from ..models import (
     ContextSummary,
@@ -63,7 +65,11 @@ from ..constants import (
 )
 from ..storage import PolicyStore
 from ..storage.store import SQLitePolicyStore
-from .confirmation import build_confirm_request, parse_confirmation_response
+from .confirmation import (
+    blockchain_preview_invalid_decision,
+    build_confirm_request,
+    parse_confirmation_response,
+)
 
 
 _RISK_ORDER: Dict[RiskClass, int] = {
@@ -180,6 +186,8 @@ class PolicyCtl:
         *,
         risk_override: Optional[RiskSpec] = None,
         config_overrides: Optional[PolicyConfig] = None,
+        confirmation_preview: BlockchainSendConfirmationPreview | None = None,
+        confirmation_preview_error: str | None = None,
     ) -> PolicyDecision:
         inv = self._normalize_invocation(invocation)
         csum = self._normalize_context(ctx)
@@ -191,7 +199,12 @@ class PolicyCtl:
         )
         effective_config = config_overrides or self._config
         mode = effective_config.mode if config_overrides is not None else self.mode()
-
+        if exact_blockchain_send and confirmation_preview is None:
+            decision = blockchain_preview_invalid_decision(
+                inv.invocation_hash, risk, confirmation_preview_error
+            )
+            self._log_decision(inv=inv, ctx=csum, decision=decision)
+            return decision
         if exact_blockchain_send and mode not in {
             POLICY_MODE_ENFORCE,
             POLICY_MODE_ENFORCE_SAFE,
@@ -206,7 +219,6 @@ class PolicyCtl:
             )
             self._log_decision(inv=inv, ctx=csum, decision=decision)
             return decision
-
         if mode == POLICY_MODE_DISABLED:
             return PolicyDecision(
                 decision=POLICY_DECISION_ALLOW,
@@ -214,7 +226,6 @@ class PolicyCtl:
                 reason="Policy mode is disabled",
                 risk=risk,
             )
-
         consume_grants = mode in {POLICY_MODE_ENFORCE, POLICY_MODE_ENFORCE_SAFE}
         enforced = self._evaluate_enforced(
             inv,
@@ -223,9 +234,9 @@ class PolicyCtl:
             consume_grants=consume_grants,
             mode=mode,
             effective_config=effective_config,
+            confirmation_preview=confirmation_preview,
         )
         self._log_decision(inv=inv, ctx=csum, decision=enforced)
-
         if mode == POLICY_MODE_LOG_ONLY:
             details = dict(enforced.details)
             details["would_decision"] = enforced.decision
@@ -382,6 +393,7 @@ class PolicyCtl:
         consume_grants: bool,
         mode: str,
         effective_config: PolicyConfig,
+        confirmation_preview: BlockchainSendConfirmationPreview | None,
     ) -> PolicyDecision:
         self._store.cleanup_expired()
         subject_id = csum.subject_id or effective_config.subject_id_default
@@ -390,7 +402,6 @@ class PolicyCtl:
         if self._is_exact_blockchain_send(inv.tool, inv.method):
             matches = [match for match in matches if match.grant.approval_id]
         selected = self._select_match(matches)
-
         if selected is not None:
             grant = selected.grant
             if grant.effect == POLICY_GRANT_EFFECT_DENY:
@@ -402,12 +413,10 @@ class PolicyCtl:
                     matched_grant_id=grant.grant_id,
                     details={"grant_id": grant.grant_id},
                 )
-
             if consume_grants and not self._is_exact_blockchain_send(
                 inv.tool, inv.method
             ):
                 self._store.consume_grant_use(grant.grant_id)
-
             return PolicyDecision(
                 decision=POLICY_DECISION_ALLOW,
                 reason_code="EXPLICIT_ALLOW",
@@ -418,7 +427,6 @@ class PolicyCtl:
                 invocation_hash=inv.invocation_hash,
                 details={"grant_id": grant.grant_id},
             )
-
         is_sensitive_target = self._matches_sensitive_target(inv, risk)
         if (
             risk.risk_class == POLICY_RISK_READ
@@ -431,7 +439,6 @@ class PolicyCtl:
                 reason="Read-only operation allowed by default",
                 risk=risk,
             )
-
         confirm_reason = self._confirm_reason(
             csum=csum,
             risk=risk,
@@ -447,8 +454,8 @@ class PolicyCtl:
                 risk=risk,
                 reason_code=reason_code,
                 reason=reason,
+                confirmation_preview=confirmation_preview,
             )
-
         if risk.risk_class == POLICY_RISK_WRITE and self._is_write_under_sandbox(inv):
             return PolicyDecision(
                 decision=POLICY_DECISION_ALLOW,
@@ -456,7 +463,6 @@ class PolicyCtl:
                 reason="Write scoped to sandbox path is allowed",
                 risk=risk,
             )
-
         return PolicyDecision(
             decision=POLICY_DECISION_ALLOW,
             reason_code="NO_MATCHING_GRANT",
@@ -531,6 +537,7 @@ class PolicyCtl:
         risk: RiskSpec,
         reason_code: str,
         reason: str,
+        confirmation_preview: BlockchainSendConfirmationPreview | None,
     ) -> PolicyDecision:
         confirm_request = build_confirm_request(
             invocation=inv,
@@ -540,6 +547,7 @@ class PolicyCtl:
         )
         approval_id: str | None = None
         if self._is_exact_blockchain_send(inv.tool, inv.method):
+            assert confirmation_preview is not None
             pending = self._store.get_or_create_pending_confirmation(
                 subject_id=csum.subject_id or self._config.subject_id_default,
                 tool=inv.tool,
@@ -548,7 +556,7 @@ class PolicyCtl:
                 invocation_id=inv.invocation_id,
                 trace_id=csum.trace_id,
                 session_id=csum.session_id,
-                preview=confirm_request["summary"],
+                preview=asdict(confirmation_preview),
                 ttl_seconds=BLOCKCHAIN_CONFIRMATION_TTL_SECONDS,
             )
             approval_id = pending.approval_id
@@ -565,6 +573,7 @@ class PolicyCtl:
             confirm_request=confirm_request,
             approval_id=approval_id,
             invocation_hash=inv.invocation_hash,
+            confirmation_preview=confirmation_preview,
         )
 
     def _default_target_scope(self, inv: InvocationSummary) -> Dict[str, Any]:

@@ -1,4 +1,6 @@
 # ruff: noqa: F403,F405
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+
 from .common import *
 
 
@@ -81,3 +83,4 @@ class PolicyDecision(BaseModel):
     require_clarification: bool = False
     clarification_question: str | None = None
     approval_id: str | None = None
+    confirmation_preview: BlockchainSendConfirmationPreview | None = None

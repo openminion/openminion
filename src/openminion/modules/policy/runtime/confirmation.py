@@ -3,18 +3,49 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
+from openminion.modules.tool.plugin_api import (
+    BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+)
+
 from ..constants import (
     POLICY_CONFIRM_RESPONSE_AFFIRM,
     POLICY_CONFIRM_RESPONSE_DENY,
     POLICY_CONFIRM_RESPONSE_UNCLEAR,
+    POLICY_DECISION_DENY,
 )
 from ..models import (
     ContextSummary,
     InvocationSummary,
     PolicyConfig,
+    PolicyDecision,
     RiskSpec,
     sanitize_args,
 )
+
+_BLOCKCHAIN_PREVIEW_ERROR_REASONS = {
+    "request_schema",
+    "preparation_digest",
+    "call_context",
+    "calldata_limit",
+    "preview_limit",
+}
+
+
+def blockchain_preview_invalid_decision(
+    invocation_hash: str, risk: RiskSpec, reason: str | None
+) -> PolicyDecision:
+    return PolicyDecision(
+        decision=POLICY_DECISION_DENY,
+        reason_code="BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID",
+        reason=BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE,
+        risk=risk,
+        invocation_hash=invocation_hash,
+        details={
+            "reason": reason
+            if reason in _BLOCKCHAIN_PREVIEW_ERROR_REASONS
+            else "request_schema"
+        },
+    )
 
 
 def _normalize_confirmation_token(value: str) -> str:

@@ -83,11 +83,13 @@ def _set_blockchain_contract_omissions(
 
     from openminion.modules.tool.contracts.model_ids import (
         MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_DEBUG,
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
         RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_DEBUG,
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
     )
@@ -95,11 +97,13 @@ def _set_blockchain_contract_omissions(
     registry_manager.set_expected_contract_omissions(
         model_ids={
             MODEL_BLOCKCHAIN_INSPECT,
+            MODEL_BLOCKCHAIN_DEBUG,
             MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
             MODEL_BLOCKCHAIN_SEND_TRANSACTION,
         },
         runtime_ids={
             RUNTIME_BLOCKCHAIN_INSPECT,
+            RUNTIME_BLOCKCHAIN_DEBUG,
             RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
             RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
         },
@@ -113,11 +117,13 @@ def _emit_contract_drift_report(
 ) -> ToolContractDriftReport:
     from openminion.modules.tool.contracts.model_ids import (
         MODEL_BLOCKCHAIN_INSPECT,
+        MODEL_BLOCKCHAIN_DEBUG,
         MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
         MODEL_BLOCKCHAIN_SEND_TRANSACTION,
     )
     from openminion.modules.tool.contracts.runtime_ids import (
         RUNTIME_BLOCKCHAIN_INSPECT,
+        RUNTIME_BLOCKCHAIN_DEBUG,
         RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
         RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
     )
@@ -134,6 +140,7 @@ def _emit_contract_drift_report(
             if blockchain_enabled
             else {
                 MODEL_BLOCKCHAIN_INSPECT,
+                MODEL_BLOCKCHAIN_DEBUG,
                 MODEL_BLOCKCHAIN_PREPARE_TRANSACTION,
                 MODEL_BLOCKCHAIN_SEND_TRANSACTION,
             }
@@ -143,6 +150,7 @@ def _emit_contract_drift_report(
             if blockchain_enabled
             else {
                 RUNTIME_BLOCKCHAIN_INSPECT,
+                RUNTIME_BLOCKCHAIN_DEBUG,
                 RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
                 RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
             }
