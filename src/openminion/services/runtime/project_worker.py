@@ -663,16 +663,13 @@ class ProjectWorker:
         verification_waived: bool,
         task_plan_incomplete: bool,
     ) -> project_cp.ProjectCycleDisposition:
-        plan_disposition = cast(
-            project_cp.ProjectCycleDisposition | None,
-            project_cp.task_plan_incomplete_disposition(
-                run,
-                cycle_number,
-                closure_status,
-                has_error,
-                task_plan_incomplete,
-                previous_replans,
-            ),
+        plan_disposition = project_cp.task_plan_incomplete_disposition(
+            run,
+            cycle_number,
+            closure_status,
+            has_error,
+            task_plan_incomplete,
+            previous_replans,
         )
         if plan_disposition is not None:
             return plan_disposition

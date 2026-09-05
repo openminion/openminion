@@ -18,6 +18,7 @@ from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.interactive.runtime.messages import room_result_chat_messages
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
+from openminion.modules.context.trace_inspection import ContextTraceLookupError
 from openminion.base.config.core import OpenMinionConfig
 
 
@@ -1192,6 +1193,29 @@ def test_openminion_runtime_context_trace_payload_uses_session_store(
 
     assert payload["count"] == 1
     assert observed == {"sessions": rt.sessions, "session_id": tui_rt.session_id}
+
+
+def test_openminion_runtime_context_trace_payload_reports_lookup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+
+    def _list_context_traces(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise ContextTraceLookupError("trace unavailable", code="trace_unavailable")
+
+    from openminion.cli.interactive.runtime import messages as runtime_messages
+
+    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+
+    payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
+
+    assert payload == {
+        "session_id": tui_rt.session_id,
+        "traces": [],
+        "count": 0,
+        "degraded": "trace_unavailable",
+    }
 
 
 def test_openminion_runtime_renders_durable_token_usage() -> None:

@@ -73,6 +73,14 @@ class _VisibleRuntime:
     def memory_report(self) -> str:
         return ""
 
+    def context_trace_payload(self, *, session_id: str) -> dict[str, object]:
+        return {
+            "session_id": session_id,
+            "traces": [],
+            "count": 0,
+            "degraded": "context_trace_not_found",
+        }
+
     def list_memory_records(self) -> list[object]:
         return []
 
@@ -412,10 +420,18 @@ def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> 
     }
 
 
-def test_context_review_reports_missing_runtime_trace_owner() -> None:
-    rendered = render_context_review(_VisibleRuntime(), "")
+def test_context_review_renders_runtime_degradation() -> None:
+    runtime = _VisibleRuntime()
+    runtime.context_trace_payload = lambda *, session_id: {
+        "session_id": session_id,
+        "traces": [],
+        "count": 0,
+        "degraded": "context_trace_not_found",
+    }
 
-    assert "degraded: runtime_context_trace_unavailable" in rendered
+    rendered = render_context_review(runtime, "")
+
+    assert "degraded: context_trace_not_found" in rendered
 
 
 def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> None:

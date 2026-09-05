@@ -58,16 +58,7 @@ def render_context_review(runtime: Any, args: str) -> str:
         elif key in {"artifacts", "artifacts_dir"}:
             options["artifacts_dir"] = value
 
-    payload_getter = getattr(runtime, "context_trace_payload", None)
-    if callable(payload_getter):
-        payload = payload_getter(session_id=options["session_id"])
-    else:
-        payload = {
-            "session_id": options["session_id"],
-            "traces": [],
-            "count": 0,
-            "degraded": "runtime_context_trace_unavailable",
-        }
+    payload = runtime.context_trace_payload(session_id=options["session_id"])
     return render_memory_context_review(
         build_memory_context_review(
             payload,
