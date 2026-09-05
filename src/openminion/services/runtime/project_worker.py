@@ -28,7 +28,6 @@ from openminion.modules.task import (
     build_terminal_proof_packet,
     load_latest_project_checkpoint,
 )
-from openminion.modules.task.plan import TaskPlan
 from openminion.modules.task.autonomy import VerificationWaiver, now_ms
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import (
@@ -132,8 +131,7 @@ class _CycleEvaluation:
     verification: tuple[TestEvidence, ...]
     closure_status: ProjectDomainVerificationStatus
     closure_payload: dict[str, object]
-    task_plan: TaskPlan | None
-    task_plan_required: bool
+    next_milestone: str | None
     decision: ProjectCycleDecision
     status: AutonomyRunStatus
     phase: AutonomyRunPhase
@@ -370,11 +368,10 @@ class ProjectWorker:
             ref not in existing_progress_refs
             for ref in (*turn_result.evidence_refs, *turn_result.effect_refs)
         )
-        task_plan, _, _ = project_cp.updated_checkpoint_task_plan(
+        task_plan_incomplete, next_milestone = project_cp.repository_task_plan_progress(
             checkpoint,
             turn_result,
         )
-        task_plan_required = project_cp.repository_task_plan_required(checkpoint)
         disposition = self._cycle_disposition(
             run,
             cycle_number=cycle_number,
@@ -387,12 +384,7 @@ class ProjectWorker:
             verification_waived=bool(
                 run.execution_selectors.verification_waiver_reason
             ),
-            task_plan_required=task_plan_required,
-            task_plan_completed=bool(
-                task_plan
-                and task_plan.status == "completed"
-                and all(step.status == "completed" for step in task_plan.steps)
-            ),
+            task_plan_incomplete=task_plan_incomplete,
         )
         return _CycleEvaluation(
             cycle_id,
@@ -400,8 +392,7 @@ class ProjectWorker:
             verification,
             closure.status,
             closure.model_dump(mode="json"),
-            task_plan,
-            task_plan_required,
+            next_milestone,
             *disposition,
         )
 
@@ -461,24 +452,9 @@ class ProjectWorker:
                 ),
                 "triggering_cron_job_id": triggering_cron_job_id,
                 "next_wake_job_id": next_wake_job_id,
-                "current_milestone": self._next_project_milestone(
-                    project_run.current_milestone,
-                    evaluation,
-                ),
+                "current_milestone": evaluation.next_milestone,
             }
         )
-
-    @staticmethod
-    def _next_project_milestone(
-        current_milestone: str | None,
-        evaluation: _CycleEvaluation,
-    ) -> str | None:
-        if not evaluation.task_plan_required or evaluation.task_plan is None:
-            return current_milestone
-        for step in evaluation.task_plan.steps:
-            if step.status in {"pending", "in_progress"}:
-                return step.description
-        return evaluation.task_plan.objective
 
     def _finalize_cycle(
         self,
@@ -674,8 +650,7 @@ class ProjectWorker:
         previous_replans: int,
         has_new_progress: bool,
         verification_waived: bool,
-        task_plan_required: bool,
-        task_plan_completed: bool,
+        task_plan_incomplete: bool,
     ) -> tuple[
         ProjectCycleDecision,
         AutonomyRunStatus,
@@ -684,29 +659,12 @@ class ProjectWorker:
         int,
         str,
     ]:
-        if (
-            closure_status == ProjectDomainVerificationStatus.VERIFIED
-            and not has_error
-            and task_plan_required
-            and not task_plan_completed
-        ):
-            if cycle_number < run.continuation_policy.max_iterations:
-                return (
-                    ProjectCycleDecision.CONTINUE,
-                    AutonomyRunStatus.RUNNING,
-                    AutonomyRunPhase.EXECUTE,
-                    ProjectVerificationState.IN_PROGRESS,
-                    previous_replans,
-                    "task_plan_incomplete",
-                )
-            return (
-                ProjectCycleDecision.BLOCKED,
-                AutonomyRunStatus.BLOCKED,
-                AutonomyRunPhase.CLOSED,
-                ProjectVerificationState.BLOCKED,
-                previous_replans,
-                "task_plan_incomplete",
-            )
+        plan_disposition = project_cp.task_plan_incomplete_disposition(
+            run, cycle_number, closure_status, has_error,
+            task_plan_incomplete, previous_replans,
+        )
+        if plan_disposition is not None:
+            return plan_disposition
         if closure_status == ProjectDomainVerificationStatus.VERIFIED and not has_error:
             return ProjectWorker._productive_disposition(
                 run,

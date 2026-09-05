@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import cast
 
 from openminion.base.redaction import redact_sensitive_text
-from openminion.modules.task.autonomy import AutonomyRun, now_ms
+from openminion.modules.task.autonomy import (
+    AutonomyRun,
+    AutonomyRunPhase,
+    AutonomyRunStatus,
+    now_ms,
+)
 from openminion.modules.task.plan import (
     TaskPlan,
     TaskPlanRevision,
@@ -28,6 +33,7 @@ from .models import (
     ProjectVerificationState,
 )
 from .turn import ProjectTurnResult
+from .verification import ProjectDomainVerificationStatus
 
 
 _OPEN_PROJECT_TASK_STATES = {
@@ -252,6 +258,73 @@ def repository_task_plan_required(checkpoint: ProjectCheckpoint) -> bool:
         return False
     resume = lifecycle.get(checkpoint.project_run.resume_packet_ref)
     return bool(isinstance(resume, dict) and resume.get("task_plan_required") is True)
+
+
+def repository_task_plan_progress(
+    checkpoint: ProjectCheckpoint,
+    turn: ProjectTurnResult,
+) -> tuple[bool, str | None]:
+    plan, _, _ = updated_checkpoint_task_plan(checkpoint, turn)
+    required = repository_task_plan_required(checkpoint)
+    incomplete = bool(
+        required
+        and not (
+            plan
+            and plan.status == "completed"
+            and all(step.status == "completed" for step in plan.steps)
+        )
+    )
+    if not required or plan is None:
+        return incomplete, checkpoint.project_run.current_milestone
+    milestone = next(
+        (
+            step.description
+            for step in plan.steps
+            if step.status in {"pending", "in_progress"}
+        ),
+        plan.objective,
+    )
+    return incomplete, milestone
+
+
+def task_plan_incomplete_disposition(
+    run: AutonomyRun,
+    cycle_number: int,
+    closure_status: ProjectDomainVerificationStatus,
+    has_error: bool,
+    required: bool,
+    previous_replans: int,
+) -> tuple[
+    ProjectCycleDecision,
+    AutonomyRunStatus,
+    AutonomyRunPhase,
+    ProjectVerificationState,
+    int,
+    str,
+] | None:
+    if not (
+        required
+        and closure_status == ProjectDomainVerificationStatus.VERIFIED
+        and not has_error
+    ):
+        return None
+    if cycle_number < run.continuation_policy.max_iterations:
+        return (
+            ProjectCycleDecision.CONTINUE,
+            AutonomyRunStatus.RUNNING,
+            AutonomyRunPhase.EXECUTE,
+            ProjectVerificationState.IN_PROGRESS,
+            previous_replans,
+            "task_plan_incomplete",
+        )
+    return (
+        ProjectCycleDecision.BLOCKED,
+        AutonomyRunStatus.BLOCKED,
+        AutonomyRunPhase.CLOSED,
+        ProjectVerificationState.BLOCKED,
+        previous_replans,
+        "task_plan_incomplete",
+    )
 
 
 def build_project_run_projection(
