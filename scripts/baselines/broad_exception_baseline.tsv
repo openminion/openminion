@@ -390,7 +390,7 @@ src/openminion/tools/browser/providers/playwright/snapshots.py	2	0	current broad
 src/openminion/tools/browser/runtime.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/browser/tab_resolver.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/browser/tool.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/tools/code/plugin.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/tools/code/plugin.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/exec/process.py	7	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/exec/sessions.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/fetch/plugin.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

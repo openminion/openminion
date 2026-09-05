@@ -269,14 +269,6 @@ def _code_error_result_from_exception(
     }
 
 
-def _line_number_range(path: Path) -> tuple[int, int]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return 1, 1
-    return 1, max(1, len(lines))
-
-
 def _definition_pattern(symbol: str) -> re.Pattern[str]:
     escaped = re.escape(symbol)
     return re.compile(rf"^\s*(?:class|def|async\s+def)\s+{escaped}\b")
@@ -630,18 +622,38 @@ def _collect_symbol_matches(
             if len(matches) >= max_results:
                 break
             try:
-                file_path, line_no, text = line.split(":", 2)
+                file_path, line_no, _ = line.split(":", 2)
                 start_line = int(line_no)
             except ValueError:
                 continue
-            kind = "class" if text.lstrip().startswith("class ") else "function"
-            end_line = _line_number_range(Path(file_path))[1]
+            path = Path(file_path)
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeError):
+                continue
+            definition = next(
+                (
+                    candidate
+                    for candidate in ast.walk(tree)
+                    if isinstance(
+                        candidate,
+                        (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+                    )
+                    and candidate.name == symbol
+                    and int(getattr(candidate, "lineno", 0) or 0) == start_line
+                ),
+                None,
+            )
+            if definition is None:
+                continue
             matches.append(
                 {
                     "file": file_path,
                     "start_line": start_line,
-                    "end_line": end_line,
-                    "kind": kind,
+                    "end_line": int(getattr(definition, "end_lineno", start_line)),
+                    "kind": "class"
+                    if isinstance(definition, ast.ClassDef)
+                    else "function",
                 }
             )
         if matches:
