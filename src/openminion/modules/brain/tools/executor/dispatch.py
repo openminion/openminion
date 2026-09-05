@@ -45,6 +45,10 @@ def _command_lineage_payload(
         "step_total": step_total or None,
         "command_id": str(getattr(command, "command_id", "") or "").strip() or None,
         "command_kind": str(getattr(command, "kind", "") or "").strip() or None,
+        "task_backed_task_id": str(
+            getattr(state, "task_backed_task_id", "") or ""
+        ).strip()
+        or None,
     }
     if getattr(command, "kind", "") == BRAIN_COMMAND_KIND_TOOL:
         payload["tool_name"] = (

@@ -56,6 +56,20 @@ def _resolve_provider() -> GithubProvider:
     return provider
 
 
+def resolve_open_pr_head_sha(args: Mapping[str, Any], ctx: Any) -> str:
+    return _resolve_provider().resolve_open_pr_head_sha(args=args, ctx=ctx)
+
+
+def find_open_pr(
+    args: Mapping[str, Any],
+    ctx: Any,
+    *,
+    head_sha: str,
+) -> dict[str, Any] | None:
+    row = _resolve_provider().find_open_pr(args=args, ctx=ctx, head_sha=head_sha)
+    return dict(row) if row is not None else None
+
+
 def _dispatch(
     tool_name: str,
     args: dict[str, Any],
@@ -181,4 +195,4 @@ def _github_tool_spec(
     )
 
 
-__all__ = ["register"]
+__all__ = ["find_open_pr", "register", "resolve_open_pr_head_sha"]

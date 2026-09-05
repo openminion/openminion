@@ -656,6 +656,8 @@ def test_open_pr_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert result["data"]["number"] == 12
+    assert result["data"]["owner"] == "openminion"
+    assert result["data"]["repo"] == "test-repo-for-agent"
     assert captured == [
         (
             "POST",
@@ -668,6 +670,57 @@ def test_open_pr_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:
             },
         )
     ]
+
+
+def test_find_open_pr_matches_exact_head_sha(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request_json(
+        self: GithubRestProvider,
+        *,
+        ctx: Any,
+        path: str,
+        query: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        del self, ctx, kwargs
+        captured.update(path=path, query=query)
+        return [
+            {
+                "number": 12,
+                "html_url": "https://github.com/openminion/test-repo-for-agent/pull/12",
+                "state": "open",
+                "head": {"ref": "openminion-smoke/test", "sha": "abc1234"},
+                "base": {"ref": "main"},
+            }
+        ]
+
+    monkeypatch.setattr(GithubRestProvider, "_request_json", fake_request_json)
+
+    result = GithubRestProvider().find_open_pr(
+        args={
+            "owner": "openminion",
+            "repo": "test-repo-for-agent",
+            "head": "openminion-smoke/test",
+            "base": "main",
+        },
+        ctx=None,
+        head_sha="abc1234",
+    )
+
+    assert result is not None
+    assert result["data"]["owner"] == "openminion"
+    assert result["data"]["repo"] == "test-repo-for-agent"
+    assert result["data"]["head_sha"] == "abc1234"
+    assert captured == {
+        "path": "/repos/openminion/test-repo-for-agent/pulls",
+        "query": {
+            "state": "all",
+            "head": "openminion:openminion-smoke/test",
+            "base": "main",
+            "per_page": "100",
+        },
+    }
 
 
 def test_post_comment_request_shape(monkeypatch: pytest.MonkeyPatch) -> None:

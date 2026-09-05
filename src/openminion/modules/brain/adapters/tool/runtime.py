@@ -46,6 +46,12 @@ from .command_metadata import (
     _runtime_workspace_from_command,
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
+from .project_github import (
+    GithubOpenPrProjectEffect,
+    begin_github_open_pr_project_effect,
+    fail_github_open_pr_project_effect,
+    finalize_github_open_pr_project_result,
+)
 from .policy_context import (
     _agent_id_from_policy,
     _apply_agent_command_policy,
@@ -106,6 +112,7 @@ class ToolAdapter:
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
         agent_profile: Any | None = None,
+        task_manager: Any | None = None,
         telemetryctl: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
@@ -123,6 +130,7 @@ class ToolAdapter:
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
+        self.task_manager = task_manager
         self.telemetryctl = telemetryctl
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
@@ -525,6 +533,9 @@ class ToolAdapter:
                 },
             )
         background_write_authorized = _background_write_authorized(inputs)
+        project_task_id = str(
+            orchestration_metadata.get("task_backed_task_id") or ""
+        ).strip()
         auto_confirm = _resolve_auto_confirm(
             tool_name=tool_name,
             args=validated_args,
@@ -532,6 +543,8 @@ class ToolAdapter:
             replay_confirmed=replay_confirmed,
             background_write_authorized=background_write_authorized,
         )
+        if tool_name == "github.open_pr" and project_task_id:
+            auto_confirm = True
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(
@@ -571,9 +584,11 @@ class ToolAdapter:
             agent_query=self.agent_query,
             telemetry_session_id=session_id,
             telemetry_turn_id=trace_id,
+            telemetryctl=self.telemetryctl,
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
+            task_manager=self.task_manager,
         )
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id
@@ -639,6 +654,7 @@ class ToolAdapter:
             if policy_decision.modified_args:
                 validated_args = dict(policy_decision.modified_args)
 
+        project_open_pr_effect: GithubOpenPrProjectEffect | None = None
         try:
             if tool_name == "blockchain.send_transaction":
                 ctx.policy_authorization = consume_blockchain_send_authorization(
@@ -646,7 +662,25 @@ class ToolAdapter:
                     permission_mode=permission_mode,
                     args=args,
                 )
-            return run_tool_spec(
+            if tool_name == "github.open_pr" and project_task_id:
+                if self.task_manager is None:
+                    raise ToolRuntimeError(
+                        "PROJECT_STATE_UNAVAILABLE",
+                        "Project tool execution requires the task manager.",
+                        {
+                            "reason_code": "project_task_manager_unavailable",
+                            "project_task_id": project_task_id,
+                        },
+                    )
+                project_open_pr_effect = begin_github_open_pr_project_effect(
+                    task_manager=self.task_manager,
+                    task_id=project_task_id,
+                    idempotency_key=str(command.get("idempotency_key") or ""),
+                    actor_ref=f"agent:{self.agent_id}",
+                    args=validated_args,
+                    ctx=ctx,
+                )
+            result = run_tool_spec(
                 spec=spec,
                 validated_args=validated_args,
                 context=ctx,
@@ -654,7 +688,24 @@ class ToolAdapter:
                 background_write_authorized=background_write_authorized,
                 tool_name=tool_name,
             )
+            if project_open_pr_effect is not None:
+                result = finalize_github_open_pr_project_result(
+                    self.task_manager,
+                    project_open_pr_effect,
+                    result=result,
+                    ctx=ctx,
+                )
+            return result
         except ToolRuntimeError as exc:
+            if project_open_pr_effect is not None:
+                exc.details.update(
+                    fail_github_open_pr_project_effect(
+                        self.task_manager,
+                        project_open_pr_effect,
+                        error=exc,
+                        ctx=ctx,
+                    )
+                )
             requires_confirm = _is_confirm_required_code(exc.code)
             if requires_confirm and not replay_confirmed:
                 details = dict(exc.details or {})
@@ -682,13 +733,24 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details=dict(exc.details or {}),
             )
-        except Exception:
+        except Exception as exc:
+            details = (
+                fail_github_open_pr_project_effect(
+                    self.task_manager,
+                    project_open_pr_effect,
+                    error=exc,
+                    ctx=ctx,
+                )
+                if project_open_pr_effect is not None
+                else None
+            )
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool execution failed",
                 code="EXEC_ERROR",
                 message="Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
+                details=details,
             )
 
     def _resolve_registry_tool(self, tool_name: str) -> tuple[str, Any, Any]:

@@ -730,6 +730,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         db_dir=db_dir,
         telemetryctl=service._telemetryctl,
     )
+    cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
+    task_manager = TaskManager.from_cron_repository(cron_repository)
     tool_api = bridge_module.create_tool_api(
         mode=service.mode,
         workspace_root=service._context.workspace_root,
@@ -743,6 +745,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
+        task_manager=task_manager,
         telemetryctl=service._telemetryctl,
     )
     service._validate_adapter_contracts(
@@ -838,7 +841,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         logger=service._logger,
     )
 
-    cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
     runner = bridge_module.BrainRunner(
         profile=profile,
         session_api=session_api,
@@ -854,7 +856,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         rlm_api=rlm_api,
         compress_api=compress_api,
         telemetryctl=service._telemetryctl,
-        task_manager=TaskManager.from_cron_repository(cron_repository),
+        task_manager=task_manager,
         cron_api=cron_repository,
         options=options,
         terminal_capture_writer=service._terminal_capture_writer,

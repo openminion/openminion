@@ -327,11 +327,17 @@ class GithubRestProvider:
         owner, repo = _owner_repo(args)
         head = str(args.get("head") or "").strip()
         base = str(args.get("base") or "").strip()
-        policy = profile_config_from_context(ctx)
+        self._ensure_open_pr_allowed(
+            ctx=ctx,
+            owner=owner,
+            repo=repo,
+            head=head,
+            base=base,
+        )
 
-        ensure_repository_allowed(owner=owner, repo=repo, config=policy)
-        ensure_branch_allowed(branch=head, base_branch=base, config=policy)
-        ensure_base_branch_allowed(base_branch=base, config=policy)
+        reconciled = getattr(ctx, "github_open_pr_reconciled_result", None)
+        if isinstance(reconciled, Mapping):
+            return dict(reconciled)
 
         row = self._request_json(
             ctx=ctx,
@@ -346,17 +352,101 @@ class GithubRestProvider:
         )
         if not isinstance(row, Mapping):
             raise _protocol_error("github.open_pr expected an object response")
-        return {
-            "ok": True,
-            "data": {
-                "number": int(row.get("number") or 0),
-                "html_url": str(row.get("html_url") or ""),
-                "head": head,
+        return _open_pr_result(
+            row,
+            owner=owner,
+            repo=repo,
+            head=head,
+            base=base,
+            head_sha=str(getattr(ctx, "github_open_pr_head_sha", "") or ""),
+            provider_id=self.provider_id,
+        )
+
+    def resolve_open_pr_head_sha(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> str:
+        owner, repo = _owner_repo(args)
+        head = str(args.get("head") or "").strip()
+        base = str(args.get("base") or "").strip()
+        self._ensure_open_pr_allowed(
+            ctx=ctx,
+            owner=owner,
+            repo=repo,
+            head=head,
+            base=base,
+        )
+        return self._resolve_branch_head_sha(
+            ctx=ctx,
+            owner=owner,
+            repo=repo,
+            branch=head,
+        )
+
+    def find_open_pr(
+        self,
+        *,
+        args: Mapping[str, Any],
+        ctx: Any,
+        head_sha: str,
+    ) -> dict[str, Any] | None:
+        owner, repo = _owner_repo(args)
+        head = str(args.get("head") or "").strip()
+        base = str(args.get("base") or "").strip()
+        self._ensure_open_pr_allowed(
+            ctx=ctx,
+            owner=owner,
+            repo=repo,
+            head=head,
+            base=base,
+        )
+        rows = self._request_json(
+            ctx=ctx,
+            path=f"/repos/{owner}/{repo}/pulls",
+            query={
+                "state": "all",
+                "head": f"{owner}:{head}",
                 "base": base,
-                "state": str(row.get("state") or ""),
+                "per_page": "100",
             },
-            "source": {"provider_id": self.provider_id},
-        }
+        )
+        if not isinstance(rows, list):
+            raise _protocol_error("github.open_pr readback expected a list response")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise _protocol_error(
+                    "github.open_pr readback expected object responses"
+                )
+            row_head = row.get("head") if isinstance(row.get("head"), Mapping) else {}
+            row_base = row.get("base") if isinstance(row.get("base"), Mapping) else {}
+            if (
+                str(row_head.get("ref") or "") == head
+                and str(row_head.get("sha") or "") == head_sha
+                and str(row_base.get("ref") or "") == base
+            ):
+                return _open_pr_result(
+                    row,
+                    owner=owner,
+                    repo=repo,
+                    head=head,
+                    base=base,
+                    head_sha=head_sha,
+                    provider_id=self.provider_id,
+                )
+        return None
+
+    @staticmethod
+    def _ensure_open_pr_allowed(
+        *,
+        ctx: Any,
+        owner: str,
+        repo: str,
+        head: str,
+        base: str,
+    ) -> None:
+        policy = profile_config_from_context(ctx)
+        ensure_repository_allowed(owner=owner, repo=repo, config=policy)
+        ensure_branch_allowed(branch=head, base_branch=base, config=policy)
+        ensure_base_branch_allowed(base_branch=base, config=policy)
 
     def post_pr_review(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         owner, repo = _owner_repo(args)
@@ -595,6 +685,34 @@ class GithubRestProvider:
 
 def _owner_repo(args: Mapping[str, Any]) -> tuple[str, str]:
     return str(args.get("owner") or ""), str(args.get("repo") or "")
+
+
+def _open_pr_result(
+    row: Mapping[str, Any],
+    *,
+    owner: str,
+    repo: str,
+    head: str,
+    base: str,
+    head_sha: str,
+    provider_id: str,
+) -> dict[str, Any]:
+    data = {
+        "owner": owner,
+        "repo": repo,
+        "number": int(row.get("number") or 0),
+        "html_url": str(row.get("html_url") or ""),
+        "head": head,
+        "base": base,
+        "state": str(row.get("state") or ""),
+    }
+    if head_sha:
+        data["head_sha"] = head_sha
+    return {
+        "ok": True,
+        "data": data,
+        "source": {"provider_id": provider_id},
+    }
 
 
 def _normalize_pr_summary(raw: Mapping[str, Any]) -> dict[str, Any]:

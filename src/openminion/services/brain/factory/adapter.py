@@ -40,6 +40,7 @@ def create_tool_api(
     a2a_delegate_api: Any | None = None,
     agent_query: Any | None = None,
     agent_profile: Any | None = None,
+    task_manager: Any | None = None,
     telemetryctl: Any | None = None,
 ) -> Any:
     return create_tool_adapter(
@@ -58,6 +59,7 @@ def create_tool_api(
         a2a_delegate_api=a2a_delegate_api,
         agent_query=agent_query,
         agent_profile=agent_profile,
+        task_manager=task_manager,
         telemetryctl=telemetryctl,
     )
 

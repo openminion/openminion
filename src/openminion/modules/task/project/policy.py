@@ -138,7 +138,7 @@ def evaluate_project_permission(
         )
 
     now = now_ms() if at_ms is None else int(at_ms)
-    for grant in state.grants:
+    for grant in reversed(state.grants):
         if grant.tool_name != normalized_tool or grant.scope != normalized_scope:
             continue
         if now >= grant.expires_at_ms:

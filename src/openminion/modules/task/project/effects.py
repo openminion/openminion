@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from openminion.modules.task.runtime.lifecycle import TaskManager
+
+from .checkpoints import load_latest_project_checkpoint
+
+
+_PROJECT_EFFECTS_PAYLOAD_KEY = "project_effects"
+_PROJECT_EFFECT_RECEIPTS_PAYLOAD_KEY = "project_effect_receipts"
 
 
 class ProjectEffectStatus(StrEnum):
@@ -122,10 +131,87 @@ def evaluate_project_effect_replay(
     )
 
 
+def load_project_effect_record(
+    task_manager: TaskManager,
+    *,
+    task_id: str,
+    effect_id: str,
+) -> ProjectEffectRecord | None:
+    checkpoint = load_latest_project_checkpoint(task_manager, task_id=task_id)
+    if checkpoint is None:
+        raise KeyError(f"project checkpoint not found: {task_id}")
+    raw_effects = checkpoint.payload.get(_PROJECT_EFFECTS_PAYLOAD_KEY)
+    if not isinstance(raw_effects, Mapping):
+        return None
+    raw_effect = raw_effects.get(effect_id)
+    if not isinstance(raw_effect, Mapping):
+        return None
+    return ProjectEffectRecord.model_validate(raw_effect)
+
+
+def load_project_effect_receipt(
+    task_manager: TaskManager,
+    *,
+    task_id: str,
+    effect_id: str,
+) -> dict[str, Any] | None:
+    checkpoint = load_latest_project_checkpoint(task_manager, task_id=task_id)
+    if checkpoint is None:
+        raise KeyError(f"project checkpoint not found: {task_id}")
+    raw_receipts = checkpoint.payload.get(_PROJECT_EFFECT_RECEIPTS_PAYLOAD_KEY)
+    if not isinstance(raw_receipts, Mapping):
+        return None
+    raw_receipt = raw_receipts.get(effect_id)
+    return dict(raw_receipt) if isinstance(raw_receipt, Mapping) else None
+
+
+def save_project_effect_record(
+    task_manager: TaskManager,
+    effect: ProjectEffectRecord,
+    *,
+    receipt: Mapping[str, Any] | None = None,
+) -> ProjectEffectRecord:
+    checkpoint = load_latest_project_checkpoint(task_manager, task_id=effect.task_id)
+    if checkpoint is None:
+        raise KeyError(f"project checkpoint not found: {effect.task_id}")
+
+    payload = dict(checkpoint.payload)
+    raw_effects = payload.get(_PROJECT_EFFECTS_PAYLOAD_KEY)
+    effects = dict(raw_effects) if isinstance(raw_effects, Mapping) else {}
+    effects[effect.effect_id] = effect.model_dump(mode="json")
+    payload[_PROJECT_EFFECTS_PAYLOAD_KEY] = effects
+    if receipt is not None:
+        raw_receipts = payload.get(_PROJECT_EFFECT_RECEIPTS_PAYLOAD_KEY)
+        receipts = dict(raw_receipts) if isinstance(raw_receipts, Mapping) else {}
+        receipts[effect.effect_id] = dict(receipt)
+        payload[_PROJECT_EFFECT_RECEIPTS_PAYLOAD_KEY] = receipts
+
+    effect_refs = tuple(
+        dict.fromkeys((*checkpoint.project_run.effect_refs, effect.effect_id))
+    )
+    updated = checkpoint.model_copy(
+        update={
+            "project_run": checkpoint.project_run.model_copy(
+                update={"effect_refs": effect_refs}
+            ),
+            "payload": payload,
+        }
+    )
+    task_manager.save_checkpoint(
+        effect.task_id,
+        checkpoint.checkpoint_id,
+        updated.model_dump(mode="json"),
+    )
+    return effect
+
+
 __all__ = [
     "ProjectEffectRecord",
     "ProjectEffectReplayDecision",
     "ProjectEffectReplayResult",
     "ProjectEffectStatus",
     "evaluate_project_effect_replay",
+    "load_project_effect_receipt",
+    "load_project_effect_record",
+    "save_project_effect_record",
 ]
