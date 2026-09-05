@@ -14,11 +14,14 @@ class CommandRegistryPairingMixin:
     ) -> CommandResult:
         pairing = self._current_pairing(ctx)
         if pairing is None:
+            channel, _ = self._current_channel_subject(ctx)
+            channel_name = channel or "<channel>"
             return CommandResult(
                 ok=True,
                 text=(
                     "No active pairing found for this chat. "
-                    "Ask the owner to run `openminion channel telegram pair`."
+                    "Ask the owner to run "
+                    f"`openminion channel {channel_name} pair`."
                 ),
                 data={"paired": False},
             )
@@ -29,7 +32,7 @@ class CommandRegistryPairingMixin:
             text=(
                 "Pairing active for this chat.\n"
                 f"  scopes: {scope_text}\n"
-                "  access: broad non-admin controlplane access until ACL exists\n"
+                "  access: limited to the scopes above\n"
                 "To disconnect this chat, send /pair revoke."
             ),
             data={"paired": True, "pairing": pairing},
