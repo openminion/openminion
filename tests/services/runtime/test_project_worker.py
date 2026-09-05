@@ -283,6 +283,17 @@ def test_project_checks_wait_fail_repair_and_pass_across_restart(tmp_path) -> No
         if len(prompts) == 1:
             _save_ci_effect(
                 active_manager[0],
+                effect_id="effect:git.push:initial",
+                capability_ref="git.push",
+                receipt={
+                    "repository": str(tmp_path),
+                    "remote": "origin",
+                    "ref": "refs/heads/feature",
+                    "remote_oid": first_head,
+                },
+            )
+            _save_ci_effect(
+                active_manager[0],
                 effect_id="effect:github.open_pr:1",
                 capability_ref="github.open_pr",
                 receipt={
@@ -378,12 +389,18 @@ def test_project_checks_wait_fail_repair_and_pass_across_restart(tmp_path) -> No
         fetch_checks=fetch,
     )
     opened = worker.run_cycle(run.run_id, triggering_cron_job_id="wake:0")
+    early = worker.run_cycle(run.run_id)
+    stale = worker.run_cycle(run.run_id, triggering_cron_job_id="wrong-wake")
     pending = worker.run_cycle(
         run.run_id,
         triggering_cron_job_id=opened.project_run.next_wake_job_id,
     )
 
     assert opened.decision == ProjectCycleDecision.CONTINUE
+    assert early.reconciled_only is True
+    assert early.project_run == opened.project_run
+    assert stale.reconciled_only is True
+    assert stale.project_run == opened.project_run
     assert opened.check_events[-1]["overall_result"] == "pending"
     assert pending.project_run.committed_cycle_count == 1
     assert pending.check_events[-1]["detail_code"] == "waiting_for_checks"
@@ -437,11 +454,227 @@ def test_project_checks_wait_fail_repair_and_pass_across_restart(tmp_path) -> No
         checkpoint.project_run.resume_packet_ref
     ]["ci_observation"]
     assert checkpoint.project_run.effect_refs == (
+        "effect:git.push:initial",
         "effect:github.open_pr:1",
         "effect:git.push:repair",
     )
     assert observation["head_sha"] == repaired_head
     assert observation["overall_result"] == "success"
+
+
+def test_failed_project_checks_block_without_an_explicit_repair_push(tmp_path) -> None:
+    head = "e" * 40
+    store, manager, run = _project(tmp_path, expected_checks=("lint",))
+    turn_count = 0
+
+    def turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        nonlocal turn_count
+        turn_count += 1
+        if turn_count == 1:
+            _save_ci_effect(
+                manager,
+                effect_id="effect:git.push:initial",
+                capability_ref="git.push",
+                receipt={
+                    "repository": str(tmp_path),
+                    "remote": "origin",
+                    "ref": "refs/heads/feature",
+                    "remote_oid": head,
+                },
+            )
+            _save_ci_effect(
+                manager,
+                effect_id="effect:github.open_pr:failure",
+                capability_ref="github.open_pr",
+                receipt={
+                    "owner": "openminion",
+                    "repo": "example",
+                    "number": 17,
+                    "head": "feature",
+                    "base": "dev",
+                    "head_sha": head,
+                },
+            )
+        return ProjectTurnResult(summary="diagnosed")
+
+    results = iter(
+        (
+            {
+                "head_sha": head,
+                "overall_result": "pending",
+                "expected_checks": ["lint"],
+                "missing_expected_checks": ["lint"],
+                "failure_facts": [],
+            },
+            {
+                "head_sha": head,
+                "overall_result": "failure",
+                "expected_checks": ["lint"],
+                "missing_expected_checks": [],
+                "failure_facts": [{"name": "lint", "conclusion": "failure"}],
+            },
+        )
+    )
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        fetch_checks=lambda _args: next(results),
+    )
+
+    opened = worker.run_cycle(run.run_id, triggering_cron_job_id="wake:0")
+    pending = worker.run_cycle(
+        run.run_id,
+        triggering_cron_job_id=opened.project_run.next_wake_job_id,
+    )
+    failed = worker.run_cycle(
+        run.run_id,
+        triggering_cron_job_id=pending.project_run.next_wake_job_id,
+    )
+
+    assert failed.decision == ProjectCycleDecision.BLOCKED
+    assert failed.run.status == AutonomyRunStatus.BLOCKED
+    assert failed.project_run.next_wake_job_id is None
+    assert failed.check_events[-1]["overall_result"] == "failure"
+    assert manager.get_task("task-1").state == TaskLifecycleState.PAUSED
+    assert turn_count == 2
+
+
+def test_repair_push_must_use_the_remote_bound_to_the_pull_request(tmp_path) -> None:
+    first_head = "f" * 40
+    repaired_head = "9" * 40
+    store, manager, run = _project(tmp_path, expected_checks=("lint",))
+    turn_count = 0
+
+    def turn(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        nonlocal turn_count
+        turn_count += 1
+        if turn_count == 1:
+            _save_ci_effect(
+                manager,
+                effect_id="effect:git.push:initial",
+                capability_ref="git.push",
+                receipt={
+                    "repository": str(tmp_path),
+                    "remote": "origin",
+                    "ref": "refs/heads/feature",
+                    "remote_oid": first_head,
+                },
+            )
+            _save_ci_effect(
+                manager,
+                effect_id="effect:github.open_pr:remote",
+                capability_ref="github.open_pr",
+                receipt={
+                    "owner": "openminion",
+                    "repo": "example",
+                    "number": 17,
+                    "head": "feature",
+                    "base": "dev",
+                    "head_sha": first_head,
+                },
+            )
+        else:
+            _save_ci_effect(
+                manager,
+                effect_id="effect:git.push:backup",
+                capability_ref="git.push",
+                receipt={
+                    "repository": str(tmp_path),
+                    "remote": "backup",
+                    "ref": "refs/heads/feature",
+                    "remote_oid": repaired_head,
+                },
+            )
+        return ProjectTurnResult(summary="worked")
+
+    checks = iter(
+        (
+            {
+                "head_sha": first_head,
+                "overall_result": "failure",
+                "expected_checks": ["lint"],
+                "missing_expected_checks": [],
+                "failure_facts": [{"name": "lint", "conclusion": "failure"}],
+            },
+        )
+    )
+    worker = ProjectWorker(
+        task_manager=manager,
+        autonomy_store=store,
+        turn=turn,
+        verify=lambda: (_evidence(_TestEvidenceStatus.PASSED),),
+        fetch_checks=lambda _args: next(checks),
+    )
+
+    opened = worker.run_cycle(run.run_id, triggering_cron_job_id="wake:0")
+    failed = worker.run_cycle(
+        run.run_id,
+        triggering_cron_job_id=opened.project_run.next_wake_job_id,
+    )
+
+    assert failed.decision == ProjectCycleDecision.BLOCKED
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    observation = project_checkpoints.repository_check_observation(checkpoint)
+    assert observation is not None
+    assert observation["remote"] == "origin"
+    assert observation["head_sha"] == first_head
+
+
+def test_repository_check_duration_uses_persisted_observation_start(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    head = "8" * 40
+    _store, manager, _run = _project(tmp_path, expected_checks=("lint",))
+    _save_ci_effect(
+        manager,
+        effect_id="effect:git.push:duration",
+        capability_ref="git.push",
+        receipt={
+            "repository": str(tmp_path),
+            "remote": "origin",
+            "ref": "refs/heads/feature",
+            "remote_oid": head,
+        },
+    )
+    _save_ci_effect(
+        manager,
+        effect_id="effect:github.open_pr:duration",
+        capability_ref="github.open_pr",
+        receipt={
+            "owner": "openminion",
+            "repo": "example",
+            "number": 17,
+            "head": "feature",
+            "base": "dev",
+            "head_sha": head,
+        },
+    )
+    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert checkpoint is not None
+    monkeypatch.setattr(project_checkpoints, "now_ms", lambda: 100)
+    checkpoint, started = project_checkpoints.begin_repository_check_observation(
+        checkpoint
+    )
+    assert started is True
+    monkeypatch.setattr(project_checkpoints, "now_ms", lambda: 160)
+    checkpoint = project_checkpoints.record_repository_check_result(
+        checkpoint,
+        {
+            "head_sha": head,
+            "overall_result": "pending",
+            "expected_checks": ["lint"],
+            "missing_expected_checks": ["lint"],
+            "failure_facts": [],
+        },
+    )
+
+    assert project_checkpoints.repository_check_event(checkpoint)[
+        "wait_duration_ms"
+    ] == 60
 
 
 def test_cancelled_project_does_not_recheck_or_repeat_repository_effect(
@@ -453,6 +686,17 @@ def test_cancelled_project_does_not_recheck_or_repeat_repository_effect(
     )
 
     def open_pull_request(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        _save_ci_effect(
+            manager,
+            effect_id="effect:git.push:cancel",
+            capability_ref="git.push",
+            receipt={
+                "repository": str(tmp_path),
+                "remote": "origin",
+                "ref": "refs/heads/feature",
+                "remote_oid": "c" * 40,
+            },
+        )
         _save_ci_effect(
             manager,
             effect_id="effect:github.open_pr:cancel",
@@ -484,12 +728,28 @@ def test_cancelled_project_does_not_recheck_or_repeat_repository_effect(
         run.run_id,
         triggering_cron_job_id=opened.project_run.next_wake_job_id,
     )
+    manager.close()
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    replay = ProjectWorker(
+        task_manager=restarted,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("cancel replay ran a model turn"),
+        verify=lambda: pytest.fail("cancel replay ran verification"),
+        fetch_checks=lambda _args: pytest.fail("cancel replay rechecked CI"),
+    ).run_cycle(
+        run.run_id,
+        triggering_cron_job_id=opened.project_run.next_wake_job_id,
+    )
 
     assert cancelled.run.status == AutonomyRunStatus.CANCELLED
     assert cancelled.check_events[-1]["overall_result"] == "cancelled"
-    checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
+    assert cancelled.project_run.next_wake_job_id is None
+    assert replay.reconciled_only is True
+    assert replay.check_events == ()
+    checkpoint = load_latest_project_checkpoint(restarted, task_id="task-1")
     assert checkpoint is not None
     assert checkpoint.project_run.effect_refs == (
+        "effect:git.push:cancel",
         "effect:github.open_pr:cancel",
     )
 
@@ -498,6 +758,17 @@ def test_expired_project_check_wait_does_not_read_or_schedule_again(tmp_path) ->
     store, manager, run = _project(tmp_path, expected_checks=("lint",))
 
     def open_pull_request(_request: ProjectTurnRequest) -> ProjectTurnResult:
+        _save_ci_effect(
+            manager,
+            effect_id="effect:git.push:expiry",
+            capability_ref="git.push",
+            receipt={
+                "repository": str(tmp_path),
+                "remote": "origin",
+                "ref": "refs/heads/feature",
+                "remote_oid": "d" * 40,
+            },
+        )
         _save_ci_effect(
             manager,
             effect_id="effect:github.open_pr:expiry",
@@ -537,10 +808,24 @@ def test_expired_project_check_wait_does_not_read_or_schedule_again(tmp_path) ->
         run.run_id,
         triggering_cron_job_id=opened.project_run.next_wake_job_id,
     )
+    manager.close()
+    restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    replay = ProjectWorker(
+        task_manager=restarted,
+        autonomy_store=store,
+        turn=lambda _request: pytest.fail("expiry replay ran a model turn"),
+        verify=lambda: pytest.fail("expiry replay ran verification"),
+        fetch_checks=lambda _args: pytest.fail("expiry replay rechecked CI"),
+    ).run_cycle(
+        run.run_id,
+        triggering_cron_job_id=opened.project_run.next_wake_job_id,
+    )
 
     assert expired.decision == ProjectCycleDecision.BLOCKED
     assert expired.check_events[-1]["overall_result"] == "expired"
-    assert expired.project_run.next_wake_job_id == opened.project_run.next_wake_job_id
+    assert expired.project_run.next_wake_job_id is None
+    assert replay.reconciled_only is True
+    assert replay.check_events == ()
 
 
 def test_repository_project_requires_completed_public_task_plan(tmp_path) -> None:

@@ -5,15 +5,23 @@ import shutil
 import subprocess
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.task.autonomy import (
+    AutonomyProofPacket,
+    AutonomyRun,
     TestEvidence,
     TestEvidenceStatus,
+    VerificationWaiver,
+    build_terminal_proof_packet,
     now_ms,
 )
+
+if TYPE_CHECKING:
+    from .turn import ProjectTurnResult
 from openminion.modules.task.constants import (
     DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
     PROJECT_VERIFICATION_OUTPUT_SUMMARY_MAX_CHARS,
@@ -132,6 +140,84 @@ def evaluate_project_verification_closure(
     )
 
 
+def evaluate_project_turn_verification(
+    run: AutonomyRun,
+    turn: ProjectTurnResult,
+    verification: tuple[TestEvidence, ...],
+) -> ProjectVerificationClosure:
+    passed = bool(verification) and all(
+        item.status == TestEvidenceStatus.PASSED for item in verification
+    )
+    evidence_kinds = tuple(turn.evidence_kinds)
+    waiver_reason = str(
+        run.execution_selectors.verification_waiver_reason or ""
+    ).strip()
+    if waiver_reason:
+        evidence_kinds = (*evidence_kinds, "waiver")
+        verification_refs: tuple[str, ...] = (f"waiver:{run.run_id}",)
+    else:
+        verification_refs = ()
+    if passed and "verification" not in evidence_kinds:
+        evidence_kinds = (*evidence_kinds, "verification")
+    verification_refs += tuple(
+        f"command:{index}:{item.status.value}"
+        for index, item in enumerate(verification, start=1)
+    )
+    selectors = run.execution_selectors
+    return evaluate_project_verification_closure(
+        ProjectDomainVerificationContract(
+            domain=ProjectVerificationDomain(selectors.verification_domain),
+            required_evidence_kinds=selectors.required_evidence_kinds,
+            verifier_ref=selectors.verifier_ref,
+        ),
+        ProjectDomainVerificationEvidence(
+            domain=ProjectVerificationDomain(selectors.verification_domain),
+            evidence_kinds=evidence_kinds,
+            evidence_refs=tuple(
+                dict.fromkeys((*turn.evidence_refs, *verification_refs))
+            ),
+            verifier_failed=(
+                not waiver_reason
+                and any(
+                    item.status == TestEvidenceStatus.FAILED for item in verification
+                )
+            ),
+        ),
+    )
+
+
+def build_project_terminal_proof(
+    run: AutonomyRun,
+    *,
+    verification: tuple[TestEvidence, ...],
+    cycle_summaries: tuple[str, ...],
+) -> AutonomyProofPacket:
+    waiver_reason = str(
+        run.execution_selectors.verification_waiver_reason or ""
+    ).strip()
+    waiver = (
+        VerificationWaiver(reason=waiver_reason, recorded_at_ms=run.updated_at_ms)
+        if waiver_reason
+        else None
+    )
+    if waiver is not None:
+        validation_summary = "Project verification was explicitly waived."
+    elif verification and all(
+        item.status == TestEvidenceStatus.PASSED for item in verification
+    ):
+        validation_summary = "Project verification commands passed."
+    else:
+        validation_summary = "Project closed without verified completion."
+    return build_terminal_proof_packet(
+        run,
+        validation_summary=validation_summary,
+        final_operator_summary=run.operator_summary or "Autonomy project closed.",
+        cycle_summaries=cycle_summaries,
+        tests_run=verification,
+        verification_waiver=waiver,
+    )
+
+
 def validate_project_verifier(
     commands: tuple[str, ...],
     *,
@@ -234,6 +320,8 @@ __all__ = [
     "ProjectDomainVerificationStatus",
     "ProjectVerificationClosure",
     "ProjectVerificationDomain",
+    "build_project_terminal_proof",
+    "evaluate_project_turn_verification",
     "evaluate_project_verification_closure",
     "run_project_verification_commands",
     "validate_project_verifier",

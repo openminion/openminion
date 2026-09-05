@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import cast
 
@@ -9,7 +8,6 @@ from openminion.modules.task.autonomy import (
     AutonomyRun,
     AutonomyRunPhase,
     AutonomyRunStatus,
-    TestEvidenceStatus,
     now_ms,
 )
 from openminion.modules.task.plan import (
@@ -210,10 +208,17 @@ def record_repository_check_result(
     overall_result = str(result.get("overall_result") or "")
     if overall_result not in {"pending", "failure", "success"}:
         raise ValueError("github.fetch_checks returned an invalid overall_result")
+    observed_at_ms = now_ms()
     observation.update(
         {
             "overall_result": overall_result,
             "check_count": cast(int, observation.get("check_count") or 0) + 1,
+            "observed_at_ms": observed_at_ms,
+            **(
+                {"completed_at_ms": observed_at_ms}
+                if overall_result in {"failure", "success"}
+                else {}
+            ),
             "missing_expected_checks": list(
                 cast(list[str], result.get("missing_expected_checks") or [])
             ),
@@ -221,6 +226,26 @@ def record_repository_check_result(
                 cast(list[object], result.get("failure_facts") or [])
             ),
         }
+    )
+    resume["ci_observation"] = observation
+    lifecycle[checkpoint.project_run.resume_packet_ref] = resume
+    return _with_repository_lifecycle(checkpoint, lifecycle)
+
+
+def record_repository_check_terminal(
+    checkpoint: ProjectCheckpoint,
+    *,
+    outcome: str,
+) -> ProjectCheckpoint:
+    if outcome not in {"cancelled", "expired"}:
+        raise ValueError("invalid repository check terminal outcome")
+    lifecycle, resume = _repository_lifecycle_resume(checkpoint)
+    observation = dict(cast(dict[str, object], resume["ci_observation"]))
+    completed_at_ms = now_ms()
+    observation.update(
+        overall_result=outcome,
+        observed_at_ms=completed_at_ms,
+        completed_at_ms=completed_at_ms,
     )
     resume["ci_observation"] = observation
     lifecycle[checkpoint.project_run.resume_packet_ref] = resume
@@ -251,6 +276,9 @@ def begin_repository_check_observation(
         "expected_checks": list(expected_checks),
         "overall_result": "pending",
         "check_count": 0,
+        "started_at_ms": now_ms(),
+        "observed_at_ms": None,
+        "completed_at_ms": None,
         "missing_expected_checks": list(expected_checks),
         "failure_facts": [],
     }
@@ -275,6 +303,13 @@ def repository_check_facts(checkpoint: ProjectCheckpoint) -> dict[str, object]:
     observation = repository_check_observation(checkpoint)
     if observation is None:
         raise ValueError("project check observation is missing")
+    started_at_ms = cast(int, observation["started_at_ms"])
+    ended_at_ms = cast(
+        int,
+        observation.get("completed_at_ms")
+        or observation.get("observed_at_ms")
+        or now_ms(),
+    )
     return {
         "owner": observation["owner"],
         "repo": observation["repo"],
@@ -284,6 +319,7 @@ def repository_check_facts(checkpoint: ProjectCheckpoint) -> dict[str, object]:
         "check_count": observation["check_count"],
         "missing_expected_checks": observation["missing_expected_checks"],
         "failure_facts": observation["failure_facts"],
+        "wait_duration_ms": max(0, ended_at_ms - started_at_ms),
         "detail_code": "waiting_for_checks"
         if observation["overall_result"] == "pending"
         else None,
@@ -299,72 +335,6 @@ def repository_check_event(
     if outcome is not None:
         facts.update(overall_result=outcome, detail_code=None)
     return facts
-
-
-def _repository_check_prompt_lines(
-    checkpoint_payload: Mapping[str, object],
-    *,
-    resume_packet_ref: str,
-) -> tuple[str, ...]:
-    observation = _repository_check_observation(
-        checkpoint_payload,
-        resume_packet_ref=resume_packet_ref,
-    )
-    if observation is None or observation["overall_result"] == "pending":
-        return ()
-    return (
-        "GitHub check facts for the exact approved head:",
-        json.dumps(observation, sort_keys=True),
-    )
-
-
-def project_cycle_prompt(
-    run: AutonomyRun,
-    project_run: ProjectRun,
-    checkpoint_payload: Mapping[str, object],
-    milestone: str,
-) -> str:
-    lines = [
-        run.goal_text,
-        "",
-        f"Current milestone: {milestone}",
-        f"Committed cycles: {project_run.committed_cycle_count}",
-        "Work on the smallest useful next step. Inspect current state before editing.",
-        "Do not claim completion; the configured verifier owns completion.",
-    ]
-    active_plan = checkpoint_payload.get("task_plan")
-    if not isinstance(active_plan, Mapping):
-        lines.append(
-            "Your first action must use the existing plan loop-control tool "
-            "to declare a durable task plan with "
-            "continue_plan_autonomously=true, then continue with its first step."
-        )
-    if project_run.verifier_refs:
-        lines.append("Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:]))
-    if verification := checkpoint_payload.get("verification"):
-        failed = [
-            item
-            for item in cast(list[dict[str, object]], verification)
-            if item["status"] == TestEvidenceStatus.FAILED.value
-        ]
-        outcome = (failed or cast(list[dict[str, object]], verification))[-1]
-        lines.extend(("Prior verifier outcome:", str(outcome["summary"])))
-        if failed and isinstance(active_plan, Mapping):
-            plan_id = str(active_plan.get("plan_id") or "").strip()
-            verifier_refs = ", ".join(project_run.verifier_refs[-5:])
-            lines.append(
-                "Your first action must use the existing plan loop-control "
-                f"tool with action=revise for plan_id={plan_id}. Use a new "
-                "revision_id, set continue_plan_autonomously=true, and bind "
-                f"verifier_refs to: {verifier_refs}."
-            )
-    if project_run.progress_refs:
-        lines.append("Prior progress refs: " + ", ".join(project_run.progress_refs[-5:]))
-    lines.extend(_repository_check_prompt_lines(
-        checkpoint_payload,
-        resume_packet_ref=project_run.resume_packet_ref,
-    ))
-    return "\n".join(lines)
 
 
 def commit_repository_check_wait(
@@ -486,31 +456,46 @@ def _latest_repository_check_target(
     prior = resume.get("ci_observation")
     pull_request = dict(prior) if isinstance(prior, Mapping) else None
     pull_request_index = -1
-    push: tuple[int, str, Mapping[str, object]] | None = None
+    latest_push: tuple[int, str, Mapping[str, object]] | None = None
+    repair_push: tuple[int, str, Mapping[str, object]] | None = None
     for index, effect_id in enumerate(checkpoint.project_run.effect_refs):
         raw_effect = raw_effects.get(effect_id)
         receipt = raw_receipts.get(effect_id)
         if not isinstance(raw_effect, Mapping) or not isinstance(receipt, Mapping):
             continue
         capability = raw_effect.get("capability_ref")
-        if capability == "github.open_pr":
+        if capability == "git.push":
+            latest_push = (index, effect_id, receipt)
+            if pull_request is not None and index > pull_request_index:
+                repair_push = latest_push
+        elif capability == "github.open_pr":
+            if latest_push is None or (
+                latest_push[2].get("ref") != f"refs/heads/{receipt['head']}"
+                or latest_push[2].get("remote_oid") != receipt["head_sha"]
+            ):
+                continue
             pull_request = {
                 "owner": receipt["owner"],
                 "repo": receipt["repo"],
                 "number": receipt["number"],
                 "head": receipt["head"],
                 "head_sha": receipt["head_sha"],
+                "repository": latest_push[2]["repository"],
+                "remote": latest_push[2]["remote"],
                 "target_effect_id": effect_id,
             }
             pull_request_index = index
-        elif capability == "git.push":
-            push = (index, effect_id, receipt)
+            repair_push = None
 
     if pull_request is None:
         return None
-    if push is not None and push[0] > pull_request_index:
-        _index, effect_id, receipt = push
-        if receipt.get("ref") == f"refs/heads/{pull_request['head']}":
+    if repair_push is not None:
+        _index, effect_id, receipt = repair_push
+        if (
+            receipt.get("repository") == pull_request.get("repository")
+            and receipt.get("remote") == pull_request.get("remote")
+            and receipt.get("ref") == f"refs/heads/{pull_request['head']}"
+        ):
             pull_request.update(
                 {
                     "head_sha": receipt["remote_oid"],
@@ -752,8 +737,11 @@ def link_project_run_to_task(
     record = task_manager.get_task(project_run.task_id)
     if record is None:
         raise KeyError(f"task not found: {project_run.task_id}")
-    if record.state not in _OPEN_PROJECT_TASK_STATES:
-        raise ValueError("project run can only link to an active or paused task")
+    if (
+        record.state not in _OPEN_PROJECT_TASK_STATES
+        and record.state != project_run.task_state
+    ):
+        raise ValueError("project run task state does not match its lifecycle task")
     existing = find_open_project_worker(
         task_manager,
         project_run_id=project_run.project_run_id,
@@ -958,9 +946,9 @@ __all__ = [
     "link_project_run_to_task",
     "load_latest_project_checkpoint",
     "project_cycle_summaries",
-    "project_cycle_prompt",
     "record_project_cycle",
     "record_repository_check_result",
+    "record_repository_check_terminal",
     "repository_check_event",
     "repository_check_facts",
     "repository_check_observation",

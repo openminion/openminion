@@ -24,26 +24,23 @@ from openminion.modules.task import (
     TaskLifecycleState,
     TaskManager,
     TestEvidence,
-    TestEvidenceStatus,
-    build_terminal_proof_packet,
     load_latest_project_checkpoint,
 )
-from openminion.modules.task.autonomy import VerificationWaiver, now_ms
+from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     AutonomyLoopJudgment,
-    ProjectDomainVerificationContract,
-    ProjectDomainVerificationEvidence,
     ProjectDomainVerificationStatus,
     ProjectTurnRequest,
     ProjectTurnResult,
-    ProjectVerificationDomain,
-    ProjectVerificationClosure,
+    build_project_terminal_proof,
     classify_autonomy_loop_condition,
     commit_project_run_checkpoint,
-    evaluate_project_verification_closure,
+    evaluate_project_turn_verification,
     project_condition_from_metadata,
+    project_cycle_checkpoint_payload,
+    project_cycle_prompt,
     project_metadata_refs,
     project_runtime_payload,
     project_turn_from_payload,
@@ -212,7 +209,12 @@ class ProjectWorker:
         task = self._task_manager.get_task(run.task_id or "")
         if task is None:
             raise KeyError(f"task not found: {run.task_id}")
-        inactive = self._inactive_task_result(run, checkpoint, task)
+        inactive = self._inactive_task_result(
+            run,
+            checkpoint,
+            task,
+            triggering_cron_job_id=triggering_cron_job_id,
+        )
         if inactive is not None:
             return inactive
         check_events: tuple[dict[str, object], ...] = ()
@@ -226,9 +228,11 @@ class ProjectWorker:
         check_events = (check_event,) if check_event is not None else ()
         if check_event is not None:
             if check_event["overall_result"] == "expired":
-                return replace(
-                    self._budget_blocked(run, checkpoint.project_run),
-                    check_events=check_events,
+                return self._terminal_repository_check_result(
+                    run,
+                    checkpoint,
+                    outcome="expired",
+                    triggering_cron_job_id=triggering_cron_job_id,
                 )
             if waiting is not None:
                 updated_run, committed = waiting
@@ -284,6 +288,18 @@ class ProjectWorker:
                 reason="waiting_for_checks",
             )
             check_events = (*check_events, next_check_event)
+        elif observed_checkpoint is not None and (
+            project_cp.repository_check_facts(observed_checkpoint)["overall_result"]
+            == "failure"
+        ):
+            evaluation = replace(
+                evaluation,
+                decision=ProjectCycleDecision.BLOCKED,
+                status=AutonomyRunStatus.BLOCKED,
+                phase=AutonomyRunPhase.RECOVER,
+                verification_state=ProjectVerificationState.BLOCKED,
+                reason="repository_checks_failed",
+            )
         waiting_for_checks = next_check_event is not None
         updated_project = self._updated_project_run(
             run,
@@ -299,11 +315,25 @@ class ProjectWorker:
             checkpoint_id=evaluation.cycle_id,
             triggering_cron_job_id=triggering_cron_job_id,
             next_wake_job_id=updated_project.next_wake_job_id,
-            payload=project_effects.project_cycle_checkpoint_payload(
-                checkpoint, updated_project,
-                turn=evaluation.turn, verification=evaluation.verification,
+            payload=project_cycle_checkpoint_payload(
+                evaluation.turn,
+                effect_payload=project_effects.project_effect_checkpoint_payload(
+                    checkpoint
+                ),
+                plan_payload=project_cp.plan_checkpoint_payload(
+                    checkpoint, evaluation.turn
+                ),
+                repository_payload=project_cp.advance_repository_lifecycle_payload(
+                    checkpoint,
+                    updated_project,
+                    turn=evaluation.turn,
+                    verification_count=len(evaluation.verification),
+                    next_action=evaluation.decision.value,
+                ),
+                decision=evaluation.decision,
+                verification=evaluation.verification,
                 verification_closure=evaluation.closure_payload,
-                decision=evaluation.decision, decision_reason=evaluation.reason,
+                decision_reason=evaluation.reason,
                 replan_count=evaluation.replan_count,
                 waiting_for_checks=waiting_for_checks,
             ),
@@ -311,6 +341,37 @@ class ProjectWorker:
         return self._finalize_cycle(
             run, updated_project, evaluation, committed=committed,
             check_events=check_events,
+        )
+
+    def _terminal_repository_check_result(
+        self,
+        run: AutonomyRun,
+        checkpoint: ProjectCheckpoint,
+        *,
+        outcome: str,
+        triggering_cron_job_id: str | None,
+    ) -> ProjectWorkerResult:
+        updated_run, committed = project_progress.finish_repository_check(
+            run,
+            checkpoint,
+            task_manager=self._task_manager,
+            autonomy_store=self._autonomy_store,
+            owner_id=self._owner_id,
+            claim_ttl_seconds=self._claim_ttl_seconds,
+            triggering_cron_job_id=triggering_cron_job_id,
+            outcome=outcome,
+        )
+        decision = (
+            ProjectCycleDecision.STOP
+            if outcome == "cancelled"
+            else ProjectCycleDecision.BLOCKED
+        )
+        return ProjectWorkerResult(
+            run=updated_run,
+            project_run=committed.project_run,
+            decision=decision,
+            verification=(),
+            check_events=(project_cp.repository_check_event(committed),),
         )
 
     def _load_cycle(self, run_id: str) -> tuple[AutonomyRun, ProjectCheckpoint]:
@@ -332,9 +393,19 @@ class ProjectWorker:
         *,
         triggering_cron_job_id: str | None,
     ) -> ProjectWorkerResult | None:
-        if not triggering_cron_job_id:
+        expected_check_wake = (
+            checkpoint.project_run.next_wake_job_id
+            if project_cp.repository_check_request(checkpoint) is not None
+            else None
+        )
+        stale_check_wake = (
+            expected_check_wake is not None
+            and expected_check_wake != triggering_cron_job_id
+        )
+        if not triggering_cron_job_id and not stale_check_wake:
             return None
-        if checkpoint.triggering_cron_job_id != triggering_cron_job_id:
+        delivered = checkpoint.triggering_cron_job_id == triggering_cron_job_id
+        if not delivered and not stale_check_wake:
             return None
         return ProjectWorkerResult(
             run=run,
@@ -349,6 +420,8 @@ class ProjectWorker:
         run: AutonomyRun,
         checkpoint: ProjectCheckpoint,
         task: TaskLifecycleRecord,
+        *,
+        triggering_cron_job_id: str | None,
     ) -> ProjectWorkerResult | None:
         if task.state == TaskLifecycleState.PAUSED:
             return ProjectWorkerResult(
@@ -364,6 +437,16 @@ class ProjectWorker:
         }.get(task.state)
         if terminal_status is None:
             return None
+        if (
+            task.state == TaskLifecycleState.CANCELLED
+            and project_cp.repository_check_request(checkpoint) is not None
+        ):
+            return self._terminal_repository_check_result(
+                run,
+                checkpoint,
+                outcome="cancelled",
+                triggering_cron_job_id=triggering_cron_job_id,
+            )
         terminal_run = run.model_copy(
             update={
                 "status": terminal_status,
@@ -381,7 +464,6 @@ class ProjectWorker:
                 else ProjectCycleDecision.STOP
             ),
             verification=(),
-            check_events=project_progress.terminal_repository_check_events(checkpoint),
         )
 
     def _evaluate_cycle(
@@ -402,18 +484,19 @@ class ProjectWorker:
             session_id=run.session_id,
             cycle_id=cycle_id,
             milestone=milestone,
-            prompt=project_cp.project_cycle_prompt(
-                run, project_run, checkpoint.payload, milestone
+            prompt=project_cycle_prompt(
+                run,
+                checkpoint,
+                milestone,
+                repository_check_observation=(
+                    project_cp.repository_check_observation(checkpoint)
+                ),
             ),
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)
         turn_result = self._turn(request)
         verification = self._verify()
-        closure = self._verification_closure(
-            run,
-            turn_result=turn_result,
-            verification=verification,
-        )
+        closure = evaluate_project_turn_verification(run, turn_result, verification)
         raw_replan_count = checkpoint.payload.get("replan_count", 0)
         previous_replans = raw_replan_count if isinstance(raw_replan_count, int) else 0
         existing_progress_refs = {*project_run.progress_refs, *project_run.effect_refs}
@@ -611,85 +694,18 @@ class ProjectWorker:
         self._autonomy_store.save(reconciled)
         return reconciled
 
-    def _verification_closure(
-        self,
-        run: AutonomyRun,
-        *,
-        turn_result: ProjectTurnResult,
-        verification: tuple[TestEvidence, ...],
-    ) -> ProjectVerificationClosure:
-        passed = bool(verification) and all(
-            item.status == TestEvidenceStatus.PASSED for item in verification
-        )
-        evidence_kinds = tuple(turn_result.evidence_kinds)
-        waiver_reason = str(
-            run.execution_selectors.verification_waiver_reason or ""
-        ).strip()
-        if waiver_reason:
-            evidence_kinds = (*evidence_kinds, "waiver")
-            verification_refs: tuple[str, ...] = (f"waiver:{run.run_id}",)
-        else:
-            verification_refs = ()
-        if passed and "verification" not in evidence_kinds:
-            evidence_kinds = (*evidence_kinds, "verification")
-        verification_refs += tuple(
-            f"command:{index}:{item.status.value}"
-            for index, item in enumerate(verification, start=1)
-        )
-        selectors = run.execution_selectors
-        return evaluate_project_verification_closure(
-            ProjectDomainVerificationContract(
-                domain=ProjectVerificationDomain(selectors.verification_domain),
-                required_evidence_kinds=selectors.required_evidence_kinds,
-                verifier_ref=selectors.verifier_ref,
-            ),
-            ProjectDomainVerificationEvidence(
-                domain=ProjectVerificationDomain(selectors.verification_domain),
-                evidence_kinds=evidence_kinds,
-                evidence_refs=tuple(
-                    dict.fromkeys((*turn_result.evidence_refs, *verification_refs))
-                ),
-                verifier_failed=(
-                    not waiver_reason
-                    and any(
-                        item.status == TestEvidenceStatus.FAILED
-                        for item in verification
-                    )
-                ),
-            ),
-        )
-
     def _write_terminal_proof(
         self,
         run: AutonomyRun,
         *,
         verification: tuple[TestEvidence, ...],
     ) -> None:
-        waiver_reason = str(
-            run.execution_selectors.verification_waiver_reason or ""
-        ).strip()
-        waiver = (
-            VerificationWaiver(reason=waiver_reason, recorded_at_ms=run.updated_at_ms)
-            if waiver_reason
-            else None
-        )
-        if waiver is not None:
-            validation_summary = "Project verification was explicitly waived."
-        elif verification and all(
-            item.status == TestEvidenceStatus.PASSED for item in verification
-        ):
-            validation_summary = "Project verification commands passed."
-        else:
-            validation_summary = "Project closed without verified completion."
-        packet = build_terminal_proof_packet(
+        packet = build_project_terminal_proof(
             run,
-            validation_summary=validation_summary,
-            final_operator_summary=run.operator_summary or "Autonomy project closed.",
+            verification=verification,
             cycle_summaries=project_cp.project_cycle_summaries(
                 self._task_manager, task_id=run.task_id or ""
             ),
-            tests_run=verification,
-            verification_waiver=waiver,
         )
         self._autonomy_store.write_proof_packet(packet)
 

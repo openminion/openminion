@@ -190,6 +190,27 @@ def _seed_project(
         },
     )
     if expected_checks:
+        push = ProjectEffectRecord(
+            effect_id="effect:git.push:cron",
+            task_id="task-1",
+            idempotency_key="push-cron",
+            actor_ref="agent:agent-main",
+            capability_ref="git.push",
+            precondition_refs=("git:head:" + "a" * 40,),
+            result_ref="git:remote:origin:refs/heads/feature@" + "a" * 40,
+            non_reversible_reason="The remote branch remains published.",
+            status=ProjectEffectStatus.SUCCEEDED,
+        )
+        save_project_effect_record(
+            task_manager,
+            push,
+            receipt={
+                "repository": str(tmp_path),
+                "remote": "origin",
+                "ref": "refs/heads/feature",
+                "remote_oid": "a" * 40,
+            },
+        )
         effect = ProjectEffectRecord(
             effect_id="effect:github.open_pr:cron",
             task_id="task-1",
@@ -372,7 +393,9 @@ def test_scheduled_project_check_uses_tool_owner_and_records_waiting_facts(
     event_payload = runtime.sessions.events[0]["payload"]
     assert event_payload["project_run_id"].startswith("prun_")
     assert event_payload["expected_checks"] == list(expected_checks)
+    assert event_payload["wait_duration_ms"] >= 0
     assert runtime.telemetry_service.operations[0][0][3] == "project_checks"
+    assert runtime.telemetry_service.operations[0][1]["extra"]["wait_duration_ms"] >= 0
 
 
 def test_project_cycle_payload_is_isolated_and_requires_durable_ids() -> None:
