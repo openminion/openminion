@@ -73,7 +73,8 @@ class _CodingLoopContextAdapter:
         runner = runner_from_context(ctx)
         self.session_api = getattr(runner, "session_api", None)
         self.provider_retry_max_attempts = build_provider_retry_policy(
-            getattr(runner, "options", None)
+            getattr(runner, "options", None),
+            getattr(runner, "llm_api", None),
         ).max_attempts
         self.prepared_parallel_dispatch_supported = all(
             callable(getattr(ctx.command_executor, name, None))

@@ -48,6 +48,7 @@ class RuntimeLLMHandle:
     tool_call_strategy: str = LLM_TOOL_CALL_STRATEGY_HYBRID
     retry_override_policy: RetryOverridePolicy = RetryOverridePolicy()
     service_vendor: str = ""
+    provider_retry_max_attempts: int | None = None
 
     def close(self) -> None:
         self.client.llmctl.close()
@@ -175,6 +176,9 @@ def build_runtime_llm_handle(
         client=client,
         tool_call_strategy=tool_call_strategy,
         retry_override_policy=behavior_profile.retry_override_policy,
+        provider_retry_max_attempts=(
+            1 if bridge_provider_name == "cortensor" or is_cortensor_portal else None
+        ),
         service_vendor=(
             behavior_profile.provider_identity.service_vendor
             if behavior_profile.provider_identity is not None

@@ -119,6 +119,8 @@ class ProviderFactoryTests(unittest.TestCase):
             self.assertEqual(bridge._runtime.config.llmctl.retries.max_retries, 0)
             self.assertEqual(runtime.client.llmctl.config.llmctl.retries.max_retries, 0)
             self.assertTrue(runtime.retry_override_policy.disabled)
+            self.assertEqual(bridge.provider_retry_max_attempts, 1)
+            self.assertEqual(runtime.provider_retry_max_attempts, 1)
         finally:
             bridge.close()
             runtime.close()

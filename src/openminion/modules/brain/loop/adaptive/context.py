@@ -143,7 +143,8 @@ class _AdaptiveLoopContextAdapter:
         )
         self.session_api = getattr(self._runner, "session_api", None)
         self.provider_retry_max_attempts = build_provider_retry_policy(
-            self._runner.options
+            self._runner.options,
+            getattr(self._runner, "llm_api", None),
         ).max_attempts
         self.prepared_parallel_dispatch_supported = all(
             callable(getattr(ctx.command_executor, name, None))

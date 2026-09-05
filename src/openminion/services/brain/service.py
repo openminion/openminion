@@ -225,6 +225,15 @@ class _RuntimeProviderAdapter:
             or getattr(getattr(service, "_provider", None), "service_vendor", "")
             or self.name
         )
+        self.provider_retry_max_attempts = getattr(
+            getattr(service, "_llm_runtime", None),
+            "provider_retry_max_attempts",
+            None,
+        ) or getattr(
+            getattr(service, "_provider", None),
+            "provider_retry_max_attempts",
+            None,
+        )
         self.tool_call_strategy = str(
             getattr(getattr(service, "_provider", object()), "tool_call_strategy", "")
             or getattr(

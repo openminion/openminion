@@ -228,7 +228,12 @@ async def _complete_unforced_lane(
         system_prompt=runtime.system_prompt,
         history=runtime.provider_history,
     )
-    for _ in range(service._config.runtime.provider_retry_max_attempts):
+    max_attempts = (
+        getattr(service._provider, "provider_retry_max_attempts", None)
+        or getattr(service._llm_runtime, "provider_retry_max_attempts", None)
+        or service._config.runtime.provider_retry_max_attempts
+    )
+    for _ in range(max_attempts):
         response = await executor.call_provider(
             request, tool_call_strategy=tool_call_strategy
         )
