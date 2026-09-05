@@ -145,9 +145,7 @@ def _child_artifact(
     )
     lease = allocate_child_worktree(subtask=subtask, child_state=state)
     assert lease is not None
-    (lease.worktree / "feature.py").write_text(
-        f"VALUE = {value}\n", encoding="utf-8"
-    )
+    (lease.worktree / "feature.py").write_text(f"VALUE = {value}\n", encoding="utf-8")
     context = SimpleNamespace(
         state=state,
         _services=SimpleNamespace(runner=SimpleNamespace(artifactctl=artifact_owner)),
@@ -377,7 +375,9 @@ def test_repository_lifecycle_survives_review_push_ci_and_reopen(
                         }
                     },
                 }
-            record = records["corrector" if target == "final-reviewer" else "implementer"]
+            record = records[
+                "corrector" if target == "final-reviewer" else "implementer"
+            ]
             passed = target == "final-reviewer"
             return {
                 "status": "success",
@@ -489,9 +489,10 @@ def test_repository_lifecycle_survives_review_push_ci_and_reopen(
             SimpleNamespace(artifactctl=ctl, session_id=run.session_id),
         )
         assert accepted["status"] == "accepted"
-        assert load_child_worktree_record(ctl, corrected_alias)[
-            "integration_status"
-        ] == "accepted"
+        assert (
+            load_child_worktree_record(ctl, corrected_alias)["integration_status"]
+            == "accepted"
+        )
     assert (repository / "feature.py").read_text(encoding="utf-8") == "VALUE = 2\n"
 
     adapter = _git_adapter(repository, manager)
@@ -665,9 +666,7 @@ def test_repository_lifecycle_survives_review_push_ci_and_reopen(
     manager.close()
     reopened_manager = TaskManager.for_lifecycle_db(db_path=task_db)
     reopened_store = AutonomyRunStore(root=store_root)
-    reopened = load_latest_project_checkpoint(
-        reopened_manager, task_id=run.task_id
-    )
+    reopened = load_latest_project_checkpoint(reopened_manager, task_id=run.task_id)
     assert reopened is not None
     observation = reopened.payload["repository_lifecycle"][
         reopened.project_run.resume_packet_ref
