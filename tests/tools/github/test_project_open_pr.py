@@ -78,7 +78,9 @@ class _ProjectGithubProvider:
         self.head_sha = _HEAD_SHA
         self.on_open_pr: Callable[[], None] | None = None
 
-    def resolve_open_pr_head_sha(self, *, args: Mapping[str, Any], ctx: Any) -> str:
+    def resolve_open_pr_head_sha(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> str:
         del args, ctx
         return self.head_sha
 

@@ -22,6 +22,7 @@ from openminion.cli.interactive.terminal.shell.actions import (
 from openminion.cli.interactive.terminal.shell.slash_output import (
     PROMPT_SAFE_OUTPUT_SLASHES,
     handle_debug_output_slash,
+    render_context_review,
 )
 from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
@@ -409,6 +410,12 @@ def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> 
         "calibration_path": "calibration.json",
         "artifacts_dir": "artifacts",
     }
+
+
+def test_context_review_reports_missing_runtime_trace_owner() -> None:
+    rendered = render_context_review(_VisibleRuntime(), "")
+
+    assert "degraded: runtime_context_trace_unavailable" in rendered
 
 
 def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> None:

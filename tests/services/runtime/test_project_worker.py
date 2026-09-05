@@ -230,14 +230,11 @@ def test_project_cycle_preserves_effect_state_across_restart(tmp_path) -> None:
         effect_id=effect.effect_id,
     )
     assert loaded is not None and loaded.status == ProjectEffectStatus.SUCCEEDED
-    assert (
-        load_project_effect_receipt(
-            restarted,
-            task_id="task-1",
-            effect_id=effect.effect_id,
-        )
-        == receipt
-    )
+    assert load_project_effect_receipt(
+        restarted,
+        task_id="task-1",
+        effect_id=effect.effect_id,
+    ) == receipt
 
 
 def test_repository_project_requires_completed_public_task_plan(tmp_path) -> None:

@@ -1169,6 +1169,31 @@ def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> No
     assert snapshot["compaction_reason"] == "token_pressure"
 
 
+def test_openminion_runtime_context_trace_payload_uses_session_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+    observed: dict[str, object] = {}
+
+    def _list_context_traces(sessions: object, *, session_id: str) -> dict[str, object]:
+        observed.update(sessions=sessions, session_id=session_id)
+        return {
+            "session_id": session_id,
+            "traces": [{"decision_trace": {}}],
+            "count": 1,
+        }
+
+    from openminion.cli.interactive.runtime import messages as runtime_messages
+
+    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+
+    payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
+
+    assert payload["count"] == 1
+    assert observed == {"sessions": rt.sessions, "session_id": tui_rt.session_id}
+
+
 def test_openminion_runtime_renders_durable_token_usage() -> None:
     rt = _FakeRuntime()
     tui_rt = OpenMinionRuntime(rt)
