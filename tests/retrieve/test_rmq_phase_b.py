@@ -18,7 +18,6 @@ def _retrieve_config(tmp_path: Path) -> dict:
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,

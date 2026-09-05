@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import list as list_type
 from dataclasses import replace
 from datetime import datetime, timezone
 import uuid
@@ -217,6 +218,9 @@ class InMemoryRecordStore:
             rows.sort(key=lambda item: item.updated_at, reverse=True)
         offset = max(0, int(options.offset or 0))
         return _apply_limit(rows[offset:], options.limit)
+
+    def list_all(self) -> list_type[MemoryRecord]:
+        return sorted(self._records.values(), key=lambda item: item.id)
 
     def list_scopes(self) -> list[str]:
         return sorted(

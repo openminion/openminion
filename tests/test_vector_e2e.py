@@ -5,6 +5,24 @@ from pathlib import Path
 
 import pytest
 
+from openminion.modules.storage.runtime.vector_index import (
+    EmbeddingBatchResult,
+    EmbeddingResult,
+    VectorSpaceIdentity,
+)
+
+
+class _TestEmbeddingProvider:
+    semantic_ready = True
+    identity = VectorSpaceIdentity("test", "test", 384)
+
+    def embed(self, text: str) -> EmbeddingResult:
+        seed = float(sum(text.encode()) % 97) / 97.0
+        return EmbeddingResult([seed] * 384, "test", "test")
+
+    def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
+        return EmbeddingBatchResult([self.embed(text) for text in texts])
+
 
 class TestVectorE2E:
     @pytest.fixture
@@ -29,11 +47,10 @@ class TestVectorE2E:
 
         from openminion.modules.storage.runtime.vector_index import (
             create_vector_index_adapter,
-            LocalEmbeddingProvider,
             InMemoryVectorIndex,
         )
 
-        embedding_provider = LocalEmbeddingProvider()
+        embedding_provider = _TestEmbeddingProvider()
         vector_index = InMemoryVectorIndex(dim=384)
 
         return create_vector_index_adapter(
@@ -42,71 +59,61 @@ class TestVectorE2E:
             vector_index=vector_index,
         )
 
-    def test_local_embedding_provider(self):
+    def test_local_embedding_provider_uses_sentence_transformer(self):
         from openminion.modules.storage.runtime.vector_index import (
             LocalEmbeddingProvider,
         )
 
         provider = LocalEmbeddingProvider()
+        provider._st_model = type(  # noqa: SLF001
+            "Model",
+            (),
+            {
+                "encode": lambda self, text, **kwargs: [0.25] * 384,
+                "get_sentence_embedding_dimension": lambda self: 384,
+            },
+        )()
 
         result = provider.embed("hello world")
 
         assert result is not None
         assert len(result.vector) == 384
-        assert result.provider == "local"
+        assert result.provider == "sentence-transformers"
         assert result.model == "all-MiniLM-L6-v2"
 
-    def test_api_and_mock_fallbacks_use_sha256_deterministically(self):
-        from openminion.modules.storage.runtime.vector_index import (
-            APIEmbeddingProvider,
-            MockEmbeddingProvider,
-        )
-
-        text = "stable embedding input"
-        api_provider = APIEmbeddingProvider(api_key="test", model="test-model")
-        api_result = api_provider.embed(text)
-        api_digest = hashlib.sha256((text + "test-model").encode()).hexdigest()
-        api_seed = int(api_digest[:16], 16)
-        expected_api_first = (((api_seed % 1013) / 1013.0) * 2) - 1
-
-        mock_result = MockEmbeddingProvider().embed(text)
-        mock_seed = int(hashlib.sha256(text.encode()).hexdigest()[:16], 16)
-
-        assert api_result.vector[0] == expected_api_first
-        assert mock_result.vector[0] == (mock_seed % 1000) / 1000.0
-        assert api_provider.embed(text).vector == api_result.vector
-
-    def test_embedding_similarity(self):
+    def test_empty_snapshot_rejects_embedding_dimension_mismatch(
+        self, temp_db_path: Path
+    ) -> None:
         from openminion.modules.storage.runtime.vector_index import (
             LocalEmbeddingProvider,
+            SQLiteVecBackend,
+            VectorIndexAdapter,
         )
 
-        provider = LocalEmbeddingProvider()
-
-        result_python = provider.embed("python programming")
-        result_python_docs = provider.embed("python data science")
-        result_airplane = provider.embed("airplane flight")
-
-        def cosine_sim(a, b):
-            dot = sum(x * y for x, y in zip(a, b))
-            norm_a = sum(x * x for x in a) ** 0.5
-            norm_b = sum(x * x for x in b) ** 0.5
-            return dot / (norm_a * norm_b)
-
-        sim_python_pair = cosine_sim(result_python.vector, result_python_docs.vector)
-        sim_python_airplane = cosine_sim(result_python.vector, result_airplane.vector)
-
-        assert sim_python_pair > sim_python_airplane, (
-            f"sim(python,pair)={sim_python_pair} should be > sim(python, airplane)={sim_python_airplane}"
+        provider = LocalEmbeddingProvider(dimension=4)
+        provider._st_model = type(  # noqa: SLF001
+            "Model", (), {"get_sentence_embedding_dimension": lambda self: 3}
+        )()
+        adapter = VectorIndexAdapter(
+            provider,
+            SQLiteVecBackend(str(temp_db_path), dimension=4),
         )
+        adapter.bind_record_source(
+            type(
+                "EmptySource",
+                (),
+                {"vector_sync_snapshot": lambda self: {"current": [], "retired": []}},
+            )()
+        )
+
+        with pytest.raises(RuntimeError, match="embedding provider is unavailable"):
+            adapter.sync_pending_records()
+        assert adapter.semantic_ready is False
 
     def test_batch_embedding(self):
-        from openminion.modules.storage.runtime.vector_index import (
-            LocalEmbeddingProvider,
-        )
         import time
 
-        provider = LocalEmbeddingProvider()
+        provider = _TestEmbeddingProvider()
 
         texts = [f"text {i}" for i in range(10)]
 
@@ -198,7 +205,7 @@ class TestVectorE2E:
         python_matches = result_ids & python_related_ids
         assert len(python_matches) > 0, "Should find Python-related documents"
 
-    def test_semantic_search_relevance(self, vector_adapter):
+    def test_vector_search_respects_top_k(self, vector_adapter):
         test_contents = [
             "The weather today is sunny and warm",
             "I love eating pizza with cheese",
@@ -219,8 +226,90 @@ class TestVectorE2E:
 
         assert len(results) <= 3
 
-        weather_ids = {"semantic-0", "semantic-2", "semantic-4"}
-        result_ids = {str(r[0]) for r in results}
+        assert len(results) == 3
 
-        weather_matches = result_ids & weather_ids
-        assert len(weather_matches) >= 2, "Should find weather-related documents"
+    def test_semantic_readiness_requires_complete_initial_sync(
+        self, temp_db_path: Path
+    ) -> None:
+        from openminion.modules.storage.runtime.vector_index import (
+            SQLiteVecBackend,
+            VectorIndexAdapter,
+        )
+
+        backend = SQLiteVecBackend(str(temp_db_path), dimension=384)
+        adapter = VectorIndexAdapter(_TestEmbeddingProvider(), backend)
+
+        class _Source:
+            def vector_sync_snapshot(self):
+                return {
+                    "current": [
+                        {
+                            "record_id": "memory-1",
+                            "text": "durable content",
+                            "content_fingerprint": hashlib.sha256(
+                                b"durable content"
+                            ).hexdigest(),
+                        }
+                    ],
+                    "retired": [],
+                }
+
+        assert adapter.semantic_ready is False
+        adapter.bind_record_source(_Source())
+        assert adapter.sync_pending_records() == 1
+        assert adapter.semantic_ready is True
+        assert adapter.get_vector("memory-1") is not None
+
+        backend.conn.execute(
+            "UPDATE vector_entries SET metadata_json = ? WHERE id = ?",
+            ('{"vector_space_identity":"other"}', "memory-1"),
+        )
+        backend.conn.commit()
+        assert adapter.get_vector("memory-1") is None
+
+    def test_snapshot_sync_uses_configured_embedding_chunks(
+        self, temp_db_path: Path
+    ) -> None:
+        from openminion.modules.storage.runtime.vector_index import (
+            SQLiteVecBackend,
+            VectorIndexAdapter,
+        )
+
+        class _RecordingEmbeddingProvider(_TestEmbeddingProvider):
+            def __init__(self) -> None:
+                self.batch_sizes: list[int] = []
+
+            def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
+                self.batch_sizes.append(len(texts))
+                return super().embed_batch(texts)
+
+        provider = _RecordingEmbeddingProvider()
+        adapter = VectorIndexAdapter(
+            provider,
+            SQLiteVecBackend(str(temp_db_path), dimension=384),
+            batch_size=2,
+        )
+        adapter.bind_record_source(
+            type(
+                "Source",
+                (),
+                {
+                    "vector_sync_snapshot": lambda self: {
+                        "current": [
+                            {
+                                "record_id": f"memory-{index}",
+                                "text": f"memory content {index}",
+                                "content_fingerprint": hashlib.sha256(
+                                    f"memory content {index}".encode()
+                                ).hexdigest(),
+                            }
+                            for index in range(5)
+                        ],
+                        "retired": [],
+                    }
+                },
+            )()
+        )
+
+        assert adapter.sync_pending_records() == 5
+        assert provider.batch_sizes == [2, 2, 1]

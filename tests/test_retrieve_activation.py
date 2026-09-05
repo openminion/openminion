@@ -36,7 +36,7 @@ class TestRetrieveActivation:
         config_path = resolve_config_path()
         retrieve_service = None
         try:
-            retrieve_service = RetrieveCtl(config=str(config_path), vector_adapter=None)
+            retrieve_service = RetrieveCtl(config=str(config_path))
             assert retrieve_service is not None
             assert retrieve_service.config is not None
         finally:
@@ -102,7 +102,7 @@ class TestRetrieveAdapterFactory:
         config_path = resolve_config_path()
         retrieve_service = None
         try:
-            retrieve_service = RetrieveCtl(config=str(config_path), vector_adapter=None)
+            retrieve_service = RetrieveCtl(config=str(config_path))
             adapter = create_retrieve_adapter(mode="auto", service=retrieve_service)
 
             assert adapter is not None

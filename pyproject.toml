@@ -77,6 +77,9 @@ remote-aws = [
 blockchain = [
   "web3>=7,<8",
 ]
+semantic = [
+  "sentence-transformers>=3,<6",
+]
 dev = [
   # Exercise the optional ACP adapter in the standard development/CI suite.
   "agent-client-protocol>=0.12,<0.13",

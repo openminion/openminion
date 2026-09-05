@@ -43,6 +43,29 @@ class _Scheduler:
         return self.live
 
 
+class _SnapshotVectorAdapter:
+    def __init__(self) -> None:
+        self.source = None
+        self.snapshot = None
+
+    def bind_record_source(self, source) -> None:
+        self.source = source
+
+    def sync_pending_records(self) -> int:
+        self.snapshot = self.source.vector_sync_snapshot()
+        return len(self.snapshot["current"])
+
+
+class _BindingScheduler(_Scheduler):
+    def __init__(self, events: list[str], adapter: _SnapshotVectorAdapter) -> None:
+        super().__init__(events)
+        self.adapter = adapter
+
+    def bind_record_source(self, record_source) -> None:
+        super().bind_record_source(record_source)
+        self.adapter.bind_record_source(record_source)
+
+
 def test_active_assembly_owns_one_non_duplicated_runtime(tmp_path) -> None:
     config = OpenMinionConfig()
     config.runtime.memory_enabled = True
@@ -110,11 +133,13 @@ def test_backend_none_builds_gateway_only_assembly(tmp_path) -> None:
 def test_assembly_starts_and_closes_scheduler_before_service() -> None:
     events: list[str] = []
     service = _Service(events)
-    scheduler = _Scheduler(events)
+    adapter = _SnapshotVectorAdapter()
+    scheduler = _BindingScheduler(events, adapter)
     assembly = active_runtime_memory_assembly(
         gateway=object(),
         service=service,  # type: ignore[arg-type]
         agent_id="alpha",
+        vector_adapter=adapter,
         scheduler=scheduler,
     )
 
@@ -131,6 +156,36 @@ def test_assembly_starts_and_closes_scheduler_before_service() -> None:
     ]
     assert first is second
     assert first.closed is True
+
+
+def test_assembly_syncs_complete_snapshot_through_memctl(tmp_path) -> None:
+    from openminion.modules.memory.service import MemoryService
+    from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+
+    service = MemoryService(store=SQLiteMemoryStore(tmp_path / "memory.db"))
+    service.write_record(
+        scope="agent:alpha",
+        record_type="fact",
+        title="Canonical title",
+        content="Canonical content",
+    )
+    adapter = _SnapshotVectorAdapter()
+    scheduler = _BindingScheduler([], adapter)
+    assembly = active_runtime_memory_assembly(
+        gateway=object(),
+        service=service,
+        agent_id="alpha",
+        vector_adapter=adapter,
+        scheduler=scheduler,
+    )
+
+    assembly.start()
+
+    assert len(adapter.snapshot["current"]) == 1
+    assert adapter.snapshot["current"][0]["text"] == (
+        "Canonical title\nCanonical content"
+    )
+    assembly.close()
 
 
 def test_assembly_leaves_service_open_while_scheduler_is_live() -> None:

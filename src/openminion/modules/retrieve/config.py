@@ -30,6 +30,7 @@ from .constants import (
     OPENMINION_MODULE_STANDALONE_ENV,
     RETRIEVECTL_CONFIG_ENV,
 )
+from .schemas import RetrievalStrategy
 
 
 class ConfigError(ValueError):
@@ -50,9 +51,8 @@ class StorageConfig(BaseModel):
 class DefaultsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    strategy: str = "contextual"
+    strategy: RetrievalStrategy = "contextual"
     contextual_enabled: bool = True
-    embeddings_enabled: bool = False
     lexical_candidate_count: int = Field(default=50, ge=5, le=500)
     snippet_tokens: int = Field(default=320, ge=32, le=4000)
     chunk_target_tokens: int = Field(default=700, ge=16, le=4000)
@@ -74,8 +74,6 @@ class DefaultsConfig(BaseModel):
     recency_weight: float = Field(default=0.3, ge=0.0, le=1.0)
     k_conversational: int = Field(default=3, ge=1, le=64)
     k_knowledge: int = Field(default=3, ge=1, le=64)
-    mmr_lambda: float = Field(default=0.6, ge=0.0, le=1.0)
-    mmr_enabled: bool = True
     feedback_decay_halflife_days: int = Field(default=60, ge=1, le=3650)
     decay_min_feedback_score: float = Field(default=0.0, ge=0.0, le=1.0)
 

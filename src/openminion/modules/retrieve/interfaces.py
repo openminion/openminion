@@ -6,7 +6,7 @@ from typing import Any, ClassVar, Protocol
 from .errors import RetrieveCtlError
 
 
-RETRIEVE_INTERFACE_VERSION = "v1"
+RETRIEVE_INTERFACE_VERSION = "v2"
 RETRIEVE_STORAGE_INTERFACE_VERSION = "v1"
 
 
@@ -18,7 +18,6 @@ class RetrieveCtlInterface(Protocol):
     def __init__(
         self,
         config: str | Path | dict[str, Any] | Any = None,  # RetrieveCtlConfig
-        vector_adapter: Any = None,
     ) -> None: ...
 
     def close(self) -> None: ...
@@ -76,6 +75,7 @@ class RetrieveCtlInterface(Protocol):
         source_ref: str,
         text: str,
         scope: str,
+        scope_key: str | None = None,
         tags: list[str] | None = None,
         title: str | None = None,
         corpus_id: str | None = None,

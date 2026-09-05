@@ -20,6 +20,11 @@ def _stable_id(namespace: str, value: str) -> str:
     return str(uuid5(uuid5(NAMESPACE_URL, namespace), value))
 
 
+def _offset_start(row: Any) -> int:
+    offsets = json.loads(str(row["offsets_json"] or "{}"))
+    return int(offsets.get("start_token", 0)) if isinstance(offsets, dict) else 0
+
+
 def _optional_payload_str(payload: dict[str, Any], key: str) -> str | None:
     value = payload.get(key)
     return None if value is None else (str(value).strip() or None)
@@ -34,14 +39,51 @@ def _payload_ingest_kwargs(
 ) -> dict[str, Any]:
     raw_tags = payload.get("tags")
     tags = raw_tags if isinstance(raw_tags, list) else []
+    scope = _optional_payload_str(payload, "scope") or default_scope
     return {
-        "scope": str(payload.get("scope", default_scope)),
+        "scope": scope,
+        "scope_key": _optional_payload_str(payload, "scope_key"),
         "tags": [str(tag) for tag in tags] + list(extra_tags),
-        "title": str(payload.get("title", default_title)),
+        "title": _optional_payload_str(payload, "title") or default_title,
         "corpus_id": _optional_payload_str(payload, "corpus_id"),
         "unit_kind": _optional_payload_str(payload, "unit_kind"),
         "created_at": _optional_payload_str(payload, "created_at"),
     }
+
+
+def _upsert_doc(service: Any, doc: DocUnit) -> None:
+    service.store.execute(
+        """
+        INSERT INTO retrievectl_docs(doc_id, source_type, source_ref, scope, scope_key, tags_json, created_at, updated_at, title, corpus_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(doc_id) DO UPDATE SET
+            source_type=excluded.source_type,
+            source_ref=excluded.source_ref,
+            scope=excluded.scope,
+            scope_key=excluded.scope_key,
+            tags_json=excluded.tags_json,
+            updated_at=excluded.updated_at,
+            title=excluded.title,
+            corpus_id=excluded.corpus_id
+        """,
+        (
+            doc.doc_id,
+            doc.source_type,
+            doc.source_ref,
+            doc.scope,
+            doc.scope_key,
+            json.dumps(
+                doc.tags,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+            doc.created_at,
+            doc.updated_at,
+            doc.title,
+            doc.corpus_id,
+        ),
+    )
 
 
 def ingest_artifact(
@@ -114,6 +156,7 @@ def ingest_source(
     source_ref: str,
     text: str,
     scope: str,
+    scope_key: str | None = None,
     tags: list[str] | None = None,
     title: str | None = None,
     corpus_id: str | None = None,
@@ -126,6 +169,7 @@ def ingest_source(
 
     normalized_source_type = service._normalize_source_type(source_type)
     normalized_scope = service._normalize_scope(scope)
+    normalized_scope_key = str(scope_key or f"{normalized_scope}:legacy").strip()
     normalized_unit_kind = service._normalize_unit_kind(unit_kind or "chunk")
     normalized_tags = sorted(
         {str(tag).strip() for tag in (tags or []) if str(tag).strip()}
@@ -140,6 +184,7 @@ def ingest_source(
         source_type=normalized_source_type,
         text="",
         scope=normalized_scope,
+        scope_key=normalized_scope_key,
         tags=normalized_tags,
         created_at=created_ts,
         updated_at=updated_ts,
@@ -148,36 +193,7 @@ def ingest_source(
     )
 
     with service.record_store.transaction():
-        service.store.execute(
-            """
-            INSERT INTO retrievectl_docs(doc_id, source_type, source_ref, scope, tags_json, created_at, updated_at, title, corpus_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(doc_id) DO UPDATE SET
-                source_type=excluded.source_type,
-                source_ref=excluded.source_ref,
-                scope=excluded.scope,
-                tags_json=excluded.tags_json,
-                updated_at=excluded.updated_at,
-                title=excluded.title,
-                corpus_id=excluded.corpus_id
-            """,
-            (
-                doc.doc_id,
-                doc.source_type,
-                doc.source_ref,
-                doc.scope,
-                json.dumps(
-                    doc.tags,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=True,
-                ),
-                doc.created_at,
-                doc.updated_at,
-                doc.title,
-                doc.corpus_id,
-            ),
-        )
+        _upsert_doc(service, doc)
         service._delete_units_for_doc(doc.doc_id)
         service._delete_raptor_for_doc(doc.doc_id)
 
@@ -319,10 +335,10 @@ def build_raptor_tree(service: Any, doc_id: str) -> dict[str, Any]:
         SELECT unit_id, doc_id, text_ref, offsets_json
         FROM retrievectl_units
         WHERE doc_id = ? AND unit_kind = 'chunk'
-        ORDER BY COALESCE(json_extract(offsets_json, '$.start_token'), 0), unit_id
         """,
         (normalized_doc_id,),
     ).fetchall()
+    rows = sorted(rows, key=lambda row: (_offset_start(row), str(row["unit_id"])))
     if not rows:
         raise RetrieveCtlError(
             "NOT_FOUND", f"no chunk units found for doc_id={normalized_doc_id}"
@@ -538,19 +554,15 @@ def group_long_units(
         policy.get("max_tokens", service.config.defaults.doc_group_max_tokens)
     )
 
-    docs = service.store.execute(
-        """
-        SELECT doc_id FROM retrievectl_docs
-        WHERE corpus_id = ?
-           OR EXISTS (
-                SELECT 1
-                FROM json_each(retrievectl_docs.tags_json)
-                WHERE json_each.value = ?
-           )
-        ORDER BY doc_id
-        """,
-        (normalized_corpus, normalized_corpus),
+    rows = service.store.execute(
+        "SELECT doc_id, corpus_id, tags_json FROM retrievectl_docs ORDER BY doc_id"
     ).fetchall()
+    docs = [
+        row
+        for row in rows
+        if str(row["corpus_id"] or "") == normalized_corpus
+        or normalized_corpus in json.loads(str(row["tags_json"] or "[]"))
+    ]
     if not docs:
         return GroupLongUnitsResult(
             corpus_id=normalized_corpus, docs_updated=0, groups_created=0
@@ -663,9 +675,9 @@ def read_doc_text(service: Any, doc_id: str) -> str:
         SELECT text_ref, offsets_json
         FROM retrievectl_units
         WHERE doc_id = ? AND unit_kind IN ('chunk', 'document')
-        ORDER BY COALESCE(json_extract(offsets_json, '$.start_token'), 0), unit_id
         """,
         (doc_id,),
     ).fetchall()
+    rows = sorted(rows, key=lambda row: _offset_start(row))
     parts = [service._read_text_blob(str(row["text_ref"])) for row in rows]
     return "\n\n".join(part for part in parts if part.strip())

@@ -1,20 +1,11 @@
 from __future__ import annotations
 
-import json
-from typing import Any
 from collections.abc import Mapping, Sequence
+from typing import Any
 
-from .retrieval import candidate_from_row, to_retrieved_item
 from ..schemas import RetrievedItem
-
-
-def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
-    if raw is None:
-        return fallback
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return fallback
+from .ingestion import _offset_start
+from .retrieval import _json_loads, candidate_from_row, to_retrieved_item
 
 
 def _missing_explanation(payload: Mapping[str, Any], detail: str) -> dict[str, Any]:
@@ -75,8 +66,8 @@ def explain_item(
         "level": str(row["level"] or "none"),
         "node_id": row["node_id"],
         "group_id": row["group_id"],
-        "offsets": _safe_json_loads(str(row["offsets_json"] or "{}"), {}),
-        "tags": _safe_json_loads(str(row["tags_json"] or "[]"), []),
+        "offsets": _json_loads(str(row["offsets_json"] or "{}"), {}),
+        "tags": _json_loads(str(row["tags_json"] or "[]"), []),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -126,7 +117,7 @@ def leaf_ids_for_node(service: Any, node_id: str) -> list[str]:
     ).fetchone()
     if row is None:
         return []
-    payload = _safe_json_loads(str(row["leaf_unit_ids_json"]), [])
+    payload = _json_loads(str(row["leaf_unit_ids_json"]), [])
     if not isinstance(payload, list):
         return []
     return [str(item) for item in payload if str(item).strip()]
@@ -159,11 +150,10 @@ def expand_group(service: Any, *, group_id: str, k: int) -> list[RetrievedItem]:
         FROM retrievectl_units u
         JOIN retrievectl_docs d ON d.doc_id = u.doc_id
         WHERE u.group_id = ?
-        ORDER BY COALESCE(json_extract(u.offsets_json, '$.start_token'), 0), u.unit_id
-        LIMIT ?
         """,
-        (group_id, int(k)),
+        (group_id,),
     ).fetchall()
+    rows = sorted(rows, key=lambda row: (_offset_start(row), str(row["unit_id"])))[:k]
     out: list[RetrievedItem] = []
     for idx, row in enumerate(rows):
         candidate = candidate_from_row(
@@ -194,10 +184,10 @@ def expand_window(service: Any, *, unit_id: str, k: int) -> list[RetrievedItem]:
         FROM retrievectl_units u
         JOIN retrievectl_docs d ON d.doc_id = u.doc_id
         WHERE u.doc_id = ?
-        ORDER BY COALESCE(json_extract(u.offsets_json, '$.start_token'), 0), u.unit_id
         """,
         (doc_id,),
     ).fetchall()
+    rows = sorted(rows, key=lambda row: (_offset_start(row), str(row["unit_id"])))
     if not rows:
         return []
 
@@ -238,11 +228,10 @@ def expand_document(service: Any, *, unit_id: str, k: int) -> list[RetrievedItem
         FROM retrievectl_units u
         JOIN retrievectl_docs d ON d.doc_id = u.doc_id
         WHERE u.doc_id = ?
-        ORDER BY COALESCE(json_extract(u.offsets_json, '$.start_token'), 0), u.unit_id
-        LIMIT ?
         """,
-        (doc_id, int(k)),
+        (doc_id,),
     ).fetchall()
+    rows = sorted(rows, key=lambda row: (_offset_start(row), str(row["unit_id"])))[:k]
     out: list[RetrievedItem] = []
     for idx, row in enumerate(rows):
         score = max(0.0, 0.95 - (idx * 0.05))

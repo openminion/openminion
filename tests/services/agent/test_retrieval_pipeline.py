@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from openminion.modules.memory.runtime.retrieval_pipeline import RetrievalPipeline
+from openminion.modules.retrieve.errors import RetrieveCtlError
 
 
 def _make_pipeline() -> RetrievalPipeline:
@@ -14,6 +15,7 @@ def _make_pipeline() -> RetrievalPipeline:
         agent_id="pipeline-test-agent",
         retrieval_max_chars=2000,
         trace_fn=None,
+        retrieve_error_type=RetrieveCtlError,
     )
 
 
@@ -83,11 +85,12 @@ def test_rank_and_format_keeps_unified_scores_without_lexical_diversity_fallback
     pipeline = RetrievalPipeline(
         retrieve_ctl=_RetrieveCtl(),
         config=None,
-        ranking_config=type("Ranking", (), {"mmr_enabled": True, "mmr_lambda": 0.0})(),
+        ranking_config=None,
         logger=logging.getLogger("openminion.tests"),
         agent_id="pipeline-test-agent",
         retrieval_max_chars=2000,
         trace_fn=None,
+        retrieve_error_type=RetrieveCtlError,
     )
 
     _, _, retrieve_hits, _ = pipeline.rank_and_format(
@@ -107,32 +110,46 @@ def test_rank_and_format_keeps_unified_scores_without_lexical_diversity_fallback
     )
 
 
-def test_mmr_rerank_stays_score_ordered_without_embeddings_when_lambda_zero() -> None:
+def test_selection_stays_score_ordered_without_embeddings() -> None:
     pipeline = _make_pipeline()
-    reranked = pipeline.mmr_rerank(
+    reranked = pipeline._select_retrieve_hits(  # noqa: SLF001
         [
             {"text": "cluster alpha", "score": 0.9},
             {"text": "cluster alpha", "score": 0.8},
             {"text": "unique beta", "score": 0.7},
-        ],
-        k=2,
-        lambda_=0.0,
+        ]
     )
 
     texts = [item["text"] for item in reranked]
     assert "cluster alpha" in texts
-    assert texts == ["cluster alpha", "cluster alpha"]
+    assert texts == ["cluster alpha", "cluster alpha", "unique beta"]
 
 
-def test_selection_keeps_global_unified_score_order_when_mmr_is_disabled() -> None:
+def test_merge_keeps_identity_less_hits_and_deduplicates_stable_ids() -> None:
+    pipeline = _make_pipeline()
+    first = {"text": "first without identity", "meta": {}}
+    second = {"text": "second without identity"}
+    identified = {"text": "identified", "meta": {"unit_id": "unit-1"}}
+    duplicate = {"text": "duplicate", "meta": {"unit_id": "unit-1"}}
+
+    merged = pipeline._merge_and_dedup(  # noqa: SLF001
+        [first, identified],
+        [second, duplicate],
+    )
+
+    assert merged == [first, identified, second]
+
+
+def test_selection_keeps_global_unified_score_order() -> None:
     pipeline = RetrievalPipeline(
         retrieve_ctl=None,
         config=None,
-        ranking_config=type("Ranking", (), {"mmr_enabled": False})(),
+        ranking_config=None,
         logger=logging.getLogger("openminion.tests"),
         agent_id="pipeline-test-agent",
         retrieval_max_chars=2000,
         trace_fn=None,
+        retrieve_error_type=RetrieveCtlError,
     )
 
     selected = pipeline._select_retrieve_hits(  # noqa: SLF001
@@ -168,6 +185,7 @@ def test_default_conversational_retrieval_does_not_expand_query() -> None:
         agent_id="pipeline-test-agent",
         retrieval_max_chars=2000,
         trace_fn=None,
+        retrieve_error_type=RetrieveCtlError,
     )
 
     conversational, _hit_counts = pipeline._retrieve_split(  # noqa: SLF001
@@ -195,17 +213,6 @@ def test_default_conversational_retrieval_does_not_expand_query() -> None:
     assert [item.get("meta", {}).get("unit_id") for item in conversational] == ["u1"]
 
 
-def test_candidate_similarity_without_embeddings_returns_zero() -> None:
-    pipeline = _make_pipeline()
-
-    similarity = pipeline._candidate_similarity(  # noqa: SLF001
-        {"text": "todo buy milk", "score": 0.8},
-        {"text": "task buy milk", "score": 0.7},
-    )
-
-    assert similarity == 0.0
-
-
 def test_empty_retrieval_traces_lane_and_result_reasons() -> None:
     traces: list[tuple[str, dict[str, object]]] = []
 
@@ -221,6 +228,7 @@ def test_empty_retrieval_traces_lane_and_result_reasons() -> None:
         agent_id="pipeline-test-agent",
         retrieval_max_chars=2000,
         trace_fn=lambda event, payload: traces.append((event, payload)),
+        retrieve_error_type=RetrieveCtlError,
     )
 
     content, _, retrieve_hits, merged_hits = pipeline.rank_and_format(

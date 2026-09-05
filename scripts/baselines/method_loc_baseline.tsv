@@ -72,7 +72,7 @@ src/openminion/modules/memory/storage/sqlite/write.py	promote_candidate	111	curr
 src/openminion/modules/memory/submissions/sdk_path.py	_dispatch_entity_episode	181	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/retrieve/config.py	load_config	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/retrieve/runtime/ingestion.py	build_raptor_tree	212	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/retrieve/runtime/ingestion.py	ingest_source	144	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/retrieve/runtime/ingestion.py	ingest_source	118	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/cli.py	_add_session_cli_subcommands	264	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/cli.py	_handle_session_store_command	280	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/storage/cron_store.py	CronStore.enqueue_due_cron_runs	131	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -98,7 +98,7 @@ src/openminion/services/gateway/service.py	GatewayService.handle_message_streami
 src/openminion/services/gateway/turn/__init__.py	GatewayTurnRunner.run	197	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/observability.py	_build_brain_llm_mode_observability_check	167	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/health/service.py	collect_health_snapshot	199	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/runtime/bootstrap.py	build_brain_runner_bundle	291	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/services/runtime/bootstrap.py	build_brain_runner_bundle	290	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/runtime/manager.py	AgentRuntimeManager._worker_loop	146	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/supervision/service.py	SupervisionService.evaluate	119	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/browser/providers/playwright/config.py	provider_config_from_mapping	184	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

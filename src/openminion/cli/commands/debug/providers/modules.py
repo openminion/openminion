@@ -131,7 +131,7 @@ class OpenMinionRetrieveDebugProvider(_ModuleDebugProvider):
 
         retrieve_service = None
         try:
-            retrieve_service = RetrieveCtl(config=str(config_path), vector_adapter=None)
+            retrieve_service = RetrieveCtl(config=str(config_path))
             return True, None
         except Exception as exc:
             return False, str(exc)

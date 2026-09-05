@@ -7,14 +7,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence, cast
 
-from openminion.modules.memory.runtime.scorer import clamp01
-
+from ..errors import RetrieveCtlError
 from ..schemas import RetrievalFilters, RetrievalStrategy, RetrievedItem
 from .time import parse_iso_timestamp
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 _LOGGER = logging.getLogger(__name__)
 _RLM_TRUST_SCORES = {"sm": 1.0, "skill": 0.9, "session": 0.7}
+
+
+def _clamp_score(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 def _tokenize(text: str) -> list[str]:
@@ -35,16 +38,11 @@ def _title_identity_boost(
         return 0.0
     overlap = matched / len(title_tokens)
     title_weight = min(1.0, len(title_tokens) / 2.0)
-    return clamp01(float(max_boost) * overlap * title_weight)
+    return _clamp_score(float(max_boost) * overlap * title_weight)
 
 
-def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
-    if raw is None:
-        return fallback
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return fallback
+def _json_loads(raw: str | None, fallback: Any) -> Any:
+    return fallback if raw is None else json.loads(raw)
 
 
 def _normalize_scope_keys(raw_scope_keys: Sequence[str]) -> list[str]:
@@ -107,18 +105,15 @@ def resolve_retrieval_strategy(
     *,
     requested_strategy: str,
     purpose: str,
-    query: str,
     scope: Mapping[str, Any],
-    filters: RetrievalFilters,
     default_strategy: str,
-    vector_adapter_enabled: bool,
-    embeddings_enabled: bool,
 ) -> RetrievalStrategy:
     normalized = str(requested_strategy or "auto").strip().lower()
     if normalized == "semantic":
-        if vector_adapter_enabled and embeddings_enabled:
-            return "semantic"
-        return "contextual"
+        raise RetrieveCtlError(
+            "SEMANTIC_UNAVAILABLE",
+            "Semantic retrieval is unavailable through RetrieveCtl.",
+        )
     if normalized in {"contextual", "raptor", "longrag_doc_group"}:
         return cast(RetrievalStrategy, normalized)
 
@@ -127,9 +122,10 @@ def resolve_retrieval_strategy(
     if bool(scope.get("doc_heavy")):
         return "raptor"
     if default_strategy == "semantic":
-        if vector_adapter_enabled and embeddings_enabled:
-            return "semantic"
-        return "contextual"
+        raise RetrieveCtlError(
+            "SEMANTIC_UNAVAILABLE",
+            "Semantic retrieval is unavailable through RetrieveCtl.",
+        )
     if default_strategy in {"contextual", "raptor", "longrag_doc_group"}:
         return cast(RetrievalStrategy, default_strategy)
     return "contextual"
@@ -200,7 +196,7 @@ def generate_candidates(
 
 
 def _candidate_row_tags(row: Mapping[str, Any]) -> list[str]:
-    tags = _safe_json_loads(str(row["tags_json"]), [])
+    tags = _json_loads(str(row["tags_json"]), [])
     if not isinstance(tags, list):
         return []
     return [str(tag) for tag in tags if str(tag).strip()]
@@ -244,14 +240,6 @@ def _append_filter_sql(
             "d.source_type IN ({})".format(",".join("?" for _ in filters.types))
         )
         params.extend([service._normalize_source_type(item) for item in filters.types])
-    tags = _normalize_filter_tags(filters.tags)
-    if tags:
-        tag_query = (
-            "EXISTS (SELECT 1 FROM json_each(d.tags_json) AS tag "
-            "WHERE LOWER(tag.value) = ?)"
-        )
-        where.append("(" + " OR ".join(tag_query for _ in tags) + ")")
-        params.extend(tags)
     if filters.time_window_hours is not None:
         cutoff = datetime.now(timezone.utc) - timedelta(
             hours=float(filters.time_window_hours)
@@ -282,7 +270,7 @@ def _candidate_from_row(
         "node_id": str(row["node_id"]) if row["node_id"] is not None else None,
         "group_id": str(row["group_id"]) if row["group_id"] is not None else None,
         "text_ref": str(row["text_ref"]),
-        "offsets": _safe_json_loads(str(row["offsets_json"]), {}),
+        "offsets": _json_loads(str(row["offsets_json"]), {}),
         "query": query,
         "bm25_score": float(row["bm25_score"] or 0.0),
         "type": _candidate_type(tags),
@@ -302,7 +290,7 @@ def _candidate_meta(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "hit_count": int(row["hit_count"] or 0),
         "last_hit_at": str(row["last_hit_at"]) if row["last_hit_at"] else None,
-        "feedback_score": clamp01(float(row["feedback_score"] or 0.0)),
+        "feedback_score": _clamp_score(float(row["feedback_score"] or 0.0)),
     }
 
 
@@ -327,7 +315,7 @@ def apply_title_identity_boost_in_place(
             title=str(candidate.get("title", "") or ""),
             max_boost=max_boost,
         )
-        base_score = clamp01(
+        base_score = _clamp_score(
             float(
                 candidate.get(
                     "unified_score",
@@ -336,12 +324,12 @@ def apply_title_identity_boost_in_place(
                 or 0.0
             )
         )
-        boosted_score = clamp01(base_score + boost)
-        breakdown["title_identity_boost"] = clamp01(boost)
-        breakdown["unified_score"] = clamp01(boosted_score)
-        meta["unified_score"] = clamp01(boosted_score)
-        candidate["score"] = clamp01(boosted_score)
-        candidate["unified_score"] = clamp01(boosted_score)
+        boosted_score = _clamp_score(base_score + boost)
+        breakdown["title_identity_boost"] = _clamp_score(boost)
+        breakdown["unified_score"] = _clamp_score(boosted_score)
+        meta["unified_score"] = _clamp_score(boosted_score)
+        candidate["score"] = _clamp_score(boosted_score)
+        candidate["unified_score"] = _clamp_score(boosted_score)
     candidates.sort(
         key=lambda item: (
             -float(item.get("unified_score", item.get("score", 0.0)) or 0.0),
@@ -354,18 +342,6 @@ def _select_contextual(
     candidates: list[dict[str, Any]], target_k: int
 ) -> list[dict[str, Any]]:
     return candidates[:target_k]
-
-
-def _select_semantic(
-    service: Any,
-    *,
-    candidates: list[dict[str, Any]],
-    target_k: int,
-) -> list[dict[str, Any]]:
-    if service.vector_adapter is None:
-        setattr(service, "_last_retrieval_degraded_reason", "vector_adapter_missing")
-        return _select_contextual(candidates, target_k)
-    return select_candidates_semantic(service, candidates=candidates, k=target_k)
 
 
 def _select_longrag_doc_group(
@@ -467,8 +443,6 @@ def select_candidates(
     if not candidates:
         return []
     target_k = max(1, int(k))
-    if strategy == "semantic":
-        return _select_semantic(service, candidates=candidates, target_k=target_k)
     if strategy == "longrag_doc_group":
         return _select_longrag_doc_group(
             service, candidates=candidates, target_k=target_k
@@ -476,45 +450,6 @@ def select_candidates(
     if strategy == "raptor":
         return _select_raptor(service, candidates=candidates, target_k=target_k)
     return _select_contextual(candidates, target_k)
-
-
-def select_candidates_semantic(
-    service: Any,
-    *,
-    candidates: list[dict[str, Any]],
-    k: int,
-) -> list[dict[str, Any]]:
-    if not candidates or not service.vector_adapter:
-        return candidates[:k]
-
-    query_text = candidates[0].get("query", "")
-    if not query_text:
-        return candidates[:k]
-
-    try:
-        search_results = service.vector_adapter.search(
-            query=query_text,
-            k=min(k * 2, len(candidates)),
-            filters=None,
-        )
-        score_map: dict[str, float] = {}
-        for result in search_results:
-            unit_id = result.get("id", "")
-            score_map[unit_id] = result.get("score", 0.0)
-        for item in candidates:
-            unit_id = item.get("unit_id", "")
-            item["vector_score"] = score_map.get(unit_id, 0.0)
-        candidates = sorted(
-            candidates,
-            key=lambda item: (
-                -float(item.get("vector_score", 0.0)),
-                str(item.get("unit_id", "")),
-            ),
-        )
-    except Exception as exc:
-        setattr(service, "_last_retrieval_degraded_reason", "semantic_adapter_failed")
-        _LOGGER.warning("semantic_search_fallback: %s", exc, exc_info=True)
-    return candidates[:k]
 
 
 def to_retrieved_item(
@@ -554,27 +489,32 @@ def to_retrieved_item(
         raptor_level = "internal"
 
     candidate_meta = candidate.get("meta") or {}
-    score = clamp01(float(candidate.get("score", 0.0) or 0.0))
-    recency = clamp01(float(candidate.get("recency", 0.0) or 0.0))
+    score = _clamp_score(float(candidate.get("score", 0.0) or 0.0))
+    recency = _clamp_score(float(candidate.get("recency", 0.0) or 0.0))
     if isinstance(candidate_meta, Mapping):
         breakdown = candidate_meta.get("score_breakdown", {})
         if isinstance(breakdown, Mapping):
             try:
-                recency = clamp01(float(breakdown.get("recency", recency) or 0.0))
+                recency = _clamp_score(float(breakdown.get("recency", recency) or 0.0))
             except (TypeError, ValueError):
-                recency = clamp01(recency)
+                recency = _clamp_score(recency)
     tags = [str(tag) for tag in candidate.get("tags", []) if str(tag).strip()]
 
     meta = {
         "doc_id": str(candidate.get("doc_id", "")),
         "unit_id": unit_id,
+        "memory_id": (
+            source_ref.removeprefix("mem:") if source_type == "mem" else None
+        ),
         "node_id": node_id,
         "offsets": candidate.get("offsets", {}),
         "created_at": candidate.get("created_at"),
         "tags": tags,
         "hit_count": int(candidate_meta.get("hit_count") or 0),
         "last_hit_at": candidate_meta.get("last_hit_at"),
-        "feedback_score": clamp01(float(candidate_meta.get("feedback_score") or 0.0)),
+        "feedback_score": _clamp_score(
+            float(candidate_meta.get("feedback_score") or 0.0)
+        ),
         "score_breakdown": candidate_meta.get("score_breakdown", {}),
     }
 
@@ -685,7 +625,7 @@ def recent_rows(
 def candidate_from_row(
     service: Any, row: Mapping[str, Any], inherited_score: float
 ) -> dict[str, Any]:
-    tags = _safe_json_loads(str(row["tags_json"]), [])
+    tags = _json_loads(str(row["tags_json"]), [])
     hit_count_raw = _optional_row_value(row, "hit_count")
     last_hit_raw = _optional_row_value(row, "last_hit_at")
     feedback_raw = _optional_row_value(row, "feedback_score")
@@ -702,24 +642,24 @@ def candidate_from_row(
         "node_id": str(row["node_id"]) if row["node_id"] is not None else None,
         "group_id": str(row["group_id"]) if row["group_id"] is not None else None,
         "text_ref": str(row["text_ref"]),
-        "offsets": _safe_json_loads(str(row["offsets_json"]), {}),
-        "score": clamp01(inherited_score),
-        "unified_score": clamp01(inherited_score),
-        "bm25_score": clamp01(inherited_score),
+        "offsets": _json_loads(str(row["offsets_json"]), {}),
+        "score": _clamp_score(inherited_score),
+        "unified_score": _clamp_score(inherited_score),
+        "bm25_score": _clamp_score(inherited_score),
         "type": _candidate_type(tags if isinstance(tags, list) else []),
         "confidence": float(service.config.defaults.confidence_default),
         "meta": {
             "hit_count": int(hit_count_raw or 0),
             "last_hit_at": str(last_hit_raw) if last_hit_raw else None,
-            "feedback_score": clamp01(float(feedback_raw or 0.0)),
+            "feedback_score": _clamp_score(float(feedback_raw or 0.0)),
             "score_breakdown": {
-                "relevance": clamp01(inherited_score),
+                "relevance": _clamp_score(inherited_score),
                 "recency": 0.0,
                 "feedback": 0.0,
                 "type_bonus": 0.0,
                 "confidence": float(service.config.defaults.confidence_default),
                 "outcome_utility": 0.5,
-                "unified_score": clamp01(inherited_score),
+                "unified_score": _clamp_score(inherited_score),
             },
         },
         "why": "raptor_expand",

@@ -698,7 +698,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     retrieve_api = bridge_module.init_retrieve_adapter(
         mode=service.mode,
         home_root=service._context.home_paths.home_root,
-        vector_adapter=vector_adapter,
         config=service._get_manager_config("retrieve"),
         logger=service._logger,
         retrieve_service=service._retrieve_service,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import list as list_type
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from sophiagraph.query import (
@@ -75,6 +76,8 @@ class MemoryStore(Protocol):
     def tombstone(self, scope: str, type: MemoryType, key: str) -> None: ...
 
     def list(self, options: ListQueryOptions) -> list[MemoryRecord]: ...
+
+    def list_all(self) -> list_type[MemoryRecord]: ...
 
     def search(self, options: SearchQueryOptions) -> list[MemoryRecord]: ...
 

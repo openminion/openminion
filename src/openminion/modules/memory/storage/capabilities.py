@@ -55,6 +55,8 @@ class RecordStore(Protocol):
 
     def list(self, options: ListQueryOptions) -> list_type[MemoryRecord]: ...
 
+    def list_all(self) -> list_type[MemoryRecord]: ...
+
     def list_scopes(self) -> list_type[str]: ...
 
     def touch_last_hit(self, record_id: str) -> None: ...
@@ -201,6 +203,9 @@ class CapabilityMemoryStore:
 
     def list(self, options: ListQueryOptions) -> list_type[MemoryRecord]:
         return self._records.list(options)
+
+    def list_all(self) -> list_type[MemoryRecord]:
+        return self._records.list_all()
 
     def list_scopes(self) -> list_type[str]:
         return self._records.list_scopes()

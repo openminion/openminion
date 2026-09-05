@@ -25,10 +25,10 @@
   "package_errors": {
     "api": 79,
     "cli": 523,
-    "modules": 3415,
+    "modules": 3412,
     "root": 1,
     "services": 364,
-    "tools": 258
+    "tools": 261
   },
   "python_version": "3.11.15",
   "reset_debt": {

@@ -1,29 +1,22 @@
 from __future__ import annotations
 
 from openminion.modules.retrieve.runtime.retrieval import resolve_retrieval_strategy
-from openminion.modules.retrieve.schemas import RetrievalFilters
+from openminion.modules.retrieve.errors import RetrieveCtlError
+import pytest
 
 
 def _resolve(
     *,
     requested_strategy: str = "auto",
     purpose: str = "act",
-    query: str = "",
     scope: dict | None = None,
-    filters: RetrievalFilters | None = None,
     default_strategy: str = "contextual",
-    vector_adapter_enabled: bool = True,
-    embeddings_enabled: bool = True,
 ):
     return resolve_retrieval_strategy(
         requested_strategy=requested_strategy,
         purpose=purpose,
-        query=query,
         scope=scope or {},
-        filters=filters or RetrievalFilters(),
         default_strategy=default_strategy,
-        vector_adapter_enabled=vector_adapter_enabled,
-        embeddings_enabled=embeddings_enabled,
     )
 
 
@@ -39,22 +32,9 @@ def test_explicit_longrag_doc_group_passes_through() -> None:
     assert _resolve(requested_strategy="longrag_doc_group") == "longrag_doc_group"
 
 
-def test_explicit_semantic_falls_back_when_vector_disabled() -> None:
-    assert (
-        _resolve(requested_strategy="semantic", vector_adapter_enabled=False)
-        == "contextual"
-    )
-
-
-def test_explicit_semantic_kept_when_vector_and_embeddings_enabled() -> None:
-    assert (
-        _resolve(
-            requested_strategy="semantic",
-            vector_adapter_enabled=True,
-            embeddings_enabled=True,
-        )
-        == "semantic"
-    )
+def test_explicit_semantic_is_unavailable() -> None:
+    with pytest.raises(RetrieveCtlError, match="SEMANTIC_UNAVAILABLE"):
+        _resolve(requested_strategy="semantic")
 
 
 def test_auto_with_verify_purpose_returns_contextual() -> None:
@@ -79,7 +59,6 @@ def test_auto_query_keyword_handbook_no_longer_routes_to_longrag() -> None:
     assert (
         _resolve(
             requested_strategy="auto",
-            query="please find the policy handbook",
             purpose="act",
             default_strategy="contextual",
         )
@@ -91,7 +70,6 @@ def test_auto_query_keyword_research_multi_hop_no_longer_routes_to_raptor() -> N
     assert (
         _resolve(
             requested_strategy="auto",
-            query="research multi-hop comparison",
             purpose="act",
             default_strategy="contextual",
         )
@@ -103,7 +81,6 @@ def test_auto_filters_tags_spec_no_longer_routes_to_longrag() -> None:
     assert (
         _resolve(
             requested_strategy="auto",
-            filters=RetrievalFilters(tags=["spec"]),
             purpose="act",
             default_strategy="contextual",
         )

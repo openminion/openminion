@@ -209,7 +209,6 @@ def test_skill_ingest_and_retrieve(tmp_path: Path) -> None:
                 "defaults": {
                     "strategy": "contextual",
                     "contextual_enabled": True,
-                    "embeddings_enabled": False,
                     "lexical_candidate_count": 25,
                     "snippet_tokens": 120,
                     "chunk_target_tokens": 40,
@@ -329,7 +328,6 @@ def test_skill_retrieve_matches_hyphenated_skill_ids(tmp_path: Path) -> None:
                 "defaults": {
                     "strategy": "contextual",
                     "contextual_enabled": True,
-                    "embeddings_enabled": False,
                     "lexical_candidate_count": 25,
                     "snippet_tokens": 120,
                     "chunk_target_tokens": 40,
@@ -419,7 +417,6 @@ def test_skill_reingest_all_backfills_retrieve(tmp_path: Path) -> None:
                 "defaults": {
                     "strategy": "contextual",
                     "contextual_enabled": True,
-                    "embeddings_enabled": False,
                     "lexical_candidate_count": 25,
                     "snippet_tokens": 120,
                     "chunk_target_tokens": 40,

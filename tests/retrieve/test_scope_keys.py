@@ -20,7 +20,6 @@ def _config(tmp_path: Path) -> dict:
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -50,6 +49,27 @@ def test_retrieval_filters_accept_scope_keys() -> None:
         }
     )
     assert filters.scope_keys == ["session:s-1", "agent:a-1"]
+
+
+def test_ingest_defaults_missing_scope_key_to_normalized_legacy_scope(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    try:
+        service.ingest_memory(
+            "memory-legacy",
+            "legacy memory content",
+            {"scope": None, "scope_key": None},
+        )
+        row = service.store.execute(
+            "SELECT scope, scope_key FROM retrievectl_docs WHERE source_ref = ?",
+            ("mem:memory-legacy",),
+        ).fetchone()
+
+        assert row["scope"] == "agent"
+        assert row["scope_key"] == "agent:legacy"
+    finally:
+        service.close()
 
 
 def test_retrievectl_retrieve_accepts_scope_keys_without_regression(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from builtins import list as list_type
 import json
 import logging
 from contextlib import contextmanager
@@ -277,6 +278,11 @@ class PostgresMemoryStore(MemoryStore):
     invalidate = _invalidate_workflow
     tombstone = _tombstone_workflow
     list = _list_records_query
+
+    def list_all(self) -> list_type[MemoryRecord]:
+        rows = self._fetchall("SELECT * FROM memory_records ORDER BY id")
+        return [self._create_record_from_row(row) for row in rows]
+
     list_scopes = _list_scopes_query
     touch_last_hit = _touch_last_hit_query
     apply_outcome_feedback = _apply_outcome_feedback_workflow

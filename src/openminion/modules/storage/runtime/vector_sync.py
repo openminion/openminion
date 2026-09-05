@@ -14,16 +14,14 @@ class VectorSyncScheduler:
         vector_adapter: Any,
         *,
         interval_seconds: int = 30,
-        batch_size: int = 32,
     ):
         self._vector_adapter = vector_adapter
         self._interval = interval_seconds
-        self._batch_size = batch_size
         self._running = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
-        self._stats = {
+        self._stats: dict[str, Any] = {
             "records_processed": 0,
             "failures": 0,
             "last_sync_at": None,
@@ -44,9 +42,8 @@ class VectorSyncScheduler:
             )
             self._thread.start()
             logger.info(
-                "Vector sync scheduler started: interval=%ds, batch_size=%d",
+                "Vector sync scheduler started: interval=%ds",
                 self._interval,
-                self._batch_size,
             )
 
     def stop(self) -> None:
@@ -71,14 +68,13 @@ class VectorSyncScheduler:
         thread = self._thread
         return bool(thread is not None and thread.is_alive())
 
-    def sync_now(self, *, limit: int | None = None) -> int:
+    def sync_now(self) -> int:
         """Sync pending records and return the number processed."""
         if self._vector_adapter is None:
             return 0
 
         try:
-            limit = limit or self._batch_size
-            processed = self._vector_adapter.sync_pending_records(limit=limit)
+            processed = int(self._vector_adapter.sync_pending_records())
 
             with self._lock:
                 self._stats["records_processed"] += processed

@@ -59,7 +59,6 @@ modules/policy/adapters/composition.py	openminion.modules.tool.runtime.blast_rad
 modules/policy/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/registry/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/retrieve/config.py	openminion.modules.storage.runtime.provider_selection
-modules/retrieve/runtime/retrieval.py	openminion.modules.memory.runtime.scorer
 modules/retrieve/runtime/retrieve.py	openminion.modules.memory.runtime.scorer
 modules/retrieve/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/secret/storage/store.py	openminion.modules.storage.runtime.module_store

@@ -33,17 +33,10 @@ def strategy_resolution_reason(
     resolved_strategy: RetrievalStrategy,
     scope: Mapping[str, Any],
     purpose: str,
-    vector_adapter_available: bool,
-    embeddings_enabled: bool,
 ) -> str:
     requested = str(requested_strategy or "auto").strip().lower() or "auto"
     if requested == str(resolved_strategy):
         return "explicit"
-    if requested == "semantic":
-        if not vector_adapter_available:
-            return "vector_adapter_missing"
-        if not embeddings_enabled:
-            return "embeddings_disabled"
     if requested == "auto":
         if str(purpose or "").strip().lower() == "verify":
             return "verify_contextual"

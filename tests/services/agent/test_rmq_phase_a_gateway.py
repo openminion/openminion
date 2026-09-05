@@ -49,26 +49,25 @@ def test_build_retrieval_filters_shape() -> None:
     assert with_project.time_window_hours is None
 
 
-def test_retrieve_split_isolates_failures_per_lane() -> None:
+def test_retrieve_split_propagates_unexpected_failures() -> None:
+    import pytest
+
     retrieve_ctl = Mock(name="retrieve_ctl")
     retrieve_ctl.retrieve.side_effect = [
         RuntimeError("conv failed"),
         [{"text": "knowledge", "meta": {"unit_id": "u-k"}}],
     ]
     adapter = _make_adapter(retrieve_ctl=retrieve_ctl)
-    merged, counts = _pipeline(adapter)._retrieve_split(  # noqa: SLF001
-        retrieve_ctl,
-        query="query",
-        session_id="sess-a",
-        agent_id="agent-a",
-        project_id=None,
-        k_conversational=3,
-        k_knowledge=3,
-    )
-
-    assert counts["conversational"] == 0
-    assert counts["knowledge"] == 1
-    assert merged == [{"text": "knowledge", "meta": {"unit_id": "u-k"}}]
+    with pytest.raises(RuntimeError, match="conv failed"):
+        _pipeline(adapter)._retrieve_split(  # noqa: SLF001
+            retrieve_ctl,
+            query="query",
+            session_id="sess-a",
+            agent_id="agent-a",
+            project_id=None,
+            k_conversational=3,
+            k_knowledge=3,
+        )
 
 
 def test_pipeline_order_split_then_selection() -> None:
@@ -81,8 +80,6 @@ def test_pipeline_order_split_then_selection() -> None:
             k_knowledge=1,
             decay_halflife_days=30,
             recency_weight=0.3,
-            mmr_enabled=False,
-            mmr_lambda=0.6,
         )
     )
     _pipeline(adapter)._config = adapter._config  # noqa: SLF001

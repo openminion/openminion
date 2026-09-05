@@ -279,7 +279,6 @@ def _build_runtime_support(
     )
     retrieve_ctl = build_retrieve_service(
         home_root=paths.home,
-        vector_adapter=vector_adapter,
         config=retrieve_config,
         logger=logger.getChild("retrieve"),
     )

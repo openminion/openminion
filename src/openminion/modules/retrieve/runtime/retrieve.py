@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import logging
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from . import diagnostics as diagnostic_ops
 from . import ingestion as ingestion_ops
 from . import retrieval as retrieval_ops
 from ..config import RetrieveCtlConfig, load_config, resolve_default_config_path
+from ..errors import RetrieveCtlError
 from ..interfaces import (
     RETRIEVE_INTERFACE_VERSION,
     ensure_retrieve_storage_compatibility,
@@ -69,7 +71,6 @@ class RetrieveCtl:
     def __init__(
         self,
         config: str | Path | dict[str, Any] | RetrieveCtlConfig | None = None,
-        vector_adapter: Any = None,
         ranking_config: RankingConfig | None = None,
         telemetryctl: Any | None = None,
         telemetry_session_id: str | None = None,
@@ -78,7 +79,6 @@ class RetrieveCtl:
         if config is None:
             config = resolve_default_config_path()
         self.config = load_config(config)
-        self.vector_adapter = vector_adapter
         self._ranking_config = (
             ranking_config
             if ranking_config is not None
@@ -168,7 +168,7 @@ class RetrieveCtl:
                 "blob_root_exists": blob_root.exists(),
                 "wal_mode": bool(self.config.storage.wal_mode),
             },
-            "vector_adapter": bool(self.vector_adapter),
+            "semantic_strategy": "unavailable",
         }
 
     def retrieve(
@@ -185,14 +185,19 @@ class RetrieveCtl:
         normalized_query = str(query or "").strip()
         if not normalized_query:
             return []
-        execution = self._execute_retrieval(
-            query=normalized_query,
-            purpose=purpose,
-            scope=scope,
-            k=k,
-            strategy=strategy,
-            filters=filters,
-        )
+        try:
+            execution = self._execute_retrieval(
+                query=normalized_query,
+                purpose=purpose,
+                scope=scope,
+                k=k,
+                strategy=strategy,
+                filters=filters,
+            )
+        except json.JSONDecodeError as exc:
+            raise RetrieveCtlError(
+                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+            ) from exc
         items = [
             self._to_retrieved_item(candidate=item, strategy=execution.strategy)
             for item in execution.selected
@@ -248,8 +253,7 @@ class RetrieveCtl:
                 "resolved_strategy": "contextual",
                 "k": retrieval_k,
                 "filters": retrieval_filters.model_dump(mode="json"),
-                "vector_adapter": bool(self.vector_adapter),
-                "embeddings_enabled": bool(self.config.defaults.embeddings_enabled),
+                "semantic_strategy": "unavailable",
                 "counts": {
                     "scored_candidates": 0,
                     "after_verify_filter": 0,
@@ -261,14 +265,19 @@ class RetrieveCtl:
                 "top_candidates": [],
             }
 
-        execution = self._execute_retrieval(
-            query=normalized_query,
-            purpose=purpose,
-            scope=scope,
-            k=retrieval_k,
-            strategy=strategy,
-            filters=retrieval_filters,
-        )
+        try:
+            execution = self._execute_retrieval(
+                query=normalized_query,
+                purpose=purpose,
+                scope=scope,
+                k=retrieval_k,
+                strategy=strategy,
+                filters=retrieval_filters,
+            )
+        except json.JSONDecodeError as exc:
+            raise RetrieveCtlError(
+                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+            ) from exc
         returned_count = len(execution.selected)
         no_result_reason = diagnostic_ops.no_result_reason(
             normalized_query=normalized_query,
@@ -291,8 +300,7 @@ class RetrieveCtl:
             ),
             "k": execution.k,
             "filters": execution.filters.model_dump(mode="json"),
-            "vector_adapter": bool(self.vector_adapter),
-            "embeddings_enabled": bool(self.config.defaults.embeddings_enabled),
+            "semantic_strategy": "unavailable",
             "counts": {
                 "scored_candidates": execution.scored_candidate_count,
                 "after_verify_filter": len(execution.candidates),
@@ -320,11 +328,9 @@ class RetrieveCtl:
         retrieval_k = max(1, int(k))
         retrieval_filters = self._normalize_filters(filters)
         resolved_strategy = self._resolve_strategy(
-            query=query,
             purpose=str(purpose or "act"),
             strategy=str(strategy or "auto"),
             scope=scope,
-            filters=retrieval_filters,
         )
         candidates = self._score_candidates(
             query=query,
@@ -429,12 +435,7 @@ class RetrieveCtl:
                 scope=scope,
                 purpose=purpose,
             ),
-            "vector_adapter": "available"
-            if self.vector_adapter is not None
-            else "missing",
-            "embeddings_enabled": str(
-                bool(self.config.defaults.embeddings_enabled)
-            ).lower(),
+            "semantic_strategy": "unavailable",
             "scored_candidates": int(max(0, scored_candidate_count)),
         }
         if degraded_reason:
@@ -483,8 +484,6 @@ class RetrieveCtl:
             resolved_strategy=resolved_strategy,
             scope=scope,
             purpose=purpose,
-            vector_adapter_available=self.vector_adapter is not None,
-            embeddings_enabled=bool(self.config.defaults.embeddings_enabled),
         )
 
     def _record_retrieval_run(
@@ -515,36 +514,46 @@ class RetrieveCtl:
         target_k = max(1, int(k))
         normalized_mode = str(mode or "window").strip().lower()
 
-        if normalized_ref.startswith("node://"):
-            out = self._expand_node(
-                node_id=normalized_ref[len("node://") :], k=target_k
-            )
-            return [item.model_dump(mode="json") for item in out]
+        try:
+            if normalized_ref.startswith("node://"):
+                out = self._expand_node(
+                    node_id=normalized_ref[len("node://") :], k=target_k
+                )
+                return [item.model_dump(mode="json") for item in out]
 
-        if normalized_ref.startswith("group://"):
-            out = self._expand_group(
-                group_id=normalized_ref[len("group://") :], k=target_k
-            )
-            return [item.model_dump(mode="json") for item in out]
+            if normalized_ref.startswith("group://"):
+                out = self._expand_group(
+                    group_id=normalized_ref[len("group://") :], k=target_k
+                )
+                return [item.model_dump(mode="json") for item in out]
 
-        unit_id = self._parse_unit_id_from_ref(normalized_ref)
-        if unit_id is None:
-            unit_id = (
-                normalized_ref
-                if self._row_exists("retrievectl_units", "unit_id", normalized_ref)
-                else None
-            )
-        if unit_id is None:
-            return []
+            unit_id = self._parse_unit_id_from_ref(normalized_ref)
+            if unit_id is None:
+                unit_id = (
+                    normalized_ref
+                    if self._row_exists("retrievectl_units", "unit_id", normalized_ref)
+                    else None
+                )
+            if unit_id is None:
+                return []
 
-        if normalized_mode == "document":
-            out = self._expand_document(unit_id=unit_id, k=target_k)
-        else:
-            out = self._expand_window(unit_id=unit_id, k=target_k)
+            if normalized_mode == "document":
+                out = self._expand_document(unit_id=unit_id, k=target_k)
+            else:
+                out = self._expand_window(unit_id=unit_id, k=target_k)
+        except json.JSONDecodeError as exc:
+            raise RetrieveCtlError(
+                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+            ) from exc
         return [item.model_dump(mode="json") for item in out]
 
     def explain(self, item: dict[str, Any] | RetrievedItem | str) -> dict[str, Any]:
-        return expansion_ops.explain_item(self, item)
+        try:
+            return expansion_ops.explain_item(self, item)
+        except json.JSONDecodeError as exc:
+            raise RetrieveCtlError(
+                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+            ) from exc
 
     def ingest_artifact(
         self, artifact_ref: str, meta: dict[str, Any] | None = None
@@ -578,6 +587,7 @@ class RetrieveCtl:
         source_ref: str,
         text: str,
         scope: str,
+        scope_key: str | None = None,
         tags: list[str] | None = None,
         title: str | None = None,
         corpus_id: str | None = None,
@@ -590,6 +600,7 @@ class RetrieveCtl:
             source_ref=source_ref,
             text=text,
             scope=scope,
+            scope_key=scope_key,
             tags=tags,
             title=title,
             corpus_id=corpus_id,
@@ -603,12 +614,22 @@ class RetrieveCtl:
         return ingestion_ops.ingest_event(self, event_type, payload)
 
     def build_raptor_tree(self, doc_id: str) -> dict[str, Any]:
-        return ingestion_ops.build_raptor_tree(self, doc_id)
+        try:
+            return ingestion_ops.build_raptor_tree(self, doc_id)
+        except json.JSONDecodeError as exc:
+            raise RetrieveCtlError(
+                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+            ) from exc
 
     def group_long_units(
         self, corpus_id: str, grouping_policy: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        return ingestion_ops.group_long_units(self, corpus_id, grouping_policy)
+        try:
+            return ingestion_ops.group_long_units(self, corpus_id, grouping_policy)
+        except json.JSONDecodeError as exc:
+            raise RetrieveCtlError(
+                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+            ) from exc
 
     def record_hits(
         self, unit_ids: Sequence[str], *, observed_at: str | None = None
@@ -848,21 +869,15 @@ class RetrieveCtl:
     def _resolve_strategy(
         self,
         *,
-        query: str,
         purpose: str,
         strategy: str,
         scope: dict[str, Any],
-        filters: RetrievalFilters,
     ) -> RetrievalStrategy:
         return resolve_retrieval_strategy(
             requested_strategy=strategy,
             purpose=purpose,
-            query=query,
             scope=scope,
-            filters=filters,
             default_strategy=str(self.config.defaults.strategy),
-            vector_adapter_enabled=self.vector_adapter is not None,
-            embeddings_enabled=self.config.defaults.embeddings_enabled,
         )
 
     def _to_rlm_source(self, source_type: str) -> str:
