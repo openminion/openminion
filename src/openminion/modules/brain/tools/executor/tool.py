@@ -891,6 +891,7 @@ def finalize_tool_result(
         command_id=prepared_dispatch.command_id,
         raw=raw_result.raw_output,
         provider="tool",
+        tool_name=prepared_dispatch.tool_name,
     )
     if job is None:
         logger.emit(

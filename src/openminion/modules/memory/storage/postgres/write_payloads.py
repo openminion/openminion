@@ -59,11 +59,17 @@ def _feedback_update_values(
     command_id: str,
     observed_at: str,
     feedback_delta: float,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     updated_at = str(observed_at or "").strip()
     if not updated_at:
         updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     meta = dict(_json_loads(row.get("meta_json"), {}))
+    normalized_command_id = str(command_id or "").strip()
+    if (
+        meta.get("last_outcome_command_id") == normalized_command_id
+        and meta.get("last_outcome_status") == outcome
+    ):
+        return None
     existing_feedback = _clamp01(float(meta.get("feedback_score", 0.0) or 0.0))
     meta["feedback_score"] = _clamp01(existing_feedback + float(feedback_delta))
     meta.setdefault("outcome_success_count", 0)
@@ -74,7 +80,7 @@ def _feedback_update_values(
     meta[counter_key] = int(meta[counter_key] or 0) + 1
     meta["last_outcome_at"] = updated_at
     meta["last_outcome_status"] = outcome
-    meta["last_outcome_command_id"] = str(command_id or "").strip()
+    meta["last_outcome_command_id"] = normalized_command_id
     return {"meta": meta, "updated_at": updated_at}
 
 

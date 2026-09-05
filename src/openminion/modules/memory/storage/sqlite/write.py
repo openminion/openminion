@@ -602,6 +602,11 @@ def apply_outcome_feedback(
                     meta = {}
                 if not isinstance(meta, dict):
                     meta = {}
+                if (
+                    meta.get("last_outcome_command_id") == normalized_command_id
+                    and meta.get("last_outcome_status") == outcome
+                ):
+                    continue
                 try:
                     existing_feedback = store._clamp01(
                         float(meta.get("feedback_score", 0.0) or 0.0)

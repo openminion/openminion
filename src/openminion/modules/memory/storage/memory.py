@@ -283,6 +283,11 @@ class InMemoryRecordStore:
             if current is None or current.is_deleted or current.superseded_by_id:
                 continue
             meta = dict(current.meta or {})
+            if (
+                meta.get("last_outcome_command_id") == command_id
+                and meta.get("last_outcome_status") == outcome
+            ):
+                continue
             try:
                 existing_feedback = float(meta.get("feedback_score", 0.0) or 0.0)
             except (TypeError, ValueError):

@@ -6,6 +6,9 @@ from openminion.modules.memory.models import MemoryRecord
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
+from openminion.modules.memory.storage.postgres.write_payloads import (
+    _feedback_update_values,
+)
 
 
 def _now() -> str:
@@ -92,3 +95,63 @@ def test_inmemory_outcome_feedback_skips_deleted_and_superseded_records() -> Non
     assert updated == 1
     assert active_record.meta["feedback_score"] == 0.0
     assert active_record.meta["outcome_failure_count"] == 1
+
+
+def test_outcome_feedback_skips_immediate_command_replay(tmp_path) -> None:
+    now = _now()
+    for store in (
+        InMemoryMemoryStore(),
+        SQLiteMemoryStore(tmp_path / "replay.db"),
+    ):
+        service = MemoryService(store=store)
+        store.put(
+            MemoryRecord(
+                id="mem_replay",
+                scope="agent:test",
+                type="fact",
+                title="Replay",
+                content="Replay content",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        first = service.apply_outcome_feedback(
+            record_ids=["mem_replay"],
+            outcome="success",
+            command_id="cmd-replay",
+            observed_at=now,
+            feedback_delta=0.2,
+        )
+        replay = service.apply_outcome_feedback(
+            record_ids=["mem_replay"],
+            outcome="success",
+            command_id="cmd-replay",
+            observed_at=now,
+            feedback_delta=0.2,
+        )
+        stored = service.get("mem_replay")
+
+        assert first == 1
+        assert replay == 0
+        assert stored.meta["feedback_score"] == 0.2
+        assert stored.meta["outcome_success_count"] == 1
+
+
+def test_postgres_feedback_payload_skips_immediate_command_replay() -> None:
+    values = _feedback_update_values(
+        {
+            "meta_json": {
+                "feedback_score": 0.2,
+                "outcome_success_count": 1,
+                "last_outcome_command_id": "cmd-replay",
+                "last_outcome_status": "success",
+            }
+        },
+        outcome="success",
+        command_id="cmd-replay",
+        observed_at=_now(),
+        feedback_delta=0.2,
+    )
+
+    assert values is None

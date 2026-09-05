@@ -377,7 +377,7 @@ def execute_action_dispatch(
         )
         _tool_duration_ms = int((time.monotonic() - _tool_started_at) * 1000)
         normalized, job = runner._normalize_execution_result(
-            command_id=command.command_id, raw=raw, provider="tool"
+            command_id=command.command_id, raw=raw, provider="tool", tool_name=tool_name
         )
         if job is None:
             logger.emit(

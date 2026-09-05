@@ -24,6 +24,7 @@ def test_execution_result_accepts_explicit_typed_memory_use() -> None:
     result, job = normalize_execution_result(
         command_id="command-1",
         provider="tool",
+        tool_name="weather.lookup",
         raw={
             "status": "success",
             "memory_refs": ["produced-memory"],
@@ -41,6 +42,79 @@ def test_execution_result_accepts_explicit_typed_memory_use() -> None:
     assert job is None
     assert result.memory_refs == ["produced-memory"]
     assert result.memory_use_refs[0].record_id == "used-memory"
+
+
+@pytest.mark.parametrize(
+    ("producer_kind", "producer_id"),
+    [("model", "weather.lookup"), ("tool", "other.tool")],
+)
+def test_execution_result_rejects_wrong_memory_use_producer(
+    producer_kind: str,
+    producer_id: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="memory use attribution producer does not match execution",
+    ):
+        normalize_execution_result(
+            command_id="command-1",
+            provider="tool",
+            tool_name="weather.lookup",
+            raw={
+                "status": "success",
+                "memory_use_refs": [
+                    {
+                        "record_id": "used-memory",
+                        "use_kind": "used",
+                        "producer_kind": producer_kind,
+                        "producer_id": producer_id,
+                    }
+                ],
+            },
+        )
+
+
+def test_delegated_execution_memory_use_matches_action_command() -> None:
+    result, job = normalize_execution_result(
+        command_id="command-2",
+        provider="a2actl",
+        raw={
+            "status": "success",
+            "memory_use_refs": [
+                {
+                    "record_id": "used-memory",
+                    "use_kind": "used",
+                    "producer_kind": "action",
+                    "producer_id": "command-2",
+                }
+            ],
+        },
+    )
+
+    assert job is None
+    assert result.memory_use_refs[0].producer_id == "command-2"
+
+
+def test_tool_memory_use_requires_execution_identity() -> None:
+    with pytest.raises(
+        ValueError,
+        match="tool memory use attribution requires tool identity",
+    ):
+        normalize_execution_result(
+            command_id="command-3",
+            provider="tool",
+            raw={
+                "status": "success",
+                "memory_use_refs": [
+                    {
+                        "record_id": "used-memory",
+                        "use_kind": "used",
+                        "producer_kind": "tool",
+                        "producer_id": "weather.lookup",
+                    }
+                ],
+            },
+        )
 
 
 def test_only_typed_use_receives_outcome_feedback() -> None:
