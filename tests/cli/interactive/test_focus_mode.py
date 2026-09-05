@@ -405,9 +405,7 @@ class _FocusRuntimeDouble:
     def project_launch_approval_args(request: SimpleNamespace) -> dict[str, str]:
         return {"repository": str(request.repository)}
 
-    def launch_prepared_project(
-        self, request: SimpleNamespace
-    ) -> tuple[str, str]:
+    def launch_prepared_project(self, request: SimpleNamespace) -> tuple[str, str]:
         self.project_launches.append(request.run.run_id)
         return ("system", f"Project started: {request.run.run_id}")
 

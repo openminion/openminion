@@ -70,9 +70,7 @@ class RuntimeProjectMixin:
             ),
         }
 
-    def launch_prepared_project(
-        self, request: ProjectLaunchRequest
-    ) -> tuple[str, str]:
+    def launch_prepared_project(self, request: ProjectLaunchRequest) -> tuple[str, str]:
         from openminion.cli.commands.autonomy_project import launch_project
         from openminion.modules.task import AutonomyRunStore, TaskManager
         from openminion.modules.task.autonomy import resolve_autonomy_state_root
@@ -92,9 +90,7 @@ class RuntimeProjectMixin:
             f"Repository: {request.repository}",
         )
 
-    def deny_prepared_project(
-        self, request: ProjectLaunchRequest
-    ) -> tuple[str, str]:
+    def deny_prepared_project(self, request: ProjectLaunchRequest) -> tuple[str, str]:
         self._record_project_launch(
             request,
             event_type="project.launch_denied",
@@ -134,9 +130,7 @@ class RuntimeProjectMixin:
             telemetryctl=self._rt.telemetry_service,
             session_id=self.session_id,
             turn_id=f"project-launch:{run.run_id}",
-            operation=(
-                "project_launch_denied" if reason_code else "project_launch"
-            ),
+            operation=("project_launch_denied" if reason_code else "project_launch"),
             status=status,
             extra=payload,
         )

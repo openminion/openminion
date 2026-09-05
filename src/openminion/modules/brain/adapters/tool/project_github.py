@@ -61,14 +61,10 @@ def github_open_pr_action_scope(
     base: str,
     head_sha: str,
 ) -> str:
-    return (
-        f"repository={owner}/{repo};head={head};base={base};head_sha={head_sha}"
-    )
+    return f"repository={owner}/{repo};head={head};base={base};head_sha={head_sha}"
 
 
-def _require_project_checkpoint(
-    task_manager: Any, task_id: str
-) -> ProjectCheckpoint:
+def _require_project_checkpoint(task_manager: Any, task_id: str) -> ProjectCheckpoint:
     checkpoint = load_latest_project_checkpoint(task_manager, task_id=task_id)
     if checkpoint is None:
         raise ToolRuntimeError(
@@ -251,8 +247,7 @@ def complete_github_open_pr_project_effect(
         update={
             "status": ProjectEffectStatus.SUCCEEDED,
             "result_ref": (
-                f"github:pull:{receipt['owner']}/{receipt['repo']}"
-                f"#{receipt['number']}"
+                f"github:pull:{receipt['owner']}/{receipt['repo']}#{receipt['number']}"
             ),
             "non_reversible_reason": (
                 "OpenMinion does not automatically close a created pull request."
@@ -466,9 +461,7 @@ def _open_pr_receipt(
     owner = str(data.get("owner") or "")
     repo = str(data.get("repo") or "")
     raw_source = result.get("source")
-    source: Mapping[str, Any] = (
-        raw_source if isinstance(raw_source, Mapping) else {}
-    )
+    source: Mapping[str, Any] = raw_source if isinstance(raw_source, Mapping) else {}
     return {
         "owner": owner,
         "repo": repo,

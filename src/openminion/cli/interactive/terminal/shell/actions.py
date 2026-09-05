@@ -721,6 +721,8 @@ async def _handle_slash(
         return False
     _print_unknown_slash_notice(cmd, console)
     return False
+
+
 def _handle_tool_view_slash(
     cmd: str,
     text: str,

@@ -103,7 +103,9 @@ async def _dispatch(
     return output.getvalue()
 
 
-def _project_runtime(tmp_path) -> tuple[OpenMinionRuntime, _ProjectSessions, _ProjectTelemetry]:
+def _project_runtime(
+    tmp_path,
+) -> tuple[OpenMinionRuntime, _ProjectSessions, _ProjectTelemetry]:
     sessions = _ProjectSessions()
     telemetry = _ProjectTelemetry()
     runtime = OpenMinionRuntime.__new__(OpenMinionRuntime)
@@ -146,9 +148,7 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
         root=resolve_autonomy_state_root(runtime._rt.home_root)
     ).require(run_id)
     manager = TaskManager.for_lifecycle_db(
-        db_path=(
-            runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH
-        ).resolve()
+        db_path=(runtime._rt.data_root / DEFAULT_INTEGRATED_SQLITE_SUBPATH).resolve()
     )
     checkpoint = load_latest_project_checkpoint(manager, task_id=run.task_id or "")
 
@@ -174,7 +174,9 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     assert approval_args["verification_timeout_seconds"] > 0
 
 
-def test_terminal_project_denial_records_fact_without_creating_project(tmp_path) -> None:
+def test_terminal_project_denial_records_fact_without_creating_project(
+    tmp_path,
+) -> None:
     repository = tmp_path / "repo"
     repository.mkdir()
     (repository / ".git").mkdir()
@@ -195,9 +197,12 @@ def test_terminal_project_denial_records_fact_without_creating_project(tmp_path)
     assert "Project launch denied" in output
     assert sessions.events[0]["event_type"] == "project.launch_denied"
     assert sessions.events[0]["payload"]["reason_code"] == "operator_denied"
-    assert AutonomyRunStore(
-        root=resolve_autonomy_state_root(runtime._rt.home_root)
-    ).list_runs() == []
+    assert (
+        AutonomyRunStore(
+            root=resolve_autonomy_state_root(runtime._rt.home_root)
+        ).list_runs()
+        == []
+    )
     assert telemetry.operations[0][0][3] == "project_launch_denied"
 
 

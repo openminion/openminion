@@ -291,14 +291,17 @@ def task_plan_incomplete_disposition(
     has_error: bool,
     required: bool,
     previous_replans: int,
-) -> tuple[
-    ProjectCycleDecision,
-    AutonomyRunStatus,
-    AutonomyRunPhase,
-    ProjectVerificationState,
-    int,
-    str,
-] | None:
+) -> (
+    tuple[
+        ProjectCycleDecision,
+        AutonomyRunStatus,
+        AutonomyRunPhase,
+        ProjectVerificationState,
+        int,
+        str,
+    ]
+    | None
+):
     if not (
         required
         and closure_status == ProjectDomainVerificationStatus.VERIFIED

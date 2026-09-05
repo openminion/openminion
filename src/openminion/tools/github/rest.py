@@ -362,9 +362,7 @@ class GithubRestProvider:
             provider_id=self.provider_id,
         )
 
-    def resolve_open_pr_head_sha(
-        self, *, args: Mapping[str, Any], ctx: Any
-    ) -> str:
+    def resolve_open_pr_head_sha(self, *, args: Mapping[str, Any], ctx: Any) -> str:
         owner, repo = _owner_repo(args)
         head = str(args.get("head") or "").strip()
         base = str(args.get("base") or "").strip()

@@ -47,6 +47,7 @@ from .project import RuntimeProjectMixin
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
 _LIVE_USAGE_THROTTLE_SECONDS = 0.5
 
+
 def _session_sort_key(session: Any) -> str:
     return (
         str(getattr(session, "last_activity_at", "") or "")
@@ -124,7 +125,6 @@ class OpenMinionRuntime(
             SettingsResolver(workspace_root=self._working_dir)
         )
         self._pending_candidate_session: Any | None = None
-
         normalized_session_id = str(session_id or "").strip() or None
 
         if bind_immediately and not self._prompt_on_resume:

@@ -51,13 +51,21 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
-from openminion.modules.task.project import checkpoints as project_cp, effects as project_effects
+from openminion.modules.task.project import (
+    checkpoints as project_cp,
+    effects as project_effects,
+)
 
 _LOGGER = get_logger("project_worker")
 
 _ProjectCycleDisposition = tuple[
-    ProjectCycleDecision, AutonomyRunStatus, AutonomyRunPhase,
-    ProjectVerificationState, int, str]
+    ProjectCycleDecision,
+    AutonomyRunStatus,
+    AutonomyRunPhase,
+    ProjectVerificationState,
+    int,
+    str,
+]
 
 
 @dataclass(frozen=True)
@@ -217,9 +225,13 @@ class ProjectWorker:
                 checkpoint,
                 cycle_number=cycle_number,
             )
-            checkpoint = cast(ProjectCheckpoint, load_latest_project_checkpoint(
-                self._task_manager, task_id=task.task_id,
-            ))
+            checkpoint = cast(
+                ProjectCheckpoint,
+                load_latest_project_checkpoint(
+                    self._task_manager,
+                    task_id=task.task_id,
+                ),
+            )
             updated_project = self._updated_project_run(
                 run,
                 checkpoint,
@@ -663,8 +675,12 @@ class ProjectWorker:
         plan_disposition = cast(
             _ProjectCycleDisposition | None,
             project_cp.task_plan_incomplete_disposition(
-                run, cycle_number, closure_status, has_error,
-                task_plan_incomplete, previous_replans,
+                run,
+                cycle_number,
+                closure_status,
+                has_error,
+                task_plan_incomplete,
+                previous_replans,
             ),
         )
         if plan_disposition is not None:
