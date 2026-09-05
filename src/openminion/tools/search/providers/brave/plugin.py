@@ -116,9 +116,12 @@ class BraveSearchFacadeProvider:
             return bool(self._provider._api_key({}))
 
 
+_PROVIDER = BraveSearchFacadeProvider()
+
+
 def register(registry: object | None = None) -> None:
     del registry
-    register_provider(BraveSearchFacadeProvider())
+    register_provider(_PROVIDER)
 
 
 register_search_provider = register
