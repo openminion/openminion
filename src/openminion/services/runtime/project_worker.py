@@ -58,16 +58,6 @@ from openminion.modules.task.project import (
 
 _LOGGER = get_logger("project_worker")
 
-_ProjectCycleDisposition = tuple[
-    ProjectCycleDecision,
-    AutonomyRunStatus,
-    AutonomyRunPhase,
-    ProjectVerificationState,
-    int,
-    str,
-]
-
-
 @dataclass(frozen=True)
 class ProjectWorkerResult:
     run: AutonomyRun
@@ -671,9 +661,9 @@ class ProjectWorker:
         has_new_progress: bool,
         verification_waived: bool,
         task_plan_incomplete: bool,
-    ) -> _ProjectCycleDisposition:
+    ) -> project_cp.ProjectCycleDisposition:
         plan_disposition = cast(
-            _ProjectCycleDisposition | None,
+            project_cp.ProjectCycleDisposition | None,
             project_cp.task_plan_incomplete_disposition(
                 run,
                 cycle_number,

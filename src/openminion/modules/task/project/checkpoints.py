@@ -42,6 +42,15 @@ _OPEN_PROJECT_TASK_STATES = {
 }
 _REPOSITORY_LIFECYCLE_PAYLOAD_KEY = "repository_lifecycle"
 
+ProjectCycleDisposition = tuple[
+    ProjectCycleDecision,
+    AutonomyRunStatus,
+    AutonomyRunPhase,
+    ProjectVerificationState,
+    int,
+    str,
+]
+
 
 def _bounded_repository_text(value: object) -> str:
     redacted, _ = redact_sensitive_text(str(value or "").strip())
@@ -291,17 +300,7 @@ def task_plan_incomplete_disposition(
     has_error: bool,
     required: bool,
     previous_replans: int,
-) -> (
-    tuple[
-        ProjectCycleDecision,
-        AutonomyRunStatus,
-        AutonomyRunPhase,
-        ProjectVerificationState,
-        int,
-        str,
-    ]
-    | None
-):
+) -> ProjectCycleDisposition | None:
     if not (
         required
         and closure_status == ProjectDomainVerificationStatus.VERIFIED

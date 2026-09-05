@@ -460,31 +460,6 @@ def _handle_slash_details(
     console.print(Text(f"(details: {message})", style=_MUTED_ITALIC_STYLE))
 
 
-def _handle_slash_export(*, runtime: Any, console: Console) -> None:
-    session_id = str(getattr(runtime, "session_id", "") or "").strip()
-    if session_id:
-        command = f"openminion export transcript --session-id {session_id} --format md"
-    else:
-        command = "openminion export transcript --session-id <session-id> --format md"
-    console.print(
-        Text(
-            f"(export: run `{command}` from a regular terminal; "
-            "add `--output transcript.md` to write a file)",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
-
-
-def _handle_slash_editor(console: Console) -> None:
-    console.print(
-        Text(
-            "(editor: external-editor composition is not bound in this renderer yet; "
-            "use multiline input, paste content, or @-mention files)",
-            style=_MUTED_ITALIC_STYLE,
-        )
-    )
-
-
 def _print_slash_help(console: Console) -> None:
     console.print(Text("Slash commands:", style="bold"))
     for slash, description in slash_help_rows():
@@ -782,10 +757,24 @@ def _handle_shell_preference_slash(
         _handle_slash_verbosity(cmd, transcript=transcript, console=console)
     elif cmd == "/details":
         _handle_slash_details(text, transcript=transcript, console=console)
-    elif cmd == "/export":
-        _handle_slash_export(runtime=runtime, console=console)
-    elif cmd == "/editor":
-        _handle_slash_editor(console)
+    elif cmd in ("/export", "/editor"):
+        if cmd == "/export":
+            session_id = str(getattr(runtime, "session_id", "") or "").strip()
+            command = (
+                f"openminion export transcript --session-id {session_id} --format md"
+                if session_id
+                else "openminion export transcript --session-id <session-id> --format md"
+            )
+            message = (
+                f"(export: run `{command}` from a regular terminal; "
+                "add `--output transcript.md` to write a file)"
+            )
+        else:
+            message = (
+                "(editor: external-editor composition is not bound in this renderer yet; "
+                "use multiline input, paste content, or @-mention files)"
+            )
+        console.print(Text(message, style=_MUTED_ITALIC_STYLE))
     else:
         return False
     return True
