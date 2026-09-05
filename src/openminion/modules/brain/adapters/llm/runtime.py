@@ -329,7 +329,8 @@ class LlmctlAdapter(LLMAPI):
         }
 
     def get_provider_retry_max_attempts(self) -> int | None:
-        return getattr(self.client.provider, "provider_retry_max_attempts", None)
+        provider = getattr(self.client, "provider", None)
+        return getattr(provider, "provider_retry_max_attempts", None)
 
     def estimate_tokens(self, *, model: str, context: dict[str, Any]) -> int:
         del model

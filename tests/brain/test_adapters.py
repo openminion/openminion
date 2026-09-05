@@ -2169,6 +2169,13 @@ class AdapterInterfaceContractTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "RATE_LIMITED")
         self.assertEqual(ctx.exception.details.get("status_code"), 429)
 
+    def test_llm_adapter_without_runtime_provider_has_no_retry_cap(self) -> None:
+        from openminion.modules.brain.adapters.llm import LlmctlAdapter
+
+        adapter = LlmctlAdapter(SimpleNamespace())
+
+        self.assertIsNone(adapter.get_provider_retry_max_attempts())
+
     def test_llm_adapter_decide_is_schema_only_and_submit_output_forced(self) -> None:
         try:
             from openminion.modules.llm.schemas import ToolCall
