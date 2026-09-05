@@ -23,7 +23,9 @@ scope	max_python_files	max_loc
 # Focus parity (2026-09-04) types the existing per-turn gateway override contract.
 # Tool/plugin foundation hardening (2026-09-05) adds bounded activation facts,
 # hook timeouts, checksum verification, and provider status to existing owners.
-services	206	40555
+# PMFO retry correction (2026-09-05) propagates the provider-owned attempt cap
+# through the existing brain and legacy agent service adapters.
+services	206	40574
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

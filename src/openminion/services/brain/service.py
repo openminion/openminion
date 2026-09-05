@@ -220,25 +220,19 @@ class _RuntimeProviderAdapter:
     def __init__(self, service: "BrainBridgeService") -> None:
         self._service = service
         self.name = str(getattr(service, "_provider_name", lambda: "provider")())
+        runtime = getattr(service, "_llm_runtime", None)
+        provider = getattr(service, "_provider", None)
         self.service_vendor = str(
-            getattr(getattr(service, "_llm_runtime", None), "service_vendor", "")
-            or getattr(getattr(service, "_provider", None), "service_vendor", "")
+            getattr(runtime, "service_vendor", "")
+            or getattr(provider, "service_vendor", "")
             or self.name
         )
         self.provider_retry_max_attempts = getattr(
-            getattr(service, "_llm_runtime", None),
-            "provider_retry_max_attempts",
-            None,
-        ) or getattr(
-            getattr(service, "_provider", None),
-            "provider_retry_max_attempts",
-            None,
-        )
+            runtime, "provider_retry_max_attempts", None
+        ) or getattr(provider, "provider_retry_max_attempts", None)
         self.tool_call_strategy = str(
-            getattr(getattr(service, "_provider", object()), "tool_call_strategy", "")
-            or getattr(
-                getattr(service, "_llm_runtime", object()), "tool_call_strategy", ""
-            )
+            getattr(provider, "tool_call_strategy", "")
+            or getattr(runtime, "tool_call_strategy", "")
             or "hybrid"
         )
 
