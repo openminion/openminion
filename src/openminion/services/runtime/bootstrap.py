@@ -650,13 +650,11 @@ def build_brain_runner_bundle(service: Any) -> Any:
         )
     )
 
-    db_dir = (
-        _Path(service.db_path).parent
-        if _Path(service.db_path).suffix
-        else _Path(service.db_path)
-    )
+    db_path = _Path(service.db_path)
+    db_dir = db_path.parent if db_path.suffix else db_path
     memory_assembly = service._runtime_memory_assembly
     vector_adapter = getattr(memory_assembly, "vector_adapter", None)
+    artifactctl = create_default_artifactctl()
     skill_config = service._get_manager_config("skill")
     context_api = bridge_module.create_context_api(
         mode=service.mode,
@@ -679,6 +677,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         telemetryctl=service._telemetryctl,
         skill_config=skill_config,
         skill_home_root=service._context.home_paths.home_root,
+        artifactctl=artifactctl,
+        owns_artifactctl=True,
     )
 
     memory_api = getattr(memory_assembly, "memctl", None)
@@ -745,6 +745,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         agent_profile=default_profile,
         task_manager=task_manager,
         telemetryctl=service._telemetryctl,
+        artifactctl=artifactctl,
     )
     service._validate_adapter_contracts(
         session_api=session_api,

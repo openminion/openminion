@@ -4,6 +4,8 @@ import queue
 import threading
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from openminion.modules.artifact.control import ArtifactCtl
 
 from .utils import make_config
@@ -54,8 +56,14 @@ def test_verify_after_purge_reports_clean(tmp_path) -> None:
         old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         conn = ctl.index._conn  # type: ignore[attr-defined]
         with conn:
-            conn.execute("UPDATE artifacts SET deleted_at = ?", (old_ts,))
-            conn.execute("UPDATE artifact_views SET deleted_at = ?", (old_ts,))
+            conn.execute(
+                "UPDATE artifacts SET deleted_at = ? WHERE deleted_at IS NOT NULL",
+                (old_ts,),
+            )
+            conn.execute(
+                "UPDATE artifact_views SET deleted_at = ? WHERE deleted_at IS NOT NULL",
+                (old_ts,),
+            )
 
         ctl.purge(grace_days=0)
         report = ctl.verify()
@@ -63,3 +71,61 @@ def test_verify_after_purge_reports_clean(tmp_path) -> None:
         assert report.checked == 0
         assert report.failed == 0
         assert report.issues == []
+
+
+def test_shared_view_survives_other_raw_artifact_purge(tmp_path) -> None:
+    with ArtifactCtl(make_config(tmp_path)) as ctl:
+        first = ctl.ingest_bytes(b'{"a": 1}', mime="application/json")
+        second = ctl.ingest_bytes(b'{ "a": 1 }', mime="application/json")
+        first_view = ctl.ensure_view(first.sha256, "json")
+        second_view = ctl.ensure_view(second.sha256, "json")
+        assert first_view.sha256 == second_view.sha256
+
+        ctl.delete(first.sha256, soft=True)
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        conn = ctl.index._conn  # type: ignore[attr-defined]
+        with conn:
+            conn.execute(
+                "UPDATE artifacts SET deleted_at = ? WHERE deleted_at IS NOT NULL",
+                (old_ts,),
+            )
+            conn.execute(
+                "UPDATE artifact_views SET deleted_at = ? WHERE deleted_at IS NOT NULL",
+                (old_ts,),
+            )
+
+        ctl.purge(grace_days=0)
+
+        assert ctl.read_view(second.sha256, "json") == {"a": 1}
+        assert ctl.index.get_artifact(second_view.sha256, include_deleted=False)
+        assert ctl.verify().failed == 0
+
+
+@pytest.mark.parametrize("protection", ["alias", "reference"])
+def test_view_blob_survives_direct_protection(tmp_path, protection: str) -> None:
+    with ArtifactCtl(make_config(tmp_path)) as ctl:
+        raw = ctl.ingest_bytes(b'{"a": 1}', mime="application/json")
+        view = ctl.ensure_view(raw.sha256, "json")
+        if protection == "alias":
+            ctl.alias_set("kept-view", view.sha256)
+        else:
+            ctl.ref_add("session", "kept-view", view.sha256)
+
+        ctl.delete(raw.sha256, soft=True)
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        conn = ctl.index._conn  # type: ignore[attr-defined]
+        with conn:
+            conn.execute(
+                "UPDATE artifacts SET deleted_at = ? WHERE deleted_at IS NOT NULL",
+                (old_ts,),
+            )
+            conn.execute(
+                "UPDATE artifact_views SET deleted_at = ? WHERE deleted_at IS NOT NULL",
+                (old_ts,),
+            )
+
+        ctl.purge(grace_days=0)
+
+        assert ctl.read_bytes(view.sha256)
+        assert ctl.index.get_artifact(view.sha256, include_deleted=False)
+        assert ctl.verify().failed == 0

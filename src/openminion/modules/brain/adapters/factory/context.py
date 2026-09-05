@@ -17,6 +17,8 @@ def create_context_adapter(
     telemetryctl: Any | None = None,
     skill_config: Any | None = None,
     skill_home_root: Any | None = None,
+    artifactctl: Any | None = None,
+    owns_artifactctl: bool = False,
 ) -> Any:
     from openminion.modules.brain.adapters.context import LocalContextAdapter
 
@@ -33,6 +35,7 @@ def create_context_adapter(
             BridgeSkillClient,
             BridgeCompressClient,
         )
+        from openminion.modules.artifact.refs import create_default_artifactctl
 
         feature_flags = context_feature_flags()
         identity_client = BridgeIdentityClient(
@@ -40,7 +43,12 @@ def create_context_adapter(
             system_prompt=identity_system_prompt,
         )
         memory_client = BridgeMemoryClient(backing_store=session_store)
-        artifact_client = BridgeArtifactClient(backing_store=session_store)
+        runtime_artifactctl = artifactctl or create_default_artifactctl()
+        artifact_client = BridgeArtifactClient(
+            backing_store=session_store,
+            artifact_ctl=runtime_artifactctl,
+            owns_artifactctl=owns_artifactctl or artifactctl is None,
+        )
         skill_client = BridgeSkillClient(
             backing_store=session_store,
             skill_config=skill_config,

@@ -1435,9 +1435,12 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
         memory._memory_ctl = MagicMock()
         memory_ctl = memory._memory_ctl
 
-        artifact = BridgeArtifactClient(backing_store=object())
-        artifact._artifact_ctl = MagicMock()
-        artifact_ctl = artifact._artifact_ctl
+        artifact_ctl = MagicMock()
+        artifact = BridgeArtifactClient(
+            backing_store=object(),
+            artifact_ctl=artifact_ctl,
+            owns_artifactctl=True,
+        )
 
         skill = BridgeSkillClient(backing_store=object())
         skill._skill_svc = MagicMock()

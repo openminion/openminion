@@ -116,6 +116,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
 
     shared_task_manager = object()
     fake_runner = SimpleNamespace(task_manager=shared_task_manager)
+    shared_artifactctl = SimpleNamespace()
     captured: dict[str, object] = {}
 
     def _capture_goal_store(path: str, *args, **kwargs):
@@ -140,6 +141,12 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     with ExitStack() as stack:
         stack.enter_context(
             mock.patch(
+                "openminion.services.runtime.bootstrap.create_default_artifactctl",
+                return_value=shared_artifactctl,
+            )
+        )
+        stack.enter_context(
+            mock.patch(
                 "openminion.services.brain.service.create_llm_adapter",
                 return_value=SimpleNamespace(),
             )
@@ -156,7 +163,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        context_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_context_api",
                 return_value=SimpleNamespace(),
@@ -285,3 +292,6 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     assert captured["goal_db_path"] != session_db_path
     assert tool_api_factory.call_args.kwargs["task_manager"] is shared_task_manager
     assert runner_factory.call_args.kwargs["task_manager"] is shared_task_manager
+    assert context_factory.call_args.kwargs["artifactctl"] is shared_artifactctl
+    assert context_factory.call_args.kwargs["owns_artifactctl"] is True
+    assert tool_api_factory.call_args.kwargs["artifactctl"] is shared_artifactctl

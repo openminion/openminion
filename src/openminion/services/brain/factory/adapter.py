@@ -42,6 +42,7 @@ def create_tool_api(
     agent_profile: Any | None = None,
     task_manager: Any | None = None,
     telemetryctl: Any | None = None,
+    artifactctl: Any | None = None,
 ) -> Any:
     return create_tool_adapter(
         mode=mode,
@@ -61,6 +62,7 @@ def create_tool_api(
         agent_profile=agent_profile,
         task_manager=task_manager,
         telemetryctl=telemetryctl,
+        artifactctl=artifactctl,
     )
 
 
@@ -94,6 +96,8 @@ def create_context_api(
     telemetryctl: Any | None = None,
     skill_config: Any | None = None,
     skill_home_root: Any | None = None,
+    artifactctl: Any | None = None,
+    owns_artifactctl: bool = False,
 ) -> Any:
     return create_context_adapter(
         mode=mode,
@@ -106,6 +110,8 @@ def create_context_api(
         telemetryctl=telemetryctl,
         skill_config=skill_config,
         skill_home_root=skill_home_root,
+        artifactctl=artifactctl,
+        owns_artifactctl=owns_artifactctl,
     )
 
 
