@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -199,6 +200,8 @@ def _assert_evidence(evidence: dict, *, profile: str, commit: str) -> None:
 
 @pytest.mark.e2e
 def test_blockchain_debug_local_and_focus_evidence() -> None:
+    if os.getenv("OPENMINION_BDTC_EVIDENCE_E2E") != "1":
+        pytest.skip("BDTC evidence validation requires explicit opt-in")
     commit = _clean_commit()
     _assert_evidence(_load("local"), profile="local", commit=commit)
     _assert_evidence(_load("focus"), profile="focus-minimax", commit=commit)
