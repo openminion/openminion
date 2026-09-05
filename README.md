@@ -158,8 +158,8 @@ commands then use the OpenMinion process's OS permissions and are not confined
 to workspace roots; command policy and approvals still apply. A native local
 sandbox and approval-free command parity are not provided yet.
 
-When setup finishes and Focus opens, ask: `Give me one safe read-only command
-to inspect the current directory.`
+When setup finishes and the interactive CLI opens, ask: `Give me one safe
+read-only command to inspect the current directory.`
 
 For a credential-free product tour, create an explicit echo/demo config:
 

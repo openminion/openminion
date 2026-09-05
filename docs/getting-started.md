@@ -39,12 +39,12 @@ openminion --version
 openminion --dir "$PWD"
 ```
 
-When the normal default config already exists, this opens the Focus terminal
+When the normal default config already exists, this opens the default terminal
 directly. When the default config is missing and a terminal is available,
 OpenMinion launches setup, guides you through hosted, local, or import setup,
 writes the canonical config at
-`<OPENMINION_HOME>/.openminion/agents.json`, runs `doctor`, and then enters
-Focus. A useful first task is:
+`<OPENMINION_HOME>/.openminion/agents.json`, runs `doctor`, and then enters the
+interactive CLI. A useful first task is:
 
 ```text
 Give me one safe read-only command to inspect the current directory.

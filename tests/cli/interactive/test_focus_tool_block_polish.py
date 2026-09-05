@@ -65,6 +65,21 @@ def test_title_row_starts_with_failure_glyph() -> None:
     assert title.startswith(ToolBlockWidget.EXIT_GLYPH_FAIL + " ")
 
 
+def test_failed_tool_title_keeps_duration_and_exit_code() -> None:
+    event = ToolEvent(
+        tool_name="exec.run",
+        args={"command": "false"},
+        content="failed",
+        exit_code=7,
+        duration_ms=1200,
+    )
+
+    title = ToolBlockWidget(event, pending=False)._header_text()
+
+    assert "1s" in title
+    assert "exit 7" in title
+
+
 def test_pending_to_success_transition_collapses() -> None:
     event = ToolEvent(
         tool_name="exec.run",

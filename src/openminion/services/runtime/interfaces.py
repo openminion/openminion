@@ -21,7 +21,11 @@ class RuntimeFacade(Protocol):
 
     def evict_agent_runtime(self, *, agent_id: str, reason: str) -> None: ...
 
-    def resolve_gateway(self, agent_id: str | None = None) -> Any: ...
+    def resolve_gateway(
+        self,
+        agent_id: str | None = None,
+        overrides: Any | None = None,
+    ) -> Any: ...
 
 
 __all__ = ["RuntimeFacade"]

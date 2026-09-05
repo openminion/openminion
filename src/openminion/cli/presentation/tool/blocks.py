@@ -19,6 +19,8 @@ from openminion.cli.status.tool_calls import (
 from ..models import ToolEvent
 from .formatting import _TOOL_VERBS as _TOOL_VERBS
 from .formatting import (
+    format_tool_duration,
+    is_diff_result,
     tool_call_body,
     tool_context_hint,
     verbs_for_tool,
@@ -172,18 +174,19 @@ class ToolBlockWidget(Widget):
             )
             hint = self._truncate_hint(raw_hint)
             head = f"{glyph} {verb} {hint or self._tool_event.tool_name}"
-            provenance_suffix = self._provenance_suffix()
-            fallback_suffix = format_tool_fallback_marker(
-                runtime_fallback_used=self._tool_event.runtime_fallback_used,
-                runtime_fallback_chain=self._tool_event.runtime_fallback_chain,
-            )
-            head = f"{head}{provenance_suffix}{fallback_suffix}"
-        duration = self._duration_suffix()
-        if duration:
-            return f"{head} · {duration}"
+        provenance_suffix = self._provenance_suffix()
+        fallback_suffix = format_tool_fallback_marker(
+            runtime_fallback_used=self._tool_event.runtime_fallback_used,
+            runtime_fallback_chain=self._tool_event.runtime_fallback_chain,
+        )
+        head = f"{head}{provenance_suffix}{fallback_suffix}"
+        suffixes = []
+        duration = format_tool_duration(self._tool_event.duration_ms)
+        if duration and not self._pending:
+            suffixes.append(duration)
         if not self._pending and self._failed():
-            return f"{head} · exit {self._tool_event.exit_code}"
-        return head
+            suffixes.append(f"exit {self._tool_event.exit_code}")
+        return f"{head} · {' · '.join(suffixes)}" if suffixes else head
 
     def _provenance_suffix(self) -> str:
         canonical = self._tool_event.model_tool_name or self._tool_event.tool_name
@@ -193,19 +196,6 @@ class ToolBlockWidget(Widget):
             runtime_tool_name=runtime,
             family_has_multiple_providers=bool(runtime and runtime != canonical),
         )
-
-    def _duration_suffix(self) -> str:
-        if self._pending:
-            return ""
-        ms = self._tool_event.duration_ms
-        if ms is None:
-            return ""
-        try:
-            ms_int = int(ms)
-        except (TypeError, ValueError):
-            return ""
-        seconds = ms_int / 1000.0
-        return "<1s" if seconds < 1.0 else f"{int(seconds)}s"
 
     @staticmethod
     def _truncate_hint(hint: str, *, limit: int = 60) -> str:
@@ -222,7 +212,8 @@ class ToolBlockWidget(Widget):
             return self._render_exec()
         if self._tool_event.tool_name == "file.read":
             return self._render_file_read()
-        if self._tool_event.tool_name == "file.edit":
+        content = self._tool_event.full_content or self._tool_event.content or ""
+        if is_diff_result(self._tool_event.tool_name, content):
             return self._render_diff()
         if self._tool_event.tool_name.startswith("fetch"):
             return self._render_fetch()
@@ -310,21 +301,14 @@ class ToolBlockWidget(Widget):
         return text
 
     def _diff_colors(self) -> tuple[str, str]:
-        try:
-            theme = self._active_theme()
-            if theme is not None:
-                return (str(theme.state_ok), str(theme.state_error))
-        except Exception:
-            pass
+        theme = self._active_theme()
+        if theme is not None:
+            return (str(theme.state_ok), str(theme.state_error))
         return ("green", "red")
 
     def _active_theme(self):
-        try:
-            app = self.app
-        except AttributeError:
-            app = None
-        if app is not None:
-            theme = getattr(app, "active_theme", None)
+        if self.is_attached:
+            theme = getattr(self.app, "active_theme", None)
             if theme is not None:
                 return theme
         try:

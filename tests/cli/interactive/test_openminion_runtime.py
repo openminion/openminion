@@ -273,6 +273,7 @@ class _FakeRuntime:
             "alpha": _FakeGateway("alpha"),
             "beta": _FakeGateway("beta"),
         }
+        self.gateway_overrides: list[object | None] = []
 
     def list_registered_agents(self) -> list[str]:
         return ["alpha", "beta"]
@@ -313,7 +314,13 @@ class _FakeRuntime:
             raise ValueError(name)
         return SimpleNamespace(name=name)
 
-    def resolve_gateway(self, agent_id: str | None = None) -> _FakeGateway:
+    def resolve_gateway(
+        self,
+        agent_id: str | None = None,
+        *,
+        overrides: object | None = None,
+    ) -> _FakeGateway:
+        self.gateway_overrides.append(overrides)
         name = str(agent_id or "").strip() or "alpha"
         return self._gateways[name]
 
