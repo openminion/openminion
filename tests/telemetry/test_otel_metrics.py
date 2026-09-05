@@ -59,13 +59,19 @@ def test_model_cost_requires_one_explicit_source() -> None:
             "llm.call.completed",
             cost_usd=0.02,
             cost_source="provider",
+            provider="openrouter",
+            model="model-a",
             usage={},
         )
     )
     cost = next(item for item in with_source if item.name == "openminion_model_cost")
     assert cost.metric_value == 0.02
     assert cost.metric_unit == "USD"
-    assert cost.attributes == {"cost_source": "provider"}
+    assert cost.attributes == {
+        "cost_source": "provider",
+        "gen_ai.provider.name": "openrouter",
+        "gen_ai.response.model": "model-a",
+    }
 
 
 def test_policy_safety_business_and_lifecycle_metrics_are_bounded() -> None:

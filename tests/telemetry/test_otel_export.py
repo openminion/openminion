@@ -732,6 +732,7 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
             exposed_tool_count=2,
             round_trip_ms=12,
             session_id="forbidden-session-label",
+            provider="openai",
             model="forbidden-model-label",
         )
     )
@@ -765,6 +766,11 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
         metric.attributes["gen_ai.token.type"]: metric.metric_value
         for metric in token_metrics
     } == {"input": 30.0, "output": 20.0, "cache_read": 5.0, "cache_write": 7.0}
+    assert all(
+        metric.attributes["gen_ai.provider.name"] == "openai"
+        and metric.attributes["gen_ai.response.model"] == "forbidden-model-label"
+        for metric in token_metrics
+    )
 
 
 def test_failed_model_event_emits_usage_when_provider_reports_it() -> None:

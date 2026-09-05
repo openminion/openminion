@@ -578,8 +578,13 @@ class SQLiteSessionStore(SessionStore):
         *,
         filters: Mapping[str, Any] | None = None,
         limit: int = 100,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self._session_helper.list_sessions(filters=filters, limit=limit)
+        return self._session_helper.list_sessions(
+            filters=filters,
+            limit=limit,
+            agent_id=agent_id,
+        )
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         return self._session_helper.get_session(session_id)

@@ -57,7 +57,7 @@ src/openminion/modules/llm/providers/cortensor/adapter.py	CortensorProvider.comp
 src/openminion/modules/llm/providers/factory.py	_provider_settings_for_llmctl_bridge	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/llm/providers/ollama/adapter.py	OllamaProvider.complete	130	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/llm/providers/openai/adapter.py	OpenAIProvider.complete	281	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/llm/providers/openrouter/adapter.py	OpenRouterProvider.complete	211	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/llm/providers/openrouter/adapter.py	OpenRouterProvider.complete	208	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/llm/providers/tool_calling/models/minimax_xml.py	MinimaxXmlToolCallParser.parse_text	177	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/llm/providers/transport/http.py	http_json_get	335	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/llm/providers/transport/http.py	http_json_post	369	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

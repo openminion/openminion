@@ -90,6 +90,7 @@ class ProviderResponse:
     normalization: dict[str, Any] = field(default_factory=dict)
     thinking: list[ThinkingBlock] = field(default_factory=list)
     cost_usd: float | None = None
+    cost_source: Literal["provider", "estimated"] | None = None
 
     @property
     def empty_payload_recovered(self) -> bool:

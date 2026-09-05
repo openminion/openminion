@@ -25,6 +25,7 @@ class SessionStore(ABC):
         *,
         filters: Mapping[str, Any] | None = None,
         limit: int = 100,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
