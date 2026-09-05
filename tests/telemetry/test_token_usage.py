@@ -269,7 +269,9 @@ def test_failed_call_usage_and_cost_provenance_are_preserved() -> None:
     assert summary.total_provider_cost_usd == 0.004
     assert summary.total_estimated_cost_usd == 0.002
     assert coverage.llm_call_events == 1
-    assert coverage.failed_llm_call_events == 1
+    assert coverage.observed_llm_call_events == 2
+    assert coverage.unmetered_llm_call_events == 1
+    assert coverage.failed_llm_call_events == 2
 
 
 def test_cost_without_known_provenance_is_not_reported() -> None:
@@ -342,12 +344,12 @@ def test_bounded_read_reports_incomplete_without_projecting_sentinel(
 
         summary = StatsService(store).get_session_token_usage(
             session_id,
-            event_limit=3,
+            event_limit=2,
         )
 
         assert summary.complete is False
-        assert summary.event_limit == 3
-        assert summary.events_scanned == 4
+        assert summary.event_limit == 2
+        assert summary.events_scanned == 3
         assert summary.source_event_count == 2
         assert summary.first_source_event is not None
         assert summary.last_source_event is not None
@@ -470,6 +472,7 @@ def test_json_export_matches_shared_v1_fixture() -> None:
         last_source_event=source,
         coverage=TokenUsageCoverage(
             llm_call_events=1,
+            observed_llm_call_events=1,
             provider_identified_llm_call_events=1,
             model_identified_llm_call_events=1,
             run_id_present_events=1,

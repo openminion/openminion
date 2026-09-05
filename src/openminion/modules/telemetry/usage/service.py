@@ -219,7 +219,11 @@ class StatsService:
             meta = record.get("meta")
             meta_map = dict(meta) if isinstance(meta, dict) else {}
             request_id = str(meta_map.get("request_id", "") or "").strip()
-        read = self._read_session_events(session_id, event_limit=event_limit)
+        read = self._read_session_events(
+            session_id,
+            event_limit=event_limit,
+            event_types=_TOKEN_USAGE_EVENT_TYPES,
+        )
         if direct_session and not read.complete:
             return None
         direct_events = [
@@ -338,7 +342,11 @@ class StatsService:
         *,
         event_limit: int | None = None,
     ) -> TokenUsageSummary:
-        read = self._read_session_events(session_id, event_limit=event_limit)
+        read = self._read_session_events(
+            session_id,
+            event_limit=event_limit,
+            event_types=_TOKEN_USAGE_EVENT_TYPES,
+        )
         return self._build_token_usage_summary(
             session_id=session_id,
             usage_events=[
@@ -354,12 +362,16 @@ class StatsService:
         *,
         limit: int,
         event_limit: int | None = None,
+        agent_id: str | None = None,
     ) -> tuple[TokenUsageSummary, ...]:
         if not hasattr(self._store, "list_sessions"):
             return ()
         normalized_limit = max(1, limit)
         summaries: list[TokenUsageSummary] = []
-        for row in self._store.list_sessions(limit=normalized_limit):
+        for row in self._store.list_sessions(
+            limit=normalized_limit,
+            agent_id=str(agent_id or "").strip() or None,
+        ):
             session_id = _session_id_from_row(row)
             if session_id:
                 summaries.append(
@@ -480,11 +492,18 @@ class StatsService:
         session_id: str,
         *,
         event_limit: int | None = None,
+        event_types: frozenset[str] | None = None,
     ) -> _EventReadResult:
         normalized_limit = _normalize_event_limit(event_limit)
+        if event_types and normalized_limit is None:
+            normalized_limit = RUNTIME_EVENT_READ_LIMIT
         if hasattr(self._store, "get_events"):
             fetch_limit = normalized_limit + 1 if normalized_limit is not None else None
-            events = self._store.get_events(session_id, limit=fetch_limit)
+            events = self._store.get_events(
+                session_id,
+                limit=fetch_limit,
+                types=sorted(event_types) if event_types else None,
+            )
             applied_limit = normalized_limit
         elif hasattr(self._store, "list_events"):
             applied_limit = normalized_limit or RUNTIME_EVENT_READ_LIMIT

@@ -111,13 +111,20 @@ def test_usage_payload_preserves_generic_object_provenance_and_cache_aliases() -
     }
 
 
-def test_response_cost_payload_preserves_only_valid_provider_cost() -> None:
+def test_response_cost_payload_preserves_only_valid_known_costs() -> None:
     assert response_cost_payload(SimpleNamespace(cost_usd=0.0123)) == {
         "cost_usd": 0.0123,
         "cost_source": "provider",
     }
     assert response_cost_payload({"cost_usd": -1}) == {}
     assert response_cost_payload({"cost_usd": "unknown"}) == {}
+    assert response_cost_payload(
+        SimpleNamespace(cost_usd=0.004, cost_source="estimated")
+    ) == {"cost_usd": 0.004, "cost_source": "estimated"}
+    assert (
+        response_cost_payload(SimpleNamespace(cost_usd=0.004, cost_source="unknown"))
+        == {}
+    )
 
 
 def test_normalize_provider_response_does_not_recover_tool_call_from_text() -> None:

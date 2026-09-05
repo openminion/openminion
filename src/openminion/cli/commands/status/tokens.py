@@ -43,9 +43,10 @@ def _resolve_session_id(args: Any, store: Any) -> str:
 
 def _validate_token_status_args(
     args: Any,
-) -> tuple[str, str, int | None, int | None, bool]:
+) -> tuple[str, str, str, int | None, int | None, bool]:
     run_id = str(args.run_id or "").strip()
     requested_session_id = str(getattr(args, "session_id", "") or "").strip()
+    agent_id = str(getattr(args, "agent_id", "") or "").strip()
     recent_limit = getattr(args, "recent", None)
     event_limit = args.event_limit
     only_warnings = bool(getattr(args, "only_warnings", False))
@@ -58,9 +59,12 @@ def _validate_token_status_args(
         raise RuntimeError("--recent cannot be combined with --session-id or --run-id")
     if only_warnings and normalized_recent_limit is None:
         raise RuntimeError("--only-warnings requires --recent")
+    if agent_id and normalized_recent_limit is None:
+        raise RuntimeError("--agent-id requires --recent")
     return (
         run_id,
         requested_session_id,
+        agent_id,
         normalized_recent_limit,
         event_limit,
         only_warnings,
@@ -68,7 +72,7 @@ def _validate_token_status_args(
 
 
 def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
-    run_id, requested_session_id, recent_limit, event_limit, only_warnings = (
+    run_id, requested_session_id, agent_id, recent_limit, event_limit, only_warnings = (
         _validate_token_status_args(args)
     )
 
@@ -79,6 +83,7 @@ def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
             summaries = service.get_recent_session_token_usage(
                 limit=recent_limit,
                 event_limit=event_limit,
+                agent_id=agent_id or None,
             )
             visible_summaries = prepare_token_rollup(
                 summaries,
@@ -90,6 +95,7 @@ def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
                         visible_summaries,
                         input_session_count=len(summaries),
                         only_warnings=only_warnings,
+                        agent_id=agent_id,
                     )
                 )
             else:
@@ -98,6 +104,7 @@ def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
                         visible_summaries,
                         input_session_count=len(summaries),
                         only_warnings=only_warnings,
+                        agent_id=agent_id,
                     )
                 )
             return 0

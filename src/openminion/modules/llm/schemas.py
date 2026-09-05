@@ -16,6 +16,7 @@ ToolResultStatus = Literal["success", "error", "blocked", "timeout"]
 ImageSourceType = Literal["path", "url", "base64"]
 ImageDetailLevel = Literal["auto", "low", "high"]
 TotalTokensSource = Literal["provider", "derived"]
+CostSource = Literal["provider", "estimated"]
 PromptBlockKind = Literal[
     "static_prefix",
     "mission_snapshot",
@@ -154,6 +155,7 @@ class LLMResponse(BaseModel):
     usage: UsageInfo = Field(default_factory=UsageInfo)
     latency_ms: int = 0
     cost_usd: Optional[float] = None
+    cost_source: Optional[CostSource] = None
     finish_reason: str = ""
     empty_payload_recovered: bool = False
     provider_raw: Optional[dict[str, Any]] = None

@@ -6,12 +6,15 @@
         }
     ],
     "complete": true,
+    "agent_id": "",
     "costs": {
         "estimated_cost_usd": null,
         "provider_cost_usd": null
     },
     "coverage": {
         "llm_call_events": 2,
+        "observed_llm_call_events": 2,
+        "unmetered_llm_call_events": 0,
         "failed_llm_call_events": 0,
         "llm_call_id_present_events": 2,
         "model_identified_llm_call_events": 2,
@@ -23,7 +26,9 @@
     "efficiency": {
         "cache_read_to_write_bps": 0,
         "context_share_bps": 0,
+        "context_estimated_tokens": 0,
         "derived_total_ratio_bps": 3333,
+        "llm_tokens": 15,
         "provider_total_ratio_bps": 6667,
         "total_visible_tokens": 15
     },
@@ -57,6 +62,8 @@
             "estimated_cost_usd": null,
             "first_observed_at": "",
             "last_observed_at": "",
+            "llm_token_delta": null,
+            "llm_tokens": 15,
             "provider_cost_usd": null,
             "provider_token_delta": null,
             "provider_tokens": 10,
@@ -75,6 +82,8 @@
                 "context_manifest_events": 0,
                 "input_tokens": {"invalid": 0, "missing": 0, "reported": 2},
                 "llm_call_events": 2,
+                "observed_llm_call_events": 2,
+                "unmetered_llm_call_events": 0,
                 "failed_llm_call_events": 0,
                 "llm_call_id_present_events": 2,
                 "model_identified_llm_call_events": 2,

@@ -143,8 +143,9 @@ canonical CLI, bounded resource commands, and typed APIs:
 
 Interactive sessions show a compact live token line when the active runtime has
 usage facts. Inside the interactive CLI, `/cost` shows the current session,
-last turn, context-window, and available cost estimate. It says cost is
-unavailable when the provider did not report one. `/tokens` renders the durable
+last turn, context-window, and available provider or configured-rate cost
+estimate. It says cost is unavailable when neither source can supply one.
+`/tokens` renders the durable
 token report for the active session in either interactive terminal.
 
 For persisted session inspection, use the status surface:
@@ -155,6 +156,7 @@ openminion status tokens --session-id <session-id>
 openminion status tokens --run-id <run-id>
 openminion status tokens --session-id <session-id> --run-id <run-id>
 openminion status tokens --recent 10
+openminion status tokens --recent 10 --agent-id <agent-id>
 openminion status tokens --recent 10 --only-warnings
 openminion status tokens --recent 10 --json
 openminion status tokens --session-id <session-id> --json
@@ -164,10 +166,15 @@ Without `--session-id`, `status tokens` inspects the newest session in the
 configured data root. With `--run-id` and no session id, it resolves the owning
 session from the run record. Text output is the human insight view: provider
 and derived totals, provider-reported and explicitly estimated cost, cache
-dimensions, context estimates, context buckets, completed/failed call coverage,
+dimensions, context estimates, context buckets, metered and unmetered
+completed/failed call coverage,
 coverage/correlation warnings, outcome signals for run-scoped reports, advisory
 recommendations, and next-step hints. Use `--recent <count>` for a read-only
 rollup across the newest sessions before drilling into one session or run.
+Add `--agent-id <agent-id>` to scope that recent-session view to one agent.
+Token reports read at most 10,000 relevant events per session by default; use
+`--event-limit` to choose a different positive bound. Limited reports are
+marked incomplete.
 Use `--recent <count> --only-warnings` when you only want sessions with token
 telemetry gaps or optimization signals. Text recommendations include stable
 advisory codes such as `[missing_provider_identity]`,
@@ -177,24 +184,29 @@ key off the same facts without parsing prose.
 Recent rollups also show a provider/model coverage matrix so operators can see
 which providers report native totals and which paths still rely on derived
 totals.
-They also include compact efficiency and session-trend rows: visible tokens,
-change from the prior session, provider-vs-derived share, context share, cache
+They also include compact efficiency and session-trend rows: non-overlapping
+LLM tokens, context estimates, LLM-token change from the prior session,
+provider-vs-derived share, context share, cache
 read/write ratio, separated cost totals, and the highest-signal warning codes
 per recent session.
 `--json` emits the raw `openminion.token_usage.v1` envelope for one session or
 run, and a rollup envelope containing those raw session envelopes when
 `--recent` is used.
+In rollup JSON, use `efficiency.llm_tokens` and each trend's `llm_token_delta`
+for non-overlapping comparisons. The older `total_visible_tokens` and
+`visible_token_delta` fields remain additive-v1 compatibility fields that sum
+LLM totals with context estimates; they are not billable-token totals.
 
 Example recent rollup:
 
 ```text
 status tokens: recent_sessions=10 with_usage=8 complete=yes
 totals: provider=12,840 derived=920 context_estimated=6,400 cache_read=1,200 cache_write=2,100 provider_cost=$0.084 estimated_cost=$0.012
-efficiency: visible=20,160 provider_total=93% derived_total=7% context_share=32% cache_read/write=57%
-session trends: session-a=provider:6,300 derived:0 context:0 delta:+2,080 cost:$0.042/-; session-b=provider:0 derived:920 context:3,300 delta:-410 cost:-/$0.012 warnings:derived_total_tokens,context_dominates
-top sessions: session-a=6,300, session-b=4,220
+efficiency: llm=13,760 context_estimated=6,400 provider_total=93% derived_total=7% context_share=32% cache_read/write=57%
+session trends: session-a=provider:6,300 derived:0 context:0 llm_delta:+2,080 cost:$0.042/-; session-b=provider:0 derived:920 context:3,300 llm_delta:-410 cost:-/$0.012 warnings:derived_total_tokens,context_dominates
+top sessions: session-a=6,300, session-b=920
 provider coverage: openai/gpt-4.1=records:8 provider:9,200 derived:0 cache_read:1,200; local/echo=records:2 provider:0 derived:920 cache_read:0
-coverage health: llm_calls=18 provider=18/18 model=18/18 usage_events=22 run_id=21/22 trace_id=22/22 llm_call_id=19/22
+coverage health: llm_calls=19 metered=18/19 unmetered=1 provider=18/18 model=18/18 usage_events=22 run_id=21/22 trace_id=22/22 llm_call_id=19/22
 recommendations: [missing_call_correlation] some usage events lack llm_call_id correlation; [context_dominates] context packing dominates recent usage; inspect bucket totals
 drilldown: `openminion status tokens --session-id session-a` | `openminion status tokens --session-id session-b`
 ```
@@ -208,6 +220,7 @@ session envelopes:
   "session_count": 1,
   "input_session_count": 10,
   "only_warnings": true,
+  "agent_id": "agent.main",
   "totals": {
     "provider_tokens": 0,
     "derived_tokens": 920,
@@ -235,6 +248,8 @@ session envelopes:
     }
   ],
   "efficiency": {
+    "llm_tokens": 920,
+    "context_estimated_tokens": 6400,
     "total_visible_tokens": 7320,
     "provider_total_ratio_bps": 0,
     "derived_total_ratio_bps": 10000,
@@ -252,10 +267,12 @@ session envelopes:
       "context_estimated_tokens": 6400,
       "cache_read_tokens": 0,
       "cache_write_tokens": 2100,
+      "llm_tokens": 920,
       "total_visible_tokens": 7320,
       "provider_cost_usd": null,
       "estimated_cost_usd": 0.012,
       "provider_token_delta": -200,
+      "llm_token_delta": -410,
       "visible_token_delta": 410,
       "advisory_codes": ["derived_total_tokens", "context_dominates"]
     }

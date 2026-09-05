@@ -50,6 +50,8 @@ _ALLOWED_LABELS = frozenset(
         "violation_category",
         "business_domain",
         "cost_source",
+        "gen_ai.provider.name",
+        "gen_ai.response.model",
         "gen_ai.token.type",
     }
 )
@@ -192,18 +194,33 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return metrics
 
 
+def _model_identity_attributes(payload: dict[str, Any]) -> dict[str, str]:
+    attributes = {}
+    provider = str(payload.get("provider") or "").strip()
+    model = str(payload.get("model") or "").strip()
+    if provider:
+        attributes["gen_ai.provider.name"] = _bounded_label(provider, default="unknown")
+    if model:
+        attributes["gen_ai.response.model"] = _bounded_label(model, default="unknown")
+    return attributes
+
+
 def _append_model_cost_metric(
     metrics: list[dict[str, Any]], payload: dict[str, Any]
 ) -> None:
     cost_source = str(payload.get("cost_source") or "").strip()
     if not cost_source:
         return
+    attributes = {
+        "cost_source": _bounded_label(cost_source, default="unknown"),
+        **_model_identity_attributes(payload),
+    }
     _append_metric(
         metrics,
         "openminion_model_cost",
         _KIND_COUNTER,
         payload.get("cost_usd"),
-        {"cost_source": _bounded_label(cost_source, default="unknown")},
+        attributes,
         unit="USD",
     )
 
@@ -247,6 +264,7 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     )
     usage = payload.get("usage")
     usage_map = usage if isinstance(usage, dict) else {}
+    token_identity = _model_identity_attributes(payload)
     for token_type, keys in (
         ("input", ("input_tokens", "prompt_tokens")),
         ("output", ("output_tokens", "completion_tokens")),
@@ -259,7 +277,7 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "gen_ai.client.token.usage",
             _KIND_HISTOGRAM,
             value,
-            {"gen_ai.token.type": token_type},
+            {**token_identity, "gen_ai.token.type": token_type},
             unit="{token}",
         )
     duration_ms = _first_present(

@@ -13,37 +13,24 @@ from openminion.modules.telemetry.usage import (
     summary_to_json_payload,
 )
 from openminion.modules.telemetry.usage.contracts import (
-    TOTAL_SOURCE_DERIVED,
-    TOTAL_SOURCE_PROVIDER,
-    TokenUsageProviderCoveragePayload,
+    TokenTotalSource,
+    TokenUsageAdvisoryPayload,
+    TokenUsageRollupCoveragePayload,
     TokenUsageRollupEfficiencyPayload,
+    TokenUsageRollupTotalsPayload,
     TokenUsageSessionTrendPayload,
 )
+from openminion.modules.telemetry.usage.coverage import TokenUsageDimensionCoverage
 from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_CONTEXT_BUCKET,
     SURFACE_CONTEXT_PACK,
-    SURFACE_LLM_CACHE_DIAGNOSTIC,
-    SURFACE_LLM_CACHE_READ,
-    SURFACE_LLM_CACHE_WRITE,
-    SURFACE_LLM_OUTPUT,
-    SURFACE_LLM_PROMPT,
     SURFACE_LLM_TOTAL,
 )
+from .provider_coverage import format_provider_coverage, provider_coverage_payload
 from .token_costs import (
     format_cost_totals,
     format_optional_cost_usd,
     token_cost_rollup,
-)
-
-_LLM_USAGE_SURFACES = frozenset(
-    {
-        SURFACE_LLM_TOTAL,
-        SURFACE_LLM_PROMPT,
-        SURFACE_LLM_OUTPUT,
-        SURFACE_LLM_CACHE_READ,
-        SURFACE_LLM_CACHE_WRITE,
-        SURFACE_LLM_CACHE_DIAGNOSTIC,
-    }
 )
 
 
@@ -52,38 +39,8 @@ class Advisory:
     code: str
     message: str
 
-    def as_payload(self) -> dict[str, str]:
+    def as_payload(self) -> TokenUsageAdvisoryPayload:
         return {"code": self.code, "message": self.message}
-
-
-@dataclass(frozen=True)
-class ProviderCoverage:
-    provider: str
-    model: str
-    llm_total_records: int = 0
-    provider_total_records: int = 0
-    derived_total_records: int = 0
-    provider_tokens: int = 0
-    derived_tokens: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-
-    def as_payload(self) -> TokenUsageProviderCoveragePayload:
-        return {
-            "provider": self.provider,
-            "model": self.model,
-            "llm_total_records": self.llm_total_records,
-            "provider_total_records": self.provider_total_records,
-            "derived_total_records": self.derived_total_records,
-            "provider_tokens": self.provider_tokens,
-            "derived_tokens": self.derived_tokens,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "cache_write_tokens": self.cache_write_tokens,
-        }
 
 
 def _record_tokens(record: TokenUsageRecord) -> int:
@@ -137,6 +94,10 @@ def _summary_visible_tokens(summary: TokenUsageSummary) -> int:
     )
 
 
+def _summary_llm_tokens(summary: TokenUsageSummary) -> int:
+    return int(summary.total_provider_tokens + summary.total_derived_tokens)
+
+
 def _yes_no_unknown(value: bool | None) -> str:
     if value is True:
         return "yes"
@@ -182,16 +143,57 @@ def _format_turn_cost(cost: TurnCostEnvelope | None) -> list[str]:
     return ["outcome: " + " ".join(parts)]
 
 
+def _add_cost_advisories(
+    advisories: list[Advisory], cost: TurnCostEnvelope | None
+) -> None:
+    if cost is None:
+        return
+    if cost.provider_retries:
+        _add_advisory(
+            advisories,
+            "provider_retry_friction",
+            "provider retries increased token friction for this run",
+        )
+    if cost.provider_calls_post_delivery:
+        _add_advisory(
+            advisories,
+            "post_delivery_calls",
+            "post-delivery calls exist; verify they are intentional auxiliary work",
+        )
+    if cost.duplicate_tool_calls:
+        _add_advisory(
+            advisories,
+            "duplicate_tool_calls",
+            "duplicate tool calls detected; inspect tool-loop planning",
+        )
+    if cost.policy_denials:
+        _add_advisory(
+            advisories,
+            "policy_denial_friction",
+            "policy denials consumed turn work; inspect approval/tool policy inputs",
+        )
+    if cost.task_success is False or cost.final_truthful is False:
+        _add_advisory(
+            advisories,
+            "negative_outcome_tokens",
+            "token spend ended with a negative outcome signal; review this run",
+        )
+
+
 def _summary_advisories(
     summary: TokenUsageSummary,
     *,
     cost: TurnCostEnvelope | None = None,
 ) -> list[Advisory]:
-    if not summary.records:
-        return []
     advisories: list[Advisory] = []
     coverage = summary.coverage
     llm_calls = coverage.llm_call_events
+    if coverage.unmetered_llm_call_events:
+        _add_advisory(
+            advisories,
+            "unmetered_llm_calls",
+            "some completed or failed LLM calls have no usage payload",
+        )
     if not summary.complete:
         _add_advisory(
             advisories,
@@ -250,37 +252,7 @@ def _summary_advisories(
             "cache_write_without_read",
             "cache writes are present without cache reads; check cache reuse",
         )
-    if cost is not None:
-        if cost.provider_retries:
-            _add_advisory(
-                advisories,
-                "provider_retry_friction",
-                "provider retries increased token friction for this run",
-            )
-        if cost.provider_calls_post_delivery:
-            _add_advisory(
-                advisories,
-                "post_delivery_calls",
-                "post-delivery calls exist; verify they are intentional auxiliary work",
-            )
-        if cost.duplicate_tool_calls:
-            _add_advisory(
-                advisories,
-                "duplicate_tool_calls",
-                "duplicate tool calls detected; inspect tool-loop planning",
-            )
-        if cost.policy_denials:
-            _add_advisory(
-                advisories,
-                "policy_denial_friction",
-                "policy denials consumed turn work; inspect approval/tool policy inputs",
-            )
-        if cost.task_success is False or cost.final_truthful is False:
-            _add_advisory(
-                advisories,
-                "negative_outcome_tokens",
-                "token spend ended with a negative outcome signal; review this run",
-            )
+    _add_cost_advisories(advisories, cost)
     return advisories
 
 
@@ -294,18 +266,25 @@ def _format_recommendations(
 
 def _format_coverage_health(summary: TokenUsageSummary) -> list[str]:
     coverage = summary.coverage
-    if not summary.source_event_count and not coverage.llm_call_events:
+    if not summary.source_event_count and not coverage.observed_llm_call_events:
         return []
     parts = []
-    if coverage.llm_call_events:
+    if coverage.observed_llm_call_events:
         llm_calls = coverage.llm_call_events
         parts.extend(
             [
-                f"llm_calls={llm_calls}",
-                f"provider={coverage.provider_identified_llm_call_events}/{llm_calls}",
-                f"model={coverage.model_identified_llm_call_events}/{llm_calls}",
+                f"llm_calls={coverage.observed_llm_call_events}",
+                f"metered={llm_calls}/{coverage.observed_llm_call_events}",
+                f"unmetered={coverage.unmetered_llm_call_events}",
             ]
         )
+        if llm_calls:
+            parts.extend(
+                [
+                    f"provider={coverage.provider_identified_llm_call_events}/{llm_calls}",
+                    f"model={coverage.model_identified_llm_call_events}/{llm_calls}",
+                ]
+            )
     if summary.source_event_count:
         parts.extend(
             [
@@ -350,7 +329,7 @@ def _summary_advisory_codes(summary: TokenUsageSummary) -> list[str]:
 def _format_drilldowns(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
     top_sessions = sorted(
         (
-            (summary.session_id, _summary_visible_tokens(summary))
+            (summary.session_id, _summary_llm_tokens(summary))
             for summary in summaries
             if summary.records
         ),
@@ -369,7 +348,13 @@ def _format_drilldowns(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
 def _rollup_coverage_health(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
     source_events = sum(summary.source_event_count for summary in summaries)
     llm_calls = sum(summary.coverage.llm_call_events for summary in summaries)
-    if not source_events and not llm_calls:
+    observed_llm_calls = sum(
+        summary.coverage.observed_llm_call_events for summary in summaries
+    )
+    unmetered_llm_calls = sum(
+        summary.coverage.unmetered_llm_call_events for summary in summaries
+    )
+    if not source_events and not observed_llm_calls:
         return []
     provider_ids = sum(
         summary.coverage.provider_identified_llm_call_events for summary in summaries
@@ -381,14 +366,21 @@ def _rollup_coverage_health(summaries: tuple[TokenUsageSummary, ...]) -> list[st
     trace_ids = sum(summary.coverage.trace_id_present_events for summary in summaries)
     call_ids = sum(summary.coverage.llm_call_id_present_events for summary in summaries)
     parts = []
-    if llm_calls:
+    if observed_llm_calls:
         parts.extend(
             [
-                f"llm_calls={llm_calls}",
-                f"provider={provider_ids}/{llm_calls}",
-                f"model={model_ids}/{llm_calls}",
+                f"llm_calls={observed_llm_calls}",
+                f"metered={llm_calls}/{observed_llm_calls}",
+                f"unmetered={unmetered_llm_calls}",
             ]
         )
+        if llm_calls:
+            parts.extend(
+                [
+                    f"provider={provider_ids}/{llm_calls}",
+                    f"model={model_ids}/{llm_calls}",
+                ]
+            )
     if source_events:
         parts.extend(
             [
@@ -428,6 +420,9 @@ def _rollup_advisories(summaries: tuple[TokenUsageSummary, ...]) -> list[Advisor
     source_events = sum(summary.source_event_count for summary in summaries)
     run_ids = sum(summary.coverage.run_id_present_events for summary in summaries)
     call_ids = sum(summary.coverage.llm_call_id_present_events for summary in summaries)
+    unmetered_calls = sum(
+        summary.coverage.unmetered_llm_call_events for summary in summaries
+    )
     if empty:
         _add_advisory(
             advisories,
@@ -439,6 +434,12 @@ def _rollup_advisories(summaries: tuple[TokenUsageSummary, ...]) -> list[Advisor
             advisories,
             "event_window_limited",
             f"{incomplete} recent session(s) were limited by --event-limit",
+        )
+    if unmetered_calls:
+        _add_advisory(
+            advisories,
+            "unmetered_llm_calls",
+            f"{unmetered_calls} completed or failed LLM call(s) have no usage payload",
         )
     if derived:
         _add_advisory(
@@ -488,58 +489,10 @@ def _format_advisories(advisories: list[Advisory]) -> list[str]:
     ]
 
 
-def _advisory_payload(advisories: list[Advisory]) -> list[dict[str, str]]:
+def _advisory_payload(
+    advisories: list[Advisory],
+) -> list[TokenUsageAdvisoryPayload]:
     return [advisory.as_payload() for advisory in advisories]
-
-
-def _provider_coverage_payload(
-    summaries: tuple[TokenUsageSummary, ...],
-) -> list[TokenUsageProviderCoveragePayload]:
-    grouped: dict[tuple[str, str], ProviderCoverage] = {}
-    for summary in summaries:
-        for record in summary.records:
-            if record.surface not in _LLM_USAGE_SURFACES:
-                continue
-            key = (record.provider or "-", record.model or "-")
-            current = grouped.get(key) or ProviderCoverage(
-                provider=key[0], model=key[1]
-            )
-            llm_total_records = current.llm_total_records
-            provider_total_records = current.provider_total_records
-            derived_total_records = current.derived_total_records
-            provider_tokens = current.provider_tokens
-            derived_tokens = current.derived_tokens
-            if record.surface == SURFACE_LLM_TOTAL:
-                llm_total_records += 1
-                if record.total_source == TOTAL_SOURCE_PROVIDER:
-                    provider_total_records += 1
-                    provider_tokens += record.total_tokens
-                elif record.total_source == TOTAL_SOURCE_DERIVED:
-                    derived_total_records += 1
-                    derived_tokens += record.total_tokens
-            grouped[key] = ProviderCoverage(
-                provider=current.provider,
-                model=current.model,
-                llm_total_records=llm_total_records,
-                provider_total_records=provider_total_records,
-                derived_total_records=derived_total_records,
-                provider_tokens=provider_tokens,
-                derived_tokens=derived_tokens,
-                input_tokens=current.input_tokens + record.input_tokens,
-                output_tokens=current.output_tokens + record.output_tokens,
-                cache_read_tokens=current.cache_read_tokens + record.cache_read_tokens,
-                cache_write_tokens=current.cache_write_tokens
-                + record.cache_write_tokens,
-            )
-    ranked = sorted(
-        grouped.values(),
-        key=lambda coverage: (
-            coverage.provider_tokens + coverage.derived_tokens,
-            coverage.llm_total_records,
-        ),
-        reverse=True,
-    )
-    return [coverage.as_payload() for coverage in ranked]
 
 
 def _rollup_efficiency_payload(
@@ -555,6 +508,8 @@ def _rollup_efficiency_payload(
     llm_tokens = provider_tokens + derived_tokens
     visible_tokens = llm_tokens + context_tokens
     return {
+        "llm_tokens": llm_tokens,
+        "context_estimated_tokens": context_tokens,
         "total_visible_tokens": visible_tokens,
         "provider_total_ratio_bps": _ratio_bps(provider_tokens, llm_tokens),
         "derived_total_ratio_bps": _ratio_bps(derived_tokens, llm_tokens),
@@ -571,7 +526,9 @@ def _format_rollup_efficiency(
         return []
     return [
         "efficiency: "
-        f"visible={_format_token_count(efficiency['total_visible_tokens'])} "
+        f"llm={_format_token_count(efficiency['llm_tokens'])} "
+        "context_estimated="
+        f"{_format_token_count(efficiency['context_estimated_tokens'])} "
         f"provider_total={_format_ratio_bps(efficiency['provider_total_ratio_bps'])} "
         f"derived_total={_format_ratio_bps(efficiency['derived_total_ratio_bps'])} "
         f"context_share={_format_ratio_bps(efficiency['context_share_bps'])} "
@@ -602,6 +559,9 @@ def _session_trend_payload(
                 "context_estimated_tokens": context_tokens,
                 "cache_read_tokens": summary.total_cache_read_tokens,
                 "cache_write_tokens": summary.total_cache_write_tokens,
+                "llm_tokens": (
+                    summary.total_provider_tokens + summary.total_derived_tokens
+                ),
                 "total_visible_tokens": _summary_visible_tokens(summary),
                 "provider_cost_usd": (
                     summary.total_provider_cost_usd
@@ -615,6 +575,14 @@ def _session_trend_payload(
                 ),
                 "provider_token_delta": (
                     summary.total_provider_tokens - previous.total_provider_tokens
+                    if previous is not None
+                    else None
+                ),
+                "llm_token_delta": (
+                    summary.total_provider_tokens
+                    + summary.total_derived_tokens
+                    - previous.total_provider_tokens
+                    - previous.total_derived_tokens
                     if previous is not None
                     else None
                 ),
@@ -639,7 +607,7 @@ def _format_session_trends(summaries: tuple[TokenUsageSummary, ...]) -> list[str
             f"provider:{_format_token_count(trend['provider_tokens'])}",
             f"derived:{_format_token_count(trend['derived_tokens'])}",
             f"context:{_format_token_count(trend['context_estimated_tokens'])}",
-            f"delta:{_format_delta(trend['visible_token_delta'])}",
+            f"llm_delta:{_format_delta(trend['llm_token_delta'])}",
         ]
         if (
             trend["provider_cost_usd"] is not None
@@ -662,28 +630,9 @@ def _format_session_trends(summaries: tuple[TokenUsageSummary, ...]) -> list[str
     return ["session trends: " + "; ".join(parts)]
 
 
-def _format_provider_coverage(
-    summaries: tuple[TokenUsageSummary, ...],
-) -> list[str]:
-    coverage = _provider_coverage_payload(summaries)
-    if not coverage:
-        return []
-    parts = []
-    for row in coverage[:5]:
-        label = f"{row['provider']}/{row['model']}"
-        parts.append(
-            f"{label}="
-            f"records:{row['llm_total_records']} "
-            f"provider:{_format_token_count(row['provider_tokens'])} "
-            f"derived:{_format_token_count(row['derived_tokens'])} "
-            f"cache_read:{_format_token_count(row['cache_read_tokens'])}"
-        )
-    return ["provider coverage: " + "; ".join(parts)]
-
-
 def _rollup_totals_payload(
     summaries: tuple[TokenUsageSummary, ...],
-) -> dict[str, int]:
+) -> TokenUsageRollupTotalsPayload:
     return {
         "provider_tokens": sum(summary.total_provider_tokens for summary in summaries),
         "derived_tokens": sum(summary.total_derived_tokens for summary in summaries),
@@ -702,11 +651,17 @@ def _rollup_totals_payload(
 
 def _rollup_coverage_payload(
     summaries: tuple[TokenUsageSummary, ...],
-) -> dict[str, int]:
+) -> TokenUsageRollupCoveragePayload:
     return {
         "source_event_count": sum(summary.source_event_count for summary in summaries),
         "llm_call_events": sum(
             summary.coverage.llm_call_events for summary in summaries
+        ),
+        "observed_llm_call_events": sum(
+            summary.coverage.observed_llm_call_events for summary in summaries
+        ),
+        "unmetered_llm_call_events": sum(
+            summary.coverage.unmetered_llm_call_events for summary in summaries
         ),
         "failed_llm_call_events": sum(
             summary.coverage.failed_llm_call_events for summary in summaries
@@ -773,15 +728,22 @@ def format_token_rollup(
     *,
     input_session_count: int | None = None,
     only_warnings: bool = False,
+    agent_id: str = "",
 ) -> str:
     if not summaries:
         if only_warnings and input_session_count is not None:
             return (
                 "status tokens: "
-                f"recent_sessions={input_session_count} with_warnings=0\n"
+                f"recent_sessions={input_session_count} "
+                + (f"agent={agent_id} " if agent_id else "")
+                + "with_warnings=0\n"
                 "recommendations: no immediate token telemetry gaps detected"
             )
-        return "no sessions found"
+        return (
+            f"no sessions found for agent {agent_id}"
+            if agent_id
+            else "no sessions found"
+        )
     token_summaries = tuple(summary for summary in summaries if summary.records)
     totals = _rollup_totals_payload(token_summaries)
     costs = token_cost_rollup(token_summaries)
@@ -789,7 +751,8 @@ def format_token_rollup(
         (
             "status tokens: "
             f"recent_sessions={len(summaries)} "
-            f"with_usage={len(token_summaries)} "
+            + (f"agent={agent_id} " if agent_id else "")
+            + f"with_usage={len(token_summaries)} "
             + (
                 f"filtered=warnings input_sessions={input_session_count} "
                 if only_warnings and input_session_count is not None
@@ -830,7 +793,7 @@ def format_token_rollup(
     lines.extend(_format_session_trends(token_summaries))
     top_sessions = sorted(
         (
-            (summary.session_id, _summary_visible_tokens(summary))
+            (summary.session_id, _summary_llm_tokens(summary))
             for summary in token_summaries
         ),
         key=lambda item: item[1],
@@ -844,7 +807,7 @@ def format_token_rollup(
                 for session_id, tokens in top_sessions
             )
         )
-    lines.extend(_format_provider_coverage(token_summaries))
+    lines.extend(format_provider_coverage(token_summaries))
     lines.extend(_rollup_coverage_health(summaries))
     lines.extend(_format_warning_sessions(summaries))
     lines.extend(_format_advisories(_rollup_advisories(summaries)))
@@ -861,6 +824,7 @@ def token_rollup_json_payload(
     *,
     input_session_count: int | None = None,
     only_warnings: bool = False,
+    agent_id: str = "",
 ) -> TokenUsageRollupPayload:
     advisories = _rollup_advisories(summaries)
     return {
@@ -870,11 +834,12 @@ def token_rollup_json_payload(
             input_session_count if input_session_count is not None else len(summaries)
         ),
         "only_warnings": only_warnings,
+        "agent_id": agent_id,
         "complete": all(summary.complete for summary in summaries),
         "totals": _rollup_totals_payload(summaries),
         "costs": token_cost_rollup(summaries),
         "coverage": _rollup_coverage_payload(summaries),
-        "provider_coverage": _provider_coverage_payload(summaries),
+        "provider_coverage": provider_coverage_payload(summaries),
         "efficiency": _rollup_efficiency_payload(summaries),
         "session_trends": _session_trend_payload(summaries),
         "advisories": _advisory_payload(advisories),
@@ -883,16 +848,16 @@ def token_rollup_json_payload(
 
 
 def _format_usage_breakdown(summary: TokenUsageSummary) -> list[str]:
-    grouped: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
+    grouped: dict[tuple[str, str, str, str, TokenTotalSource], int] = defaultdict(int)
     for record in summary.records:
-        key = (
+        group_key = (
             record.provider or "-",
             record.model or "-",
             record.surface or "unknown",
             record.bucket,
             record.total_source,
         )
-        grouped[key] += _record_tokens(record)
+        grouped[group_key] += _record_tokens(record)
     lines = ["breakdown:"] if grouped else []
     for key, tokens in sorted(grouped.items(), key=lambda item: item[1], reverse=True):
         provider, model, surface, bucket, total_source = key
@@ -937,29 +902,37 @@ def format_token_summary(
         )
         lines.extend(_format_insights(summary))
         lines.extend(_format_turn_cost(cost))
+    if summary.records or summary.coverage.observed_llm_call_events:
         lines.extend(_format_recommendations(summary, cost=cost))
     lines.extend(_format_usage_breakdown(summary))
     coverage = summary.coverage
-    if coverage.llm_call_events:
+    if coverage.observed_llm_call_events:
         llm_calls = coverage.llm_call_events
-        dimensions = (
-            ("input", coverage.input_tokens),
-            ("output", coverage.output_tokens),
-            ("total", coverage.total_tokens),
-            ("cache_read", coverage.cache_read_tokens),
-            ("cache_write", coverage.cache_write_tokens),
-        )
-        lines.append(
+        coverage_line = (
             "coverage: "
-            f"llm_calls={llm_calls} "
-            f"failed={coverage.failed_llm_call_events} "
-            f"provider={coverage.provider_identified_llm_call_events}/{llm_calls} "
-            f"model={coverage.model_identified_llm_call_events}/{llm_calls} "
-            + " ".join(
-                f"{name}={dimension.reported}/{dimension.total}"
-                for name, dimension in dimensions
-            )
+            f"llm_calls={coverage.observed_llm_call_events} "
+            f"metered={llm_calls} "
+            f"unmetered={coverage.unmetered_llm_call_events} "
+            f"failed={coverage.failed_llm_call_events}"
         )
+        dimensions: tuple[tuple[str, TokenUsageDimensionCoverage], ...] = ()
+        if llm_calls:
+            dimensions = (
+                ("input", coverage.input_tokens),
+                ("output", coverage.output_tokens),
+                ("total", coverage.total_tokens),
+                ("cache_read", coverage.cache_read_tokens),
+                ("cache_write", coverage.cache_write_tokens),
+            )
+            coverage_line += (
+                f" provider={coverage.provider_identified_llm_call_events}/{llm_calls} "
+                f"model={coverage.model_identified_llm_call_events}/{llm_calls} "
+                + " ".join(
+                    f"{name}={dimension.reported}/{dimension.total}"
+                    for name, dimension in dimensions
+                )
+            )
+        lines.append(coverage_line)
         invalid = [
             f"{name}={dimension.invalid}"
             for name, dimension in dimensions

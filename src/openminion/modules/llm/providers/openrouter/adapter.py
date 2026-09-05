@@ -2,6 +2,8 @@ import json
 import time
 from typing import Any, Iterator
 
+from openminion.base.config.parse import as_optional_float
+
 from ...contracts.adapter import (
     ProviderAdapterResult,
     adapter_result_to_llm_response,
@@ -214,17 +216,13 @@ class OpenRouterProvider(OpenAIProvider):
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         assistant_messages = [Message(role="assistant", content=text)] if text else []
-        usage = _usage_from_openai_like(response_payload.get("usage"))
-
-        cost_usd: float | None = None
-        usage_dict = response_payload.get("usage")
-        if isinstance(usage_dict, dict):
-            raw_cost = usage_dict.get("cost")
-            if raw_cost is not None:
-                try:
-                    cost_usd = float(raw_cost)
-                except (TypeError, ValueError):
-                    pass
+        usage_payload = response_payload.get("usage")
+        usage = _usage_from_openai_like(usage_payload)
+        cost_usd = (
+            as_optional_float(usage_payload.get("cost"))
+            if isinstance(usage_payload, dict)
+            else None
+        )
 
         return adapter_result_to_llm_response(
             ProviderAdapterResult(
@@ -237,6 +235,7 @@ class OpenRouterProvider(OpenAIProvider):
                 usage=usage,
                 latency_ms=elapsed_ms,
                 cost_usd=cost_usd,
+                cost_source="provider" if cost_usd is not None else None,
                 finish_reason=str(first_choice.get("finish_reason", "")).strip(),
                 provider_raw=response_payload,
                 normalization_meta={

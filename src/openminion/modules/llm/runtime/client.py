@@ -55,6 +55,7 @@ from .flow import (
     _execute_with_routing,
     _finalize_response,
     _merge_generation_params,
+    _observe_response_cost,
     _resolve_provider_and_model,
     _resolve_provider_cost_hint,
     _retry_config,
@@ -335,6 +336,7 @@ class LLMClient:
     _call_with_retries = _call_with_retries
     _apply_tool_policy_post = _apply_tool_policy_post
     _apply_cost_budget = _apply_cost_budget
+    _observe_response_cost = _observe_response_cost
     _resolve_provider_cost_hint = _resolve_provider_cost_hint
     _finalize_response = _finalize_response
     _error_response = _error_response
@@ -616,6 +618,7 @@ class LLMClient:
                 source="llm_response_normalization",
             )
         response = self._apply_tool_policy_post(response, tool_policy_ctx)
+        response = self._observe_response_cost(response)
         response = self._apply_cost_budget(response)
 
         return self._finalize_response(response)

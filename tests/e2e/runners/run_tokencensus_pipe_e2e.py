@@ -176,6 +176,30 @@ def _seed_usage(installed_bin: Path, home_root: Path, data_root: Path) -> str:
                 },
             },
         ),
+        (
+            "llm.call.completed",
+            {
+                "run_id": "run-token-pipe",
+                "provider": "echo",
+                "model": "echo-test",
+                "cost_usd": 0.001,
+                "cost_source": "estimated",
+                "usage": {
+                    "input_tokens": 2,
+                    "output_tokens": 1,
+                    "total_tokens": 3,
+                    "total_source": "derived",
+                },
+            },
+        ),
+        (
+            "llm.call.failed",
+            {
+                "run_id": "run-token-pipe",
+                "provider": "echo",
+                "model": "echo-test",
+            },
+        ),
     )
     for event_type, payload in events:
         _require_success(
@@ -226,12 +250,18 @@ def _assert_usage_payload(payload: dict[str, Any]) -> None:
     totals = payload.get("totals") or {}
     if totals.get("provider_tokens") != 18:
         raise RuntimeError(f"unexpected provider total: {totals}")
+    if totals.get("derived_tokens") != 3:
+        raise RuntimeError(f"unexpected derived total: {totals}")
     costs = payload.get("costs") or {}
     if costs.get("provider_cost_usd") != 0.003:
         raise RuntimeError(f"unexpected provider cost: {costs}")
+    if costs.get("estimated_cost_usd") != 0.001:
+        raise RuntimeError(f"unexpected estimated cost: {costs}")
     coverage = payload.get("coverage") or {}
-    if coverage.get("failed_llm_call_events") != 1:
+    if coverage.get("failed_llm_call_events") != 2:
         raise RuntimeError(f"unexpected failed-call coverage: {coverage}")
+    if coverage.get("unmetered_llm_call_events") != 1:
+        raise RuntimeError(f"unexpected unmetered-call coverage: {coverage}")
     rendered = json.dumps(payload, sort_keys=True)
     if "do not export" in rendered or "do-not-export-secret" in rendered:
         raise RuntimeError("prompt or secret content leaked into token usage payload")
@@ -245,6 +275,13 @@ def _assert_tokencensus_payload(payload: dict[str, Any]) -> None:
     totals = payload.get("totals") or {}
     if totals.get("provider_tokens") != 18:
         raise RuntimeError(f"unexpected TokenCensus totals: {totals}")
+    if totals.get("derived_tokens") != 3:
+        raise RuntimeError(f"unexpected TokenCensus derived totals: {totals}")
+    costs = payload.get("costs") or {}
+    if costs.get("provider_cost_usd") != 0.003:
+        raise RuntimeError(f"unexpected TokenCensus provider cost: {costs}")
+    if costs.get("estimated_cost_usd") != 0.001:
+        raise RuntimeError(f"unexpected TokenCensus estimated cost: {costs}")
     rendered = json.dumps(payload, sort_keys=True)
     if "do not export" in rendered or "do-not-export-secret" in rendered:
         raise RuntimeError("prompt or secret content leaked into TokenCensus payload")

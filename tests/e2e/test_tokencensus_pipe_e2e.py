@@ -32,9 +32,15 @@ def test_usage_payload_assertion_rejects_prompt_or_secret_leak() -> None:
             {
                 "schema_version": "openminion.token_usage.v1",
                 "session_id": "token-pipe-session",
-                "totals": {"provider_tokens": 18},
-                "costs": {"provider_cost_usd": 0.003},
-                "coverage": {"failed_llm_call_events": 1},
+                "totals": {"provider_tokens": 18, "derived_tokens": 3},
+                "costs": {
+                    "provider_cost_usd": 0.003,
+                    "estimated_cost_usd": 0.001,
+                },
+                "coverage": {
+                    "failed_llm_call_events": 2,
+                    "unmetered_llm_call_events": 1,
+                },
                 "records": [{"extra": "do-not-export-secret"}],
             }
         )

@@ -757,18 +757,30 @@ def _apply_tool_policy_post(
     return response
 
 
+def _observe_response_cost(client: Any, response: LLMResponse) -> LLMResponse:
+    if not response.ok:
+        return response
+    if response.cost_usd is not None:
+        return response.model_copy(
+            update={"cost_source": response.cost_source or "provider"}
+        )
+    estimate = estimate_usage_cost_usd(
+        usage=response.usage,
+        cost_hint=client._resolve_provider_cost_hint(response.provider),
+    )
+    if estimate is None:
+        return response
+    return response.model_copy(
+        update={"cost_usd": estimate, "cost_source": "estimated"}
+    )
+
+
 def _apply_cost_budget(client: Any, response: LLMResponse) -> LLMResponse:
     max_cost = client.profile.budgets.max_cost_usd
     if not response.ok or max_cost is None:
         return response
 
-    observed_cost = response.cost_usd
-    evaluated_cost = observed_cost
-    if evaluated_cost is None:
-        evaluated_cost = estimate_usage_cost_usd(
-            usage=response.usage,
-            cost_hint=client._resolve_provider_cost_hint(response.provider),
-        )
+    evaluated_cost = response.cost_usd
     if evaluated_cost is None:
         LOGGER.warning(
             "llm.cost_budget.unassessable provider=%s model=%s max_cost_usd=%s",
@@ -782,12 +794,12 @@ def _apply_cost_budget(client: Any, response: LLMResponse) -> LLMResponse:
 
     details: Dict[str, Any] = {
         "max_cost_usd": max_cost,
-        "cost_source": "provider" if observed_cost is not None else "estimated",
+        "cost_source": response.cost_source or "provider",
     }
-    if observed_cost is not None:
-        details["cost_usd"] = observed_cost
-    else:
+    if response.cost_source == "estimated":
         details["estimated_cost_usd"] = evaluated_cost
+    else:
+        details["cost_usd"] = evaluated_cost
 
     return client._error_response(
         provider=response.provider,
@@ -905,6 +917,7 @@ __all__ = [
     "ToolPolicyContext",
     "_apply_budgets",
     "_apply_cost_budget",
+    "_observe_response_cost",
     "_apply_tool_policy_post",
     "_apply_tool_policy_pre",
     "_cache_hit_payload",

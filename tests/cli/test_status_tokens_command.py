@@ -38,6 +38,7 @@ def _args(
     event_limit: int | None = None,
     as_json: bool = False,
     only_warnings: bool = False,
+    agent_id: str = "",
 ) -> Namespace:
     return Namespace(
         config="",
@@ -47,6 +48,7 @@ def _args(
         event_limit=event_limit,
         json=as_json,
         only_warnings=only_warnings,
+        agent_id=agent_id,
     )
 
 
@@ -62,12 +64,21 @@ def test_status_tokens_parser_registration() -> None:
 
 def test_status_tokens_parser_accepts_recent_rollup() -> None:
     args = build_parser().parse_args(
-        ["status", "tokens", "--recent", "5", "--only-warnings"]
+        [
+            "status",
+            "tokens",
+            "--recent",
+            "5",
+            "--only-warnings",
+            "--agent-id",
+            "agent.main",
+        ]
     )
 
     assert args.status_command == "tokens"
     assert args.recent == 5
     assert args.only_warnings is True
+    assert args.agent_id == "agent.main"
 
 
 def test_status_tokens_parser_defaults_to_latest_session() -> None:
@@ -154,7 +165,7 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
 
     assert (
         run_tokens_status(
-            _args(session_id=session_id, event_limit=2),
+            _args(session_id=session_id, event_limit=1),
             config=OpenMinionConfig(),
         )
         == 0
@@ -163,7 +174,7 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
     assert "complete=no" in output
     assert "coverage: llm_calls=1" in output
     assert "input=1/1" in output
-    assert "incomplete: event_limit=2" in output
+    assert "incomplete: event_limit=1" in output
     assert "[event_window_limited]" in output
 
 
@@ -335,6 +346,36 @@ def test_status_tokens_text_shows_insights_and_navigation(
     assert "next: add `--run-id <run-id>`" in output
 
 
+def test_status_tokens_shows_unmetered_failed_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-unmetered.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    store.append_event(
+        session_id,
+        event_type="llm.call.failed",
+        payload={"provider": "openai", "model": "gpt-test"},
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id=session_id),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "llm_calls=1 metered=0 unmetered=1 failed=1" in output
+    assert "[unmetered_llm_calls]" in output
+
+
 def test_status_tokens_recent_rollup_shows_cross_session_insights(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -377,17 +418,17 @@ def test_status_tokens_recent_rollup_shows_cross_session_insights(
     assert "with_usage=2" in output
     assert "context_estimated=20" in output
     assert (
-        "efficiency: visible=26 provider_total=100% derived_total=0% "
+        "efficiency: llm=6 context_estimated=20 provider_total=100% derived_total=0% "
         "context_share=77% cache_read/write=0%"
     ) in output
     assert "session trends:" in output
     assert "context:20" in output
-    assert "delta:+14" in output
+    assert "llm_delta:-6" in output
     assert "top sessions:" in output
     assert "provider coverage: openai/gpt-a=records:1 provider:6" in output
     assert "coverage health:" in output
     assert "[context_dominates] context packing dominates recent usage" in output
-    assert "drilldown: `openminion status tokens --session-id session-b`" in output
+    assert "`openminion status tokens --session-id session-b`" in output
 
 
 def test_status_tokens_recent_json_wraps_raw_session_envelopes(
@@ -424,9 +465,14 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
     assert payload["session_count"] == 1
     assert payload["input_session_count"] == 1
     assert payload["only_warnings"] is False
+    assert payload["agent_id"] == ""
     assert payload["totals"]["provider_tokens"] == 5
     assert payload["coverage"]["llm_call_events"] == 1
+    assert payload["coverage"]["observed_llm_call_events"] == 1
+    assert payload["coverage"]["unmetered_llm_call_events"] == 0
     assert payload["efficiency"] == {
+        "llm_tokens": 5,
+        "context_estimated_tokens": 0,
         "total_visible_tokens": 5,
         "provider_total_ratio_bps": 10000,
         "derived_total_ratio_bps": 0,
@@ -459,10 +505,12 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
     assert trend["context_estimated_tokens"] == 0
     assert trend["cache_read_tokens"] == 0
     assert trend["cache_write_tokens"] == 0
+    assert trend["llm_tokens"] == 5
     assert trend["total_visible_tokens"] == 5
     assert trend["provider_cost_usd"] is None
     assert trend["estimated_cost_usd"] is None
     assert trend["provider_token_delta"] is None
+    assert trend["llm_token_delta"] is None
     assert trend["visible_token_delta"] is None
     assert set(trend["advisory_codes"]) == {
         "missing_run_correlation",
@@ -513,6 +561,7 @@ def test_status_tokens_recent_json_matches_rollup_fixture() -> None:
         events_scanned=2,
         coverage=TokenUsageCoverage(
             llm_call_events=2,
+            observed_llm_call_events=2,
             provider_identified_llm_call_events=2,
             model_identified_llm_call_events=2,
             run_id_present_events=2,
@@ -630,6 +679,45 @@ def test_status_tokens_recent_only_warnings_json_filters_clean_sessions(
     assert payload["only_warnings"] is True
     assert payload["summaries"][0]["session_id"] == "session-warning"
     assert payload["advisories"][0]["code"] == "derived_total_tokens"
+
+
+def test_status_tokens_recent_filters_sessions_by_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-agent.db")
+    selected = store.create_session(
+        initial_agent_id="agent.selected",
+        profile_version="v1",
+        session_id="session-selected",
+    )
+    ignored = store.create_session(
+        initial_agent_id="agent.ignored",
+        profile_version="v1",
+        session_id="session-ignored",
+    )
+    for session_id in (selected, ignored):
+        store.append_event(
+            session_id,
+            event_type="llm.call.completed",
+            payload={"usage": {"input_tokens": 3, "output_tokens": 2}},
+        )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id="", recent=5, agent_id="agent.selected"),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "agent=agent.selected" in output
+    assert "session-selected" in output
+    assert "session-ignored" not in output
 
 
 def test_status_tokens_run_output_shows_outcome_and_friction(
@@ -753,6 +841,14 @@ def test_status_tokens_rejects_only_warnings_without_recent() -> None:
     with pytest.raises(RuntimeError, match="requires --recent"):
         run_tokens_status(
             _args(session_id="session-1", only_warnings=True),
+            config=OpenMinionConfig(),
+        )
+
+
+def test_status_tokens_rejects_agent_without_recent() -> None:
+    with pytest.raises(RuntimeError, match="requires --recent"):
+        run_tokens_status(
+            _args(session_id="session-1", agent_id="agent.main"),
             config=OpenMinionConfig(),
         )
 
