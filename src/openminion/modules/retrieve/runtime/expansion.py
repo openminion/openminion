@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..schemas import RetrievedItem
 from .ingestion import _offset_start
-from .retrieval import _json_loads, candidate_from_row, to_retrieved_item
+from .retrieval import candidate_from_row, to_retrieved_item
 
 
 def _missing_explanation(payload: Mapping[str, Any], detail: str) -> dict[str, Any]:
@@ -53,6 +54,15 @@ def explain_item(
     if row is None:
         return _missing_explanation(payload, "unit row not found")
 
+    raw_offsets = str(row["offsets_json"])
+    offsets = json.loads(raw_offsets)
+    if not isinstance(offsets, dict):
+        raise json.JSONDecodeError("expected a JSON object", raw_offsets, 0)
+    raw_tags = str(row["tags_json"])
+    tags = json.loads(raw_tags)
+    if not isinstance(tags, list):
+        raise json.JSONDecodeError("expected a JSON array", raw_tags, 0)
+
     return {
         "ref_id": payload.get("ref_id"),
         "why": payload.get("why", ""),
@@ -66,8 +76,8 @@ def explain_item(
         "level": str(row["level"] or "none"),
         "node_id": row["node_id"],
         "group_id": row["group_id"],
-        "offsets": _json_loads(str(row["offsets_json"] or "{}"), {}),
-        "tags": _json_loads(str(row["tags_json"] or "[]"), []),
+        "offsets": offsets,
+        "tags": tags,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -117,9 +127,10 @@ def leaf_ids_for_node(service: Any, node_id: str) -> list[str]:
     ).fetchone()
     if row is None:
         return []
-    payload = _json_loads(str(row["leaf_unit_ids_json"]), [])
+    raw_payload = str(row["leaf_unit_ids_json"])
+    payload = json.loads(raw_payload)
     if not isinstance(payload, list):
-        return []
+        raise json.JSONDecodeError("expected a JSON array", raw_payload, 0)
     return [str(item) for item in payload if str(item).strip()]
 
 

@@ -41,10 +41,6 @@ def _title_identity_boost(
     return _clamp_score(float(max_boost) * overlap * title_weight)
 
 
-def _json_loads(raw: str | None, fallback: Any) -> Any:
-    return fallback if raw is None else json.loads(raw)
-
-
 def _normalize_scope_keys(raw_scope_keys: Sequence[str]) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
@@ -196,9 +192,10 @@ def generate_candidates(
 
 
 def _candidate_row_tags(row: Mapping[str, Any]) -> list[str]:
-    tags = _json_loads(str(row["tags_json"]), [])
+    raw_tags = str(row["tags_json"])
+    tags = json.loads(raw_tags)
     if not isinstance(tags, list):
-        return []
+        raise json.JSONDecodeError("expected a JSON array", raw_tags, 0)
     return [str(tag) for tag in tags if str(tag).strip()]
 
 
@@ -256,6 +253,10 @@ def _candidate_from_row(
     defaults: Any,
 ) -> dict[str, Any]:
     source_type = str(row["source_type"])
+    raw_offsets = str(row["offsets_json"])
+    offsets = json.loads(raw_offsets)
+    if not isinstance(offsets, dict):
+        raise json.JSONDecodeError("expected a JSON object", raw_offsets, 0)
     return {
         "unit_id": str(row["unit_id"]),
         "doc_id": str(row["doc_id"]),
@@ -270,7 +271,7 @@ def _candidate_from_row(
         "node_id": str(row["node_id"]) if row["node_id"] is not None else None,
         "group_id": str(row["group_id"]) if row["group_id"] is not None else None,
         "text_ref": str(row["text_ref"]),
-        "offsets": _json_loads(str(row["offsets_json"]), {}),
+        "offsets": offsets,
         "query": query,
         "bm25_score": float(row["bm25_score"] or 0.0),
         "type": _candidate_type(tags),
@@ -625,7 +626,14 @@ def recent_rows(
 def candidate_from_row(
     service: Any, row: Mapping[str, Any], inherited_score: float
 ) -> dict[str, Any]:
-    tags = _json_loads(str(row["tags_json"]), [])
+    raw_tags = str(row["tags_json"])
+    tags = json.loads(raw_tags)
+    if not isinstance(tags, list):
+        raise json.JSONDecodeError("expected a JSON array", raw_tags, 0)
+    raw_offsets = str(row["offsets_json"])
+    offsets = json.loads(raw_offsets)
+    if not isinstance(offsets, dict):
+        raise json.JSONDecodeError("expected a JSON object", raw_offsets, 0)
     hit_count_raw = _optional_row_value(row, "hit_count")
     last_hit_raw = _optional_row_value(row, "last_hit_at")
     feedback_raw = _optional_row_value(row, "feedback_score")
@@ -635,18 +643,18 @@ def candidate_from_row(
         "source_type": str(row["source_type"]),
         "source_ref": str(row["source_ref"]),
         "doc_scope": str(row["scope"]),
-        "tags": [str(tag) for tag in tags] if isinstance(tags, list) else [],
+        "tags": [str(tag) for tag in tags],
         "created_at": str(row["created_at"]),
         "unit_kind": str(row["unit_kind"]),
         "level": str(row["level"] or "none"),
         "node_id": str(row["node_id"]) if row["node_id"] is not None else None,
         "group_id": str(row["group_id"]) if row["group_id"] is not None else None,
         "text_ref": str(row["text_ref"]),
-        "offsets": _json_loads(str(row["offsets_json"]), {}),
+        "offsets": offsets,
         "score": _clamp_score(inherited_score),
         "unified_score": _clamp_score(inherited_score),
         "bm25_score": _clamp_score(inherited_score),
-        "type": _candidate_type(tags if isinstance(tags, list) else []),
+        "type": _candidate_type(tags),
         "confidence": float(service.config.defaults.confidence_default),
         "meta": {
             "hit_count": int(hit_count_raw or 0),

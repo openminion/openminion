@@ -196,7 +196,7 @@ class RetrieveCtl:
             )
         except json.JSONDecodeError as exc:
             raise RetrieveCtlError(
-                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+                "CORRUPT_RETRIEVAL_DATA", "persisted retrieval data is invalid"
             ) from exc
         items = [
             self._to_retrieved_item(candidate=item, strategy=execution.strategy)
@@ -276,7 +276,7 @@ class RetrieveCtl:
             )
         except json.JSONDecodeError as exc:
             raise RetrieveCtlError(
-                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+                "CORRUPT_RETRIEVAL_DATA", "persisted retrieval data is invalid"
             ) from exc
         returned_count = len(execution.selected)
         no_result_reason = diagnostic_ops.no_result_reason(
@@ -543,7 +543,7 @@ class RetrieveCtl:
                 out = self._expand_window(unit_id=unit_id, k=target_k)
         except json.JSONDecodeError as exc:
             raise RetrieveCtlError(
-                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+                "CORRUPT_RETRIEVAL_DATA", "persisted retrieval data is invalid"
             ) from exc
         return [item.model_dump(mode="json") for item in out]
 
@@ -552,7 +552,7 @@ class RetrieveCtl:
             return expansion_ops.explain_item(self, item)
         except json.JSONDecodeError as exc:
             raise RetrieveCtlError(
-                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+                "CORRUPT_RETRIEVAL_DATA", "persisted retrieval data is invalid"
             ) from exc
 
     def ingest_artifact(
@@ -618,7 +618,7 @@ class RetrieveCtl:
             return ingestion_ops.build_raptor_tree(self, doc_id)
         except json.JSONDecodeError as exc:
             raise RetrieveCtlError(
-                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+                "CORRUPT_RETRIEVAL_DATA", "persisted retrieval data is invalid"
             ) from exc
 
     def group_long_units(
@@ -628,7 +628,7 @@ class RetrieveCtl:
             return ingestion_ops.group_long_units(self, corpus_id, grouping_policy)
         except json.JSONDecodeError as exc:
             raise RetrieveCtlError(
-                "CORRUPT_RETRIEVAL_DATA", "Stored retrieval data is invalid."
+                "CORRUPT_RETRIEVAL_DATA", "persisted retrieval data is invalid"
             ) from exc
 
     def record_hits(

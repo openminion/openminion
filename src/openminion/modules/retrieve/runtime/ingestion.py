@@ -21,8 +21,11 @@ def _stable_id(namespace: str, value: str) -> str:
 
 
 def _offset_start(row: Any) -> int:
-    offsets = json.loads(str(row["offsets_json"] or "{}"))
-    return int(offsets.get("start_token", 0)) if isinstance(offsets, dict) else 0
+    raw_offsets = str(row["offsets_json"])
+    offsets = json.loads(raw_offsets)
+    if not isinstance(offsets, dict):
+        raise json.JSONDecodeError("expected a JSON object", raw_offsets, 0)
+    return int(offsets.get("start_token", 0))
 
 
 def _optional_payload_str(payload: dict[str, Any], key: str) -> str | None:
@@ -557,12 +560,17 @@ def group_long_units(
     rows = service.store.execute(
         "SELECT doc_id, corpus_id, tags_json FROM retrievectl_docs ORDER BY doc_id"
     ).fetchall()
-    docs = [
-        row
-        for row in rows
-        if str(row["corpus_id"] or "") == normalized_corpus
-        or normalized_corpus in json.loads(str(row["tags_json"] or "[]"))
-    ]
+    docs = []
+    for row in rows:
+        raw_tags = str(row["tags_json"])
+        tags = json.loads(raw_tags)
+        if not isinstance(tags, list):
+            raise json.JSONDecodeError("expected a JSON array", raw_tags, 0)
+        if (
+            str(row["corpus_id"] or "") == normalized_corpus
+            or normalized_corpus in tags
+        ):
+            docs.append(row)
     if not docs:
         return GroupLongUnitsResult(
             corpus_id=normalized_corpus, docs_updated=0, groups_created=0

@@ -98,7 +98,47 @@ def test_public_reads_report_corrupt_stored_json(tmp_path: Path) -> None:
             with pytest.raises(RetrieveCtlError) as exc_info:
                 read()
             assert exc_info.value.code == "CORRUPT_RETRIEVAL_DATA"
-            assert exc_info.value.message == "Stored retrieval data is invalid."
+            assert exc_info.value.message == "persisted retrieval data is invalid"
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    ("statement", "value"),
+    [
+        ("UPDATE retrievectl_docs SET tags_json = ? WHERE doc_id = ?", "{}"),
+        ("UPDATE retrievectl_units SET offsets_json = ? WHERE doc_id = ?", "[]"),
+    ],
+)
+def test_public_reads_reject_wrong_stored_json_shapes(
+    tmp_path: Path,
+    statement: str,
+    value: str,
+) -> None:
+    service = _service(tmp_path)
+    try:
+        result = service.ingest_source(
+            source_type="doc",
+            source_ref="doc://wrong-json-shape",
+            text="wrong json shape boundary record",
+            scope="project",
+            tags=["boundary"],
+            title="wrong json shape",
+            unit_kind="chunk",
+        )
+        service.store.execute(statement, (value, result.doc_id))
+        service.store.commit()
+
+        with pytest.raises(RetrieveCtlError) as exc_info:
+            service.retrieve(
+                query="wrong",
+                purpose="act",
+                scope={"project": True},
+                k=2,
+                strategy="contextual",
+            )
+        assert exc_info.value.code == "CORRUPT_RETRIEVAL_DATA"
+        assert exc_info.value.message == "persisted retrieval data is invalid"
     finally:
         service.close()
 
