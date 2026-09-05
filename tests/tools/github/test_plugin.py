@@ -22,7 +22,7 @@ from openminion.tools.github.interfaces import (
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
-from openminion.tools.github.plugin import register
+from openminion.tools.github.plugin import read_update_pr, register
 from openminion.tools.github.providers import (
     provider_registry,
     register_provider,
@@ -74,6 +74,10 @@ class _StubProvider:
     def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
         return self._record("update_pr", args)
+
+    def read_update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("read_update_pr", args)
 
     def post_pr_review(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
@@ -395,7 +399,7 @@ def test_post_pr_comment_schema_requires_body() -> None:
         )
 
 
-def test_provider_protocol_violation_raises_deterministic_error(
+def test_invalid_provider_result_raises_public_error(
     registry_with_tools: ToolRegistry,
 ) -> None:
     class _BadProvider:
@@ -421,6 +425,33 @@ def test_provider_protocol_violation_raises_deterministic_error(
         spec = registry_with_tools.list()[TOOL_GITHUB_LIST_PRS]
         with pytest.raises(ToolRuntimeError) as exc:
             spec.handler({"owner": "o", "repo": "r"}, ctx=None)
-        assert exc.value.code == "PROVIDER_PROTOCOL_VIOLATION"
+        assert exc.value.code == "INVALID_RESPONSE"
+        assert exc.value.details["reason_code"] == "github_provider_bad_result"
     finally:
         provider_registry().reset()
+
+
+def test_update_pr_rejects_invalid_provider_results(
+    monkeypatch: pytest.MonkeyPatch,
+    registry_with_tools: ToolRegistry,
+    stub_provider: _StubProvider,
+) -> None:
+    def bad_result(**kwargs: Any) -> Any:
+        del kwargs
+        return "not-a-mapping"
+
+    monkeypatch.setattr(stub_provider, "update_pr", bad_result)
+    spec = registry_with_tools.list()[TOOL_GITHUB_UPDATE_PR]
+    with pytest.raises(ToolRuntimeError) as invoke_error:
+        spec.handler(
+            {"owner": "o", "repo": "r", "number": 1, "title": "Updated"},
+            ctx=None,
+        )
+    assert invoke_error.value.code == "INVALID_RESPONSE"
+    assert invoke_error.value.details["reason_code"] == "github_provider_bad_result"
+
+    monkeypatch.setattr(stub_provider, "read_update_pr", bad_result)
+    with pytest.raises(ToolRuntimeError) as preflight_error:
+        read_update_pr({"owner": "o", "repo": "r", "number": 1}, ctx=None)
+    assert preflight_error.value.code == "INVALID_RESPONSE"
+    assert preflight_error.value.details["reason_code"] == "github_provider_bad_result"

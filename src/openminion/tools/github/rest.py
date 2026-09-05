@@ -28,6 +28,7 @@ from .policy import (
     ensure_repository_allowed,
 )
 from .env import get_github_api_base_url, get_github_timeout_seconds
+from .pull_requests import open_pr_result, update_pr_result
 
 
 class GithubRestProvider:
@@ -352,7 +353,7 @@ class GithubRestProvider:
         )
         if not isinstance(row, Mapping):
             raise _protocol_error("github.open_pr expected an object response")
-        return _open_pr_result(
+        return open_pr_result(
             row,
             owner=owner,
             repo=repo,
@@ -423,7 +424,7 @@ class GithubRestProvider:
                 and str(row_head.get("sha") or "") == head_sha
                 and str(row_base.get("ref") or "") == base
             ):
-                return _open_pr_result(
+                return open_pr_result(
                     row,
                     owner=owner,
                     repo=repo,
@@ -461,7 +462,12 @@ class GithubRestProvider:
                 "Only an open pull request can be updated.",
                 {"reason_code": "github_update_pr_not_open", "state": state},
             )
-        return _update_pr_result(row, owner, repo, self.provider_id)
+        return update_pr_result(
+            row,
+            owner=owner,
+            repo=repo,
+            provider_id=self.provider_id,
+        )
 
     def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         owner, repo = _owner_repo(args)
@@ -485,7 +491,12 @@ class GithubRestProvider:
         )
         if not isinstance(row, Mapping):
             raise _protocol_error("github.update_pr expected an object response")
-        return _update_pr_result(row, owner, repo, self.provider_id)
+        return update_pr_result(
+            row,
+            owner=owner,
+            repo=repo,
+            provider_id=self.provider_id,
+        )
 
     @staticmethod
     def _ensure_open_pr_allowed(
@@ -742,57 +753,6 @@ def _owner_repo(args: Mapping[str, Any]) -> tuple[str, str]:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
-
-
-def _open_pr_result(
-    row: Mapping[str, Any],
-    *,
-    owner: str,
-    repo: str,
-    head: str,
-    base: str,
-    head_sha: str,
-    provider_id: str,
-) -> dict[str, Any]:
-    data = {
-        "owner": owner,
-        "repo": repo,
-        "number": int(row.get("number") or 0),
-        "html_url": str(row.get("html_url") or ""),
-        "head": head,
-        "base": base,
-        "state": str(row.get("state") or ""),
-    }
-    if head_sha:
-        data["head_sha"] = head_sha
-    return {
-        "ok": True,
-        "data": data,
-        "source": {"provider_id": provider_id},
-    }
-
-
-def _update_pr_result(
-    row: Mapping[str, Any],
-    owner: str,
-    repo: str,
-    provider_id: str,
-) -> dict[str, Any]:
-    head = _mapping(row.get("head"))
-    return {
-        "ok": True,
-        "data": {
-            "owner": owner,
-            "repo": repo,
-            "number": int(row.get("number") or 0),
-            "html_url": str(row.get("html_url") or ""),
-            "title": str(row.get("title") or ""),
-            "body": str(row.get("body") or ""),
-            "state": str(row.get("state") or ""),
-            "head_sha": str(head.get("sha") or ""),
-        },
-        "source": {"provider_id": provider_id},
-    }
 
 
 def _normalize_pr_summary(raw: Mapping[str, Any]) -> dict[str, Any]:

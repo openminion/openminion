@@ -74,7 +74,21 @@ def find_open_pr(
 
 
 def read_update_pr(args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
-    return dict(_resolve_provider().read_update_pr(args=args, ctx=ctx))
+    result = _resolve_provider().read_update_pr(args=args, ctx=ctx)
+    return _validated_provider_result(TOOL_GITHUB_UPDATE_PR, result)
+
+
+def _validated_provider_result(
+    tool_name: str,
+    result: Any,
+) -> dict[str, Any]:
+    if not isinstance(result, Mapping):
+        raise ToolRuntimeError(
+            "INVALID_RESPONSE",
+            f"GitHub provider returned non-mapping for {tool_name!r}",
+            {"reason_code": "github_provider_bad_result"},
+        )
+    return dict(result)
 
 
 def _dispatch(
@@ -86,13 +100,7 @@ def _dispatch(
     provider = _resolve_provider()
     method: Callable[..., Mapping[str, Any]] = getattr(provider, method_name)
     result = method(args=dict(args), ctx=ctx)
-    if not isinstance(result, Mapping):
-        raise ToolRuntimeError(
-            "PROVIDER_PROTOCOL_VIOLATION",
-            f"GitHub provider returned non-mapping for {tool_name!r}",
-            {"reason_code": "github_provider_bad_result"},
-        )
-    return dict(result)
+    return _validated_provider_result(tool_name, result)
 
 
 def _h_list_prs(args: dict[str, Any], ctx: Any) -> dict[str, Any]:

@@ -46,10 +46,8 @@ from .command_metadata import (
     _runtime_workspace_from_command,
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
-from .project_github import (
-    execute_github_open_pr_project_effect,
-    execute_github_update_pr_project_effect,
-)
+from .project_github import execute_github_open_pr_project_effect
+from .github_update import execute_github_update_pr_project_effect
 from .project_git import execute_git_remote_project_effect
 from .policy_context import (
     _agent_id_from_policy,
@@ -659,16 +657,17 @@ class ToolAdapter:
                     args=args,
                 )
             if tool_name == "github.open_pr" and project_task_id:
-                if self.task_manager is None:
-                    raise ToolRuntimeError(
-                        "INVALID_REQUEST",
-                        "Project tool execution requires the task manager.",
-                        {
-                            "reason_code": "project_task_manager_unavailable",
-                            "project_task_id": project_task_id,
-                        },
-                    )
-                return execute_github_open_pr_project_effect(
+                return self._execute_project_open_pr(
+                    command=command,
+                    validated_args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    project_task_id=project_task_id,
+                    start_time=start_time,
+                    background_write_authorized=background_write_authorized,
+                )
+            if tool_name == "github.update_pr" and project_task_id:
+                return execute_github_update_pr_project_effect(
                     task_manager=self.task_manager,
                     task_id=project_task_id,
                     idempotency_key=str(command.get("idempotency_key") or ""),
@@ -683,13 +682,6 @@ class ToolAdapter:
                         background_write_authorized=background_write_authorized,
                         tool_name=tool_name,
                     ),
-                )
-            if tool_name == "github.update_pr" and project_task_id:
-                return self._execute_project_update_pr(
-                    command=command, validated_args=validated_args,
-                    ctx=ctx, spec=spec,
-                    project_task_id=project_task_id, start_time=start_time,
-                    background_write_authorized=background_write_authorized,
                 )
             if _is_project_git_action(tool_name, validated_args):
                 return self._invoke_project_git_effect(
@@ -738,7 +730,7 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
 
-    def _execute_project_update_pr(
+    def _execute_project_open_pr(
         self,
         *,
         command: Mapping[str, Any],
@@ -758,7 +750,7 @@ class ToolAdapter:
                     "project_task_id": project_task_id,
                 },
             )
-        return execute_github_update_pr_project_effect(
+        return execute_github_open_pr_project_effect(
             task_manager=self.task_manager,
             task_id=project_task_id,
             idempotency_key=str(command.get("idempotency_key") or ""),

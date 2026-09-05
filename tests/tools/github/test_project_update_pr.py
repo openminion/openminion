@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from openminion.modules.brain.adapters.tool import ToolAdapter
-from openminion.modules.brain.adapters.tool.project_github import (
+from openminion.modules.brain.adapters.tool.github_update import (
     github_update_pr_action_scope,
 )
 from openminion.modules.task import (
@@ -76,17 +76,19 @@ class _ProjectGithubProvider:
         self.mutation_calls = 0
         self.return_uncertain = False
         self.return_error = False
+        self.preflight_error = ""
         self.on_update: Callable[[], None] | None = None
 
-    def read_update_pr(
-        self, *, args: Mapping[str, Any], ctx: Any
-    ) -> dict[str, Any]:
+    def read_update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del args, ctx
-        return self._result()
+        result = self._result()
+        if self.preflight_error == "missing_data":
+            result.pop("data")
+        elif self.preflight_error == "missing_head_sha":
+            result["data"].pop("head_sha")
+        return result
 
-    def update_pr(
-        self, *, args: Mapping[str, Any], ctx: Any
-    ) -> dict[str, Any]:
+    def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         reconciled = getattr(ctx, "github_update_pr_reconciled_result", None)
         if isinstance(reconciled, Mapping):
             return dict(reconciled)
@@ -281,14 +283,30 @@ def test_project_update_pr_persists_effect_after_consuming_exact_grant(
     assert effect.result_ref == "github:pull:openminion/test-repo-for-agent#17"
     checkpoint = load_latest_project_checkpoint(manager, task_id="task-1")
     assert checkpoint is not None
-    assert checkpoint.payload["project_effect_receipts"][effect.effect_id][
-        "title"
-    ] == _ARGS["title"]
-    operation = telemetry.operations[-1]
-    assert operation["session_id"] == "session-1"
-    assert operation["turn_id"] == "turn-1"
-    assert operation["extra"]["repository_pr_number"] == 17
-    assert operation["extra"]["repository_head_sha"] == _HEAD_SHA
+    assert (
+        checkpoint.payload["project_effect_receipts"][effect.effect_id]["title"]
+        == _ARGS["title"]
+    )
+    assert [item["operation"] for item in telemetry.operations] == [
+        "invoke",
+        "completed",
+    ]
+    started, completed = telemetry.operations
+    assert started["extra"]["project_effect_status"] == "started"
+    assert completed["session_id"] == "session-1"
+    assert completed["turn_id"] == "turn-1"
+    assert completed["status"] == "ok"
+    assert completed["extra"] == {
+        "tool": "github.update_pr",
+        "project_task_id": "task-1",
+        "project_run_id": checkpoint.project_run.project_run_id,
+        "project_permission_grant_id": "grant-1",
+        "project_effect_id": "effect:github.update_pr:update-pr-1",
+        "project_effect_status": "succeeded",
+        "repository_action_scope": _scope(),
+        "repository_head_sha": _HEAD_SHA,
+        "repository_pr_number": 17,
+    }
 
 
 def test_project_update_pr_denies_without_matching_grant(
@@ -298,14 +316,23 @@ def test_project_update_pr_denies_without_matching_grant(
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     manager = _project_manager(tmp_path)
     provider = _ProjectGithubProvider()
+    telemetry = _Telemetry()
     register_provider(provider)
 
-    result = _adapter(tmp_path, manager).execute(
+    result = _adapter(tmp_path, manager, telemetry=telemetry).execute(
         command=_command(), session_id="session-1", trace_id="turn-1"
     )
 
     assert result["error"]["code"] == "POLICY_DENIED"
     assert provider.mutation_calls == 0
+    assert len(telemetry.operations) == 1
+    blocked = telemetry.operations[0]
+    assert blocked["operation"] == "blocked_by_policy"
+    assert blocked["status"] == "error"
+    assert blocked["extra"]["tool"] == "github.update_pr"
+    assert blocked["extra"]["error_code"] == "POLICY_DENIED"
+    assert blocked["extra"]["project_task_id"] == "task-1"
+    assert blocked["extra"]["repository_action_scope"] == _scope()
 
 
 def test_project_update_pr_rejects_approval_for_stale_head(
@@ -337,24 +364,34 @@ def test_uncertain_update_reconciles_after_restart_without_repeat(
     provider.return_uncertain = True
     register_provider(provider)
     command = _command()
+    first_telemetry = _Telemetry()
 
-    first = _adapter(tmp_path, manager).execute(
+    first = _adapter(tmp_path, manager, telemetry=first_telemetry).execute(
         command=command, session_id="session-1", trace_id="turn-1"
     )
 
     assert first["error"]["code"] == "UPSTREAM_ERROR"
     assert first["error"]["details"]["provider_error_code"] == "REMOTE_ERROR"
     effect_id = "effect:github.update_pr:update-pr-1"
-    effect = load_project_effect_record(
-        manager, task_id="task-1", effect_id=effect_id
-    )
+    effect = load_project_effect_record(manager, task_id="task-1", effect_id=effect_id)
     assert effect is not None and effect.status == ProjectEffectStatus.STARTED
+    assert [item["operation"] for item in first_telemetry.operations] == [
+        "invoke",
+        "completed",
+    ]
+    uncertain = first_telemetry.operations[-1]
+    assert uncertain["status"] == "error"
+    assert uncertain["extra"]["tool"] == "github.update_pr"
+    assert uncertain["extra"]["error_code"] == "PROJECT_EFFECT_UNCERTAIN"
+    assert uncertain["extra"]["project_effect_uncertain"] is True
+    assert uncertain["extra"]["project_effect_status"] == "started"
     manager.close()
 
     restarted = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
     provider.return_uncertain = False
     provider.title = str(_ARGS["title"])
-    second = _adapter(tmp_path, restarted).execute(
+    second_telemetry = _Telemetry()
+    second = _adapter(tmp_path, restarted, telemetry=second_telemetry).execute(
         command=command, session_id="session-1", trace_id="turn-2"
     )
 
@@ -366,6 +403,45 @@ def test_uncertain_update_reconciles_after_restart_without_repeat(
     )
     assert effect is not None
     assert effect.verification_refs == ("github.update_pr:readback",)
+    assert [item["operation"] for item in second_telemetry.operations] == [
+        "invoke",
+        "completed",
+    ]
+    reconciled = second_telemetry.operations[-1]
+    assert reconciled["session_id"] == "session-1"
+    assert reconciled["turn_id"] == "turn-2"
+    assert reconciled["extra"]["tool"] == "github.update_pr"
+    assert reconciled["extra"]["project_effect_id"] == effect_id
+    assert reconciled["extra"]["project_permission_grant_id"] == "grant-1"
+    assert reconciled["extra"]["project_effect_status"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    ("preflight_error", "reason_code"),
+    [
+        ("missing_data", "github_update_pr_preflight_bad_result"),
+        ("missing_head_sha", "github_update_pr_head_sha_missing"),
+    ],
+)
+def test_project_update_pr_rejects_malformed_preflight_as_invalid_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    preflight_error: str,
+    reason_code: str,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    manager = _project_manager(tmp_path)
+    provider = _ProjectGithubProvider()
+    provider.preflight_error = preflight_error
+    register_provider(provider)
+
+    result = _adapter(tmp_path, manager).execute(
+        command=_command(), session_id="session-1", trace_id="turn-1"
+    )
+
+    assert result["error"]["code"] == "INVALID_RESPONSE"
+    assert result["error"]["details"]["reason_code"] == reason_code
+    assert provider.mutation_calls == 0
 
 
 def test_uncertain_update_not_applied_is_not_repeated(
