@@ -52,9 +52,18 @@ commands:
     return policy
 
 
+def _build_test_registry(_policy):
+    registry = ToolRegistry()
+    registry.add(ToolSpec("sys.info", SysInfoArgs, "READ_ONLY", lambda _args, _ctx: {}))
+    return registry, []
+
+
 def test_call_returns_json_envelope_when_run_root_creation_fails(monkeypatch, tmp_path):
     runner = CliRunner()
     policy_path = _policy_file(tmp_path)
+    monkeypatch.setattr(
+        "openminion.modules.tool.cli._build_registry", _build_test_registry
+    )
 
     def _boom(*_args, **_kwargs):
         raise ToolRuntimeError(
@@ -67,7 +76,7 @@ def test_call_returns_json_envelope_when_run_root_creation_fails(monkeypatch, tm
         app,
         [
             "call",
-            '{"tool":"cmd.which","args":{"name":"python3.11"}}',
+            '{"tool":"sys.info","args":{}}',
             "--policy",
             str(policy_path),
             "--json",
@@ -84,6 +93,9 @@ def test_call_returns_json_envelope_when_run_root_creation_fails(monkeypatch, tm
 def test_call_dry_run_skips_run_root_creation(monkeypatch, tmp_path):
     runner = CliRunner()
     policy_path = _policy_file(tmp_path)
+    monkeypatch.setattr(
+        "openminion.modules.tool.cli._build_registry", _build_test_registry
+    )
 
     def _should_not_run(*_args, **_kwargs):
         raise AssertionError("create_run_root should not be called for dry_run")
@@ -94,7 +106,7 @@ def test_call_dry_run_skips_run_root_creation(monkeypatch, tmp_path):
         app,
         [
             "call",
-            '{"tool":"cmd.which","args":{"name":"python3.11"},"meta":{"dry_run":true}}',
+            '{"tool":"sys.info","args":{},"meta":{"dry_run":true}}',
             "--policy",
             str(policy_path),
             "--json",
@@ -107,9 +119,12 @@ def test_call_dry_run_skips_run_root_creation(monkeypatch, tmp_path):
     assert payload["data"]["dry_run"] is True
 
 
-def test_call_timeout_sec_rejects_non_positive_value(tmp_path):
+def test_call_timeout_sec_rejects_non_positive_value(monkeypatch, tmp_path):
     runner = CliRunner()
     policy_path = _policy_file(tmp_path)
+    monkeypatch.setattr(
+        "openminion.modules.tool.cli._build_registry", _build_test_registry
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -117,7 +132,7 @@ def test_call_timeout_sec_rejects_non_positive_value(tmp_path):
         app,
         [
             "call",
-            '{"tool":"cmd.which","args":{"name":"python3.11"}}',
+            '{"tool":"sys.info","args":{}}',
             "--policy",
             str(policy_path),
             "--workspace",
