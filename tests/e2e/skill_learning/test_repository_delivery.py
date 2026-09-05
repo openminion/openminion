@@ -109,15 +109,16 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
             "public TaskPlan",
         ):
             assert required in snippet
-        markdown = SKILL_PATH.read_text(encoding="utf-8")
         for stop in (
             "repository is ambiguous",
             "required validation commands are missing",
             "exact approval is missing",
             "failed verification",
             "uncertain remote mutation",
+            "required evidence cannot be preserved truthfully",
         ):
-            assert stop in markdown
+            assert stop in snippet
+        markdown = SKILL_PATH.read_text(encoding="utf-8")
         assert "make lint" not in markdown
         assert "pytest" not in markdown
     finally:
