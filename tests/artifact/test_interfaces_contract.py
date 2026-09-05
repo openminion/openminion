@@ -94,7 +94,7 @@ class TestCompatibilityValidator:
 
 
 def test_sqlite_index_exposes_hard_delete_methods(tmp_path: Path) -> None:
-    with ArtifactCtl(make_config(tmp_path)) as ctl:
+    with ArtifactCtl(make_config(tmp_path / ".openminion")) as ctl:
         assert callable(getattr(ctl.index, "hard_delete_artifact"))
         assert callable(getattr(ctl.index, "hard_delete_views_for_raw"))
 
