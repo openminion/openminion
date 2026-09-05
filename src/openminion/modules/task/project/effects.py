@@ -5,10 +5,16 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from openminion.modules.task.autonomy import TestEvidence
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
-from .checkpoints import load_latest_project_checkpoint
-from .models import ProjectCheckpoint
+from .checkpoints import (
+    advance_repository_lifecycle_payload,
+    load_latest_project_checkpoint,
+    plan_checkpoint_payload,
+)
+from .models import ProjectCheckpoint, ProjectCycleDecision, ProjectRun
+from .turn import ProjectTurnResult
 
 
 _PROJECT_EFFECTS_PAYLOAD_KEY = "project_effects"
@@ -179,6 +185,42 @@ def project_effect_checkpoint_payload(
     }
 
 
+def project_cycle_checkpoint_payload(
+    checkpoint: ProjectCheckpoint,
+    project_run: ProjectRun,
+    *,
+    turn: ProjectTurnResult,
+    verification: tuple[TestEvidence, ...],
+    verification_closure: dict[str, object],
+    decision: ProjectCycleDecision,
+    decision_reason: str,
+    replan_count: int,
+    waiting_for_checks: bool,
+) -> dict[str, object]:
+    turn_error = turn.error
+    return {
+        **project_effect_checkpoint_payload(checkpoint),
+        "decision": decision.value,
+        "summary": turn.summary,
+        "gateway_run_id": turn.gateway_run_id,
+        "verification": [item.model_dump(mode="json") for item in verification],
+        "verification_closure": verification_closure,
+        "condition": turn.condition.value,
+        "decision_reason": decision_reason,
+        **({"detail_code": "waiting_for_checks"} if waiting_for_checks else {}),
+        "replan_count": replan_count,
+        **plan_checkpoint_payload(checkpoint, turn),
+        **advance_repository_lifecycle_payload(
+            checkpoint,
+            project_run,
+            turn=turn,
+            verification_count=len(verification),
+            next_action=decision.value,
+        ),
+        **({"error": turn_error.to_dict()} if turn_error else {}),
+    }
+
+
 def save_project_effect_record(
     task_manager: TaskManager,
     effect: ProjectEffectRecord,
@@ -228,5 +270,6 @@ __all__ = [
     "load_project_effect_receipt",
     "load_project_effect_record",
     "project_effect_checkpoint_payload",
+    "project_cycle_checkpoint_payload",
     "save_project_effect_record",
 ]

@@ -15,6 +15,7 @@ from openminion.cli.commands.autonomy_project import (
     launch_project,
     persisted_verification_waiver,
     project_task_manager,
+    resolve_project_repository,
     run_project_turn,
     resume_project_task,
     schedule_unattended_project,
@@ -113,16 +114,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     goal = _resolve_goal(args)
     workspace_boundary = _resolve_workspace(args)
     raw_repository = _clean(getattr(args, "repository", None))
-    repository_path = Path(raw_repository).expanduser() if raw_repository else None
-    repository = (
-        (
-            repository_path
-            if repository_path.is_absolute()
-            else workspace_boundary / repository_path
-        ).resolve(strict=False)
-        if repository_path is not None
-        else workspace_boundary
-    )
+    repository = resolve_project_repository(workspace_boundary, raw_repository)
     verification_commands = tuple(getattr(args, "verify_command", ()) or ())
     turn_timeout_seconds = int(
         getattr(args, "turn_timeout_seconds", None)
@@ -153,6 +145,7 @@ def _start(args: argparse.Namespace, store: AutonomyRunStore) -> int:
         verification_waiver_reason=waiver.reason if waiver is not None else None,
         goal_id=_clean(getattr(args, "goal_id", None)) or None,
         task_plan_required=bool(raw_repository),
+        expected_checks=tuple(getattr(args, "expected_check", ()) or ()),
     )
     run = request.run
     if run.continuation_policy.max_iterations < 1:
@@ -935,6 +928,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--repository",
         default="",
         help="Exact Git repository inside the workspace boundary",
+    )
+    start.add_argument(
+        "--expected-check",
+        action="append",
+        default=[],
+        help="Exact required GitHub check name (repeat for each check)",
     )
     start.add_argument("--max-iterations", type=int, default=1)
     start.add_argument("--permission-profile", default="local-safe")

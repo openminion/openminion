@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from typing import cast
 
 from openminion.base.redaction import redact_sensitive_text
@@ -7,6 +9,7 @@ from openminion.modules.task.autonomy import (
     AutonomyRun,
     AutonomyRunPhase,
     AutonomyRunStatus,
+    TestEvidenceStatus,
     now_ms,
 )
 from openminion.modules.task.plan import (
@@ -72,6 +75,7 @@ def initial_repository_lifecycle_payload(
     *,
     workspace_boundary_ref: str | None = None,
     task_plan_required: bool = False,
+    expected_checks: tuple[str, ...] = (),
 ) -> dict[str, object]:
     repository_ref = _bounded_repository_text(project_run.workspace_ref)
     repository_revision = _workspace_revision(repository_ref)
@@ -100,6 +104,7 @@ def initial_repository_lifecycle_payload(
                 "current_phase": project_run.phase.value,
                 "next_action": ProjectCycleDecision.CONTINUE.value,
                 "task_plan_required": task_plan_required,
+                "expected_checks": list(expected_checks),
             },
             project_run.operator_decision_log_ref: {"decisions": []},
             project_run.capability_plan_ref: {
@@ -176,6 +181,343 @@ def advance_repository_lifecycle_payload(
         }
     )
     return {_REPOSITORY_LIFECYCLE_PAYLOAD_KEY: lifecycle}
+
+
+def repository_check_request(
+    checkpoint: ProjectCheckpoint,
+) -> dict[str, object] | None:
+    observation = repository_check_observation(checkpoint)
+    if observation is None or observation.get("overall_result") != "pending":
+        return None
+    return {
+        "owner": observation["owner"],
+        "repo": observation["repo"],
+        "head_sha": observation["head_sha"],
+        "expected_checks": list(cast(list[str], observation["expected_checks"])),
+    }
+
+
+def record_repository_check_result(
+    checkpoint: ProjectCheckpoint,
+    result: Mapping[str, object],
+) -> ProjectCheckpoint:
+    lifecycle, resume = _repository_lifecycle_resume(checkpoint)
+    observation = dict(cast(dict[str, object], resume["ci_observation"]))
+    if result.get("head_sha") != observation["head_sha"]:
+        raise ValueError("github.fetch_checks returned a different head_sha")
+    if result.get("expected_checks") != observation["expected_checks"]:
+        raise ValueError("github.fetch_checks returned different expected checks")
+    overall_result = str(result.get("overall_result") or "")
+    if overall_result not in {"pending", "failure", "success"}:
+        raise ValueError("github.fetch_checks returned an invalid overall_result")
+    observation.update(
+        {
+            "overall_result": overall_result,
+            "check_count": cast(int, observation.get("check_count") or 0) + 1,
+            "missing_expected_checks": list(
+                cast(list[str], result.get("missing_expected_checks") or [])
+            ),
+            "failure_facts": list(
+                cast(list[object], result.get("failure_facts") or [])
+            ),
+        }
+    )
+    resume["ci_observation"] = observation
+    lifecycle[checkpoint.project_run.resume_packet_ref] = resume
+    return _with_repository_lifecycle(checkpoint, lifecycle)
+
+
+def begin_repository_check_observation(
+    checkpoint: ProjectCheckpoint,
+) -> tuple[ProjectCheckpoint, bool]:
+    if not isinstance(
+        checkpoint.payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY), Mapping
+    ):
+        return checkpoint, False
+    lifecycle, resume = _repository_lifecycle_resume(checkpoint)
+    expected_checks = cast(list[str], resume.get("expected_checks") or [])
+    if not expected_checks:
+        return checkpoint, False
+    target = _latest_repository_check_target(checkpoint, resume)
+    if target is None:
+        return checkpoint, False
+    current = resume.get("ci_observation")
+    if isinstance(current, Mapping) and (
+        current.get("target_effect_id") == target["target_effect_id"]
+    ):
+        return checkpoint, False
+    resume["ci_observation"] = {
+        **target,
+        "expected_checks": list(expected_checks),
+        "overall_result": "pending",
+        "check_count": 0,
+        "missing_expected_checks": list(expected_checks),
+        "failure_facts": [],
+    }
+    lifecycle[checkpoint.project_run.resume_packet_ref] = resume
+    return _with_repository_lifecycle(checkpoint, lifecycle), True
+
+
+def carry_repository_check_observation(
+    checkpoint: ProjectCheckpoint,
+    observed: ProjectCheckpoint,
+) -> ProjectCheckpoint:
+    observation = repository_check_observation(observed)
+    if observation is None:
+        return checkpoint
+    lifecycle, resume = _repository_lifecycle_resume(checkpoint)
+    resume["ci_observation"] = observation
+    lifecycle[checkpoint.project_run.resume_packet_ref] = resume
+    return _with_repository_lifecycle(checkpoint, lifecycle)
+
+
+def repository_check_facts(checkpoint: ProjectCheckpoint) -> dict[str, object]:
+    observation = repository_check_observation(checkpoint)
+    if observation is None:
+        raise ValueError("project check observation is missing")
+    return {
+        "owner": observation["owner"],
+        "repo": observation["repo"],
+        "head_sha": observation["head_sha"],
+        "expected_checks": observation["expected_checks"],
+        "overall_result": observation["overall_result"],
+        "check_count": observation["check_count"],
+        "missing_expected_checks": observation["missing_expected_checks"],
+        "failure_facts": observation["failure_facts"],
+        "detail_code": "waiting_for_checks"
+        if observation["overall_result"] == "pending"
+        else None,
+    }
+
+
+def repository_check_event(
+    checkpoint: ProjectCheckpoint,
+    *,
+    outcome: str | None = None,
+) -> dict[str, object]:
+    facts = repository_check_facts(checkpoint)
+    if outcome is not None:
+        facts.update(overall_result=outcome, detail_code=None)
+    return facts
+
+
+def _repository_check_prompt_lines(
+    checkpoint_payload: Mapping[str, object],
+    *,
+    resume_packet_ref: str,
+) -> tuple[str, ...]:
+    observation = _repository_check_observation(
+        checkpoint_payload,
+        resume_packet_ref=resume_packet_ref,
+    )
+    if observation is None or observation["overall_result"] == "pending":
+        return ()
+    return (
+        "GitHub check facts for the exact approved head:",
+        json.dumps(observation, sort_keys=True),
+    )
+
+
+def project_cycle_prompt(
+    run: AutonomyRun,
+    project_run: ProjectRun,
+    checkpoint_payload: Mapping[str, object],
+    milestone: str,
+) -> str:
+    lines = [
+        run.goal_text,
+        "",
+        f"Current milestone: {milestone}",
+        f"Committed cycles: {project_run.committed_cycle_count}",
+        "Work on the smallest useful next step. Inspect current state before editing.",
+        "Do not claim completion; the configured verifier owns completion.",
+    ]
+    active_plan = checkpoint_payload.get("task_plan")
+    if not isinstance(active_plan, Mapping):
+        lines.append(
+            "Your first action must use the existing plan loop-control tool "
+            "to declare a durable task plan with "
+            "continue_plan_autonomously=true, then continue with its first step."
+        )
+    if project_run.verifier_refs:
+        lines.append("Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:]))
+    if verification := checkpoint_payload.get("verification"):
+        failed = [
+            item
+            for item in cast(list[dict[str, object]], verification)
+            if item["status"] == TestEvidenceStatus.FAILED.value
+        ]
+        outcome = (failed or cast(list[dict[str, object]], verification))[-1]
+        lines.extend(("Prior verifier outcome:", str(outcome["summary"])))
+        if failed and isinstance(active_plan, Mapping):
+            plan_id = str(active_plan.get("plan_id") or "").strip()
+            verifier_refs = ", ".join(project_run.verifier_refs[-5:])
+            lines.append(
+                "Your first action must use the existing plan loop-control "
+                f"tool with action=revise for plan_id={plan_id}. Use a new "
+                "revision_id, set continue_plan_autonomously=true, and bind "
+                f"verifier_refs to: {verifier_refs}."
+            )
+    if project_run.progress_refs:
+        lines.append("Prior progress refs: " + ", ".join(project_run.progress_refs[-5:]))
+    lines.extend(_repository_check_prompt_lines(
+        checkpoint_payload,
+        resume_packet_ref=project_run.resume_packet_ref,
+    ))
+    return "\n".join(lines)
+
+
+def commit_repository_check_wait(
+    task_manager: TaskManager,
+    checkpoint: ProjectCheckpoint,
+    *,
+    owner_id: str,
+    claim_ttl_seconds: int,
+    triggering_cron_job_id: str | None,
+    task_state: TaskLifecycleState,
+) -> ProjectCheckpoint:
+    check_count = cast(int, repository_check_facts(checkpoint)["check_count"])
+    project_run = checkpoint.project_run
+    observation = cast(dict[str, object], repository_check_observation(checkpoint))
+    check_ref = f"{observation['head_sha']}:{check_count}"
+    checkpoint_id = f"{project_run.project_run_id}:checks:{check_ref}"
+    next_wake_job_id = (
+        f"{project_run.project_run_id}:checks:{observation['head_sha']}:{check_count + 1}"
+    )
+    updated = project_run.model_copy(
+        update={
+            "status": AutonomyRunStatus.RUNNING,
+            "phase": AutonomyRunPhase.VALIDATE,
+            "updated_at_ms": now_ms(),
+            "last_checkpoint_id": checkpoint_id,
+            "blocked_reason": None,
+            "task_state": task_state,
+            "triggering_cron_job_id": triggering_cron_job_id,
+            "next_wake_job_id": next_wake_job_id,
+        }
+    )
+    claim = task_manager.lifecycle_repository.acquire_project_cycle_claim(
+        task_id=project_run.task_id,
+        owner_id=owner_id,
+        expected_checkpoint_id=checkpoint.checkpoint_id,
+        ttl_seconds=claim_ttl_seconds,
+    )
+    try:
+        return commit_project_run_checkpoint(
+            task_manager,
+            updated,
+            claim=claim,
+            checkpoint_id=checkpoint_id,
+            triggering_cron_job_id=triggering_cron_job_id,
+            next_wake_job_id=next_wake_job_id,
+            payload={
+                **checkpoint.payload,
+                "decision": ProjectCycleDecision.CONTINUE.value,
+                "decision_reason": "waiting_for_checks",
+                "detail_code": "waiting_for_checks",
+            },
+        )
+    finally:
+        task_manager.lifecycle_repository.release_project_cycle_claim(claim)
+
+
+def repository_check_observation(
+    checkpoint: ProjectCheckpoint,
+) -> dict[str, object] | None:
+    return _repository_check_observation(
+        checkpoint.payload,
+        resume_packet_ref=checkpoint.project_run.resume_packet_ref,
+    )
+
+
+def _repository_check_observation(
+    payload: Mapping[str, object],
+    *,
+    resume_packet_ref: str,
+) -> dict[str, object] | None:
+    raw_lifecycle = payload.get(_REPOSITORY_LIFECYCLE_PAYLOAD_KEY)
+    if not isinstance(raw_lifecycle, Mapping):
+        return None
+    raw_resume = raw_lifecycle.get(resume_packet_ref)
+    if not isinstance(raw_resume, Mapping):
+        return None
+    raw_observation = raw_resume.get("ci_observation")
+    return dict(raw_observation) if isinstance(raw_observation, Mapping) else None
+
+
+def _with_repository_lifecycle(
+    checkpoint: ProjectCheckpoint,
+    lifecycle: Mapping[str, object],
+) -> ProjectCheckpoint:
+    return checkpoint.model_copy(
+        update={
+            "payload": {
+                **checkpoint.payload,
+                _REPOSITORY_LIFECYCLE_PAYLOAD_KEY: dict(lifecycle),
+            }
+        }
+    )
+
+
+def _repository_lifecycle_resume(
+    checkpoint: ProjectCheckpoint,
+) -> tuple[dict[str, object], dict[str, object]]:
+    lifecycle = dict(
+        cast(
+            dict[str, object],
+            checkpoint.payload[_REPOSITORY_LIFECYCLE_PAYLOAD_KEY],
+        )
+    )
+    resume = dict(
+        cast(dict[str, object], lifecycle[checkpoint.project_run.resume_packet_ref])
+    )
+    return lifecycle, resume
+
+
+def _latest_repository_check_target(
+    checkpoint: ProjectCheckpoint,
+    resume: Mapping[str, object],
+) -> dict[str, object] | None:
+    raw_effects = checkpoint.payload.get("project_effects")
+    raw_receipts = checkpoint.payload.get("project_effect_receipts")
+    if not isinstance(raw_effects, Mapping) or not isinstance(raw_receipts, Mapping):
+        return None
+
+    prior = resume.get("ci_observation")
+    pull_request = dict(prior) if isinstance(prior, Mapping) else None
+    pull_request_index = -1
+    push: tuple[int, str, Mapping[str, object]] | None = None
+    for index, effect_id in enumerate(checkpoint.project_run.effect_refs):
+        raw_effect = raw_effects.get(effect_id)
+        receipt = raw_receipts.get(effect_id)
+        if not isinstance(raw_effect, Mapping) or not isinstance(receipt, Mapping):
+            continue
+        capability = raw_effect.get("capability_ref")
+        if capability == "github.open_pr":
+            pull_request = {
+                "owner": receipt["owner"],
+                "repo": receipt["repo"],
+                "number": receipt["number"],
+                "head": receipt["head"],
+                "head_sha": receipt["head_sha"],
+                "target_effect_id": effect_id,
+            }
+            pull_request_index = index
+        elif capability == "git.push":
+            push = (index, effect_id, receipt)
+
+    if pull_request is None:
+        return None
+    if push is not None and push[0] > pull_request_index:
+        _index, effect_id, receipt = push
+        if receipt.get("ref") == f"refs/heads/{pull_request['head']}":
+            pull_request.update(
+                {
+                    "head_sha": receipt["remote_oid"],
+                    "target_effect_id": effect_id,
+                }
+            )
+    return pull_request
 
 
 def plan_checkpoint_payload(
@@ -606,14 +948,23 @@ def replay_project_cycles(
 
 __all__ = [
     "advance_repository_lifecycle_payload",
+    "begin_repository_check_observation",
     "build_project_run_projection",
+    "carry_repository_check_observation",
     "commit_project_run_checkpoint",
+    "commit_repository_check_wait",
     "find_open_project_worker",
     "initial_repository_lifecycle_payload",
     "link_project_run_to_task",
     "load_latest_project_checkpoint",
     "project_cycle_summaries",
+    "project_cycle_prompt",
     "record_project_cycle",
+    "record_repository_check_result",
+    "repository_check_event",
+    "repository_check_facts",
+    "repository_check_observation",
+    "repository_check_request",
     "replay_project_cycles",
     "resume_project_run_from_latest_checkpoint",
     "save_project_run_checkpoint",

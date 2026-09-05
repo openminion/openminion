@@ -411,6 +411,10 @@ def test_autonomy_start_persists_repository_lifecycle_refs(tmp_path: Path) -> No
             str(workspace),
             "--repository",
             str(repository),
+            "--expected-check",
+            "lint",
+            "--expected-check",
+            "tests (3.11)",
             "--replay-response",
             "completed from replay",
             "--verification-waiver",
@@ -441,6 +445,7 @@ def test_autonomy_start_persists_repository_lifecycle_refs(tmp_path: Path) -> No
     assert str(workspace) in resume["workspace_boundary"]
     assert resume["execution_repository"] == run["workspace_ref"]
     assert resume["task_plan_required"] is True
+    assert resume["expected_checks"] == ["lint", "tests (3.11)"]
     assert "workspace_boundary" not in type(project_run).model_fields
 
 

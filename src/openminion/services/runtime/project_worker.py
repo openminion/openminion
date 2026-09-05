@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -51,13 +51,12 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
-from openminion.modules.task.project import (
-    checkpoints as project_cp,
-    effects as project_effects,
-)
+from openminion.modules.task.project import checkpoints as project_cp, effects as project_effects
+from openminion.modules.task.project import progress as project_progress
+from openminion.services.runtime.routine_context import ToolRegistryPreTurnContext
+from openminion.tools.github.interfaces import TOOL_GITHUB_FETCH_CHECKS
 
 _LOGGER = get_logger("project_worker")
-
 
 @dataclass(frozen=True)
 class ProjectWorkerResult:
@@ -66,6 +65,7 @@ class ProjectWorkerResult:
     decision: ProjectCycleDecision
     verification: tuple[TestEvidence, ...]
     reconciled_only: bool = False
+    check_events: tuple[dict[str, object], ...] = ()
 
 
 def project_cycle_claim_ttl_seconds(run: AutonomyRun) -> int:
@@ -108,6 +108,17 @@ def build_cron_project_worker(
         workspace=workspace,
         turn_timeout_seconds=autonomy_run.execution_selectors.turn_timeout_seconds,
     )
+    check_context = ToolRegistryPreTurnContext(
+        registry=runtime.tools, routine_id=autonomy_run.run_id,
+        session_id=autonomy_run.session_id,
+        agent_id=autonomy_run.execution_selectors.agent_id,
+    )
+
+    def fetch_checks(args: Mapping[str, object]) -> Mapping[str, object]:
+        result = check_context.invoke_tool(name=TOOL_GITHUB_FETCH_CHECKS, args=args)
+        data: Mapping[str, object] = project_progress.repository_check_data(result)
+        return data
+
     worker = ProjectWorker(
         task_manager=task_manager,
         autonomy_store=autonomy_store,
@@ -123,6 +134,7 @@ def build_cron_project_worker(
         ),
         claim_ttl_seconds=project_cycle_claim_ttl_seconds(autonomy_run),
         owner_id=owner_id,
+        fetch_checks=fetch_checks,
     )
     return worker, task_manager
 
@@ -153,6 +165,7 @@ class ProjectWorker:
         verify: Callable[[], tuple[TestEvidence, ...]],
         claim_ttl_seconds: int = 120,
         owner_id: str | None = None,
+        fetch_checks: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
     ) -> None:
         self._task_manager = task_manager
         self._autonomy_store = autonomy_store
@@ -160,6 +173,7 @@ class ProjectWorker:
         self._verify = verify
         self._claim_ttl_seconds = max(1, int(claim_ttl_seconds))
         self._owner_id = owner_id or f"project-worker-{uuid4().hex}"
+        self._fetch_checks = fetch_checks
 
     def run(
         self,
@@ -201,6 +215,28 @@ class ProjectWorker:
         inactive = self._inactive_task_result(run, checkpoint, task)
         if inactive is not None:
             return inactive
+        check_events: tuple[dict[str, object], ...] = ()
+        checkpoint, check_event, waiting = project_progress.observe_repository_checks(
+            run, checkpoint, self._fetch_checks,
+            task_manager=self._task_manager, autonomy_store=self._autonomy_store,
+            owner_id=self._owner_id, claim_ttl_seconds=self._claim_ttl_seconds,
+            triggering_cron_job_id=triggering_cron_job_id, task_state=task.state,
+        )
+        observed_checkpoint = checkpoint if check_event is not None else None
+        check_events = (check_event,) if check_event is not None else ()
+        if check_event is not None:
+            if check_event["overall_result"] == "expired":
+                return replace(
+                    self._budget_blocked(run, checkpoint.project_run),
+                    check_events=check_events,
+                )
+            if waiting is not None:
+                updated_run, committed = waiting
+                return ProjectWorkerResult(
+                    run=updated_run, project_run=committed.project_run,
+                    decision=ProjectCycleDecision.CONTINUE, verification=(),
+                    check_events=check_events,
+                )
         cycle_number = checkpoint.project_run.committed_cycle_count + 1
         if cycle_number > run.continuation_policy.max_iterations:
             return self._budget_blocked(run, checkpoint.project_run)
@@ -211,68 +247,71 @@ class ProjectWorker:
             ttl_seconds=self._claim_ttl_seconds,
         )
         try:
-            evaluation = self._evaluate_cycle(
-                run,
-                checkpoint,
-                cycle_number=cycle_number,
-            )
-            checkpoint = cast(
-                ProjectCheckpoint,
-                load_latest_project_checkpoint(
-                    self._task_manager,
-                    task_id=task.task_id,
-                ),
-            )
-            updated_project = self._updated_project_run(
-                run,
-                checkpoint,
-                task,
-                evaluation,
+            return self._run_claimed_cycle(
+                run=run, checkpoint=checkpoint,
+                observed_checkpoint=observed_checkpoint, task=task,
+                claim=claim, cycle_number=cycle_number,
                 triggering_cron_job_id=triggering_cron_job_id,
-            )
-            turn_error = evaluation.turn.error
-            plan_payload = project_cp.plan_checkpoint_payload(
-                checkpoint,
-                evaluation.turn,
-            )
-            committed = commit_project_run_checkpoint(
-                self._task_manager,
-                updated_project,
-                claim=claim,
-                checkpoint_id=evaluation.cycle_id,
-                triggering_cron_job_id=triggering_cron_job_id,
-                next_wake_job_id=updated_project.next_wake_job_id,
-                payload={
-                    **project_effects.project_effect_checkpoint_payload(checkpoint),
-                    "decision": evaluation.decision.value,
-                    "summary": evaluation.turn.summary,
-                    "gateway_run_id": evaluation.turn.gateway_run_id,
-                    "verification": [
-                        item.model_dump(mode="json") for item in evaluation.verification
-                    ],
-                    "verification_closure": evaluation.closure_payload,
-                    "condition": evaluation.turn.condition.value,
-                    "decision_reason": evaluation.reason,
-                    "replan_count": evaluation.replan_count,
-                    **plan_payload,
-                    **project_cp.advance_repository_lifecycle_payload(
-                        checkpoint,
-                        updated_project,
-                        turn=evaluation.turn,
-                        verification_count=len(evaluation.verification),
-                        next_action=evaluation.decision.value,
-                    ),
-                    **({"error": turn_error.to_dict()} if turn_error else {}),
-                },
-            )
-            return self._finalize_cycle(
-                run,
-                updated_project,
-                evaluation,
-                committed=committed,
+                check_events=check_events,
             )
         finally:
             self._task_manager.lifecycle_repository.release_project_cycle_claim(claim)
+
+    def _run_claimed_cycle(
+        self,
+        *,
+        run: AutonomyRun, checkpoint: ProjectCheckpoint,
+        observed_checkpoint: ProjectCheckpoint | None, task: TaskLifecycleRecord,
+        claim: Any, cycle_number: int,
+        triggering_cron_job_id: str | None,
+        check_events: tuple[dict[str, object], ...],
+    ) -> ProjectWorkerResult:
+        evaluation = self._evaluate_cycle(run, checkpoint, cycle_number=cycle_number)
+        checkpoint = cast(ProjectCheckpoint, load_latest_project_checkpoint(
+            self._task_manager, task_id=task.task_id,
+        ))
+        checkpoint, next_check_event = project_progress.begin_next_repository_check(
+            checkpoint,
+            observed_checkpoint=observed_checkpoint, enabled=self._fetch_checks is not None,
+        )
+        if next_check_event is not None:
+            evaluation = replace(
+                evaluation,
+                decision=ProjectCycleDecision.CONTINUE,
+                status=AutonomyRunStatus.RUNNING,
+                phase=AutonomyRunPhase.VALIDATE,
+                verification_state=ProjectVerificationState.IN_PROGRESS,
+                reason="waiting_for_checks",
+            )
+            check_events = (*check_events, next_check_event)
+        waiting_for_checks = next_check_event is not None
+        updated_project = self._updated_project_run(
+            run,
+            checkpoint,
+            task,
+            evaluation,
+            triggering_cron_job_id=triggering_cron_job_id,
+        )
+        committed = commit_project_run_checkpoint(
+            self._task_manager,
+            updated_project,
+            claim=claim,
+            checkpoint_id=evaluation.cycle_id,
+            triggering_cron_job_id=triggering_cron_job_id,
+            next_wake_job_id=updated_project.next_wake_job_id,
+            payload=project_effects.project_cycle_checkpoint_payload(
+                checkpoint, updated_project,
+                turn=evaluation.turn, verification=evaluation.verification,
+                verification_closure=evaluation.closure_payload,
+                decision=evaluation.decision, decision_reason=evaluation.reason,
+                replan_count=evaluation.replan_count,
+                waiting_for_checks=waiting_for_checks,
+            ),
+        )
+        return self._finalize_cycle(
+            run, updated_project, evaluation, committed=committed,
+            check_events=check_events,
+        )
 
     def _load_cycle(self, run_id: str) -> tuple[AutonomyRun, ProjectCheckpoint]:
         run = self._autonomy_store.require(run_id)
@@ -342,6 +381,7 @@ class ProjectWorker:
                 else ProjectCycleDecision.STOP
             ),
             verification=(),
+            check_events=project_progress.terminal_repository_check_events(checkpoint),
         )
 
     def _evaluate_cycle(
@@ -362,7 +402,9 @@ class ProjectWorker:
             session_id=run.session_id,
             cycle_id=cycle_id,
             milestone=milestone,
-            prompt=self._cycle_prompt(run, project_run, checkpoint.payload, milestone),
+            prompt=project_cp.project_cycle_prompt(
+                run, project_run, checkpoint.payload, milestone
+            ),
         )
         self._log_cycle("project.cycle.started", run, project_run, cycle_id=cycle_id)
         turn_result = self._turn(request)
@@ -474,6 +516,7 @@ class ProjectWorker:
         evaluation: _CycleEvaluation,
         *,
         committed: ProjectCheckpoint,
+        check_events: tuple[dict[str, object], ...] = (),
     ) -> ProjectWorkerResult:
         operator_summary = evaluation.turn.summary
         if (
@@ -525,6 +568,7 @@ class ProjectWorker:
             project_run=project_run,
             decision=evaluation.decision,
             verification=evaluation.verification,
+            check_events=check_events,
         )
 
     @staticmethod
@@ -663,13 +707,15 @@ class ProjectWorker:
         verification_waived: bool,
         task_plan_incomplete: bool,
     ) -> project_cp.ProjectCycleDisposition:
-        plan_disposition = project_cp.task_plan_incomplete_disposition(
-            run,
-            cycle_number,
-            closure_status,
-            has_error,
-            task_plan_incomplete,
-            previous_replans,
+        plan_disposition: project_cp.ProjectCycleDisposition | None = (
+            project_cp.task_plan_incomplete_disposition(
+                run,
+                cycle_number,
+                closure_status,
+                has_error,
+                task_plan_incomplete,
+                previous_replans,
+            )
         )
         if plan_disposition is not None:
             return plan_disposition
@@ -841,55 +887,6 @@ class ProjectWorker:
     @staticmethod
     def _checkpoint_decision(payload: dict[str, object]) -> ProjectCycleDecision:
         return ProjectCycleDecision(str(payload.get("decision") or "blocked"))
-
-    @staticmethod
-    def _cycle_prompt(
-        run: AutonomyRun,
-        project_run: ProjectRun,
-        checkpoint_payload: Mapping[str, Any],
-        milestone: str,
-    ) -> str:
-        lines = [
-            run.goal_text,
-            "",
-            f"Current milestone: {milestone}",
-            f"Committed cycles: {project_run.committed_cycle_count}",
-            "Work on the smallest useful next step. Inspect current state before editing.",
-            "Do not claim completion; the configured verifier owns completion.",
-        ]
-        active_plan = checkpoint_payload.get("task_plan")
-        if not isinstance(active_plan, Mapping):
-            lines.append(
-                "Your first action must use the existing plan loop-control tool "
-                "to declare a durable task plan with "
-                "continue_plan_autonomously=true, then continue with its first step."
-            )
-        if project_run.verifier_refs:
-            lines.append(
-                "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
-            )
-        if verification := checkpoint_payload.get("verification"):
-            failed = [
-                item
-                for item in verification
-                if item["status"] == TestEvidenceStatus.FAILED.value
-            ]
-            outcome = (failed or verification)[-1]
-            lines.extend(("Prior verifier outcome:", outcome["summary"]))
-            if failed and isinstance(active_plan, Mapping):
-                plan_id = str(active_plan.get("plan_id") or "").strip()
-                verifier_refs = ", ".join(project_run.verifier_refs[-5:])
-                lines.append(
-                    "Your first action must use the existing plan loop-control "
-                    f"tool with action=revise for plan_id={plan_id}. Use a new "
-                    "revision_id, set continue_plan_autonomously=true, and bind "
-                    f"verifier_refs to: {verifier_refs}."
-                )
-        if project_run.progress_refs:
-            lines.append(
-                "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
-            )
-        return "\n".join(lines)
 
     def _budget_blocked(
         self,

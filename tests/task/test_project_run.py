@@ -334,6 +334,7 @@ def test_project_run_checkpoint_survives_lifecycle_manager_restart(tmp_path) -> 
         "current_phase": "recover",
         "next_action": "continue",
         "task_plan_required": False,
+        "expected_checks": [],
     }
     assert loaded.payload["task_plan_revision"]["revision_id"] == "revision-1"
     assert lifecycle[project_run.metrics_summary_ref] == {

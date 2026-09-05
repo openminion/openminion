@@ -136,7 +136,8 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
 
     output = asyncio.run(
         _dispatch(
-            f'/project start --repository "{repository}" --goal "ship it"',
+            f'/project start --repository "{repository}" --goal "ship it" '
+            '--expected-check lint --expected-check "tests (3.11)"',
             runtime=runtime,
             status_line=TerminalStatusLine(),
             approval_callback=approve,
@@ -163,12 +164,14 @@ def test_terminal_project_launch_approval_persists_exact_repository(tmp_path) ->
     ]
     assert str(repository) in checkpoint.project_run.workspace_ref
     assert resume["task_plan_required"] is True
+    assert resume["expected_checks"] == ["lint", "tests (3.11)"]
     assert resume["execution_repository"] == checkpoint.project_run.workspace_ref
     assert str(tmp_path) in resume["workspace_boundary"]
     assert telemetry.operations[0][0][3] == "project_launch"
     assert approval_args["permission_profile_id"] == "local-safe"
     assert approval_args["max_iterations"] == 1
     assert approval_args["verification_commands"] == []
+    assert approval_args["expected_checks"] == ["lint", "tests (3.11)"]
     assert approval_args["verification_waiver_reason"] is None
     assert approval_args["turn_timeout_seconds"] > 0
     assert approval_args["verification_timeout_seconds"] > 0

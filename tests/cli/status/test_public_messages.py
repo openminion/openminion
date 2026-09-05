@@ -40,6 +40,7 @@ def test_stopped_runtime_status_is_not_presented_as_an_error() -> None:
         ("loading_session_history", "Reviewing this conversation..."),
         ("thinking", "Thinking..."),
         ("composing_answer", "Preparing the answer..."),
+        ("waiting_for_checks", "Waiting for checks..."),
     ],
 )
 def test_known_detail_code_uses_public_message(
@@ -120,6 +121,7 @@ def test_detail_catalog_is_the_bounded_v1_set() -> None:
         "loading_session_history",
         "thinking",
         "composing_answer",
+        "waiting_for_checks",
     }
 
 

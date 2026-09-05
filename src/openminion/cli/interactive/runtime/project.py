@@ -49,6 +49,7 @@ class RuntimeProjectMixin:
             "goal": run.goal_text,
             "workspace_boundary": str(request.workspace_boundary),
             "repository": str(request.repository),
+            "expected_checks": list(request.expected_checks),
             "permission_profile_id": run.permission_profile_id,
             "max_iterations": run.continuation_policy.max_iterations,
             "max_wall_clock_ms": run.continuation_policy.max_wall_clock_ms,

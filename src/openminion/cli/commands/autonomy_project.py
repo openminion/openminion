@@ -56,6 +56,16 @@ class ProjectLaunchRequest:
     workspace_boundary: Path
     repository: Path
     task_plan_required: bool
+    expected_checks: tuple[str, ...]
+
+
+def resolve_project_repository(workspace_boundary: Path, value: str) -> Path:
+    if not value:
+        return workspace_boundary
+    repository = Path(value).expanduser()
+    if not repository.is_absolute():
+        repository = workspace_boundary / repository
+    return repository.resolve(strict=False)
 
 
 def build_project_launch_request(
@@ -75,9 +85,15 @@ def build_project_launch_request(
     verification_waiver_reason: str | None = None,
     goal_id: str | None = None,
     task_plan_required: bool = True,
+    expected_checks: tuple[str, ...] = (),
 ) -> ProjectLaunchRequest:
     boundary = workspace_boundary.expanduser().resolve(strict=False)
     repo = repository.expanduser().resolve(strict=False)
+    check_names = tuple(name.strip() for name in expected_checks)
+    if any(not name for name in check_names) or len(set(check_names)) != len(
+        check_names
+    ):
+        raise ValueError("expected check names must be non-empty and unique")
     if task_plan_required:
         _validate_project_repository(boundary=boundary, repository=repo)
     run = build_autonomy_run(
@@ -109,6 +125,7 @@ def build_project_launch_request(
         workspace_boundary=boundary,
         repository=repo,
         task_plan_required=task_plan_required,
+        expected_checks=check_names,
     )
 
 
@@ -127,6 +144,7 @@ def parse_focus_project_launch(
     parser.add_argument("--goal", default="")
     parser.add_argument("--max-iterations", type=int, default=1)
     parser.add_argument("--verify-command", action="append", default=[])
+    parser.add_argument("--expected-check", action="append", default=[])
     try:
         tokens = shlex.split(line)
         if tokens and tokens[0] == "/project":
@@ -158,6 +176,7 @@ def parse_focus_project_launch(
         config_ref=config_ref,
         verification_commands=tuple(parsed.verify_command),
         task_plan_required=True,
+        expected_checks=tuple(parsed.expected_check),
     )
 
 
@@ -191,6 +210,7 @@ def launch_project(
         running,
         workspace_boundary_ref=build_local_workspace_ref(request.workspace_boundary),
         task_plan_required=request.task_plan_required,
+        expected_checks=request.expected_checks,
     )
     return store.require(running.run_id)
 
@@ -301,6 +321,7 @@ def initialize_project(
     *,
     workspace_boundary_ref: str | None = None,
     task_plan_required: bool = False,
+    expected_checks: tuple[str, ...] = (),
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -333,6 +354,7 @@ def initialize_project(
                 project_run,
                 workspace_boundary_ref=workspace_boundary_ref,
                 task_plan_required=task_plan_required,
+                expected_checks=expected_checks,
             ),
         },
     )
@@ -517,6 +539,7 @@ __all__ = [
     "initialize_project",
     "persisted_verification_waiver",
     "project_task_manager",
+    "resolve_project_repository",
     "run_project_turn",
     "resume_project_task",
     "schedule_unattended_project",

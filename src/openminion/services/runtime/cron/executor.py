@@ -12,6 +12,7 @@ from openminion.services.agent.execution.composition import AgentServiceTurnFlow
 from openminion.modules.policy.adapters.memory import (
     memory_capture_recovery_allowed,
 )
+from openminion.modules.session.diagnostics import events as session_events
 from openminion.tools.task.routine.dispatcher import (
     RoutineDispatcher,
     build_default_dispatcher,
@@ -149,6 +150,7 @@ class CronTurnExecutor:
             payload=payload,
             task_manager=task_manager,
         )
+        session_events.record_project_check_events(runtime=self._runtime, result=result)
         return {
             "summary": result.run.operator_summary or "Project cycle completed.",
             "metadata": {
@@ -159,6 +161,7 @@ class CronTurnExecutor:
                 "decision": result.decision.value,
                 "next_wake_job_id": next_job_id,
                 "reconciled_only": result.reconciled_only,
+                **session_events.project_check_metadata(result.check_events),
             },
         }
 

@@ -48,6 +48,7 @@ StatusDetailCode = Literal[
     "loading_session_history",
     "thinking",
     "composing_answer",
+    "waiting_for_checks",
 ]
 
 _STATUS_LABELS: dict[StatusKey, str] = {

@@ -14,14 +14,25 @@ from openminion.modules.task import (
     TaskManager,
     build_autonomy_run,
     build_project_run_projection,
+    load_latest_project_checkpoint,
     save_project_run_checkpoint,
 )
+from openminion.modules.task.project import checkpoints as project_checkpoints
+from openminion.modules.task.project.effects import (
+    ProjectEffectRecord,
+    ProjectEffectStatus,
+    save_project_effect_record,
+)
+from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 from openminion.modules.task.scheduling.schedule import (
     normalize_payload,
     validate_target_payload_pair,
 )
 from openminion.services.runtime.cron.executor import CronTurnExecutor
+from openminion.tools.github import plugin as github_plugin
+from openminion.tools.github.constants import DEFAULT_GITHUB_PROVIDER_ID
+from openminion.tools.github.providers import provider_registry
 
 
 class _Handle:
@@ -39,6 +50,44 @@ class _RuntimeManager:
     def submit_turn(self, request: object) -> _Handle:
         self.submitted.append(request)
         return _Handle(SimpleNamespace(final_text="worked", metadata={}))
+
+
+class _Sessions:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def append_event(self, **kwargs: object) -> None:
+        self.events.append(dict(kwargs))
+
+
+class _Telemetry:
+    def __init__(self) -> None:
+        self.operations: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def emit_module_operation(self, *args: object, **kwargs: object) -> None:
+        self.operations.append((args, kwargs))
+
+
+class _ChecksProvider:
+    provider_id = DEFAULT_GITHUB_PROVIDER_ID
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def fetch_checks(self, *, args, ctx):  # noqa: ANN001
+        del ctx
+        self.calls.append(dict(args))
+        return {
+            "ok": True,
+            "data": {
+                "head_sha": args["head_sha"],
+                "overall_result": "pending",
+                "expected_checks": list(args["expected_checks"]),
+                "missing_expected_checks": ["tests (3.11)"],
+                "failure_facts": [],
+            },
+            "source": {"provider_id": self.provider_id},
+        }
 
 
 class _CronStore:
@@ -67,7 +116,13 @@ def _request_builder(payload: dict[str, object], agent_id: str) -> object:
     )
 
 
-def _seed_project(tmp_path, monkeypatch, *, verifier_passes: bool):
+def _seed_project(
+    tmp_path,
+    monkeypatch,
+    *,
+    verifier_passes: bool,
+    expected_checks: tuple[str, ...] = (),
+):
     home = tmp_path / "home"
     data = tmp_path / "data"
     monkeypatch.setenv("OPENMINION_HOME", str(home))
@@ -124,8 +179,51 @@ def _seed_project(tmp_path, monkeypatch, *, verifier_passes: bool):
         task_manager,
         project,
         checkpoint_id="initial",
-        payload={"decision": "continue", "replan_count": 0},
+        payload={
+            "decision": "continue",
+            "replan_count": 0,
+            **project_checkpoints.initial_repository_lifecycle_payload(
+                run,
+                project,
+                expected_checks=expected_checks,
+            ),
+        },
     )
+    if expected_checks:
+        effect = ProjectEffectRecord(
+            effect_id="effect:github.open_pr:cron",
+            task_id="task-1",
+            idempotency_key="open-pr-cron",
+            actor_ref="agent:agent-main",
+            capability_ref="github.open_pr",
+            precondition_refs=("github:head:" + "a" * 40,),
+            result_ref="github:pull:openminion/example#17",
+            non_reversible_reason="The pull request remains open.",
+            status=ProjectEffectStatus.SUCCEEDED,
+        )
+        save_project_effect_record(
+            task_manager,
+            effect,
+            receipt={
+                "owner": "openminion",
+                "repo": "example",
+                "number": 17,
+                "head": "feature",
+                "base": "dev",
+                "head_sha": "a" * 40,
+            },
+        )
+        checkpoint = load_latest_project_checkpoint(task_manager, task_id="task-1")
+        assert checkpoint is not None
+        checkpoint, started = project_checkpoints.begin_repository_check_observation(
+            checkpoint
+        )
+        assert started is True
+        task_manager.save_checkpoint(
+            "task-1",
+            checkpoint.checkpoint_id,
+            checkpoint.model_dump(mode="json"),
+        )
     runtime_manager = _RuntimeManager()
     runtime = SimpleNamespace(
         config=SimpleNamespace(
@@ -134,6 +232,9 @@ def _seed_project(tmp_path, monkeypatch, *, verifier_passes: bool):
             default_agent="agent-main",
         ),
         runtime_manager=runtime_manager,
+        tools=ToolRegistry(),
+        sessions=_Sessions(),
+        telemetry_service=_Telemetry(),
         list_registered_agents=lambda: ["agent-main"],
         resolve_agent_service=lambda _agent_id: SimpleNamespace(_runner=None),
     )
@@ -156,14 +257,14 @@ def _seed_project(tmp_path, monkeypatch, *, verifier_passes: bool):
             "cycle_interval_seconds": 17,
         },
     }
-    return executor, cron_store, runtime_manager, job
+    return executor, cron_store, runtime_manager, job, runtime
 
 
 def test_project_cycle_schedules_one_deterministic_wake_and_reconciles_retry(
     tmp_path,
     monkeypatch,
 ) -> None:
-    executor, cron_store, runtime_manager, job = _seed_project(
+    executor, cron_store, runtime_manager, job, _runtime = _seed_project(
         tmp_path,
         monkeypatch,
         verifier_passes=False,
@@ -219,7 +320,7 @@ def test_verified_project_cycle_finishes_without_another_wake(
     tmp_path,
     monkeypatch,
 ) -> None:
-    executor, cron_store, runtime_manager, job = _seed_project(
+    executor, cron_store, runtime_manager, job, _runtime = _seed_project(
         tmp_path,
         monkeypatch,
         verifier_passes=True,
@@ -231,6 +332,47 @@ def test_verified_project_cycle_finishes_without_another_wake(
     assert result["metadata"]["next_wake_job_id"] is None
     assert cron_store.jobs == {}
     assert len(runtime_manager.submitted) == 1
+
+
+def test_scheduled_project_check_uses_tool_owner_and_records_waiting_facts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    expected_checks = ("lint", "tests (3.11)")
+    executor, cron_store, runtime_manager, job, runtime = _seed_project(
+        tmp_path,
+        monkeypatch,
+        verifier_passes=True,
+        expected_checks=expected_checks,
+    )
+    provider = _ChecksProvider()
+    github_plugin.register(runtime.tools)
+    provider_registry().register(provider)
+    try:
+        first = executor.execute(job, {"run_id": "cron-run-1"})
+        replay = executor.execute(job, {"run_id": "cron-run-1-retry"})
+    finally:
+        provider_registry().reset()
+
+    next_job_id = first["metadata"]["next_wake_job_id"]
+    assert next_job_id in cron_store.jobs
+    assert first["metadata"]["detail_code"] == "waiting_for_checks"
+    assert first["metadata"]["check_events"][0]["head_sha"] == "a" * 40
+    assert replay["metadata"]["reconciled_only"] is True
+    assert provider.calls == [
+        {
+            "owner": "openminion",
+            "repo": "example",
+            "head_sha": "a" * 40,
+            "expected_checks": list(expected_checks),
+        }
+    ]
+    assert runtime_manager.submitted == []
+    assert runtime.sessions.events[0]["event_type"] == "project.checks.pending"
+    event_payload = runtime.sessions.events[0]["payload"]
+    assert event_payload["project_run_id"].startswith("prun_")
+    assert event_payload["expected_checks"] == list(expected_checks)
+    assert runtime.telemetry_service.operations[0][0][3] == "project_checks"
 
 
 def test_project_cycle_payload_is_isolated_and_requires_durable_ids() -> None:
