@@ -122,6 +122,7 @@ def test_tool_adapter_closes_raised_handler_lifecycle_without_exposing_text(
 
     assert result["error"] == {
         "code": "EXEC_ERROR",
+        "details": {"error_type": "RuntimeError"},
         "message": "Tool execution failed",
     }
     assert "private provider text" not in str(result)

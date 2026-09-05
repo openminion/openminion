@@ -17,6 +17,7 @@ from openminion.cli.interactive.terminal.shell import (
 from openminion.cli.interactive.terminal.shell.actions import (
     _handle_session_slash,
     _handle_shell_preference_slash,
+    _handle_visible_parity_slash,
 )
 from openminion.cli.interactive.terminal.shell.slash_output import (
     PROMPT_SAFE_OUTPUT_SLASHES,
@@ -175,6 +176,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
+        _handle_visible_parity_slash,
         handle_debug_output_slash,
     )
     for dispatcher in dispatchers:
