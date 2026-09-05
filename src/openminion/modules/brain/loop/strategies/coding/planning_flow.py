@@ -32,7 +32,7 @@ class CodingPlanningMixin:
         *,
         runtime: DefaultCodingLLMRuntime,
         model: str,
-    ) -> tuple[CodingPlan, LLMResponse | None] | ExecutionResult:
+    ) -> CodingPlan | ExecutionResult:
         goal = (
             str(
                 ctx.user_input
@@ -51,7 +51,7 @@ class CodingPlanningMixin:
         )
         if isinstance(plan, CodingPlan):
             self._apply_plan_to_scratchpad(plan)
-            return plan, None
+            return plan
         response = runtime.complete(
             messages=[
                 Message(role="system", content=build_coding_plan_system_prompt()),
@@ -65,11 +65,10 @@ class CodingPlanningMixin:
         fallback_plan = self._plan_from_response(response=response)
         if fallback_plan is not None:
             self._apply_plan_to_scratchpad(fallback_plan)
-            return fallback_plan, None
-        if response.ok and response.tool_calls:
-            fallback_plan = CodingPlan.fallback(goal)
-            self._apply_plan_to_scratchpad(fallback_plan)
-            return fallback_plan, response
+            return fallback_plan
+        return self._invalid_plan_result(ctx)
+
+    def _invalid_plan_result(self: Any, ctx: ExecutionContext) -> ExecutionResult:
         message = "Coding planner did not return a valid CodingPlan."
         return ExecutionResult(
             status=BRAIN_STATE_ERROR,

@@ -56,7 +56,7 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.schemas.closure import ClosureJudgment
 from openminion.modules.brain.tools.executor import CommandExecutionOutcome
-from openminion.modules.llm.schemas import LLMRequest, LLMResponse, ToolCall, UsageInfo
+from openminion.modules.llm.schemas import LLMRequest, LLMResponse, ToolCall
 from openminion.modules.llm.transcript import validate_tool_transcript
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.policy import Policy
@@ -497,6 +497,19 @@ def _plan_response(payload: str) -> LLMResponse:
     )
 
 
+def _read_only_plan_response() -> LLMResponse:
+    return _plan_response(
+        json.dumps(
+            {
+                "goal": "inspect the workspace",
+                "phases": [{"name": "implement", "status": "active"}],
+                "current_phase": "implement",
+                "requires_file_change": False,
+            }
+        )
+    )
+
+
 def _coding_resume_payload() -> dict[str, Any]:
     verifier_command = ToolCommand(
         title="Run tests",
@@ -673,6 +686,7 @@ def test_coding_loop_single_tool_then_final_text() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             # First call: LLM requests file.read
             LLMResponse(
                 ok=True,
@@ -707,14 +721,15 @@ def test_coding_loop_single_tool_then_final_text() -> None:
     assert executor.calls[0].tool_name == "file.read"
     # include_reflect was False for every tool call
     assert all(not v for v in executor.include_reflect_values)
-    # LLM was called twice
-    assert len(llm_client.calls) == 2
+    # One planning call plus the tool and final-answer calls.
+    assert len(llm_client.calls) == 3
 
 
 def test_coding_loop_exec_run_cmd_alias_reaches_final_text() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -752,6 +767,7 @@ def test_coding_loop_preserves_tool_transcript_shape_for_follow_up_round() -> No
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -779,7 +795,7 @@ def test_coding_loop_preserves_tool_transcript_shape_for_follow_up_round() -> No
     result = handler.execute(ctx)
 
     assert result.status == "done"
-    second_call_messages = llm_client.calls[1]["messages"]
+    second_call_messages = llm_client.calls[2]["messages"]
     tool_message = next(
         message for message in reversed(second_call_messages) if message.role == "tool"
     )
@@ -934,6 +950,38 @@ def test_coding_loop_fails_closed_when_plan_json_is_invalid() -> None:
     assert result.action_result is not None
     assert result.action_result.error is not None
     assert result.action_result.error.code == "coding_plan_invalid"
+    assert executor.calls == []
+
+
+def test_coding_loop_rejects_planner_tool_calls_before_tool_execution() -> None:
+    executor = _FakeCommandExecutor()
+    llm_client = _FakeLLMClient(
+        responses=[
+            _plan_response("{not valid json"),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-read",
+                        name="file.read",
+                        arguments={"path": "src/auth.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+
+    result = CodingMode().execute(_ctx(llm_client, executor))
+
+    assert result.status == "error"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
+    assert executor.calls == []
 
 
 def test_coding_loop_fails_closed_on_invalid_phase_order() -> None:
@@ -1349,6 +1397,30 @@ def test_coding_resume_hook_rehydrates_plan_from_module_state() -> None:
     assert int(mode.snapshot_state()["resume_count"]) == 1
 
 
+def test_coding_resume_rejects_invalid_persisted_plan_before_tool_execution() -> None:
+    state = _state()
+    state.module_state["coding"] = _coding_resume_payload()
+    state.module_state["coding"]["coding_plan"]["goal"] = ""
+    llm_client = _FakeLLMClient()
+    executor = _FakeCommandExecutor()
+
+    result = CodingMode().execute(
+        _ctx(
+            llm_client,
+            executor,
+            state=state,
+            user_input="continue",
+        )
+    )
+
+    assert result.status == "error"
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_plan_invalid"
+    assert llm_client.calls == []
+    assert executor.calls == []
+
+
 def test_coding_cancel_clears_module_state_and_emits_stop() -> None:
     state = _state()
     state.module_state["coding"] = _coding_resume_payload()
@@ -1528,6 +1600,7 @@ def test_coding_read_only_continue_preserves_state_and_resumes_without_user_inpu
         _ctx(
             _FakeLLMClient(
                 responses=[
+                    _read_only_plan_response(),
                     LLMResponse(
                         ok=True,
                         provider="fake",
@@ -2147,7 +2220,7 @@ def test_coding_verify_failure_blocks_on_repeated_identical_error() -> None:
     assert result.action_result.error.code == "blocked_novel_failure"
 
 
-def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -> None:
+def test_coding_subtasks_dispatch_serially_and_synthesize_outputs(monkeypatch) -> None:
     call_windows: list[tuple[str, float, float]] = []
     child_routes: list[tuple[str, str]] = []
     lock = threading.Lock()
@@ -2235,10 +2308,7 @@ def test_coding_subtasks_dispatch_parallel_and_synthesize_outputs(monkeypatch) -
         (BRAIN_INTERNAL_MODE_ACT_ADAPTIVE, BRAIN_ACT_PROFILE_GENERAL),
         (BRAIN_INTERNAL_MODE_ACT_ADAPTIVE, BRAIN_ACT_PROFILE_GENERAL),
     ]
-    assert (
-        call_windows[0][2] > call_windows[1][1]
-        or call_windows[1][2] > call_windows[0][1]
-    )
+    assert call_windows[0][2] <= call_windows[1][1]
     synthesized_prompts = [
         message.content
         for message in llm_client.calls[1]["messages"]
@@ -2291,81 +2361,6 @@ def test_coding_subtasks_receive_target_and_success_contract(monkeypatch) -> Non
         "Goal: patch alpha\nTarget files: src/a.py\nSuccess criteria: alpha done",
         "Goal: patch beta\nTarget files: src/b.py\nSuccess criteria: beta done",
     ]
-
-
-def test_coding_subtasks_conflicting_targets_serialize(monkeypatch) -> None:
-    call_windows: list[tuple[str, float, float]] = []
-
-    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
-        del runner, user_input, logger, depth
-        started = time.monotonic()
-        time.sleep(0.03)
-        finished = time.monotonic()
-        call_windows.append((str(decision.objective), started, finished))
-        return ExecutionResult(
-            status="done",
-            working_state=state,
-            message=f"{decision.objective} complete",
-        )
-
-    _patch_child_dispatch(monkeypatch, _fake_invoke)
-    services = _FakeServices(
-        runner=SimpleNamespace(profile=SimpleNamespace(mode_config={}))
-    )
-    llm_client = _FakeLLMClient(
-        responses=[
-            _subtask_plan_response(first_target="src/a.py", second_target="src/a.py"),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-run",
-                        name="exec.run",
-                        arguments={"argv": ["pytest", "-q"]},
-                    )
-                ],
-                finish_reason="tool_calls",
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="implementation synthesized",
-                finish_reason="stop",
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="",
-                tool_calls=_bound_verification_tool_calls(),
-                finish_reason="tool_calls",
-            ),
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="verified",
-                finish_reason="stop",
-            ),
-        ]
-    )
-
-    result = CodingMode().execute(
-        _ctx(
-            llm_client,
-            _FakeCommandExecutor(),
-            services=services,
-            user_input="split work",
-        )
-    )
-
-    assert result.status == "done"
-    assert len(call_windows) == 2
-    assert call_windows[0][2] <= call_windows[1][1]
 
 
 def test_docker_like_recovery_requires_matching_verification_before_done(
@@ -2714,6 +2709,7 @@ def test_coding_loop_parallelizes_two_independent_reads() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2764,6 +2760,7 @@ def test_coding_loop_parallel_telemetry_is_emitted_in_status_event() -> None:
     services = _FakeServices()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2814,6 +2811,7 @@ def test_coding_loop_serializes_write_then_read_same_path() -> None:
     executor = _TimedCommandExecutor(delays_by_path={"/src/alpha.py": 0.1})
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2866,6 +2864,7 @@ def test_coding_loop_merges_parallel_results_in_tool_call_order() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2900,7 +2899,7 @@ def test_coding_loop_merges_parallel_results_in_tool_call_order() -> None:
     result = handler.execute(ctx)
 
     assert result.status == "done"
-    second_call_messages = llm_client.calls[1]["messages"]
+    second_call_messages = llm_client.calls[2]["messages"]
     tool_messages = [
         message for message in second_call_messages if message.role == "tool"
     ]
@@ -2917,6 +2916,7 @@ def test_coding_loop_disallowed_tool_exits_with_error() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2929,7 +2929,7 @@ def test_coding_loop_disallowed_tool_exits_with_error() -> None:
                         arguments={"url": "https://example.com"},
                     )
                 ],
-            )
+            ),
         ]
     )
     handler = CodingMode()
@@ -2962,6 +2962,7 @@ def test_coding_loop_stops_on_needs_user() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -2972,7 +2973,7 @@ def test_coding_loop_stops_on_needs_user() -> None:
                         id="tc-1", name="exec.run", arguments={"cmd": "rm -rf /build"}
                     )
                 ],
-            )
+            ),
         ]
     )
     handler = CodingMode()
@@ -3018,6 +3019,7 @@ def test_coding_loop_preserves_confirmation_replay_state() -> None:
     executor = _ConfirmRequiredExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -3030,7 +3032,7 @@ def test_coding_loop_preserves_confirmation_replay_state() -> None:
                         arguments={"command": "python --version"},
                     )
                 ],
-            )
+            ),
         ]
     )
 
@@ -3400,6 +3402,7 @@ def test_coding_loop_stops_on_job_pending() -> None:
     )
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -3408,7 +3411,7 @@ def test_coding_loop_stops_on_job_pending() -> None:
                 tool_calls=[
                     ToolCall(id="tc-1", name="exec.run", arguments={"cmd": "make test"})
                 ],
-            )
+            ),
         ]
     )
     handler = CodingMode()
@@ -3416,37 +3419,6 @@ def test_coding_loop_stops_on_job_pending() -> None:
     result = handler.execute(ctx)
 
     assert result.status == "job_pending"
-
-
-# Budget exhausted (token budget)
-
-
-def test_coding_loop_does_not_redebit_accounted_entry_response() -> None:
-    llm_client = _FakeLLMClient(
-        responses=[
-            LLMResponse(
-                ok=True,
-                provider="fake",
-                model="fake-model",
-                output_text="",
-                tool_calls=[
-                    ToolCall(id="tc-1", name="file.read", arguments={"path": "a.py"})
-                ],
-                usage=UsageInfo(input_tokens=40001, output_tokens=0),
-            )
-        ]
-    )
-    executor = _FakeCommandExecutor()
-    state = _state(tokens=40000, tool_calls=10, llm_calls_max=20)
-    handler = CodingMode()
-    ctx = _ctx(llm_client, executor, state=state)
-    result = handler.execute(ctx)
-
-    assert result.status == "done"
-    assert result.action_result is not None
-    assert result.message == "done"
-    assert result.action_result.error is None
-    assert result.action_result.outputs["coding.tool_calls"] == ["file.read"]
 
 
 def test_coding_loop_circular_pattern_returns_recoverable_result() -> None:
@@ -3593,6 +3565,7 @@ def test_coding_loop_emits_adaptive_status_payload_during_execution() -> None:
     executor = _FakeCommandExecutor()
     llm_client = _FakeLLMClient(
         responses=[
+            _read_only_plan_response(),
             LLMResponse(
                 ok=True,
                 provider="fake",

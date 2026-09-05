@@ -368,7 +368,7 @@ class CodingProfileRunner(
         )
         if isinstance(prepared, ExecutionResult):
             return prepared
-        tool_specs, seed_response = prepared
+        tool_specs = prepared
 
         while True:
             self._sync_plan_telemetry()
@@ -401,9 +401,7 @@ class CodingProfileRunner(
                     ctx,
                     adaptive_state=adaptive_state,
                 ),
-                seed_response=seed_response,
             )
-            seed_response = None
             result = self._handle_iteration_outcome(
                 ctx,
                 outcome=outcome,
@@ -418,10 +416,9 @@ class CodingProfileRunner(
         *,
         runtime: DefaultCodingLLMRuntime,
         model: str,
-    ) -> tuple[list[Any], Any | None] | ExecutionResult:
+    ) -> list[Any] | ExecutionResult:
         tool_specs = _build_tool_specs(CODING_ALLOWED_TOOLS, ctx=ctx)
         self._init_checkpoint(ctx)
-        seed_response: Any | None = None
         resume_state = {
             key: value
             for key, value in dict(
@@ -452,9 +449,7 @@ class CodingProfileRunner(
             ):
                 self._apply_resume_input(ctx)
             if self._coding_plan is None:
-                self._coding_plan = CodingPlan.fallback(
-                    str(ctx.state.goal or ctx.user_input or "")
-                )
+                return self._invalid_plan_result(ctx)
             self._sync_coding_context(ctx)
         else:
             self._loop_state = CodingLoopState()
@@ -470,7 +465,7 @@ class CodingProfileRunner(
             )
             if isinstance(initialized, ExecutionResult):
                 return initialized
-            self._coding_plan, seed_response = initialized
+            self._coding_plan = initialized
             self._sync_coding_context(ctx)
             self._sync_coding_module_state(ctx)
         seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)
@@ -479,7 +474,7 @@ class CodingProfileRunner(
         if self._coding_plan is not None:
             self._stage_initial_write_if_required()
             self._emit_phase_status(ctx)
-        return tool_specs, seed_response
+        return tool_specs
 
     def _handle_iteration_outcome(
         self,
@@ -676,9 +671,7 @@ class CodingProfileRunner(
         )
         raw_plan = state.get("coding_plan")
         self._coding_plan = (
-            coding_plan_from_payload(raw_plan, goal="")
-            if isinstance(raw_plan, dict)
-            else None
+            coding_plan_from_payload(raw_plan) if isinstance(raw_plan, dict) else None
         )
         self._resume_count = int(state.get("resume_count", 0) or 0)
         checkpoint_id = str(state.get("last_checkpoint_id", "") or "").strip()

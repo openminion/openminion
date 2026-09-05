@@ -194,6 +194,22 @@ class _FakeLLMClient:
         return response
 
 
+def _read_only_coding_plan_response() -> LLMResponse:
+    return LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text=json.dumps(
+            {
+                "goal": "inspect the workspace",
+                "phases": [{"name": "implement", "status": "active"}],
+                "current_phase": "implement",
+                "requires_file_change": False,
+            }
+        ),
+    )
+
+
 @dataclass
 class _FakeCommandExecutor:
     outcomes: list[CommandExecutionOutcome] = field(default_factory=list)
@@ -425,6 +441,7 @@ def test_coding_mode_resumes_after_budget_exit() -> None:
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -438,7 +455,7 @@ def test_coding_mode_resumes_after_budget_exit() -> None:
                         )
                     ],
                     usage=UsageInfo(input_tokens=1, output_tokens=1),
-                )
+                ),
             ]
         )
         executor = _FakeCommandExecutor(
@@ -567,6 +584,7 @@ def test_coding_mode_closes_from_tool_evidence_when_budget_is_exhausted() -> Non
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -580,7 +598,7 @@ def test_coding_mode_closes_from_tool_evidence_when_budget_is_exhausted() -> Non
                         )
                     ],
                     usage=UsageInfo(input_tokens=1, output_tokens=1),
-                )
+                ),
             ]
         )
         executor = _FakeCommandExecutor(
@@ -639,6 +657,7 @@ def test_coding_mode_resumes_after_needs_user_without_duplicate_batch_stop() -> 
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -652,7 +671,7 @@ def test_coding_mode_resumes_after_needs_user_without_duplicate_batch_stop() -> 
                         )
                     ],
                     usage=UsageInfo(input_tokens=1, output_tokens=1),
-                )
+                ),
             ]
         )
         executor = _FakeCommandExecutor(

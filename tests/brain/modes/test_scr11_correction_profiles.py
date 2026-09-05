@@ -51,6 +51,19 @@ class _FakeLLMClient:
         )
 
 
+def _read_only_coding_plan_response() -> LLMResponse:
+    return LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text=(
+            '{"goal":"read file","phases":[{"name":"implement",'
+            '"status":"active"}],"current_phase":"implement",'
+            '"requires_file_change":false}'
+        ),
+    )
+
+
 @dataclass
 class _FakeCommandExecutor:
     outcomes: list[CommandExecutionOutcome] = field(default_factory=list)
@@ -262,6 +275,7 @@ class TestCodingModeProfileCorrectionEnabled:
     def test_coding_happy_path_still_passes(self):
         llm_client = _FakeLLMClient(
             responses=[
+                _read_only_coding_plan_response(),
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -331,7 +345,8 @@ class TestCodingModeProfileCorrectionEnabled:
         """
         llm_client = _FakeLLMClient(
             responses=[
-                # First call: request a tool
+                _read_only_coding_plan_response(),
+                # First execution call: request a tool
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -343,7 +358,7 @@ class TestCodingModeProfileCorrectionEnabled:
                         )
                     ],
                 ),
-                # Second call: LLM recovery after tool failure
+                # Second execution call: LLM recovery after tool failure
                 LLMResponse(
                     ok=True,
                     provider="fake",
@@ -389,9 +404,9 @@ class TestCodingModeProfileCorrectionEnabled:
         result = CodingMode().execute(ctx)
 
         # Layer 1 enrichment: LLM was called again after the tool failure
-        # (at least 2 LLM calls: 1 initial + 1 recovery)
-        assert len(llm_client.calls) >= 2, (
-            f"Expected at least 2 LLM calls (initial + recovery after failure), "
+        # (at least 3 LLM calls: plan + initial execution + recovery)
+        assert len(llm_client.calls) >= 3, (
+            f"Expected at least 3 LLM calls (plan + execution + recovery), "
             f"got {len(llm_client.calls)}"
         )
         # Result should be done (model provided final text) or waiting_user
