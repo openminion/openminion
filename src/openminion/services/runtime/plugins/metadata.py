@@ -5,12 +5,12 @@ if TYPE_CHECKING:
 
 
 def plugin_label(plugin: "Plugin") -> str:
-    module = getattr(plugin, "__module__", None)
     name = getattr(plugin, "name", None)
-    if module:
-        return module
     if name:
         return str(name)
+    module = getattr(plugin, "__module__", None)
+    if module:
+        return module
     return type(plugin).__name__
 
 

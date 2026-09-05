@@ -6,7 +6,6 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
-from openminion.base.logging import get_logger
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.artifact.refs import create_default_artifactctl
@@ -66,7 +65,6 @@ from .results import (
 )
 from .workspace_policy import workspace_context_policy
 
-_log = get_logger("brain.adapters.tool.runtime")
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override",
     default=None,
@@ -87,28 +85,6 @@ def _is_confirm_required_code(code: Any) -> bool:
 def _policy_context_metadata(policy: Policy) -> Any:
     raw = getattr(policy, "raw", {}) or {}
     return raw.get("context_metadata") if isinstance(raw, Mapping) else None
-
-
-try:
-    import openminion_tool_os.plugin
-
-    HAS_OS_PLUGIN = True
-except ImportError:
-    HAS_OS_PLUGIN = False
-
-try:
-    import openminion.tools.browser.providers.pinchtab.plugin as openminion_tool_browser_pinchtab_plugin
-
-    HAS_BROWSER_PINCHTAB_PLUGIN = True
-except ImportError:
-    HAS_BROWSER_PINCHTAB_PLUGIN = False
-
-try:
-    import openminion.tools.reaction.plugin as openminion_tools_reaction_plugin
-
-    HAS_REACTIONS_PLUGIN = True
-except ImportError:
-    HAS_REACTIONS_PLUGIN = False
 
 
 class ToolAdapter:
@@ -184,34 +160,12 @@ class ToolAdapter:
             )
         _apply_reactions_default_policy(self.policy, runtime_config)
         _apply_agent_command_policy(self.policy, agent_profile)
-        registry_prepopulated = runtime_registry is not None
         if runtime_registry is not None:
             self.registry = runtime_registry
         else:
-            try:
-                from openminion.modules.tool import build_default_tool_registry
+            from openminion.modules.tool import build_default_tool_registry
 
-                self.registry = build_default_tool_registry(config=runtime_config)
-                registry_prepopulated = True
-            except ImportError:
-                self.registry = ToolRegistry()
-            except RuntimeError as e:
-                self.registry = ToolRegistry()
-                _log.warning(
-                    "tool registry build failed due to missing optional modules; using fallback registry: %s",
-                    e,
-                )
-
-        if not registry_prepopulated and HAS_OS_PLUGIN:
-            openminion_tool_os.plugin.register(self.registry)
-        if not registry_prepopulated and HAS_BROWSER_PINCHTAB_PLUGIN:
-            openminion_tool_browser_pinchtab_plugin.register(self.registry)
-        if (
-            not registry_prepopulated
-            and HAS_REACTIONS_PLUGIN
-            and self.reactions_enabled
-        ):
-            openminion_tools_reaction_plugin.register(self.registry)
+            self.registry = build_default_tool_registry(config=runtime_config)
 
     def close(self) -> None:
         if self.secret_service is not None:
