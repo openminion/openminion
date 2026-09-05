@@ -1,1 +1,3 @@
 # path	loc	reason
+src/openminion/services/runtime/project_worker.py	1014	Repository continuation remains in the existing project worker owner.
+src/openminion/tools/github/rest.py	1005	GitHub pull-request mutations remain in the existing REST provider owner.
