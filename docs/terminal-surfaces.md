@@ -1,21 +1,16 @@
 # OpenMinion Terminal Surfaces
 
 Status: active
-Last updated: 2026-08-10
+Last updated: 2026-09-05
 
 OpenMinion has one canonical interactive CLI: `openminion`. It uses the
-terminal renderer by default. Textual remains available through explicit
-`openminion --rich`, not as the default. Install that optional renderer with:
-
-```bash
-python -m pip install "openminion[textual]"
-```
+terminal renderer.
 
 ## Canonical routes
 
 | Need | Route | Contract |
 | --- | --- | --- |
-| Interactive work | `openminion` | Launch the default terminal renderer on a TTY; add `--rich` only when the Textual renderer is desired. |
+| Interactive work | `openminion` | Launch the interactive terminal renderer on a TTY. |
 | Piped prompt | `cat prompt.md \| openminion` | Run one request without mounting an interactive renderer. |
 | Scripted request | `openminion run` | Use stable human or JSON one-shot output. |
 | Resource operations | `openminion status`, `openminion cron`, and companion CLIs | Use bounded operator commands rather than dashboard widgets. |
@@ -50,18 +45,10 @@ and backward compatibility.
 
 ## Read-only operations overview
 
-The optional Textual renderer provides a compact local overview:
-
-```bash
-openminion --rich
-```
-
-Then enter `/overview`. The overlay reads the active agent/model,
-workspace/session, task summary, recent tool activity, telemetry diagnostics,
-and host metrics from their existing owners. It performs no write action and
-closes with Escape. The command is intentionally absent from the default
-terminal renderer; use `/status`, `/tasks`, `/telemetry`, and the bounded
-operator commands there.
+Enter `/overview` in the interactive CLI. The report reads the active
+agent/model, workspace/session, task summary, recent tool activity, telemetry
+diagnostics, and host metrics from their existing owners. It performs no write
+action.
 
 ## Interactive activity animation
 
@@ -74,16 +61,6 @@ Useful commands:
 
 ```bash
 openminion --animation-provider unicode --animation helix
-```
-
-Inside the interactive CLI:
-
-```text
-/animation
-/animation list
-/animation use unicode:helix
-/animation save unicode:helix
-/animation reset
 ```
 
 Install the optional Unicode catalog with:

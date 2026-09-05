@@ -1,12 +1,15 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-02
+Last updated: 2026-09-05
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
 
+- Consolidated interactive Focus onto its established terminal renderer,
+  removed the alternate renderer selector and dependency, and preserved
+  overview, context-review, and copy commands in the canonical shell.
 - Added conventional root `--version`, predictable root-option parsing, and
   repeatable process-local `--add-dir` support for interactive workspaces.
 - Narrowed default file roots to the active workspace, preserved configured

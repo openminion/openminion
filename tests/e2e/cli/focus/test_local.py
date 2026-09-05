@@ -32,22 +32,6 @@ def test_focus_pty_launches_and_handles_help(
         write_transcript(artifact_root(tmp_path), "local-help", transcript)
 
 
-def test_rich_focus_pty_launches_and_handles_help(
-    focus_probe: FocusProbe,
-    tmp_path,
-) -> None:
-    with PtySession(
-        argv=(*focus_probe.command(), "--rich"),
-        cwd=focus_probe.openminion_root,
-        env=focus_probe.environment(),
-        rows=42,
-        cols=140,
-    ) as session:
-        focus_probe.wait_ready(session)
-        transcript = focus_probe.run_slash(session, "/help", marker="/exit")
-        write_transcript(artifact_root(tmp_path), "local-rich-help", transcript)
-
-
 def test_focus_pty_renders_durable_token_report(
     focus_probe: FocusProbe,
     tmp_path,

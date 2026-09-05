@@ -1260,15 +1260,10 @@ def _measure_import_surface(
         if not isinstance(imported, list):
             raise RuntimeError("import surface returned malformed module facts")
         names = [str(name) for name in imported]
-        textual_modules = [
-            name for name in names if name == "textual" or name.startswith("textual.")
-        ]
         metrics["imported_module_count"] = len(names)
         metrics["openminion_module_count"] = sum(
             name == "openminion" or name.startswith("openminion.") for name in names
         )
-        metrics["textual_module_count"] = len(textual_modules)
-        metrics["textual_modules"] = textual_modules
         metrics["measured_boundary"] = SUT_BOUNDARY_SUBPROCESS
         return [
             f"Fresh subprocess imports {module_name} and reports exact module names.",

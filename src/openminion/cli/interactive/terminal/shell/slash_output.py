@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 import io
+import shlex
 from typing import Any
 
 from rich.console import Console
+from rich.text import Text
 
+from openminion.cli.presentation import copy_to_clipboard
 from openminion.cli.presentation.models import ChatMessage, MessageKind
+from openminion.cli.presentation.markers import token_rich_style
+from openminion.cli.presentation.styles import StyleToken
+from openminion.cli.status.models import (
+    build_memory_context_review,
+    render_memory_context_review,
+)
 from openminion.cli.presentation.telemetry import (
     render_telemetry_slash,
     render_trace_slash,
@@ -15,14 +24,71 @@ from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
 
+_MUTED_ITALIC_STYLE = f"italic {token_rich_style(StyleToken.MUTED)}"
+
 PROMPT_SAFE_OUTPUT_SLASHES = frozenset(
     """
-    / /agents /browser /compact /context /cost /delegate /details /editor /effort
+    / /agents /browser /compact /context /context-review /copy /cost /delegate /details /editor /effort
     /export /goal /graph /help /mcp /memory /model /normal /permissions /queue /quiet
-    /readonly /new /resume /review /sessions /skills /status /statusline /tasks
+    /readonly /new /overview /resume /review /sessions /skills /status /statusline /tasks
     /telemetry /theme /tokens /tools /trace /undo /verbose
     """.split()
 )
+
+
+def render_context_review(runtime: Any, args: str) -> str:
+    options = {
+        "session_id": str(getattr(runtime, "session_id", "") or ""),
+        "canary": "",
+        "calibration": "",
+        "artifacts_dir": "",
+    }
+    try:
+        tokens = shlex.split(args)
+    except ValueError:
+        tokens = ()
+    for token in tokens:
+        key, separator, value = token.partition("=")
+        if not separator:
+            continue
+        if key in {"session", "session_id"}:
+            options["session_id"] = value
+        elif key in {"canary", "calibration"}:
+            options[key] = value
+        elif key in {"artifacts", "artifacts_dir"}:
+            options["artifacts_dir"] = value
+
+    payload_getter = getattr(runtime, "context_trace_payload", None)
+    if callable(payload_getter):
+        payload = payload_getter(session_id=options["session_id"])
+    else:
+        payload = {
+            "session_id": options["session_id"],
+            "traces": [],
+            "count": 0,
+            "degraded": "runtime_context_trace_unavailable",
+        }
+    return render_memory_context_review(
+        build_memory_context_review(
+            payload,
+            canary_path=options["canary"],
+            calibration_path=options["calibration"],
+            artifacts_dir=options["artifacts_dir"],
+        )
+    )
+
+
+def copy_latest_message(transcript: TerminalTranscript, console: Console) -> None:
+    body = transcript.copy_last_copyable_message()
+    if not body:
+        console.print(Text("(no message to copy)", style=_MUTED_ITALIC_STYLE))
+        return
+    message = (
+        "(copied last message to clipboard)"
+        if copy_to_clipboard(body)
+        else "(no clipboard tool available)"
+    )
+    console.print(Text(message, style=_MUTED_ITALIC_STYLE))
 
 
 def handle_debug_output_slash(

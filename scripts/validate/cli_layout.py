@@ -82,10 +82,17 @@ RETIRED_DOC_PATTERNS = {
     "removed focus verbosity env": re.compile(r"OPENMINION_FOCUS_VERBOSITY"),
     "removed focus progress env": re.compile(r"OPENMINION_FOCUS_PROGRESS"),
     "removed focus spinner env": re.compile(r"OPENMINION_FOCUS_PLAIN_SPINNER"),
+    "removed focus renderer flag": re.compile(r"`--rich`"),
+    "removed focus renderer extra": re.compile(r"openminion\[textual\]"),
     "hidden alias claim": re.compile(r"hidden compatibility alias(?:es)?", re.I),
     "live alias claim": re.compile(
         r"compatibility alias(?:es)?\s+(?:remain|exist|forward|are tested)", re.I
     ),
+}
+RETIRED_FOCUS_SOURCE_PATTERNS = {
+    "removed focus app": re.compile(r"\bFocusApp\b"),
+    "removed focus renderer flag": re.compile(r"--rich"),
+    "removed focus renderer import": re.compile(r"(?m)^\s*(?:from|import)\s+textual\b"),
 }
 
 
@@ -162,6 +169,16 @@ def scan_current_doc(path: Path) -> list[str]:
     return errors
 
 
+def scan_retired_focus_source(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    errors: list[str] = []
+    for label, pattern in RETIRED_FOCUS_SOURCE_PATTERNS.items():
+        for match in pattern.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            errors.append(f"{path.relative_to(REPO_ROOT)}:{line}: {label}")
+    return errors
+
+
 def iter_current_docs() -> list[Path]:
     paths: list[Path] = []
     package_root = REPO_ROOT / "src" / "openminion"
@@ -186,6 +203,8 @@ def main() -> int:
             if path.suffix == ".pyc":
                 continue
             errors.extend(scan_text_file(path))
+    for path in sorted(CLI_ROOT.rglob("*.py")):
+        errors.extend(scan_retired_focus_source(path))
     current_docs = iter_current_docs()
     for path in current_docs:
         errors.extend(scan_current_doc(path))
@@ -196,6 +215,7 @@ def main() -> int:
         "legacy_token_count": len(LEGACY_PATH_TOKENS),
         "current_doc_count": len(current_docs),
         "retired_doc_pattern_count": len(RETIRED_DOC_PATTERNS),
+        "retired_focus_source_pattern_count": len(RETIRED_FOCUS_SOURCE_PATTERNS),
     }
     emit_json_report(
         "validate/cli_layout.py",

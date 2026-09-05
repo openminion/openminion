@@ -128,10 +128,9 @@ def test_renderer_and_animation_dependencies_are_scoped() -> None:
 
     assert any(dep.startswith("prompt-toolkit") for dep in dependencies)
     assert any(dep.startswith("rich") for dep in dependencies)
-    assert not any(dep.startswith(("textual", "pyfiglet")) for dep in dependencies)
-    assert extras["textual"] == ["textual>=1,<9"]
+    assert not any(dep.startswith("pyfiglet") for dep in dependencies)
+    assert "textual" not in extras
     assert "pyfiglet>=1.0,<2" in extras["animations"]
-    assert "textual>=1,<9" in extras["dev"]
     assert "pyfiglet>=1.0,<2" in extras["dev"]
 
 
@@ -151,11 +150,17 @@ def test_built_archives_exclude_test_tree(tmp_path: Path) -> None:
     with tarfile.open(source_archive, "r:gz") as archive:
         assert not any("/tests/" in name for name in archive.getnames())
     with zipfile.ZipFile(wheel) as archive:
-        assert not any(name.startswith("tests/") for name in archive.namelist())
-        assert {
-            "openminion/cli/interactive/foundation.tcss",
-            "openminion/cli/interactive/styles.tcss",
-        } <= set(archive.namelist())
+        names = archive.namelist()
+        assert not any(name.startswith("tests/") for name in names)
+        assert not any(name.endswith(".tcss") for name in names)
+        assert not any("openminion/cli/interactive/widgets/" in name for name in names)
+        assert "openminion/cli/interactive/app.py" not in names
+        metadata_name = next(
+            name for name in names if name.endswith(".dist-info/METADATA")
+        )
+        metadata = archive.read(metadata_name).decode("utf-8")
+        assert "Provides-Extra: textual" not in metadata
+        assert "Requires-Dist: textual" not in metadata
 
 
 def test_package_version_owner_matches_public_metadata() -> None:

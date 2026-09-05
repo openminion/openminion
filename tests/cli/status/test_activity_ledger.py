@@ -456,26 +456,21 @@ def test_format_activity_line_search_event_uses_two_line_lifecycle() -> None:
     assert "\n└" in line
 
 
-# ---- structural guard: no Rich / Textual imports --------------------
+# ---- structural guard: no renderer imports ---------------------------
 
 
-def test_activity_ledger_owner_does_not_import_rich_or_textual() -> None:
-    # Re-import in a controlled environment and inspect its module
-    # graph: the owner module itself must not import Rich or Textual.
+def test_activity_ledger_owner_does_not_import_rich() -> None:
+    # Re-import in a controlled environment and inspect its module graph.
     mod = importlib.import_module("openminion.cli.status.activity_ledger")
     source_path = mod.__file__ or ""
     assert source_path
     with open(source_path, encoding="utf-8") as fh:
         source = fh.read()
     assert "import rich" not in source and "from rich" not in source
-    assert "import textual" not in source and "from textual" not in source
 
 
-def test_format_activity_line_does_not_pull_in_rich_or_textual() -> None:
-    # Calling the formatter on each supported kind should not import
-    # Rich or Textual transitively. We snapshot `sys.modules` before
-    # the calls and assert no new rich/textual entries appeared.
-    before = {name for name in sys.modules if name.startswith(("rich", "textual"))}
+def test_format_activity_line_does_not_pull_in_rich() -> None:
+    before = {name for name in sys.modules if name.startswith("rich")}
     for event in [
         TurnActivityEvent(kind=KIND_TOOL, tool_name="bash"),
         TurnActivityEvent(
@@ -489,5 +484,5 @@ def test_format_activity_line_does_not_pull_in_rich_or_textual() -> None:
         TurnActivityEvent(kind=KIND_STATUS, title="Thinking"),
     ]:
         format_activity_line(event)
-    after = {name for name in sys.modules if name.startswith(("rich", "textual"))}
+    after = {name for name in sys.modules if name.startswith("rich")}
     assert after == before

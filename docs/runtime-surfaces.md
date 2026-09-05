@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-07-19
+Last updated: 2026-09-05
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -23,12 +23,10 @@ Best for:
 
 Notes:
 
-1. the default invocation launches the interactive CLI with the terminal renderer on a TTY,
-2. `openminion --rich` explicitly selects the Textual renderer after it is
-   installed with `python -m pip install "openminion[textual]"`,
-3. piped input executes one request without mounting an interactive renderer,
-4. legacy `focus`, `chat`, `tui`, and `dashboard` command names are retired and rejected,
-5. startup creates a fresh session unless `--session <id>` is provided.
+1. the default invocation launches the sole interactive terminal renderer on a TTY,
+2. piped input executes one request without mounting an interactive renderer,
+3. legacy `focus`, `chat`, `tui`, and `dashboard` command names are retired and rejected,
+4. startup creates a fresh session unless `--session <id>` is provided.
 
 ### 2. Python library API
 
@@ -88,7 +86,7 @@ Use:
 1. `openminion graph status`
 2. `openminion graph view --current`
 3. `openminion graph view --brain third --provider <name>`
-4. `/graph` inside either interactive renderer for copyable viewer commands
+4. `/graph` inside the interactive CLI for copyable viewer commands
 
 Best for:
 

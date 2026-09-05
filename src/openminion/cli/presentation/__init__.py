@@ -5,12 +5,8 @@ from typing import Any
 
 _LAZY_EXPORTS = {
     "ChatMessage": (".models", "ChatMessage"),
-    "DEFAULT_PROGRESS_FALLBACK": (".status", "DEFAULT_PROGRESS_FALLBACK"),
-    "DEFAULT_THINKING_LABEL": (".status", "DEFAULT_THINKING_LABEL"),
     "MessageKind": (".models", "MessageKind"),
     "RuntimeHeaderContext": (".header", "RuntimeHeaderContext"),
-    "ThinkingIndicator": (".status", "ThinkingIndicator"),
-    "ToolBlockWidget": (".tool.blocks", "ToolBlockWidget"),
     "ToolEvent": (".models", "ToolEvent"),
     "build_tool_event_from_progress": (
         ".tool.progress",

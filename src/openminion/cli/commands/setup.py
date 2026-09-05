@@ -472,7 +472,6 @@ def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
         no_interactive=False,
         no_context=False,
         no_update_check=False,
-        rich=False,
     )
     return int(run_interactive(interactive_args) or 0)
 

@@ -67,3 +67,23 @@ def test_current_doc_scan_allows_explicit_retirement_language(tmp_path: Path) ->
     )
 
     assert MODULE.scan_current_doc(path) == []
+
+
+def test_focus_source_scan_rejects_retired_renderer_entrypoints(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.py"
+    path.write_text(
+        "from textual.app import App\nclass FocusApp(App):\n    flag = '--rich'\n",
+        encoding="utf-8",
+    )
+    original_root = MODULE.REPO_ROOT
+    MODULE.REPO_ROOT = tmp_path
+    try:
+        errors = MODULE.scan_retired_focus_source(path)
+    finally:
+        MODULE.REPO_ROOT = original_root
+
+    assert errors == [
+        "legacy.py:2: removed focus app",
+        "legacy.py:3: removed focus renderer flag",
+        "legacy.py:1: removed focus renderer import",
+    ]

@@ -34,18 +34,13 @@ src/openminion/cli/commands/debug/providers/modules.py	20	3	current broad-handle
 src/openminion/cli/commands/debug/providers/tools.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/doctor.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/gateway.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/commands/interactive.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/commands/interactive.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/room.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/sessions.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/skill.py	14	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/storage.py	6	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/app.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/commands.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/runtime/__init__.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/runtime/commands.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/runtime/controls.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/screen.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/shell.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/composer.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/shell/__init__.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/shell/actions.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -53,9 +48,6 @@ src/openminion/cli/interactive/terminal/shell/renderers.py	5	0	current broad-han
 src/openminion/cli/interactive/terminal/shell/sessions.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/streaming.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/terminal/transcript.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/turn_queue.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/widgets/mention_overlay.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/interactive/widgets/slash_overlay.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/animation/registry.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/clipboard.py	1	0	best-effort clipboard backend failures must not terminate the interactive surface
 src/openminion/cli/presentation/visible_parity.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

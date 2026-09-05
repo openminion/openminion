@@ -7,12 +7,8 @@ import openminion.cli.presentation as presentation
 
 _EXPECTED_EXPORTS = [
     "ChatMessage",
-    "DEFAULT_PROGRESS_FALLBACK",
-    "DEFAULT_THINKING_LABEL",
     "MessageKind",
     "RuntimeHeaderContext",
-    "ThinkingIndicator",
-    "ToolBlockWidget",
     "ToolEvent",
     "build_tool_event_from_progress",
     "coerce_optional_int",
@@ -52,21 +48,5 @@ def test_presentation_public_exports_remain_compatible() -> None:
 def test_presentation_submodule_and_formatter_reexports_remain_compatible() -> None:
     styles = importlib.import_module("openminion.cli.presentation.styles")
     from openminion.cli.presentation import styles as package_styles
-    from openminion.cli.presentation.tool import blocks, formatting
 
     assert package_styles is styles
-    assert blocks.__all__ == (
-        "ToolBlockWidget",
-        "tool_call_body",
-        "tool_context_hint",
-    )
-    assert blocks.tool_call_body is formatting.tool_call_body
-    assert blocks.tool_context_hint is formatting.tool_context_hint
-
-
-def test_interactive_tool_block_module_remains_compatible() -> None:
-    legacy = importlib.import_module("openminion.cli.interactive.widgets.tool_block")
-
-    assert legacy.ToolBlockWidget is presentation.ToolBlockWidget
-    assert legacy.tool_call_body is presentation.tool_call_body
-    assert legacy.tool_context_hint is presentation.tool_context_hint

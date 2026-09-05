@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
 
 from openminion.cli.interactive.project_context import (
@@ -11,17 +9,6 @@ from openminion.cli.interactive.project_context import (
     write_init_template,
 )
 from openminion.services.agent.context.runtime import _append_project_context_block
-
-
-def test_project_context_import_does_not_eagerly_import_textual_app() -> None:
-    sys.modules.pop("openminion.cli.interactive", None)
-    sys.modules.pop("openminion.cli.interactive.app", None)
-    sys.modules.pop("openminion.cli.interactive.project_context", None)
-
-    module = importlib.import_module("openminion.cli.interactive.project_context")
-
-    assert module.__name__ == "openminion.cli.interactive.project_context"
-    assert "openminion.cli.interactive.app" not in sys.modules
 
 
 def test_resolve_project_context_prefers_openminion_md(tmp_path: Path) -> None:

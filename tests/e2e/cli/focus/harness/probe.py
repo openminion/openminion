@@ -550,7 +550,7 @@ class FocusProbe:
 
     @classmethod
     def _submit_composer_line(cls, session: PtySession, text: str) -> str:
-        """Submit through the composer only after Textual exposes an input state."""
+        """Submit through the composer only after its input state is visible."""
         cls._wait_for_composer(session)
         if "\n" in text or "\r" in text:
             session.send_bracketed_paste(text)

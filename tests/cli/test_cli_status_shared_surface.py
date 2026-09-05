@@ -234,25 +234,6 @@ def test_status_from_payload_passes_through_phase_status() -> None:
     assert status_from_payload(ps) is ps
 
 
-# ── Cross-shell adoption proof ────────────────────────────────────────────────
-
-
-def test_focus_screen_uses_shared_status_controller() -> None:
-    import inspect
-
-    from openminion.cli.interactive.screen import FocusScreen
-
-    src = inspect.getsource(FocusScreen)
-    assert "PhaseStatusController" in src, (
-        "Focus `FocusScreen` must consume `PhaseStatusController`; the "
-        "shared status owner is no longer being invoked."
-    )
-    assert "_status_controller" in src, (
-        "The interactive CLI must hold a per-turn `_status_controller` so dedup "
-        "and elapsed tracking match the canonical interactive CLI."
-    )
-
-
 # ── Ownership direction: shared owner does not import shell modules ──────────
 
 
