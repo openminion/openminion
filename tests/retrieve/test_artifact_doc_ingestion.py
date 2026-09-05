@@ -76,6 +76,7 @@ def test_artifact_creation_fires_ingest_event(tmp_path: Path) -> None:
         assert payload["scope"] == "agent:test"
         assert payload["title"] == "artifact.txt"
         assert payload["tags"] == ["artifact"]
+        assert ctl.list_views(ref.sha256) == []
     finally:
         ctl.close()
 

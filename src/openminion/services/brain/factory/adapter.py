@@ -40,6 +40,7 @@ def create_tool_api(
     a2a_delegate_api: Any | None = None,
     agent_query: Any | None = None,
     agent_profile: Any | None = None,
+    artifactctl: Any | None = None,
 ) -> Any:
     return create_tool_adapter(
         mode=mode,
@@ -57,6 +58,7 @@ def create_tool_api(
         a2a_delegate_api=a2a_delegate_api,
         agent_query=agent_query,
         agent_profile=agent_profile,
+        artifactctl=artifactctl,
     )
 
 
@@ -90,6 +92,8 @@ def create_context_api(
     telemetryctl: Any | None = None,
     skill_config: Any | None = None,
     skill_home_root: Any | None = None,
+    artifactctl: Any | None = None,
+    owns_artifactctl: bool = False,
 ) -> Any:
     return create_context_adapter(
         mode=mode,
@@ -102,6 +106,8 @@ def create_context_api(
         telemetryctl=telemetryctl,
         skill_config=skill_config,
         skill_home_root=skill_home_root,
+        artifactctl=artifactctl,
+        owns_artifactctl=owns_artifactctl,
     )
 
 

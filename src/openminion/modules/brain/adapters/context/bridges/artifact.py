@@ -1,13 +1,11 @@
 import logging
 from typing import Any
 
+from openminion.modules.artifact.models import sha_to_ref
 from openminion.modules.context.schemas import ArtifactDigest
 
 from .shared import (
     BRAIN_ADAPTER_INTERFACE_VERSION,
-    _extract_text_from_record,
-    _lazy_resolve_service,
-    _resolve_database_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -16,33 +14,21 @@ logger = logging.getLogger(__name__)
 class BridgeArtifactClient:
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
-    def __init__(self, backing_store: Any) -> None:
+    def __init__(
+        self,
+        backing_store: Any,
+        artifact_ctl: Any,
+        *,
+        owns_artifactctl: bool = False,
+    ) -> None:
         self._store = backing_store
-        self._artifact_ctl: Any | None = None
-
-    def _resolve_artifactctl(self) -> Any | None:
-        return _lazy_resolve_service(
-            self,
-            cache_attr="_artifact_ctl",
-            import_loader=_import_artifact_dependencies,
-            factory=self._build_artifact_ctl,
-        )
-
-    def _build_artifact_ctl(self, imported: tuple[Any, Any]) -> Any | None:
-        artifact_ctl_cls, config_cls = imported
-        db_path = _resolve_database_path(self._store)
-        if db_path is None:
-            return None
-        config = config_cls()
-        config.blob_store.root_dir = str(db_path.parent / "artifacts")
-        config.index.sqlite_path = str(db_path.parent / "artifact.db")
-        return artifact_ctl_cls(config)
+        self._artifact_ctl = artifact_ctl
+        self._owns_artifactctl = owns_artifactctl
 
     def close(self) -> None:
-        artifact_ctl = self._artifact_ctl
-        self._artifact_ctl = None
-        if artifact_ctl is not None:
-            artifact_ctl.close()
+        if self._owns_artifactctl:
+            self._owns_artifactctl = False
+            self._artifact_ctl.close()
 
     def query_digests(
         self,
@@ -53,37 +39,27 @@ class BridgeArtifactClient:
         limit: int,
     ) -> list[ArtifactDigest]:
         del agent_id
-        artifact_ctl = self._resolve_artifactctl()
-        if artifact_ctl is None:
-            logger.debug("artifact infrastructure not available")
-            return []
         try:
-            results = artifact_ctl.search(
+            results = self._artifact_ctl.search(
                 query=query,
                 filters={"owner_type": "session", "owner_id": session_id},
             )
-            return [
-                ArtifactDigest(
-                    ref=_extract_text_from_record(meta, attr_keys=("sha256", "ref")),
-                    view_id=getattr(meta, "view_id", None),
-                    digest_hash=_extract_text_from_record(
-                        meta, attr_keys=("sha256", "digest_hash")
-                    ),
+            digests: list[ArtifactDigest] = []
+            for meta in results[:limit]:
+                view_ref = self._artifact_ctl.ensure_digest(meta.sha256)
+                digest = self._artifact_ctl.read_digest(meta.sha256)
+                digests.append(
+                    ArtifactDigest(
+                        ref=sha_to_ref(meta.sha256),
+                        view_id=view_ref.ref,
+                        digest_hash=view_ref.sha256,
+                        excerpt=str(digest.get("excerpt") or "") or None,
+                    )
                 )
-                for meta in results[:limit]
-            ]
+            return digests
         except Exception as exc:
             logger.warning("artifact query_digests failed: %s", exc)
             return []
-
-
-def _import_artifact_dependencies() -> tuple[Any, Any] | None:
-    try:
-        from openminion.modules.artifact.config import ArtifactCtlConfig
-        from openminion.modules.artifact.control import ArtifactCtl
-    except ImportError:
-        return None
-    return ArtifactCtl, ArtifactCtlConfig
 
 
 __all__ = ["BridgeArtifactClient"]

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.artifact.config import ArtifactCtlConfig, load_config
+from openminion.modules.artifact.control import ArtifactCtl
 
 from .utils import make_config, write_config_file
 
@@ -64,3 +65,28 @@ def test_load_config_accepts_mapping_input(tmp_path: Path) -> None:
     cfg = load_config(cfg_dict)
     assert cfg.retention.keep_days == 3
     assert cfg.retention.purge_grace_days == 7
+
+
+def test_direct_config_uses_current_openminion_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_HOME", str(home_root))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+
+    cfg = ArtifactCtlConfig()
+
+    assert cfg.blob_store.root_dir == str(data_root / "artifact")
+    assert cfg.index.sqlite_path == str(data_root / "artifact" / "index.db")
+    with ArtifactCtl(cfg) as ctl:
+        ctl.ingest_bytes(b"data-root proof", original_name="proof.txt")
+    assert (data_root / "artifact" / "index.db").is_file()
+
+
+def test_load_config_preserves_empty_auto_generate_list(tmp_path: Path) -> None:
+    cfg = load_config(
+        make_config(tmp_path, {"artifactctl": {"views": {"auto_generate": []}}})
+    )
+
+    assert cfg.views.auto_generate == []

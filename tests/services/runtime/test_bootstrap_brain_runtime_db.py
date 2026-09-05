@@ -115,6 +115,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     )
 
     fake_runner = SimpleNamespace(task_manager=object())
+    shared_artifactctl = SimpleNamespace()
     captured: dict[str, object] = {}
 
     def _capture_goal_store(path: str, *args, **kwargs):
@@ -139,6 +140,12 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     with ExitStack() as stack:
         stack.enter_context(
             mock.patch(
+                "openminion.services.runtime.bootstrap.create_default_artifactctl",
+                return_value=shared_artifactctl,
+            )
+        )
+        stack.enter_context(
+            mock.patch(
                 "openminion.services.brain.service.create_llm_adapter",
                 return_value=SimpleNamespace(),
             )
@@ -155,7 +162,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        context_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_context_api",
                 return_value=SimpleNamespace(),
@@ -203,7 +210,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        tool_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_tool_api",
                 return_value=SimpleNamespace(),
@@ -282,3 +289,6 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     assert captured["mission_db_path"] == expected_runtime_db_path
     assert captured["owns_stores"] is True
     assert captured["goal_db_path"] != session_db_path
+    assert context_factory.call_args.kwargs["artifactctl"] is shared_artifactctl
+    assert context_factory.call_args.kwargs["owns_artifactctl"] is True
+    assert tool_factory.call_args.kwargs["artifactctl"] is shared_artifactctl
