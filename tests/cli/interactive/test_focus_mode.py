@@ -292,6 +292,7 @@ class _FakeRuntime:
         )
         self._gateways: dict[str, _FakeGateway] = {}
         self._streaming_gateway = streaming_gateway
+        self.gateway_overrides: list[object | None] = []
 
     def list_registered_agents(self) -> list[str]:
         return ["alpha", "beta", "custom-agent"]
@@ -303,7 +304,13 @@ class _FakeRuntime:
             SimpleNamespace(name=normalized, provider="openai"),
         )
 
-    def resolve_gateway(self, agent_id: str | None = None) -> _FakeGateway:
+    def resolve_gateway(
+        self,
+        agent_id: str | None = None,
+        *,
+        overrides: object | None = None,
+    ) -> _FakeGateway:
+        self.gateway_overrides.append(overrides)
         name = str(agent_id or "").strip() or "alpha"
         if name not in self._gateways:
             gateway_class = (
@@ -524,6 +531,8 @@ async def test_openminion_runtime_focus_deferred_binding_and_send_message_forwar
     created = runtime.create_new_session()
     assert runtime.is_bound is True
     assert created == runtime.session_id
+    assert rt.gateway_overrides[-1].provider == ""
+    assert rt.gateway_overrides[-1].model == ""
     record = rt.sessions.get_session(created)
     assert record is not None
     assert record.metadata["working_dir"] == str(Path("/tmp/focus-project").resolve())

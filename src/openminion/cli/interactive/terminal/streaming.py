@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Callable
 from threading import Event, Thread
@@ -27,6 +26,10 @@ from openminion.cli.presentation.markers import (
     token_rich_style,
 )
 from openminion.cli.presentation.models import ToolEvent
+from openminion.cli.presentation.tool.formatting import (
+    format_tool_duration,
+    is_diff_result,
+)
 
 from .spinner import (
     THINKING_VERB,
@@ -36,32 +39,6 @@ from .spinner import (
 )
 
 _looks_like_markdown = looks_like_markdown
-
-
-def _looks_like_unified_diff(text: str) -> bool:
-    if not text:
-        return False
-    lines = text.split("\n")
-    for line in lines[:3]:
-        if line.startswith("$ "):
-            return False
-    has_hunk = any(_HUNK_HEADER_RE.match(line) for line in lines)
-    if not has_hunk:
-        return False
-    has_plus = False
-    has_minus = False
-    for line in lines:
-        if line.startswith("+++"):
-            continue
-        if line.startswith("---"):
-            continue
-        if line.startswith("+"):
-            has_plus = True
-        elif line.startswith("-"):
-            has_minus = True
-        if has_plus and has_minus:
-            break
-    return has_plus and has_minus
 
 
 _STREAM_CURSOR = "▍"
@@ -74,8 +51,6 @@ _TOOL_BLOCK_VERBOSE_MAX_LINES = 200
 
 _ASSISTANT_MARKER = "⏺"
 _TOOL_MARKER = "●"
-_DIFF_RENDER_TOOL_NAMES = frozenset({"Edit", "Write"})
-_HUNK_HEADER_RE = re.compile(r"^@@\s+-\d+(,\d+)?\s+\+\d+(,\d+)?\s+@@")
 
 
 class TerminalTurnHandle:
@@ -399,9 +374,7 @@ class TerminalTurnHandle:
 
 def _render_tool_block(event: ToolEvent) -> Group:
     body_for_detection = event.full_content or event.content or ""
-    if event.tool_name in _DIFF_RENDER_TOOL_NAMES and _looks_like_unified_diff(
-        body_for_detection
-    ):
+    if is_diff_result(event.tool_name, body_for_detection):
         return _render_diff_block(event, public_title=True)
     return _render_plain_tool_block(
         event,
@@ -414,9 +387,7 @@ def _render_tool_block(event: ToolEvent) -> Group:
 
 def _render_full_tool_block(event: ToolEvent, *, cap: int | None = None) -> Group:
     body_for_detection = event.full_content or event.content or ""
-    if event.tool_name in _DIFF_RENDER_TOOL_NAMES and _looks_like_unified_diff(
-        body_for_detection
-    ):
+    if is_diff_result(event.tool_name, body_for_detection):
         return _render_diff_block(event, cap=cap, public_title=False)
     return _render_plain_tool_block(
         event,
@@ -520,6 +491,12 @@ def _tool_title_row(
     if include_event_markers:
         title_row.append(
             _tool_event_markers(event),
+            style=token_rich_style(StyleToken.MUTED),
+        )
+    duration = format_tool_duration(event.duration_ms)
+    if duration:
+        title_row.append(
+            f" · {duration}",
             style=token_rich_style(StyleToken.MUTED),
         )
     if exit_code is not None and exit_code != 0:

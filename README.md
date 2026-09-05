@@ -140,8 +140,8 @@ Setup asks for a provider, model, and credential. For built-in providers,
 OpenMinion selects the API adapter automatically. For example, MiniMax remains
 the provider when it uses an OpenAI-compatible API.
 
-When setup finishes and Focus opens, ask: `Give me one safe read-only command
-to inspect the current directory.`
+When setup finishes and the interactive CLI opens, ask: `Give me one safe
+read-only command to inspect the current directory.`
 
 For a credential-free product tour, create an explicit echo/demo config:
 

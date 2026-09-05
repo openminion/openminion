@@ -20,9 +20,7 @@ from openminion.cli.presentation.messages import (
     render_user_text,
 )
 from openminion.cli.presentation.animation import AnimationSpec
-from openminion.cli.presentation.tool.blocks import VerbosityLevel
-
-from .tool_block import ToolBlockWidget
+from openminion.cli.presentation.tool.blocks import ToolBlockWidget, VerbosityLevel
 
 _STREAM_CURSOR = "▍"
 _STREAM_BLINK_INTERVAL = 0.5

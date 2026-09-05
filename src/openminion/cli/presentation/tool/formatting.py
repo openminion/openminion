@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from ..models import ToolEvent
@@ -15,6 +16,8 @@ _TOOL_VERB_PREFIXES: tuple[tuple[str, tuple[str, str]], ...] = (
     ("search", ("Searching", "Searched")),
 )
 _DEFAULT_VERBS: tuple[str, str] = ("Running", "Ran")
+_DIFF_TOOL_NAMES = frozenset({"Edit", "Write", "file.edit", "file.write"})
+_HUNK_HEADER_RE = re.compile(r"^@@\s+-\d+(,\d+)?\s+\+\d+(,\d+)?\s+@@")
 
 
 def verbs_for_tool(tool_name: str) -> tuple[str, str]:
@@ -44,4 +47,30 @@ def tool_call_body(tool_event: ToolEvent) -> str:
     return hint or tool_event.tool_name
 
 
-__all__ = ("tool_call_body", "tool_context_hint")
+def format_tool_duration(duration_ms: int | None) -> str:
+    if duration_ms is None:
+        return ""
+    seconds = duration_ms / 1000.0
+    return "<1s" if seconds < 1.0 else f"{int(seconds)}s"
+
+
+def is_diff_result(tool_name: str, content: str) -> bool:
+    if tool_name not in _DIFF_TOOL_NAMES or not content:
+        return False
+    lines = content.split("\n")
+    if any(line.startswith("$ ") for line in lines[:3]):
+        return False
+    if not any(_HUNK_HEADER_RE.match(line) for line in lines):
+        return False
+    content_lines = [line for line in lines if not line.startswith(("+++", "---"))]
+    return any(line.startswith("+") for line in content_lines) and any(
+        line.startswith("-") for line in content_lines
+    )
+
+
+__all__ = (
+    "format_tool_duration",
+    "is_diff_result",
+    "tool_call_body",
+    "tool_context_hint",
+)

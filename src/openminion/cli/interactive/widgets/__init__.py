@@ -6,7 +6,7 @@ from .permissions_overlay import PermissionsOverlay
 from .session_overlay import SessionOverlay
 from .slash_overlay import SlashCommandOverlay
 from .status_line import FocusStatusLine
-from .tool_block import ToolBlockWidget
+from openminion.cli.presentation.tool.blocks import ToolBlockWidget
 from .tools_overlay import ToolsOverlay
 from .transcript import FocusMessageWidget, FocusTranscript, TurnHandle
 

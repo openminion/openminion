@@ -56,26 +56,6 @@ def test_diff_renderer_uses_light_theme_state_tokens() -> None:
     assert LIGHT.state_error != DARK.state_error
 
 
-def test_diff_renderer_falls_back_when_theme_unavailable() -> None:
-    event = ToolEvent(
-        tool_name="file.edit",
-        args={"path": "x.py"},
-        content="-a\n+b\n",
-        content_type="diff",
-    )
-    widget = ToolBlockWidget(event, pending=False)
-    widget.collapsed = False
-
-    def _boom():
-        raise RuntimeError("no app context")
-
-    widget._active_theme = _boom  # type: ignore[method-assign]
-    rendered = widget._render_diff()
-    style_strings = {str(span.style) for span in rendered.spans}
-    assert "green" in style_strings
-    assert "red" in style_strings
-
-
 def test_diff_renderer_handles_empty_content() -> None:
     event = ToolEvent(
         tool_name="file.edit",

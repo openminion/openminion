@@ -34,8 +34,8 @@ It reports:
 openminion graph view --current
 ```
 
-Inside Focus or the terminal chat UI, use `/graph` to see the same viewer
-entrypoints without leaving the session:
+Inside the interactive CLI, use `/graph` to see the same viewer entrypoints
+without leaving the session:
 
 ```text
 /graph
