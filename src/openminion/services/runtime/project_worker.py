@@ -9,7 +9,9 @@ from typing import Any, cast
 from uuid import uuid4
 
 from openminion.base.logging import format_structured_event, get_logger
-from openminion.modules.brain.loop.strategies.coding.contracts import select_coding_allowed_tools
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    select_coding_allowed_tools,
+)
 from openminion.modules.config import resolve_module_data_root, resolve_module_home_root
 from openminion.modules.task import (
     AutonomyRun,
@@ -49,7 +51,10 @@ from openminion.modules.task.project import (
     project_workspace,
     run_project_verification_commands,
 )
-from openminion.modules.task.project import checkpoints as project_cp, effects as project_effects
+from openminion.modules.task.project import (
+    checkpoints as project_cp,
+    effects as project_effects,
+)
 from openminion.modules.task.project import policy as project_policy
 from openminion.modules.task.project import progress as project_progress
 from openminion.services.runtime.routine_context import ToolRegistryPreTurnContext
@@ -108,7 +113,8 @@ def build_cron_project_worker(
         turn_timeout_seconds=autonomy_run.execution_selectors.turn_timeout_seconds,
     )
     check_context = ToolRegistryPreTurnContext(
-        registry=runtime.tools, routine_id=autonomy_run.run_id,
+        registry=runtime.tools,
+        routine_id=autonomy_run.run_id,
         session_id=autonomy_run.session_id,
         agent_id=autonomy_run.execution_selectors.agent_id,
     )
@@ -164,7 +170,8 @@ class ProjectWorker:
         verify: Callable[[], tuple[TestEvidence, ...]],
         claim_ttl_seconds: int = 120,
         owner_id: str | None = None,
-        fetch_checks: Callable[[Mapping[str, object]], Mapping[str, object]] | None = None,
+        fetch_checks: Callable[[Mapping[str, object]], Mapping[str, object]]
+        | None = None,
     ) -> None:
         self._task_manager = task_manager
         self._autonomy_store = autonomy_store
@@ -221,10 +228,15 @@ class ProjectWorker:
             return inactive
         check_events: tuple[dict[str, object], ...] = ()
         checkpoint, check_event, waiting = project_progress.observe_repository_checks(
-            run, checkpoint, self._fetch_checks,
-            task_manager=self._task_manager, autonomy_store=self._autonomy_store,
-            owner_id=self._owner_id, claim_ttl_seconds=self._claim_ttl_seconds,
-            triggering_cron_job_id=triggering_cron_job_id, task_state=task.state,
+            run,
+            checkpoint,
+            self._fetch_checks,
+            task_manager=self._task_manager,
+            autonomy_store=self._autonomy_store,
+            owner_id=self._owner_id,
+            claim_ttl_seconds=self._claim_ttl_seconds,
+            triggering_cron_job_id=triggering_cron_job_id,
+            task_state=task.state,
         )
         observed_checkpoint = checkpoint if check_event is not None else None
         check_events = (check_event,) if check_event is not None else ()
@@ -239,8 +251,10 @@ class ProjectWorker:
             if waiting is not None:
                 updated_run, committed = waiting
                 return ProjectWorkerResult(
-                    run=updated_run, project_run=committed.project_run,
-                    decision=ProjectCycleDecision.CONTINUE, verification=(),
+                    run=updated_run,
+                    project_run=committed.project_run,
+                    decision=ProjectCycleDecision.CONTINUE,
+                    verification=(),
                     check_events=check_events,
                 )
         cycle_number = checkpoint.project_run.committed_cycle_count + 1
@@ -254,9 +268,12 @@ class ProjectWorker:
         )
         try:
             return self._run_claimed_cycle(
-                run=run, checkpoint=checkpoint,
-                observed_checkpoint=observed_checkpoint, task=task,
-                claim=claim, cycle_number=cycle_number,
+                run=run,
+                checkpoint=checkpoint,
+                observed_checkpoint=observed_checkpoint,
+                task=task,
+                claim=claim,
+                cycle_number=cycle_number,
                 triggering_cron_job_id=triggering_cron_job_id,
                 check_events=check_events,
             )
@@ -266,19 +283,27 @@ class ProjectWorker:
     def _run_claimed_cycle(
         self,
         *,
-        run: AutonomyRun, checkpoint: ProjectCheckpoint,
-        observed_checkpoint: ProjectCheckpoint | None, task: TaskLifecycleRecord,
-        claim: Any, cycle_number: int,
+        run: AutonomyRun,
+        checkpoint: ProjectCheckpoint,
+        observed_checkpoint: ProjectCheckpoint | None,
+        task: TaskLifecycleRecord,
+        claim: Any,
+        cycle_number: int,
         triggering_cron_job_id: str | None,
         check_events: tuple[dict[str, object], ...],
     ) -> ProjectWorkerResult:
         evaluation = self._evaluate_cycle(run, checkpoint, cycle_number=cycle_number)
-        checkpoint = cast(ProjectCheckpoint, load_latest_project_checkpoint(
-            self._task_manager, task_id=task.task_id,
-        ))
+        checkpoint = cast(
+            ProjectCheckpoint,
+            load_latest_project_checkpoint(
+                self._task_manager,
+                task_id=task.task_id,
+            ),
+        )
         checkpoint, next_check_event = project_progress.begin_next_repository_check(
             checkpoint,
-            observed_checkpoint=observed_checkpoint, enabled=self._fetch_checks is not None,
+            observed_checkpoint=observed_checkpoint,
+            enabled=self._fetch_checks is not None,
         )
         if next_check_event is not None:
             evaluation = replace(
@@ -341,7 +366,10 @@ class ProjectWorker:
             ),
         )
         return self._finalize_cycle(
-            run, updated_project, evaluation, committed=committed,
+            run,
+            updated_project,
+            evaluation,
+            committed=committed,
             check_events=check_events,
         )
 

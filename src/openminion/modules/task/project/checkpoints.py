@@ -363,9 +363,7 @@ def commit_repository_check_wait(
     observation = cast(dict[str, object], repository_check_observation(checkpoint))
     check_ref = f"{observation['head_sha']}:{check_count}"
     checkpoint_id = f"{project_run.project_run_id}:checks:{check_ref}"
-    next_wake_job_id = (
-        f"{project_run.project_run_id}:checks:{observation['head_sha']}:{check_count + 1}"
-    )
+    next_wake_job_id = f"{project_run.project_run_id}:checks:{observation['head_sha']}:{check_count + 1}"
     updated = project_run.model_copy(
         update={
             "status": AutonomyRunStatus.RUNNING,

@@ -352,7 +352,9 @@ class A2aRuntimeDelegateAdapter:
         )
         if not result.ok:
             self._emit_handoff(
-                session_id, turn_id, "agent.handoff.failed",
+                session_id,
+                turn_id,
+                "agent.handoff.failed",
                 {**handoff_payload, "review_outcome": "denied"},
                 "failed",
             )

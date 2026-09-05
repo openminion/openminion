@@ -45,12 +45,11 @@ def repository_project_launch_approved(checkpoint: ProjectCheckpoint) -> bool:
 
 
 def repository_release_tools_approved(checkpoint: ProjectCheckpoint) -> bool:
-    return (
-        repository_project_launch_approved(checkpoint)
-        and _repository_decision_approved(
-            checkpoint,
-            "project_release_tools_approved",
-        )
+    return repository_project_launch_approved(
+        checkpoint
+    ) and _repository_decision_approved(
+        checkpoint,
+        "project_release_tools_approved",
     )
 
 

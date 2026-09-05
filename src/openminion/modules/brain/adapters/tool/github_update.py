@@ -550,8 +550,7 @@ def _update_pr_receipt(
     )
     if (
         not all(
-            data[field]
-            for field in ("owner", "repo", "html_url", "title", "head_sha")
+            data[field] for field in ("owner", "repo", "html_url", "title", "head_sha")
         )
         or not source["provider_id"]
         or data["owner"] != args.get("owner")

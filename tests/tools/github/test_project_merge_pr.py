@@ -420,9 +420,10 @@ def test_project_merge_pr_rejects_mismatched_preflight_target_before_effect(
     )
     assert provider.check_calls == 0
     assert provider.mutation_calls == 0
-    assert load_project_effect_record(
-        manager, task_id="task-1", effect_id=_effect_id()
-    ) is None
+    assert (
+        load_project_effect_record(manager, task_id="task-1", effect_id=_effect_id())
+        is None
+    )
     policy = load_project_policy_state(manager, task_id="task-1")
     assert policy is not None and policy.grants[0].uses == 0
 

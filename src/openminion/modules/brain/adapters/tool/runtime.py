@@ -516,7 +516,11 @@ class ToolAdapter:
             replay_confirmed=replay_confirmed,
             background_write_authorized=background_write_authorized,
         )
-        if project_task_id and tool_name in {"github.open_pr", "github.update_pr", "github.merge_pr"}:
+        if project_task_id and tool_name in {
+            "github.open_pr",
+            "github.update_pr",
+            "github.merge_pr",
+        }:
             auto_confirm = True
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
@@ -661,10 +665,14 @@ class ToolAdapter:
                 )
             if tool_name == "github.open_pr" and project_task_id:
                 return execute_github_open_pr_project_effect(
-                    task_manager=self.task_manager, task_id=project_task_id,
+                    task_manager=self.task_manager,
+                    task_id=project_task_id,
                     idempotency_key=str(command.get("idempotency_key") or ""),
-                    actor_ref=f"agent:{self.agent_id}", args=validated_args,
-                    ctx=ctx, spec=spec, start_time=start_time,
+                    actor_ref=f"agent:{self.agent_id}",
+                    args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
             github_effect: Callable[..., dict[str, Any]] | None = None
@@ -695,13 +703,18 @@ class ToolAdapter:
                 )
             if _is_project_git_action(tool_name, validated_args):
                 return self._invoke_project_git_effect(
-                    validated_args=validated_args, ctx=ctx, spec=spec,
-                    project_task_id=project_task_id, start_time=start_time,
+                    validated_args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    project_task_id=project_task_id,
+                    start_time=start_time,
                     background_write_authorized=background_write_authorized,
                 )
             return run_tool_spec(
-                spec=spec, validated_args=validated_args,
-                context=ctx, start_time=start_time,
+                spec=spec,
+                validated_args=validated_args,
+                context=ctx,
+                start_time=start_time,
                 background_write_authorized=background_write_authorized,
                 tool_name=tool_name,
             )
@@ -722,7 +735,9 @@ class ToolAdapter:
                 if replay is not None:
                     return replay
             return _error_envelope(
-                status=BRAIN_ACTION_STATUS_NEEDS_USER if requires_confirm else BRAIN_STATE_ERROR,
+                status=BRAIN_ACTION_STATUS_NEEDS_USER
+                if requires_confirm
+                else BRAIN_STATE_ERROR,
                 summary=exc.message or "Tool execution failed",
                 code=TOOL_ERROR_CONFIRM_REQUIRED if requires_confirm else exc.code,
                 message=exc.message or "Tool execution failed",

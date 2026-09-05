@@ -164,8 +164,12 @@ def _begin_github_merge_pr_project_effect(
 
     preflight = read_merge_pr(args, ctx)
     require_merge_pr_ready(
-        preflight, expected_owner=owner, expected_repo=repo, expected_number=number,
-        expected_head_sha=head_sha, allow_merged=existing is not None,
+        preflight,
+        expected_owner=owner,
+        expected_repo=repo,
+        expected_number=number,
+        expected_head_sha=head_sha,
+        allow_merged=existing is not None,
     )
     reconciled = False
     if existing is not None and replay.decision in {

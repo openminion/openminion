@@ -96,7 +96,9 @@ def project_cycle_prompt(
             "continue_plan_autonomously=true, then continue with its first step."
         )
     if project_run.verifier_refs:
-        lines.append("Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:]))
+        lines.append(
+            "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
+        )
     if verification := checkpoint_payload.get("verification"):
         evidence = cast(list[dict[str, object]], verification)
         failed = [
@@ -116,7 +118,9 @@ def project_cycle_prompt(
                 f"verifier_refs to: {verifier_refs}."
             )
     if project_run.progress_refs:
-        lines.append("Prior progress refs: " + ", ".join(project_run.progress_refs[-5:]))
+        lines.append(
+            "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
+        )
     if (
         repository_check_observation is not None
         and repository_check_observation["overall_result"] != "pending"

@@ -82,9 +82,12 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
             ),
         )
         assert addition.added_skill_id == "emergent.repository-delivery"
-        assert get_proposal(proposal_store, proposal_id=proposal.proposal_id)[
-            "queue_state"
-        ] == "applied"
+        assert (
+            get_proposal(proposal_store, proposal_id=proposal.proposal_id)[
+                "queue_state"
+            ]
+            == "applied"
+        )
 
         skill_id, version_hash, warnings = ingest_file_and_admit(
             skill,

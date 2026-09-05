@@ -187,9 +187,7 @@ def test_approved_project_turn_uses_the_core_tool_scope(tmp_path) -> None:
     worker.run_cycle(run.run_id)
 
     assert set(requests[0].allowed_tools) == PROJECT_CODING_ALLOWED_TOOLS
-    assert set(requests[0].allowed_tools).isdisjoint(
-        PROJECT_RELEASE_ADDITIONAL_TOOLS
-    )
+    assert set(requests[0].allowed_tools).isdisjoint(PROJECT_RELEASE_ADDITIONAL_TOOLS)
 
 
 def test_separately_approved_release_project_turn_uses_release_scope(tmp_path) -> None:
@@ -736,9 +734,9 @@ def test_repository_check_duration_uses_persisted_observation_start(
         },
     )
 
-    assert project_checkpoints.repository_check_event(checkpoint)[
-        "wait_duration_ms"
-    ] == 60
+    assert (
+        project_checkpoints.repository_check_event(checkpoint)["wait_duration_ms"] == 60
+    )
 
 
 def test_cancelled_project_does_not_recheck_or_repeat_repository_effect(

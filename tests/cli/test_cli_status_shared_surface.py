@@ -15,7 +15,10 @@ from openminion.cli.status import (
     status_from_payload,
 )
 from openminion.cli.status.public_messages import format_public_status_text
-from openminion.modules.brain.diagnostics.status import PhaseStatus, phase_status_from_event
+from openminion.modules.brain.diagnostics.status import (
+    PhaseStatus,
+    phase_status_from_event,
+)
 
 
 # ── Signature dedup parity ────────────────────────────────────────────────────

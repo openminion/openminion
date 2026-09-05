@@ -249,9 +249,7 @@ def finish_repository_check(
     updated_project = project_run.model_copy(
         update={
             "status": (
-                AutonomyRunStatus.CANCELLED
-                if cancelled
-                else AutonomyRunStatus.BLOCKED
+                AutonomyRunStatus.CANCELLED if cancelled else AutonomyRunStatus.BLOCKED
             ),
             "phase": AutonomyRunPhase.CLOSED,
             "updated_at_ms": now_ms(),
@@ -300,9 +298,7 @@ def finish_repository_check(
                 else "Project check wait expired."
             ),
             "next_action_hint": (
-                None
-                if cancelled
-                else "Resume with an explicitly extended time budget."
+                None if cancelled else "Resume with an explicitly extended time budget."
             ),
             "updated_at_ms": committed.project_run.updated_at_ms,
         }

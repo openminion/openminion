@@ -44,11 +44,7 @@ def child_verifier_evidence(result: Any) -> dict[str, Any]:
     verdict = str(outputs.get("coding.verifier_verdict") or "").strip()
     goal_id = str(outputs.get("coding.verifier_goal_id") or "").strip()
     result_count = int(outputs.get("coding.verifier_result_count") or 0)
-    if (
-        verdict != CODING_VERIFIER_VERDICT_COMPLETE
-        or not goal_id
-        or result_count < 1
-    ):
+    if verdict != CODING_VERIFIER_VERDICT_COMPLETE or not goal_id or result_count < 1:
         return {}
     return {"passed": True, "verifier_refs": [f"coding-verifier:{goal_id}"]}
 
@@ -169,10 +165,7 @@ def load_child_worktree_record(
     if not isinstance(payload, dict):
         raise ValueError("child artifact record is invalid")
     owner_id = str(payload.get("artifact", {}).get("owner_id") or "")
-    if (
-        alias != f"a2a-child:{owner_id}"
-        or payload.get("record_alias") != alias
-    ):
+    if alias != f"a2a-child:{owner_id}" or payload.get("record_alias") != alias:
         raise ValueError("child artifact record is invalid")
     return cast(dict[str, Any], payload)
 
@@ -509,8 +502,10 @@ def accept_child_worktree_artifact(
     if str(validation.get("target_digest") or "") != target_digest:
         return {"ok": False, "status": "stale_verification"}
     verifier_refs = validation.get("verifier_refs")
-    if not isinstance(verifier_refs, list) or not verifier_refs or any(
-        not isinstance(ref, str) or not ref.strip() for ref in verifier_refs
+    if (
+        not isinstance(verifier_refs, list)
+        or not verifier_refs
+        or any(not isinstance(ref, str) or not ref.strip() for ref in verifier_refs)
     ):
         return {"ok": False, "status": "verification_failed"}
     if review.get("verifier_refs") != verifier_refs:

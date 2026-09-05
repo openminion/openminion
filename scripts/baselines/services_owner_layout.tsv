@@ -25,7 +25,7 @@ scope	max_python_files	max_loc
 # hook timeouts, checksum verification, and provider status to existing owners.
 # PMFO retry correction (2026-09-05) propagates the provider-owned attempt cap
 # through the existing brain and legacy agent service adapters.
-services	206	40574
+services	206	40627
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

@@ -401,11 +401,14 @@ def test_workflow_identity_input_mismatch_stops_before_approval_or_mutation(
     policy = load_project_policy_state(manager, task_id="task-1")
     assert policy is not None and policy.grants[0].uses == 0
     scope = github_workflow_action_scope(args)
-    assert load_project_effect_record(
-        manager,
-        task_id="task-1",
-        effect_id=_effect("github.dispatch_workflow", scope),
-    ) is None
+    assert (
+        load_project_effect_record(
+            manager,
+            task_id="task-1",
+            effect_id=_effect("github.dispatch_workflow", scope),
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("readback", ["not_found", "ambiguous"])
@@ -572,11 +575,14 @@ def test_release_rejects_mismatched_preflight_identity_before_effect(
         "github_release_result_mismatch"
     )
     assert provider.release_mutations == 0
-    assert load_project_effect_record(
-        manager,
-        task_id="task-1",
-        effect_id=_effect("github.create_release", scope),
-    ) is None
+    assert (
+        load_project_effect_record(
+            manager,
+            task_id="task-1",
+            effect_id=_effect("github.create_release", scope),
+        )
+        is None
+    )
     policy = load_project_policy_state(manager, task_id="task-1")
     assert policy is not None and policy.grants[0].uses == 0
 

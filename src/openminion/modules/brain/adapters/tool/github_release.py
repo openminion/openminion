@@ -364,9 +364,11 @@ def _record_release_failure(
     error: BaseException,
     ctx: Any,
 ) -> dict[str, Any]:
-    status_code = error.details.get("status_code") if isinstance(
-        error, ToolRuntimeError
-    ) else None
+    status_code = (
+        error.details.get("status_code")
+        if isinstance(error, ToolRuntimeError)
+        else None
+    )
     uncertain = _is_uncertain_github_error(error) or (
         isinstance(error, ToolRuntimeError)
         and (

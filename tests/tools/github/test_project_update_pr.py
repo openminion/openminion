@@ -425,9 +425,12 @@ def test_uncertain_update_reconciles_after_restart_with_new_command_id(
     assert second["status"] == "success"
     assert second["outputs"]["data"]["reconciled"] is True
     assert provider.mutation_calls == 1
-    assert load_project_effect_record(
-        restarted, task_id="task-1", effect_id="effect:github.update_pr:call-B"
-    ) is None
+    assert (
+        load_project_effect_record(
+            restarted, task_id="task-1", effect_id="effect:github.update_pr:call-B"
+        )
+        is None
+    )
     effect = load_project_effect_record(
         restarted, task_id="task-1", effect_id=effect_id
     )

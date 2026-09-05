@@ -112,9 +112,7 @@ def test_dispatch_workflow_rejects_mismatched_target_before_post() -> None:
     provider = _Provider([])
     with pytest.raises(ToolRuntimeError) as exc:
         provider.dispatch_workflow(
-            args=_workflow_args(
-                inputs={"request_id": "release-123", "target": "pypi"}
-            ),
+            args=_workflow_args(inputs={"request_id": "release-123", "target": "pypi"}),
             ctx=_ctx(),
         )
     assert exc.value.code == "INVALID_REQUEST"
@@ -129,7 +127,10 @@ def test_list_workflow_runs_reports_ambiguous_bounded_matches() -> None:
 
 
 def test_list_workflow_runs_does_not_claim_exact_when_truncated() -> None:
-    rows = [_run(), *[{**_run(index), "display_title": "other"} for index in range(8, 57)]]
+    rows = [
+        _run(),
+        *[{**_run(index), "display_title": "other"} for index in range(8, 57)],
+    ]
     provider = _Provider([{"workflow_runs": rows}])
     result = provider.list_workflow_runs(
         args={**_workflow_args(), "limit": 1}, ctx=_ctx()
