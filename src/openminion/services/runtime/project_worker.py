@@ -58,6 +58,7 @@ from openminion.modules.task.project import (
 
 _LOGGER = get_logger("project_worker")
 
+
 @dataclass(frozen=True)
 class ProjectWorkerResult:
     run: AutonomyRun
