@@ -5,7 +5,7 @@ Last updated: 2026-09-05
 
 This file tracks package-facing release notes for `openminion`.
 
-## 0.0.16 - 2026-09-05
+## Current package line - 2026-09-05
 
 - Added approval-bound repository delivery across Git remotes, pull request
   updates and merges, workflow dispatches, check inspection, and GitHub
@@ -31,7 +31,7 @@ This file tracks package-facing release notes for `openminion`.
 - Improved provider retry enforcement, pairing and session status, token and
   provider telemetry, CPU measurement, and bounded Focus history.
 
-## Current package line - 2026-09-02
+## Prior package line - 2026-09-02
 
 - Added durable human-agent Focus rooms with explicit participant roles,
   multi-agent routing, direct addressing, participant controls, attributed
@@ -48,7 +48,7 @@ This file tracks package-facing release notes for `openminion`.
 - Restored formatter enforcement and aligned service typing and method-size
   quality ratchets with the formatted release candidate.
 
-## Prior package line - 2026-09-01
+## Earlier package line - 2026-09-01
 
 - Generalized authenticated active-turn status and streaming contracts with
   bounded history, redaction, terminal controls, and durable interruption
