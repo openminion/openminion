@@ -8,7 +8,6 @@ from .evidence import (
 )
 from .miner import WorkflowShapeMiner
 from .proposer import LearningProposalResult, stage_shape_as_skill_proposal
-from .replay import ReplayProof
 from .reuse import record_learned_skill_reuse
 from .shapes import WorkflowEvidenceBundle, WorkflowShape
 from .telemetry import (
@@ -23,7 +22,6 @@ from .trust import (
 
 __all__ = (
     "LearningProposalResult",
-    "ReplayProof",
     "SkillDraftError",
     "SkillExecutionTrustRecord",
     "WORKFLOW_LEARNING_EVENT_TYPES",

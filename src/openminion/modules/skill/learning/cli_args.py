@@ -1,24 +1,4 @@
-from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.skill.errors import SkillError
-
-from .replay import ReplayProof
-
-
-def replay_proof_from_args(
-    *,
-    proposal_id: str,
-    shape_id: str,
-    proof_id: str,
-    status: str,
-    evidence: str,
-) -> ReplayProof:
-    return ReplayProof(
-        proof_id=proof_id,
-        proposal_id=proposal_id,
-        shape_id=shape_id,
-        status=status,
-        evidence_refs=split_comma_tokens(evidence),
-    )
 
 
 def parse_criterion_args(raw_values: list[str]) -> list[dict[str, str]]:

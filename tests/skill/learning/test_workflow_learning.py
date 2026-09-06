@@ -18,11 +18,6 @@ from openminion.modules.skill.learning import (
     workflow_learning_event,
 )
 from openminion.modules.skill.learning.reuse import matching_catalog_entries
-from openminion.modules.skill.learning.replay import (
-    ReplayGateError,
-    ReplayProof,
-    require_replay_passed,
-)
 from openminion.modules.skill.learning.shapes import (
     WorkflowEvidenceBundle,
     WorkflowShape,
@@ -251,26 +246,6 @@ def test_skill_draft_requires_validation_for_source_changes() -> None:
     )
     assert "# Validation" in rendered
     assert "pytest tests" in rendered
-
-
-def test_replay_proof_requires_passed_status() -> None:
-    with pytest.raises(ReplayGateError):
-        require_replay_passed(
-            ReplayProof(
-                proof_id="proof-1",
-                proposal_id="wlsk-proposal",
-                shape_id="wlsh-test",
-                status="failed",
-            )
-        )
-    require_replay_passed(
-        ReplayProof(
-            proof_id="proof-2",
-            proposal_id="wlsk-proposal",
-            shape_id="wlsh-test",
-            status="passed",
-        )
-    )
 
 
 def test_reuse_records_through_existing_log_run_owner_and_trust_demotes() -> None:

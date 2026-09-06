@@ -13,10 +13,7 @@ from openminion.modules.skill.cli_admission import (
     add_admission_subcommands,
     run_admission_command,
 )
-from openminion.modules.skill.learning.cli_args import (
-    parse_criterion_args,
-    replay_proof_from_args,
-)
+from openminion.modules.skill.learning.cli_args import parse_criterion_args
 from openminion.cli.identity.operator import local_operator_id
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.config import load_config
@@ -35,14 +32,12 @@ from openminion.modules.storage.module_cli import (
     run_module_storage_command,
 )
 
-_REPLAY_STATUS_CHOICES = ("passed", "failed", "blocked", "skipped")
 _LEARNING_COMMANDS = frozenset(
     {
         "learning-scan",
         "learning-inspect",
         "learning-save-workflow",
         "learning-propose",
-        "learning-replay-proof",
         "learning-trust-status",
     }
 )
@@ -392,18 +387,6 @@ def _add_learning_subcommands(sub: Any) -> None:
         help="Stage a workflow shape through the existing proposal queue.",
     )
     learning_propose.add_argument("--shape-json", required=True)
-
-    learning_replay = sub.add_parser(
-        "learning-replay-proof",
-        help="Emit a deterministic replay proof payload.",
-    )
-    learning_replay.add_argument("--proposal-id", required=True)
-    learning_replay.add_argument("--shape-id", required=True)
-    learning_replay.add_argument("--proof-id", required=True)
-    learning_replay.add_argument(
-        "--status", required=True, choices=_REPLAY_STATUS_CHOICES
-    )
-    learning_replay.add_argument("--evidence", default="")
 
     learning_trust = sub.add_parser(
         "learning-trust-status",
@@ -876,17 +859,6 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
             current_catalog=ctl.list_skills({}) or [],
         )
         _print_json({"ok": True, "result": result.model_dump(mode="json")})
-        return
-
-    if args.cmd == "learning-replay-proof":
-        proof = replay_proof_from_args(
-            proposal_id=args.proposal_id,
-            shape_id=args.shape_id,
-            proof_id=args.proof_id,
-            status=args.status,
-            evidence=args.evidence,
-        )
-        _print_json({"ok": True, "proof": proof.model_dump(mode="json")})
         return
 
     if args.cmd == "learning-trust-status":

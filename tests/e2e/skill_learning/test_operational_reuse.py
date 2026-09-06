@@ -208,7 +208,6 @@ try:
     print(json.dumps({
         "skill_id": hints["skill_id"],
         "version_hash": hints["skill_version_hash"],
-        "context_contains_marker": True,
     }))
 finally:
     skill.close()
@@ -220,4 +219,4 @@ finally:
         cwd=repo,
     )
     assert reused["skill_id"] == "operational_reuse_proof"
-    assert reused["context_contains_marker"] is True
+    assert reused["version_hash"] == addition["version_hash"]

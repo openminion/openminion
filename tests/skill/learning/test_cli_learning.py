@@ -151,23 +151,3 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     )
     result = proposed["result"]
     assert result["status"] == "staged"
-    proposal_id = result["proposal"]["proposal_id"]
-
-    proof = _run_cli(
-        [
-            "--config",
-            str(cfg),
-            "learning-replay-proof",
-            "--proposal-id",
-            proposal_id,
-            "--shape-id",
-            shape.shape_id,
-            "--proof-id",
-            "proof-1",
-            "--status",
-            "passed",
-            "--evidence",
-            "replay:1",
-        ]
-    )
-    assert proof["proof"]["status"] == "passed"
