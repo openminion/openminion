@@ -43,7 +43,6 @@ _LEARNING_COMMANDS = frozenset(
         "learning-save-workflow",
         "learning-propose",
         "learning-replay-proof",
-        "learning-apply-proved",
         "learning-trust-status",
     }
 )
@@ -405,20 +404,6 @@ def _add_learning_subcommands(sub: Any) -> None:
         "--status", required=True, choices=_REPLAY_STATUS_CHOICES
     )
     learning_replay.add_argument("--evidence", default="")
-
-    learning_apply = sub.add_parser(
-        "learning-apply-proved",
-        help="Apply an accepted proposal only when replay proof passed.",
-    )
-    learning_apply.add_argument("--proposal-id", required=True)
-    learning_apply.add_argument("--shape-id", required=True)
-    learning_apply.add_argument("--proof-id", required=True)
-    learning_apply.add_argument(
-        "--proof-status",
-        required=True,
-        choices=_REPLAY_STATUS_CHOICES,
-    )
-    learning_apply.add_argument("--evidence", default="")
 
     learning_trust = sub.add_parser(
         "learning-trust-status",
@@ -842,10 +827,8 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         WorkflowEvidenceBundle,
         WorkflowShape,
         WorkflowShapeMiner,
-        apply_proposal_with_replay,
         stage_shape_as_skill_proposal,
     )
-    from openminion.modules.skill.learning.replay import ReplayGateError
 
     if args.cmd == "learning-scan":
         raw = _read_json_path(args.bundle_json)
@@ -904,26 +887,6 @@ def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
             evidence=args.evidence,
         )
         _print_json({"ok": True, "proof": proof.model_dump(mode="json")})
-        return
-
-    if args.cmd == "learning-apply-proved":
-        proof = replay_proof_from_args(
-            proposal_id=args.proposal_id,
-            shape_id=args.shape_id,
-            proof_id=args.proof_id,
-            status=args.proof_status,
-            evidence=args.evidence,
-        )
-        try:
-            addition = apply_proposal_with_replay(
-                ctl.store,
-                proposal_id=args.proposal_id,
-                current_catalog=ctl.list_skills({}) or [],
-                replay_proof=proof,
-            )
-        except (ReplayGateError, ValueError) as exc:
-            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
-        _print_json({"ok": True, "addition": addition.model_dump(mode="json")})
         return
 
     if args.cmd == "learning-trust-status":

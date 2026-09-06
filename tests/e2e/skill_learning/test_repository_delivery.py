@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from openminion.modules.skill.learning import ReplayProof, apply_proposal_with_replay
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.proposal.queue import (
     create_proposal,
@@ -83,19 +82,6 @@ def test_repository_delivery_manual_use_and_legacy_proposal_gate(tmp_path: Path)
                 },
             ],
         )
-        with pytest.raises(ValueError, match="complete skill Markdown"):
-            apply_proposal_with_replay(
-                proposal_store,
-                proposal_id=proposal.proposal_id,
-                current_catalog=[],
-                replay_proof=ReplayProof(
-                    proof_id=f"repository-delivery-replay:{version_hash}",
-                    proposal_id=proposal.proposal_id,
-                    shape_id="task-shape:repository-delivery",
-                    status="passed",
-                    evidence_refs=[artifact_ref],
-                ),
-            )
         applied = get_proposal(proposal_store, proposal_id=proposal.proposal_id)
         assert applied is not None and applied["queue_state"] == "reviewed"
         assert applied["proposal"]["evidence_refs"] == [artifact_ref]

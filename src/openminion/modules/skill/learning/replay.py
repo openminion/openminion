@@ -6,10 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openminion.modules.skill.proposal.catalog import EmergentSkillCatalogAddition
-from openminion.modules.skill.storage.base import SkillStore
-
-
 ReplayStatus = Literal["passed", "failed", "blocked", "skipped"]
 
 
@@ -40,28 +36,9 @@ def require_replay_passed(proof: ReplayProof) -> None:
         raise ReplayGateError(f"replay_proof_not_passed:{proof.status}")
 
 
-def apply_proposal_with_replay(
-    store: SkillStore,
-    *,
-    proposal_id: str,
-    current_catalog: object,
-    replay_proof: ReplayProof,
-) -> EmergentSkillCatalogAddition:
-    """Apply a proposal only after accepted review and passing replay proof."""
-
-    if replay_proof.proposal_id != proposal_id:
-        raise ReplayGateError("replay_proof_proposal_mismatch")
-    require_replay_passed(replay_proof)
-    del store, current_catalog
-    raise ReplayGateError(
-        "legacy replay helper cannot admit a proposal without complete skill Markdown"
-    )
-
-
 __all__ = (
     "ReplayGateError",
     "ReplayProof",
     "ReplayStatus",
-    "apply_proposal_with_replay",
     "require_replay_passed",
 )

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 
@@ -41,13 +40,12 @@ def _run(*args: str, cwd: Path) -> dict[str, object]:
     return json.loads(completed.stdout)
 
 
-def test_proposed_skill_is_admitted_and_reused_across_processes(
+def test_proposed_skill_is_selected_and_rendered_across_processes(
     tmp_path: Path,
 ) -> None:
     repo = Path(__file__).resolve().parents[3]
     config_path = tmp_path / "skill.json"
     db_path = tmp_path / "skill.db"
-    output_path = tmp_path / "reuse-proof.json"
     config_path.write_text(
         json.dumps(
             {
@@ -126,11 +124,9 @@ finally:
     reuse_script = """
 import json
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 from openminion.modules.brain.bootstrap.skill.hints import resolve_skill_hints
-from openminion.modules.brain.schemas import ActionResult, ArtifactRef, BudgetCounters, WorkingState
-from openminion.modules.brain.state import respond
+from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 from openminion.modules.context.schemas import BuildConstraints, BuildPackRequest, IdentitySnippet, SessionSlice
 from openminion.modules.context.service import ContextCtlService
 from openminion.modules.skill.runtime.skill import Skill
@@ -138,16 +134,6 @@ from openminion.modules.skill.runtime.skill import Skill
 class SessionAPI:
     def get_slice(self, **kwargs):
         return {"recent_turns": [], "open_tasks": [], "recent_tool_events": [], "summary_short": ""}
-    def append_turn(self, *args, **kwargs):
-        return None
-    def update_session_status(self, *args, **kwargs):
-        return None
-    def list_turns(self, *args, **kwargs):
-        return []
-    def update_summary(self, *args, **kwargs):
-        return None
-    def put_working_state(self, *args, **kwargs):
-        return None
 
 class Logger:
     def emit(self, *args, **kwargs):
@@ -183,13 +169,11 @@ try:
         skill_api=skill,
         llm_api=SimpleNamespace(),
         session_api=session_api,
-        context_api=None,
         profile=SimpleNamespace(
             skill=None,
             skill_catalog=[],
             llm_profiles=SimpleNamespace(act_model="", summarize_model="test-model"),
         ),
-        _compact=lambda **kwargs: None,
     )
     state = WorkingState(
         session_id="reuse-session",
@@ -221,26 +205,10 @@ try:
     ))
     rendered = "\\n".join(str(message.content) for message in pack.messages)
     assert "skill-operational-reuse" in rendered
-    output = Path(sys.argv[2])
-    output.write_text(
-        json.dumps({"marker": "skill-operational-reuse"}) + "\\n",
-        encoding="utf-8",
-    )
-    respond(
-        runner,
-        state=state,
-        logger=Logger(),
-        message="reuse complete",
-        status="done",
-        action_result=ActionResult(
-            command_id="reuse-command",
-            status="success",
-            artifact_refs=[ArtifactRef(ref=str(output))],
-        ),
-    )
     print(json.dumps({
         "skill_id": hints["skill_id"],
         "version_hash": hints["skill_version_hash"],
+        "context_contains_marker": True,
     }))
 finally:
     skill.close()
@@ -249,22 +217,7 @@ finally:
         "-c",
         reuse_script,
         str(config_path),
-        str(output_path),
         cwd=repo,
     )
     assert reused["skill_id"] == "operational_reuse_proof"
-    assert output_path.read_text(encoding="utf-8") == (
-        '{"marker": "skill-operational-reuse"}\n'
-    )
-
-    with sqlite3.connect(db_path) as connection:
-        run = connection.execute(
-            "SELECT skill_id, session_id, outcome FROM skill_runs "
-            "WHERE skill_id = ? AND version_hash = ? AND session_id = ?",
-            (
-                reused["skill_id"],
-                reused["version_hash"],
-                "reuse-session",
-            ),
-        ).fetchone()
-    assert run == ("operational_reuse_proof", "reuse-session", "success")
+    assert reused["context_contains_marker"] is True

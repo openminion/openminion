@@ -6,9 +6,7 @@ import pytest
 from pathlib import Path
 
 from openminion.modules.skill.learning import (
-    ReplayProof,
     WorkflowShapeMiner,
-    apply_proposal_with_replay,
     bundle_from_autonomy_proof_packet,
     stage_shape_as_skill_proposal,
 )
@@ -108,20 +106,6 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
                 }
             ],
         )
-        proof = ReplayProof(
-            proof_id="replay-proof-1",
-            proposal_id=result.proposal.proposal_id,
-            shape_id=shape.shape_id,
-            status="passed",
-            evidence_refs=["replay:passed"],
-        )
-        with pytest.raises(ValueError, match="complete skill Markdown"):
-            apply_proposal_with_replay(
-                store,
-                proposal_id=result.proposal.proposal_id,
-                current_catalog=[],
-                replay_proof=proof,
-            )
         reviewed = get_proposal(store, proposal_id=result.proposal.proposal_id)
         assert reviewed is not None
         assert reviewed["queue_state"] == "reviewed"

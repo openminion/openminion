@@ -8,7 +8,7 @@ from .evidence import (
 )
 from .miner import WorkflowShapeMiner
 from .proposer import LearningProposalResult, stage_shape_as_skill_proposal
-from .replay import ReplayProof, apply_proposal_with_replay
+from .replay import ReplayProof
 from .reuse import record_learned_skill_reuse
 from .shapes import WorkflowEvidenceBundle, WorkflowShape
 from .telemetry import (
@@ -30,7 +30,6 @@ __all__ = (
     "WorkflowEvidenceBundle",
     "WorkflowShape",
     "WorkflowShapeMiner",
-    "apply_proposal_with_replay",
     "bundle_from_autonomy_proof_packet",
     "bundle_from_skill_run",
     "bundle_from_strategy_outcome",

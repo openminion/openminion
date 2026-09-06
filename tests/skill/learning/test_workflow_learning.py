@@ -9,7 +9,6 @@ from openminion.modules.skill.learning import (
     SkillDraftError,
     SkillExecutionTrustRecord,
     WorkflowShapeMiner,
-    apply_proposal_with_replay,
     bundle_from_autonomy_proof_packet,
     promote_execution_trust,
     record_learned_skill_reuse,
@@ -19,7 +18,11 @@ from openminion.modules.skill.learning import (
     workflow_learning_event,
 )
 from openminion.modules.skill.learning.reuse import matching_catalog_entries
-from openminion.modules.skill.learning.replay import ReplayGateError, ReplayProof
+from openminion.modules.skill.learning.replay import (
+    ReplayGateError,
+    ReplayProof,
+    require_replay_passed,
+)
 from openminion.modules.skill.learning.shapes import (
     WorkflowEvidenceBundle,
     WorkflowShape,
@@ -27,10 +30,6 @@ from openminion.modules.skill.learning.shapes import (
 )
 from openminion.modules.skill.proposal.queue import (
     PROPOSAL_QUEUE_STATE_PENDING,
-    PROPOSAL_QUEUE_STATE_REVIEWED,
-    create_proposal,
-    get_proposal,
-    record_proposal_review,
 )
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.storage import SQLiteSkillStore
@@ -254,50 +253,24 @@ def test_skill_draft_requires_validation_for_source_changes() -> None:
     assert "pytest tests" in rendered
 
 
-def test_replay_proof_blocks_apply_until_passed(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    try:
-        create_proposal(store, _proposal())
-        record_proposal_review(
-            store,
-            proposal_id="wlsk-proposal",
-            reviewer_id="operator-1",
-            review_policy_id="workflow_learning_review",
-            criterion_decisions=[
-                {"criterion_id": "fit", "status": "accepted", "comment": "ok"}
-            ],
+def test_replay_proof_requires_passed_status() -> None:
+    with pytest.raises(ReplayGateError):
+        require_replay_passed(
+            ReplayProof(
+                proof_id="proof-1",
+                proposal_id="wlsk-proposal",
+                shape_id="wlsh-test",
+                status="failed",
+            )
         )
-        record = get_proposal(store, proposal_id="wlsk-proposal")
-        assert record is not None
-        assert record["queue_state"] == PROPOSAL_QUEUE_STATE_REVIEWED
-
-        with pytest.raises(ReplayGateError):
-            apply_proposal_with_replay(
-                store,
-                proposal_id="wlsk-proposal",
-                current_catalog=[],
-                replay_proof=ReplayProof(
-                    proof_id="proof-1",
-                    proposal_id="wlsk-proposal",
-                    shape_id="wlsh-test",
-                    status="failed",
-                ),
-            )
-
-        with pytest.raises(ReplayGateError, match="complete skill Markdown"):
-            apply_proposal_with_replay(
-                store,
-                proposal_id="wlsk-proposal",
-                current_catalog=[],
-                replay_proof=ReplayProof(
-                    proof_id="proof-2",
-                    proposal_id="wlsk-proposal",
-                    shape_id="wlsh-test",
-                    status="passed",
-                ),
-            )
-    finally:
-        store.close()
+    require_replay_passed(
+        ReplayProof(
+            proof_id="proof-2",
+            proposal_id="wlsk-proposal",
+            shape_id="wlsh-test",
+            status="passed",
+        )
+    )
 
 
 def test_reuse_records_through_existing_log_run_owner_and_trust_demotes() -> None:
