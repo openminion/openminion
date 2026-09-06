@@ -746,3 +746,24 @@ def test_record_review_blocked_after_verification(tmp_path: Path) -> None:
             )
     finally:
         skill.close()
+
+
+def test_record_verification_cannot_replace_existing_evidence(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    try:
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        with pytest.raises(ValueError, match="unverified reviewed proposal"):
+            record_proposal_verification(
+                skill.store,
+                proposal_id="sprq-proposal-1",
+                operator_id="local:test",
+                evidence=SkillVerificationEvidence(
+                    check="replacement",
+                    result="passed",
+                    evidence_ref="artifact://validation/replacement.txt",
+                ),
+            )
+    finally:
+        skill.close()
