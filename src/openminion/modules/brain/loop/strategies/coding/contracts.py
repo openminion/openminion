@@ -1,3 +1,6 @@
+from openminion.modules.brain.loop.strategies.coding.constants import (
+    CODING_TERM_VERIFY_CAP_EXCEEDED as CODING_TERM_VERIFY_CAP_EXCEEDED,
+)
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_CONFIDENT_COMPLETE,
@@ -8,9 +11,6 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopLLMRuntime,
-)
-from openminion.modules.brain.loop.strategies.coding.constants import (
-    CODING_TERM_VERIFY_CAP_EXCEEDED as CODING_TERM_VERIFY_CAP_EXCEEDED,
 )
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_AGENT_GET,
@@ -24,13 +24,41 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_LIST,
     MODEL_EXEC_POLL,
     MODEL_EXEC_RUN,
-    MODEL_TASK_DELEGATE,
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
     MODEL_FILE_READ_RANGE,
     MODEL_FILE_TRASH,
     MODEL_FILE_WRITE,
+    MODEL_GIT_ADD,
+    MODEL_GIT_BRANCH,
+    MODEL_GIT_CHECKOUT,
+    MODEL_GIT_COMMIT,
+    MODEL_GIT_DIFF,
+    MODEL_GIT_FETCH,
+    MODEL_GIT_LOG,
+    MODEL_GIT_PUSH,
+    MODEL_GIT_SHOW,
+    MODEL_GIT_STATUS,
+    MODEL_GIT_TAG,
+    MODEL_GITHUB_CREATE_RELEASE,
+    MODEL_GITHUB_DISPATCH_WORKFLOW,
+    MODEL_GITHUB_FETCH_CHECKS,
+    MODEL_GITHUB_FETCH_COMMENTS,
+    MODEL_GITHUB_FETCH_DIFF,
+    MODEL_GITHUB_FETCH_PR,
+    MODEL_GITHUB_LIST_PRS,
+    MODEL_GITHUB_LIST_WORKFLOW_RUNS,
+    MODEL_GITHUB_MERGE_PR,
+    MODEL_GITHUB_OPEN_PR,
+    MODEL_GITHUB_UPDATE_PR,
+    MODEL_TASK_CANCEL,
+    MODEL_TASK_DELEGATE,
+    MODEL_TASK_LIST,
+    MODEL_TASK_PAUSE,
+    MODEL_TASK_RESUME,
+    MODEL_TASK_SCHEDULE,
+    MODEL_TASK_SHOW,
     MODEL_WEB_FETCH,
 )
 
@@ -57,6 +85,61 @@ CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
         MODEL_TASK_DELEGATE,
     )
 )
+
+PROJECT_CORE_ADDITIONAL_TOOLS: frozenset[str] = frozenset(
+    (
+        MODEL_GIT_STATUS,
+        MODEL_GIT_DIFF,
+        MODEL_GIT_LOG,
+        MODEL_GIT_SHOW,
+        MODEL_GIT_BRANCH,
+        MODEL_GIT_CHECKOUT,
+        MODEL_GIT_ADD,
+        MODEL_GIT_COMMIT,
+        MODEL_GIT_FETCH,
+        MODEL_GIT_PUSH,
+        MODEL_GIT_TAG,
+        MODEL_GITHUB_LIST_PRS,
+        MODEL_GITHUB_FETCH_PR,
+        MODEL_GITHUB_FETCH_DIFF,
+        MODEL_GITHUB_FETCH_COMMENTS,
+        MODEL_GITHUB_FETCH_CHECKS,
+        MODEL_GITHUB_OPEN_PR,
+        MODEL_GITHUB_UPDATE_PR,
+        MODEL_GITHUB_MERGE_PR,
+        MODEL_TASK_DELEGATE,
+        MODEL_TASK_SCHEDULE,
+        MODEL_TASK_CANCEL,
+        MODEL_TASK_LIST,
+        MODEL_TASK_PAUSE,
+        MODEL_TASK_RESUME,
+        MODEL_TASK_SHOW,
+    )
+)
+PROJECT_RELEASE_ADDITIONAL_TOOLS: frozenset[str] = frozenset(
+    (
+        MODEL_GITHUB_DISPATCH_WORKFLOW,
+        MODEL_GITHUB_LIST_WORKFLOW_RUNS,
+        MODEL_GITHUB_CREATE_RELEASE,
+    )
+)
+PROJECT_CODING_ALLOWED_TOOLS = CODING_ALLOWED_TOOLS | PROJECT_CORE_ADDITIONAL_TOOLS
+PROJECT_RELEASE_ALLOWED_TOOLS = (
+    PROJECT_CODING_ALLOWED_TOOLS | PROJECT_RELEASE_ADDITIONAL_TOOLS
+)
+
+
+def select_coding_allowed_tools(
+    *,
+    project_launch_approved: bool,
+    release_approved: bool = False,
+) -> frozenset[str]:
+    if project_launch_approved and release_approved:
+        return PROJECT_RELEASE_ALLOWED_TOOLS
+    if project_launch_approved:
+        return PROJECT_CODING_ALLOWED_TOOLS
+    return CODING_ALLOWED_TOOLS
+
 
 CODING_V1_ALLOWED_TOOLS = CODING_ALLOWED_TOOLS
 

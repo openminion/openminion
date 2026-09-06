@@ -138,12 +138,14 @@ def normalize_execution_result(
     command_id: str,
     raw: dict[str, Any],
     provider: str,
+    tool_name: str | None = None,
 ) -> tuple[ActionResult, JobHandle | None]:
     status = str(raw.get("status", BRAIN_ACTION_STATUS_SUCCESS))
     async_job = _normalize_async_job(
         command_id=command_id,
         raw=raw,
         provider=provider,
+        tool_name=tool_name,
         status=status,
     )
     if async_job is not None:
@@ -173,7 +175,35 @@ def normalize_execution_result(
         error=error_obj,
         metrics=metrics,
     )
+    _validate_memory_use_producer(
+        action_result=action_result,
+        provider=provider,
+        tool_name=tool_name,
+    )
     return action_result, None
+
+
+def _validate_memory_use_producer(
+    *,
+    action_result: ActionResult,
+    provider: str,
+    tool_name: str | None,
+) -> None:
+    if not action_result.memory_use_refs:
+        return
+    if provider == BRAIN_COMMAND_KIND_TOOL:
+        expected_kind = "tool"
+        expected_id = str(tool_name or "").strip()
+        if not expected_id:
+            raise ValueError("tool memory use attribution requires tool identity")
+    elif provider == "a2actl":
+        expected_kind = "action"
+        expected_id = action_result.command_id
+    else:
+        raise ValueError("memory use attribution provider is unsupported")
+    for ref in action_result.memory_use_refs:
+        if ref.producer_kind != expected_kind or ref.producer_id != expected_id:
+            raise ValueError("memory use attribution producer does not match execution")
 
 
 def _normalize_async_job(
@@ -181,6 +211,7 @@ def _normalize_async_job(
     command_id: str,
     raw: dict[str, Any],
     provider: str,
+    tool_name: str | None,
     status: str,
 ) -> tuple[ActionResult, JobHandle] | None:
     if status not in {
@@ -194,6 +225,9 @@ def _normalize_async_job(
         provider=BRAIN_COMMAND_KIND_TOOL
         if provider == BRAIN_COMMAND_KIND_TOOL
         else "a2actl",
+        producer_id=str(tool_name or "").strip()
+        if provider == BRAIN_COMMAND_KIND_TOOL
+        else command_id,
         status=BRAIN_JOB_STATUS_RUNNING
         if status == BRAIN_JOB_STATUS_RUNNING
         else BRAIN_JOB_STATUS_PENDING,

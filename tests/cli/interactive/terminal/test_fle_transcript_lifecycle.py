@@ -8,7 +8,6 @@ from prompt_toolkit.application.current import get_app_or_none
 from rich.console import Console
 from rich.text import Text
 
-import openminion.cli.interactive.terminal.transcript as transcript_module
 import openminion.cli.interactive.terminal.prompt_output as prompt_output_module
 from openminion.cli.interactive.terminal.prompt_output import (
     build_prompt_safe_terminal_writer,
@@ -427,46 +426,6 @@ def test_completed_ignores_live_clear_failure() -> None:
     )
 
     assert "ok" in buf.getvalue()
-
-
-def test_agent_render_uses_prompt_safe_terminal_hook_when_app_running(
-    monkeypatch,
-) -> None:
-    async def _case() -> None:
-        t, buf = _make("normal")
-
-        class _App:
-            is_running = True
-
-        calls: list[bool] = []
-
-        monkeypatch.setattr(transcript_module, "get_app_or_none", lambda: _App())
-
-        def _fake_run_in_terminal(func, render_cli_done=False):
-            assert render_cli_done is False
-            calls.append(True)
-            func()
-
-            async def _done():
-                return None
-
-            return asyncio.create_task(_done())
-
-        monkeypatch.setattr(
-            transcript_module,
-            "run_in_terminal",
-            _fake_run_in_terminal,
-        )
-
-        t.push_message(
-            ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="hello"),
-        )
-        await asyncio.sleep(0)
-
-        assert calls
-        assert "hello" in buf.getvalue()
-
-    asyncio.run(_case())
 
 
 def test_terminal_writer_overrides_direct_console_print() -> None:

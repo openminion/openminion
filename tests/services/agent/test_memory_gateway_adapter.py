@@ -8,7 +8,9 @@ from unittest.mock import Mock
 
 from openminion.modules.memory.models import MemoryPatchResult, MemoryRecord
 from openminion.modules.memory.service import MemoryService
+from openminion.modules.memory.storage.base import ListQueryOptions
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
+from openminion.modules.retrieve.errors import RetrieveCtlError
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
@@ -516,10 +518,6 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         store = InMemoryMemoryStore()
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
-        retrieve_ctl.retrieve.return_value = [
-            {"text": "project uses python 312"},
-            {"text": "project uses fastapi"},
-        ]
         adapter = MemoryServiceGatewayAdapter(
             service,
             agent_id="query-agent",
@@ -534,6 +532,16 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             user_message="fact: project uses python 312",
             assistant_message="",
         )
+        memory_record = service.list(
+            ListQueryOptions(scopes=["session:s-dedup"], limit=1)
+        )[0]
+        retrieve_ctl.retrieve.return_value = [
+            {
+                "text": "project uses python 312",
+                "meta": {"memory_id": memory_record.id},
+            },
+            {"text": "project uses fastapi", "meta": {"unit_id": "fastapi"}},
+        ]
         content, _meta = adapter.build_retrieval_context_with_metadata(
             session_id="s-dedup",
             user_message="what does the project use?",
@@ -545,7 +553,9 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         store = InMemoryMemoryStore()
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
-        retrieve_ctl.retrieve.side_effect = RuntimeError("retrieve down")
+        retrieve_ctl.retrieve.side_effect = RetrieveCtlError(
+            "UPSTREAM_UNAVAILABLE", "retrieve down"
+        )
         adapter = MemoryServiceGatewayAdapter(
             service,
             agent_id="query-agent",
@@ -564,7 +574,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
             session_id="s-fallback",
             user_message="fallback",
         )
-        self.assertIn("fallback memory value", content)
+        self.assertEqual(content, "")
 
     def test_retrieval_context_prefers_structured_facts_over_session_summaries(
         self,
@@ -647,7 +657,9 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         store = InMemoryMemoryStore()
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
-        retrieve_ctl.retrieve.side_effect = RuntimeError("retrieve boom")
+        retrieve_ctl.retrieve.side_effect = RetrieveCtlError(
+            "UPSTREAM_UNAVAILABLE", "retrieve boom"
+        )
         adapter = MemoryServiceGatewayAdapter(
             service,
             agent_id="query-agent",
@@ -675,7 +687,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         service = MemoryService(store=store)
         retrieve_ctl = Mock(name="retrieve_ctl")
         retrieve_ctl.retrieve.return_value = [
-            {"text": "secondary retrieve hit"},
+            {"text": "secondary retrieve hit", "meta": {"unit_id": "secondary"}},
         ]
         adapter = MemoryServiceGatewayAdapter(
             service,

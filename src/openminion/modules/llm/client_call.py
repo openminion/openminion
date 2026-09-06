@@ -133,7 +133,15 @@ def response_cost_payload(response: Any) -> dict[str, Any]:
         return {}
     if cost < 0 or not math.isfinite(cost):
         return {}
-    return {"cost_usd": cost, "cost_source": "provider"}
+    raw_source = (
+        response.get("cost_source")
+        if isinstance(response, dict)
+        else getattr(response, "cost_source", None)
+    )
+    source = str(raw_source or "provider").strip()
+    if source not in {"provider", "estimated"}:
+        return {}
+    return {"cost_usd": cost, "cost_source": source}
 
 
 def optional_int(value: Any) -> int | None:

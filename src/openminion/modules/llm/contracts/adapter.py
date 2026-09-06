@@ -2,7 +2,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..schemas import LLMResponse, Message, ResponseError, ToolCall, UsageInfo
+from ..schemas import (
+    CostSource,
+    LLMResponse,
+    Message,
+    ResponseError,
+    ToolCall,
+    UsageInfo,
+)
 
 
 class ProviderAdapterResult(BaseModel):
@@ -19,6 +26,7 @@ class ProviderAdapterResult(BaseModel):
     usage: UsageInfo = Field(default_factory=UsageInfo)
     latency_ms: int = 0
     cost_usd: float | None = None
+    cost_source: CostSource | None = None
     finish_reason: str = ""
     provider_raw: dict[str, Any] | None = None
     error: ResponseError | None = None
@@ -116,6 +124,7 @@ def adapter_result_to_llm_response(result: ProviderAdapterResult) -> LLMResponse
             usage=usage,
             latency_ms=max(0, result.latency_ms),
             cost_usd=result.cost_usd,
+            cost_source=result.cost_source,
             finish_reason=result.finish_reason,
             provider_raw=result.provider_raw,
             error=result.error,

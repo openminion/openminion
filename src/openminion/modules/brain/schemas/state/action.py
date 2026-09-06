@@ -1,4 +1,6 @@
 # ruff: noqa: F403,F405
+from openminion.modules.tool.plugin_api import BlockchainSendConfirmationPreview
+
 from .common import *
 
 
@@ -47,6 +49,7 @@ class JobHandle(BaseModel):
     task_id: str = Field(..., min_length=1)
     command_id: str = Field(..., min_length=1)
     provider: Literal["tool", "a2actl"]
+    producer_id: str = ""
     status: Literal["pending", "running", "done", "failed"]
     poll_after_ms: int = Field(default=1000, ge=1)
     created_at: str = Field(default_factory=iso_now)
@@ -80,3 +83,4 @@ class PolicyDecision(BaseModel):
     require_clarification: bool = False
     clarification_question: str | None = None
     approval_id: str | None = None
+    confirmation_preview: BlockchainSendConfirmationPreview | None = None

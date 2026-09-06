@@ -124,8 +124,15 @@ def test_skill_admission_backend_parity(skill_store_case) -> None:
         reviewer_id="local:test",
         reason="reviewed",
         decided_at="2026-04-01T00:01:00+00:00",
+        verification_check="manual bundle review",
+        verification_result="passed",
+        verification_evidence_ref="review://deploy/v1",
+        verification_reviewer_id="local:test",
     )
     assert store.get_skill_package("skill.deploy")["status"] == "verified"
+    admission = store.get_skill_admission(skill_id="skill.deploy", version_hash="v1")
+    assert admission["verification_evidence_ref"] == "review://deploy/v1"
+    assert admission["verification_reviewer_id"] == "local:test"
 
 
 def test_build_skill_store_returns_sqlite_store(tmp_path: Path) -> None:

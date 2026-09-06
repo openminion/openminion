@@ -178,6 +178,21 @@ def test_pending_confirmation_preserved_on_cancel_via_both_paths() -> None:
     assert bbpc_events[0]["payload"] == {"reply": "deny", "command_kind": "tool"}
 
 
+def test_blockchain_session_reply_does_not_preserve_pending_confirmation() -> None:
+    pending = {
+        "command_id": "blockchain-send-1",
+        "kind": "tool",
+        "tool_name": "blockchain.send_transaction",
+        "inputs": {},
+    }
+    runner = _DummyRunner(_state_with_pending(pending=pending))
+
+    written = _run_reset(runner=runner, user_input="session")
+
+    assert written is not None
+    assert written["pending_confirmation_command"] is None
+
+
 @pytest.mark.parametrize(
     "user_input",
     ["tell me a joke", "what time is it", "hello", "design CRM SaaS"]

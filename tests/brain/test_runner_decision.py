@@ -585,6 +585,46 @@ class RunnerDecisionTests(unittest.TestCase):
         )
         self.assertEqual(failed_event.args[1]["request_id"], "portal-request-1")
 
+    def test_decide_honors_provider_attempt_limit(self) -> None:
+        class _SingleAttemptLLM(_StaticEntryLLM):
+            @staticmethod
+            def get_provider_retry_max_attempts() -> int:
+                return 1
+
+        llm_api = _SingleAttemptLLM(
+            LLMCtlError("PROVIDER_ERROR", "Bad Gateway", {"status_code": 502})
+        )
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=fake_session_api(),
+            llm_api=llm_api,
+            context_api=fake_context_builder(),
+            tool_api=SimpleNamespace(registry=SimpleNamespace(_tools={})),
+        )
+        state = WorkingState(
+            session_id="s-provider-attempt-limit",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+        )
+        logger = MagicMock()
+
+        with (
+            patch.object(runner, "_estimate_tokens", return_value=1),
+            patch.object(runner, "_debit_tokens", return_value=None),
+        ):
+            decision = runner._decide(state=state, user_input="hi", logger=logger)
+
+        self.assertEqual(decision.reason_code, "provider_error")
+        self.assertEqual(llm_api.call_count, 1)
+        self.assertFalse(
+            any(
+                call.args and call.args[0] == "llm.call.retry"
+                for call in logger.emit.call_args_list
+            )
+        )
+
     def test_decide_records_successful_provider_request_id(self) -> None:
         response = _entry_text_response("ok")
         response.telemetry = {

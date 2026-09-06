@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from builtins import list as list_type
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -483,6 +484,11 @@ class SQLiteMemoryStore(MemoryStore):
             if options.limit is not None:
                 records = records[: max(1, int(options.limit))]
         return records
+
+    def list_all(self) -> list_type[MemoryRecord]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM memory_records ORDER BY id").fetchall()
+        return [self._create_record_from_row(row) for row in rows]
 
     def list_scopes(self) -> list[str]:
         with self._connect() as conn:

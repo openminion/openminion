@@ -79,6 +79,7 @@ def _make_runner() -> SimpleNamespace:
 def test_tool_lineage_carries_runtime_session_into_tool_metadata() -> None:
     state = _make_state()
     state.runtime_session_id = "focus-session"
+    state.task_backed_task_id = "project-task-1"
     command = _make_command(tool_name="task.schedule")
     payload: dict[str, Any] = {}
 
@@ -86,6 +87,7 @@ def test_tool_lineage_carries_runtime_session_into_tool_metadata() -> None:
     _inject_runtime_tool_metadata(payload, state=state, lineage=lineage)
 
     assert payload["meta"]["orchestration"]["runtime_session_id"] == "focus-session"
+    assert payload["meta"]["orchestration"]["task_backed_task_id"] == "project-task-1"
 
 
 # ── readonly mode blocks write-capable tools ───────────────────────

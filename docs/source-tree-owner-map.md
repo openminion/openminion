@@ -52,12 +52,11 @@ presentation-local owners include:
    diagnostics.
 2. `cli/presentation/theme.py` and `cli/theme/` — renderer colors, theme
    persistence, and theme application.
-3. `cli/interactive/` — shared interactive ownership for the default terminal
-   renderer and the
-   opt-in Textual renderer, including slash commands and runtime adapters.
-4. `cli/interactive/terminal/` — default interactive shell, transcript,
+3. `cli/interactive/` — shared runtime and project-context ownership for the
+   interactive CLI.
+4. `cli/interactive/terminal/` — interactive shell, transcript,
    composer, status, and tool rendering.
 
 Animation providers return raw frame strings and timing only. Foreground
 colors, backgrounds, labels, progress policy, and accessibility remain owned by
-OpenMinion renderers.
+the OpenMinion renderer.

@@ -114,7 +114,10 @@ def _compress_postgres_summaries(
                     (
                         record_id,
                         soft_delete_postgres_record(
-                            conn, record_id, now_iso=now.isoformat()
+                            conn,
+                            record_id,
+                            now_iso=now.isoformat(),
+                            reason="summary_retention",
                         ),
                     )
                 )
@@ -190,7 +193,10 @@ def _compress_sqlite_summaries(
                         (
                             record_id,
                             soft_delete_sqlite_record(
-                                conn, record_id, now_iso=now.isoformat()
+                                conn,
+                                record_id,
+                                now_iso=now.isoformat(),
+                                reason="summary_retention",
                             ),
                         )
                     )

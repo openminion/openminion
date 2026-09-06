@@ -11,6 +11,11 @@ def watch_profile_tools(
     ctx: Any,
     validated: TaskWatchArgs,
 ) -> tuple[str, ...]:
+    if (
+        validated.routine is not None
+        and validated.routine.routine_kind == "social_signal"
+    ):
+        return ()
     profile_id = str(validated.check_profile_id or "").strip()
     if not profile_id:
         return tuple(WATCH_DEFAULT_ALLOWED_TOOLS)

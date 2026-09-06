@@ -209,6 +209,10 @@ def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionR
         }
     )
     data = strip_tool_result_noise(data)
+    if isinstance(raw_error, Mapping):
+        data["error_code"] = str(raw_error.get("code", "") or "EXEC_ERROR")
+        if isinstance(raw_error.get("details"), Mapping):
+            data["details"] = dict(raw_error["details"])
     if not content and data:
         try:
             content = json.dumps(data, sort_keys=True, default=str)

@@ -53,6 +53,7 @@ class SkillValidationReport:
     bundle_summary: Mapping[str, Any]
     recipe_summary: Mapping[str, Any]
     readiness: Mapping[str, Any]
+    verification_evidence: Mapping[str, Any]
     generated_at: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +66,7 @@ class SkillValidationReport:
             "bundle_summary": dict(self.bundle_summary),
             "recipe_summary": dict(self.recipe_summary),
             "readiness": dict(self.readiness),
+            "verification_evidence": dict(self.verification_evidence),
             "generated_at": self.generated_at,
         }
 
@@ -211,6 +213,7 @@ def build_skill_validation_report(
     lint_report: Mapping[str, Any] | None,
     verified_lint_report: Mapping[str, Any] | None = None,
     harness_result: Any | None,
+    admission: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> SkillValidationReport:
     skill_id = str(getattr(package, "skill_id", "") or "").strip()
@@ -223,6 +226,21 @@ def build_skill_validation_report(
     harness_findings, harness_counts = _harness_findings(skill_id, harness_result)
     draft_blockers = _lint_error_codes(lint_report)
     verified_blockers = _lint_error_codes(verified_lint_report)
+    evidence_fields = (
+        "verification_check",
+        "verification_result",
+        "verification_evidence_ref",
+        "verification_reviewer_id",
+    )
+    verification_evidence = (
+        {field: admission.get(field) for field in evidence_fields}
+        if admission and all(admission.get(field) for field in evidence_fields)
+        else {}
+    )
+    if verification_evidence:
+        verified_blockers = [
+            code for code in verified_blockers if code != "status.requires_verification"
+        ]
     recipe = package.recipe
     steps = tuple(recipe.steps) if recipe is not None else ()
 
@@ -244,6 +262,7 @@ def build_skill_validation_report(
                 "blockers": verified_blockers,
             },
         },
+        verification_evidence=verification_evidence,
         generated_at=generated_at or _iso_now(),
     )
 

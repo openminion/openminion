@@ -4,17 +4,20 @@ from typing import Any, Callable
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.logging import format_structured_event, get_logger
+from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.services.runtime.routine_context import (
-    CronRunRoutineSink,
-    ToolRegistryPreTurnContext,
+    build_routine_pre_turn_context,
+    write_routine_artifact,
 )
 from openminion.services.agent.execution.composition import AgentServiceTurnFlowAdapter
 from openminion.modules.policy.adapters.memory import (
     memory_capture_recovery_allowed,
 )
+from openminion.modules.session.diagnostics import events as session_events
 from openminion.tools.task.routine.dispatcher import (
     RoutineDispatcher,
     build_default_dispatcher,
+    build_routine_run_result,
 )
 from openminion.tools.task.routine.schemas import RoutinePayloadV1
 from openminion.services.runtime.cron.audit import watch_write_audit_entries
@@ -22,12 +25,10 @@ from openminion.modules.task.cron_payloads import (
     build_cron_turn_result,
     build_cron_request_payload,
     build_expired_watch_result,
+    finalize_watch_turn,
     mark_idle_tick_request,
-    monitoring_delivery_state,
-    persist_watch_progress,
     watch_condition_value,
     watch_output,
-    watch_terminal_state,
 )
 from openminion.modules.task.watch_execution import execute_watch_check_turn
 from openminion.modules.task import (
@@ -68,6 +69,7 @@ class CronTurnExecutor:
         timeout_s: float,
         max_attempts: int,
         routine_dispatcher: RoutineDispatcher | None = None,
+        artifactctl_factory: Callable[[], Any] = create_default_artifactctl,
     ) -> None:
         self._runtime = runtime
         self._cron_store = cron_store
@@ -75,6 +77,7 @@ class CronTurnExecutor:
         self._timeout_s = max(10.0, float(timeout_s))
         self._max_attempts = max(1, int(max_attempts))
         self._routine_dispatcher = routine_dispatcher or build_default_dispatcher()
+        self._artifactctl_factory = artifactctl_factory
 
     def execute(self, job: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
         if not getattr(self._runtime, "runtime_manager", None):
@@ -96,6 +99,14 @@ class CronTurnExecutor:
             return self._execute_project_cycle(job=job, run=run, payload=payload)
         watch = self._watch_metadata(payload)
         if watch is not None:
+            current_checks = int(watch.get("checks_completed", 0) or 0)
+            if self._watch_ttl_expired(job=job, watch=watch):
+                return build_expired_watch_result(
+                    watch_output=watch_output,
+                    watch_terminal_summary=self._watch_terminal_summary,
+                    watch=watch,
+                    checks_completed=current_checks,
+                )
             routine = self._routine_dispatcher.routine_for(payload)
             if routine is not None:
                 return self._execute_routine_turn(
@@ -105,6 +116,11 @@ class CronTurnExecutor:
                     watch=watch,
                     routine=routine,
                 )
+            if self._routine_dispatcher.has_routine_block(payload):
+                return {
+                    "summary": "routine payload is invalid or unsupported",
+                    "error": True,
+                }
             return self._execute_watch_turn(
                 job=job, run=run, payload=payload, watch=watch
             )
@@ -149,6 +165,7 @@ class CronTurnExecutor:
             payload=payload,
             task_manager=task_manager,
         )
+        session_events.record_project_check_events(runtime=self._runtime, result=result)
         return {
             "summary": result.run.operator_summary or "Project cycle completed.",
             "metadata": {
@@ -159,6 +176,7 @@ class CronTurnExecutor:
                 "decision": result.decision.value,
                 "next_wake_job_id": next_job_id,
                 "reconciled_only": result.reconciled_only,
+                **session_events.project_check_metadata(result.check_events),
             },
         }
 
@@ -225,16 +243,6 @@ class CronTurnExecutor:
         payload: dict[str, Any],
         watch: dict[str, Any],
     ) -> dict[str, Any]:
-        expired_precheck = self._watch_ttl_expired(job=job, watch=watch)
-        current_checks = int(watch.get("checks_completed", 0) or 0)
-        if expired_precheck:
-            return build_expired_watch_result(
-                watch_output=watch_output,
-                watch_terminal_summary=self._watch_terminal_summary,
-                watch=watch,
-                checks_completed=current_checks,
-            )
-
         result = execute_watch_check_turn(
             runtime=self._runtime,
             execute_turn=self._execute_agent_turn,
@@ -243,80 +251,31 @@ class CronTurnExecutor:
             payload=payload,
             watch=watch,
         )
-        checks_completed = current_checks + 1
         metadata = dict(result.get("metadata") or {})
         condition_value = (
             None if bool(result.get("error")) else watch_condition_value(metadata)
         )
-        previous_condition = bool(watch.get("last_condition_met", False))
-        effective_condition = (
-            previous_condition if condition_value is None else condition_value
-        )
-        checked_at = datetime.now(timezone.utc)
         watch_summary = str(metadata.get("watch_summary", "") or "").strip()
         summary = str(result.get("summary", "") or "").strip() or watch_summary
-        terminal_state = watch_terminal_state(
+        return finalize_watch_turn(
+            cron_store=self._cron_store,
+            watch_output_builder=watch_output,
             watch_terminal_summary=self._watch_terminal_summary,
             watch_ttl_expired=self._watch_ttl_expired,
             job=job,
+            payload=payload,
             watch=watch,
-            checks_completed=checks_completed,
-            condition_met=condition_value,
-            summary=summary,
-        )
-        terminal = terminal_state["terminal"]
-        deliver = terminal_state["deliver"]
-        terminal_reason = str(terminal_state["terminal_reason"])
-        summary = str(terminal_state["summary"])
-        deliver, delivery_transition, alert_requested_at = monitoring_delivery_state(
-            watch=watch,
+            result=result,
             condition_value=condition_value,
-            checked_at=checked_at,
-            terminal=terminal,
-            terminal_delivery=deliver,
-        )
-        action_executed, action_summary, write_audit_entries, summary = (
-            self._maybe_execute_watch_action(
+            summary=summary,
+            action_executor=partial(
+                self._maybe_execute_watch_action,
                 job=job,
                 run=run,
                 payload=payload,
                 watch=watch,
-                terminal_reason=terminal_reason,
-                summary=summary,
-            )
+            ),
         )
-
-        persist_watch_progress(
-            cron_store=self._cron_store,
-            job=job,
-            payload=payload,
-            watch=watch,
-            checks_completed=checks_completed,
-            summary=summary,
-            condition_met=effective_condition,
-            condition_valid=condition_value is not None,
-            terminal_reason=terminal_reason,
-            checked_at=checked_at,
-            alert_requested_at=alert_requested_at,
-            write_audit_entries=write_audit_entries
-            if bool(watch.get("write_authorized", False))
-            else (),
-        )
-        output = watch_output(
-            condition_met=effective_condition,
-            condition_valid=condition_value is not None,
-            terminal=terminal,
-            deliver=deliver,
-            checks_completed=checks_completed,
-            terminal_reason=terminal_reason,
-            summary=summary,
-            delivery_transition=delivery_transition,
-            action_executed=action_executed,
-            action_summary=action_summary,
-        )
-        result["summary"] = summary
-        result["output"] = output
-        return result
 
     def _maybe_execute_watch_action(
         self,
@@ -379,26 +338,22 @@ class CronTurnExecutor:
         watch: dict[str, Any],
         routine: RoutinePayloadV1,
     ) -> dict[str, Any]:
-        """BRPR-06: typed routine pre/post-turn around the agent turn."""
         handler = self._routine_dispatcher.get(routine.routine_kind)
         if handler is None:
-            return self._execute_watch_turn(
-                job=job, run=run, payload=payload, watch=watch
-            )
-
+            return {"summary": "routine handler is not registered", "error": True}
         routine_id = str(job.get("job_id", "") or "").strip() or "<unknown>"
-        registry = getattr(self._runtime, "tools", None)
-        if registry is None:
+        pre_turn_ctx = build_routine_pre_turn_context(
+            runtime=self._runtime,
+            routine_id=routine_id,
+            session_id=str(payload.get("session_id") or "").strip(),
+            agent_id=self._resolve_agent_id(job) or "",
+            allowed_tools=handler.pre_turn_tools_for(routine),
+        )
+        if pre_turn_ctx is None:
             return {
                 "summary": "routine pre-turn aborted: tool registry unavailable",
                 "error": True,
             }
-        pre_turn_ctx = ToolRegistryPreTurnContext(
-            registry=registry,
-            routine_id=routine_id,
-            session_id=str(payload.get("session_id") or "").strip(),
-            agent_id=self._resolve_agent_id(job) or "",
-        )
         try:
             facts = handler.pre_turn(
                 routine=routine, routine_id=routine_id, ctx=pre_turn_ctx
@@ -408,109 +363,72 @@ class CronTurnExecutor:
                 "summary": f"routine pre-turn failed: {exc}",
                 "error": True,
             }
-
+        routine_watch = dict(watch)
+        routine_watch["allowed_tools"] = list(handler.model_turn_tools)
+        routine_watch.update(handler.finalizer_watch_overrides)
         routine_payload = dict(payload)
-        routine_payload["message"] = self._routine_turn_message(
+        routine_payload[WATCH_PAYLOAD_KEY] = routine_watch
+        routine_payload["message"] = handler.render_turn(
             check_instruction=str(watch.get("check_instruction", "")).strip(),
-            facts_json=facts.model_dump_json(),
+            facts=facts,
         )
-
         turn_result = self._execute_agent_turn(
             job=job, run=run, payload=routine_payload
         )
         if turn_result.get("error"):
             return turn_result
-
-        sink = CronRunRoutineSink()
         try:
             post = handler.post_turn(
                 routine=routine,
                 routine_id=routine_id,
                 facts=facts,
                 outcome_text=str(turn_result.get("summary", "") or ""),
-                sink=sink,
             )
         except Exception as exc:  # noqa: BLE001
             return {
                 "summary": f"routine post-turn failed: {exc}",
                 "error": True,
             }
-
-        if post.updated_routine is not None:
-            self._persist_routine_cursor(
-                job=job,
-                payload=payload,
-                watch=watch,
-                updated_routine=post.updated_routine,
-            )
-
-        summary_parts: list[str] = [f"routine={routine.routine_kind}"]
-        if not post.ok:
-            summary_parts.append(f"error_code={post.reason_code or 'unknown'}")
-        elif sink.write_count == 0:
-            summary_parts.append("no-op")
-        else:
-            summary_parts.append(f"artifact={sink.artifact_id}")
-            summary_parts.append(f"new_findings={post.new_findings_count}")
-            if sink.announce_summary:
-                summary_parts.append(f"announce={sink.announce_summary}")
-        return {
-            "summary": " | ".join(summary_parts),
-            "isolated_session_id": turn_result.get("isolated_session_id"),
-            "metadata": {
-                "routine_kind": routine.routine_kind,
-                "routine_ok": post.ok,
-                "routine_reason_code": post.reason_code or "",
-                "routine_artifact_id": sink.artifact_id or "",
-                "routine_kept_count": post.kept_count,
-                "routine_dropped_count": post.dropped_count,
-                "routine_new_findings_count": post.new_findings_count,
-                "routine_announced": sink.announce_count > 0,
-            },
-        }
-
-    def _routine_turn_message(self, *, check_instruction: str, facts_json: str) -> str:
-        """Compose the deterministic agent-turn prompt for a routine."""
-        instruction = check_instruction or "Review the supplied PR facts."
-        return (
-            f"{instruction}\n\n"
-            "PR facts (typed, read-only):\n"
-            f"{facts_json}\n\n"
-            "Emit exactly one trailer block of the form:\n"
-            "<routine_outcome>{...}</routine_outcome>\n"
-            "where the JSON conforms to ReviewOutcomePayloadV1: "
-            '{ "reviewed_prs": [ ... ], "skipped_prs": [ ... ] }. '
-            "For each reviewed PR, set head_sha_reviewed to the head_sha "
-            "supplied in the facts. The runtime drops entries whose "
-            "head_sha_reviewed does not match. Free prose outside the "
-            "trailer is recorded but not actionable."
-        )
-
-    def _persist_routine_cursor(
-        self,
-        *,
-        job: dict[str, Any],
-        payload: dict[str, Any],
-        watch: dict[str, Any],
-        updated_routine: RoutinePayloadV1,
-    ) -> None:
-        replacer = getattr(self._cron_store, "replace_cron_job_payload", None)
-        if not callable(replacer):
-            return
-        updated_watch = dict(watch)
-        updated_watch["routine"] = updated_routine.model_dump(mode="json")
-        updated_payload = dict(payload)
-        updated_payload[WATCH_PAYLOAD_KEY] = updated_watch
-        try:
-            replacer(job.get("job_id"), updated_payload)
-        except Exception as exc:  # noqa: BLE001
-            _CRON_LOGGER.warning(
-                format_structured_event(
-                    "cron.routine.persist_failed",
-                    job_id=str(job.get("job_id", "") or ""),
-                    error=str(exc),
+        artifact_id = ""
+        if post.artifact_body is not None:
+            try:
+                artifact_id = write_routine_artifact(
+                    artifactctl_factory=self._artifactctl_factory,
+                    routine_id=routine_id,
+                    body=post.artifact_body,
+                    mime=post.artifact_mime,
+                    session_id=str(payload.get("session_id") or "").strip(),
+                    agent_id=self._resolve_agent_id(job) or "",
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 - artifact boundary
+                return {
+                    "summary": f"routine artifact write failed: {exc}",
+                    "error": True,
+                }
+        routine_result = build_routine_run_result(
+            routine_kind=routine.routine_kind,
+            post=post,
+            artifact_id=artifact_id,
+            isolated_session_id=turn_result.get("isolated_session_id"),
+        )
+        summary = str(routine_result["summary"])
+        return finalize_watch_turn(
+            cron_store=self._cron_store,
+            watch_output_builder=watch_output,
+            watch_terminal_summary=self._watch_terminal_summary,
+            watch_ttl_expired=self._watch_ttl_expired,
+            job=job,
+            payload=payload,
+            watch=routine_watch,
+            result=routine_result,
+            condition_value=post.condition_value if post.ok else None,
+            summary=summary,
+            routine=(
+                post.updated_routine.model_dump(mode="json")
+                if post.updated_routine is not None
+                else None
+            ),
+        )
 
     def _execute_agent_turn(
         self,

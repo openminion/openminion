@@ -236,6 +236,44 @@ def test_confirmation_replay_session_reply_grants_pending_tool_for_session() -> 
     assert seeded_commands[0].tool_name == "file.write"
 
 
+def test_blockchain_session_reply_does_not_replay_or_grant_session() -> None:
+    pending = ToolCommand(
+        title="send transaction",
+        tool_name="blockchain.send_transaction",
+        args={"transaction": "first"},
+        inputs={"transaction": "first"},
+        requires_confirmation=True,
+    )
+    state = WorkingState(
+        session_id="sess-blockchain-session",
+        agent_id="agent-blockchain-session",
+        trace_id="trace-blockchain-session",
+        budgets_remaining={
+            "ticks": 8,
+            "tool_calls": 8,
+            "a2a_calls": 0,
+            "tokens": 100000,
+            "time_ms": 45000,
+        },
+        pending_confirmation_command=pending,
+    )
+    policy_api = _GrantingPolicyAPI(["grant-first"])
+    runner = _DummyRunner({}, policy_api=policy_api)
+    tick_ctx = TickRunContext(session_id=state.session_id, user_input="session")
+
+    confirmation_process(
+        runner=runner,
+        state=state,
+        logger=_CapturingLogger(),
+        tick_ctx=tick_ctx,
+    )
+
+    assert state.pending_confirmation_command is None
+    assert "blockchain.send_transaction" not in state.permission_overrides
+    assert policy_api._grant_ids == ["grant-first"]
+    assert tick_ctx.decision is None
+
+
 def test_bridge_reset_session_reply_preserves_pending_confirmation() -> None:
     inline_state, original_pending = _build_inline_state_with_pending_file_write()
     bridge_runner = _DummyRunner(inline_state)
@@ -398,6 +436,57 @@ def test_confirmation_replay_replays_full_confirmed_batch() -> None:
     ]
     assert len(confirm_events) == 1
     assert confirm_events[0][1]["replay_count"] == 3
+
+
+def test_blockchain_confirmation_replays_only_the_approved_send() -> None:
+    pending = ToolCommand(
+        title="send first transaction",
+        tool_name="blockchain.send_transaction",
+        args={"transaction": "first"},
+        inputs={"transaction": "first"},
+        requires_confirmation=True,
+    )
+    sibling = pending.model_copy(deep=True)
+    sibling.title = "send second transaction"
+    sibling.args = {"transaction": "second"}
+    sibling.inputs = {"transaction": "second"}
+    state = WorkingState(
+        session_id="sess-blockchain-single",
+        agent_id="agent-blockchain-single",
+        trace_id="trace-blockchain-single",
+        budgets_remaining={
+            "ticks": 8,
+            "tool_calls": 8,
+            "a2a_calls": 0,
+            "tokens": 100000,
+            "time_ms": 45000,
+        },
+        pending_confirmation_command=attach_confirmation_replay_queue(
+            pending, [sibling]
+        ),
+        pending_confirmation_sub_intents=[],
+        pending_confirmation_sub_intent_refs=[],
+        pending_confirmation_rationale="one send approval",
+        pending_confirmation_success_criteria={},
+        pending_confirmation_feasibility_state={},
+        pending_confirmation_feasibility_report=None,
+    )
+    runner = _DummyRunner(
+        {}, policy_api=_GrantingPolicyAPI(["grant-first", "grant-second"])
+    )
+    tick_ctx = TickRunContext(session_id=state.session_id, user_input="yes")
+
+    confirmation_process(
+        runner=runner,
+        state=state,
+        logger=_CapturingLogger(),
+        tick_ctx=tick_ctx,
+    )
+
+    seeded = list(getattr(tick_ctx.decision, "_seeded_commands", []) or [])
+    assert len(seeded) == 1
+    assert seeded[0].args == {"transaction": "first"}
+    assert seeded[0].inputs["confirmation_grant_id"] == "grant-first"
 
 
 def test_confirmation_replay_preserves_verification_target_binding() -> None:

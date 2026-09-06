@@ -35,28 +35,6 @@ _ERROR_STYLE = token_rich_style(StyleToken.ERROR)
 DEFAULT_MAX_RETAINED_MESSAGES = 1000
 
 
-def get_app_or_none() -> Any | None:
-    try:
-        import importlib
-
-        context = importlib.import_module("textual._context")
-        active_app = getattr(context, "active_app", None)
-        if active_app is None:
-            return None
-        return active_app.get(None)
-    except (ImportError, LookupError, RuntimeError, AttributeError):
-        return None
-
-
-def run_in_terminal(func: Callable[[], None], *, render_cli_done: bool = False) -> Any:
-    app = get_app_or_none()
-    runner = getattr(app, "run_in_terminal", None)
-    if callable(runner):
-        return runner(func, render_cli_done=render_cli_done)
-    func()
-    return None
-
-
 class TerminalTranscript:
     def __init__(
         self,
@@ -69,7 +47,6 @@ class TerminalTranscript:
     ) -> None:
         self._console = console
         self._messages: list[ChatMessage] = []
-        self._selected_message_id: str | None = None
         self._plain_spinner = bool(plain_spinner)
         self._show_response_time = bool(show_response_time)
         self._verbosity: VerbosityLevel = cast(
@@ -99,10 +76,6 @@ class TerminalTranscript:
         if writer is not None:
             writer(render)
             return
-        app = get_app_or_none()
-        if bool(getattr(app, "is_running", False)):
-            run_in_terminal(render, render_cli_done=False)
-            return
         render()
 
     def begin_turn(
@@ -115,7 +88,6 @@ class TerminalTranscript:
         message = ChatMessage(kind=kind, sender=role, body="")
         self._messages.append(message)
         self._trim_retained_messages()
-        self._selected_message_id = message.msg_id
         handle = TerminalTurnHandle(
             self._console,
             plain=self._plain_spinner,
@@ -148,7 +120,6 @@ class TerminalTranscript:
             self._hidden_failed_count = 0
             self._reset_turn_tool_compaction()
         self._messages.append(message)
-        self._selected_message_id = message.msg_id
         self._trim_retained_messages()
         if render:
             self._render(message)
@@ -204,14 +175,12 @@ class TerminalTranscript:
     def set_messages(self, messages: list[ChatMessage]) -> None:
         self.reset_session_state()
         self._messages = []
-        self._selected_message_id = None
         for msg in messages:
             self.push_message(msg)
 
     def clear_messages(self) -> None:
         self.reset_session_state()
         self._messages = []
-        self._selected_message_id = None
         self._console.print(Text("─" * 60, style="dim"))
 
     def reset_session_state(self) -> None:
@@ -220,25 +189,6 @@ class TerminalTranscript:
         self._truncated_blocks = []
         self._live_narrated_call_ids = set()
         self._reset_turn_tool_compaction()
-
-    def filter_messages(self, query: str) -> None:
-        if query:
-            self._console.print(
-                Text(
-                    f"(filter: '{query}' — use your terminal's native "
-                    f"search instead; terminal scrollback is "
-                    f"searchable directly)",
-                    style="dim italic",
-                )
-            )
-
-    def copy_selected_message(self) -> str | None:
-        if self._selected_message_id is None:
-            return None
-        for msg in self._messages:
-            if msg.msg_id == self._selected_message_id:
-                return _copyable_text(msg)
-        return None
 
     def copy_last_copyable_message(self) -> str | None:
         for msg in reversed(self._messages):
@@ -254,10 +204,6 @@ class TerminalTranscript:
         self._messages = [m for m in self._messages if m.msg_id != msg_id]
         if len(self._messages) == before:
             return False
-        if self._selected_message_id == msg_id:
-            self._selected_message_id = (
-                self._messages[-1].msg_id if self._messages else None
-            )
         return True
 
     def _trim_retained_messages(self) -> None:
@@ -265,10 +211,6 @@ class TerminalTranscript:
         if limit is None or len(self._messages) <= limit:
             return
         self._messages = self._messages[-limit:]
-        if self._selected_message_id not in {msg.msg_id for msg in self._messages}:
-            self._selected_message_id = (
-                self._messages[-1].msg_id if self._messages else None
-            )
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:
@@ -621,6 +563,8 @@ def _copyable_text(message: ChatMessage) -> str | None:
             return message.tool_event.full_content or message.tool_event.content or None
         body = str(message.tool_result or message.body or "").strip()
         return body or None
+    if message.kind != MessageKind.AGENT:
+        return None
     body = str(message.body or "").strip()
     return body or None
 

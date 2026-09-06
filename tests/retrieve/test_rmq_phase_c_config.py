@@ -22,7 +22,6 @@ def _config(
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -37,8 +36,6 @@ def _config(
                 "recency_weight": 0.3,
                 "k_conversational": 3,
                 "k_knowledge": 3,
-                "mmr_lambda": 0.6,
-                "mmr_enabled": True,
                 "feedback_decay_halflife_days": 60,
                 "decay_min_feedback_score": 0.0,
                 **(defaults or {}),

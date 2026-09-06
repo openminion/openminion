@@ -667,11 +667,11 @@ def _record_memory_context_failure(
         fallback_reason=MEMORY_CONTEXT_BUILD_FAILED_REASON,
     )
     logger.warning(
-        "agent memory context build failed agent_id=%s session_id=%s strategy=%s error=%s",
+        "agent memory context build failed agent_id=%s session_id=%s strategy=%s reason=%s",
         agent_id,
         session_id,
         memory_capsule_strategy,
-        exc,
+        error_facts["reason_code"],
     )
     emit_memory_event(
         session_id=session_id,
@@ -683,7 +683,7 @@ def _record_memory_context_failure(
             "run_id": run_id,
             "request_id": request_id,
             "strategy": memory_capsule_strategy,
-            "error": str(exc),
+            "error": MEMORY_CONTEXT_BUILD_FAILED_REASON,
             **error_facts,
         },
     )

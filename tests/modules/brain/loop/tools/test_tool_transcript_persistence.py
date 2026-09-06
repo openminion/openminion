@@ -5,13 +5,14 @@ from types import SimpleNamespace
 
 from openminion.modules.brain.adapters.session.runtime import SessctlAdapter
 from openminion.modules.brain.adapters.session.local_store import LocalSessionStore
+from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
 from openminion.modules.brain.loop.tools.transcript import (
     persist_blocked_tool_calls,
     persist_requested_tool_calls,
     persist_terminal_tool_result,
     replay_tool_messages,
 )
-from openminion.modules.brain.schemas import ActionError, ActionResult
+from openminion.modules.brain.schemas import ActionError, ActionResult, ArtifactRef
 from openminion.modules.llm.schemas import ToolCall
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
@@ -197,3 +198,186 @@ def test_local_session_adapter_preserves_parent_linkage_and_replay(
     assert [message.role for message in messages] == ["assistant", "tool"]
     assert messages[0].tool_calls[0].arguments == {"timezone": "UTC"}
     assert messages[1].tool_call_id == "call-local"
+
+
+def test_security_tool_transcript_persists_only_structural_facts(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "security-transcript.db")
+    try:
+        session_id = store.create_session(
+            initial_agent_id="security-researcher-readonly",
+            profile_version="pv1",
+        )
+        loop_ctx = SimpleNamespace(
+            session_api=SessctlAdapter(store),
+            state=SimpleNamespace(session_id=session_id),
+        )
+        loop_state = SimpleNamespace(scratchpad={})
+        report_ref = "artifact://sha256/" + ("a" * 64)
+        call = ToolCall(
+            id="call-report",
+            name="security.publish_report",
+            arguments={
+                "scope": {
+                    "target": "/private/source",
+                    "objective": "Bearer request-secret-12345",
+                },
+                "findings": [{"description": "private finding prose"}],
+            },
+        )
+
+        persist_requested_tool_calls(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id="turn-security",
+            tool_calls=[call],
+        )
+        persist_terminal_tool_result(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id="turn-security",
+            tool_call=call,
+            action_result=ActionResult(
+                command_id="call-report",
+                status="success",
+                summary="private report summary",
+                artifact_refs=[ArtifactRef(ref=report_ref)],
+                outputs={
+                    "assessment_id": "b" * 32,
+                    "execution_status": "partial",
+                    "finding_count": 1,
+                    "artifact_refs": [report_ref, "/private/report.json"],
+                    "findings": [{"description": "private finding prose"}],
+                },
+            ),
+        )
+
+        events = store.get_tool_transcript(session_id)["events"]
+        requested = events[0]["payload"]["sanitized_normalized_arguments"]
+        output = events[1]["payload"]["output"]
+        assert requested == {}
+        assert output == {
+            "summary": "security tool completed",
+            "outputs": {
+                "assessment_id": "b" * 32,
+                "result_status": "partial",
+                "finding_count": 1,
+                "artifact_refs": [report_ref],
+                "artifact_count": 1,
+            },
+        }
+        assert events[1]["refs"] == {"artifact_refs": [report_ref]}
+        assert "/private" not in str(events)
+        assert "request-secret" not in str(events)
+        assert "private finding prose" not in str(events)
+
+        blocked_call = ToolCall(
+            id="call-scan",
+            name="security.scan_code",
+            arguments={"target": "/private/source"},
+        )
+        scan_ref = "artifact://sha256/" + ("c" * 64)
+        persist_requested_tool_calls(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id="turn-security-2",
+            tool_calls=[blocked_call],
+        )
+        persist_terminal_tool_result(
+            loop_ctx,
+            loop_state=loop_state,
+            turn_scope_id="turn-security-2",
+            tool_call=blocked_call,
+            action_result=ActionResult(
+                command_id="call-scan",
+                status="failed",
+                summary="failed at /private/source",
+                artifact_refs=[ArtifactRef(ref=scan_ref)],
+                error=ActionError(
+                    code="EXEC_ERROR",
+                    message="Bearer failure-secret-12345",
+                    details={"path": "/private/source"},
+                ),
+            ),
+        )
+        blocked = store.get_tool_transcript(session_id)["events"][-1]["payload"]
+        assert blocked["error"] == {
+            "code": "EXEC_ERROR",
+            "message": "security tool did not complete",
+            "details": {},
+        }
+        assert store.get_tool_transcript(session_id)["events"][-1]["refs"] == {
+            "artifact_refs": [scan_ref]
+        }
+        assert "failure-secret" not in str(blocked)
+    finally:
+        store.close()
+
+
+def test_security_profile_persists_file_reads_as_structural_facts(
+    tmp_path: Path,
+) -> None:
+    session_api = LocalSessionStore(tmp_path / "security-profile")
+    loop_ctx = SimpleNamespace(
+        session_api=session_api,
+        state=SimpleNamespace(
+            session_id="security-session",
+            agent_id="security-researcher-readonly",
+        ),
+    )
+    loop_state = SimpleNamespace(scratchpad={})
+    call = ToolCall(
+        id="call-read",
+        name="file.read",
+        arguments={"path": "/private/source.py"},
+    )
+
+    persist_requested_tool_calls(
+        loop_ctx,
+        loop_state=loop_state,
+        turn_scope_id="turn-security-read",
+        tool_calls=[call],
+    )
+    persist_terminal_tool_result(
+        loop_ctx,
+        loop_state=loop_state,
+        turn_scope_id="turn-security-read",
+        tool_call=call,
+        action_result=ActionResult(
+            command_id="call-read",
+            status="success",
+            summary="read private source",
+            outputs={"content": "return eval(user_input)"},
+        ),
+    )
+
+    events = session_api.get_tool_transcript("security-session")["events"]
+    assert events[0]["payload"]["sanitized_normalized_arguments"] == {}
+    assert events[1]["payload"]["output"] == {
+        "summary": "security tool completed",
+        "outputs": {},
+    }
+    assert "/private" not in str(events)
+    assert "eval(user_input)" not in str(events)
+
+
+def test_security_profile_tool_event_omits_summary(tmp_path: Path) -> None:
+    session_api = LocalSessionStore(tmp_path / "security-events")
+    logger = CanonicalEventLogger(
+        session_api=session_api,
+        session_id="security-session",
+        agent_id="security-researcher-readonly",
+    )
+
+    logger.emit(
+        "tool.completed",
+        {
+            "status": "success",
+            "summary": "return eval(user_input)",
+            "tool_name": "file.read",
+        },
+    )
+
+    payload = session_api.list_events("security-session")[0]["payload"]
+    assert payload == {"status": "success", "tool_name": "file.read"}

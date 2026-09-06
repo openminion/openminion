@@ -156,7 +156,6 @@ def _run_default_interactive(
                 animation=getattr(args, "animation", None),
                 verbosity=getattr(args, "verbosity", None),
                 progress=getattr(args, "progress", None),
-                rich=bool(getattr(args, "rich", False)),
             )
         )
         or 0

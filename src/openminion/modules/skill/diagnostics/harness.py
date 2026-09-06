@@ -1,7 +1,10 @@
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+
+import yaml
 
 from openminion.modules.skill.runtime.parser import (
     build_recipe,
@@ -10,19 +13,12 @@ from openminion.modules.skill.runtime.parser import (
 )
 
 _SUPPORTED_RESOURCE_ROOTS = ("references", "assets", "scripts")
-_KNOWN_TOP_LEVEL_ENTRIES = {
-    "SKILL.md",
-    "agents",
-    "assets",
-    "fixtures",
-    "references",
-    "scripts",
-}
 _FATAL_PARSE_WARNINGS = {
     "front_matter.invalid_mapping",
     "front_matter.unclosed",
     "parse.warning:invalid_recipe",
 }
+_PORTABLE_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True)
@@ -41,6 +37,7 @@ class SkillHarnessResult:
     unknown_front_matter_keys: Sequence[str] = field(default_factory=tuple)
     recipe_step_count: int = 0
     recipe_tool_bindings: Sequence[str] = field(default_factory=tuple)
+    portable_conformance: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -58,6 +55,7 @@ class SkillHarnessResult:
             "unknown_front_matter_keys": list(self.unknown_front_matter_keys),
             "recipe_step_count": self.recipe_step_count,
             "recipe_tool_bindings": list(self.recipe_tool_bindings),
+            "portable_conformance": dict(self.portable_conformance),
         }
 
 
@@ -146,10 +144,11 @@ def validate_skill(skill_root: Path) -> SkillHarnessResult:
     errors: list[str] = []
     fixture_input = ""
     fixture_expected = ""
-    content = skill_file.read_text(encoding="utf-8").strip()
-    if not content:
+    content = skill_file.read_text(encoding="utf-8")
+    if not content.strip():
         errors.append("SKILL.md is empty")
     front_matter, sections, _summary, parser_warnings = parse_markdown(content)
+    portable_errors = _portable_conformance_errors(content, front_matter)
     unknown_warnings = front_matter_unknown_key_warnings(front_matter)
     recipe, recipe_warnings = build_recipe(
         front_matter=front_matter,
@@ -199,11 +198,6 @@ def validate_skill(skill_root: Path) -> SkillHarnessResult:
         root_name: _count_supported_resources(skill_root / root_name)
         for root_name in _SUPPORTED_RESOURCE_ROOTS
     }
-    unsupported_entries = tuple(
-        path.name
-        for path in sorted(skill_root.iterdir(), key=lambda item: item.name)
-        if path.name not in _KNOWN_TOP_LEVEL_ENTRIES
-    )
     nested_candidates = _nested_skill_candidates(skill_root)
     unknown_keys = tuple(
         warning.rsplit(":", 1)[-1]
@@ -221,14 +215,59 @@ def validate_skill(skill_root: Path) -> SkillHarnessResult:
         parse_ok=parse_ok,
         parse_warnings=parse_warnings,
         resource_counts=resource_counts,
-        unsupported_entries=unsupported_entries,
+        unsupported_entries=(),
         nested_skill_candidates=nested_candidates,
         unknown_front_matter_keys=unknown_keys,
         recipe_step_count=len(recipe.steps) if recipe else 0,
         recipe_tool_bindings=tuple(
             step.tool_id for step in (recipe.steps if recipe else ()) if step.tool_id
         ),
+        portable_conformance={"ok": not portable_errors, "errors": portable_errors},
     )
+
+
+def _portable_conformance_errors(
+    content: str, front_matter: Mapping[str, object]
+) -> list[str]:
+    errors: list[str] = []
+    if not content.startswith("---\n"):
+        errors.append("portable.front_matter_required")
+    elif not _portable_front_matter_is_valid_yaml(content):
+        errors.append("portable.front_matter_invalid")
+    raw_name = front_matter.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+    if raw_name is None or (isinstance(raw_name, str) and not name):
+        errors.append("portable.name_required")
+    elif (
+        not isinstance(raw_name, str)
+        or len(name) > 64
+        or _PORTABLE_NAME_RE.fullmatch(name) is None
+    ):
+        errors.append("portable.name_invalid")
+    raw_description = front_matter.get("description")
+    description = raw_description.strip() if isinstance(raw_description, str) else ""
+    if not description:
+        errors.append("portable.description_required")
+    elif len(description) > 1024:
+        errors.append("portable.description_too_long")
+    return errors
+
+
+def _portable_front_matter_is_valid_yaml(content: str) -> bool:
+    lines = content.splitlines()
+    try:
+        boundary = next(
+            index
+            for index, line in enumerate(lines[1:], start=1)
+            if line.strip() == "---"
+        )
+    except StopIteration:
+        return False
+    try:
+        parsed = yaml.safe_load("\n".join(lines[1:boundary])) or {}
+    except yaml.YAMLError:
+        return False
+    return isinstance(parsed, Mapping)
 
 
 def _has_skill_ancestor(path: Path, boundary: Path) -> bool:

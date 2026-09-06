@@ -91,6 +91,7 @@ class SessionLifecycleHelper:
         *,
         filters: Mapping[str, Any] | None = None,
         limit: int = 100,
+        agent_id: str | None = None,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -99,9 +100,10 @@ class SessionLifecycleHelper:
         if filter_map.get("status"):
             clauses.append("status = ?")
             params.append(str(filter_map["status"]))
-        if filter_map.get("active_agent_id"):
+        active_agent_id = agent_id or filter_map.get("active_agent_id")
+        if active_agent_id:
             clauses.append("active_agent_id = ?")
-            params.append(str(filter_map["active_agent_id"]))
+            params.append(str(active_agent_id))
 
         query = """
             SELECT session_id, created_at, updated_at, title, status, active_agent_id,

@@ -11,9 +11,13 @@ from openminion.modules.context.input_boundaries import (
 )
 from openminion.modules.skill.constants import RISK_CLASS_LOW
 from openminion.modules.skill.errors import SkillError
-from openminion.modules.skill.interfaces import SkillIngestAuthority
+from openminion.modules.skill.interfaces import (
+    SkillIngestAuthority,
+    SkillVerificationEvidence,
+)
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.modules.skill.models import (
+    LintIssue,
     SkillPackage,
     ToolRecipe,
     WorkflowCatalog,
@@ -134,6 +138,40 @@ class SkillCatalogMixin:
         target_status: str,
         reason: str,
         authority: SkillIngestAuthority,
+        verification_evidence: SkillVerificationEvidence | None = None,
+    ) -> dict[str, Any]:
+        if (
+            verification_evidence is not None
+            and authority.authority_class != "local_operator"
+        ):
+            raise SkillError(
+                "SKILL_OPERATOR_AUTH_REQUIRED",
+                "Verification evidence requires local operator authority.",
+            )
+        return self._admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=expected_active_version_hash,
+            target_status=target_status,
+            reason=reason,
+            authority=authority,
+            verification_evidence=verification_evidence,
+            verification_reviewer_id=(
+                authority.principal_id if verification_evidence is not None else None
+            ),
+        )
+
+    def _admit_skill_version(
+        self,
+        *,
+        skill_id: str,
+        version_hash: str,
+        expected_active_version_hash: str | None,
+        target_status: str,
+        reason: str,
+        authority: SkillIngestAuthority,
+        verification_evidence: SkillVerificationEvidence | None,
+        verification_reviewer_id: str | None,
     ) -> dict[str, Any]:
         if not authority.can_admit or not authority.principal_id:
             raise SkillError(
@@ -150,18 +188,20 @@ class SkillCatalogMixin:
         if not reason_text:
             raise SkillError("INVALID_ARGUMENT", "reason must be non-empty")
         candidate = self.get_skill(skill_id=skill_id, version_hash=version_hash)
-        lint_errors = [
-            issue
-            for issue in self._lint_package(
-                replace(candidate, status=normalized_status)
-            )
-            if issue.severity == "error"
-        ]
+        lint_errors = self._admission_lint_errors(
+            candidate=candidate,
+            normalized_status=normalized_status,
+            verification_evidence=verification_evidence,
+        )
         if lint_errors and normalized_status in {"verified", "blessed"}:
             raise SkillError(
                 "SKILL_ADMISSION_VALIDATION_FAILED",
-                "Skill version has lint errors and cannot be admitted.",
-                {"skill_id": skill_id, "version_hash": version_hash},
+                "Skill version is not ready for admission.",
+                {
+                    "skill_id": skill_id,
+                    "version_hash": version_hash,
+                    "blockers": [issue.code for issue in lint_errors],
+                },
             )
         previous_active = self.store.get_active_skill_version_hash(skill_id=skill_id)
         updated_at = iso_now()
@@ -174,6 +214,16 @@ class SkillCatalogMixin:
             reviewer_id=authority.principal_id,
             reason=reason_text,
             decided_at=updated_at,
+            verification_check=(
+                verification_evidence.check if verification_evidence else None
+            ),
+            verification_result=(
+                verification_evidence.result if verification_evidence else None
+            ),
+            verification_evidence_ref=(
+                verification_evidence.evidence_ref if verification_evidence else None
+            ),
+            verification_reviewer_id=verification_reviewer_id,
         )
         if not changed:
             raise SkillError(
@@ -194,9 +244,38 @@ class SkillCatalogMixin:
             "reviewer_id": authority.principal_id,
             "reason": reason_text,
             "updated_at": updated_at,
+            "verification_check": (
+                verification_evidence.check if verification_evidence else None
+            ),
+            "verification_result": (
+                verification_evidence.result if verification_evidence else None
+            ),
+            "verification_evidence_ref": (
+                verification_evidence.evidence_ref if verification_evidence else None
+            ),
+            "verification_reviewer_id": verification_reviewer_id,
         }
         self._emit_event("skill.version_admitted", dict(result))
         return result
+
+    def _admission_lint_errors(
+        self,
+        *,
+        candidate: SkillPackage,
+        normalized_status: str,
+        verification_evidence: SkillVerificationEvidence | None,
+    ) -> list[LintIssue]:
+        return [
+            issue
+            for issue in self._lint_package(
+                replace(candidate, status=normalized_status)
+            )
+            if issue.severity == "error"
+            and not (
+                verification_evidence is not None
+                and issue.code == "status.requires_verification"
+            )
+        ]
 
     def rollback_skill_version(
         self,
@@ -220,13 +299,32 @@ class SkillCatalogMixin:
                 "Rollback target must be a previously admitted skill version.",
                 {"skill_id": skill_id, "version_hash": to_version_hash},
             )
-        return self.admit_skill_version(
+        evidence = None
+        if all(
+            admission.get(key)
+            for key in (
+                "verification_check",
+                "verification_result",
+                "verification_evidence_ref",
+                "verification_reviewer_id",
+            )
+        ):
+            evidence = SkillVerificationEvidence(
+                check=str(admission["verification_check"]),
+                result="passed",
+                evidence_ref=str(admission["verification_evidence_ref"]),
+            )
+        return self._admit_skill_version(
             skill_id=skill_id,
             version_hash=to_version_hash,
             expected_active_version_hash=expected_active_version_hash,
             target_status=str(admission.get("target_status") or "verified"),
             reason=reason,
             authority=authority,
+            verification_evidence=evidence,
+            verification_reviewer_id=(
+                str(admission["verification_reviewer_id"]) if evidence else None
+            ),
         )
 
     def list_skills(

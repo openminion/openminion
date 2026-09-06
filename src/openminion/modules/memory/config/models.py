@@ -69,8 +69,6 @@ class RankingConfig:
     type_boost_meta_insight: float = 1.05
     feedback_decay_halflife_days: float = 60.0
     semantic_bm25_weight: float = 0.5
-    mmr_enabled: bool = True
-    mmr_lambda: float = 0.6
 
     def __post_init__(self) -> None:
         weights = {
@@ -313,16 +311,12 @@ def merge_ranking_config(
     if retrieve_defaults is not None:
         default_defaults = {
             "decay_halflife_days": 30,
-            "mmr_enabled": True,
-            "mmr_lambda": 0.6,
             "feedback_decay_halflife_days": 60,
             "recency_half_life_hours": 72,
         }
         legacy_overrides: dict[str, Any] = {}
         translation_map = {
             "decay_halflife_days": "recency_half_life_days",
-            "mmr_enabled": "mmr_enabled",
-            "mmr_lambda": "mmr_lambda",
             "feedback_decay_halflife_days": "feedback_decay_halflife_days",
         }
         for legacy_key, ranking_key in translation_map.items():

@@ -37,15 +37,17 @@ def test_vector_factory_local_sqlite(monkeypatch, tmp_path) -> None:
             pass
 
     class DummyScheduler:
-        def __init__(self, vector_adapter, batch_size: int) -> None:
+        def __init__(self, vector_adapter) -> None:
             self.vector_adapter = vector_adapter
-            self.batch_size = batch_size
             self.started = False
 
         def start(self) -> None:
             self.started = True
 
+    adapter_kwargs: dict[str, object] = {}
+
     def fake_create_vector_index_adapter(**kwargs):
+        adapter_kwargs.update(kwargs)
         return "adapter"
 
     monkeypatch.setattr(vector_index, "LocalEmbeddingProvider", DummyEmbeddingProvider)
@@ -75,3 +77,4 @@ def test_vector_factory_local_sqlite(monkeypatch, tmp_path) -> None:
     assert isinstance(sync, DummyScheduler)
     assert sync.started is False
     assert provider_calls == [{"args": (), "kwargs": {"model": "m", "dimension": 8}}]
+    assert adapter_kwargs["batch_size"] == 7

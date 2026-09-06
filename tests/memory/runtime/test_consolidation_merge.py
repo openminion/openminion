@@ -72,7 +72,12 @@ def _payload() -> ExtractionPayload:
 
 def test_resolve_consolidation_model_handle_returns_distinct_model_handle() -> None:
     client = _FakeMergeClient()
-    primary = RuntimeLLMHandle(name="openai", model="gpt-4.2", client=client)
+    primary = RuntimeLLMHandle(
+        name="openai",
+        model="gpt-4.2",
+        client=client,
+        provider_retry_max_attempts=1,
+    )
 
     resolved = resolve_consolidation_model_handle(
         primary,
@@ -83,6 +88,7 @@ def test_resolve_consolidation_model_handle_returns_distinct_model_handle() -> N
     assert resolved.model == "gpt-4.2-mini"
     assert resolved.client is client
     assert resolved.name == primary.name
+    assert resolved.provider_retry_max_attempts == 1
 
 
 def test_run_consolidation_merge_returns_review_vocabulary_without_writes() -> None:

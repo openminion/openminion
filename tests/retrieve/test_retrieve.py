@@ -6,7 +6,7 @@ from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
 from openminion.modules.retrieve.schemas import RetrieveRequest
 
 
-def _config(tmp_path: Path, *, embeddings_enabled: bool = False) -> dict:
+def _config(tmp_path: Path) -> dict:
     return {
         "version": 1,
         "retrievectl": {
@@ -18,7 +18,6 @@ def _config(tmp_path: Path, *, embeddings_enabled: bool = False) -> dict:
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": embeddings_enabled,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -76,9 +75,12 @@ def test_contextual_retrieve_returns_provenance(tmp_path: Path) -> None:
         service.close()
 
 
-def test_semantic_strategy_is_public_and_uses_vector_scores(tmp_path: Path) -> None:
+def test_semantic_strategy_is_public_but_unavailable(tmp_path: Path) -> None:
+    from openminion.modules.retrieve.errors import RetrieveCtlError
+    import pytest
+
     RetrieveRequest(query="alpha", strategy="semantic")
-    service = RetrieveCtl(_config(tmp_path, embeddings_enabled=True))
+    service = RetrieveCtl(_config(tmp_path))
     try:
         service.ingest_source(
             source_type="doc",
@@ -98,32 +100,14 @@ def test_semantic_strategy_is_public_and_uses_vector_scores(tmp_path: Path) -> N
             title="semantic two",
             unit_kind="chunk",
         )
-        preferred_unit_id = str(
-            service.store.execute(
-                "SELECT unit_id FROM retrievectl_docs d "
-                "JOIN retrievectl_units u ON u.doc_id = d.doc_id "
-                "WHERE d.source_ref = ?",
-                ("doc://semantic/b",),
-            ).fetchone()["unit_id"]
-        )
-
-        class _VectorAdapter:
-            def search(self, **_kwargs: object) -> list[dict[str, object]]:
-                return [{"id": preferred_unit_id, "score": 0.99}]
-
-        service.vector_adapter = _VectorAdapter()
-
-        rows = service.retrieve(
-            query="alpha semantic",
-            purpose="act",
-            scope={"project": True},
-            k=2,
-            strategy="semantic",
-        )
-
-        assert rows
-        assert rows[0]["meta"]["unit_id"] == preferred_unit_id
-        assert rows[0]["retrieval_strategy"] == "semantic"
+        with pytest.raises(RetrieveCtlError, match="SEMANTIC_UNAVAILABLE"):
+            service.retrieve(
+                query="alpha semantic",
+                purpose="act",
+                scope={"project": True},
+                k=2,
+                strategy="semantic",
+            )
     finally:
         service.close()
 

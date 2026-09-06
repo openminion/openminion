@@ -22,6 +22,11 @@ DEFAULT_LIVE_TIMEOUT_SECONDS = 1800
 LOCAL_TESTS = (
     "tests/cli/test_default_invocation.py",
     "tests/cli/test_focus_backend_selection.py",
+    "tests/cli/interactive/test_openminion_runtime.py",
+    "tests/cli/interactive/terminal/test_fia_slash_catalog.py",
+    "tests/cli/interactive/terminal/test_focus_input_queue.py",
+    "tests/cli/interactive/terminal/test_streaming_integration.py",
+    "tests/cli/interactive/terminal/test_transcript.py",
     "tests/e2e/cli/focus/test_local.py",
     "tests/e2e/telemetry/test_invocation_lifecycle_consistency.py",
 )

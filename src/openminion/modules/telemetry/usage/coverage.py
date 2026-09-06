@@ -91,6 +91,8 @@ class TokenUsageDimensionCoverage:
 @dataclass(frozen=True)
 class TokenUsageCoverage:
     llm_call_events: int = 0
+    observed_llm_call_events: int = 0
+    unmetered_llm_call_events: int = 0
     failed_llm_call_events: int = 0
     context_manifest_events: int = 0
     cache_metric_events: int = 0
@@ -118,6 +120,8 @@ class TokenUsageCoverage:
     def __post_init__(self) -> None:
         for field_name in (
             "llm_call_events",
+            "observed_llm_call_events",
+            "unmetered_llm_call_events",
             "failed_llm_call_events",
             "context_manifest_events",
             "cache_metric_events",
@@ -136,6 +140,8 @@ class TokenUsageCoverage:
     def as_payload(self) -> TokenUsageCoveragePayload:
         return {
             "llm_call_events": self.llm_call_events,
+            "observed_llm_call_events": self.observed_llm_call_events,
+            "unmetered_llm_call_events": self.unmetered_llm_call_events,
             "failed_llm_call_events": self.failed_llm_call_events,
             "context_manifest_events": self.context_manifest_events,
             "cache_metric_events": self.cache_metric_events,
@@ -177,11 +183,15 @@ def explicit_total_source(payload: Mapping[str, Any]) -> str:
 def coverage_from_session_events(
     events: list[dict[str, Any]],
 ) -> TokenUsageCoverage:
-    llm_events = [
+    observed_llm_events = [
         event
         for event in events
         if _coverage_event_text(event, "event_type") in LLM_USAGE_EVENT_TYPES
-        and isinstance(_coverage_payload(event).get("usage"), Mapping)
+    ]
+    llm_events = [
+        event
+        for event in observed_llm_events
+        if isinstance(_coverage_payload(event).get("usage"), Mapping)
     ]
     llm_payloads = [_coverage_payload(event) for event in llm_events]
 
@@ -210,9 +220,11 @@ def coverage_from_session_events(
     payloads = [_coverage_payload(event) for event in events]
     return TokenUsageCoverage(
         llm_call_events=len(llm_events),
+        observed_llm_call_events=len(observed_llm_events),
+        unmetered_llm_call_events=len(observed_llm_events) - len(llm_events),
         failed_llm_call_events=sum(
             _coverage_event_text(event, "event_type") == "llm.call.failed"
-            for event in llm_events
+            for event in observed_llm_events
         ),
         context_manifest_events=event_types.count("context.manifest.created"),
         cache_metric_events=event_types.count("llm.cache.metrics"),

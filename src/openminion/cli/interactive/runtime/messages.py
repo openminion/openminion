@@ -8,6 +8,10 @@ from uuid import uuid4
 from openminion.base.types import Message
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.formatting import tool_call_body
+from openminion.modules.context.trace_inspection import (
+    ContextTraceLookupError,
+    list_context_traces,
+)
 from openminion.modules.storage import (
     is_room_session_key,
     normalize_identity,
@@ -64,6 +68,20 @@ class RuntimeMessageMixin:
         return session is not None and is_room_session_key(
             str(getattr(session, "session_key", "") or "")
         )
+
+    def context_trace_payload(self, *, session_id: str) -> dict[str, Any]:
+        try:
+            return cast(
+                dict[str, Any],
+                list_context_traces(self._rt.sessions, session_id=session_id),
+            )
+        except ContextTraceLookupError as exc:
+            return {
+                "session_id": session_id,
+                "traces": [],
+                "count": 0,
+                "degraded": exc.code,
+            }
 
     def _room_session_and_actor(self) -> tuple[Any, Any]:
         session = self._rt.sessions.get_session(self.session_id)

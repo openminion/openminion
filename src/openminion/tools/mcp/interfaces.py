@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from openminion.base.config.mcp import MCPServerConfig
+from openminion.base.config.base import ConfigError
 
 from .schemas import (
     MCPElicitationRequest,
@@ -32,6 +33,7 @@ class MCPServerFailure:
     server_name: str
     reason_code: str
     message: str
+    primitive: str = ""
 
 
 @runtime_checkable
@@ -109,6 +111,10 @@ class MCPFleetHandle(Protocol):
 
     def mcp_server_metrics(self) -> dict[str, dict[str, Any]]: ...
 
+    def server_status_snapshot(self) -> dict[str, dict[str, Any]]: ...
+
+    def browse_snapshot(self) -> dict[str, dict[str, tuple[str, ...]]]: ...
+
     def mcp_sampling_events(self) -> list[dict[str, Any]]: ...
 
     def mcp_elicitation_events(self) -> list[dict[str, Any]]: ...
@@ -124,6 +130,9 @@ class MCPFleetHandle(Protocol):
 
 @runtime_checkable
 class MCPTransport(Protocol):
+    @property
+    def authorization_identity(self) -> str: ...
+
     def start(self) -> None: ...
 
     def is_running(self) -> bool: ...
@@ -253,11 +262,19 @@ class MCPToolRegistrationState:
         supported_tools: list[MCPListedTool] = []
         passthrough_tools: list[str] = []
         unsupported_tools: list[str] = []
+        runtime_names: dict[str, str] = {}
         for tool in self.discovered_tools:
             runtime_tool_name = build_mcp_runtime_tool_name(
                 server_name=tool.server_name,
                 remote_name=tool.remote_name,
             )
+            previous = runtime_names.get(runtime_tool_name)
+            if previous is not None and previous != tool.remote_name:
+                raise ConfigError(
+                    "MCP tool names collide after normalization: "
+                    f"{previous!r} and {tool.remote_name!r} -> {runtime_tool_name!r}."
+                )
+            runtime_names[runtime_tool_name] = tool.remote_name
             try:
                 prepared = prepare_mcp_registration_schema(tool.input_schema)
             except MCPUnsupportedSchemaError as exc:

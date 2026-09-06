@@ -294,6 +294,71 @@ def test_general_adaptive_profile_allows_decompose_control_tool() -> None:
     }
 
 
+def test_restricted_entry_keeps_full_allowed_surface_without_control_tools() -> None:
+    llm_client = _FakeLLMClient()
+    executor = _FakeCommandExecutor()
+    ctx, services = _ctx(llm_client, executor)
+    allowed = frozenset({"file.list_dir", "file.read"})
+    services.runner = SimpleNamespace(
+        tool_api=SimpleNamespace(
+            is_tool_allowed=lambda name: name in allowed,
+            registry=object(),
+        ),
+        options=SimpleNamespace(failure_strategy="halt"),
+    )
+    ctx.decision.reason_code = "entry_tool_call"
+    ctx.decision._entry_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="",
+        tool_calls=[
+            ToolCall(id="call-1", name="file.list_dir", arguments={"path": "."})
+        ],
+    )
+    captured: dict[str, Any] = {}
+
+    def _fake_run_adaptive_tool_loop(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        profile = kwargs["profile"]
+        return AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason="final_text",
+            state=AdaptiveToolLoopState(),
+            allowed_tools=profile.allowed_tools,
+            mode_result=SimpleNamespace(
+                status="done",
+                working_state=ctx.state,
+                message="ok",
+            ),
+        )
+
+    with (
+        patch(
+            "openminion.modules.brain.loop.adaptive.modes._with_exposed_runtime_tools",
+            return_value=allowed,
+        ),
+        patch(
+            "openminion.modules.brain.loop.adaptive.modes.build_runtime_tool_specs",
+            side_effect=lambda _runner, *, allowed_tools, metadata=None: [
+                SimpleNamespace(name=name) for name in sorted(allowed_tools)
+            ],
+        ),
+        patch(
+            "openminion.modules.brain.loop.adaptive.run_adaptive_tool_loop",
+            side_effect=_fake_run_adaptive_tool_loop,
+        ),
+    ):
+        result = ActLoopMode().execute(ctx)
+
+    assert result.status == "done"
+    assert captured["profile"].allowed_tools == allowed
+    assert {spec.name for spec in captured["tool_specs"]} == allowed
+    assert captured["requestable_tool_specs"] is None
+
+
 def test_general_adaptive_does_not_infer_tool_scope_from_user_prose() -> None:
     llm_client = _FakeLLMClient()
     executor = _FakeCommandExecutor()

@@ -65,6 +65,7 @@ def test_bootstrap_builds_service_at_canonical_data_path(tmp_path: Path) -> None
 
 def test_module_factory_forwards_identical_secret_service(monkeypatch) -> None:
     sentinel = object()
+    telemetry = object()
     captured: dict[str, object] = {}
 
     class _Adapter:
@@ -79,14 +80,17 @@ def test_module_factory_forwards_identical_secret_service(monkeypatch) -> None:
     result = tool_factory.create_tool_adapter(
         mode="strict",
         secret_service=sentinel,
+        telemetryctl=telemetry,
     )
 
     assert isinstance(result, _Adapter)
     assert captured["secret_service"] is sentinel
+    assert captured["telemetryctl"] is telemetry
 
 
 def test_service_factory_forwards_identical_secret_service(monkeypatch) -> None:
     sentinel = object()
+    telemetry = object()
     captured: dict[str, object] = {}
 
     def _create_tool_adapter(**kwargs: object) -> object:
@@ -100,9 +104,11 @@ def test_service_factory_forwards_identical_secret_service(monkeypatch) -> None:
         workspace_root=".",
         runtime_config=SimpleNamespace(reactions_enabled=True),
         secret_service=sentinel,
+        telemetryctl=telemetry,
     )
 
     assert captured["secret_service"] is sentinel
+    assert captured["telemetryctl"] is telemetry
 
 
 def test_tool_adapter_closes_injected_service_once(tmp_path: Path) -> None:

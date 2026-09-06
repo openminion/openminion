@@ -73,6 +73,10 @@ class SkillStore(ABC):
         reviewer_id: str,
         reason: str,
         decided_at: str,
+        verification_check: str | None = None,
+        verification_result: str | None = None,
+        verification_evidence_ref: str | None = None,
+        verification_reviewer_id: str | None = None,
     ) -> bool:
         raise NotImplementedError
 

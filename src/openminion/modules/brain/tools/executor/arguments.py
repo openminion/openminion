@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from ...constants import BRAIN_COMMAND_KIND_TOOL
-from ...schemas import Command
+from ...schemas.commands import Command, ToolCommand
 from ...tool_catalog import RunnerToolCatalog
 from ...tool_catalog.runtime import _schema_payload as _spec_like_payload
 
@@ -55,16 +57,23 @@ def sanitize_tool_command_args(
     *,
     command: Command,
 ) -> tuple[dict[str, Any], list[str]]:
-    if command.kind != BRAIN_COMMAND_KIND_TOOL:
+    if command.kind != BRAIN_COMMAND_KIND_TOOL or not isinstance(command, ToolCommand):
         return {}, []
     existing_args = getattr(command, "args", {})
     if not isinstance(existing_args, dict):
         return {}, []
+    tool_name = str(getattr(command, "tool_name", "") or "")
+    catalog = RunnerToolCatalog(runner)
+    args_model = catalog.get_tool_args_model(tool_name)
+    model_validate = getattr(args_model, "model_validate", None)
+    if callable(model_validate):
+        try:
+            existing_args = model_validate(existing_args).model_dump()
+            command.args = dict(existing_args)
+        except ValidationError:
+            pass
     known_keys = _parameter_keys_from_spec_payload(
-        resolve_tool_spec_payload(
-            runner,
-            tool_name=str(getattr(command, "tool_name", "") or ""),
-        )
+        resolve_tool_spec_payload(runner, tool_name=tool_name)
     )
     if not known_keys:
         return dict(existing_args), []

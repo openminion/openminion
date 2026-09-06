@@ -291,12 +291,6 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
     from openminion.cli.parser.flags import add_interactive_session_flags
 
     add_interactive_session_flags(parser)
-    parser.add_argument(
-        "--rich",
-        action="store_true",
-        help="Use the optional Textual renderer instead of the default terminal renderer.",
-    )
-
     subparsers = parser.add_subparsers(dest="command")
     _register_command_modules(subparsers, selected_command=selected_command)
     _hide_suppressed_subcommands(parser)

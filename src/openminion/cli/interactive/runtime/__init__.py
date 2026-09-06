@@ -42,6 +42,7 @@ from .messages import (
     TARGET_KIND_FOCUS as _TARGET_KIND_FOCUS,
     RuntimeMessageMixin,
 )
+from .project import RuntimeProjectMixin
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
 _LIVE_USAGE_THROTTLE_SECONDS = 0.5
@@ -60,6 +61,7 @@ class OpenMinionRuntime(
     RuntimeDelegationMixin,
     RuntimeMCPMixin,
     RuntimeMessageMixin,
+    RuntimeProjectMixin,
 ):
     """ChatRuntimeAPI adapter over APIRuntime."""
 
@@ -123,7 +125,6 @@ class OpenMinionRuntime(
             SettingsResolver(workspace_root=self._working_dir)
         )
         self._pending_candidate_session: Any | None = None
-
         normalized_session_id = str(session_id or "").strip() or None
 
         if bind_immediately and not self._prompt_on_resume:

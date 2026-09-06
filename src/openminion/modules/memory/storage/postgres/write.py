@@ -436,6 +436,8 @@ def apply_outcome_feedback(
                     observed_at=observed_at,
                     feedback_delta=feedback_delta,
                 )
+                if feedback_values is None:
+                    continue
                 store._execute(
                     """
                     UPDATE memory_records SET meta_json = CAST(:meta_json AS JSONB),

@@ -1,7 +1,7 @@
 from typing import Any, ClassVar, Protocol
 
 
-POLICY_INTERFACE_VERSION = "v2"
+POLICY_INTERFACE_VERSION = "v3"
 _REQUIRED_METHODS = (
     "close",
     "mode",
@@ -61,6 +61,7 @@ class PolicyCtlInterface(Protocol):
         ctx: Any,
         *,
         risk_override: Any | None = None,
+        confirmation_preview: Any | None = None,
     ) -> Any: ...  # PolicyDecision
 
     def create_grant(self, grant: Any) -> str: ...  # PolicyGrantInput

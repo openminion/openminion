@@ -114,7 +114,8 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         _resolve_llm_wrapper=lambda _llm_api: None,
     )
 
-    fake_runner = SimpleNamespace(task_manager=object())
+    shared_task_manager = object()
+    fake_runner = SimpleNamespace(task_manager=shared_task_manager)
     captured: dict[str, object] = {}
 
     def _capture_goal_store(path: str, *args, **kwargs):
@@ -203,7 +204,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
                 return_value=SimpleNamespace(),
             )
         )
-        stack.enter_context(
+        tool_api_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.create_tool_api",
                 return_value=SimpleNamespace(),
@@ -248,10 +249,10 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         stack.enter_context(
             mock.patch(
                 "openminion.modules.task.TaskManager.from_cron_repository",
-                return_value=object(),
+                return_value=shared_task_manager,
             )
         )
-        stack.enter_context(
+        runner_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.brain.service.BrainRunner",
                 return_value=fake_runner,
@@ -282,3 +283,5 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     assert captured["mission_db_path"] == expected_runtime_db_path
     assert captured["owns_stores"] is True
     assert captured["goal_db_path"] != session_db_path
+    assert tool_api_factory.call_args.kwargs["task_manager"] is shared_task_manager
+    assert runner_factory.call_args.kwargs["task_manager"] is shared_task_manager

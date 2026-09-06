@@ -14,12 +14,16 @@ The repo now has two bounded GitHub surfaces:
 2. L3 write-authorized smoke actions:
    - `github.commit_files`
    - `github.open_pr`
+   - `github.update_pr` (title/body only)
+   - `github.merge_pr` (profile-gated and disabled by default)
    - `github.post_pr_review`
    - `github.post_pr_comment`
 
-L3 remains deliberately narrow. There are still no `github.merge_pr`,
-`github.close_pr`, `github.delete_branch`, direct default-branch write, or
-force-push tools.
+L3 remains deliberately narrow. There are still no `github.close_pr`,
+`github.delete_branch`, direct default-branch write, or force-push tools. Merge
+requires an exact PR head SHA, explicit expected checks, a bounded merge method,
+an exact project grant, and `provider_config_overrides.github.allow_merge=true`.
+It is not in the default-visible tool set.
 
 ---
 
@@ -140,24 +144,18 @@ reads.
 Each successful tick that produces actionable findings emits:
 
 1. A rendered markdown artifact body (produced by
-   `openminion.tools.task.pr_review.renderer`) held on the
-   `CronRunRoutineSink` and surfaced via a synthetic
-   `artifact://routine/<routine_id>/run-<n>` id on the cron run
-   summary (V1 placeholder per spec D6.2). Operator-readable
-   artifact-store persistence (canonical file path, retention,
-   downloads, indexed metadata) is deferred to the follow-up
-   tracker `routine-artifact-store-delivery`.
+   `openminion.tools.task.pr_review.renderer`) persisted through the existing
+   artifact store before routine cursor progress is committed. The cron run
+   metadata carries the resulting content-addressed artifact reference.
 2. A single `announce` summary line delivered to the originating
    session, of shape:
    `"PR review run for <repo>: reviewed <N> PR(s), <M> finding(s)."`
 
 Idempotent ticks (no head_sha changes) write nothing.
 
-To inspect the rendered markdown body for a given run in V1, read
-the cron run row's `summary` field for the synthetic artifact id
-and either re-run with verbose logging or query the in-process
-sink during a test harness run. The `routine-artifact-store-delivery`
-follow-up will land an operator-readable file path.
+To inspect the rendered markdown body, read the cron run metadata for
+`routine_artifact_id` and resolve that reference through the existing artifact
+store.
 
 ## 6. L3 live smoke flow
 

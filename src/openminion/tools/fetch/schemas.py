@@ -19,7 +19,10 @@ class FetchGetArgs(BaseModel):
     url: str = Field(..., min_length=1, max_length=4096)
     method: Literal["GET", "HEAD"] = "GET"
     headers: dict[str, str] = Field(default_factory=dict)
-    accept: str = Field(default="text/html,text/plain,application/json", max_length=512)
+    accept: str = Field(
+        default="text/html,text/plain,application/json,application/xml,text/xml",
+        max_length=512,
+    )
     timeout_ms: int = Field(default=8000, ge=100, le=30000)
     max_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)
@@ -49,7 +52,10 @@ class FetchHeadArgs(BaseModel):
     url: str = Field(..., min_length=1, max_length=4096)
     method: Literal["HEAD"] = "HEAD"
     headers: dict[str, str] = Field(default_factory=dict)
-    accept: str = Field(default="text/html,text/plain,application/json", max_length=512)
+    accept: str = Field(
+        default="text/html,text/plain,application/json,application/xml,text/xml",
+        max_length=512,
+    )
     timeout_ms: int = Field(default=8000, ge=100, le=30000)
     max_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)

@@ -20,6 +20,14 @@ def test_agent_id_from_context_prefers_context_metadata(monkeypatch) -> None:
     assert agent_id_from_context(ctx) == "meta-agent"
 
 
+def test_agent_id_from_context_prefers_runtime_identity(monkeypatch) -> None:
+    monkeypatch.setenv("OPENMINION_AGENT_ID", "env-agent")
+    ctx = _ctx_with_raw({"context_metadata": {"agent_id": "meta-agent"}})
+    ctx.agent_id = "runtime-agent"
+
+    assert agent_id_from_context(ctx) == "runtime-agent"
+
+
 def test_agent_id_from_context_falls_back_to_env(monkeypatch) -> None:
     monkeypatch.setenv("OPENMINION_AGENT_ID", "env-agent")
     ctx = _ctx_with_raw({})

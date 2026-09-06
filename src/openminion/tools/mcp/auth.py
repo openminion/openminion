@@ -11,6 +11,9 @@ from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 from openminion.base.config.mcp import MCPAuthorizationConfig
+from openminion.base.config.runtime import RuntimeConfig
+from openminion.modules.runtime.sync import run_async_compat
+from openminion.modules.secret.schemas import SecretNotFoundError
 
 
 class MCPTokenStore(Protocol):
@@ -19,6 +22,8 @@ class MCPTokenStore(Protocol):
     def get(self, ref: str) -> str: ...
 
     def set(self, ref: str, value: str) -> None: ...
+
+    def close(self) -> None: ...
 
 
 @dataclass
@@ -33,6 +38,59 @@ class InMemoryMCPTokenStore:
     def set(self, ref: str, value: str) -> None:
         self.values[ref] = value
 
+    def close(self) -> None:
+        return None
+
+
+class SecretServiceMCPTokenStore:
+    """MCP token adapter over OpenMinion's encrypted secret service."""
+
+    def __init__(self, service: Any) -> None:
+        self._service = service
+
+    def get(self, ref: str) -> str:
+        try:
+            return str(self._service.get_secret_sync(ref, namespace="mcp") or "")
+        except SecretNotFoundError:
+            return ""
+
+    def set(self, ref: str, value: str) -> None:
+        run_async_compat(self._service.set_secret(ref, value, namespace="mcp"))
+
+    def close(self) -> None:
+        self._service.close_sync()
+
+
+def build_runtime_mcp_token_store(
+    runtime_config: RuntimeConfig,
+) -> MCPTokenStore | None:
+    """Build encrypted MCP token storage when the runtime secret key is set."""
+
+    servers = runtime_config.mcp_servers
+    needs_store = any(
+        server.enabled
+        and server.authorization.mode == "oauth_pkce"
+        and (
+            server.authorization.access_token_ref
+            or server.authorization.refresh_token_ref
+        )
+        for server in servers
+    )
+    if not needs_store:
+        return None
+
+    from openminion.base.config.env import resolve_environment_config
+    from openminion.base.config.paths import resolve_data_root, resolve_home_root
+    from openminion.modules.secret.factory import build_secret_service
+
+    env = resolve_environment_config(runtime_env=runtime_config.env)
+    home_root = resolve_home_root(env=env)
+    service = build_secret_service(
+        data_root=resolve_data_root(home_root, env=env),
+        env=env,
+    )
+    return SecretServiceMCPTokenStore(service) if service is not None else None
+
 
 @dataclass(frozen=True)
 class MCPOAuthMetadata:
@@ -41,6 +99,8 @@ class MCPOAuthMetadata:
     registration_endpoint: str = ""
     revocation_endpoint: str = ""
     issuer: str = ""
+    code_challenge_methods_supported: tuple[str, ...] = ()
+    client_id_metadata_document_supported: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +156,13 @@ def discover_oauth_metadata(
         raise ValueError(
             "OAuth metadata must include authorization_endpoint and token_endpoint"
         )
+    code_challenge_methods = tuple(
+        str(item).strip()
+        for item in payload.get("code_challenge_methods_supported", [])
+        if str(item).strip()
+    )
+    if "S256" not in code_challenge_methods:
+        raise ValueError("OAuth metadata must advertise PKCE S256 support")
     return MCPOAuthMetadata(
         authorization_endpoint=authorization_endpoint,
         token_endpoint=token_endpoint,
@@ -104,6 +171,10 @@ def discover_oauth_metadata(
         ).strip(),
         revocation_endpoint=str(payload.get("revocation_endpoint", "") or "").strip(),
         issuer=str(payload.get("issuer", "") or "").strip(),
+        code_challenge_methods_supported=code_challenge_methods,
+        client_id_metadata_document_supported=(
+            payload.get("client_id_metadata_document_supported") is True
+        ),
     )
 
 
@@ -120,6 +191,7 @@ def build_authorization_url(
     metadata: MCPOAuthMetadata,
     challenge: MCPOAuthPKCEChallenge,
     state: str,
+    resource: str = "",
 ) -> str:
     query = {
         "response_type": "code",
@@ -131,6 +203,8 @@ def build_authorization_url(
     }
     if config.scope:
         query["scope"] = config.scope
+    if resource:
+        query["resource"] = resource
     return f"{metadata.authorization_endpoint}?{urllib_parse.urlencode(query)}"
 
 
@@ -141,21 +215,25 @@ def exchange_authorization_code(
     code: str,
     challenge: MCPOAuthPKCEChallenge,
     authorization_issuer: str = "",
+    resource: str = "",
     timeout_seconds: float = 10.0,
 ) -> MCPOAuthTokenState:
     _validate_authorization_issuer(
         expected=metadata.issuer,
         received=authorization_issuer,
     )
+    fields = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": config.client_id,
+        "redirect_uri": config.redirect_uri,
+        "code_verifier": challenge.code_verifier,
+    }
+    if resource:
+        fields["resource"] = resource
     return _request_token(
         metadata.token_endpoint,
-        {
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": config.client_id,
-            "redirect_uri": config.redirect_uri,
-            "code_verifier": challenge.code_verifier,
-        },
+        fields,
         issuer=metadata.issuer,
         timeout_seconds=timeout_seconds,
     )
@@ -166,15 +244,19 @@ def refresh_oauth_access_token(
     config: MCPAuthorizationConfig,
     metadata: MCPOAuthMetadata,
     refresh_token: str,
+    resource: str = "",
     timeout_seconds: float = 10.0,
 ) -> MCPOAuthTokenState:
+    fields = {
+        "grant_type": "refresh_token",
+        "client_id": config.client_id,
+        "refresh_token": refresh_token,
+    }
+    if resource:
+        fields["resource"] = resource
     return _request_token(
         metadata.token_endpoint,
-        {
-            "grant_type": "refresh_token",
-            "client_id": config.client_id,
-            "refresh_token": refresh_token,
-        },
+        fields,
         issuer=metadata.issuer,
         timeout_seconds=timeout_seconds,
     )
@@ -283,6 +365,8 @@ __all__ = [
     "MCPOAuthPKCEChallenge",
     "MCPOAuthTokenState",
     "MCPTokenStore",
+    "SecretServiceMCPTokenStore",
+    "build_runtime_mcp_token_store",
     "build_authorization_url",
     "build_pkce_challenge",
     "discover_oauth_metadata",

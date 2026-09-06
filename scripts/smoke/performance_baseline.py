@@ -621,6 +621,8 @@ def _base_metrics() -> dict[str, Any]:
     return {
         "wall_time_ms": None,
         "wall_time_ns": None,
+        "process_cpu_time_ns": None,
+        "python_gc_collection_count": None,
         "time_to_first_visible_text_ms": None,
         "phase_timings_ms": {},
         "phase_timings_ns": {},
@@ -838,6 +840,10 @@ def _run_with_metrics(
     metrics = _base_metrics()
     tracemalloc.start()
     before_snapshot = tracemalloc.take_snapshot()
+    gc_collections_started = sum(
+        int(generation["collections"]) for generation in gc.get_stats()
+    )
+    process_cpu_started_ns = time.process_time_ns()
     started_ns = time.perf_counter_ns()
     notes: list[str] = []
     error: str | None = None
@@ -845,9 +851,29 @@ def _run_with_metrics(
         notes.extend(action(metrics))
     except Exception as exc:  # noqa: BLE001 - baseline artifacts must record failure
         error = f"{type(exc).__name__}: {exc}"
-    command_value = str(metrics.pop("_command_override", command))
-    identity_value = metrics.pop("_measurement_identity_override", None)
     harness_wall_ns = _elapsed_ns(started_ns)
+    process_cpu_time_ns = time.process_time_ns() - process_cpu_started_ns
+    python_gc_collection_count = (
+        sum(int(generation["collections"]) for generation in gc.get_stats())
+        - gc_collections_started
+    )
+    identity_value = metrics.pop("_measurement_identity_override", None)
+    boundary_identity = (
+        identity_value
+        if isinstance(identity_value, dict)
+        else measurement_identity or {}
+    )
+    subprocess_boundary = (
+        boundary_identity.get("measured_boundary") == SUT_BOUNDARY_SUBPROCESS
+    )
+    if subprocess_boundary:
+        availability_reasons = metrics.setdefault("availability_reasons", {})
+        for key in ("process_cpu_time_ns", "python_gc_collection_count"):
+            availability_reasons[key] = "not_supported_for_subprocess"
+    else:
+        metrics["process_cpu_time_ns"] = process_cpu_time_ns
+        metrics["python_gc_collection_count"] = python_gc_collection_count
+    command_value = str(metrics.pop("_command_override", command))
     override_wall_ns = metrics.pop("_wall_time_ns_override", None)
     metrics["wall_time_ns"] = (
         int(override_wall_ns) if isinstance(override_wall_ns, int) else harness_wall_ns
@@ -857,7 +883,7 @@ def _run_with_metrics(
     _capture_tracemalloc_metrics(
         metrics,
         before_snapshot,
-        subprocess_boundary=isinstance(metrics.get("_process_metrics_override"), dict),
+        subprocess_boundary=subprocess_boundary,
     )
     resolved_identity = dict(
         identity_value
@@ -1234,15 +1260,10 @@ def _measure_import_surface(
         if not isinstance(imported, list):
             raise RuntimeError("import surface returned malformed module facts")
         names = [str(name) for name in imported]
-        textual_modules = [
-            name for name in names if name == "textual" or name.startswith("textual.")
-        ]
         metrics["imported_module_count"] = len(names)
         metrics["openminion_module_count"] = sum(
             name == "openminion" or name.startswith("openminion.") for name in names
         )
-        metrics["textual_module_count"] = len(textual_modules)
-        metrics["textual_modules"] = textual_modules
         metrics["measured_boundary"] = SUT_BOUNDARY_SUBPROCESS
         return [
             f"Fresh subprocess imports {module_name} and reports exact module names.",
@@ -4335,11 +4356,9 @@ def _measure_retrieval_breakdown_profile(options: RunOptions) -> ScenarioRun:
             filters = RetrievalFilters()
             scope = {"session": "pnt20"}
             strategy = service._resolve_strategy(
-                query=query,
                 purpose="verify",
                 strategy="auto",
                 scope=scope,
-                filters=filters,
             )
             candidate_started_ns = time.perf_counter_ns()
             candidates = service._generate_candidates(
@@ -5061,6 +5080,12 @@ def summarize_runs(
             ),
             "wall_time_ns": _metric_summary(
                 metric.get("wall_time_ns") for metric in metrics
+            ),
+            "process_cpu_time_ns": _metric_summary(
+                metric.get("process_cpu_time_ns") for metric in metrics
+            ),
+            "python_gc_collection_count": _metric_summary(
+                metric.get("python_gc_collection_count") for metric in metrics
             ),
             "rss_delta_bytes": _metric_summary(
                 metric.get("rss_delta_bytes") for metric in metrics

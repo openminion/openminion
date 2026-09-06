@@ -148,6 +148,10 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
             authority_class TEXT NOT NULL,
             reviewer_id TEXT,
             reason TEXT,
+            verification_check TEXT,
+            verification_result TEXT,
+            verification_evidence_ref TEXT,
+            verification_reviewer_id TEXT,
             created_at TEXT NOT NULL,
             decided_at TEXT,
             PRIMARY KEY (skill_id, version_hash),
@@ -155,6 +159,18 @@ def _create_catalog_schema(record_store: RecordStore) -> None:
         )
         """
     )
+    for column_name in (
+        "verification_check",
+        "verification_result",
+        "verification_evidence_ref",
+        "verification_reviewer_id",
+    ):
+        _ensure_column(
+            record_store,
+            table_name="skill_version_admissions",
+            column_name=column_name,
+            ddl_tail="TEXT",
+        )
     _backfill_legacy_catalog_admission(record_store)
     record_store.execute_count(
         """

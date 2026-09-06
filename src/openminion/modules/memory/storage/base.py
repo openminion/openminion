@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import list as list_type
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from sophiagraph.query import (
@@ -31,6 +32,23 @@ def record_matches_namespaces(
     return any(record.effective_namespace.matches(item) for item in namespaces)
 
 
+def register_feedback_command(meta: dict[str, Any], command_id: str) -> bool:
+    normalized_command_id = str(command_id or "").strip()
+    command_ids = [
+        normalized
+        for item in meta.get("outcome_feedback_command_ids", [])
+        if (normalized := str(item or "").strip())
+    ]
+    legacy_command_id = str(meta.get("last_outcome_command_id") or "").strip()
+    if legacy_command_id and legacy_command_id not in command_ids:
+        command_ids.append(legacy_command_id)
+    if normalized_command_id in command_ids:
+        return False
+    command_ids.append(normalized_command_id)
+    meta["outcome_feedback_command_ids"] = command_ids
+    return True
+
+
 @runtime_checkable
 class MemoryStore(Protocol):
     """Protocol describing the persistence boundary for openminion-memory."""
@@ -58,6 +76,8 @@ class MemoryStore(Protocol):
     def tombstone(self, scope: str, type: MemoryType, key: str) -> None: ...
 
     def list(self, options: ListQueryOptions) -> list[MemoryRecord]: ...
+
+    def list_all(self) -> list_type[MemoryRecord]: ...
 
     def search(self, options: SearchQueryOptions) -> list[MemoryRecord]: ...
 

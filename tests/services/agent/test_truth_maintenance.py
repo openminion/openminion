@@ -56,7 +56,7 @@ def _make_adapter(
     return store, service, adapter
 
 
-def test_session_lifecycle_runs_capacity_and_purge(tmp_path: Path) -> None:
+def test_session_lifecycle_runs_capacity_without_hard_purge(tmp_path: Path) -> None:
     store, service, adapter = _make_adapter(tmp_path)
     now = datetime.now(timezone.utc)
 
@@ -107,7 +107,9 @@ def test_session_lifecycle_runs_capacity_and_purge(tmp_path: Path) -> None:
     remaining = service.list(ListQueryOptions(scopes=["agent:truth-agent"], limit=600))
     assert len(remaining) <= 500
     assert any(record.id == "pin-1" for record in remaining)
-    assert store.get("purge-me") is None
+    deleted = store.get("purge-me")
+    assert deleted is not None
+    assert deleted.is_deleted is True
 
 
 @pytest.mark.postgres

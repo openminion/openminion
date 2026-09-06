@@ -52,12 +52,14 @@ def build_runtime_bootstrap(
     workspace_root: object | None = None,
     run_root: object | None = None,
     strict: bool = True,
+    plugin_registrars: tuple[tuple[str, object], ...] = (),
 ) -> RuntimeBootstrap:
     return _runtime_build.build_runtime_bootstrap(
         config=config,
         workspace_root=workspace_root,
         run_root=run_root,
         strict=strict,
+        plugin_registrars=plugin_registrars,
         tool_bootstrap_entries=_TOOL_BOOTSTRAP_ENTRIES,
     )
 
@@ -73,6 +75,5 @@ __all__ = [
     "build_runtime_bootstrap",
     "wire_default_tool_registry_manager",
     "_ToolBootstrapEntry",
-    "_ToolBootstrapRecord",
     "_TOOL_BOOTSTRAP_ENTRIES",
 ]

@@ -76,14 +76,26 @@ class MCPScopedToolRegistryView(ToolRegistry):
     def mcp_manager(self) -> Any:
         return self._base_registry.mcp_manager
 
+    @property
+    def exposure_service(self) -> Any:
+        return self._base_registry.exposure_service
+
+    @property
+    def temporary_registration_lock(self) -> Any:
+        return self._base_registry.temporary_registration_lock
+
     def register(self, tool: Any) -> None:
         raise RuntimeError("MCPScopedToolRegistryView is read-only")
 
     def unregister(self, tool_name: str) -> None:
         raise RuntimeError("MCPScopedToolRegistryView is read-only")
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._base_registry, name)
+    def bind_sidecar_autostart(self, callback: Any) -> None:
+        self._base_registry.bind_sidecar_autostart(callback)
+
+    def ensure_sidecar_autostart(self, **kwargs: Any) -> dict[str, Any]:
+        result: dict[str, Any] = self._base_registry.ensure_sidecar_autostart(**kwargs)
+        return result
 
 
 def scoped_mcp_registry_view(

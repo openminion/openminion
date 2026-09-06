@@ -37,8 +37,9 @@ class RuntimeMemoryAssembly:
     def start(self) -> None:
         if self._started or self._close_result is not None:
             return
-        if self.scheduler is not None:
+        if self.scheduler is not None and self.vector_adapter is not None:
             self.scheduler.bind_record_source(self.memctl)
+            self.vector_adapter.sync_pending_records()
             self.scheduler.start()
         self._started = True
 

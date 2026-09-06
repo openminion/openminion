@@ -127,6 +127,12 @@ def resolve_task_surface_source(runtime: Any | None) -> Any | None:
     if direct is not None:
         return direct
 
+    api_runtime = getattr(runtime, "_rt", None)
+    if api_runtime is not None and api_runtime is not runtime:
+        owner = resolve_task_surface_source(api_runtime)
+        if owner is not None:
+            return owner
+
     for attr in ("agent", "gateway"):
         nested = getattr(runtime, attr, None)
         owner = _first_task_owner(nested)

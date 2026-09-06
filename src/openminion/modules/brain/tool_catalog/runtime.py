@@ -139,5 +139,29 @@ class RunnerToolCatalog:
                     return payload
         return None
 
+    def get_tool_args_model(self, name: str) -> Any | None:
+        token = str(name or "").strip()
+        if not token:
+            return None
+        normalized = normalize_tool_name_for_brain(token) or token
+        candidates = (token, normalized)
+        if not any(self._is_allowed(candidate) for candidate in candidates):
+            return None
+        tool_api = getattr(self.runner, "tool_api", None)
+        registry = getattr(tool_api, "registry", None) if tool_api else None
+        get_tool = getattr(registry, "get", None)
+        if callable(get_tool):
+            for candidate in candidates:
+                tool = _call_optional(get_tool, candidate)
+                if tool is not None:
+                    return getattr(tool, "args_model", None)
+        tools = getattr(registry, "_tools", None)
+        if isinstance(tools, dict):
+            for candidate in candidates:
+                tool = tools.get(candidate)
+                if tool is not None:
+                    return getattr(tool, "args_model", None)
+        return None
+
 
 __all__ = ["RunnerToolCatalog"]

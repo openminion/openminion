@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 
+from .auth import MCPTokenStore, build_runtime_mcp_token_store
 from .elicitation import OpenMinionElicitationHandler
 from .interfaces import (
     MCPCapabilityChangeListener,
@@ -81,6 +82,7 @@ class MCPFleetManager:
         progress_listener: MCPProgressListener | None = None,
         discovery_cache_ttl_seconds: float = 0.0,
         deferred_discovery_enabled: bool = False,
+        token_store: MCPTokenStore | None = None,
     ) -> None:
         self._client_capability_state = (
             client_capability_state or _default_client_capability_state(servers)
@@ -101,15 +103,18 @@ class MCPFleetManager:
             float(discovery_cache_ttl_seconds or 0.0),
         )
         self._deferred_discovery_enabled = bool(deferred_discovery_enabled)
+        self._token_store = token_store
         self._discovery_cache: dict[str, _DiscoveryCacheEntry] = {}
+        enabled_servers = [server for server in servers if server.enabled]
         self._sessions = {
             server.name: MCPServerSession(
                 server,
                 client_capability_state=self._client_capability_state,
                 capability_change_handler=self._on_capability_change,
                 progress_listener=self._progress_listener,
+                token_store=token_store,
             )
-            for server in servers
+            for server in enabled_servers
         }
         self._refresh_pending: set[tuple[str, str]] = set()
         self._refresh_executor = (
@@ -168,6 +173,7 @@ class MCPFleetManager:
             client_capability_state=client_capability_state,
             discovery_cache_ttl_seconds=runtime_config.mcp_discovery_cache_ttl_seconds,
             deferred_discovery_enabled=runtime_config.mcp_deferred_discovery_enabled,
+            token_store=build_runtime_mcp_token_store(runtime_config),
         )
 
     def bind_sampling_executor(self, executor: Any) -> None:
@@ -292,6 +298,7 @@ class MCPFleetManager:
             ok=True,
             restart_total=session.restart_total,
         )
+        self._clear_failed_server(session.server_name)
         return result
 
     def get_prompt(
@@ -412,6 +419,42 @@ class MCPFleetManager:
                 for primitive, entry in self._discovery_cache.items()
             }
 
+    def server_status_snapshot(self) -> dict[str, dict[str, Any]]:
+        metrics = self.mcp_server_metrics()
+        logs = self.mcp_server_logs(limit=1)
+        failures = self.failed_servers
+        with self._state_lock:
+            return {
+                name: {
+                    "transport": session.server_config.transport,
+                    "trusted": session.server_config.trusted,
+                    "tool_names": self._tool_catalog_by_server.get(name, ()),
+                    "prompt_names": self._prompt_catalog_by_server.get(name, ()),
+                    "resource_uris": self._resource_catalog_by_server.get(name, ()),
+                    "resource_template_uris": (
+                        self._resource_template_catalog_by_server.get(name, ())
+                    ),
+                    "metrics": dict(metrics.get(name, {})),
+                    "recent_log": logs.get(name, [])[-1] if logs.get(name) else None,
+                    "failure": failures.get(name),
+                    "sandbox": session.server_config.stdio_sandbox,
+                }
+                for name, session in self._sessions.items()
+            }
+
+    def browse_snapshot(self) -> dict[str, dict[str, tuple[str, ...]]]:
+        with self._state_lock:
+            return {
+                name: {
+                    "prompts": self._prompt_catalog_by_server.get(name, ()),
+                    "resources": self._resource_catalog_by_server.get(name, ()),
+                    "resource_templates": (
+                        self._resource_template_catalog_by_server.get(name, ())
+                    ),
+                }
+                for name in self._sessions
+            }
+
     def close_server(self, server_name: str) -> None:
         session = self._sessions.get(str(server_name or "").strip())
         if session is None:
@@ -426,6 +469,8 @@ class MCPFleetManager:
             refresh_executor.shutdown(wait=True, cancel_futures=True)
         for session in self._sessions.values():
             session.close(reset_initialized=True)
+        if self._token_store is not None:
+            self._token_store.close()
 
     def _require_session(self, server_name: str) -> MCPServerSession:
         session = self._sessions.get(str(server_name or "").strip())
@@ -446,11 +491,12 @@ class MCPFleetManager:
         if cached is not None:
             return list(cached)
 
+        discovered: list[Any] = []
         if not parallel:
-            discovered: list[Any] = []
             for server_name, session in self._sessions.items():
                 items = self._discover_for_session(primitive=primitive, session=session)
                 discovered.extend(items)
+                self._clear_failed_server(server_name, primitive=primitive)
                 self._update_catalog(
                     primitive=primitive,
                     server_name=server_name,
@@ -459,7 +505,6 @@ class MCPFleetManager:
             self._store_discovery_cache(primitive=primitive, items=discovered)
             return discovered
 
-        discovered: list[Any] = []
         max_workers = min(max(len(self._sessions), 1), 8)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_map = {
@@ -484,6 +529,7 @@ class MCPFleetManager:
                     )
                     continue
                 discovered.extend(items)
+                self._clear_failed_server(server_name, primitive=primitive)
                 self._update_catalog(
                     primitive=primitive,
                     server_name=server_name,
@@ -599,6 +645,7 @@ class MCPFleetManager:
             )
             return
         self._update_catalog(primitive=primitive, server_name=server_name, items=items)
+        self._clear_failed_server(server_name, primitive=primitive)
         new_catalog = set(self._catalog_for(primitive, server_name))
         added = tuple(sorted(new_catalog - old_catalog))
         removed = tuple(sorted(old_catalog - new_catalog))
@@ -692,7 +739,15 @@ class MCPFleetManager:
                 server_name=server_name,
                 reason_code=exc.reason_code or primitive,
                 message=str(exc),
+                primitive=primitive,
             )
+
+    def _clear_failed_server(self, server_name: str, *, primitive: str = "") -> None:
+        with self._state_lock:
+            failure = self._failed_servers.get(server_name)
+            if primitive and failure is not None and failure.primitive != primitive:
+                return
+            self._failed_servers.pop(server_name, None)
 
     def _record_call_metric(
         self,

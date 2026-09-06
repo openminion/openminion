@@ -91,6 +91,7 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
     assert started["trace_artifact_paths"] == ["llm/request.json"]
     assert started["trace_artifacts_complete"] is False
     assert started["provider_name"] == "provider-1"
+    assert started["provider"] == "provider-1"
     assert started["service_vendor"] == "cortensor"
     assert started["request_id"] == "req-1"
     assert started["trace_id"] == "trace-1"
@@ -102,6 +103,8 @@ async def test_response_artifacts_publish_before_completed_event() -> None:
     assert completed["trace_artifacts_complete"] is True
     assert completed["cost_usd"] == 0.001
     assert completed["cost_source"] == "provider"
+    assert completed["provider"] == "provider-1"
+    assert completed["model"] == "model-1"
 
 
 @pytest.mark.asyncio

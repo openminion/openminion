@@ -32,6 +32,7 @@ from openminion.modules.brain.execution.delegation_policy import (
 from openminion.modules.brain.execution.worktree_children import (
     allocate_child_worktree,
     bind_runner_tool_workspace,
+    child_verifier_evidence,
     finalize_child_worktree,
 )
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
@@ -496,7 +497,12 @@ class OrchestrateMode:
             result_status = result.status
         finally:
             child_artifact = finalize_child_worktree(
-                ctx, lease=lease, status=result_status
+                ctx,
+                lease=lease,
+                status=result_status,
+                validation=child_verifier_evidence(result)
+                if result_status != "error"
+                else None,
             )
         return result, child_artifact
 

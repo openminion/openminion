@@ -50,6 +50,21 @@ class A2ADelegateApi(Protocol):
 
     def cancel(self, *, task_id: str) -> A2ADelegateResult: ...
 
+    def review_readonly(
+        self,
+        *,
+        reviewer_agent_id: str,
+        objective: str,
+        criteria: list[str],
+        readable_base_repository: str,
+        bundle_ref: str,
+        target_digest: str,
+        diff: str,
+        verifier_refs: list[str],
+        repository_instructions: str,
+        timeout_seconds: int,
+    ) -> A2ADelegateResult: ...
+
 
 _SUCCESS_STATUS = "success"
 _RUNNING_STATUSES = frozenset({"pending", "running"})
@@ -223,40 +238,49 @@ class A2aRuntimeDelegateAdapter:
         setter = getattr(owner, "set_approval_callback", None)
         return setter(callback) if callable(setter) else None
 
-    def review_readonly(
+    def _reject_review_target(
         self,
         *,
         reviewer_agent_id: str,
-        objective: str,
-        criteria: list[str],
-        worktree: str,
-        diff: str,
+        bundle_ref: str,
+        target_digest: str,
         verifier_refs: list[str],
-        repository_instructions: str,
-        timeout_seconds: int,
     ) -> A2ADelegateResult:
-        instruction = "\n".join(
-            (
-                f"Review objective: {objective}",
-                f"Criteria: {', '.join(criteria)}",
-                f"Worktree: {worktree}",
-                f"Diff: {diff}",
-                f"Verifier refs: {', '.join(verifier_refs)}",
-                f"Repository instructions: {repository_instructions}",
-            )
+        session_id, turn_id, payload, _observability = self._handoff_context(
+            reviewer_agent_id,
+            review_target_digest=target_digest,
+            review_bundle_ref=bundle_ref,
+            review_verifier_refs=verifier_refs,
         )
-        result = self.delegate(
-            agent_id=reviewer_agent_id,
-            instruction=instruction,
-            timeout_seconds=timeout_seconds,
-            permission_mode="readonly",
-            workspace_root=worktree,
-            cwd=worktree,
+        self._emit_handoff(
+            session_id, turn_id, "agent.handoff.started", payload, "started"
         )
-        if not result.ok:
-            return result
-        child_id = result.outputs.get("child_agent_id")
+        self._emit_handoff(
+            session_id,
+            turn_id,
+            "agent.handoff.failed",
+            {**payload, "review_outcome": "denied", "reason": "target_mismatch"},
+            "failed",
+        )
+        return A2ADelegateResult(
+            ok=False,
+            status="failed",
+            error_code="A2A_REVIEW_TARGET_MISMATCH",
+            error_message="readonly review target digest does not match the diff",
+            target_agent_id=reviewer_agent_id,
+        )
+
+    @staticmethod
+    def _review_receipt(
+        result: A2ADelegateResult,
+        *,
+        reviewer_agent_id: str,
+        bundle_ref: str,
+        target_digest: str,
+        verifier_refs: list[str],
+    ) -> dict[str, Any] | None:
         findings = result.outputs.get("findings")
+        passed = result.outputs.get("passed")
         valid_findings = isinstance(findings, list) and all(
             isinstance(finding, Mapping)
             and all(
@@ -265,17 +289,124 @@ class A2aRuntimeDelegateAdapter:
             )
             for finding in findings
         )
-        if not isinstance(child_id, str) or not child_id.strip() or not valid_findings:
-            return A2ADelegateResult(
+        if (
+            result.outputs.get("child_agent_id") != reviewer_agent_id
+            or not valid_findings
+            or not isinstance(passed, bool)
+            or result.outputs.get("target_digest") != target_digest
+            or result.outputs.get("verifier_refs") != verifier_refs
+        ):
+            return None
+        return {
+            "reviewer_agent_id": reviewer_agent_id,
+            "bundle_ref": bundle_ref,
+            "target_digest": target_digest,
+            "passed": passed,
+            "findings": findings,
+            "verifier_refs": list(verifier_refs),
+        }
+
+    def review_readonly(
+        self,
+        *,
+        reviewer_agent_id: str,
+        objective: str,
+        criteria: list[str],
+        readable_base_repository: str,
+        bundle_ref: str,
+        target_digest: str,
+        diff: str,
+        verifier_refs: list[str],
+        repository_instructions: str,
+        timeout_seconds: int,
+    ) -> A2ADelegateResult:
+        if hashlib.sha256(diff.encode("utf-8")).hexdigest() != target_digest:
+            return self._reject_review_target(
+                reviewer_agent_id=reviewer_agent_id,
+                bundle_ref=bundle_ref,
+                target_digest=target_digest,
+                verifier_refs=verifier_refs,
+            )
+        instruction = "\n".join(
+            (
+                f"Review objective: {objective}",
+                f"Criteria: {', '.join(criteria)}",
+                f"Readable base repository: {readable_base_repository}",
+                f"Immutable child bundle: {bundle_ref}",
+                f"Target digest: {target_digest}",
+                f"Diff: {diff}",
+                f"Verifier refs: {', '.join(verifier_refs)}",
+                f"Repository instructions: {repository_instructions}",
+            )
+        )
+        result, session_id, turn_id, handoff_payload = self._delegate_request(
+            agent_id=reviewer_agent_id,
+            instruction=instruction,
+            timeout_seconds=timeout_seconds,
+            permission_mode="readonly",
+            workspace_root=readable_base_repository,
+            cwd=readable_base_repository,
+            review_target_digest=target_digest,
+            review_bundle_ref=bundle_ref,
+            review_verifier_refs=verifier_refs,
+        )
+        if not result.ok:
+            self._emit_handoff(
+                session_id,
+                turn_id,
+                "agent.handoff.failed",
+                {**handoff_payload, "review_outcome": "denied"},
+                "failed",
+            )
+            return result
+        receipt = self._review_receipt(
+            result,
+            reviewer_agent_id=reviewer_agent_id,
+            bundle_ref=bundle_ref,
+            target_digest=target_digest,
+            verifier_refs=verifier_refs,
+        )
+        if receipt is None:
+            invalid = A2ADelegateResult(
                 ok=False,
                 status="failed",
                 error_code="A2A_REVIEW_INVALID_RESULT",
-                error_message="readonly review requires child identity and findings",
+                error_message=(
+                    "readonly review requires child identity, findings, verifier refs, "
+                    "pass status, and the exact target digest"
+                ),
                 target_agent_id=result.target_agent_id,
                 trace_id=result.trace_id,
                 task_id=result.task_id,
                 outputs=result.outputs,
             )
+            self._emit_handoff(
+                session_id,
+                turn_id,
+                "agent.handoff.failed",
+                {
+                    **handoff_payload,
+                    "review_outcome": "denied",
+                    "reason": "invalid_result",
+                },
+                "failed",
+            )
+            return invalid
+        result.outputs["review_receipt"] = receipt
+        self._emit_handoff(
+            session_id,
+            turn_id,
+            "agent.handoff.completed",
+            {
+                **handoff_payload,
+                "reviewer_agent_id": reviewer_agent_id,
+                "review_outcome": (
+                    "passed" if receipt["passed"] else "correction_required"
+                ),
+                "finding_count": len(receipt["findings"]),
+            },
+            "completed",
+        )
         return result
 
     def _idempotency_key(
@@ -303,8 +434,13 @@ class A2aRuntimeDelegateAdapter:
         return f"task-delegate::{parent_session_id or self._parent_agent_id or 'agent'}"
 
     def _handoff_context(
-        self, target: str
-    ) -> tuple[str, str, dict[str, str], dict | None]:
+        self,
+        target: str,
+        *,
+        review_target_digest: str = "",
+        review_bundle_ref: str = "",
+        review_verifier_refs: list[str] | None = None,
+    ) -> tuple[str, str, dict[str, Any], dict | None]:
         session_id = self._observability.get("session_id", "")
         turn_id = self._observability.get("turn_id", "")
         invocation_id = self._observability.get("invocation_id", "")
@@ -313,11 +449,20 @@ class A2aRuntimeDelegateAdapter:
         if not traceparent and invocation_id and execution_id:
             traceparent = build_execution_traceparent(invocation_id, execution_id)
         handoff_id = str(uuid4())
-        payload = {
+        payload: dict[str, Any] = {
             "handoff_id": handoff_id,
             "handoff_role": "caller",
             "target_agent": target,
         }
+        if review_target_digest:
+            payload.update(
+                {
+                    "handoff_kind": "readonly_review",
+                    "target_digest": review_target_digest,
+                    "bundle_ref": review_bundle_ref,
+                    "verifier_refs": list(review_verifier_refs or []),
+                }
+            )
         if not (invocation_id and execution_id and traceparent):
             return session_id, turn_id, payload, None
         return (
@@ -390,7 +535,7 @@ class A2aRuntimeDelegateAdapter:
             trace_id=idempotency_key,
         )
 
-    def delegate(
+    def _delegate_request(
         self,
         *,
         agent_id: str,
@@ -400,7 +545,10 @@ class A2aRuntimeDelegateAdapter:
         permission_mode: str = "ask",
         workspace_root: str = "",
         cwd: str = "",
-    ) -> A2ADelegateResult:
+        review_target_digest: str = "",
+        review_bundle_ref: str = "",
+        review_verifier_refs: list[str] | None = None,
+    ) -> tuple[A2ADelegateResult, str, str, dict[str, Any]]:
         target = str(agent_id or "").strip()
         text = str(instruction or "").strip()
         normalized_mode = str(mode or "sync").strip().lower()
@@ -411,12 +559,17 @@ class A2aRuntimeDelegateAdapter:
         if timeout <= 0:
             timeout = TOOL_A2A_DELEGATE_DEFAULT_TIMEOUT_SECONDS
         if not target or not text:
-            return A2ADelegateResult(
-                ok=False,
-                status="failed",
-                error_code="TASK_DELEGATE_INVALID_ARGS",
-                error_message="task.delegate requires agent_id and instruction.",
-                target_agent_id=target,
+            return (
+                A2ADelegateResult(
+                    ok=False,
+                    status="failed",
+                    error_code="TASK_DELEGATE_INVALID_ARGS",
+                    error_message="task.delegate requires agent_id and instruction.",
+                    target_agent_id=target,
+                ),
+                "",
+                "",
+                {},
             )
 
         normalized_workspace_root = str(workspace_root or "").strip()
@@ -429,7 +582,10 @@ class A2aRuntimeDelegateAdapter:
         )
         trace_id = idem
         session_id, turn_id, handoff_payload, observability = self._handoff_context(
-            target
+            target,
+            review_target_digest=review_target_digest,
+            review_bundle_ref=review_bundle_ref,
+            review_verifier_refs=review_verifier_refs,
         )
         self._emit_handoff(
             session_id,
@@ -452,21 +608,19 @@ class A2aRuntimeDelegateAdapter:
                 session_id=self._delegation_session_id(),
             )
         except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
-            self._emit_handoff(
+            _LOG.warning("task.delegate A2A call failed: %s", exc)
+            return (
+                A2ADelegateResult(
+                    ok=False,
+                    status="failed",
+                    error_code="A2A_RUNTIME_ERROR",
+                    error_message=str(exc),
+                    target_agent_id=target,
+                    trace_id=trace_id,
+                ),
                 session_id,
                 turn_id,
-                "agent.handoff.failed",
                 {**handoff_payload, "error": {"type": type(exc).__name__}},
-                "failed",
-            )
-            _LOG.warning("task.delegate A2A call failed: %s", exc)
-            return A2ADelegateResult(
-                ok=False,
-                status="failed",
-                error_code="A2A_RUNTIME_ERROR",
-                error_message=str(exc),
-                target_agent_id=target,
-                trace_id=trace_id,
             )
 
         result = map_a2a_delegate_result(
@@ -475,13 +629,36 @@ class A2aRuntimeDelegateAdapter:
             trace_id=trace_id,
             async_requested=normalized_mode == "async",
         )
-        self._emit_handoff(
-            session_id,
-            turn_id,
-            "agent.handoff.completed" if result.ok else "agent.handoff.failed",
-            handoff_payload,
-            "completed" if result.ok else "failed",
+        return result, session_id, turn_id, handoff_payload
+
+    def delegate(
+        self,
+        *,
+        agent_id: str,
+        instruction: str,
+        timeout_seconds: int,
+        mode: str = "sync",
+        permission_mode: str = "ask",
+        workspace_root: str = "",
+        cwd: str = "",
+    ) -> A2ADelegateResult:
+        result, session_id, turn_id, handoff_payload = self._delegate_request(
+            agent_id=agent_id,
+            instruction=instruction,
+            timeout_seconds=timeout_seconds,
+            mode=mode,
+            permission_mode=permission_mode,
+            workspace_root=workspace_root,
+            cwd=cwd,
         )
+        if handoff_payload:
+            self._emit_handoff(
+                session_id,
+                turn_id,
+                "agent.handoff.completed" if result.ok else "agent.handoff.failed",
+                handoff_payload,
+                "completed" if result.ok else "failed",
+            )
         return result
 
     def status(self, *, task_id: str) -> A2ADelegateResult:

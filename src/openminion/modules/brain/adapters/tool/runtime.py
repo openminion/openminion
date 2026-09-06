@@ -4,16 +4,14 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, cast
 
-from openminion.base.logging import get_logger
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
-    BRAIN_JOB_STATUS_RUNNING,
     BRAIN_STATE_ERROR,
 )
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
@@ -33,7 +31,7 @@ from openminion.modules.tool import (
 )
 from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
+from openminion.modules.tool.plugin_api import PolicyAdapter
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
@@ -48,25 +46,31 @@ from .command_metadata import (
     _runtime_workspace_from_command,
 )
 from .blockchain_authorization import consume_blockchain_send_authorization
+from .github_merge import execute_github_merge_pr_project_effect
+from .github_release import execute_github_release_project_effect
+from .github_update import execute_github_update_pr_project_effect
+from .github_workflow import execute_github_workflow_project_effect
+from .project_github import execute_github_open_pr_project_effect
+from .project_git import execute_git_remote_project_effect
 from .policy_context import (
     _agent_id_from_policy,
     _apply_agent_command_policy,
     _apply_reactions_default_policy,
     _background_write_authorized,
+    _compose_policy_adapter,
     _resolve_auto_confirm,
     _runtime_background_write_authorization_enabled,
     _runtime_env_from_policy,
     _watch_write_authorization_requested,
 )
 from .results import (
-    _derive_toolspec_summary,
     _error_envelope,
     _normalized_artifact_refs,
     _tool_allowlist_error,
+    run_tool_spec,
 )
 from .workspace_policy import workspace_context_policy
 
-_log = get_logger("brain.adapters.tool.runtime")
 _WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
     "openminion_tool_workspace_override",
     default=None,
@@ -81,34 +85,18 @@ _TURN_TOOL_ALLOWLIST: ContextVar[frozenset[str] | None] = ContextVar(
 
 
 def _is_confirm_required_code(code: Any) -> bool:
-    return str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
+    return cast(bool, str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED)
+
+
+def _is_project_git_action(tool_name: str, args: Mapping[str, Any]) -> bool:
+    return tool_name == "git.push" or (
+        tool_name == "git.tag" and args.get("action") == "push"
+    )
 
 
 def _policy_context_metadata(policy: Policy) -> Any:
     raw = getattr(policy, "raw", {}) or {}
     return raw.get("context_metadata") if isinstance(raw, Mapping) else None
-
-
-try:
-    import openminion_tool_os.plugin
-
-    HAS_OS_PLUGIN = True
-except ImportError:
-    HAS_OS_PLUGIN = False
-
-try:
-    import openminion.tools.browser.providers.pinchtab.plugin as openminion_tool_browser_pinchtab_plugin
-
-    HAS_BROWSER_PINCHTAB_PLUGIN = True
-except ImportError:
-    HAS_BROWSER_PINCHTAB_PLUGIN = False
-
-try:
-    import openminion.tools.reaction.plugin as openminion_tools_reaction_plugin
-
-    HAS_REACTIONS_PLUGIN = True
-except ImportError:
-    HAS_REACTIONS_PLUGIN = False
 
 
 class ToolAdapter:
@@ -131,6 +119,8 @@ class ToolAdapter:
         agent_query: Callable[[], list[dict[str, Any]]] | None = None,
         agent_id: str | None = None,
         agent_profile: Any | None = None,
+        task_manager: Any | None = None,
+        telemetryctl: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
         policy_from_none = policy is None
@@ -147,6 +137,8 @@ class ToolAdapter:
         self.a2a_delegate_api = a2a_delegate_api
         self.agent_query = agent_query
         self.agent_profile = agent_profile
+        self.task_manager = task_manager
+        self.telemetryctl = telemetryctl
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
         )
@@ -184,34 +176,12 @@ class ToolAdapter:
             )
         _apply_reactions_default_policy(self.policy, runtime_config)
         _apply_agent_command_policy(self.policy, agent_profile)
-        registry_prepopulated = runtime_registry is not None
         if runtime_registry is not None:
             self.registry = runtime_registry
         else:
-            try:
-                from openminion.modules.tool import build_default_tool_registry
+            from openminion.modules.tool import build_default_tool_registry
 
-                self.registry = build_default_tool_registry(config=runtime_config)
-                registry_prepopulated = True
-            except ImportError:
-                self.registry = ToolRegistry()
-            except RuntimeError as e:
-                self.registry = ToolRegistry()
-                _log.warning(
-                    "tool registry build failed due to missing optional modules; using fallback registry: %s",
-                    e,
-                )
-
-        if not registry_prepopulated and HAS_OS_PLUGIN:
-            openminion_tool_os.plugin.register(self.registry)
-        if not registry_prepopulated and HAS_BROWSER_PINCHTAB_PLUGIN:
-            openminion_tool_browser_pinchtab_plugin.register(self.registry)
-        if (
-            not registry_prepopulated
-            and HAS_REACTIONS_PLUGIN
-            and self.reactions_enabled
-        ):
-            openminion_tools_reaction_plugin.register(self.registry)
+            self.registry = build_default_tool_registry(config=runtime_config)
 
     def close(self) -> None:
         if self.secret_service is not None:
@@ -320,40 +290,6 @@ class ToolAdapter:
             trace_id=trace_id,
         )
 
-    @staticmethod
-    def _compose_policy_adapter(
-        *,
-        base_adapter: PolicyAdapter,
-        extra_adapter: PolicyAdapter | None,
-    ) -> PolicyAdapter:
-        if extra_adapter is None:
-            return base_adapter
-
-        class _CompositePolicyAdapter:
-            def __init__(self, adapters: list[PolicyAdapter]):
-                self._adapters = adapters
-
-            def evaluate(
-                self, *, tool_name: str, tool_spec: ToolSpec, args: dict[str, Any]
-            ) -> PolicyDecision:
-                current_args = dict(args)
-                for adapter in self._adapters:
-                    decision = adapter.evaluate(
-                        tool_name=tool_name, tool_spec=tool_spec, args=current_args
-                    )
-                    if not decision.allowed:
-                        return decision
-                    if decision.modified_args:
-                        current_args = dict(decision.modified_args)
-                return PolicyDecision(
-                    allowed=True,
-                    reason="policy passed",
-                    code="OK",
-                    modified_args=current_args,
-                )
-
-        return _CompositePolicyAdapter([base_adapter, extra_adapter])
-
     def _effective_workspace_root(self, policy: Policy | None = None) -> Path:
         override = _WORKSPACE_OVERRIDE.get()
         if override is not None:
@@ -399,12 +335,9 @@ class ToolAdapter:
         _inject_runtime_message_ref(
             tool_name=tool_name, args=args, message_ref=runtime_message_ref
         )
-
         tool_name, spec, runtime_tool = self._resolve_registry_tool(tool_name)
-
         if not self.is_tool_allowed(tool_name):
             return _tool_allowlist_error(tool_name)
-
         if spec is None and runtime_tool is None:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
@@ -415,7 +348,6 @@ class ToolAdapter:
         if isinstance(runtime_tool, ToolSpec):
             spec = runtime_tool
             runtime_tool = None
-
         try:
             policy_for_run = workspace_context_policy(
                 self.policy,
@@ -464,7 +396,6 @@ class ToolAdapter:
                         if str(value or "").strip()
                     }
                 )
-
         if runtime_tool is not None:
             return self._execute_openminion_runtime_tool(
                 tool=runtime_tool,
@@ -477,7 +408,6 @@ class ToolAdapter:
                 orchestration_metadata=orchestration_metadata,
                 replay_confirmation_metadata=replay_confirmation_metadata,
             )
-
         if not isinstance(spec, ToolSpec):
             handler = getattr(spec, "handler", None)
             if handler is None:
@@ -497,14 +427,13 @@ class ToolAdapter:
                 tags=tuple(getattr(spec, "tags", ("core",)) or ("core",)),
                 capabilities=getattr(spec, "capabilities", None),
             )
-
         try:
             args_model = spec.args_model
             if hasattr(args_model, "model_validate"):
                 validated_args = args_model.model_validate(args).model_dump()
             else:
                 validated_args = dict(args)
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Invalid tool arguments",
@@ -577,6 +506,9 @@ class ToolAdapter:
                 },
             )
         background_write_authorized = _background_write_authorized(inputs)
+        project_task_id = str(
+            orchestration_metadata.get("task_backed_task_id") or ""
+        ).strip()
         auto_confirm = _resolve_auto_confirm(
             tool_name=tool_name,
             args=validated_args,
@@ -584,6 +516,12 @@ class ToolAdapter:
             replay_confirmed=replay_confirmed,
             background_write_authorized=background_write_authorized,
         )
+        if project_task_id and tool_name in {
+            "github.open_pr",
+            "github.update_pr",
+            "github.merge_pr",
+        }:
+            auto_confirm = True
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(
@@ -595,7 +533,7 @@ class ToolAdapter:
         policy_adapter = (
             None
             if replay_confirmed
-            else self._compose_policy_adapter(
+            else _compose_policy_adapter(
                 base_adapter=local_adapter,
                 extra_adapter=extra_adapter,
             )
@@ -616,6 +554,7 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             secret_service=self.secret_service,
+            telemetryctl=self.telemetryctl,
             artifactctl=self.artifactctl,
             memory_service=self.memory_service,
             a2a_delegate_api=self.a2a_delegate_api,
@@ -625,10 +564,12 @@ class ToolAdapter:
             permission_mode=permission_mode,
             agent_profile=self.agent_profile,
             tool_registry=self.registry,
+            task_manager=self.task_manager,
         )
         ctx.session_id, ctx.trace_id = session_id, trace_id
         ctx.agent_id, ctx.run_id = self.agent_id, run_id
         ctx.tool_name = tool_name
+        ctx.tool_call_id = str(command.get("command_id", "") or "")
         ctx.invocation_id = str(command.get("idempotency_key", "") or "")
         if runtime_message_ref is not None:
             ctx.message_ref = dict(runtime_message_ref)
@@ -689,14 +630,87 @@ class ToolAdapter:
             if policy_decision.modified_args:
                 validated_args = dict(policy_decision.modified_args)
 
+        return self._invoke_validated_tool(
+            command=command,
+            args=args,
+            validated_args=validated_args,
+            ctx=ctx,
+            spec=spec,
+            project_task_id=project_task_id,
+            replay_confirmed=replay_confirmed,
+            background_write_authorized=background_write_authorized,
+            start_time=start_time,
+        )
+
+    def _invoke_validated_tool(
+        self,
+        *,
+        command: dict[str, Any],
+        args: dict[str, Any],
+        validated_args: dict[str, Any],
+        ctx: RuntimeContext,
+        spec: ToolSpec,
+        project_task_id: str,
+        replay_confirmed: bool,
+        background_write_authorized: bool,
+        start_time: float,
+    ) -> dict[str, Any]:
+        tool_name = ctx.tool_name
         try:
             if tool_name == "blockchain.send_transaction":
                 ctx.policy_authorization = consume_blockchain_send_authorization(
                     policy_ctl=self.policy_ctl,
-                    permission_mode=permission_mode,
+                    permission_mode=ctx.permission_mode,
                     args=args,
                 )
-            return self._run_tool_spec(
+            if tool_name == "github.open_pr" and project_task_id:
+                return execute_github_open_pr_project_effect(
+                    task_manager=self.task_manager,
+                    task_id=project_task_id,
+                    idempotency_key=str(command.get("idempotency_key") or ""),
+                    actor_ref=f"agent:{self.agent_id}",
+                    args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    start_time=start_time,
+                    background_write_authorized=background_write_authorized,
+                )
+            github_effect: Callable[..., dict[str, Any]] | None = None
+            if tool_name == "github.update_pr":
+                github_effect = execute_github_update_pr_project_effect
+            elif tool_name == "github.merge_pr":
+                github_effect = execute_github_merge_pr_project_effect
+            elif tool_name == "github.dispatch_workflow":
+                github_effect = execute_github_workflow_project_effect
+            elif tool_name == "github.create_release":
+                github_effect = execute_github_release_project_effect
+            if github_effect is not None and project_task_id:
+                return github_effect(
+                    task_manager=self.task_manager,
+                    task_id=project_task_id,
+                    actor_ref=f"agent:{self.agent_id}",
+                    args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    start_time=start_time,
+                    background_write_authorized=background_write_authorized,
+                )
+            if tool_name in {"github.dispatch_workflow", "github.create_release"}:
+                raise ToolRuntimeError(
+                    "POLICY_DENIED",
+                    "Release-only GitHub actions require an approved project.",
+                    {"reason_code": "github_release_project_required"},
+                )
+            if _is_project_git_action(tool_name, validated_args):
+                return self._invoke_project_git_effect(
+                    validated_args=validated_args,
+                    ctx=ctx,
+                    spec=spec,
+                    project_task_id=project_task_id,
+                    start_time=start_time,
+                    background_write_authorized=background_write_authorized,
+                )
+            return run_tool_spec(
                 spec=spec,
                 validated_args=validated_args,
                 context=ctx,
@@ -714,32 +728,72 @@ class ToolAdapter:
                     tool_name=tool_name,
                     args=validated_args,
                     approval_id=approval_id,
-                    session_id=session_id,
-                    trace_id=trace_id,
+                    session_id=str(ctx.session_id or ""),
+                    trace_id=ctx.trace_id,
                     start_time=start_time,
                 )
                 if replay is not None:
                     return replay
             return _error_envelope(
-                status=(
-                    BRAIN_ACTION_STATUS_NEEDS_USER
-                    if requires_confirm
-                    else BRAIN_STATE_ERROR
-                ),
+                status=BRAIN_ACTION_STATUS_NEEDS_USER
+                if requires_confirm
+                else BRAIN_STATE_ERROR,
                 summary=exc.message or "Tool execution failed",
                 code=TOOL_ERROR_CONFIRM_REQUIRED if requires_confirm else exc.code,
                 message=exc.message or "Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details=dict(exc.details or {}),
             )
-        except Exception as exc:
+        except Exception:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool execution failed",
                 code="EXEC_ERROR",
-                message=str(exc),
+                message="Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
+
+    def _invoke_project_git_effect(
+        self,
+        *,
+        validated_args: dict[str, Any],
+        ctx: RuntimeContext,
+        spec: ToolSpec,
+        project_task_id: str,
+        background_write_authorized: bool,
+        start_time: float,
+    ) -> dict[str, Any]:
+        if not project_task_id:
+            raise ToolRuntimeError(
+                "POLICY_DENIED",
+                "Git publication requires a project action.",
+                {"reason_code": "project_context_required"},
+            )
+        if self.task_manager is None:
+            raise ToolRuntimeError(
+                "INVALID_REQUEST",
+                "Project tool execution requires the task manager.",
+                {
+                    "reason_code": "project_task_manager_unavailable",
+                    "project_task_id": project_task_id,
+                },
+            )
+        return execute_git_remote_project_effect(
+            task_manager=self.task_manager,
+            task_id=project_task_id,
+            tool_name=ctx.tool_name,
+            actor_ref=f"agent:{self.agent_id}",
+            args=validated_args,
+            ctx=ctx,
+            invoke=lambda: run_tool_spec(
+                spec=spec,
+                validated_args=validated_args,
+                context=ctx,
+                start_time=start_time,
+                background_write_authorized=background_write_authorized,
+                tool_name=ctx.tool_name,
+            ),
+        )
 
     def _resolve_registry_tool(self, tool_name: str) -> tuple[str, Any, Any]:
         spec = None
@@ -775,65 +829,6 @@ class ToolAdapter:
         elif hasattr(spec, "execute") and not hasattr(spec, "handler"):
             runtime_tool = spec
         return tool_name, spec, runtime_tool
-
-    @staticmethod
-    def _run_tool_spec(
-        *,
-        spec: ToolSpec,
-        validated_args: dict[str, Any],
-        context: RuntimeContext,
-        start_time: float,
-        background_write_authorized: bool,
-        tool_name: str,
-    ) -> dict[str, Any]:
-        data = spec.handler(validated_args, context)
-        if isinstance(data, Mapping) and "status" in data:
-            inner_status = str(data.get("status", BRAIN_STATE_ERROR))
-        elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
-            inner_status = "ok" if data["ok"] else BRAIN_STATE_ERROR
-        else:
-            inner_status = "ok"
-        status = (
-            BRAIN_ACTION_STATUS_SUCCESS
-            if inner_status
-            in ("ok", BRAIN_ACTION_STATUS_SUCCESS, BRAIN_JOB_STATUS_RUNNING)
-            else BRAIN_STATE_ERROR
-        )
-        summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
-        artifact_refs = _normalized_artifact_refs(context.artifacts)
-        result = {
-            "status": status,
-            "summary": summary,
-            "outputs": data,
-            "artifact_refs": artifact_refs,
-            "memory_refs": [],
-            "metrics": {
-                "latency_ms": int((time.monotonic() - start_time) * 1000),
-                "tokens_used": 0,
-                "cost_estimate": 0.0,
-            },
-        }
-        if background_write_authorized:
-            result["outputs"] = dict(result["outputs"])
-            result["outputs"].update(
-                background_watch_write_authorized=True,
-                background_watch_write_tool=tool_name,
-            )
-        if status != BRAIN_ACTION_STATUS_SUCCESS:
-            raw_error = data.get("error") if isinstance(data, Mapping) else None
-            if isinstance(raw_error, Mapping):
-                error: dict[str, Any] = {
-                    "code": str(raw_error.get("code", "") or "EXEC_ERROR"),
-                    "message": str(raw_error.get("message", "") or summary).strip(),
-                }
-                if isinstance(raw_error.get("details"), Mapping):
-                    error["details"] = dict(raw_error["details"])
-            elif raw_error:
-                error = {"code": "EXEC_ERROR", "message": str(raw_error).strip()}
-            else:
-                error = {"code": "EXEC_ERROR", "message": summary}
-            result["error"] = error
-        return result
 
     def _execute_openminion_runtime_tool(
         self,

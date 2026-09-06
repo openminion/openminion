@@ -1,6 +1,7 @@
 """Stable metadata assembly for provider trace results."""
 
 import json
+import re
 from typing import Any, cast
 
 
@@ -64,6 +65,146 @@ _PROHIBITED_FIELDS = frozenset(
         "gen_ai.reasoning",
     }
 )
+_STRUCTURAL_SECURITY_AGENT_ID = "security-researcher-readonly"
+_STRUCTURAL_SECURITY_FIELDS = frozenset(
+    {
+        "act.allowed_tools",
+        "act.profile",
+        "actor_type",
+        "adaptive.allowed_tools",
+        "adaptive.llm_calls",
+        "adaptive.loop_iterations",
+        "adaptive.mode",
+        "adaptive.profile",
+        "adaptive.termination_reason",
+        "adaptive.tool_calls",
+        "adaptive.tool_calls_total",
+        "agent_id",
+        "artifact_count",
+        "artifact_refs",
+        "assessment_id",
+        "candidate_count",
+        "check_count",
+        "command_kind",
+        "duration_ms",
+        "error_code",
+        "execution_id",
+        "finding_count",
+        "invocation_id",
+        "kind",
+        "mode_name",
+        "mode_state",
+        "operation",
+        "permission_mode",
+        "rejected_count",
+        "report_published",
+        "result_status",
+        "route",
+        "scanner",
+        "scanner_version",
+        "schema_version",
+        "source_phase",
+        "status",
+        "status_key",
+        "terminal",
+        "tool_execution_count",
+        "tool_name",
+        "tool_results",
+        "total_findings",
+        "trace_id",
+    }
+)
+_STRUCTURAL_TOOL_RESULT_FIELDS = frozenset(
+    {"call_id", "data", "error_code", "ok", "source", "tool_name", "verified"}
+)
+_STRUCTURAL_TOOL_DATA_FIELDS = frozenset(
+    {
+        "artifact_count",
+        "artifact_refs",
+        "assessment_id",
+        "candidate_count",
+        "check_count",
+        "duration_ms",
+        "finding_count",
+        "redaction_count",
+        "rejected_count",
+        "result_status",
+        "returned_findings",
+        "total_findings",
+    }
+)
+_CANONICAL_ARTIFACT_REF = re.compile(r"^artifact://sha256/[0-9a-f]{64}$")
+
+
+def _canonical_artifact_refs(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, str) and _CANONICAL_ARTIFACT_REF.fullmatch(item)
+    ]
+
+
+def _structural_tool_results(items: list[Any]) -> list[dict[str, Any]]:
+    results = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("structural_only") is not True:
+            continue
+        result = {
+            key: value
+            for key, value in item.items()
+            if key in _STRUCTURAL_TOOL_RESULT_FIELDS
+        }
+        data = item.get("data")
+        result["data"] = (
+            {
+                key: (
+                    _canonical_artifact_refs(value) if key == "artifact_refs" else value
+                )
+                for key, value in data.items()
+                if key in _STRUCTURAL_TOOL_DATA_FIELDS
+            }
+            if isinstance(data, dict)
+            else {}
+        )
+        results.append(result)
+    return results
+
+
+def structural_security_payload(
+    payload: dict[str, Any], agent_id: str | None
+) -> dict[str, Any]:
+    if agent_id != _STRUCTURAL_SECURITY_AGENT_ID:
+        return payload
+    structural = {
+        key: value
+        for key, value in payload.items()
+        if key in _STRUCTURAL_SECURITY_FIELDS
+    }
+    if "artifact_refs" in structural:
+        structural["artifact_refs"] = _canonical_artifact_refs(
+            structural["artifact_refs"]
+        )
+    tool_results = structural.get("tool_results")
+    if not isinstance(tool_results, list):
+        return structural
+    structural["tool_results"] = _structural_tool_results(tool_results)
+    published = next(
+        (
+            item
+            for item in reversed(structural["tool_results"])
+            if item.get("tool_name") == "security.publish_report"
+            and item.get("ok") is True
+        ),
+        None,
+    )
+    if published is not None:
+        structural["report_published"] = True
+        report_data = published["data"]
+        structural["result_status"] = report_data.get("result_status", "")
+        structural["assessment_id"] = report_data.get("assessment_id", "")
+    return structural
 
 
 def apply_content_policy(
@@ -171,4 +312,8 @@ def merge_trace_metadata(
     return merged
 
 
-__all__ = ["apply_content_policy", "merge_trace_metadata"]
+__all__ = [
+    "apply_content_policy",
+    "merge_trace_metadata",
+    "structural_security_payload",
+]

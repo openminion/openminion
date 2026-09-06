@@ -2169,6 +2169,13 @@ class AdapterInterfaceContractTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "RATE_LIMITED")
         self.assertEqual(ctx.exception.details.get("status_code"), 429)
 
+    def test_llm_adapter_without_runtime_provider_has_no_retry_cap(self) -> None:
+        from openminion.modules.brain.adapters.llm import LlmctlAdapter
+
+        adapter = LlmctlAdapter(SimpleNamespace())
+
+        self.assertIsNone(adapter.get_provider_retry_max_attempts())
+
     def test_llm_adapter_decide_is_schema_only_and_submit_output_forced(self) -> None:
         try:
             from openminion.modules.llm.schemas import ToolCall
@@ -4067,7 +4074,7 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertIn("missing_tool", res["error"]["message"])
         self.assertIn("latency_ms", res["metrics"])
 
-    def test_tool_adapter_fallback_when_optional_modules_missing(self) -> None:
+    def test_tool_adapter_propagates_canonical_bootstrap_failure(self) -> None:
         from unittest.mock import patch
         from openminion.modules.brain.adapters.tool import ToolAdapter
 
@@ -4078,23 +4085,14 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
                     "Module-only runtime requires openminion-tool-search-tavily. Module import failed"
                 )
 
-            with patch(
-                "openminion.modules.tool.build_default_tool_registry",
-                side_effect=failing_build_default_tool_registry,
+            with (
+                patch(
+                    "openminion.modules.tool.build_default_tool_registry",
+                    side_effect=failing_build_default_tool_registry,
+                ),
+                self.assertRaisesRegex(RuntimeError, "requires openminion-tool-search"),
             ):
-                adapter = ToolAdapter(workspace_root=Path(tmp))
-
-                self.assertIsNotNone(adapter.registry)
-
-                res = adapter.execute(
-                    command={"tool_name": "unknown_test_tool", "args": {}},
-                    session_id="s1",
-                    trace_id="t1",
-                )
-
-                self.assertIn("status", res)
-                self.assertIn("error", res)
-                self.assertEqual(res["status"], "error")
+                ToolAdapter(workspace_root=Path(tmp))
 
     def test_tool_adapter_accepts_specs_without_args_model(self) -> None:
         from types import SimpleNamespace

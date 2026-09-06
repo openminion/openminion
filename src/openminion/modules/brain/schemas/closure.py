@@ -2,6 +2,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .state.action import MemoryUseRef
+
 
 class PostCompletionCritique(BaseModel):
     """Typed model-authored critique linked to one completed intent."""
@@ -54,6 +56,7 @@ class ClosureJudgment(BaseModel):
     reason: str = ""
     next_action: Literal["close", "continue", "replan"] = "close"
     final_answer: str | None = None
+    memory_use_refs: list[MemoryUseRef] = Field(default_factory=list)
     mutation_claimed: bool = False
     post_completion_critique: PostCompletionCritique | None = None
     plan_reconciliation: PlanReconciliationFact | None = None

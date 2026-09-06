@@ -7,6 +7,7 @@ from openminion.tools.mcp.server.published import (
     handle_published_mcp_request,
     invoke_published_tool,
     render_tools_list_payload,
+    serve_published_stdio,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "handle_published_mcp_request",
     "invoke_published_tool",
     "render_tools_list_payload",
+    "serve_published_stdio",
 ]

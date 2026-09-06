@@ -35,6 +35,7 @@ def _runtime_config() -> RuntimeConfig:
                 transport="stdio",
                 command=[sys.executable, str(FIXTURE_SERVER_PATH)],
                 env={"MOCK_MCP_TOOLS_LIST_DELAY_SECONDS": "2.0"},
+                stdio_sandbox={"env_allowlist": ["MOCK_MCP_TOOLS_LIST_DELAY_SECONDS"]},
                 request_timeout_seconds=1.0,
                 startup_timeout_seconds=1.0,
             ),

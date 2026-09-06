@@ -17,6 +17,7 @@ from openminion.modules.llm.providers.base import ProviderError, ProviderRespons
 from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
+from openminion.modules.brain.loop.services import turn_tool_allowlist
 from openminion.services.brain.post_execution.postprocess import (
     _tool_result_response_text,
 )
@@ -25,6 +26,30 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 class DummyBridge(BrainBridgeTurnMixin):
     pass
+
+
+def test_turn_tool_allowlist_uses_restrictive_identity_posture() -> None:
+    identity_filter = {
+        "tool_use": "read_only",
+        "allowed_tools": ["file.read", "git.status"],
+    }
+
+    assert turn_tool_allowlist({}, identity_filter) == ("file.read", "git.status")
+    assert turn_tool_allowlist({}, {"tool_use": "allowed"}) is None
+    assert turn_tool_allowlist(
+        {
+            "turn_tool_allowlist_supplied": "true",
+            "turn_tool_allowlist": "time,file.read",
+        },
+        identity_filter,
+    ) == ("file.read",)
+    assert turn_tool_allowlist(
+        {
+            "subagent_context_id": "child-1",
+            "subagent_tool_allowlist": "git.status,web.fetch",
+        },
+        identity_filter,
+    ) == ("git.status",)
 
 
 class _DummySessionAPI:

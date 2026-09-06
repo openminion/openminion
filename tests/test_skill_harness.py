@@ -116,7 +116,7 @@ def test_skill_harness_reports_external_bundle_facts() -> None:
 
     assert result.parse_ok is True
     assert result.resource_counts == {"references": 1, "assets": 0, "scripts": 0}
-    assert result.unsupported_entries == ("child", "specifications")
+    assert result.unsupported_entries == ()
     assert result.nested_skill_candidates == ("child/SKILL.md",)
     assert result.unknown_front_matter_keys == (
         "author",

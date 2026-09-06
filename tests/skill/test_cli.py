@@ -124,6 +124,8 @@ def test_cli_inspect_returns_skill_package(tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["skill"]["skill_id"] == skill_id
     assert payload["skill"]["name"] == "Sync Git Branch"
+    assert payload["skill"]["tools"] == ["tool.shell"]
+    assert payload["skill"]["risk_class"] == "low"
 
 
 def test_cli_ingest_persists_explicit_trust(tmp_path: Path) -> None:

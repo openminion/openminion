@@ -14,11 +14,11 @@ config/env/__init__.py	13	0	0	0
 config/env/registry.py	448	2	2	0
 config/env/schema.py	122	5	29	3
 config/env/snapshot.py	294	46	13	4
-config/env/subprocess.py	50	1	15	2
+config/env/subprocess.py	36	2	10	2
 config/interface.py	29	1	7	4
 config/io.py	89	4	19	3
 config/manager.py	110	6	34	4
-config/mcp.py	714	33	50	2
+config/mcp.py	706	33	49	2
 config/parse.py	216	19	13	2
 config/parser/__init__.py	18	0	0	0
 config/parser/action.py	99	6	41	2

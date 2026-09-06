@@ -525,6 +525,7 @@ def test_async_resume_returns_to_active_mission_without_auto_completion() -> Non
                 task_id="job-2",
                 command_id="cmd-async",
                 provider="tool",
+                producer_id="echo",
                 status="pending",
             )
         ]
@@ -540,6 +541,14 @@ def test_async_resume_returns_to_active_mission_without_auto_completion() -> Non
                 "status": "success",
                 "summary": "async complete",
                 "outputs": {},
+                "memory_use_refs": [
+                    {
+                        "record_id": "memory-used-async",
+                        "use_kind": "used",
+                        "producer_kind": "tool",
+                        "producer_id": "echo",
+                    }
+                ],
             },
         ):
             output = runner._reconcile_pending_jobs(state=state, logger=logger)
@@ -549,6 +558,8 @@ def test_async_resume_returns_to_active_mission_without_auto_completion() -> Non
         assert state.mission is not None
         assert state.mission.status == "active"
         assert state.mission.latest_judgment is None
+        assert output.action_result is not None
+        assert output.action_result.memory_use_refs[0].record_id == "memory-used-async"
         assert "could not safely determine the next step" in str(output.message or "")
         event_types = {
             event.get("type") for event in session.list_events("s-mission-resume")

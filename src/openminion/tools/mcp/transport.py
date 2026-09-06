@@ -8,11 +8,12 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from openminion.base.config.base import ConfigError
+from openminion.base.config.env.subprocess import build_subprocess_env
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.mcp import resolve_mcp_server_env
 
@@ -112,6 +113,10 @@ class StdioMCPTransport:
     def server_name(self) -> str:
         return self._server.name
 
+    @property
+    def authorization_identity(self) -> str:
+        return ""
+
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None
 
@@ -185,8 +190,9 @@ class StdioMCPTransport:
         )
 
     def _build_stdio_env(self) -> dict[str, str]:
-        env = os.environ.copy()
         allowlist = set(self._server.stdio_sandbox.env_allowlist)
+        inherit_allowlist = set(self._server.stdio_sandbox.inherit_env_allowlist)
+        env: dict[str, str] = build_subprocess_env(inherit_parent=inherit_allowlist)
         try:
             configured_env = resolve_mcp_server_env(self._server)
         except ConfigError as exc:
@@ -500,11 +506,13 @@ class StreamableHTTPMCPTransport:
         server: MCPServerConfig,
         *,
         token_store: MCPTokenStore | None = None,
+        auth_change_handler: Callable[[], None] | None = None,
     ) -> None:
         self._server = server
         self._next_request_id = 1
         self._session = StreamableHTTPSessionState()
         self._token_store = token_store
+        self._auth_change_handler = auth_change_handler
         self._oauth_access_token = str(server.authorization.access_token or "").strip()
         self._state_lock = threading.RLock()
 
@@ -522,6 +530,15 @@ class StreamableHTTPMCPTransport:
     @property
     def session_state(self) -> StreamableHTTPSessionState:
         return self._session
+
+    @property
+    def authorization_identity(self) -> str:
+        authorization = self._server.authorization
+        return str(
+            authorization.access_token_ref
+            or authorization.client_id
+            or authorization.mode
+        )
 
     def start(self) -> None:
         if not self._server.url:
@@ -761,6 +778,8 @@ class StreamableHTTPMCPTransport:
                     and int(getattr(exc, "code", 0) or 0) in {401, 403}
                     and self._refresh_oauth_access_token()
                 ):
+                    if self._auth_change_handler is not None:
+                        self._auth_change_handler()
                     refreshed = True
                     continue
                 self._handle_http_error(exc=exc, method_name=method_name)
@@ -932,6 +951,7 @@ class StreamableHTTPMCPTransport:
                 config=config,
                 metadata=metadata,
                 refresh_token=refresh_token,
+                resource=self._server.url,
                 timeout_seconds=float(self._server.request_timeout_seconds),
             )
             self._oauth_access_token = token_state.access_token

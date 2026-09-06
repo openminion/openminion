@@ -3,6 +3,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
+from openminion.base.config.base import ConfigError
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
@@ -10,6 +13,7 @@ from openminion.modules.tool.runtime.registrar import ToolRegisterContext
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.mcp import REGISTRAR
 from openminion.tools.mcp.interfaces import MCPToolRegistrationState
+from openminion.tools.mcp.schemas import MCPListedTool
 
 
 FIXTURE_SERVER_PATH = (
@@ -116,3 +120,18 @@ def test_mcp_registrar_register_uses_same_snapshot_as_manifest() -> None:
         assert registry.mcp_manager is None
     finally:
         _close_ctx(ctx)
+
+
+def test_registration_rejects_colliding_normalized_tool_names() -> None:
+    tools = tuple(
+        MCPListedTool(
+            server_name="fixture",
+            remote_name=name,
+            description="",
+            input_schema={"type": "object"},
+        )
+        for name in ("read-file", "read_file")
+    )
+
+    with pytest.raises(ConfigError, match="read-file.*read_file"):
+        MCPToolRegistrationState(manager=object(), discovered_tools=tools)

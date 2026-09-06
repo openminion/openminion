@@ -643,6 +643,47 @@ def test_task_watch_creates_profile_bound_continuous_monitor(
     assert view["last_terminal_reason"] == ""
 
 
+def test_task_watch_persists_social_routine_with_no_model_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+    ctx = _ctx(tmp_path, agent_id="agent-a")
+
+    created = _h_task_watch(
+        {
+            "description": "Watch OpenMinion releases",
+            "check_instruction": "Report important release activity.",
+            "interval_minutes": 15,
+            "max_checks": 4,
+            "alert_condition": "an important release is published",
+            "stop_on_condition": False,
+            "routine": {
+                "routine_kind": "social_signal",
+                "config": {
+                    "sources": [
+                        {
+                            "source_kind": "rss_atom",
+                            "source_id": "releases",
+                            "label": "OpenMinion releases",
+                            "url": "https://example.com/releases.atom",
+                            "allowed_final_origins": ["example.com"],
+                        }
+                    ],
+                    "topics": ["OpenMinion release activity"],
+                },
+            },
+        },
+        ctx,
+    )
+
+    row = _resolve_cron_store(ctx).get_cron_job(created["task_id"])
+    watch = dict((row.get("payload") or {}).get("_openminion_watch") or {})
+    assert watch["allowed_tools"] == []
+    assert watch["routine"]["routine_kind"] == "social_signal"
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

@@ -3,7 +3,7 @@
 import fnmatch
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, TextIO
 from uuid import uuid4
 
 from openminion.base.config.mcp import MCPPublishConfig, coerce_mcp_publish_config
@@ -76,8 +76,11 @@ def invoke_published_tool(
     tool = by_name[name]
     try:
         result = tool.handler(arguments)
-    except Exception as exc:  # noqa: BLE001 — surface as MCP error
-        raise MCPServerError(f"openminion MCP tool {name!r} failed: {exc!r}") from exc
+    except Exception as exc:  # noqa: BLE001 - remote tool failures are MCP results
+        return {
+            "content": [{"type": "text", "text": str(exc) or exc.__class__.__name__}],
+            "isError": True,
+        }
     return {
         "content": [
             {
@@ -154,16 +157,36 @@ def handle_published_mcp_request(
             )
         try:
             result = invoke_published_tool(tools, name=name, arguments=arguments)
-            if modern:
-                result["resultType"] = "complete"
-            return _jsonrpc_result(request_id, result)
         except MCPServerError as exc:
-            return _jsonrpc_error(request_id, code=-32000, message=str(exc))
+            return _jsonrpc_error(request_id, code=-32602, message=str(exc))
+        if modern:
+            result["resultType"] = "complete"
+        return _jsonrpc_result(request_id, result)
     return _jsonrpc_error(
         request_id,
         code=-32601,
         message=f"unsupported MCP server method: {method}",
     )
+
+
+def serve_published_stdio(
+    tools: list[PublishedTool],
+    *,
+    input_stream: TextIO,
+    output_stream: TextIO,
+) -> None:
+    """Serve newline-delimited MCP JSON-RPC over stdio."""
+
+    for line in input_stream:
+        if not line.strip():
+            continue
+        request = json.loads(line)
+        if not isinstance(request, dict):
+            raise MCPServerError("MCP stdio request must be a JSON object")
+        response = handle_published_mcp_request(tools, request)
+        if response is not None:
+            output_stream.write(json.dumps(response, separators=(",", ":")) + "\n")
+            output_stream.flush()
 
 
 def _is_modern_request(request: dict[str, Any]) -> bool:

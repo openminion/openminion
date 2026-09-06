@@ -39,6 +39,7 @@ PUBLIC_EXPORTS = [
     "build_default_tool_registry_debug_report",
     "binary_dependency",
     "build_runtime_bootstrap",
+    "build_runtime_tool_routing_metadata",
     "build_runtime_repositories",
     "blast_radius_requires_verification",
     "canonical_tool_name",
@@ -142,6 +143,10 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     ),
     "binary_dependency": (".runtime.dependencies", "binary_dependency"),
     "build_runtime_bootstrap": (".bootstrap", "build_runtime_bootstrap"),
+    "build_runtime_tool_routing_metadata": (
+        ".runtime.routing",
+        "build_runtime_tool_routing_metadata",
+    ),
     "build_runtime_repositories": (".runtime", "build_runtime_repositories"),
     "blast_radius_requires_verification": (
         ".runtime.blast_radius",

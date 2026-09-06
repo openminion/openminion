@@ -210,7 +210,9 @@ def _child_artifact_facts(value: dict[str, Any] | None) -> dict[str, Any] | None
     if not value:
         return None
     facts = {
-        key: value[key] for key in ("status", "integration_status") if key in value
+        key: value[key]
+        for key in ("status", "integration_status", "record_alias", "target_digest")
+        if key in value
     }
     touched_paths = [str(path)[:200] for path in value.get("touched_paths", [])]
     if touched_paths:

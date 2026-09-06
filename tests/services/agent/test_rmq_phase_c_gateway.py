@@ -48,14 +48,3 @@ def test_retrieve_split_uses_direct_query_for_both_lanes() -> None:
     assert first["strategy"] == "contextual"
     assert second["query"] == "what task should I do next?"
     assert second["strategy"] == "auto"
-
-
-def test_retrieve_split_without_embeddings_has_no_lexical_fallback_diversity() -> None:
-    adapter = _make_adapter()
-
-    similarity = _pipeline(adapter)._candidate_similarity(  # noqa: SLF001
-        {"text": "todo buy milk", "score": 0.8},
-        {"text": "task buy milk", "score": 0.7},
-    )
-
-    assert similarity == 0.0

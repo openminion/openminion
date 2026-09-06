@@ -239,6 +239,7 @@ class RuntimeContext:
     telemetry_turn_id: Optional[str] = None
     ops_service: Any | None = None
     tool_registry: Any | None = None
+    task_manager: Any | None = None
     artifactctl: Optional[Any] = None
     memory_service: MemoryToolRuntimeService | None = None
     sandbox_runner: Any | None = None

@@ -2,20 +2,27 @@
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from .schemas import ScanError, ScanStatus, SecurityFinding, SecurityScanResult
+from .schemas import (
+    ScanError,
+    ScanStatus,
+    SecurityConfigurationIdentity,
+    SecurityFinding,
+    SecurityScanResult,
+)
 
 
 def build_scan_result(
     *,
     capability_id: str,
-    adapter_id: str,
+    adapter_id: Literal["semgrep", "trivy"],
     target: str,
     started_at: str,
     started: float,
     status: ScanStatus,
     scanner_version: str = "",
+    configuration_identity: SecurityConfigurationIdentity | None = None,
     findings: list[SecurityFinding] | None = None,
     total_findings: int = 0,
     truncated: bool = False,
@@ -29,6 +36,7 @@ def build_scan_result(
         adapter_id=adapter_id,
         scanner=adapter_id,
         scanner_version=scanner_version,
+        configuration_identity=configuration_identity,
         target=target,
         started_at=started_at,
         duration_ms=max(0, int((time.monotonic() - started) * 1000)),

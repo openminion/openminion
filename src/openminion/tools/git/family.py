@@ -26,6 +26,7 @@ from .plugin import (
     _h_stash,
     _h_status,
 )
+from .remote import GitFetchArgs, GitPushArgs, GitTagArgs, _h_fetch, _h_push, _h_tag
 
 GIT_FAMILY = ToolFamilySpec(
     module_id="git",
@@ -163,6 +164,39 @@ GIT_FAMILY = ToolFamilySpec(
             min_scope="READ_ONLY",
             idempotent=True,
             capabilities=("read_only",),
+        ),
+        ToolDecl(
+            name="git.fetch",
+            args_model=GitFetchArgs,
+            handler=_h_fetch,
+            description="Fetch one explicit ref from a configured remote.",
+            idempotent=True,
+            capabilities=("write_safe",),
+            block_under_readonly=True,
+        ),
+        ToolDecl(
+            name="git.push",
+            args_model=GitPushArgs,
+            handler=_h_push,
+            description=(
+                "Push one explicit local ref to one explicit remote ref. "
+                "Force and deletion are not supported."
+            ),
+            idempotent=False,
+            capabilities=("write_safe",),
+            block_under_readonly=True,
+        ),
+        ToolDecl(
+            name="git.tag",
+            args_model=GitTagArgs,
+            handler=_h_tag,
+            description=(
+                "List or create annotated tags, or publish one explicit tag. "
+                "Force and deletion are not supported."
+            ),
+            idempotent=False,
+            capabilities=("write_safe",),
+            block_under_readonly=True,
         ),
     ),
 )

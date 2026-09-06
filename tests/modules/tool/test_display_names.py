@@ -30,6 +30,7 @@ def test_map_keys_are_canonical_model_tool_ids_only() -> None:
         ("web.search", "Web Search"),
         ("web.fetch", "Web Fetch"),
         ("browser", "Browser"),
+        ("blockchain.debug", "Debug Blockchain"),
         ("blockchain.inspect", "Inspect Blockchain"),
         (
             "blockchain.prepare_transaction",

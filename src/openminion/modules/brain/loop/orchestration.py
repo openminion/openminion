@@ -628,7 +628,7 @@ def decide(
         )
 
     response = None
-    retry_policy = build_provider_retry_policy(runner.options)
+    retry_policy = build_provider_retry_policy(runner.options, runner.llm_api)
     max_retries = retry_policy.max_retries
     last_detection = None
     base_messages = list(_messages_from_context(context))

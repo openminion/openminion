@@ -67,15 +67,19 @@ class TaskManagerScheduleMixin:
     def list_scheduled_jobs(self, *, limit: int) -> list[dict[str, Any]]:
         return self._cron_repository.list_cron_jobs(limit=limit)
 
+    def _require_scheduled_record(self, task_id: str) -> TaskLifecycleRecord:
+        record = self.get_task(task_id) or self.get_task_by_job(task_id)
+        if record is not None:
+            return record
+        job = self.get_scheduled_job(task_id)
+        if job is None:
+            raise KeyError(f"task not found: {task_id}")
+        return self.ensure_task_record_for_job(job)
+
     def set_scheduled_job_enabled(
         self, task_id: str, *, enabled: bool
     ) -> dict[str, Any]:
-        record = self.get_task(task_id) or self.get_task_by_job(task_id)
-        job = self.get_scheduled_job(task_id)
-        if record is None and job is not None:
-            record = self.ensure_task_record_for_job(job)
-        if record is None:
-            raise KeyError(f"task not found: {task_id}")
+        record = self._require_scheduled_record(task_id)
         self._cron_repository.set_cron_job_enabled(record.cron_job_id, enabled)
         refreshed = self.get_scheduled_job(record.cron_job_id)
         if refreshed is None:
@@ -175,12 +179,7 @@ class TaskManagerScheduleMixin:
         return None
 
     def cancel_task(self, task_id: str) -> TaskLifecycleRecord:
-        record = self.get_task(task_id) or self.get_task_by_job(task_id)
-        if record is None:
-            job = self.get_scheduled_job(task_id)
-            if job is None:
-                raise KeyError(f"task not found: {task_id}")
-            record = self.ensure_task_record_for_job(job)
+        record = self._require_scheduled_record(task_id)
         self._cron_repository.delete_cron_job(record.cron_job_id)
         return self.transition_task(
             task_id=record.task_id,
@@ -188,12 +187,7 @@ class TaskManagerScheduleMixin:
         )
 
     def pause_task(self, task_id: str) -> tuple[TaskLifecycleRecord, dict[str, Any]]:
-        record = self.get_task(task_id) or self.get_task_by_job(task_id)
-        job = self.get_scheduled_job(task_id)
-        if record is None and job is not None:
-            record = self.ensure_task_record_for_job(job)
-        if record is None:
-            raise KeyError(f"task not found: {task_id}")
+        record = self._require_scheduled_record(task_id)
         self._cron_repository.set_cron_job_enabled(record.cron_job_id, False)
         record = self.transition_task(
             task_id=record.task_id,
@@ -205,12 +199,7 @@ class TaskManagerScheduleMixin:
         return record, refreshed
 
     def resume_task(self, task_id: str) -> tuple[TaskLifecycleRecord, dict[str, Any]]:
-        record = self.get_task(task_id) or self.get_task_by_job(task_id)
-        job = self.get_scheduled_job(task_id)
-        if record is None and job is not None:
-            record = self.ensure_task_record_for_job(job)
-        if record is None:
-            raise KeyError(f"task not found: {task_id}")
+        record = self._require_scheduled_record(task_id)
         self._cron_repository.set_cron_job_enabled(record.cron_job_id, True)
         record = self.transition_task(
             task_id=record.task_id,

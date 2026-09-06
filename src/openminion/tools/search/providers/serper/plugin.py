@@ -1,11 +1,11 @@
 from openminion.tools.search import register_provider
 
-from .provider import SerperSearchProvider
+from .family import _PROVIDER
 
 
 def register(registry: object | None = None) -> None:
     del registry
-    register_provider(SerperSearchProvider())
+    register_provider(_PROVIDER)
 
 
 register_search_provider = register
