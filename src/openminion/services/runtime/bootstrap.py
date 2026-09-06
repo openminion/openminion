@@ -860,9 +860,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         options=options,
         terminal_capture_writer=service._terminal_capture_writer,
     )
-    brain_runtime_db_path = resolve_brain_runtime_db_path(
-        storage_path=_Path(service.db_path)
-    )
+    brain_runtime_db_path = resolve_brain_runtime_db_path(storage_path=db_path)
     goal_store = SQLiteGoalStore(str(brain_runtime_db_path))
     mission_store = SQLiteMissionStateStore(str(brain_runtime_db_path))
     runner.goal_runtime = LongRunningGoalRuntime(
