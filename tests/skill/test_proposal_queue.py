@@ -536,9 +536,7 @@ def test_apply_proposal_rejects_active_identity_collision(tmp_path: Path) -> Non
         skill.close()
 
 
-def test_apply_proposal_checks_every_active_identity_collision(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_proposal_checks_every_active_identity_collision(tmp_path: Path) -> None:
     skill = _skill(tmp_path)
     authority = _authority()
     try:
@@ -566,7 +564,7 @@ def test_apply_proposal_checks_every_active_identity_collision(
                 _proposal()
                 .skill_markdown.replace(
                     "name: research-latest-news-playbook",
-                    "name: conflicting-copy",
+                    "id: conflicting-copy\nname: research-latest-news-playbook",
                 )
                 .replace(
                     "Research the requested topic and cite current sources.",
@@ -588,11 +586,6 @@ def test_apply_proposal_checks_every_active_identity_collision(
                 evidence_ref="artifact://validation/conflict.txt",
             ),
         )
-        rows = skill.list_skills({})
-        for row in rows:
-            if row["skill_id"] == conflict_id:
-                row["name"] = "research-latest-news-playbook"
-        monkeypatch.setattr(skill, "list_skills", lambda _filters: rows)
         create_proposal(skill.store, _proposal())
         _review_and_verify(skill.store)
 
@@ -640,6 +633,37 @@ def test_apply_exact_active_skill_records_proposal_verification(tmp_path: Path) 
         assert admission["verification_evidence_ref"] == (
             "artifact://validation/pytest.txt"
         )
+    finally:
+        skill.close()
+
+
+def test_apply_exact_active_skill_preserves_blessed_status(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    authority = _authority()
+    try:
+        skill_id, version_hash, _warnings = skill.ingest_text(
+            name="research-latest-news-playbook",
+            markdown=_proposal().skill_markdown,
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=None,
+            target_status="blessed",
+            reason="setup",
+            authority=authority,
+        )
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        apply_proposal(
+            skill,
+            proposal_id="sprq-proposal-1",
+            authority=authority,
+        )
+
+        assert skill.get_skill(skill_id).status == "blessed"
     finally:
         skill.close()
 

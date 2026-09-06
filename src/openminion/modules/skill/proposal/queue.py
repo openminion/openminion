@@ -227,7 +227,7 @@ def apply_proposal(
             skill_id=skill_id,
             version_hash=version_hash,
             expected_active_version_hash=version_hash,
-            target_status=SKILL_STATUS_VERIFIED,
+            target_status=active.status,
             reason=f"accepted skill proposal {proposal.proposal_id}",
             authority=authority,
             verification_evidence=verification,
