@@ -10,6 +10,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_SKILL_INSPECT,
     MODEL_SKILL_LIST,
     MODEL_SKILL_REMOVE,
+    MODEL_SKILL_PROPOSE,
 )
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.skill.interfaces import SkillIngestAuthority
@@ -22,6 +23,7 @@ from .schemas import (
     SkillInspectArgs,
     SkillListArgs,
     SkillRemoveArgs,
+    SkillProposeArgs,
 )
 from .url_ingest import ingest_skill_url
 
@@ -73,6 +75,42 @@ def _h_skill_inspect(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "risk_level": risk_level,
         "safe": safe,
         "issues": issues,
+    }
+
+
+def _h_skill_propose(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    skill = getattr(ctx, "skill_api", None)
+    if skill is None:
+        return _error("SKILL_UNAVAILABLE", _SKILL_UNAVAILABLE_MESSAGE)
+    session_id = str(getattr(ctx, "session_id", "") or "").strip()
+    if not session_id:
+        return _error(
+            "SKILL_PROPOSAL_CONTEXT_REQUIRED",
+            "Skill proposals require a current session.",
+        )
+    try:
+        parsed_args = SkillProposeArgs.model_validate(args)
+        from openminion.modules.skill.proposal import proposal_from_markdown
+        from openminion.modules.skill.proposal.queue import create_proposal
+
+        evidence_refs = [
+            f"{key}:{str(getattr(ctx, key, '') or '').strip()}"
+            for key in ("run_id", "trace_id")
+            if str(getattr(ctx, key, "") or "").strip()
+        ]
+        proposal = proposal_from_markdown(
+            parsed_args.skill_markdown,
+            source_task_shape_ref=f"session:{session_id}",
+            evidence_refs=evidence_refs,
+        )
+        record = create_proposal(skill.store, proposal)
+    except (ValidationError, ValueError) as exc:
+        return _error("INVALID_ARGS", str(exc))
+    return {
+        "ok": True,
+        "proposal_id": proposal.proposal_id,
+        "queue_state": record["queue_state"],
+        "created_now": record["created_now"],
     }
 
 
@@ -265,6 +303,19 @@ def _h_skill_remove(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 def register(registry: ToolRegistry) -> None:
+    registry.add(
+        ToolSpec(
+            name=MODEL_SKILL_PROPOSE,
+            args_model=SkillProposeArgs,
+            min_scope="WRITE_SAFE",
+            handler=_h_skill_propose,
+            dangerous=False,
+            idempotent=True,
+            tags=("plugin", "skill"),
+            capabilities=("skill",),
+            block_under_readonly=True,
+        )
+    )
     registry.add(
         ToolSpec(
             name=MODEL_SKILL_INSPECT,

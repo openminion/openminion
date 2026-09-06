@@ -559,6 +559,7 @@ class _SkillStoreMixin(SkillStore):
                     p.proposed_at,
                     p.proposal_json,
                     p.queue_state,
+                    p.verification_evidence_json,
                     p.applied_addition_json,
                     p.created_at,
                     p.updated_at,
@@ -584,6 +585,7 @@ class _SkillStoreMixin(SkillStore):
                     p.proposed_at,
                     p.proposal_json,
                     p.queue_state,
+                    p.verification_evidence_json,
                     p.applied_addition_json,
                     p.created_at,
                     p.updated_at,
@@ -614,6 +616,7 @@ class _SkillStoreMixin(SkillStore):
                 p.proposed_at,
                 p.proposal_json,
                 p.queue_state,
+                p.verification_evidence_json,
                 p.applied_addition_json,
                 p.created_at,
                 p.updated_at,
@@ -685,6 +688,31 @@ class _SkillStoreMixin(SkillStore):
                 WHERE proposal_id = ?
                 """,
                 (str(created_at), str(proposal_id)),
+            )
+
+    def record_proposal_verification(
+        self,
+        *,
+        proposal_id: str,
+        verification_evidence_json: str,
+        updated_at: str,
+    ) -> None:
+        affected = self._record_store.execute_count(
+            """
+            UPDATE skill_proposals
+            SET verification_evidence_json = ?, updated_at = ?
+            WHERE proposal_id = ? AND queue_state = 'reviewed'
+            """,
+            (
+                str(verification_evidence_json),
+                str(updated_at),
+                str(proposal_id),
+            ),
+        )
+        if int(affected or 0) != 1:
+            raise ValueError(
+                "proposal verification requires queue_state='reviewed': "
+                f"{proposal_id!r}"
             )
 
     def apply_proposal(
@@ -901,6 +929,12 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
     review_payload = (
         _json_loads(str(review_raw), None) if review_raw not in {None, ""} else None
     )
+    verification_raw = row.get("verification_evidence_json")
+    verification_payload = (
+        _json_loads(str(verification_raw), None)
+        if verification_raw not in {None, ""}
+        else None
+    )
     return {
         "proposal_id": str(row.get("proposal_id") or ""),
         "source_task_shape_ref": str(row.get("source_task_shape_ref") or ""),
@@ -912,6 +946,7 @@ def _proposal_row(row: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),
         "review": review_payload,
+        "verification_evidence": verification_payload,
         "reviewer_id": str(row.get("reviewer_id") or ""),
         "review_status": str(row.get("review_status") or ""),
         "decided_at": str(row.get("decided_at") or ""),

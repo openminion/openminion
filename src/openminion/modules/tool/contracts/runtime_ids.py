@@ -106,6 +106,7 @@ RUNTIME_SKILL_INGEST = "runtime.skill.ingest"
 RUNTIME_SKILL_INGEST_URL = "runtime.skill.ingest_url"
 RUNTIME_SKILL_INSPECT = "runtime.skill.inspect"
 RUNTIME_SKILL_LIST = "runtime.skill.list"
+RUNTIME_SKILL_PROPOSE = "runtime.skill.propose"
 RUNTIME_SKILL_GET = "runtime.skill.get"
 RUNTIME_SKILL_REMOVE = "runtime.skill.remove"
 RUNTIME_MEMORY_WRITE = "runtime.memory.write"
@@ -215,6 +216,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_SKILL_LIST,
     RUNTIME_SKILL_GET,
     RUNTIME_SKILL_REMOVE,
+    RUNTIME_SKILL_PROPOSE,
     RUNTIME_MEMORY_WRITE,
     RUNTIME_MEMORY_SEARCH,
     RUNTIME_MEMORY_FORGET,

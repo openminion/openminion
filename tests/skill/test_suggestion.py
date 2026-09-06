@@ -5,7 +5,6 @@ from pathlib import Path
 
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.proposal.queue import (
-    apply_proposal,
     create_proposal,
     record_proposal_review,
 )
@@ -293,7 +292,6 @@ def test_outcome_audit_after_apply_does_not_double_count(tmp_path: Path) -> None
                 },
             ],
         )
-        apply_proposal(store, proposal_id="scsp-1", current_catalog=[])
         status = suggestion_status(store)
         assert status.accepted_count == 1
         assert status.rejected_count == 0

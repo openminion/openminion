@@ -7,6 +7,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_SKILL_INSPECT,
     MODEL_SKILL_LIST,
     MODEL_SKILL_REMOVE,
+    MODEL_SKILL_PROPOSE,
 )
 from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_SKILL_GET,
@@ -15,6 +16,7 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_SKILL_INSPECT,
     RUNTIME_SKILL_LIST,
     RUNTIME_SKILL_REMOVE,
+    RUNTIME_SKILL_PROPOSE,
 )
 
 if TYPE_CHECKING:
@@ -23,6 +25,11 @@ if TYPE_CHECKING:
 
 
 _TOOL_DEFINITIONS = (
+    (
+        MODEL_SKILL_PROPOSE,
+        "Propose complete SKILL.md content from work in the current session for local operator review. This stages a pending proposal and does not add a catalog skill.",
+        RUNTIME_SKILL_PROPOSE,
+    ),
     (
         MODEL_SKILL_INGEST,
         "Ingest a skill definition (Markdown) and store it for reuse. Returns skill_id, version_hash, and a rendered snippet for immediate use.",

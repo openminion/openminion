@@ -215,11 +215,18 @@ def _create_proposal_schema(record_store: RecordStore) -> None:
             proposed_at TEXT NOT NULL,
             proposal_json TEXT NOT NULL,
             queue_state TEXT NOT NULL,
+            verification_evidence_json TEXT,
             applied_addition_json TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
+    )
+    _ensure_column(
+        record_store,
+        table_name="skill_proposals",
+        column_name="verification_evidence_json",
+        ddl_tail="TEXT",
     )
     record_store.execute_count(
         """

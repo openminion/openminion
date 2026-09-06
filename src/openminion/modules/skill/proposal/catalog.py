@@ -32,6 +32,7 @@ class EmergentSkillCatalogAddition(BaseModel):
     source_field: str
     added_at: str
     added_by: str
+    version_hash: str = ""
 
 
 def _review_field(review: Any, field: str) -> Any:

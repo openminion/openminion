@@ -15,7 +15,13 @@ from openminion.modules.skill.proposal.queue import (
     apply_proposal,
     create_proposal,
     record_proposal_review,
+    record_proposal_verification,
 )
+from openminion.modules.skill.interfaces import (
+    SkillIngestAuthority,
+    SkillVerificationEvidence,
+)
+from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.proposal.review import _RUNTIME_REVIEWER_IDS
 from openminion.modules.skill.storage import SQLiteSkillStore
 
@@ -39,6 +45,18 @@ def _proposal(*, proposal_id: str = "wiring-1") -> SkillProposal:
             inputs_schema=[],
             verification_rules=[],
         ),
+        skill_markdown="""---
+name: wiring-playbook
+description: Verify proposal wiring.
+verification:
+  - Confirm wiring output.
+---
+# Wiring Playbook
+
+## Procedure
+
+Verify proposal wiring.
+""",
         evidence_refs=[],
         proposer_policy_id="wiring",
         proposed_at="",
@@ -80,26 +98,39 @@ def test_record_proposal_review_calls_decide_skill_proposal(
     assert calls[0]["kwargs"]["reviewer_id"] == "operator-x"
 
 
-def test_apply_proposal_calls_apply_emergent_skill(
+def test_apply_proposal_calls_ingest_and_admission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    skill = Skill(
+        {
+            "skill": {
+                "sqlite_path": str(tmp_path / "skill.db"),
+                "blob_root": str(tmp_path / "blob"),
+                "fallback_root": str(tmp_path / "fallback"),
+                "wal": False,
+            }
+        }
+    )
+    calls: list[str] = []
+    real_ingest = skill.ingest_text
+    real_admit = skill.admit_skill_version
 
-    calls: list[dict[str, Any]] = []
-    real = proposal_queue.apply_emergent_skill
+    def ingest_spy(*args: Any, **kwargs: Any):
+        calls.append("ingest")
+        return real_ingest(*args, **kwargs)
 
-    def spy(*args: Any, **kwargs: Any):
-        calls.append({"args": args, "kwargs": dict(kwargs)})
-        return real(*args, **kwargs)
+    def admit_spy(*args: Any, **kwargs: Any):
+        calls.append("admit")
+        return real_admit(*args, **kwargs)
 
-    monkeypatch.setattr(proposal_queue, "apply_emergent_skill", spy)
-
-    store = _store(tmp_path)
+    monkeypatch.setattr(skill, "ingest_text", ingest_spy)
+    monkeypatch.setattr(skill, "admit_skill_version", admit_spy)
     try:
-        create_proposal(store, _proposal())
+        create_proposal(skill.store, _proposal())
         record_proposal_review(
-            store,
+            skill.store,
             proposal_id="wiring-1",
-            reviewer_id="operator-x",
+            reviewer_id="local:test",
             review_policy_id="wiring",
             criterion_decisions=[
                 {
@@ -109,11 +140,28 @@ def test_apply_proposal_calls_apply_emergent_skill(
                 },
             ],
         )
-        addition = apply_proposal(store, proposal_id="wiring-1", current_catalog=[])
+        record_proposal_verification(
+            skill.store,
+            proposal_id="wiring-1",
+            operator_id="local:test",
+            evidence=SkillVerificationEvidence(
+                check="pytest",
+                result="passed",
+                evidence_ref="artifact://validation/pytest.txt",
+            ),
+        )
+        addition = apply_proposal(
+            skill,
+            proposal_id="wiring-1",
+            authority=SkillIngestAuthority.local_operator(
+                surface="test.skill.apply",
+                principal_id="local:test",
+            ),
+        )
     finally:
-        store.close()
+        skill.close()
     assert isinstance(addition, EmergentSkillCatalogAddition)
-    assert len(calls) == 1
+    assert calls == ["ingest", "admit"]
 
 
 def test_runtime_reviewer_ids_set_is_unchanged_in_proposal_review() -> None:

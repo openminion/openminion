@@ -47,6 +47,15 @@ _LEARNING_COMMANDS = frozenset(
         "learning-trust-status",
     }
 )
+_PROPOSAL_COMMANDS = frozenset(
+    {
+        "proposal-list",
+        "proposal-inspect",
+        "proposal-review",
+        "proposal-verify",
+        "proposal-apply",
+    }
+)
 
 
 def _add_ingest_metadata_args(parser: argparse.ArgumentParser) -> None:
@@ -281,20 +290,9 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
 
     proposal_review = sub.add_parser(
         "proposal-review",
-        help=(
-            "Record an operator review for one proposal. Requires "
-            "--reviewer-id and at least one --criterion."
-        ),
+        help="Record a local-operator review for one proposal.",
     )
     proposal_review.add_argument("proposal_id")
-    proposal_review.add_argument(
-        "--reviewer-id",
-        required=True,
-        help=(
-            "Operator-supplied reviewer id. Runtime reviewer ids "
-            "('runtime', 'system', 'auto', 'automatic', 'self') are rejected."
-        ),
-    )
     proposal_review.add_argument(
         "--review-policy-id",
         default="",
@@ -313,12 +311,17 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
 
     proposal_apply = sub.add_parser(
         "proposal-apply",
-        help=(
-            "Apply an accepted proposal to the catalog via the shipped "
-            "apply_emergent_skill() seam."
-        ),
+        help="Admit an accepted and verified proposal into the skill catalog.",
     )
     proposal_apply.add_argument("proposal_id")
+
+    proposal_verify = sub.add_parser(
+        "proposal-verify",
+        help="Record passing local-operator verification evidence for a proposal.",
+    )
+    proposal_verify.add_argument("proposal_id")
+    proposal_verify.add_argument("--check", required=True)
+    proposal_verify.add_argument("--evidence-ref", required=True)
 
     _add_learning_subcommands(sub)
 
@@ -644,12 +647,7 @@ def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
         _print_json({"ok": True, "run_id": run_id})
         return
 
-    if args.cmd in {
-        "proposal-list",
-        "proposal-inspect",
-        "proposal-review",
-        "proposal-apply",
-    }:
+    if args.cmd in _PROPOSAL_COMMANDS:
         _dispatch_proposal_cmd(ctl, args)
         return
 
@@ -762,7 +760,7 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
             review = record_proposal_review(
                 ctl.store,
                 proposal_id=args.proposal_id,
-                reviewer_id=args.reviewer_id,
+                reviewer_id=local_operator_id(),
                 review_policy_id=args.review_policy_id,
                 criterion_decisions=criteria,
             )
@@ -777,13 +775,19 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         )
         return
 
+    if args.cmd == "proposal-verify":
+        _dispatch_proposal_verify(ctl, args)
+        return
+
     if args.cmd == "proposal-apply":
-        catalog_rows = ctl.list_skills({}) or []
         try:
             addition = apply_proposal(
-                ctl.store,
+                ctl,
                 proposal_id=args.proposal_id,
-                current_catalog=catalog_rows,
+                authority=SkillIngestAuthority.local_operator(
+                    surface="module_cli.skill.proposal_apply",
+                    principal_id=local_operator_id(),
+                ),
             )
         except ProposalQueueError as exc:
             raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
@@ -796,6 +800,40 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     raise SkillError("INVALID_ARGUMENT", "Unsupported proposal command")
+
+
+def _dispatch_proposal_verify(ctl: Skill, args: argparse.Namespace) -> None:
+    from openminion.modules.skill.interfaces import SkillVerificationEvidence
+    from openminion.modules.skill.proposal.queue import (
+        ProposalQueueError,
+        record_proposal_verification,
+    )
+
+    try:
+        evidence = SkillVerificationEvidence(
+            check=args.check,
+            result="passed",
+            evidence_ref=args.evidence_ref,
+        )
+        record_proposal_verification(
+            ctl.store,
+            proposal_id=args.proposal_id,
+            operator_id=local_operator_id(),
+            evidence=evidence,
+        )
+    except (ProposalQueueError, ValueError) as exc:
+        raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
+    _print_json(
+        {
+            "ok": True,
+            "proposal_id": args.proposal_id,
+            "verification_evidence": {
+                "check": evidence.check,
+                "result": evidence.result,
+                "evidence_ref": evidence.evidence_ref,
+            },
+        }
+    )
 
 
 def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:

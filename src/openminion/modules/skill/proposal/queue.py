@@ -1,16 +1,28 @@
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from openminion.base.time import utc_now_iso
-from .base import SkillProposal, SkillProposalDraft
-from .catalog import EmergentSkillCatalogAddition, apply_emergent_skill
+from openminion.modules.skill.constants import (
+    SKILL_SOURCE_OPERATOR_DECLARED,
+    SKILL_STATUS_VERIFIED,
+)
+from openminion.modules.skill.interfaces import (
+    SkillIngestAuthority,
+    SkillVerificationEvidence,
+)
 from openminion.modules.skill.models import canonical_json
+from openminion.modules.skill.storage.base import SkillStore
+
+from .base import SkillProposal
+from .catalog import EmergentSkillCatalogAddition
 from .review import (
     SkillProposalCriterionDecision,
     SkillProposalReview,
     decide_skill_proposal,
 )
-from openminion.modules.skill.storage.base import SkillStore
+
+if TYPE_CHECKING:
+    from openminion.modules.skill.runtime.skill import Skill
 
 
 PROPOSAL_QUEUE_STATE_PENDING = "pending"
@@ -130,14 +142,49 @@ def record_proposal_review(
     return review
 
 
-def apply_proposal(
+def record_proposal_verification(
     store: SkillStore,
     *,
     proposal_id: str,
-    current_catalog: Iterable[Any],
-) -> EmergentSkillCatalogAddition:
-    """Apply an accepted-review proposal with ``apply_emergent_skill()``."""
+    operator_id: str,
+    evidence: SkillVerificationEvidence,
+) -> SkillVerificationEvidence:
+    """Attach local-operator verification evidence to an accepted proposal."""
 
+    record = get_proposal(store, proposal_id=proposal_id)
+    if record is None:
+        raise ProposalNotFoundError(f"proposal not found: {proposal_id!r}")
+    if record.get("queue_state") != PROPOSAL_QUEUE_STATE_REVIEWED:
+        raise ProposalQueueError("proposal verification requires a recorded review")
+    if record.get("review_status") != "accepted":
+        raise ProposalQueueError("proposal verification requires an accepted review")
+    if str(record.get("reviewer_id") or "") != str(operator_id or ""):
+        raise ProposalQueueError("verifying operator must match the accepted reviewer")
+    payload = {
+        "check": evidence.check,
+        "result": evidence.result,
+        "evidence_ref": evidence.evidence_ref,
+        "reviewer_id": operator_id,
+    }
+    store.record_proposal_verification(
+        proposal_id=proposal_id,
+        verification_evidence_json=canonical_json(payload),
+        updated_at=utc_now_iso(),
+    )
+    return evidence
+
+
+def apply_proposal(
+    skill_runtime: "Skill",
+    *,
+    proposal_id: str,
+    authority: SkillIngestAuthority,
+) -> EmergentSkillCatalogAddition:
+    """Admit authoritative proposal Markdown through the existing Skill runtime."""
+
+    if authority.authority_class != "local_operator" or not authority.principal_id:
+        raise ProposalQueueError("proposal apply requires local operator authority")
+    store: SkillStore = skill_runtime.store
     record = get_proposal(store, proposal_id=proposal_id)
     if record is None:
         raise ProposalNotFoundError(f"proposal not found: {proposal_id!r}")
@@ -149,10 +196,85 @@ def apply_proposal(
         raise ProposalQueueError(
             f"proposal already applied but addition payload missing: {proposal_id!r}"
         )
+    proposal, review, verification = _validated_application_inputs(
+        record,
+        proposal_id=proposal_id,
+        operator_id=authority.principal_id,
+    )
+    markdown = str(proposal.skill_markdown or "")
+    if not markdown.strip():
+        raise ProposalQueueError("proposal has no authoritative skill Markdown")
+
+    candidate, _warnings = skill_runtime._build_package(
+        markdown=markdown,
+        explicit_name=proposal.proposed_skill_definition.name,
+        source_artifact_ref=f"proposal:{proposal.proposal_id}",
+        scope="global",
+        agent_id=None,
+        bundle_root=None,
+        trust=None,
+        remote_source=False,
+        authority=authority,
+    )
+    active_rows = skill_runtime.list_skills({}) or []
+    collisions = [
+        row
+        for row in active_rows
+        if str(row.get("skill_id") or "") == candidate.skill_id
+        or str(row.get("name") or "") == candidate.name
+    ]
+    if collisions:
+        active = skill_runtime.get_skill(str(collisions[0]["skill_id"]))
+        if active.to_content_fingerprint() != candidate.to_content_fingerprint():
+            raise ProposalQueueError("proposal conflicts with an active skill identity")
+        skill_id = active.skill_id
+        version_hash = active.version_hash
+    else:
+        skill_id, version_hash, _warnings = skill_runtime.ingest_text(
+            name=candidate.name,
+            markdown=markdown,
+            scope="global",
+            authority=authority,
+        )
+        skill_runtime.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=None,
+            target_status=SKILL_STATUS_VERIFIED,
+            reason=f"accepted skill proposal {proposal.proposal_id}",
+            authority=authority,
+            verification_evidence=verification,
+        )
+    visible = skill_runtime.get_skill(skill_id)
+    if visible.version_hash != version_hash:
+        raise ProposalQueueError("admitted proposal version is not catalog-visible")
+    addition = EmergentSkillCatalogAddition(
+        review_ref=review.proposal_ref,
+        added_skill_id=skill_id,
+        source_field=SKILL_SOURCE_OPERATOR_DECLARED,
+        added_at=utc_now_iso(),
+        added_by=authority.principal_id,
+        version_hash=version_hash,
+    )
+    store.apply_proposal(
+        proposal_id=str(proposal.proposal_id or ""),
+        applied_at=utc_now_iso(),
+        applied_addition_json=canonical_json(addition.model_dump(mode="json")),
+    )
+    return addition
+
+
+def _validated_application_inputs(
+    record: Mapping[str, Any],
+    *,
+    proposal_id: str,
+    operator_id: str,
+) -> tuple[SkillProposal, SkillProposalReview, SkillVerificationEvidence]:
+    queue_state = str(record.get("queue_state") or "")
     if queue_state != PROPOSAL_QUEUE_STATE_REVIEWED:
         raise ProposalQueueError(
             "apply requires a recorded review with status='accepted'; "
-            f"current queue_state={queue_state!r}"
+            f"current queue_state={record.get('queue_state')!r}"
         )
     review_payload = record.get("review")
     if not isinstance(review_payload, Mapping):
@@ -164,19 +286,22 @@ def apply_proposal(
         raise ProposalQueueError(
             f"apply requires accepted review; got status={review.status!r}"
         )
+    if review.reviewer_id != operator_id:
+        raise ProposalQueueError("applying operator must match the accepted reviewer")
+    verification_payload = record.get("verification_evidence")
+    if not isinstance(verification_payload, Mapping):
+        raise ProposalQueueError("apply requires recorded verification evidence")
+    if str(verification_payload.get("reviewer_id") or "") != operator_id:
+        raise ProposalQueueError("verification operator must match the applying operator")
+    if str(verification_payload.get("result") or "") != "passed":
+        raise ProposalQueueError("apply requires passing verification evidence")
+    verification = SkillVerificationEvidence(
+        check=str(verification_payload.get("check") or ""),
+        result="passed",
+        evidence_ref=str(verification_payload.get("evidence_ref") or ""),
+    )
     proposal = SkillProposal.model_validate(record["proposal"])
-    draft: SkillProposalDraft = proposal.proposed_skill_definition
-    addition, _new_catalog = apply_emergent_skill(
-        review,
-        catalog=list(current_catalog),
-        skill_definition=draft,
-    )
-    store.apply_proposal(
-        proposal_id=str(proposal.proposal_id or ""),
-        applied_at=utc_now_iso(),
-        applied_addition_json=canonical_json(addition.model_dump(mode="json")),
-    )
-    return addition
+    return proposal, review, verification
 
 
 __all__ = (
@@ -190,4 +315,5 @@ __all__ = (
     "get_proposal",
     "list_proposals",
     "record_proposal_review",
+    "record_proposal_verification",
 )

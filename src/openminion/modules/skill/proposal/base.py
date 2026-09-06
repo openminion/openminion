@@ -4,7 +4,13 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.modules.skill.constants import RISK_CLASS_LOW
-from openminion.modules.skill.models import normalize_text_list, slugify, stable_hash
+from openminion.modules.skill.models import (
+    normalize_risk,
+    normalize_text_list,
+    slugify,
+    stable_hash,
+)
+from openminion.modules.skill.runtime.parser import parse_markdown
 
 
 class SkillProposalDraft(BaseModel):
@@ -31,9 +37,68 @@ class SkillProposal(BaseModel):
     proposal_id: str
     source_task_shape_ref: str
     proposed_skill_definition: SkillProposalDraft
+    skill_markdown: str = ""
     evidence_refs: list[str] = Field(default_factory=list)
     proposer_policy_id: str = ""
     proposed_at: str = ""
+
+
+def proposal_from_markdown(
+    markdown: str,
+    *,
+    source_task_shape_ref: str,
+    evidence_refs: Iterable[str] = (),
+    policy_id: str = "model.skill.propose.v1",
+) -> SkillProposal:
+    """Build one pending proposal from authoritative skill Markdown."""
+
+    front_matter, sections, _summary, _warnings = parse_markdown(markdown)
+    name = str(front_matter.get("name") or front_matter.get("id") or "").strip()
+    description = str(front_matter.get("description") or "").strip()
+    has_body = bool(str(_summary or "").strip()) or any(
+        str(value or "").strip() for value in sections.values()
+    )
+    if not name or not description or not has_body:
+        raise ValueError("skill Markdown requires name, description, and content")
+
+    normalized_evidence = normalize_text_list(list(evidence_refs))
+    draft = SkillProposalDraft(
+        name=slugify(name),
+        display_name=name,
+        short_description=description,
+        tools=normalize_text_list(
+            front_matter.get("tools") or front_matter.get("allowed-tools")
+        ),
+        tags=normalize_text_list(front_matter.get("tags")),
+        risk_class=normalize_risk(str(front_matter.get("risk") or RISK_CLASS_LOW)),
+        applies_to=(
+            dict(front_matter["applies_to"])
+            if isinstance(front_matter.get("applies_to"), dict)
+            else {}
+        ),
+        inputs_schema=[
+            item
+            for item in front_matter.get("inputs", [])
+            if isinstance(item, dict)
+        ],
+        verification_rules=normalize_text_list(front_matter.get("verification")),
+    )
+    proposal_id = stable_hash(
+        {
+            "source_task_shape_ref": source_task_shape_ref,
+            "proposer_policy_id": policy_id,
+            "skill_markdown": markdown,
+            "evidence_refs": normalized_evidence,
+        }
+    )
+    return SkillProposal(
+        proposal_id=proposal_id,
+        source_task_shape_ref=source_task_shape_ref,
+        proposed_skill_definition=draft,
+        skill_markdown=markdown,
+        evidence_refs=normalized_evidence,
+        proposer_policy_id=policy_id,
+    )
 
 
 def _shape_field(shape: Any, field: str) -> Any:
@@ -174,5 +239,6 @@ def propose_skills_from_task_shapes(
 __all__ = (
     "SkillProposal",
     "SkillProposalDraft",
+    "proposal_from_markdown",
     "propose_skills_from_task_shapes",
 )

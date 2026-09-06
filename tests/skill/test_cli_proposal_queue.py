@@ -11,6 +11,7 @@ from openminion.modules.skill.cli import main
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.proposal.queue import create_proposal
 from openminion.modules.skill.runtime.skill import Skill
+from openminion.cli.identity.operator import local_operator_id
 
 
 def _config_path(tmp_path: Path) -> Path:
@@ -75,6 +76,18 @@ def _seed_proposal(tmp_path: Path, *, proposal_id: str = "sprq-cli-1") -> str:
                     inputs_schema=[],
                     verification_rules=[],
                 ),
+                skill_markdown="""---
+name: research-latest-news-playbook
+description: Research current news from reviewed sources.
+verification:
+  - Confirm cited sources are current.
+---
+# Research Latest News Playbook
+
+## Procedure
+
+Research the requested topic and cite current sources.
+""",
                 evidence_refs=["performance:research|live_information|latest_news"],
                 proposer_policy_id="skill_promotion_cadence_v1",
                 proposed_at="",
@@ -137,8 +150,6 @@ def test_cli_proposal_review_persists_and_transitions(tmp_path: Path) -> None:
             str(cfg),
             "proposal-review",
             "sprq-cli-1",
-            "--reviewer-id",
-            "operator-cli",
             "--review-policy-id",
             "sprq_review_v1",
             "--criterion",
@@ -148,42 +159,13 @@ def test_cli_proposal_review_persists_and_transitions(tmp_path: Path) -> None:
     payload = json.loads(out)
     assert payload["ok"] is True
     assert payload["review"]["status"] == "accepted"
-    assert payload["review"]["reviewer_id"] == "operator-cli"
+    assert payload["review"]["reviewer_id"] == local_operator_id()
 
     # Inspect now reports reviewed state.
     inspect_out = _run_cli(["--config", str(cfg), "proposal-inspect", "sprq-cli-1"])
     inspect_payload = json.loads(inspect_out)
     assert inspect_payload["proposal"]["queue_state"] == "reviewed"
     assert inspect_payload["proposal"]["review_status"] == "accepted"
-
-
-@pytest.mark.parametrize(
-    "runtime_id", ["runtime", "system", "auto", "automatic", "self"]
-)
-def test_cli_proposal_review_rejects_runtime_reviewer(
-    tmp_path: Path, runtime_id: str
-) -> None:
-    _seed_proposal(tmp_path)
-    cfg = _config_path(tmp_path)
-    rc, out = _run_cli_expect_failure(
-        [
-            "--config",
-            str(cfg),
-            "proposal-review",
-            "sprq-cli-1",
-            "--reviewer-id",
-            runtime_id,
-            "--criterion",
-            "fit:accepted:should never persist",
-        ]
-    )
-    assert rc == 1
-    payload = json.loads(out)
-    assert payload["ok"] is False
-    # Proposal still pending.
-    inspect_out = _run_cli(["--config", str(cfg), "proposal-inspect", "sprq-cli-1"])
-    inspect_payload = json.loads(inspect_out)
-    assert inspect_payload["proposal"]["queue_state"] == "pending"
 
 
 def test_cli_proposal_review_refuses_missing_criteria(tmp_path: Path) -> None:
@@ -195,8 +177,6 @@ def test_cli_proposal_review_refuses_missing_criteria(tmp_path: Path) -> None:
             str(cfg),
             "proposal-review",
             "sprq-cli-1",
-            "--reviewer-id",
-            "operator-cli",
             "--criterion",
             "bad-format-no-colons",
         ]
@@ -215,18 +195,88 @@ def test_cli_proposal_apply_emits_addition(tmp_path: Path) -> None:
             str(cfg),
             "proposal-review",
             "sprq-cli-1",
-            "--reviewer-id",
-            "operator-cli",
             "--criterion",
             "fit:accepted:matches recurring intent",
+        ]
+    )
+    _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "proposal-verify",
+            "sprq-cli-1",
+            "--check",
+            "pytest",
+            "--evidence-ref",
+            "artifact://validation/pytest.txt",
         ]
     )
     apply_out = _run_cli(["--config", str(cfg), "proposal-apply", "sprq-cli-1"])
     apply_payload = json.loads(apply_out)
     assert apply_payload["ok"] is True
     addition = apply_payload["addition"]
-    assert addition["added_skill_id"].startswith("emergent.")
-    assert addition["added_by"] == "operator-cli"
+    assert addition["added_skill_id"] == "research_latest_news_playbook"
+    assert addition["added_by"] == local_operator_id()
+    assert len(addition["version_hash"]) == 64
+
+
+def test_cli_proposal_verify_persists_operator_evidence(tmp_path: Path) -> None:
+    _seed_proposal(tmp_path)
+    cfg = _config_path(tmp_path)
+    _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "proposal-review",
+            "sprq-cli-1",
+            "--criterion",
+            "fit:accepted:matches recurring intent",
+        ]
+    )
+
+    out = _run_cli(
+        [
+            "--config",
+            str(cfg),
+            "proposal-verify",
+            "sprq-cli-1",
+            "--check",
+            "pytest",
+            "--evidence-ref",
+            "artifact://validation/pytest.txt",
+        ]
+    )
+    payload = json.loads(out)
+    assert payload["verification_evidence"]["result"] == "passed"
+
+    inspected = json.loads(
+        _run_cli(["--config", str(cfg), "proposal-inspect", "sprq-cli-1"])
+    )["proposal"]
+    assert inspected["verification_evidence"] == {
+        "check": "pytest",
+        "result": "passed",
+        "evidence_ref": "artifact://validation/pytest.txt",
+        "reviewer_id": local_operator_id(),
+    }
+
+
+def test_cli_proposal_verify_requires_accepted_review(tmp_path: Path) -> None:
+    _seed_proposal(tmp_path)
+    cfg = _config_path(tmp_path)
+    rc, out = _run_cli_expect_failure(
+        [
+            "--config",
+            str(cfg),
+            "proposal-verify",
+            "sprq-cli-1",
+            "--check",
+            "pytest",
+            "--evidence-ref",
+            "artifact://validation/pytest.txt",
+        ]
+    )
+    assert rc == 1
+    assert json.loads(out)["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_cli_proposal_apply_refuses_pending(tmp_path: Path) -> None:

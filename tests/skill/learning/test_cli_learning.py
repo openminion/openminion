@@ -178,8 +178,6 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             str(cfg),
             "proposal-review",
             proposal_id,
-            "--reviewer-id",
-            "operator-cli",
             "--criterion",
             "fit:accepted:recurring evidence",
         ]
@@ -203,7 +201,7 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     assert failed["ok"] is False
     assert failed["error"]["code"] == "INVALID_ARGUMENT"
 
-    applied = _run_cli(
+    incomplete = _run_cli_expect_failure(
         [
             "--config",
             str(cfg),
@@ -218,4 +216,5 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
             "passed",
         ]
     )
-    assert applied["addition"]["added_skill_id"].startswith("emergent.")
+    assert incomplete["ok"] is False
+    assert incomplete["error"]["code"] == "INVALID_ARGUMENT"

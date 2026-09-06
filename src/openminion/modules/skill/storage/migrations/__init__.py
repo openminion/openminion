@@ -15,6 +15,7 @@ _MIGRATIONS = (
     "0003_audit",
     "0004_active_version_admission",
     "0005_verification_evidence",
+    "0006_proposal_verification",
 )
 
 

@@ -26,7 +26,7 @@ SKILL_PATH = (
 )
 
 
-def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) -> None:
+def test_repository_delivery_manual_use_and_legacy_proposal_gate(tmp_path: Path) -> None:
     proposal_store = SQLiteSkillStore(tmp_path / "proposal.db", wal=False)
     skill = Skill(
         {
@@ -83,22 +83,21 @@ def test_repository_delivery_review_replay_apply_and_manual_use(tmp_path: Path) 
                 },
             ],
         )
-        addition = apply_proposal_with_replay(
-            proposal_store,
-            proposal_id=proposal.proposal_id,
-            current_catalog=[],
-            replay_proof=ReplayProof(
-                proof_id=f"repository-delivery-replay:{version_hash}",
+        with pytest.raises(ValueError, match="complete skill Markdown"):
+            apply_proposal_with_replay(
+                proposal_store,
                 proposal_id=proposal.proposal_id,
-                shape_id="task-shape:repository-delivery",
-                status="passed",
-                evidence_refs=[artifact_ref],
-            ),
-        )
-        assert addition.added_skill_id == "emergent.repository-delivery"
-        assert addition.review_ref == proposal.proposal_id
+                current_catalog=[],
+                replay_proof=ReplayProof(
+                    proof_id=f"repository-delivery-replay:{version_hash}",
+                    proposal_id=proposal.proposal_id,
+                    shape_id="task-shape:repository-delivery",
+                    status="passed",
+                    evidence_refs=[artifact_ref],
+                ),
+            )
         applied = get_proposal(proposal_store, proposal_id=proposal.proposal_id)
-        assert applied is not None and applied["queue_state"] == "applied"
+        assert applied is not None and applied["queue_state"] == "reviewed"
         assert applied["proposal"]["evidence_refs"] == [artifact_ref]
         assert applied["review"]["proposal_ref"] == proposal.proposal_id
         assert artifact_ref in applied["review"]["reviewer_notes"][1]["comment"]

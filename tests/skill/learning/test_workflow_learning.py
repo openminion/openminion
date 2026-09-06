@@ -284,18 +284,18 @@ def test_replay_proof_blocks_apply_until_passed(tmp_path: Path) -> None:
                 ),
             )
 
-        addition = apply_proposal_with_replay(
-            store,
-            proposal_id="wlsk-proposal",
-            current_catalog=[],
-            replay_proof=ReplayProof(
-                proof_id="proof-2",
+        with pytest.raises(ReplayGateError, match="complete skill Markdown"):
+            apply_proposal_with_replay(
+                store,
                 proposal_id="wlsk-proposal",
-                shape_id="wlsh-test",
-                status="passed",
-            ),
-        )
-        assert addition.added_skill_id == "emergent.test-cleanup-playbook"
+                current_catalog=[],
+                replay_proof=ReplayProof(
+                    proof_id="proof-2",
+                    proposal_id="wlsk-proposal",
+                    shape_id="wlsh-test",
+                    status="passed",
+                ),
+            )
     finally:
         store.close()
 

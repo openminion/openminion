@@ -29,6 +29,22 @@ class SkillIngestArgs(BaseModel):
     )
 
 
+class SkillProposeArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skill_markdown: str = Field(
+        ...,
+        min_length=1,
+        max_length=500_000,
+        description=(
+            "Complete reviewable SKILL.md content: YAML frontmatter with name and "
+            "description, a closing ---, then Markdown body headings such as "
+            "# Title and ## Procedure. Do not put the body in a frontmatter "
+            "content field."
+        ),
+    )
+
+
 class SkillIngestUrlArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

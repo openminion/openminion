@@ -190,6 +190,16 @@ class SkillStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def record_proposal_verification(
+        self,
+        *,
+        proposal_id: str,
+        verification_evidence_json: str,
+        updated_at: str,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def apply_proposal(
         self,
         *,

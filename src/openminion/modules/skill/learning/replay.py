@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from openminion.modules.skill.proposal import queue as proposal_queue
 from openminion.modules.skill.proposal.catalog import EmergentSkillCatalogAddition
 from openminion.modules.skill.storage.base import SkillStore
 
@@ -46,7 +44,7 @@ def apply_proposal_with_replay(
     store: SkillStore,
     *,
     proposal_id: str,
-    current_catalog: Iterable[object],
+    current_catalog: object,
     replay_proof: ReplayProof,
 ) -> EmergentSkillCatalogAddition:
     """Apply a proposal only after accepted review and passing replay proof."""
@@ -54,10 +52,9 @@ def apply_proposal_with_replay(
     if replay_proof.proposal_id != proposal_id:
         raise ReplayGateError("replay_proof_proposal_mismatch")
     require_replay_passed(replay_proof)
-    return proposal_queue.apply_proposal(
-        store,
-        proposal_id=proposal_id,
-        current_catalog=current_catalog,
+    del store, current_catalog
+    raise ReplayGateError(
+        "legacy replay helper cannot admit a proposal without complete skill Markdown"
     )
 
 

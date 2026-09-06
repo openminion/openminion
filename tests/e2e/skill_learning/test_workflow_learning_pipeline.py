@@ -7,13 +7,9 @@ from pathlib import Path
 
 from openminion.modules.skill.learning import (
     ReplayProof,
-    SkillExecutionTrustRecord,
     WorkflowShapeMiner,
     apply_proposal_with_replay,
     bundle_from_autonomy_proof_packet,
-    promote_execution_trust,
-    record_learned_skill_reuse,
-    record_skill_run_outcome,
     stage_shape_as_skill_proposal,
 )
 from openminion.modules.skill.proposal.queue import (
@@ -119,52 +115,16 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
             status="passed",
             evidence_refs=["replay:passed"],
         )
-        addition = apply_proposal_with_replay(
-            store,
-            proposal_id=result.proposal.proposal_id,
-            current_catalog=[],
-            replay_proof=proof,
-        )
-        assert addition.added_skill_id.startswith("emergent.")
-
-        class Runtime:
-            def __init__(self) -> None:
-                self.runs: list[dict[str, object]] = []
-
-            def log_run(self, **kwargs: object) -> str:
-                run_id = f"skill-run-{len(self.runs) + 1}"
-                self.runs.append({"run_id": run_id, **kwargs})
-                return run_id
-
-        runtime = Runtime()
-        run_id = record_learned_skill_reuse(
-            runtime,
-            session_id="session-1",
-            agent_id="agent-1",
-            skill_id=addition.added_skill_id,
-            version_hash="v1",
-            evidence_refs=["replay:passed"],
-        )
-        assert runtime.runs[0]["outcome"] == "success"
-
-        trust = SkillExecutionTrustRecord(
-            skill_id=addition.added_skill_id,
-            shape_id=shape.shape_id,
-            trust_state="catalog_applied",
-        )
-        trust = promote_execution_trust(trust, "suggest_only")
-        trust = record_skill_run_outcome(trust, outcome="success", evidence_ref=run_id)
-        trust = promote_execution_trust(trust, "trusted_for_manual")
-        trust = record_skill_run_outcome(
-            trust, outcome="fail", evidence_ref="run-fail-1"
-        )
-        trust = record_skill_run_outcome(
-            trust, outcome="fail", evidence_ref="run-fail-2"
-        )
-
-        assert trust.trust_state == "execution_downgraded"
-        applied = get_proposal(store, proposal_id=result.proposal.proposal_id)
-        assert applied is not None
-        assert applied["applied_addition"]["added_skill_id"] == addition.added_skill_id
+        with pytest.raises(ValueError, match="complete skill Markdown"):
+            apply_proposal_with_replay(
+                store,
+                proposal_id=result.proposal.proposal_id,
+                current_catalog=[],
+                replay_proof=proof,
+            )
+        reviewed = get_proposal(store, proposal_id=result.proposal.proposal_id)
+        assert reviewed is not None
+        assert reviewed["queue_state"] == "reviewed"
+        assert reviewed["applied_addition"] is None
     finally:
         store.close()

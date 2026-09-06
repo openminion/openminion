@@ -15,7 +15,6 @@ from openminion.modules.skill.proposal import (
     SkillProposal,
 )
 from openminion.modules.skill.proposal.queue import (
-    apply_proposal,
     create_proposal,
     list_proposals,
     record_proposal_review,
@@ -144,12 +143,7 @@ def test_scsp04_demonstrative_pilot_loop(pilot_env) -> None:
         if (row.get("review") or {}).get("status") == "accepted"
     ]
     assert len(accepted_rows) == 1
-    addition = apply_proposal(
-        store,
-        proposal_id=accepted_rows[0]["proposal_id"],
-        current_catalog=[],
-    )
-    assert addition.added_skill_id.startswith("emergent.")
+    assert accepted_rows[0]["proposal"]["skill_markdown"] == ""
 
     status_payload = suggestion_status(store).to_dict()
     assert status_payload["surfaced_count"] == 3

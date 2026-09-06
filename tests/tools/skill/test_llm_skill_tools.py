@@ -10,9 +10,11 @@ from openminion.tools.skill.plugin import (
     _h_skill_ingest_url,
     _h_skill_list,
     _h_skill_remove,
+    _h_skill_propose,
 )
+from openminion.modules.skill.storage import SQLiteSkillStore
 from openminion.tools.skill.registrar import REGISTRAR
-from openminion.tools.skill.schemas import SkillGetArgs
+from openminion.tools.skill.schemas import SkillGetArgs, SkillProposeArgs
 
 
 @dataclass
@@ -194,3 +196,108 @@ def test_skill_ingest_render_snippet_failure_logs_structured_warning(caplog) -> 
     assert warnings, "expected structured warning when render_snippet raises"
     assert any("RuntimeError" in r.getMessage() for r in warnings)
     assert any("skill-abc" in r.getMessage() for r in warnings)
+
+
+def _proposal_markdown() -> str:
+    return """---
+name: local-system-summary
+description: Gather a small local system summary.
+---
+# Local System Summary
+
+## Procedure
+
+Gather facts and write report.md.
+"""
+
+
+def test_skill_propose_stages_markdown_with_runtime_session_refs(tmp_path) -> None:
+    store = SQLiteSkillStore(tmp_path / "skill.db", wal=False)
+    try:
+        ctx = SimpleNamespace(
+            skill_api=SimpleNamespace(store=store),
+            session_id="session-1",
+            run_id="run-1",
+            trace_id="trace-1",
+        )
+        result = _h_skill_propose({"skill_markdown": _proposal_markdown()}, ctx)
+
+        assert result["ok"] is True
+        rows = store.list_proposals(queue_state="pending", limit=10)
+        assert len(rows) == 1
+        proposal = rows[0]["proposal"]
+        assert proposal["source_task_shape_ref"] == "session:session-1"
+        assert proposal["evidence_refs"] == ["run_id:run-1", "trace_id:trace-1"]
+        assert proposal["skill_markdown"] == _proposal_markdown()
+        assert store.list_skills() == []
+    finally:
+        store.close()
+
+
+def test_skill_propose_schema_explains_portable_markdown_shape() -> None:
+    description = SkillProposeArgs.model_json_schema()["properties"][
+        "skill_markdown"
+    ]["description"]
+
+    assert "YAML frontmatter" in description
+    assert "## Procedure" in description
+    assert "frontmatter content field" in description
+
+
+def test_skill_propose_is_idempotent(tmp_path) -> None:
+    store = SQLiteSkillStore(tmp_path / "skill.db", wal=False)
+    try:
+        ctx = SimpleNamespace(
+            skill_api=SimpleNamespace(store=store),
+            session_id="session-1",
+            metadata={},
+        )
+        first = _h_skill_propose({"skill_markdown": _proposal_markdown()}, ctx)
+        second = _h_skill_propose({"skill_markdown": _proposal_markdown()}, ctx)
+
+        assert first["proposal_id"] == second["proposal_id"]
+        assert first["created_now"] is True
+        assert second["created_now"] is False
+        assert len(store.list_proposals(queue_state="pending", limit=10)) == 1
+    finally:
+        store.close()
+
+
+def test_skill_propose_rejects_authority_fields(tmp_path) -> None:
+    store = SQLiteSkillStore(tmp_path / "skill.db", wal=False)
+    try:
+        ctx = SimpleNamespace(
+            skill_api=SimpleNamespace(store=store),
+            session_id="session-1",
+            metadata={},
+        )
+        result = _h_skill_propose(
+            {
+                "skill_markdown": _proposal_markdown(),
+                "reviewer_id": "operator",
+            },
+            ctx,
+        )
+
+        assert result["ok"] is False
+        assert result["error"]["code"] == "INVALID_ARGS"
+        assert store.list_proposals(queue_state="pending", limit=10) == []
+    finally:
+        store.close()
+
+
+def test_skill_propose_requires_session(tmp_path) -> None:
+    store = SQLiteSkillStore(tmp_path / "skill.db", wal=False)
+    try:
+        result = _h_skill_propose(
+            {"skill_markdown": _proposal_markdown()},
+            SimpleNamespace(
+                skill_api=SimpleNamespace(store=store),
+                session_id="",
+                metadata={},
+            ),
+        )
+        assert result["ok"] is False
+        assert result["error"]["code"] == "SKILL_PROPOSAL_CONTEXT_REQUIRED"
+    finally:
+        store.close()

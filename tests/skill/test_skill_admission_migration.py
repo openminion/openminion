@@ -128,6 +128,12 @@ def test_admission_migration_backfills_legacy_active_version_and_downgrades(
         "verification_evidence_ref",
         "verification_reviewer_id",
     } <= admission_columns
+    with sqlite3.connect(db_path) as conn:
+        proposal_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(skill_proposals)").fetchall()
+        }
+    assert "verification_evidence_json" in proposal_columns
 
     _run_alembic(db_path, "downgrade", "0003_audit")
     with sqlite3.connect(db_path) as conn:
