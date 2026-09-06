@@ -581,6 +581,7 @@ def test_apply_proposal_rejects_agent_scoped_identity_without_mutation(
         assert [(row["scope"], row["agent_id"]) for row in rows] == [
             ("agent", "agent-1")
         ]
+        assert skill.store.delete_skill(skill_id=existing_id)["versions"] == 1
     finally:
         skill.close()
 
