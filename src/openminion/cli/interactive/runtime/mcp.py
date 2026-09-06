@@ -6,7 +6,6 @@ from openminion.cli.interactive.mcp_status import (
     build_mcp_reference,
     render_mcp_status_report,
 )
-from openminion.tools.mcp import MCPProtocolError
 
 
 def _mcp_runtime_tool_names(
@@ -41,28 +40,6 @@ def _mcp_runtime_auxiliary_counts(
     )
 
 
-def _mcp_live_auxiliary_counts(live_session: Any) -> tuple[int, int, int, int] | None:
-    try:
-        prompts = live_session.list_prompts()
-        resources = live_session.list_resources()
-        list_templates = getattr(live_session, "list_resource_templates", None)
-        templates = list_templates() if callable(list_templates) else []
-    except MCPProtocolError as exc:
-        if exc.details.get("code") == -32601:
-            return None
-        raise
-    return (
-        len(prompts),
-        len(resources),
-        len(templates),
-        sum(
-            1
-            for resource in resources
-            if str(getattr(resource, "resource_uri", "") or "").startswith("ui://")
-        ),
-    )
-
-
 class RuntimeMCPMixin:
     _rt: Any
 
@@ -76,11 +53,6 @@ class RuntimeMCPMixin:
         manager = getattr(self._rt.tools, "mcp_manager", None)
         status_snapshot = (
             manager.server_status_snapshot() if manager is not None else {}
-        )
-        metric_snapshot = (
-            manager.mcp_server_metrics()
-            if manager is not None and hasattr(manager, "mcp_server_metrics")
-            else {}
         )
         rows: list[MCPServerStatusRow] = []
         for server in configured_servers:

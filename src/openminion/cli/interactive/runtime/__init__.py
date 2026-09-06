@@ -66,7 +66,6 @@ class OpenMinionRuntime(
     """ChatRuntimeAPI adapter over APIRuntime."""
 
     contract_version: str = CLI_INTERFACE_VERSION
-    _added_workspace_roots: tuple[str, ...] = ()
 
     def __init__(
         self,

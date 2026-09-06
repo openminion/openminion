@@ -20,7 +20,6 @@ from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
 from openminion.modules.context.trace_inspection import ContextTraceLookupError
 from openminion.base.config.core import OpenMinionConfig
-from openminion.tools.mcp import MCPAuthorizationError, MCPProtocolError
 
 
 @dataclass
@@ -275,7 +274,6 @@ class _FakeRuntime:
             "alpha": _FakeGateway("alpha"),
             "beta": _FakeGateway("beta"),
         }
-        self.gateway_overrides: list[object | None] = []
 
     def list_registered_agents(self) -> list[str]:
         return ["alpha", "beta"]
@@ -1005,63 +1003,6 @@ def test_openminion_runtime_reports_optional_mcp_failures(
 
     assert "[error]" in body
     assert failure_message in body
-
-
-def test_openminion_runtime_keeps_tool_only_mcp_server_ready() -> None:
-    class _ToolOnlySession:
-        def list_tools(self):
-            return [object()]
-
-        def list_prompts(self):
-            raise MCPProtocolError("Method not found", details={"code": -32601})
-
-        def list_resources(self):
-            raise MCPProtocolError("Method not found", details={"code": -32601})
-
-        def list_resource_templates(self):
-            raise MCPProtocolError("Method not found", details={"code": -32601})
-
-    rt = _FakeRuntime()
-    rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
-    rt.tools = SimpleNamespace(
-        list=lambda: {"mcp.fixture.echo_text": SimpleNamespace(enabled=True)},
-        mcp_manager=SimpleNamespace(_sessions={"fixture": _ToolOnlySession()}),
-    )
-    tui_rt = OpenMinionRuntime(rt)
-
-    body = tui_rt.mcp_status_report()
-
-    assert "[ready]" in body
-    assert "tools=1" in body
-    assert "Method not found" not in body
-
-
-@pytest.mark.parametrize(
-    "error",
-    [
-        MCPProtocolError("malformed prompts payload"),
-        MCPAuthorizationError("authorization failed"),
-    ],
-)
-def test_openminion_runtime_reports_optional_mcp_failures(error: Exception) -> None:
-    class _FailingSession:
-        def list_tools(self):
-            return [object()]
-
-        def list_prompts(self):
-            raise error
-
-    rt = _FakeRuntime()
-    rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
-    rt.tools = SimpleNamespace(
-        list=lambda: {"mcp.fixture.echo_text": SimpleNamespace(enabled=True)},
-        mcp_manager=SimpleNamespace(_sessions={"fixture": _FailingSession()}),
-    )
-
-    body = OpenMinionRuntime(rt).mcp_status_report()
-
-    assert "[error]" in body
-    assert str(error) in body
 
 
 @pytest.mark.asyncio

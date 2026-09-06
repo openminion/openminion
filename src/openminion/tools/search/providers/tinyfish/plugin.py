@@ -2,8 +2,6 @@ from openminion.tools.search import register_provider
 
 from .family import _PROVIDER
 
-_PROVIDER = TinyFishSearchProvider()
-
 
 def register(registry: object | None = None) -> None:
     del registry
