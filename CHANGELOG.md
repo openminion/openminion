@@ -5,17 +5,30 @@ Last updated: 2026-09-05
 
 This file tracks package-facing release notes for `openminion`.
 
-## Unreleased
+## 0.0.16 - 2026-09-05
 
-- Consolidated interactive Focus onto its established terminal renderer,
-  removed the alternate renderer selector and dependency, and preserved
-  overview, context-review, and copy commands in the canonical shell.
-- Added conventional root `--version`, predictable root-option parsing, and
-  repeatable process-local `--add-dir` support for interactive workspaces.
-- Narrowed default file roots to the active workspace, preserved configured
-  absolute reads, and isolated transient workspace grants per turn and worker.
-- Made implicit workspace trust and sandbox-unavailable host-command guidance
-  explicit without enabling unsandboxed execution or persistent grants.
+- Added approval-bound repository delivery across Git remotes, pull request
+  updates and merges, workflow dispatches, check inspection, and GitHub
+  releases, including preflight validation and uncertain-effect reconciliation.
+- Persisted project plans, repository lifecycle state, tool scopes, terminal
+  outcomes, and scheduled check continuations across pauses and resumed work.
+- Bound delegated review to artifact digests and durable child dispositions so
+  corrected artifacts retain auditable review evidence.
+- Added portable skill-bundle admission and authoring support plus a reviewed
+  repository-delivery procedure with explicit stop rules.
+- Consolidated interactive Focus onto the canonical terminal renderer, added
+  root `--version` and repeatable `--add-dir`, and made workspace trust and
+  transient grants explicit.
+- Strengthened memory retention, final-use attribution, replay suppression,
+  corrupt-shape rejection, and truthful recall paths.
+- Hardened tool, plugin, extension, and MCP ownership boundaries while adding
+  exact Python symbol ranges and clearer protocol and operator behavior.
+- Added typed social-signal watches with bounded fetching, durable scheduled
+  execution, and visible delivery outcomes.
+- Added read-only security audit reports and completed bounded blockchain
+  diagnostics and explicit approval flows.
+- Improved provider retry enforcement, pairing and session status, token and
+  provider telemetry, CPU measurement, and bounded Focus history.
 
 ## Current package line - 2026-09-02
 
