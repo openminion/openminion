@@ -194,6 +194,7 @@ class SkillStore(ABC):
         self,
         *,
         proposal_id: str,
+        reviewer_id: str,
         verification_evidence_json: str,
         updated_at: str,
     ) -> None:

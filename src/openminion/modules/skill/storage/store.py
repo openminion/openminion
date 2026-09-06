@@ -702,6 +702,7 @@ class _SkillStoreMixin(SkillStore):
         self,
         *,
         proposal_id: str,
+        reviewer_id: str,
         verification_evidence_json: str,
         updated_at: str,
     ) -> None:
@@ -711,11 +712,18 @@ class _SkillStoreMixin(SkillStore):
             SET verification_evidence_json = ?, updated_at = ?
             WHERE proposal_id = ? AND queue_state = 'reviewed'
               AND verification_evidence_json IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM skill_proposal_reviews r
+                  WHERE r.proposal_id = skill_proposals.proposal_id
+                    AND r.status = 'accepted'
+                    AND r.reviewer_id = ?
+              )
             """,
             (
                 str(verification_evidence_json),
                 str(updated_at),
                 str(proposal_id),
+                str(reviewer_id),
             ),
         )
         if int(affected or 0) != 1:

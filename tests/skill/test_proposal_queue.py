@@ -474,6 +474,7 @@ def test_apply_proposal_rejects_failed_stored_verification(tmp_path: Path) -> No
         )
         skill.store.record_proposal_verification(
             proposal_id="sprq-proposal-1",
+            reviewer_id="local:test",
             verification_evidence_json=(
                 '{"check":"pytest","result":"failed",'
                 '"evidence_ref":"artifact://validation/failed.txt",'
@@ -765,5 +766,65 @@ def test_record_verification_cannot_replace_existing_evidence(tmp_path: Path) ->
                     evidence_ref="artifact://validation/replacement.txt",
                 ),
             )
+    finally:
+        skill.close()
+
+
+def test_verification_write_is_bound_to_current_accepted_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill = _skill(tmp_path)
+    try:
+        create_proposal(skill.store, _proposal())
+        record_proposal_review(
+            skill.store,
+            proposal_id="sprq-proposal-1",
+            reviewer_id="local:test",
+            review_policy_id="sprq_review_policy_v1",
+            criterion_decisions=[
+                {"criterion_id": "fit", "status": "accepted", "comment": "Accept."}
+            ],
+        )
+        original_write = skill.store.record_proposal_verification
+
+        def replace_review_then_write(**kwargs: object) -> None:
+            record_proposal_review(
+                skill.store,
+                proposal_id="sprq-proposal-1",
+                reviewer_id="local:other",
+                review_policy_id="sprq_review_policy_v1",
+                criterion_decisions=[
+                    {
+                        "criterion_id": "fit",
+                        "status": "rejected",
+                        "comment": "Reject before verification commits.",
+                    }
+                ],
+            )
+            original_write(**kwargs)
+
+        monkeypatch.setattr(
+            skill.store,
+            "record_proposal_verification",
+            replace_review_then_write,
+        )
+
+        with pytest.raises(ValueError, match="unverified reviewed proposal"):
+            record_proposal_verification(
+                skill.store,
+                proposal_id="sprq-proposal-1",
+                operator_id="local:test",
+                evidence=SkillVerificationEvidence(
+                    check="pytest",
+                    result="passed",
+                    evidence_ref="artifact://validation/pytest.txt",
+                ),
+            )
+
+        record = get_proposal(skill.store, proposal_id="sprq-proposal-1")
+        assert record is not None
+        assert record["review_status"] == "rejected"
+        assert record["reviewer_id"] == "local:other"
+        assert record["verification_evidence"] is None
     finally:
         skill.close()

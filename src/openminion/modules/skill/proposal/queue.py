@@ -169,6 +169,7 @@ def record_proposal_verification(
     }
     store.record_proposal_verification(
         proposal_id=proposal_id,
+        reviewer_id=operator_id,
         verification_evidence_json=canonical_json(payload),
         updated_at=utc_now_iso(),
     )
