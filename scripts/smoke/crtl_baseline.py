@@ -53,7 +53,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
     if len(values) == 1:
         return values[0]
     try:
-        return statistics.quantiles(values, n=100)[int(pct) - 1]
+        return statistics.quantiles(values, n=100, method="inclusive")[int(pct) - 1]
     except statistics.StatisticsError:
         return values[-1]
 
@@ -148,9 +148,14 @@ def _measure_path(
 
                 runtime.telemetry_service.record_event_sync = _tap_sync  # type: ignore[assignment]
 
-        for i in range(int(runs)):
+        run_count = int(runs) + (1 if path_id == "warm_daemon" else 0)
+        for i in range(run_count):
             cold = path_id != "warm_daemon" or i == 0
-            session_id = f"crtl-baseline-{path_id}-{i}"
+            session_id = (
+                f"crtl-baseline-{path_id}"
+                if path_id == "warm_daemon"
+                else f"crtl-baseline-{path_id}-{i}"
+            )
             run_result = _run_one_turn(
                 runtime=runtime,
                 agent_id=agent_id,
@@ -158,7 +163,14 @@ def _measure_path(
                 message=message,
                 cold_start=cold,
             )
-            raw_runs.append({"run_index": i, "cold_start": cold, **run_result})
+            raw_runs.append(
+                {
+                    "run_index": i,
+                    "cold_start": cold,
+                    "warmup": path_id == "warm_daemon" and i == 0,
+                    **run_result,
+                }
+            )
     except Exception as exc:  # noqa: BLE001
         return {
             "path_id": path_id,
@@ -173,11 +185,16 @@ def _measure_path(
             except Exception:
                 pass
 
+    measured_events = (
+        sink.events[1:]
+        if path_id == "warm_daemon" and sink.events
+        else sink.events
+    )
     return {
         "path_id": path_id,
         "events": list(sink.events),
         "runs_raw": raw_runs,
-        "summary": _summarize(list(sink.events)),
+        "summary": _summarize(list(measured_events)),
     }
 
 
@@ -205,8 +222,9 @@ def main(argv: list[str] | None = None) -> int:
             "Some per-phase timing fields remain 0 until those phases expose direct instrumentation.",
             "`time_to_first_text_ms` stays None until the runtime emits first-text timing.",
             "The `warm_daemon` path currently exercises the same in-process "
-            "runtime as `cold_single_process` (one APIRuntime reused across "
-            "runs); a separate daemon path can add a stronger comparison later.",
+            "runtime as `cold_single_process`, but reuses one session across "
+            "runs. Its first turn seeds the session and is excluded from the "
+            "requested resumed-sample summary.",
             "Three load-bearing wall-clock metrics: cold full-turn, warm "
             "full-turn, and TTFT are tracked separately in the output artifact.",
         ],

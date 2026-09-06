@@ -423,9 +423,12 @@ def apply_outcome_feedback(
     with store._lock:
         with store._engine.begin() as conn:
             for record_id in normalized_ids:
-                try:
-                    row = store._get_required_record(conn, record_id)
-                except ValueError:
+                row = store._fetchone(
+                    "SELECT * FROM memory_records WHERE id = :id FOR UPDATE",
+                    {"id": record_id},
+                    connection=conn,
+                )
+                if row is None:
                     continue
                 if bool(row.get("is_deleted")) or row.get("superseded_by_id"):
                     continue
@@ -436,6 +439,8 @@ def apply_outcome_feedback(
                     observed_at=observed_at,
                     feedback_delta=feedback_delta,
                 )
+                if not feedback_values["applied"]:
+                    continue
                 store._execute(
                     """
                     UPDATE memory_records SET meta_json = CAST(:meta_json AS JSONB),

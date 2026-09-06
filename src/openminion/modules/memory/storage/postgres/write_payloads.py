@@ -64,6 +64,16 @@ def _feedback_update_values(
     if not updated_at:
         updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     meta = dict(_json_loads(row.get("meta_json"), {}))
+    normalized_command_id = str(command_id or "").strip()
+    command_ids = [
+        str(value).strip()
+        for value in meta.get("outcome_feedback_command_ids", [])
+        if str(value).strip()
+    ]
+    if normalized_command_id in command_ids:
+        return {"applied": False, "meta": meta, "updated_at": updated_at}
+    command_ids.append(normalized_command_id)
+    meta["outcome_feedback_command_ids"] = command_ids
     existing_feedback = _clamp01(float(meta.get("feedback_score", 0.0) or 0.0))
     meta["feedback_score"] = _clamp01(existing_feedback + float(feedback_delta))
     meta.setdefault("outcome_success_count", 0)
@@ -74,8 +84,8 @@ def _feedback_update_values(
     meta[counter_key] = int(meta[counter_key] or 0) + 1
     meta["last_outcome_at"] = updated_at
     meta["last_outcome_status"] = outcome
-    meta["last_outcome_command_id"] = str(command_id or "").strip()
-    return {"meta": meta, "updated_at": updated_at}
+    meta["last_outcome_command_id"] = normalized_command_id
+    return {"applied": True, "meta": meta, "updated_at": updated_at}
 
 
 __all__ = ["_feedback_update_values", "_upsert_payload"]

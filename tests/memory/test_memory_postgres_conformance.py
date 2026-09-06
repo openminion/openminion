@@ -4,6 +4,9 @@ import datetime
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
+import uuid
 
 import pytest
 import sqlalchemy as sa
@@ -23,6 +26,7 @@ from openminion.modules.memory.storage.base import (
     ListQueryOptions,
 )
 from openminion.modules.memory.storage.postgres.store import PostgresMemoryStore
+from openminion.modules.memory.storage.postgres import write as postgres_write
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from tests.storage.postgres_test_utils import schema_url
 
@@ -241,3 +245,81 @@ def test_relation_conformance_round_trip(store) -> None:
         relation_types=["supports"],
     )
     assert [item.id for item in related] == ["r2"]
+
+
+def test_feedback_is_once_per_command_across_postgres_store_instances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    postgres_url = str(os.environ.get("OPENMINION_TEST_POSTGRES_URL", "")).strip()
+    if not postgres_url:
+        pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
+
+    schema_name = f"memory_feedback_{uuid.uuid4().hex}"
+    admin_engine = sa.create_engine(postgres_url, future=True)
+    with admin_engine.begin() as conn:
+        conn.execute(sa.text(f'CREATE SCHEMA "{schema_name}"'))
+    engines = [
+        sa.create_engine(schema_url(postgres_url, schema_name), future=True)
+        for _ in range(2)
+    ]
+    stores = [
+        PostgresMemoryStore(
+            engine,
+            database_path=tmp_path / f"memory-{index}.db",
+            artifactctl=None,
+        )
+        for index, engine in enumerate(engines)
+    ]
+    try:
+        stores[0].put(_record("feedback-race"))
+        original = postgres_write._feedback_update_values
+        first_read = threading.Event()
+        calls_lock = threading.Lock()
+        calls = 0
+
+        def delayed_feedback(*args, **kwargs):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+                is_first = calls == 1
+            if is_first:
+                first_read.set()
+                time.sleep(0.2)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(postgres_write, "_feedback_update_values", delayed_feedback)
+        results: list[int] = []
+
+        def apply(store: PostgresMemoryStore) -> None:
+            results.append(
+                store.apply_outcome_feedback(
+                    ["feedback-race"],
+                    outcome="success",
+                    command_id="same-command",
+                    observed_at=_now(),
+                    feedback_delta=0.2,
+                )
+            )
+
+        first = threading.Thread(target=apply, args=(stores[0],))
+        second = threading.Thread(target=apply, args=(stores[1],))
+        first.start()
+        assert first_read.wait(timeout=2)
+        second.start()
+        first.join(timeout=5)
+        second.join(timeout=5)
+
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert sorted(results) == [0, 1]
+        stored = stores[0].get("feedback-race")
+        assert stored is not None
+        assert stored.meta["outcome_feedback_command_ids"] == ["same-command"]
+        assert stored.meta["outcome_success_count"] == 1
+    finally:
+        for engine in engines:
+            engine.dispose()
+        with admin_engine.begin() as conn:
+            conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        admin_engine.dispose()

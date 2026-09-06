@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 from unittest.mock import Mock
 
+from openminion.modules.context.contracts import MemoryClient
+from openminion.modules.context.memory_client import ContextMemoryClientAdapter
 from openminion.modules.memory.models import MemoryPatchResult, MemoryRecord
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
@@ -218,6 +220,40 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
 
         self.assertIn("User email address", context)
         self.assertIn("value-visible@example.com", context)
+
+    def test_contextctl_memory_contract_uses_existing_recall_pipeline(self) -> None:
+        adapter = _make_adapter(agent_id="minimax-m2-7")
+        now = datetime.now(timezone.utc).isoformat()
+        adapter._service._store.put(  # noqa: SLF001
+            MemoryRecord(
+                id="contextctl-fact",
+                created_at=now,
+                updated_at=now,
+                key="fact:project",
+                source="user_said",
+                confidence=0.8,
+                scope="agent:minimax-m2-7",
+                type="fact",
+                title="Project name",
+                content={"text": "The project is Helios."},
+                tags=["project"],
+            )
+        )
+
+        memory_client = ContextMemoryClientAdapter(adapter)
+        facts = memory_client.query_facts(
+            session_id="session-1",
+            agent_id="minimax-m2-7",
+            query="Helios",
+            limit=5,
+        )
+
+        self.assertIsInstance(memory_client, MemoryClient)
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0].record_id, "contextctl-fact")
+        self.assertEqual(facts[0].text, "The project is Helios.")
+        self.assertEqual(facts[0].confidence, 0.8)
+        self.assertEqual(facts[0].tags, ["project"])
 
     def test_build_retrieval_context_returns_string(self) -> None:
         adapter = _make_adapter()

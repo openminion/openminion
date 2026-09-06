@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 import unittest
@@ -44,6 +45,13 @@ class AdapterConstructionTests(unittest.TestCase):
         with patch.dict(os.environ, {"CONTEXTCTL_DUAL_RENDER": "1"}):
             adapter = ContextCtlGatewayAdapter.from_env(logger=_logger())
         self.assertTrue(adapter.is_dual_render)
+
+    def test_dual_render_warning_matches_wired_gateway_state(self) -> None:
+        with self.assertLogs(_logger(), level=logging.WARNING) as captured:
+            _adapter(contextctl_dual_render=True)
+
+        self.assertIn("history parity logging is enabled", captured.output[0])
+        self.assertNotIn("not wired", captured.output[0])
 
 
 class SelectHistoryTests(unittest.TestCase):

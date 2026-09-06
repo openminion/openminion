@@ -76,6 +76,7 @@ def test_summarize_aggregates_multiple_events_p50_p95():
     assert summary["runs"] == 10
     # p95 should reflect the upper tail of the distribution
     assert summary["total_turn_ms_p95"] >= summary["total_turn_ms_p50"]
+    assert summary["total_turn_ms_p95"] <= summary["total_turn_ms_max"]
     assert summary["total_turn_ms_max"] == 190
 
 
@@ -98,6 +99,45 @@ def test_summarize_handles_ttft_none_observations():
     ]
     summary = module._summarize(events)
     assert summary["ttft_observations"] == 1
+
+
+def test_warm_path_reuses_one_session_after_first_turn(monkeypatch):
+    module = _load_module()
+    observed: list[tuple[str, bool]] = []
+
+    class _Runtime:
+        telemetry_service = None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        module.APIRuntime,
+        "from_config_path",
+        lambda _config_path: _Runtime(),
+    )
+
+    def run_one_turn(**kwargs):
+        observed.append((kwargs["session_id"], kwargs["cold_start"]))
+        return {"ok": True}
+
+    monkeypatch.setattr(module, "_run_one_turn", run_one_turn)
+
+    result = module._measure_path(
+        path_id="warm_daemon",
+        config_path="config.json",
+        agent_id="agent",
+        message="hello",
+        runs=3,
+    )
+
+    assert observed == [
+        ("crtl-baseline-warm_daemon", True),
+        ("crtl-baseline-warm_daemon", False),
+        ("crtl-baseline-warm_daemon", False),
+        ("crtl-baseline-warm_daemon", False),
+    ]
+    assert result["runs_raw"][0]["warmup"] is True
 
 
 def test_baseline_sink_captures_only_chat_phase_timing_events():
