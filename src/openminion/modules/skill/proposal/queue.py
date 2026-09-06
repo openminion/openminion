@@ -22,6 +22,7 @@ from .review import (
 )
 
 if TYPE_CHECKING:
+    from openminion.modules.skill.models import SkillPackage
     from openminion.modules.skill.runtime.skill import Skill
 
 
@@ -190,6 +191,7 @@ def apply_proposal(
         raise ProposalNotFoundError(f"proposal not found: {proposal_id!r}")
     queue_state = str(record.get("queue_state") or "")
     if queue_state == PROPOSAL_QUEUE_STATE_APPLIED:
+        _require_matching_operator(record, operator_id=authority.principal_id)
         existing = record.get("applied_addition")
         if isinstance(existing, Mapping):
             return EmergentSkillCatalogAddition.model_validate(existing)
@@ -216,19 +218,19 @@ def apply_proposal(
         remote_source=False,
         authority=authority,
     )
-    active_rows = skill_runtime.list_skills({}) or []
-    collisions = [
-        row
-        for row in active_rows
-        if str(row.get("skill_id") or "") == candidate.skill_id
-        or str(row.get("name") or "") == candidate.name
-    ]
-    if collisions:
-        active = skill_runtime.get_skill(str(collisions[0]["skill_id"]))
-        if active.to_content_fingerprint() != candidate.to_content_fingerprint():
-            raise ProposalQueueError("proposal conflicts with an active skill identity")
+    active = _reusable_active_skill(skill_runtime, candidate=candidate)
+    if active is not None:
         skill_id = active.skill_id
         version_hash = active.version_hash
+        skill_runtime.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=version_hash,
+            target_status=SKILL_STATUS_VERIFIED,
+            reason=f"accepted skill proposal {proposal.proposal_id}",
+            authority=authority,
+            verification_evidence=verification,
+        )
     else:
         skill_id, version_hash, _warnings = skill_runtime.ingest_text(
             name=candidate.name,
@@ -262,6 +264,41 @@ def apply_proposal(
         applied_addition_json=canonical_json(addition.model_dump(mode="json")),
     )
     return addition
+
+
+def _reusable_active_skill(
+    skill_runtime: "Skill", *, candidate: "SkillPackage"
+) -> "SkillPackage | None":
+    collisions = [
+        row
+        for row in (skill_runtime.list_skills({}) or [])
+        if str(row.get("skill_id") or "") == candidate.skill_id
+        or str(row.get("name") or "") == candidate.name
+    ]
+    if not collisions:
+        return None
+    active_matches = [
+        skill_runtime.get_skill(str(row["skill_id"])) for row in collisions
+    ]
+    candidate_fingerprint = candidate.to_content_fingerprint()
+    if any(
+        active.to_content_fingerprint() != candidate_fingerprint
+        for active in active_matches
+    ):
+        raise ProposalQueueError("proposal conflicts with an active skill identity")
+    return active_matches[0]
+
+
+def _require_matching_operator(
+    record: Mapping[str, Any], *, operator_id: str
+) -> None:
+    if str(record.get("reviewer_id") or "") != operator_id:
+        raise ProposalQueueError("applying operator must match the accepted reviewer")
+    verification = record.get("verification_evidence")
+    if not isinstance(verification, Mapping):
+        raise ProposalQueueError("apply requires recorded verification evidence")
+    if str(verification.get("reviewer_id") or "") != operator_id:
+        raise ProposalQueueError("verification operator must match the applying operator")
 
 
 def _validated_application_inputs(

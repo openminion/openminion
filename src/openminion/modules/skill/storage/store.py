@@ -648,7 +648,10 @@ class _SkillStoreMixin(SkillStore):
     ) -> None:
         with self._record_store.transaction():
             existing = self._record_store.query_dicts(
-                "SELECT queue_state FROM skill_proposals WHERE proposal_id = ?",
+                """
+                SELECT queue_state, verification_evidence_json
+                FROM skill_proposals WHERE proposal_id = ?
+                """,
                 (str(proposal_id),),
             )
             if not existing:
@@ -657,6 +660,11 @@ class _SkillStoreMixin(SkillStore):
             if current_state == "applied":
                 raise ValueError(
                     f"proposal already applied; cannot record new review: {proposal_id!r}"
+                )
+            if existing[0].get("verification_evidence_json"):
+                raise ValueError(
+                    "proposal verification already recorded; review is immutable: "
+                    f"{proposal_id!r}"
                 )
             self._record_store.execute_count(
                 """
@@ -702,6 +710,7 @@ class _SkillStoreMixin(SkillStore):
             UPDATE skill_proposals
             SET verification_evidence_json = ?, updated_at = ?
             WHERE proposal_id = ? AND queue_state = 'reviewed'
+              AND verification_evidence_json IS NULL
             """,
             (
                 str(verification_evidence_json),
@@ -711,7 +720,7 @@ class _SkillStoreMixin(SkillStore):
         )
         if int(affected or 0) != 1:
             raise ValueError(
-                "proposal verification requires queue_state='reviewed': "
+                "proposal verification requires an unverified reviewed proposal: "
                 f"{proposal_id!r}"
             )
 

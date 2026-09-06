@@ -88,7 +88,6 @@ def proposal_from_markdown(
             "source_task_shape_ref": source_task_shape_ref,
             "proposer_policy_id": policy_id,
             "skill_markdown": markdown,
-            "evidence_refs": normalized_evidence,
         }
     )
     return SkillProposal(

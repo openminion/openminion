@@ -53,6 +53,22 @@ def test_proposal_from_markdown_is_deterministic() -> None:
     )
 
 
+def test_proposal_identity_excludes_per_run_evidence() -> None:
+    first = proposal_from_markdown(
+        SKILL_MARKDOWN,
+        source_task_shape_ref="session:one",
+        evidence_refs=["run_id:first", "trace_id:first"],
+    )
+    second = proposal_from_markdown(
+        SKILL_MARKDOWN,
+        source_task_shape_ref="session:one",
+        evidence_refs=["run_id:second", "trace_id:second"],
+    )
+
+    assert first.proposal_id == second.proposal_id
+    assert first.evidence_refs != second.evidence_refs
+
+
 @pytest.mark.parametrize(
     "markdown",
     [

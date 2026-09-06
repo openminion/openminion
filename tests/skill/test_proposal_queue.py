@@ -363,6 +363,23 @@ def test_apply_proposal_is_idempotent_after_first_apply(tmp_path: Path) -> None:
         skill.close()
 
 
+def test_apply_proposal_retry_requires_original_operator(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    try:
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+        apply_proposal(skill, proposal_id="sprq-proposal-1", authority=_authority())
+
+        with pytest.raises(ProposalQueueError, match="accepted reviewer"):
+            apply_proposal(
+                skill,
+                proposal_id="sprq-proposal-1",
+                authority=_authority("local:other"),
+            )
+    finally:
+        skill.close()
+
+
 def test_apply_proposal_refuses_pending_proposal(tmp_path: Path) -> None:
     skill = _skill(tmp_path)
     try:
@@ -518,6 +535,114 @@ def test_apply_proposal_rejects_active_identity_collision(tmp_path: Path) -> Non
         skill.close()
 
 
+def test_apply_proposal_checks_every_active_identity_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill = _skill(tmp_path)
+    authority = _authority()
+    try:
+        exact_id, exact_hash, _warnings = skill.ingest_text(
+            name="research-latest-news-playbook",
+            markdown=_proposal().skill_markdown,
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=exact_id,
+            version_hash=exact_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="exact setup",
+            authority=authority,
+            verification_evidence=SkillVerificationEvidence(
+                check="pytest",
+                result="passed",
+                evidence_ref="artifact://validation/exact.txt",
+            ),
+        )
+        conflict_id, conflict_hash, _warnings = skill.ingest_text(
+            name="conflicting-copy",
+            markdown=(
+                _proposal()
+                .skill_markdown.replace(
+                    "name: research-latest-news-playbook",
+                    "name: conflicting-copy",
+                )
+                .replace(
+                    "Research the requested topic and cite current sources.",
+                    "Use a conflicting procedure.",
+                )
+            ),
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=conflict_id,
+            version_hash=conflict_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="conflict setup",
+            authority=authority,
+            verification_evidence=SkillVerificationEvidence(
+                check="pytest",
+                result="passed",
+                evidence_ref="artifact://validation/conflict.txt",
+            ),
+        )
+        rows = skill.list_skills({})
+        for row in rows:
+            if row["skill_id"] == conflict_id:
+                row["name"] = "research-latest-news-playbook"
+        monkeypatch.setattr(skill, "list_skills", lambda _filters: rows)
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        with pytest.raises(ProposalQueueError, match="active skill identity"):
+            apply_proposal(
+                skill,
+                proposal_id="sprq-proposal-1",
+                authority=authority,
+            )
+    finally:
+        skill.close()
+
+
+def test_apply_exact_active_skill_records_proposal_verification(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    authority = _authority()
+    try:
+        skill_id, version_hash, _warnings = skill.ingest_text(
+            name="research-latest-news-playbook",
+            markdown=_proposal().skill_markdown,
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="setup",
+            authority=authority,
+        )
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        apply_proposal(
+            skill,
+            proposal_id="sprq-proposal-1",
+            authority=authority,
+        )
+
+        admission = skill.store.get_skill_admission(
+            skill_id=skill_id,
+            version_hash=version_hash,
+        )
+        assert admission is not None
+        assert admission["verification_evidence_ref"] == (
+            "artifact://validation/pytest.txt"
+        )
+    finally:
+        skill.close()
+
+
 def test_apply_proposal_retries_after_admission_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -593,6 +718,30 @@ def test_record_review_blocked_after_apply(tmp_path: Path) -> None:
                         "status": "rejected",
                         "comment": "Change of heart.",
                     },
+                ],
+            )
+    finally:
+        skill.close()
+
+
+def test_record_review_blocked_after_verification(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    try:
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        with pytest.raises(ValueError, match="review is immutable"):
+            record_proposal_review(
+                skill.store,
+                proposal_id="sprq-proposal-1",
+                reviewer_id="local:other",
+                review_policy_id="sprq_review_policy_v1",
+                criterion_decisions=[
+                    {
+                        "criterion_id": "fit",
+                        "status": "rejected",
+                        "comment": "Replace the accepted review.",
+                    }
                 ],
             )
     finally:

@@ -253,6 +253,8 @@ def test_skill_propose_is_idempotent(tmp_path) -> None:
             metadata={},
         )
         first = _h_skill_propose({"skill_markdown": _proposal_markdown()}, ctx)
+        ctx.run_id = "run-2"
+        ctx.trace_id = "trace-2"
         second = _h_skill_propose({"skill_markdown": _proposal_markdown()}, ctx)
 
         assert first["proposal_id"] == second["proposal_id"]
