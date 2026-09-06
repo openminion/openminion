@@ -158,9 +158,7 @@ def test_provider_normalizes_overflowing_rate_limit_date(monkeypatch) -> None:
         lambda **kwargs: _FetchStep(
             status_code=429,
             final_url=str(kwargs["url"]),
-            headers={
-                "retry-after": "Mon, 01 Jan 999999999999999999999 00:00:00 GMT"
-            },
+            headers={"retry-after": "Mon, 01 Jan 999999999999999999999 00:00:00 GMT"},
             body=b"",
         ),
     )

@@ -4,8 +4,6 @@ from collections.abc import Sequence
 import re
 from typing import Any, cast
 
-from eth_abi.exceptions import DecodingError
-
 from .schema_types import AbiParameter, ErrorAbi, EventAbi, FunctionAbi
 
 _OUTER_ARRAY_RE = re.compile(r"^(.*)(\[(?:0|[1-9][0-9]*)?\])$")
@@ -168,6 +166,8 @@ def decode_revert_fact(
     data: str | None,
     error_abis: Sequence[ErrorAbi] = (),
 ) -> dict[str, Any]:
+    from eth_abi.exceptions import DecodingError
+
     if data is None:
         return {"kind": "data_unavailable", "raw_data": None}
     raw = data.lower()
