@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.brain.paths import (
     resolve_brain_runtime_db_path,
@@ -75,8 +77,10 @@ def test_disabled_memory_does_not_install_terminal_capture_writer(
         assert bridge.call_args.kwargs["terminal_capture_writer"] is not None
 
 
-def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
+@pytest.mark.parametrize("mode", ["auto", "local"])
+def test_build_brain_runner_bundle_uses_brain_runtime_db_and_artifact_ownership(
     tmp_path: Path,
+    mode: str,
 ) -> None:
     config = OpenMinionConfig()
     _csc_install_default_agent(config, provider="echo")
@@ -85,7 +89,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
 
     service = SimpleNamespace(
         _config=config,
-        mode="auto",
+        mode=mode,
         db_path=str(session_db_path),
         _telemetryctl=None,
         _runtime_handle=None,
@@ -138,7 +142,7 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
         return SimpleNamespace(goal_store=goal_store, mission_store=mission_store)
 
     with ExitStack() as stack:
-        stack.enter_context(
+        artifact_factory = stack.enter_context(
             mock.patch(
                 "openminion.services.runtime.bootstrap.create_default_artifactctl",
                 return_value=shared_artifactctl,
@@ -289,6 +293,8 @@ def test_build_brain_runner_bundle_uses_brain_runtime_db_for_goal_runtime(
     assert captured["mission_db_path"] == expected_runtime_db_path
     assert captured["owns_stores"] is True
     assert captured["goal_db_path"] != session_db_path
-    assert context_factory.call_args.kwargs["artifactctl"] is shared_artifactctl
-    assert context_factory.call_args.kwargs["owns_artifactctl"] is True
-    assert tool_factory.call_args.kwargs["artifactctl"] is shared_artifactctl
+    expected_artifactctl = shared_artifactctl if mode == "auto" else None
+    assert artifact_factory.call_count == (1 if mode == "auto" else 0)
+    assert context_factory.call_args.kwargs["artifactctl"] is expected_artifactctl
+    assert context_factory.call_args.kwargs["owns_artifactctl"] is (mode == "auto")
+    assert tool_factory.call_args.kwargs["artifactctl"] is expected_artifactctl

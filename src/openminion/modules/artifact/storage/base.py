@@ -131,6 +131,10 @@ class ArtifactIndex(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def retained_view_shas(self, grace_days: int) -> set[str]:
+        raise NotImplementedError
+
+    @abstractmethod
     def recent_artifact_shas(self, keep_days: int) -> set[str]:
         raise NotImplementedError
 
@@ -156,6 +160,14 @@ class ArtifactIndex(ABC):
 
     @abstractmethod
     def hard_delete_view(self, view: ViewRecord) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def hard_delete_expired_aliases(self, grace_days: int) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def hard_delete_reference_tombstones(self, grace_days: int) -> int:
         raise NotImplementedError
 
     @abstractmethod

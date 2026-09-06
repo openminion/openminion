@@ -33,7 +33,7 @@ def test_load_config_from_json_applies_overrides(tmp_path: Path) -> None:
     overrides = {
         "artifactctl": {
             "blob_store": {
-                "root_dir": str(tmp_path / "custom-root"),
+                "root_dir": str(tmp_path / ".openminion" / "custom-root"),
                 "max_ingest_bytes": 2048,
             },
             "views": {

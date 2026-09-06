@@ -654,7 +654,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
     db_dir = db_path.parent if db_path.suffix else db_path
     memory_assembly = service._runtime_memory_assembly
     vector_adapter = getattr(memory_assembly, "vector_adapter", None)
-    artifactctl = create_default_artifactctl()
+    artifactctl = None if service.mode == "local" else create_default_artifactctl()
     skill_config = service._get_manager_config("skill")
     context_api = bridge_module.create_context_api(
         mode=service.mode,
@@ -678,7 +678,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_config=skill_config,
         skill_home_root=service._context.home_paths.home_root,
         artifactctl=artifactctl,
-        owns_artifactctl=True,
+        owns_artifactctl=artifactctl is not None,
     )
 
     memory_api = getattr(memory_assembly, "memctl", None)

@@ -207,16 +207,17 @@ class ArtifactCtl:
         if raw_meta is None:
             raise ArtifactCtlError("NOT_FOUND", f"Artifact not found: {ref_or_sha}")
 
-        policy_hash = _policy_hash(
-            {
-                "policy": policy or {},
+        settings: dict[str, dict[str, Any]] = {
+            "digest": {
                 "redaction_enabled": self.config.security.redaction_enabled,
                 "digest_max_chars": self.config.views.digest_max_chars,
                 "digest_max_lines": self.config.views.digest_max_lines,
-                "json_max_chars": self.config.views.json_max_chars,
-                "table_max_rows": self.config.views.table_max_rows,
-            }
-        )
+            },
+            "text": {"redaction_enabled": self.config.security.redaction_enabled},
+            "json": {"json_max_chars": self.config.views.json_max_chars},
+            "table": {"table_max_rows": self.config.views.table_max_rows},
+        }
+        policy_hash = _policy_hash({"policy": policy or {}, **settings[normalized]})
         existing = self.index.get_view(
             raw_sha, normalized, _SCHEMA_VERSION, policy_hash, include_deleted=False
         )
@@ -228,11 +229,8 @@ class ArtifactCtl:
                 return view_meta.to_ref()
 
         payload, mime = self._generate_view_payload(raw_meta, normalized)
-        view_name = (
-            f"{raw_sha}.{normalized}.json"
-            if mime == "application/json"
-            else f"{raw_sha}.{normalized}.txt"
-        )
+        extension = "json" if mime == "application/json" else "txt"
+        view_name = f"{raw_sha}.{normalized}.{extension}"
         view_ref = self._ingest_bytes_internal(
             data=payload,
             mime=mime,
@@ -390,10 +388,12 @@ class ArtifactCtl:
     def delete(self, ref_or_sha: str, soft: bool = True) -> None:
         sha = self._resolve_sha(ref_or_sha)
         now = iso_now()
-        self.index.soft_delete_artifacts([sha], now)
         derived_shas = self._soft_delete_derived_views([sha], now)
+        if sha not in self.index.active_view_shas():
+            self.index.soft_delete_artifacts([sha], now)
+            if not soft:
+                self.blob_store.delete(sha)
         if not soft:
-            self.blob_store.delete(sha)
             for derived_sha in derived_shas:
                 self.blob_store.delete(derived_sha)
 
@@ -404,9 +404,8 @@ class ArtifactCtl:
             else int(grace_days)
         )
         views = self.index.purgeable_views(grace)
-        protected: set[str] = set(self.index.active_reference_shas())
-        protected.update(self.index.active_alias_shas())
-        protected.update(self.index.active_view_shas())
+        protected = self.index.active_reference_shas() | self.index.active_alias_shas()
+        protected.update(self.index.retained_view_shas(grace))
         view_shas = {
             view.view_sha256
             for view in views
@@ -422,6 +421,7 @@ class ArtifactCtl:
             for artifact in self.index.purgeable_artifacts(grace)
             if artifact.sha256 not in protected
         ]
+        view_shas.intersection_update(artifact.sha256 for artifact in artifacts)
         missing = 0
         handled_blob_shas: set[str] = set()
         purged_blobs = 0
@@ -466,6 +466,8 @@ class ArtifactCtl:
             self.index.hard_delete_view(view)
         for artifact in artifacts:
             self.index.hard_delete_artifact(artifact.sha256)
+        self.index.hard_delete_expired_aliases(grace)
+        self.index.hard_delete_reference_tombstones(grace)
         return PurgeReport(
             grace_days=grace,
             purged_views=purged_views,
@@ -473,21 +475,18 @@ class ArtifactCtl:
             missing_files=missing,
         )
 
-    def _soft_delete_derived_views(
-        self, raw_shas: list[str], deleted_at: str
-    ) -> set[str]:
+    def _soft_delete_derived_views(self, shas: list[str], deleted_at: str) -> set[str]:
         candidates: set[str] = {
             str(view.view_sha256)
-            for raw_sha in raw_shas
+            for raw_sha in shas
             for view in self.index.list_views(raw_sha)
             if view.view_sha256
         }
-        for raw_sha in raw_shas:
+        for raw_sha in shas:
             self.index.soft_delete_views_for_raw(raw_sha, deleted_at)
-        protected: set[str] = set(self.index.active_reference_shas())
-        protected.update(self.index.active_alias_shas())
+        protected = self.index.active_reference_shas() | self.index.active_alias_shas()
         protected.update(self.index.active_view_shas())
-        deletable = candidates - protected
+        deletable: set[str] = candidates - protected
         self.index.soft_delete_artifacts(deletable, deleted_at)
         return deletable
 

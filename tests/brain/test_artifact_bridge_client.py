@@ -20,9 +20,7 @@ class _FailingArtifactCtl:
 
 
 def test_bridge_client_logs_on_db_error(caplog) -> None:
-    bridge = BridgeArtifactClient(
-        backing_store=object(), artifact_ctl=_FailingArtifactCtl()
-    )
+    bridge = BridgeArtifactClient(artifact_ctl=_FailingArtifactCtl())
 
     caplog.set_level(logging.WARNING)
     result = bridge.query_digests(
@@ -44,14 +42,16 @@ def test_bridge_client_returns_owned_canonical_digest(tmp_path: Path) -> None:
     )
     with ArtifactCtl(config) as artifactctl:
         first = artifactctl.ingest_bytes(
-            b"session alpha evidence", mime="text/plain", label="shared session note"
+            b"session alpha user@example.com evidence",
+            mime="text/plain",
+            label="shared session note",
         )
         second = artifactctl.ingest_bytes(
             b"session beta evidence", mime="text/plain", label="shared session note"
         )
         artifactctl.ref_add("session", "session-a", first.sha256)
         artifactctl.ref_add("session", "session-b", second.sha256)
-        bridge = BridgeArtifactClient(backing_store=object(), artifact_ctl=artifactctl)
+        bridge = BridgeArtifactClient(artifact_ctl=artifactctl)
 
         result = bridge.query_digests(
             session_id="session-a",
@@ -64,4 +64,15 @@ def test_bridge_client_returns_owned_canonical_digest(tmp_path: Path) -> None:
         digest = result[0]
         assert digest.ref == first.ref
         assert digest.view_id == f"artifact://sha256/{digest.digest_hash}"
-        assert "session alpha evidence" in str(digest.excerpt)
+        assert "session alpha [REDACTED_EMAIL] evidence" in str(digest.excerpt)
+
+        artifactctl.ref_remove("session", "session-a", first.sha256)
+        assert (
+            bridge.query_digests(
+                session_id="session-a",
+                agent_id="agent-1",
+                query="session",
+                limit=5,
+            )
+            == []
+        )

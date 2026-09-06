@@ -126,15 +126,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(sha256) DO UPDATE SET
-                original_name=COALESCE(artifacts.original_name, excluded.original_name),
-                original_path=COALESCE(artifacts.original_path, excluded.original_path),
-                label=COALESCE(artifacts.label, excluded.label),
-                session_id=COALESCE(artifacts.session_id, excluded.session_id),
-                trace_id=COALESCE(artifacts.trace_id, excluded.trace_id),
-                agent_id=COALESCE(artifacts.agent_id, excluded.agent_id),
-                encoding=COALESCE(artifacts.encoding, excluded.encoding),
-                deleted_at=excluded.deleted_at,
-                meta_json=COALESCE(artifacts.meta_json, excluded.meta_json)
+                deleted_at=excluded.deleted_at
             """,
             (
                 meta.sha256,
@@ -395,6 +387,21 @@ class _ArtifactIndexMixin(ArtifactIndex):
         )
         return {str(row["view_sha256"]) for row in rows}
 
+    def retained_view_shas(self, grace_days: int) -> set[str]:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max(0, int(grace_days)))
+        ).isoformat()
+        rows = self._record_store.query_dicts(
+            """
+            SELECT DISTINCT view_sha256
+            FROM artifact_views
+            WHERE view_sha256 IS NOT NULL
+              AND (deleted_at IS NULL OR deleted_at > ?)
+            """,
+            (cutoff,),
+        )
+        return {str(row["view_sha256"]) for row in rows}
+
     def recent_artifact_shas(self, keep_days: int) -> set[str]:
         cutoff_date = (
             (datetime.now(timezone.utc) - timedelta(days=max(0, int(keep_days))))
@@ -509,6 +516,36 @@ class _ArtifactIndexMixin(ArtifactIndex):
                     view.policy_hash,
                 ),
             ),
+        )
+
+    def hard_delete_expired_aliases(self, grace_days: int) -> int:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max(0, int(grace_days)))
+        ).isoformat()
+        return int(
+            self._record_store.execute_count(
+                """
+                DELETE FROM aliases
+                WHERE expires_at IS NOT NULL
+                  AND expires_at <= ?
+                """,
+                (cutoff,),
+            )
+        )
+
+    def hard_delete_reference_tombstones(self, grace_days: int) -> int:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=max(0, int(grace_days)))
+        ).isoformat()
+        return int(
+            self._record_store.execute_count(
+                """
+                DELETE FROM reference_edges
+                WHERE deleted_at IS NOT NULL
+                  AND deleted_at <= ?
+                """,
+                (cutoff,),
+            )
         )
 
     def purgeable_artifacts(self, grace_days: int) -> list[ArtifactMeta]:

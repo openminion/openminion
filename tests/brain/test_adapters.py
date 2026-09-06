@@ -1426,7 +1426,6 @@ class RealCtxAndLlmAdapterTests(unittest.TestCase):
 
         artifact_ctl = MagicMock()
         artifact = BridgeArtifactClient(
-            backing_store=object(),
             artifact_ctl=artifact_ctl,
             owns_artifactctl=True,
         )

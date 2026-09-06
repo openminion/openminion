@@ -154,6 +154,23 @@ def test_table_view_cache_changes_with_row_limit(tmp_path):
         assert ctl.read_view(ref.sha256, "table")["sampled_rows"] == 1
 
 
+def test_text_view_cache_ignores_unrelated_table_limit(tmp_path):
+    initial = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "table_max_rows": 2}}
+    }
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(b"plain text", mime="text/plain")
+        ctl.ensure_view(ref.sha256, "text")
+        assert len(ctl.list_views(ref.sha256)) == 1
+
+    changed = {
+        "artifactctl": {"views": {"auto_generate": ["text"], "table_max_rows": 1}}
+    }
+    with artifact_ctl(tmp_path, changed) as ctl:
+        ctl.ensure_view(ref.sha256, "text")
+        assert len(ctl.list_views(ref.sha256)) == 1
+
+
 def test_json_view_rejects_large_payload(tmp_path):
     large_json = "{" + ",".join(f'"k{i}":{i}' for i in range(1000)) + "}"
     overrides = {"artifactctl": {"views": {"json_max_chars": 100}}}
