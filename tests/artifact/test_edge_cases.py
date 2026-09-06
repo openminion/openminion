@@ -101,6 +101,20 @@ def test_shared_view_survives_other_raw_artifact_purge(tmp_path) -> None:
         assert ctl.verify().failed == 0
 
 
+def test_hard_delete_preserves_raw_sha_used_as_another_active_view(tmp_path) -> None:
+    overrides = {"artifactctl": {"views": {"auto_generate": []}}}
+    with ArtifactCtl(make_config(tmp_path, overrides)) as ctl:
+        shared = ctl.ingest_bytes(b'{\n  "a": 1\n}', mime="application/json")
+        raw = ctl.ingest_bytes(b'{"a":1}', mime="application/json")
+        assert ctl.ensure_view(raw.sha256, "json").sha256 == shared.sha256
+
+        ctl.delete(shared.sha256, soft=False)
+
+        assert ctl.blob_store.exists(shared.sha256)
+        assert ctl.get(shared.sha256).deleted_at is None
+        assert ctl.ensure_view(raw.sha256, "json").sha256 == shared.sha256
+
+
 @pytest.mark.parametrize("protection", ["alias", "reference"])
 def test_view_blob_survives_direct_protection(tmp_path, protection: str) -> None:
     with ArtifactCtl(make_config(tmp_path)) as ctl:

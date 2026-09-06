@@ -43,9 +43,10 @@ def create_context_adapter(
             system_prompt=identity_system_prompt,
         )
         memory_client = BridgeMemoryClient(backing_store=session_store)
-        runtime_artifactctl = artifactctl or create_default_artifactctl()
+        runtime_artifactctl = (
+            artifactctl if artifactctl is not None else create_default_artifactctl()
+        )
         artifact_client = BridgeArtifactClient(
-            backing_store=session_store,
             artifact_ctl=runtime_artifactctl,
             owns_artifactctl=owns_artifactctl or artifactctl is None,
         )

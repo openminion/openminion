@@ -47,15 +47,40 @@ def test_ingest_bytes_detects_binary_and_mime(tmp_path: Path) -> None:
 def test_duplicate_ingest_preserves_first_metadata(tmp_path: Path) -> None:
     with artifact_ctl(tmp_path) as ctl:
         payload = b"hello metadata"
-        first = ctl.ingest_bytes(payload, original_name="first.txt", label="initial")
+        first = ctl.ingest_bytes(
+            payload,
+            original_name="first.txt",
+            label="initial",
+            session_id="first-session",
+            agent_id="first-agent",
+        )
         second = ctl.ingest_bytes(
-            payload, original_name="second.txt", label="new-label"
+            payload,
+            original_name="second.txt",
+            label="new-label",
+            session_id="second-session",
+            agent_id="second-agent",
         )
 
         meta = ctl.get(first.sha256)
         assert second == meta.to_ref()
         assert meta.original_name == "first.txt"
         assert meta.label == "initial"
+        assert meta.session_id == "first-session"
+        assert meta.agent_id == "first-agent"
+
+
+def test_duplicate_ingest_does_not_fill_empty_first_metadata(tmp_path: Path) -> None:
+    with artifact_ctl(tmp_path) as ctl:
+        first = ctl.ingest_bytes(b"same bytes")
+        second = ctl.ingest_bytes(
+            b"same bytes", original_name="later.txt", label="later"
+        )
+
+        meta = ctl.get(first.sha256)
+        assert second == meta.to_ref()
+        assert meta.original_name is None
+        assert meta.label is None
 
 
 def test_store_original_path_disabled_by_default(tmp_path: Path) -> None:

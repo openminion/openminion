@@ -16,12 +16,10 @@ class BridgeArtifactClient:
 
     def __init__(
         self,
-        backing_store: Any,
         artifact_ctl: Any,
         *,
         owns_artifactctl: bool = False,
     ) -> None:
-        self._store = backing_store
         self._artifact_ctl = artifact_ctl
         self._owns_artifactctl = owns_artifactctl
 
