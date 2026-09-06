@@ -5,7 +5,6 @@ import hashlib
 import json
 from typing import Any, cast
 
-from eth_abi.exceptions import DecodingError
 from pydantic import ValidationError
 
 from .config import resolve_blockchain_config
@@ -330,6 +329,7 @@ def _simulate_prepared_transaction(
     gas_limit: int,
     max_total_fee: int,
 ) -> dict[str, Any]:
+    from eth_abi.exceptions import DecodingError
     from web3.exceptions import ContractLogicError, Web3Exception
 
     configured_cap = int(config.max_total_fee_wei)

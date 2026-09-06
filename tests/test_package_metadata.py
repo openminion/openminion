@@ -134,6 +134,33 @@ def test_renderer_and_animation_dependencies_are_scoped() -> None:
     assert "pyfiglet>=1.0,<2" in extras["dev"]
 
 
+def test_public_import_does_not_require_blockchain_extra(tmp_path: Path) -> None:
+    script = """
+import builtins
+
+original_import = builtins.__import__
+
+def import_without_blockchain_dependencies(name, *args, **kwargs):
+    if name == "eth_abi" or name.startswith("eth_abi."):
+        raise ModuleNotFoundError(name)
+    if name == "web3" or name.startswith("web3."):
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = import_without_blockchain_dependencies
+
+import openminion
+from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+from openminion.api import dispatch_request
+
+assert openminion.__version__
+assert APIRuntime and Agent and OpenMinionConfig
+assert callable(tool) and callable(dispatch_request)
+"""
+
+    subprocess.run([sys.executable, "-c", script], cwd=tmp_path, check=True)
+
+
 def test_built_archives_exclude_test_tree(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[1]
     dist = tmp_path / "dist"

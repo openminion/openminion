@@ -5,7 +5,6 @@ import hashlib
 import json
 from typing import Any, cast
 
-from eth_abi.exceptions import DecodingError
 from pydantic import ValidationError
 
 from .abi import (
@@ -100,6 +99,7 @@ def _resolved_block(
 
 
 def _simulate(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
+    from eth_abi.exceptions import DecodingError
     from web3.exceptions import ContractLogicError, Web3Exception
 
     data = request.data.lower()
@@ -176,6 +176,8 @@ def _simulate(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
 
 
 def _decode_calldata(request: Any, client: Any) -> dict[str, Any]:
+    from eth_abi.exceptions import DecodingError
+
     data = request.data.lower()
     if data[:10] != abi_selector(request.function_abi, client):
         return _decode_error("decode_calldata", data)
@@ -234,6 +236,7 @@ def _event_arguments(
 
 
 def _transaction_events(request: Any, client: Any, chain_id: int) -> dict[str, Any]:
+    from eth_abi.exceptions import DecodingError
     from web3.exceptions import TransactionNotFound, Web3Exception
 
     try:
