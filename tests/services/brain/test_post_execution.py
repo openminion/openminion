@@ -59,7 +59,13 @@ class _DummySessionAPI:
         self.events: list[dict] = []
         self.turns: list[dict[str, object]] = []
 
-    def get_latest_working_state(self, session_id: str) -> dict:
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict:
+        del agent_id
         return dict(self._state)
 
     def get_active_task_plan(self, session_id: str) -> dict | None:
@@ -133,13 +139,14 @@ class _DummyRunner:
     def __init__(self, state: dict) -> None:
         self.session_api = _DummySessionAPI(state)
         self.profile = SimpleNamespace(
+            agent_id="test-agent",
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=8,
                 max_tool_calls=8,
                 max_a2a_calls=0,
                 max_total_llm_tokens=100000,
                 max_elapsed_ms=45000,
-            )
+            ),
         )
 
 
@@ -954,6 +961,7 @@ def test_prepare_turn_appends_pending_turn_context_block_when_present() -> None:
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
+        profile=SimpleNamespace(agent_id="test-agent"),
         session_api=_DummySessionAPI(
             {
                 "pending_turn_context": {
@@ -1335,6 +1343,7 @@ def test_prepare_turn_keeps_prior_turn_context_when_pending_context_exists() -> 
     bridge = DummyBridge()
     runner = SimpleNamespace(
         context_api=_DummyContextAdapter(),
+        profile=SimpleNamespace(agent_id="test-agent"),
         session_api=_DummySessionAPI(
             {
                 "pending_turn_context": {

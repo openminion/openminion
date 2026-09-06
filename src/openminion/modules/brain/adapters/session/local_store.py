@@ -126,11 +126,23 @@ class LocalSessionStore:
         )
         return version
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None:
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None:
         path = self._state_path(session_id)
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        state_inline = payload.get("state_inline")
+        if agent_id is not None and (
+            not isinstance(state_inline, dict)
+            or state_inline.get("agent_id") != agent_id
+        ):
+            return None
+        return payload
 
     def update_session_status(self, session_id: str, status: str) -> None:
         path = self._session_meta_path(session_id)

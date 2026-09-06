@@ -40,6 +40,12 @@ def test_run_room_create_adds_agents_and_prints_summary(capsys) -> None:
         result = room_command.run_room_create(args)
 
     assert result == 0
+    MockRuntime.from_config_path.assert_called_once_with(
+        None,
+        home_root=None,
+        data_root=None,
+        logging_mode="interactive",
+    )
     runtime.sessions.create_room.assert_called_once()
     assert runtime.sessions.add_participant.call_count == 2
     runtime.sessions.set_active_agent.assert_called_once_with(

@@ -337,9 +337,7 @@ class BrainRunner:
                 raise RuntimeError("terminal capture identity is unavailable")
             event_payload = {
                 **payload,
-                "agent_id": str(
-                    getattr(state, "agent_id", "") or self.profile.agent_id
-                ),
+                "agent_id": self.profile.agent_id,
             }
             capture_state: Literal["pending", "excluded"] = (
                 "excluded"

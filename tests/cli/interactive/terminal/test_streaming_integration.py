@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 import pytest
 from rich.console import Console
 
+from openminion.cli.presentation import styles
 from openminion.cli.status import TokenUsageSnapshot
 from openminion.cli.interactive.terminal import shell as terminal_shell
 from openminion.cli.interactive.terminal.shell import _run_agent_turn
@@ -225,17 +226,30 @@ def test_agent_turn_passes_terminal_approval_callback() -> None:
 
 
 def test_terminal_room_turn_renders_structured_agent_attribution() -> None:
-    transcript, buf = _make_transcript()
-    runtime = _RoomRuntime()
-
-    asyncio.run(
-        _run_agent_turn(
-            text="review",
-            runtime=runtime,
-            transcript=transcript,
-            status_line=None,
+    buf = io.StringIO()
+    styles.set_color_mode("always")
+    transcript = TerminalTranscript(
+        Console(
+            file=buf,
+            force_terminal=True,
+            color_system="standard",
+            no_color=False,
+            width=80,
         )
     )
+    runtime = _RoomRuntime()
+
+    try:
+        asyncio.run(
+            _run_agent_turn(
+                text="review",
+                runtime=runtime,
+                transcript=transcript,
+                status_line=None,
+            )
+        )
+    finally:
+        styles.set_color_mode(None)
 
     agents = [item for item in transcript._messages if item.kind == MessageKind.AGENT]
     assert [(item.sender, item.body, item.msg_id) for item in agents] == [
@@ -244,6 +258,8 @@ def test_terminal_room_turn_renders_structured_agent_attribution() -> None:
     ]
     assert "alpha reply" in buf.getvalue()
     assert "beta reply" in buf.getvalue()
+    assert "\x1b[1;32malpha" in buf.getvalue()
+    assert "\x1b[1;32mbeta" in buf.getvalue()
 
 
 def test_mid_stream_error_preserves_partial_and_emits_error() -> None:

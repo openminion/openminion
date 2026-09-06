@@ -92,11 +92,13 @@ def _session_snapshot(data_root: Path, session_id: str) -> dict[str, object]:
         assert session is not None
         participants = store.list_participants(session_id)
         messages = store.list_messages(session_id=session_id, limit=1000)
+        events = store.list_events(session_id=session_id, limit=1000)
         return {
             "database_path": str(db_path),
             "session": asdict(session),
             "participants": [asdict(item) for item in participants],
             "messages": [asdict(item) for item in messages],
+            "events": [asdict(item) for item in events],
         }
     finally:
         connection.close()
@@ -135,6 +137,14 @@ def _response_body(item: dict[str, object]) -> str:
     participant_id = str(metadata.get("participant_id", "") or "")
     body = str(item.get("body", "") or "").strip()
     return body.removeprefix(f"{participant_id}:").strip()
+
+
+def _capture_result(item: dict[str, object]) -> dict[str, object]:
+    metadata = item["metadata"]
+    assert isinstance(metadata, dict)
+    result = json.loads(str(metadata["memory_capture_bundle_result"]))
+    assert isinstance(result, dict)
+    return result
 
 
 def _run_prompt(
@@ -279,6 +289,16 @@ def test_live_room_collaboration(
         if isinstance(event, dict)
         and event.get("event_type") == "agent.invocation.started"
     ]
+    events = session_snapshot["events"]
+    assert isinstance(events, list)
+    outcome_agents = [
+        str(event["payload"].get("agent_id", "") or "")
+        for event in events
+        if isinstance(event, dict)
+        and event.get("event_type") == "turn.outcome"
+        and isinstance(event.get("payload"), dict)
+    ]
+    capture_results = [_capture_result(item) for item in outbound]
     assertions = {
         "room_id": room_id,
         "inbound_count": len(inbound),
@@ -288,6 +308,10 @@ def test_live_room_collaboration(
             for earlier, later in zip(outbound_counts, outbound_counts[1:])
         ],
         "telemetry_invocation_agents": telemetry_agents,
+        "outcome_agents": outcome_agents,
+        "capture_dispositions": [
+            str(result.get("disposition", "") or "") for result in capture_results
+        ],
         "response_agents": response_agents,
         "response_bodies": response_bodies,
     }
@@ -315,6 +339,12 @@ def test_live_room_collaboration(
         _PRIMARY,
         _SECONDARY,
     ]
+    assert outcome_agents == telemetry_agents
+    assert all(
+        result.get("disposition") in {"succeeded", "succeeded_no_output"}
+        and not result.get("error_code")
+        for result in capture_results
+    )
     assert Path(str(session_snapshot["database_path"])).is_relative_to(probe.data_root)
     assert Path(str(telemetry_snapshot["database_path"])).is_relative_to(
         probe.data_root

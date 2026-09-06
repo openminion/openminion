@@ -4,6 +4,7 @@ import io
 
 from rich.console import Console
 
+from openminion.cli.presentation import styles
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.contracts import TranscriptSink
 from openminion.cli.presentation.models import (
@@ -39,18 +40,32 @@ def test_push_agent_message_plain_text() -> None:
 
 
 def test_push_attributed_agent_message_renders_author() -> None:
-    t, buf = _make_transcript()
-    t.push_message(
-        ChatMessage(
-            kind=MessageKind.AGENT,
-            sender="review-agent",
-            body="reply",
-            show_header=True,
+    buf = io.StringIO()
+    styles.set_color_mode("always")
+    try:
+        t = TerminalTranscript(
+            Console(
+                file=buf,
+                force_terminal=True,
+                color_system="standard",
+                no_color=False,
+                width=80,
+            )
         )
-    )
+        t.push_message(
+            ChatMessage(
+                kind=MessageKind.AGENT,
+                sender="review-agent",
+                body="reply",
+                show_header=True,
+            )
+        )
+    finally:
+        styles.set_color_mode(None)
     output = buf.getvalue()
     assert "review-agent" in output
     assert "reply" in output
+    assert "\x1b[1;32mreview-agent" in output
 
 
 def test_push_non_room_agent_message_omits_author_header() -> None:

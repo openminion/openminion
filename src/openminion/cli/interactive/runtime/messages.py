@@ -607,6 +607,14 @@ class RuntimeMessageMixin:
         return ""
 
 
+def _strip_expected_sender_prefix(body: str, sender: str) -> str:
+    stripped = body.strip()
+    prefix = f"{sender}:"
+    if sender and stripped.startswith(prefix):
+        return stripped[len(prefix) :].lstrip()
+    return body
+
+
 def room_result_chat_messages(payload: Mapping[str, Any]) -> list[ChatMessage]:
     metadata = payload.get("metadata")
     response_items = (
@@ -617,7 +625,10 @@ def room_result_chat_messages(payload: Mapping[str, Any]) -> list[ChatMessage]:
             ChatMessage(
                 kind=MessageKind.AGENT,
                 sender=str(item.get("agent_id", "") or ""),
-                body=str(item.get("body", "") or ""),
+                body=_strip_expected_sender_prefix(
+                    str(item.get("body", "") or ""),
+                    str(item.get("agent_id", "") or ""),
+                ),
                 show_header=True,
                 msg_id=str(item.get("persisted_outbound_message_id", "") or ""),
             )
@@ -633,7 +644,10 @@ def room_result_chat_messages(payload: Mapping[str, Any]) -> list[ChatMessage]:
         ChatMessage(
             kind=MessageKind.AGENT,
             sender=str(payload.get("agent_id", "") or ""),
-            body=str(payload.get("body", "") or ""),
+            body=_strip_expected_sender_prefix(
+                str(payload.get("body", "") or ""),
+                str(payload.get("agent_id", "") or ""),
+            ),
             show_header=True,
             msg_id=persisted_id,
         )

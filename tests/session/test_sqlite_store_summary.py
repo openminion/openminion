@@ -32,6 +32,38 @@ def test_working_state_roundtrip(store: SQLiteSessionStore) -> None:
     assert active["cursor"] == 1
 
 
+def test_latest_working_state_can_be_scoped_to_agent(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="pv1"
+    )
+    store.put_working_state(
+        session_id,
+        state_inline={"agent_id": "agent.main", "cursor": 1},
+    )
+    store.put_working_state(
+        session_id,
+        state_inline={"agent_id": "agent.review", "cursor": 2},
+    )
+    store.put_working_state(
+        session_id,
+        state_inline={"agent_id": "agent.main", "cursor": 3},
+    )
+
+    latest = store.get_latest_working_state(session_id)
+    main = store.get_latest_working_state(session_id, agent_id="agent.main")
+    review = store.get_latest_working_state(session_id, agent_id="agent.review")
+
+    assert latest is not None
+    assert main is not None
+    assert review is not None
+    assert latest["state_inline"]["cursor"] == 3
+    assert main["state_inline"]["cursor"] == 3
+    assert review["state_inline"]["cursor"] == 2
+    assert store.get_latest_working_state(session_id, agent_id="agent.missing") is None
+
+
 def test_summary_base_and_deltas(store: SQLiteSessionStore) -> None:
     session_id = store.create_session(
         initial_agent_id="agent.main", profile_version="pv1"

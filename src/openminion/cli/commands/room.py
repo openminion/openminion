@@ -17,6 +17,7 @@ def _open_room_runtime(args):
         getattr(args, "config", None),
         home_root=getattr(args, "home_root", None),
         data_root=getattr(args, "data_root", None),
+        logging_mode="interactive",
     )
 
 

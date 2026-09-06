@@ -224,7 +224,12 @@ class TerminalTranscript:
 
             def _render_agent() -> None:
                 if message.show_header and sender not in {"", "agent", "assistant"}:
-                    self._console.print(Text(sender, style="bold"))
+                    self._console.print(
+                        Text(
+                            sender,
+                            style=token_rich_style(StyleToken.ASSISTANT, bold=True),
+                        )
+                    )
                 self._console.print(render_body(body))
 
             self._write_render(_render_agent)
