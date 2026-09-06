@@ -717,6 +717,37 @@ def test_apply_exact_active_skill_preserves_blessed_status(tmp_path: Path) -> No
         skill.close()
 
 
+def test_apply_exact_deprecated_skill_restores_verified_status(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    authority = _authority()
+    try:
+        skill_id, version_hash, _warnings = skill.ingest_text(
+            name="research-latest-news-playbook",
+            markdown=_proposal().skill_markdown,
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=skill_id,
+            version_hash=version_hash,
+            expected_active_version_hash=None,
+            target_status="deprecated",
+            reason="setup",
+            authority=authority,
+        )
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        apply_proposal(
+            skill,
+            proposal_id="sprq-proposal-1",
+            authority=authority,
+        )
+
+        assert skill.get_skill(skill_id).status == "verified"
+    finally:
+        skill.close()
+
+
 def test_apply_proposal_retries_after_admission_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

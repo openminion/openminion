@@ -4,6 +4,7 @@ from typing import Any, TYPE_CHECKING
 from openminion.base.time import utc_now_iso
 from openminion.modules.skill.constants import (
     SKILL_SOURCE_OPERATOR_DECLARED,
+    SKILL_STATUS_BLESSED,
     SKILL_STATUS_VERIFIED,
 )
 from openminion.modules.skill.interfaces import (
@@ -227,7 +228,11 @@ def apply_proposal(
             skill_id=skill_id,
             version_hash=version_hash,
             expected_active_version_hash=version_hash,
-            target_status=active.status,
+            target_status=(
+                SKILL_STATUS_BLESSED
+                if active.status == SKILL_STATUS_BLESSED
+                else SKILL_STATUS_VERIFIED
+            ),
             reason=f"accepted skill proposal {proposal.proposal_id}",
             authority=authority,
             verification_evidence=verification,
