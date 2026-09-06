@@ -26,7 +26,8 @@ This file tracks package-facing release notes for `openminion`.
 - Added typed social-signal watches with bounded fetching, durable scheduled
   execution, and visible delivery outcomes.
 - Added read-only security audit reports and completed bounded blockchain
-  diagnostics and explicit approval flows.
+  diagnostics and explicit approval flows while preserving the optional
+  dependency boundary for bare package installs.
 - Improved provider retry enforcement, pairing and session status, token and
   provider telemetry, CPU measurement, and bounded Focus history.
 
