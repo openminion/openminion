@@ -49,8 +49,6 @@ def create_tool_api(
         workspace=workspace_root,
         runtime_config=runtime_config,
         runtime_registry=runtime_registry,
-        policy=None,
-        policy_adapter=None,
         reactions_enabled=getattr(runtime_config, "reactions_enabled", True),
         agent_id=str(agent_name or "").strip() or None,
         skill_api=skill_api,
