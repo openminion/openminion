@@ -212,6 +212,7 @@ class ArtifactCtl:
                 "redaction_enabled": self.config.security.redaction_enabled,
                 "digest_max_chars": self.config.views.digest_max_chars,
                 "digest_max_lines": self.config.views.digest_max_lines,
+                "table_max_rows": self.config.views.table_max_rows,
             },
             "text": {"redaction_enabled": self.config.security.redaction_enabled},
             "json": {"json_max_chars": self.config.views.json_max_chars},
