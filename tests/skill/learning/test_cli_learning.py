@@ -141,7 +141,7 @@ def test_learning_cli_scan_inspect_save_and_trust_status(tmp_path: Path) -> None
     assert trust["trust"]["trust_state"] == "candidate"
 
 
-def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
+def test_learning_cli_stages_shape_proposal(tmp_path: Path) -> None:
     cfg = _config_path(tmp_path)
     shape = _shape()
     shape_path = _write_json(tmp_path, "shape.json", shape.model_dump(mode="json"))
