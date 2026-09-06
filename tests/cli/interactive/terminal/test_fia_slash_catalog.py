@@ -17,10 +17,12 @@ from openminion.cli.interactive.terminal.shell import (
 from openminion.cli.interactive.terminal.shell.actions import (
     _handle_session_slash,
     _handle_shell_preference_slash,
+    _handle_visible_parity_slash,
 )
 from openminion.cli.interactive.terminal.shell.slash_output import (
     PROMPT_SAFE_OUTPUT_SLASHES,
     handle_debug_output_slash,
+    render_context_review,
 )
 from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
@@ -70,6 +72,14 @@ class _VisibleRuntime:
 
     def memory_report(self) -> str:
         return ""
+
+    def context_trace_payload(self, *, session_id: str) -> dict[str, object]:
+        return {
+            "session_id": session_id,
+            "traces": [],
+            "count": 0,
+            "degraded": "context_trace_not_found",
+        }
 
     def list_memory_records(self) -> list[object]:
         return []
@@ -175,6 +185,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
+        _handle_visible_parity_slash,
         handle_debug_output_slash,
     )
     for dispatcher in dispatchers:
@@ -362,6 +373,139 @@ def test_advertised_output_slashes_are_visible(monkeypatch, tmp_path: Path) -> N
         assert buf.getvalue().strip() or len(transcript._messages) > before, (
             f"{slash} accepted input but produced no visible terminal output"
         )
+
+
+def test_context_review_forwards_explicit_paths(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.interactive.terminal.shell import slash_output
+
+    captured: dict[str, str] = {}
+
+    def _build_review(payload, **kwargs):
+        captured.update(kwargs)
+        return {"payload": payload}
+
+    monkeypatch.setattr(slash_output, "build_memory_context_review", _build_review)
+    monkeypatch.setattr(
+        slash_output,
+        "render_memory_context_review",
+        lambda review: f"context review: {review['payload']['session_id']}",
+    )
+    runtime = _VisibleRuntime()
+    runtime.context_trace_payload = lambda *, session_id: {
+        "session_id": session_id,
+        "traces": [],
+        "count": 0,
+    }
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/context-review session=review canary=canary.json "
+            "calibration=calibration.json artifacts=artifacts",
+            runtime=runtime,
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+        )
+    )
+
+    assert "context review: review" in buf.getvalue()
+    assert captured == {
+        "canary_path": "canary.json",
+        "calibration_path": "calibration.json",
+        "artifacts_dir": "artifacts",
+    }
+
+
+def test_context_review_renders_runtime_degradation() -> None:
+    runtime = _VisibleRuntime()
+    runtime.context_trace_payload = lambda *, session_id: {
+        "session_id": session_id,
+        "traces": [],
+        "count": 0,
+        "degraded": "context_trace_not_found",
+    }
+
+    rendered = render_context_review(runtime, "")
+
+    assert "degraded: context_trace_not_found" in rendered
+
+
+def test_overview_renders_operations_sections(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.status import overview
+
+    monkeypatch.setattr(
+        overview,
+        "build_operations_overview",
+        lambda _runtime, *, working_dir: {"working_dir": working_dir},
+    )
+    monkeypatch.setattr(
+        overview,
+        "render_operations_overview",
+        lambda snapshot: (
+            f"Runtime  [available]\nHost  [available]\n{snapshot['working_dir']}"
+        ),
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/overview",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+        )
+    )
+
+    output = buf.getvalue()
+    assert "Runtime  [available]" in output
+    assert "Host  [available]" in output
+    assert str(tmp_path) in output
+
+
+def test_copy_uses_latest_copyable_message(monkeypatch, tmp_path: Path) -> None:
+    from openminion.cli.interactive.terminal.shell import slash_output
+    from openminion.cli.presentation.models import ChatMessage, MessageKind
+
+    copied: list[str] = []
+    monkeypatch.setattr(
+        slash_output,
+        "copy_to_clipboard",
+        lambda body: copied.append(body) or True,
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+    transcript.push_message(
+        ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="copy this"),
+        render=False,
+    )
+    transcript.push_message(
+        ChatMessage(kind=MessageKind.SYSTEM, sender="system", body="skip this"),
+        render=False,
+    )
+
+    asyncio.run(
+        _handle_slash(
+            "/copy",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+        )
+    )
+
+    assert copied == ["copy this"]
+    assert "copied last message" in buf.getvalue()
 
 
 def test_prompt_loop_routes_output_slashes_through_transcript(

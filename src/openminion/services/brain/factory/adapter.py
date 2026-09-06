@@ -40,6 +40,8 @@ def create_tool_api(
     a2a_delegate_api: Any | None = None,
     agent_query: Any | None = None,
     agent_profile: Any | None = None,
+    task_manager: Any | None = None,
+    telemetryctl: Any | None = None,
     artifactctl: Any | None = None,
 ) -> Any:
     return create_tool_adapter(
@@ -47,8 +49,6 @@ def create_tool_api(
         workspace=workspace_root,
         runtime_config=runtime_config,
         runtime_registry=runtime_registry,
-        policy=None,
-        policy_adapter=None,
         reactions_enabled=getattr(runtime_config, "reactions_enabled", True),
         agent_id=str(agent_name or "").strip() or None,
         skill_api=skill_api,
@@ -58,6 +58,8 @@ def create_tool_api(
         a2a_delegate_api=a2a_delegate_api,
         agent_query=agent_query,
         agent_profile=agent_profile,
+        task_manager=task_manager,
+        telemetryctl=telemetryctl,
         artifactctl=artifactctl,
     )
 

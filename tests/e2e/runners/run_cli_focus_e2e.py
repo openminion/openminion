@@ -43,10 +43,10 @@ SUITES: dict[str, Suite] = {
             "tests/cli/test_default_invocation.py",
             "tests/cli/test_focus_backend_selection.py",
             "tests/cli/presentation/test_permissions_menu.py",
-            "tests/cli/interactive/test_focus_approval_persistence.py",
-            "tests/cli/interactive/test_focus_turn_interrupt.py",
+            "tests/cli/interactive/terminal/test_overlays.py",
             "tests/cli/interactive/terminal/test_focus_input_queue.py",
             "tests/cli/interactive/terminal/test_streaming.py",
+            "tests/cli/interactive/terminal/test_streaming_integration.py",
             "tests/cli/interactive/terminal/test_streaming_visuals.py",
             "tests/cli/interactive/terminal/test_pty_scrollback.py",
             "tests/cli/interactive/terminal/test_verbosity_render.py",
@@ -85,7 +85,10 @@ SUITES: dict[str, Suite] = {
     "core": Suite(("tests/e2e/cli/focus/test_live_basic.py",), live=True),
     "tools": Suite(("tests/e2e/cli/focus/test_live_tools.py",), live=True),
     "approval": Suite(
-        ("tests/cli/interactive/test_focus_mode.py",),
+        (
+            "tests/cli/interactive/terminal/test_overlays.py",
+            "tests/cli/interactive/terminal/test_streaming_integration.py",
+        ),
         ("-k", "approval"),
     ),
     "research": Suite(
@@ -113,8 +116,8 @@ SUITES: dict[str, Suite] = {
     ),
     "queued-input": Suite(
         (
-            "tests/cli/interactive/test_focus_input_chrome.py",
-            "tests/cli/interactive/test_focus_status_line_richness.py",
+            "tests/cli/interactive/terminal/test_focus_input_queue.py",
+            "tests/cli/interactive/terminal/test_status_line.py",
         ),
         ("-k", "queued"),
     ),
@@ -122,14 +125,15 @@ SUITES: dict[str, Suite] = {
     "progress-visibility": Suite(
         (
             "tests/cli/status",
-            "tests/cli/interactive/test_focus_status_format_parity.py",
-            "tests/cli/interactive/test_focus_status_line_richness.py",
+            "tests/cli/interactive/terminal/test_single_indicator_rule.py",
+            "tests/cli/interactive/terminal/test_status_line.py",
+            "tests/cli/interactive/terminal/test_streaming.py",
         ),
     ),
     "tier-a": Suite(
         (
-            "tests/cli/interactive/test_focus_approval_persistence.py",
-            "tests/cli/interactive/test_focus_slash_commands.py",
+            "tests/cli/interactive/terminal/test_overlays.py",
+            "tests/cli/interactive/terminal/test_fia_slash_catalog.py",
             "tests/policy/test_policy_service.py",
             "tests/brain/test_confirmation_replay_bridge_integration.py",
             "tests/integration/test_parallel_rollout_patch_apply.py",

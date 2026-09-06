@@ -117,6 +117,21 @@ def test_digest_view_cache_changes_with_limits(tmp_path):
         assert ctl.read_digest(ref.sha256)["excerpt"] == "abcde"
 
 
+def test_digest_view_cache_changes_with_table_row_limit(tmp_path):
+    data = b"name,value\na,1\nb,2\n"
+    initial = {"artifactctl": {"views": {"table_max_rows": 2}}}
+    with artifact_ctl(tmp_path, initial) as ctl:
+        ref = ctl.ingest_bytes(data, mime="text/csv")
+        first_view = ctl.ensure_digest(ref.sha256)
+        assert ctl.read_digest(ref.sha256)["stats"]["table_rows_sampled"] == 2
+
+    changed = {"artifactctl": {"views": {"table_max_rows": 1}}}
+    with artifact_ctl(tmp_path, changed) as ctl:
+        second_view = ctl.ensure_digest(ref.sha256)
+        assert second_view.sha256 != first_view.sha256
+        assert ctl.read_digest(ref.sha256)["stats"]["table_rows_sampled"] == 1
+
+
 def test_json_view_cache_changes_with_limit(tmp_path):
     data = json.dumps({"message": "long enough"}).encode()
     initial = {

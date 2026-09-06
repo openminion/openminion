@@ -128,11 +128,37 @@ def test_renderer_and_animation_dependencies_are_scoped() -> None:
 
     assert any(dep.startswith("prompt-toolkit") for dep in dependencies)
     assert any(dep.startswith("rich") for dep in dependencies)
-    assert not any(dep.startswith(("textual", "pyfiglet")) for dep in dependencies)
-    assert extras["textual"] == ["textual>=1,<9"]
+    assert not any(dep.startswith("pyfiglet") for dep in dependencies)
+    assert "textual" not in extras
     assert "pyfiglet>=1.0,<2" in extras["animations"]
-    assert "textual>=1,<9" in extras["dev"]
     assert "pyfiglet>=1.0,<2" in extras["dev"]
+
+
+def test_public_import_does_not_require_blockchain_extra(tmp_path: Path) -> None:
+    script = """
+import builtins
+
+original_import = builtins.__import__
+
+def import_without_blockchain_dependencies(name, *args, **kwargs):
+    if name == "eth_abi" or name.startswith("eth_abi."):
+        raise ModuleNotFoundError(name)
+    if name == "web3" or name.startswith("web3."):
+        raise ModuleNotFoundError(name)
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = import_without_blockchain_dependencies
+
+import openminion
+from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+from openminion.api import dispatch_request
+
+assert openminion.__version__
+assert APIRuntime and Agent and OpenMinionConfig
+assert callable(tool) and callable(dispatch_request)
+"""
+
+    subprocess.run([sys.executable, "-c", script], cwd=tmp_path, check=True)
 
 
 def test_built_archives_exclude_test_tree(tmp_path: Path) -> None:
@@ -151,11 +177,17 @@ def test_built_archives_exclude_test_tree(tmp_path: Path) -> None:
     with tarfile.open(source_archive, "r:gz") as archive:
         assert not any("/tests/" in name for name in archive.getnames())
     with zipfile.ZipFile(wheel) as archive:
-        assert not any(name.startswith("tests/") for name in archive.namelist())
-        assert {
-            "openminion/cli/interactive/foundation.tcss",
-            "openminion/cli/interactive/styles.tcss",
-        } <= set(archive.namelist())
+        names = archive.namelist()
+        assert not any(name.startswith("tests/") for name in names)
+        assert not any(name.endswith(".tcss") for name in names)
+        assert not any("openminion/cli/interactive/widgets/" in name for name in names)
+        assert "openminion/cli/interactive/app.py" not in names
+        metadata_name = next(
+            name for name in names if name.endswith(".dist-info/METADATA")
+        )
+        metadata = archive.read(metadata_name).decode("utf-8")
+        assert "Provides-Extra: textual" not in metadata
+        assert "Requires-Dist: textual" not in metadata
 
 
 def test_package_version_owner_matches_public_metadata() -> None:

@@ -67,7 +67,10 @@ def compute_backoff_ms(
     return max(0.0, capped + jitter)
 
 
-def build_provider_retry_policy(config: Any = None) -> ProviderRetryPolicy:
+def build_provider_retry_policy(
+    config: Any = None,
+    llm_api: Any | None = None,
+) -> ProviderRetryPolicy:
     runtime = getattr(config, "runtime", config)
     raw = getattr(
         runtime, "provider_retry_max_attempts", PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
@@ -76,6 +79,12 @@ def build_provider_retry_policy(config: Any = None) -> ProviderRetryPolicy:
         max_attempts = int(raw)
     except (TypeError, ValueError):
         max_attempts = PROVIDER_RETRY_DEFAULT_MAX_ATTEMPTS
+    provider_limit_getter = getattr(llm_api, "get_provider_retry_max_attempts", None)
+    provider_limit = (
+        provider_limit_getter() if callable(provider_limit_getter) else None
+    )
+    if provider_limit is not None:
+        max_attempts = min(max_attempts, int(provider_limit))
     return ProviderRetryPolicy(max_attempts=max(1, min(6, max_attempts)))
 
 

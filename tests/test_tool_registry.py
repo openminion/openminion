@@ -20,6 +20,7 @@ from openminion.modules.tool import (
     build_default_tool_registry_debug_report,
 )
 from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.errors import ToolRuntimeError
 
 
@@ -116,6 +117,25 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(context.exception.code, "INVALID_ARGUMENT")
         self.assertEqual(context.exception.details, {"tool": "policy_tool"})
         self.assertIs(registry.get("policy_tool"), original)
+        self.assertEqual(registry._category_index, categories_before)
+
+    def test_add_rejects_whitespace_variant_without_mutation(self) -> None:
+        def handler(args, context):
+            del args, context
+            return {"ok": True}
+
+        original = ToolSpec("same", _EchoArgs, "READ_ONLY", handler)
+        registry = ToolRegistry()
+        registry.add(original)
+        categories_before = {
+            name: set(tool_names)
+            for name, tool_names in registry._category_index.items()
+        }
+
+        with self.assertRaises(ToolRuntimeError):
+            registry.add(ToolSpec(" same ", _EchoArgs, "READ_ONLY", handler))
+
+        self.assertIs(registry.get("same"), original)
         self.assertEqual(registry._category_index, categories_before)
 
     def test_sidecar_autostart_requires_runtime_binding(self) -> None:

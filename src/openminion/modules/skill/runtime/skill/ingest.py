@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-import mimetypes
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, Mapping, cast
+from typing import Any, Iterable, Mapping, TypedDict, cast
 
 from openminion.modules.skill.runtime.bundle_metadata import (
     BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL,
@@ -20,9 +18,6 @@ from openminion.modules.skill.constants import (
     HIGH_RISK_CLASSES,
     RISK_CLASS_HIGH,
     RISK_CLASS_LOW,
-    SKILL_BUNDLE_MAX_RESOURCES,
-    SKILL_BUNDLE_MAX_RESOURCE_BYTES,
-    SKILL_BUNDLE_MAX_TOTAL_RESOURCE_BYTES,
     SKILL_STATUSES,
     SKILL_STATUS_DRAFT,
     SKILL_TOOL_REGISTRY_UNAVAILABLE,
@@ -40,6 +35,7 @@ from openminion.modules.skill.models import (
     normalize_text_list,
     slugify,
 )
+from openminion.modules.skill.runtime.skill.resources import collect_bundle_resources
 from openminion.modules.skill.runtime.parser import (
     build_default_snippets,
     build_recipe,
@@ -85,16 +81,23 @@ _REFERENCE_FILE_SUFFIXES = (
 )
 
 
-def _capability_metadata(front_matter: Mapping[str, Any]) -> dict[str, list[str]]:
+class _CapabilityMetadata(TypedDict):
+    teaches: list[str]
+    requires_tools: list[str]
+    safe_for_domains: list[str]
+    forbidden_claims: list[str]
+    evidence_expectations: list[str]
+
+
+def _capability_metadata(front_matter: Mapping[str, Any]) -> _CapabilityMetadata:
     return {
-        key: normalize_text_list(front_matter.get(key))
-        for key in (
-            "teaches",
-            "requires_tools",
-            "safe_for_domains",
-            "forbidden_claims",
-            "evidence_expectations",
-        )
+        "teaches": normalize_text_list(front_matter.get("teaches")),
+        "requires_tools": normalize_text_list(front_matter.get("requires_tools")),
+        "safe_for_domains": normalize_text_list(front_matter.get("safe_for_domains")),
+        "forbidden_claims": normalize_text_list(front_matter.get("forbidden_claims")),
+        "evidence_expectations": normalize_text_list(
+            front_matter.get("evidence_expectations")
+        ),
     }
 
 
@@ -396,58 +399,7 @@ class SkillIngestMixin:
     def _collect_bundle_resources(
         self, bundle_root: Path | None
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        if bundle_root is None:
-            return [], []
-        root = bundle_root.resolve()
-        resources: list[dict[str, Any]] = []
-        warnings: list[str] = []
-        total_bytes = 0
-        for kind in ("references", "assets", "scripts"):
-            resource_root = root / kind
-            if not resource_root.is_dir():
-                continue
-            for path in sorted(resource_root.rglob("*")):
-                if len(resources) >= SKILL_BUNDLE_MAX_RESOURCES:
-                    warnings.append("bundle.resources.count_limit")
-                    return resources, warnings
-                if path.is_symlink() or not path.is_file():
-                    if path.is_symlink():
-                        warnings.append("bundle.resources.symlink_skipped")
-                    continue
-                resolved = path.resolve()
-                if not resolved.is_relative_to(root):
-                    warnings.append("bundle.resources.path_escape_skipped")
-                    continue
-                size = resolved.stat().st_size
-                if size > SKILL_BUNDLE_MAX_RESOURCE_BYTES:
-                    warnings.append("bundle.resources.file_size_limit")
-                    continue
-                if total_bytes + size > SKILL_BUNDLE_MAX_TOTAL_RESOURCE_BYTES:
-                    warnings.append("bundle.resources.total_size_limit")
-                    return resources, warnings
-                payload = resolved.read_bytes()
-                media_type = (
-                    mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
-                )
-                relative_path = resolved.relative_to(root).as_posix()
-                ref = self._blob_store.put_bytes(
-                    payload,
-                    media_type=media_type,
-                    ext=resolved.suffix.lstrip("."),
-                    meta={"skill_resource_path": relative_path},
-                )
-                resources.append(
-                    {
-                        "path": relative_path,
-                        "kind": kind,
-                        "size_bytes": size,
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                        "artifact_ref": f"artifact://sha256/{ref.hash}",
-                        "executable": False,
-                    }
-                )
-                total_bytes += size
-        return resources, warnings
+        return collect_bundle_resources(bundle_root, blob_store=self._blob_store)
 
     def _persist_package(
         self,

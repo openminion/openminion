@@ -308,6 +308,22 @@ def _resolve_relative_base_dir(ctx: RuntimeContext) -> Path:
     return resolved_candidate
 
 
+def _workspace_escape_error(raw_path: str, workspace_root: Path) -> ToolRuntimeError:
+    retry_path = workspace_retry_path(raw_path)
+    return ToolRuntimeError(
+        "POLICY_DENIED",
+        (
+            f"path escapes workspace root: {raw_path}. "
+            f"Use a relative path under the workspace root, for example {retry_path}."
+        ),
+        details={
+            "workspace_root": str(workspace_root),
+            "retry_path": retry_path,
+            "retry_hint": "Use a relative path under the workspace root.",
+        },
+    )
+
+
 def _resolve_path_lexical(ctx: RuntimeContext, raw_path: str, operation: str) -> str:
     workspace_root = _resolve_workspace_root(ctx)
     relative_base_dir = _resolve_relative_base_dir(ctx)
@@ -319,28 +335,23 @@ def _resolve_path_lexical(ctx: RuntimeContext, raw_path: str, operation: str) ->
         candidate = relative_base_dir / candidate
     resolved = candidate.resolve(strict=False)
 
-    try:
-        resolved.relative_to(workspace_root)
-    except ValueError:
-        retry_path = workspace_retry_path(raw_path)
-        raise ToolRuntimeError(
-            "POLICY_DENIED",
-            (
-                f"path escapes workspace root: {raw_path}. "
-                f"Use a relative path under the workspace root, for example {retry_path}."
-            ),
-            details={
-                "workspace_root": str(workspace_root),
-                "retry_path": retry_path,
-                "retry_hint": "Use a relative path under the workspace root.",
-            },
-        )
+    if not Path(raw_path).expanduser().is_absolute():
+        try:
+            resolved.relative_to(workspace_root)
+        except ValueError:
+            raise _workspace_escape_error(raw_path, workspace_root)
 
-    ctx.policy.ensure_path_allowed(
-        str(resolved),
-        workspace=workspace_root,
-        operation=operation,
-    )
+    try:
+        ctx.policy.ensure_path_allowed(
+            str(resolved),
+            workspace=workspace_root,
+            operation=operation,
+        )
+    except ToolRuntimeError as exc:
+        details = exc.details if isinstance(exc.details, dict) else {}
+        if details.get("rule") == f"paths.{operation}_allow":
+            raise _workspace_escape_error(raw_path, workspace_root) from exc
+        raise
     return str(resolved)
 
 

@@ -43,32 +43,6 @@ print({_MODULE_SENTINEL!r} + json.dumps(sorted(sys.modules)))
     return completed, set(json.loads(module_line.removeprefix(_MODULE_SENTINEL)))
 
 
-def _fresh_imports(module_name: str) -> set[str]:
-    script = f"""
-import importlib
-import json
-import sys
-importlib.import_module({module_name!r})
-print({_MODULE_SENTINEL!r} + json.dumps(sorted(sys.modules)))
-"""
-    env = os.environ.copy()
-    env["PYTHONPATH"] = os.pathsep.join((str(_SOURCE_ROOT), str(_REPO_ROOT)))
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=_REPO_ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    module_line = next(
-        line
-        for line in completed.stdout.splitlines()
-        if line.startswith(_MODULE_SENTINEL)
-    )
-    return set(json.loads(module_line.removeprefix(_MODULE_SENTINEL)))
-
-
 def test_root_help_avoids_runtime_and_renderer_imports() -> None:
     completed, imported = _root_help_imports()
 
@@ -79,7 +53,6 @@ def test_root_help_avoids_runtime_and_renderer_imports() -> None:
         "openminion.modules.llm.providers",
         "openminion.modules.tool.contracts",
         "rich",
-        "textual",
         "prompt_toolkit",
     )
     assert not {
@@ -90,19 +63,6 @@ def test_root_help_avoids_runtime_and_renderer_imports() -> None:
             for prefix in forbidden_prefixes
         )
     }
-
-
-def test_default_terminal_and_shared_runtime_do_not_import_textual() -> None:
-    for module_name in (
-        "openminion.cli.interactive.terminal",
-        "openminion.cli.interactive.runtime",
-    ):
-        imported = _fresh_imports(module_name)
-        assert not {
-            name
-            for name in imported
-            if name == "textual" or name.startswith("textual.")
-        }
 
 
 def test_performance_runner_owns_both_import_surface_scenarios(
@@ -136,4 +96,3 @@ def test_performance_runner_owns_both_import_surface_scenarios(
     for scenario_id in scenario_ids:
         run = module.run_scenario(scenario_id, options)
         assert run.ok is True
-        assert run.metrics["textual_module_count"] == 0

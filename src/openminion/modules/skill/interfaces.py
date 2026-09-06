@@ -84,6 +84,23 @@ class SkillIngestAuthority:
         }
 
 
+@dataclass(frozen=True)
+class SkillVerificationEvidence:
+    check: str
+    result: Literal["passed"]
+    evidence_ref: str
+
+    def __post_init__(self) -> None:
+        check = self.check.strip()
+        evidence_ref = self.evidence_ref.strip()
+        if not check or not evidence_ref or self.result != "passed":
+            raise ValueError(
+                "verification evidence requires check, passed result, and evidence_ref"
+            )
+        object.__setattr__(self, "check", check)
+        object.__setattr__(self, "evidence_ref", evidence_ref)
+
+
 class SkillContract(Protocol):
     def __init__(
         self,
@@ -146,6 +163,7 @@ class SkillContract(Protocol):
         target_status: str,
         reason: str,
         authority: SkillIngestAuthority,
+        verification_evidence: SkillVerificationEvidence | None = ...,
     ) -> dict[str, Any]: ...
 
     def rollback_skill_version(

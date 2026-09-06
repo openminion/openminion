@@ -6,22 +6,37 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from openminion.base.errors import ErrorInfo, error_info_from_mapping
 from openminion.base.redaction import redact_sensitive_text
 from openminion.modules.controlplane.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
-from openminion.modules.task.autonomy import autonomy_permission_metadata
-from openminion.modules.task.plan import TaskPlan, TaskPlanRevision
+from openminion.modules.task.autonomy import (
+    AutonomyRun,
+    TestEvidence,
+    TestEvidenceStatus,
+    autonomy_permission_metadata,
+)
+from openminion.modules.task.plan import (
+    TaskPlan,
+    TaskPlanRevision,
+    TaskPlanStepBlocked,
+    TaskPlanStepCompleted,
+    TaskPlanTerminalSignal,
+)
 
 from .progress import AutonomyLoopConditionKind
+from .models import ProjectCheckpoint, ProjectCycleDecision
 
 _ProjectMetadataModel = TypeVar(
     "_ProjectMetadataModel",
     TaskPlan,
     TaskPlanRevision,
+    TaskPlanStepBlocked,
+    TaskPlanStepCompleted,
+    TaskPlanTerminalSignal,
 )
 
 
@@ -35,6 +50,7 @@ class ProjectTurnRequest:
     cycle_id: str
     milestone: str
     prompt: str
+    allowed_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,7 +64,104 @@ class ProjectTurnResult:
     tool_call_count: int = 0
     task_plan: TaskPlan | None = None
     task_plan_revision: TaskPlanRevision | None = None
+    task_plan_step_completed: TaskPlanStepCompleted | None = None
+    task_plan_step_blocked: TaskPlanStepBlocked | None = None
+    task_plan_abandoned: TaskPlanTerminalSignal | None = None
+    task_plan_completed: TaskPlanTerminalSignal | None = None
     error: ErrorInfo | None = None
+
+
+def project_cycle_prompt(
+    run: AutonomyRun,
+    checkpoint: ProjectCheckpoint,
+    milestone: str,
+    *,
+    repository_check_observation: Mapping[str, object] | None = None,
+) -> str:
+    project_run = checkpoint.project_run
+    checkpoint_payload = checkpoint.payload
+    lines = [
+        run.goal_text,
+        "",
+        f"Current milestone: {milestone}",
+        f"Committed cycles: {project_run.committed_cycle_count}",
+        "Work on the smallest useful next step. Inspect current state before editing.",
+        "Do not claim completion; the configured verifier owns completion.",
+    ]
+    active_plan = checkpoint_payload.get("task_plan")
+    if not isinstance(active_plan, Mapping):
+        lines.append(
+            "Your first action must use the existing plan loop-control tool "
+            "to declare a durable task plan with "
+            "continue_plan_autonomously=true, then continue with its first step."
+        )
+    if project_run.verifier_refs:
+        lines.append(
+            "Prior verifier refs: " + ", ".join(project_run.verifier_refs[-5:])
+        )
+    if verification := checkpoint_payload.get("verification"):
+        evidence = cast(list[dict[str, object]], verification)
+        failed = [
+            item
+            for item in evidence
+            if item["status"] == TestEvidenceStatus.FAILED.value
+        ]
+        outcome = (failed or evidence)[-1]
+        lines.extend(("Prior verifier outcome:", str(outcome["summary"])))
+        if failed and isinstance(active_plan, Mapping):
+            plan_id = str(active_plan.get("plan_id") or "").strip()
+            verifier_refs = ", ".join(project_run.verifier_refs[-5:])
+            lines.append(
+                "Your first action must use the existing plan loop-control "
+                f"tool with action=revise for plan_id={plan_id}. Use a new "
+                "revision_id, set continue_plan_autonomously=true, and bind "
+                f"verifier_refs to: {verifier_refs}."
+            )
+    if project_run.progress_refs:
+        lines.append(
+            "Prior progress refs: " + ", ".join(project_run.progress_refs[-5:])
+        )
+    if (
+        repository_check_observation is not None
+        and repository_check_observation["overall_result"] != "pending"
+    ):
+        lines.extend(
+            (
+                "GitHub check facts for the exact approved head:",
+                json.dumps(repository_check_observation, sort_keys=True),
+            )
+        )
+    return "\n".join(lines)
+
+
+def project_cycle_checkpoint_payload(
+    turn: ProjectTurnResult,
+    *,
+    effect_payload: Mapping[str, object],
+    plan_payload: Mapping[str, object],
+    repository_payload: Mapping[str, object],
+    decision: ProjectCycleDecision,
+    verification: tuple[TestEvidence, ...],
+    verification_closure: Mapping[str, object],
+    decision_reason: str,
+    replan_count: int,
+    waiting_for_checks: bool,
+) -> dict[str, object]:
+    return {
+        **effect_payload,
+        "decision": decision.value,
+        "summary": turn.summary,
+        "gateway_run_id": turn.gateway_run_id,
+        "verification": [item.model_dump(mode="json") for item in verification],
+        "verification_closure": dict(verification_closure),
+        "condition": turn.condition.value,
+        "decision_reason": decision_reason,
+        **({"detail_code": "waiting_for_checks"} if waiting_for_checks else {}),
+        "replan_count": replan_count,
+        **plan_payload,
+        **repository_payload,
+        **({"error": turn.error.to_dict()} if turn.error else {}),
+    }
 
 
 _PROJECT_ERROR_DETAIL_KEYS = frozenset(
@@ -144,12 +257,19 @@ def project_turn_inbound_metadata(
     *,
     base: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    metadata: dict[str, object] = {
         **dict(base or {}),
         CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
         "conversation_id": request.project_run_id,
+        "linked_task_id": request.task_id,
         "resume": "true",
     }
+    if request.allowed_tools:
+        metadata.update(
+            turn_tool_allowlist=",".join(request.allowed_tools),
+            turn_tool_allowlist_supplied="true",
+        )
+    return metadata
 
 
 def project_turn_from_payload(
@@ -228,6 +348,26 @@ def project_turn_result_from_response(
         tool_call_count=_project_tool_call_count(metadata, tool_results),
         task_plan=_project_metadata_model(metadata, "task_plan", TaskPlan),
         task_plan_revision=_project_checkpoint_revision(metadata),
+        task_plan_step_completed=_project_metadata_model(
+            metadata,
+            "task_plan.step_completed",
+            TaskPlanStepCompleted,
+        ),
+        task_plan_step_blocked=_project_metadata_model(
+            metadata,
+            "task_plan.step_blocked",
+            TaskPlanStepBlocked,
+        ),
+        task_plan_abandoned=_project_metadata_model(
+            metadata,
+            "task_plan.abandoned",
+            TaskPlanTerminalSignal,
+        ),
+        task_plan_completed=_project_metadata_model(
+            metadata,
+            "task_plan.completed",
+            TaskPlanTerminalSignal,
+        ),
         error=error,
     )
 
@@ -324,10 +464,12 @@ def project_runtime_payload(
 __all__ = [
     "ProjectTurnRequest",
     "ProjectTurnResult",
+    "project_cycle_prompt",
     "project_condition_from_metadata",
     "project_error_from_payload",
     "project_metadata_refs",
     "project_runtime_payload",
+    "project_cycle_checkpoint_payload",
     "project_turn_from_payload",
     "project_turn_inbound_metadata",
     "project_workspace",

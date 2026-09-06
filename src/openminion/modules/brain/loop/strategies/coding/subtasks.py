@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,74 +29,28 @@ def _dispatch_subtasks_if_needed(runner: Any, ctx: ExecutionContext) -> None:
     if local_runner is None:
         return
 
-    batches = _subtask_batches(runner, pending_indices)
     total_subtasks = max(1, len(pending_indices))
     child_budget = _child_budget_payload(runner, ctx, total_subtasks=total_subtasks)
     outcomes: dict[int, ExecutionResult] = {}
-    for batch in batches:
+    for index in pending_indices:
         if _parent_subtask_budget_exhausted(runner, ctx):
             break
-        if len(batch) == 1:
-            index = batch[0]
-            result, child_state = _invoke_coding_subtask(
-                runner,
-                ctx,
-                runner_obj=local_runner,
-                subtask_index=index,
-                child_budget=child_budget,
-            )
-            outcomes[index] = result
-            _debit_parent_budget_for_subtask(
-                runner,
-                ctx,
-                child_budget=child_budget,
-                child_state=child_state,
-            )
-            continue
-        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-            futures = {
-                index: pool.submit(
-                    _invoke_coding_subtask,
-                    runner,
-                    ctx,
-                    runner_obj=local_runner,
-                    subtask_index=index,
-                    child_budget=child_budget,
-                )
-                for index in batch
-            }
-            for index in batch:
-                result, child_state = futures[index].result()
-                outcomes[index] = result
-                _debit_parent_budget_for_subtask(
-                    runner,
-                    ctx,
-                    child_budget=child_budget,
-                    child_state=child_state,
-                )
+        result, child_state = _invoke_coding_subtask(
+            runner,
+            ctx,
+            runner_obj=local_runner,
+            subtask_index=index,
+            child_budget=child_budget,
+        )
+        outcomes[index] = result
+        _debit_parent_budget_for_subtask(
+            runner,
+            ctx,
+            child_budget=child_budget,
+            child_state=child_state,
+        )
     _append_subtask_synthesis(runner, ctx, outcomes)
     runner._sync_coding_module_state(ctx)
-
-
-def _subtask_batches(runner: Any, pending_indices: list[int]) -> list[list[int]]:
-    if runner._coding_plan is None:
-        return []
-    conflicts = set(runner._coding_plan.conflicting_subtask_pairs())
-    batches: list[list[int]] = []
-    for index in pending_indices:
-        placed = False
-        for batch in batches:
-            if any(
-                (min(index, sibling), max(index, sibling)) in conflicts
-                for sibling in batch
-            ):
-                continue
-            batch.append(index)
-            placed = True
-            break
-        if not placed:
-            batches.append([index])
-    return batches
 
 
 def _child_budget_payload(

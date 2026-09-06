@@ -34,6 +34,10 @@ class MCPListedTool:
     annotations: dict[str, Any] = field(default_factory=dict)
     posture: MCPToolPosture = field(default_factory=MCPToolPosture)
     output_schema: dict[str, Any] = field(default_factory=dict)
+    title: str = ""
+    icons: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+    task_support: str = ""
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,9 @@ class MCPListedPrompt:
     remote_name: str
     description: str
     arguments_schema: dict[str, Any]
+    title: str = ""
+    icons: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,9 @@ class MCPListedResource:
     resource_name: str
     description: str
     mime_type: str
+    title: str = ""
+    icons: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -61,6 +71,9 @@ class MCPListedResourceTemplate:
     description: str
     mime_type: str
     arguments_schema: dict[str, Any]
+    title: str = ""
+    icons: tuple[dict[str, Any], ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

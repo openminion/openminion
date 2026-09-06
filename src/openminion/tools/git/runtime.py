@@ -12,12 +12,15 @@ from openminion.tools.file.plugin import (
 
 from openminion.tools.git.errors import (
     GIT_AMBIGUOUS_WORKSPACE,
+    GIT_AUTH_FAILED,
     GIT_BINARY_ERROR,
     GIT_DIRTY_WORKING_TREE,
     GIT_MERGE_CONFLICT,
+    GIT_NON_FAST_FORWARD,
     GIT_NOT_A_REPOSITORY,
     GIT_NOT_AVAILABLE,
     GIT_REF_NOT_FOUND,
+    GIT_REMOTE_NOT_FOUND,
 )
 
 DEFAULT_GIT_TIMEOUT_SECONDS = 30.0
@@ -164,7 +167,17 @@ def classify_git_failure(result: GitCommandResult) -> ToolRuntimeError:
         )
 
     stderr_lower = result.stderr.lower()
+    output_lower = f"{result.stdout}\n{result.stderr}".lower()
     stderr_excerpt = result.stderr[:MAX_STDERR_DETAIL_CHARS]
+
+    remote_failure = _classify_remote_failure(
+        result,
+        output_lower=output_lower,
+        stderr_lower=stderr_lower,
+        stderr_excerpt=stderr_excerpt,
+    )
+    if remote_failure is not None:
+        return remote_failure
 
     if "not a git repository" in stderr_lower:
         return ToolRuntimeError(
@@ -182,6 +195,7 @@ def classify_git_failure(result: GitCommandResult) -> ToolRuntimeError:
         or "bad revision" in stderr_lower
         or "ambiguous argument" in stderr_lower
         or "did not match any file(s) known to git" in stderr_lower
+        or "needed a single revision" in stderr_lower
     ):
         return ToolRuntimeError(
             GIT_REF_NOT_FOUND,
@@ -230,3 +244,81 @@ def classify_git_failure(result: GitCommandResult) -> ToolRuntimeError:
             "command": list(result.command[1:]),
         },
     )
+
+
+def _classify_remote_failure(
+    result: GitCommandResult,
+    *,
+    output_lower: str,
+    stderr_lower: str,
+    stderr_excerpt: str,
+) -> ToolRuntimeError | None:
+    details = {
+        "cwd": result.cwd,
+        "exit_code": result.exit_code,
+        "stderr": stderr_excerpt,
+    }
+    if "non-fast-forward" in output_lower or "fetch first" in output_lower:
+        return ToolRuntimeError(
+            GIT_NON_FAST_FORWARD,
+            "remote ref update is not a fast-forward",
+            details,
+        )
+    if any(
+        token in stderr_lower
+        for token in (
+            "authentication failed",
+            "could not read username",
+            "could not read password",
+            "permission denied (publickey)",
+            "terminal prompts disabled",
+        )
+    ):
+        return ToolRuntimeError(
+            GIT_AUTH_FAILED,
+            "git remote authentication failed",
+            details,
+        )
+    if "does not appear to be a git repository" in stderr_lower:
+        return ToolRuntimeError(
+            GIT_REMOTE_NOT_FOUND,
+            "configured git remote was not found",
+            details,
+        )
+    return None
+
+
+def require_configured_git_remote(cwd: str | Path, remote: str) -> None:
+    result = run_git(("remote", "get-url", remote), cwd=cwd)
+    if result.exit_code != 0:
+        raise ToolRuntimeError(
+            GIT_REMOTE_NOT_FOUND,
+            f"configured git remote not found: {remote}",
+            {"cwd": str(cwd), "remote": remote},
+        )
+
+
+def resolve_git_ref_oid(cwd: str | Path, ref: str) -> str:
+    result = run_git(
+        ("rev-parse", "--verify", "--end-of-options", ref),
+        cwd=cwd,
+    )
+    if result.exit_code != 0:
+        raise classify_git_failure(result)
+    return result.stdout.strip()
+
+
+def resolve_git_remote_ref_oid(
+    cwd: str | Path,
+    *,
+    remote: str,
+    ref: str,
+) -> str | None:
+    result = run_git(("ls-remote", remote, ref), cwd=cwd)
+    if result.exit_code != 0:
+        raise classify_git_failure(result)
+    for line in result.stdout.splitlines():
+        oid, separator, observed_ref = line.partition("\t")
+        if separator and observed_ref == ref:
+            return oid
+    return None

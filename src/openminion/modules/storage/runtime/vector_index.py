@@ -2,11 +2,10 @@ import hashlib
 import json
 import logging
 import math
-import re
 import struct
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,7 +14,6 @@ from openminion.base.config.env import (
     EnvironmentConfig,
     resolve_environment_config_with_explicit_env,
 )
-from ..config import VECTOR_INDEX_CHAR_NGRAM_MAX, VECTOR_INDEX_CHAR_NGRAM_MIN
 from .sqlite import connect_database
 from . import migrations
 
@@ -74,57 +72,6 @@ class EmbeddingBatchResult:
     results: list[EmbeddingResult]
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
-_SENTENCE_TRANSFORMERS_ENV = "OPENMINION_ENABLE_SENTENCE_TRANSFORMERS"
-
-
-def _tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
-
-
-def _normalized_text(text: str) -> str:
-    return " ".join(_tokenize(text))
-
-
-def _feature_hash_index(value: str, dim: int) -> tuple[int, float]:
-    digest = hashlib.sha256(value.encode("utf-8")).digest()
-    index = int.from_bytes(digest[:4], "big") % max(1, dim)
-    sign = -1.0 if (digest[4] & 1) else 1.0
-    return index, sign
-
-
-def _iter_embedding_features(text: str) -> Iterator[str]:
-    normalized = _normalized_text(text)
-    if not normalized:
-        yield "__empty__"
-        return
-
-    tokens = normalized.split()
-    for token in tokens:
-        yield f"tok:{token}"
-
-    for left, right in zip(tokens, tokens[1:]):
-        yield f"bi:{left}_{right}"
-
-    padded = f" {normalized} "
-    for size in range(VECTOR_INDEX_CHAR_NGRAM_MIN, VECTOR_INDEX_CHAR_NGRAM_MAX + 1):
-        if len(padded) < size:
-            continue
-        for start in range(len(padded) - size + 1):
-            gram = padded[start : start + size]
-            if gram.strip():
-                yield f"char:{size}:{gram}"
-
-
-def _l2_normalize(values: list[float]) -> list[float]:
-    norm = math.sqrt(sum(v * v for v in values))
-    if norm <= 0.0:
-        if values:
-            values[0] = 1.0
-        return values
-    return [v / norm for v in values]
-
-
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
     dot_product = sum(a * b for a, b in zip(left, right))
     left_norm = math.sqrt(sum(value * value for value in left))
@@ -133,7 +80,7 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
 
 
 class LocalEmbeddingProvider(EmbeddingProvider):
-    """Local embedding provider with a no-dependency feature-hashing fallback."""
+    """Local sentence-transformers embedding provider."""
 
     def __init__(
         self,
@@ -142,43 +89,26 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         *,
         env: EnvironmentConfig | Mapping[str, Any] | None = None,
     ):
+        del env
         self.model = model
-        self.provider = "local"
+        self.provider = "sentence-transformers"
         self.dimension = dimension
-        self._env = resolve_environment_config_with_explicit_env(env)
         self._st_model: Any = None
-        self._st_checked = False
 
-    def _sentence_transformers_enabled(self) -> bool:
-        raw = str(self._env.get(_SENTENCE_TRANSFORMERS_ENV, "")).strip().lower()
-        return raw not in {"0", "false", "off", "no"}
-
-    def _ensure_sentence_transformer(self) -> bool:
-        if self._st_checked:
-            return self._st_model is not None
-        self._st_checked = True
-        if not self._sentence_transformers_enabled():
-            self._st_model = None
-            return False
-        try:
-            from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+    def _sentence_transformer(self) -> Any:
+        if self._st_model is None:
+            from sentence_transformers import SentenceTransformer
 
             self._st_model = SentenceTransformer(self.model)
-        except Exception:
-            self._st_model = None
-        return self._st_model is not None
-
-    def _embed_fallback(self, text: str) -> list[float]:
-        vector = [0.0] * self.dimension
-        for feature in _iter_embedding_features(text):
-            index, sign = _feature_hash_index(feature, self.dimension)
-            vector[index] += sign
-
-        return _l2_normalize(vector)
+        return self._st_model
 
     @property
     def semantic_ready(self) -> bool:
-        return self._ensure_sentence_transformer()
+        try:
+            model = self._sentence_transformer()
+        except (ImportError, ModuleNotFoundError):
+            return False
+        return int(model.get_sentence_embedding_dimension()) == self.dimension
 
     @property
     def identity(self) -> VectorSpaceIdentity:
@@ -189,62 +119,13 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         )
 
     def embed(self, text: str) -> EmbeddingResult:
-        vector: list[float]
-        if self._ensure_sentence_transformer():
-            encoded = self._st_model.encode(text, normalize_embeddings=True)
-            vector = [float(v) for v in encoded]
-            if len(vector) != self.dimension:
-                if len(vector) > self.dimension:
-                    vector = vector[: self.dimension]
-                else:
-                    vector.extend([0.0] * (self.dimension - len(vector)))
-                vector = _l2_normalize(vector)
-        else:
-            vector = self._embed_fallback(text)
-
-        return EmbeddingResult(
-            vector=vector,
-            provider=self.provider,
-            model=self.model,
-        )
-
-    def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
-        return EmbeddingBatchResult(results=[self.embed(text) for text in texts])
-
-
-class APIEmbeddingProvider(EmbeddingProvider):
-    """API-based embedding provider (e.g., OpenAI)."""
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "text-embedding-3-small",
-        base_url: str = "https://api.openai.com/v1",
-    ):
-        self.api_key = api_key
-        self.model = model
-        self.base_url = base_url
-        self.provider = "api"
-
-        # Deterministic fallback until a real HTTP client is wired here.
-
-    @property
-    def identity(self) -> VectorSpaceIdentity:
-        return VectorSpaceIdentity(
-            provider=self.provider,
-            model=self.model,
-            dimension=1536,
-        )
-
-    def embed(self, text: str) -> EmbeddingResult:
-        text_hash = hashlib.sha256((text + self.model).encode()).hexdigest()
-
-        vector = []
-        seed = int(text_hash[:16], 16)
-        for i in range(1536):  # Standard OpenAI embedding dim
-            value = ((seed + i) % 1013) / 1013.0
-            value = (value * 2) - 1
-            vector.append(value)
+        encoded = self._sentence_transformer().encode(text, normalize_embeddings=True)
+        vector = [float(value) for value in encoded]
+        if len(vector) != self.dimension:
+            raise ValueError(
+                f"Embedding dimension {len(vector)} does not match configured "
+                f"dimension {self.dimension}"
+            )
 
         return EmbeddingResult(
             vector=vector,
@@ -710,11 +591,14 @@ class VectorIndexAdapter:
         self.batch_size = batch_size
         self.search_k = search_k
         self._record_source: Any | None = None
+        self._initial_sync_complete = False
 
     @property
     def semantic_ready(self) -> bool:
-        return isinstance(self.__vector_index, SQLiteVecBackend) and bool(
-            self.embedding_provider.semantic_ready
+        return (
+            self._initial_sync_complete
+            and isinstance(self.__vector_index, SQLiteVecBackend)
+            and bool(self.embedding_provider.semantic_ready)
         )
 
     @property
@@ -725,6 +609,12 @@ class VectorIndexAdapter:
         self._record_source = source
 
     def get_vector(self, record_id: str) -> list[float] | None:
+        metadata_reader = getattr(self.__vector_index, "get_metadata", None)
+        metadata = metadata_reader(record_id) if callable(metadata_reader) else None
+        if not metadata or (
+            metadata.get("vector_space_identity") != self.vector_space_identity.key
+        ):
+            return None
         return self.__vector_index.get_vector(record_id)
 
     @property
@@ -768,8 +658,9 @@ class VectorIndexAdapter:
             vectors = [result.vector for result in embeddings.results]
             metadata = [
                 {
-                    "source": content,
                     "record_id": str(getattr(record, "id", i + j)),
+                    "content_fingerprint": hashlib.sha256(content.encode()).hexdigest(),
+                    "vector_space_identity": self.vector_space_identity.key,
                 }
                 for j, (record, content) in enumerate(
                     zip(batch_records, batch_contents)
@@ -789,11 +680,14 @@ class VectorIndexAdapter:
 
         return search_results
 
-    def sync_pending_records(self, limit: int = 32) -> int:
-        if self._record_source is None or not self.semantic_ready:
-            return 0
-        snapshot = self._record_source.vector_sync_snapshot(limit=max(1, int(limit)))
-        processed = 0
+    def sync_pending_records(self) -> int:
+        if self._record_source is None:
+            raise RuntimeError("Vector record source is not bound")
+        if not self.embedding_provider.semantic_ready:
+            raise RuntimeError("Local semantic embedding provider is unavailable")
+        snapshot = self._record_source.vector_sync_snapshot()
+        pending_records: list[Any] = []
+        pending_contents: list[str] = []
         for item in snapshot.get("current", []):
             record_id = str(item["record_id"])
             metadata_reader = getattr(self.__vector_index, "get_metadata", None)
@@ -804,15 +698,16 @@ class VectorIndexAdapter:
                 == self.vector_space_identity.key
             ):
                 continue
-            self.index_record(
-                type("VectorRecord", (), {"id": record_id})(),
-                str(item["text"]),
-            )
-            processed += 1
+            pending_records.append(type("VectorRecord", (), {"id": record_id})())
+            pending_contents.append(str(item["text"]))
+        if pending_records:
+            self.index_records_batch(pending_records, pending_contents)
+        processed = len(pending_records)
         retired_ids = [str(item) for item in snapshot.get("retired", [])]
         if retired_ids:
             self.__vector_index.delete_vectors(retired_ids)
             processed += len(retired_ids)
+        self._initial_sync_complete = True
         return processed
 
 
@@ -821,6 +716,7 @@ def create_vector_index_adapter(
     embedding_provider: EmbeddingProvider,
     vector_index: VectorIndexBackend,
     *,
+    batch_size: int = 32,
     env: EnvironmentConfig | Mapping[str, Any] | None = None,
 ) -> VectorIndexAdapter:
     """Create a vector index adapter after storage migrations are current."""
@@ -831,30 +727,8 @@ def create_vector_index_adapter(
     return VectorIndexAdapter(
         embedding_provider=embedding_provider,
         vector_index=vector_index,
+        batch_size=batch_size,
     )
-
-
-class MockEmbeddingProvider(EmbeddingProvider):
-    """Mock embedding provider for testing."""
-
-    def embed(self, text: str) -> EmbeddingResult:
-        text_hash = hashlib.sha256(text.encode()).hexdigest()
-        seed = int(text_hash[:16], 16)
-
-        vector = [(seed ^ i) % 1000 / 1000.0 for i in range(128)]
-
-        return EmbeddingResult(
-            vector=vector,
-            provider="mock",
-            model="mock-model",
-        )
-
-    def embed_batch(self, texts: list[str]) -> EmbeddingBatchResult:
-        return EmbeddingBatchResult(results=[self.embed(text) for text in texts])
-
-    @property
-    def identity(self) -> VectorSpaceIdentity:
-        return VectorSpaceIdentity(provider="mock", model="mock-model", dimension=128)
 
 
 def reindex_vectors(

@@ -1,0 +1,21 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "ReferenceSwap.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity 0.8.30;\n\ncontract ReferenceSwap {\n    struct SwapRequest {\n        address recipient;\n        uint256 amountIn;\n        uint256 minAmountOut;\n    }\n\n    error MinimumOutput(uint256 quoted, uint256 minimum);\n\n    event Swap(\n        address indexed sender,\n        address indexed recipient,\n        uint256 amountIn,\n        uint256 amountOut\n    );\n\n    mapping(address => uint256) public outputOf;\n\n    function quote(uint256 amountIn) external pure returns (uint256 amountOut) {\n        return amountIn * 2;\n    }\n\n    function swap(SwapRequest calldata request) external returns (uint256 amountOut) {\n        amountOut = request.amountIn * 2;\n        if (amountOut < request.minAmountOut) {\n            revert MinimumOutput(amountOut, request.minAmountOut);\n        }\n        outputOf[request.recipient] += amountOut;\n        emit Swap(msg.sender, request.recipient, request.amountIn, amountOut);\n    }\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {"enabled": false, "runs": 200},
+    "viaIR": false,
+    "evmVersion": "paris",
+    "metadata": {
+      "appendCBOR": false,
+      "bytecodeHash": "none",
+      "useLiteralContent": true
+    },
+    "outputSelection": {
+      "*": {"*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"]}
+    }
+  }
+}

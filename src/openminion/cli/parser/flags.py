@@ -46,6 +46,12 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
         help="Working directory for the interactive session",
     )
     parser.add_argument(
+        "--add-dir",
+        action="append",
+        default=[],
+        help="Add an existing directory for read/write access in this process",
+    )
+    parser.add_argument(
         "--theme",
         default=None,
         help=(

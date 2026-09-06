@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from eth_account import Account
 from web3 import Web3
-from web3.exceptions import Web3Exception
+from web3.exceptions import ContractLogicError, Web3Exception
 
 from openminion.tools.blockchain.runtime import prepare_transaction
 
@@ -68,11 +68,12 @@ class _Eth:
         self.max_priority_fee = 3
         self.gas_price = 5
         self.legacy = legacy
-        self.simulation_error = False
+        self.simulation_error: Exception | None = None
         self.estimated: list[dict[str, Any]] = []
         self.simulated: list[tuple[dict[str, Any], str]] = []
         self.signed = 0
         self.broadcast = 0
+        self.estimate_error: Exception | None = None
 
     def contract(self, *, abi: list[dict[str, Any]]) -> _Contract:
         assert len(abi) == 1
@@ -86,6 +87,8 @@ class _Eth:
 
     def estimate_gas(self, transaction: dict[str, Any]) -> int:
         self.estimated.append(transaction)
+        if self.estimate_error is not None:
+            raise self.estimate_error
         return 21000
 
     def get_block(self, block: str) -> dict[str, int]:
@@ -94,14 +97,15 @@ class _Eth:
 
     def call(self, transaction: dict[str, Any], block: str) -> bytes:
         self.simulated.append((transaction, block))
-        if self.simulation_error:
-            raise Web3Exception("private provider text")
+        if self.simulation_error is not None:
+            raise self.simulation_error
         return b""
 
 
 class _Web3:
     def __init__(self, *, legacy: bool = False) -> None:
         self.eth = _Eth(legacy=legacy)
+        self.codec = Web3().codec
 
     @staticmethod
     def to_checksum_address(value: str) -> str:
@@ -174,6 +178,16 @@ def test_prepare_branches_are_deterministic_and_side_effect_free(
     }
     assert (result["call_context"] is not None) is has_call_context
     assert result["preparation_digest"].startswith("sha256:")
+    assert result["simulation"] == {
+        "state": "succeeded",
+        "chain_id": "31337",
+        "block_identifier": "pending",
+        "resolved_block_number": None,
+        "resolved_block_hash": None,
+        "return_data": "0x",
+        "gas_estimate": "21000",
+        "decoded_returns": None,
+    }
     assert secret.reads == [("signer-reference-sentinel", "chain-reference-sentinel")]
     assert client.eth.signed == 0
     assert client.eth.broadcast == 0
@@ -225,9 +239,25 @@ def test_prepare_enforces_fee_cap_before_simulation() -> None:
     assert client.eth.simulated == []
 
 
-def test_prepare_normalizes_simulation_failure_without_provider_text() -> None:
+def test_prepare_separates_rpc_failure_without_provider_text() -> None:
     client = _Web3()
-    client.eth.simulation_error = True
+    client.eth.simulation_error = Web3Exception("private provider text")
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        _context(secret_service=_SecretService()),
+        web3=client,
+    )
+
+    assert result["error"]["code"] == "RPC_UNAVAILABLE"
+    assert result["error"]["details"] == {"operation": "simulate"}
+    assert "private provider text" not in str(result)
+
+
+def test_prepare_returns_structured_standard_revert_without_provider_text() -> None:
+    client = _Web3()
+    data = "0x08c379a0" + Web3().codec.encode(["string"], ["minimum output"]).hex()
+    client.eth.simulation_error = ContractLogicError("private provider text", data=data)
 
     result = prepare_transaction(
         {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
@@ -236,7 +266,32 @@ def test_prepare_normalizes_simulation_failure_without_provider_text() -> None:
     )
 
     assert result["error"]["code"] == "SIMULATION_REVERTED"
-    assert result["error"]["details"] == {"stage": "prepare"}
+    assert result["error"]["details"] == {
+        "stage": "prepare",
+        "revert": {
+            "kind": "standard_error",
+            "reason": "minimum output",
+            "raw_data": data,
+        },
+        "broadcast_attempted": False,
+    }
+    assert "private provider text" not in str(result)
+
+
+def test_prepare_keeps_estimation_revert_structured() -> None:
+    client = _Web3()
+    data = "0x08c379a0" + Web3().codec.encode(["string"], ["minimum output"]).hex()
+    client.eth.estimate_error = ContractLogicError("private provider text", data=data)
+
+    result = prepare_transaction(
+        {"kind": "native_transfer", "to_address": RECIPIENT, "value_wei": "1"},
+        _context(secret_service=_SecretService()),
+        web3=client,
+    )
+
+    assert result["error"]["code"] == "SIMULATION_REVERTED"
+    assert result["error"]["details"]["revert"]["kind"] == "standard_error"
+    assert result["error"]["details"]["broadcast_attempted"] is False
     assert "private provider text" not in str(result)
 
 

@@ -214,3 +214,64 @@ def test_branch_checkout_commit_checkout_main_round_trip_emits_v2_metadata() -> 
         _assert_v2_metadata(results)
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_remote_tools_run_directly_against_local_bare_remote() -> None:
+    if _GIT is None:
+        return
+    root = Path(tempfile.mkdtemp(prefix="orel05-git-remote-"))
+    try:
+        workspace = root / "workspace"
+        remote = root / "remote.git"
+        workspace.mkdir()
+        remote.mkdir()
+        _run([_GIT, "init", "-q", "--bare", "-b", "main"], cwd=remote)
+        _make_fixture_repo(workspace)
+        _run([_GIT, "remote", "add", "origin", str(remote)], cwd=workspace)
+        registry = _registry()
+        results = [
+            _execute(
+                registry=registry,
+                workspace=workspace,
+                tool_name="git.push",
+                arguments={
+                    "remote": "origin",
+                    "source_ref": "refs/heads/main",
+                    "target_ref": "refs/heads/main",
+                },
+            ),
+            _execute(
+                registry=registry,
+                workspace=workspace,
+                tool_name="git.fetch",
+                arguments={"remote": "origin", "ref": "refs/heads/main"},
+            ),
+            _execute(
+                registry=registry,
+                workspace=workspace,
+                tool_name="git.tag",
+                arguments={
+                    "action": "create",
+                    "name": "v1.0.0-rc1",
+                    "target_ref": "refs/heads/main",
+                    "message": "Release candidate 1",
+                },
+            ),
+            _execute(
+                registry=registry,
+                workspace=workspace,
+                tool_name="git.tag",
+                arguments={
+                    "action": "push",
+                    "name": "v1.0.0-rc1",
+                    "remote": "origin",
+                },
+            ),
+        ]
+        head = _run([_GIT, "rev-parse", "HEAD"], cwd=workspace).stdout.strip()
+        assert results[0].data["parsed"]["remote_oid"] == head
+        assert results[1].data["parsed"]["fetched_oid"] == head
+        assert results[3].data["parsed"]["remote_target_oid"] == head
+        _assert_v2_metadata(results)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)

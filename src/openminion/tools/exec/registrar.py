@@ -22,6 +22,7 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_EXEC_SEND_KEYS,
     RUNTIME_EXEC_SUBMIT,
 )
+from openminion.tools.exec.schemas import EXEC_RUN_DESCRIPTION, EXEC_SUBMIT_DESCRIPTION
 
 if TYPE_CHECKING:
     from openminion.modules.tool.registry import ToolRegistry
@@ -52,12 +53,17 @@ def _exec_model_tools() -> tuple[Any, ...]:
     from openminion.modules.tool.contracts import ModelToolDef
 
     return (
-        ModelToolDef(MODEL_EXEC_RUN, _EXEC_RUN_DESCRIPTION, {}, ("exec_run",)),
+        ModelToolDef(MODEL_EXEC_RUN, EXEC_RUN_DESCRIPTION, {}, ("exec_run",)),
         ModelToolDef(MODEL_EXEC_POLL, "Poll process status", {}, ("exec_poll",)),
         ModelToolDef(
             MODEL_EXEC_SEND_KEYS, "Send keys to process", {}, ("exec_send_keys",)
         ),
-        ModelToolDef(MODEL_EXEC_SUBMIT, "Submit new process", {}, ("exec_submit",)),
+        ModelToolDef(
+            MODEL_EXEC_SUBMIT,
+            EXEC_SUBMIT_DESCRIPTION,
+            {},
+            ("exec_submit",),
+        ),
         ModelToolDef(MODEL_EXEC_PASTE, "Paste to process", {}, ("exec_paste",)),
         ModelToolDef(MODEL_EXEC_KILL, "Kill process", {}, ("exec_kill",)),
         ModelToolDef(MODEL_EXEC_CLEAR, "Clear process buffer", {}, ("exec_clear",)),
@@ -81,18 +87,6 @@ def _exec_runtime_bindings() -> tuple[Any, ...]:
             (RUNTIME_EXEC_LIST, MODEL_EXEC_LIST, "exec.list"),
         )
     )
-
-
-_EXEC_RUN_DESCRIPTION = (
-    "Run one allowlisted direct shell command, including commands through the "
-    "system SSH client; do not use pipes, redirections, chaining, or fallback "
-    "operators. Commands already run from the current workspace root; omit "
-    "workdir unless selecting an existing subdirectory. "
-    "For toolchain checks, use direct discovery such as `command -v nasm`, then "
-    "a separate direct version check such as `nasm --version`. Prefer "
-    "host.metrics for disk, memory, and OS status; prefer structured file/web "
-    "tools for reads, scaffolding, or web fetches."
-)
 
 
 REGISTRAR = ExecRegistrar()

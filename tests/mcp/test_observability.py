@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from openminion.api.queries.runtime_reports import _build_mcp_section
+from openminion.base.config.base import ConfigError
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.cli.interactive.mcp_status import (
@@ -52,15 +53,39 @@ def _close_bootstrap(bootstrap) -> None:
 
 
 def test_stderr_buffer_config_bounds_are_enforced() -> None:
-    low = MCPServerConfig(name="Low", command=["echo"], stderr_buffer_bytes=1)
-    high = MCPServerConfig(
-        name="High",
-        command=["echo"],
-        stderr_buffer_bytes=10_000_000,
-    )
+    with pytest.raises(ConfigError, match="stderr_buffer_bytes"):
+        MCPServerConfig(name="Low", command=["echo"], stderr_buffer_bytes=1)
+    with pytest.raises(ConfigError, match="stderr_buffer_bytes"):
+        MCPServerConfig(
+            name="High",
+            command=["echo"],
+            stderr_buffer_bytes=10_000_000,
+        )
+    with pytest.raises(ConfigError, match="must be an integer"):
+        MCPServerConfig(
+            name="Fractional",
+            command=["echo"],
+            stderr_buffer_bytes=1024.5,
+        )
+    with pytest.raises(ConfigError, match="must be numeric"):
+        MCPServerConfig(
+            name="Boolean",
+            command=["echo"],
+            request_timeout_seconds=True,
+        )
+    with pytest.raises(ConfigError, match="must be finite"):
+        MCPServerConfig(
+            name="Nan",
+            command=["echo"],
+            request_timeout_seconds=float("nan"),
+        )
 
-    assert low.stderr_buffer_bytes == 1024
-    assert high.stderr_buffer_bytes == 1_048_576
+
+def test_mcp_server_enabled_requires_an_explicit_boolean() -> None:
+    disabled = MCPServerConfig(name="Disabled", command=["echo"], enabled=False)
+    assert disabled.enabled is False
+    with pytest.raises(ConfigError, match="enabled must be a boolean"):
+        MCPServerConfig(name="String", command=["echo"], enabled="false")
 
 
 def test_stderr_tail_is_attached_to_tool_runtime_error_details() -> None:

@@ -38,6 +38,7 @@ DETAIL_MESSAGES_EN = {
     "loading_session_history": "Reviewing this conversation...",
     "thinking": "Thinking...",
     "composing_answer": "Preparing the answer...",
+    "waiting_for_checks": "Waiting for checks...",
 }
 
 _PRIMARY_ONLY_KEYS = frozenset(

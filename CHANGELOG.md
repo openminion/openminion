@@ -1,15 +1,37 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-02
+Last updated: 2026-09-05
 
 This file tracks package-facing release notes for `openminion`.
 
-## Unreleased
+## Current package line - 2026-09-05
 
-- No unreleased package-facing changes yet.
+- Added approval-bound repository delivery across Git remotes, pull request
+  updates and merges, workflow dispatches, check inspection, and GitHub
+  releases, including preflight validation and uncertain-effect reconciliation.
+- Persisted project plans, repository lifecycle state, tool scopes, terminal
+  outcomes, and scheduled check continuations across pauses and resumed work.
+- Bound delegated review to artifact digests and durable child dispositions so
+  corrected artifacts retain auditable review evidence.
+- Added portable skill-bundle admission and authoring support plus a reviewed
+  repository-delivery procedure with explicit stop rules.
+- Consolidated interactive Focus onto the canonical terminal renderer, added
+  root `--version` and repeatable `--add-dir`, and made workspace trust and
+  transient grants explicit.
+- Strengthened memory retention, final-use attribution, replay suppression,
+  corrupt-shape rejection, and truthful recall paths.
+- Hardened tool, plugin, extension, and MCP ownership boundaries while adding
+  exact Python symbol ranges and clearer protocol and operator behavior.
+- Added typed social-signal watches with bounded fetching, durable scheduled
+  execution, and visible delivery outcomes.
+- Added read-only security audit reports and completed bounded blockchain
+  diagnostics and explicit approval flows while preserving the optional
+  dependency boundary for bare package installs.
+- Improved provider retry enforcement, pairing and session status, token and
+  provider telemetry, CPU measurement, and bounded Focus history.
 
-## Current package line - 2026-09-02
+## Prior package line - 2026-09-02
 
 - Added durable human-agent Focus rooms with explicit participant roles,
   multi-agent routing, direct addressing, participant controls, attributed
@@ -26,7 +48,7 @@ This file tracks package-facing release notes for `openminion`.
 - Restored formatter enforcement and aligned service typing and method-size
   quality ratchets with the formatted release candidate.
 
-## Prior package line - 2026-09-01
+## Earlier package line - 2026-09-01
 
 - Generalized authenticated active-turn status and streaming contracts with
   bounded history, redaction, terminal controls, and durable interruption

@@ -98,6 +98,19 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
         console.print(Text(f"  API adapter: {adapter}"))
     console.print(Text(f"  session: {session_id}", style=_MUTED_STYLE))
     console.print(Text(f"  cwd: {working_dir}", style=_MUTED_STYLE))
+    console.print(
+        Text(
+            f"  permissions: {getattr(runtime, 'permission_mode', 'default')}",
+            style=_MUTED_STYLE,
+        )
+    )
+    console.print(
+        Text(
+            "  added directories: "
+            f"{int(getattr(runtime, 'added_workspace_root_count', 0) or 0)}",
+            style=_MUTED_STYLE,
+        )
+    )
     room_detector = getattr(runtime, "is_room_session", None)
     room_reporter = getattr(runtime, "room_participants_report", None)
     if callable(room_detector) and room_detector() and callable(room_reporter):

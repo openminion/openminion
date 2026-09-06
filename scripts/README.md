@@ -41,8 +41,6 @@ Generic repo guardrails live under `scripts/validate/`.
 Use this shape:
 
 1. `scripts/validate/<generic_repo_contract>.py`
-2. `scripts/validate/focus/<focus_subcontract>.py` for subvalidators that feed a
-   broader `focus_layout.py`-style entrypoint.
 
 Do not keep repo validators at the `scripts/` root. Do not keep shorthand
 project acronyms, temporary rollout names, smoke launchers, or docs-only
@@ -117,20 +115,17 @@ that should not become part of the public validator surface.
 8. `scripts/validate/tool_selection_scoring_contract.py` and
    `scripts/validate/runtime_step_ownership.py` are the canonical
    contract-first names for the two runtime anti-LLM guards.
-9. `scripts/validate/focus_layout.py` is the lint entrypoint for the canonical
-   interactive-surface layout check. Its widget-isolation guard keeps Textual
-   Focus independent from dashboard body widgets.
-10. `scripts/validate/runner_delegates.py` is a generic brain-runner contract
+9. `scripts/validate/runner_delegates.py` is a generic brain-runner contract
    guard: every generated `RUNNER_DELEGATES` key must have a static source/test
    consumer, and every `_runner_delegate("...")` call must target a defined
    key.
-11. `scripts/validate/openminion_root_layout.py` is the package-root layout
+10. `scripts/validate/openminion_root_layout.py` is the package-root layout
     guard: root feature packages must not bypass the canonical `api/`, `base/`,
     `cli/`, `modules/`, `services/`, and `tools/` owner families.
-12. `scripts/validate/no_source_e2e_artifact_refs.py` keeps generated E2E proof
+11. `scripts/validate/no_source_e2e_artifact_refs.py` keeps generated E2E proof
     paths out of `src/openminion/`; source may expose artifact APIs, but it
     must not embed transient proof-output paths.
-13. `manual/audit_characterization_snapshot_brittleness.py` is intentionally
+12. `manual/audit_characterization_snapshot_brittleness.py` is intentionally
     manual-only: it audits characterization-test brittleness for targeted review
     work, but it is not a generic repo gate and does not belong in
     `scripts/validate/`.

@@ -26,7 +26,7 @@ def _config(enabled: bool):
     )
 
 
-def test_enabled_bootstrap_registers_exact_three_blockchain_tools(tmp_path) -> None:
+def test_enabled_bootstrap_registers_exact_four_blockchain_tools(tmp_path) -> None:
     bootstrap = build_runtime_bootstrap(
         config=_config(True),
         workspace_root=tmp_path,
@@ -37,6 +37,7 @@ def test_enabled_bootstrap_registers_exact_three_blockchain_tools(tmp_path) -> N
     assert {
         name for name in bootstrap.registry.list() if name.startswith("blockchain.")
     } == {
+        "blockchain.debug",
         "blockchain.inspect",
         "blockchain.prepare_transaction",
         "blockchain.send_transaction",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import shlex
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,6 +15,8 @@ from openminion.modules.cli_common import resolve_module_cli_db_path
 from openminion.modules.task import (
     AutonomyRun,
     AutonomyRunError,
+    AutonomyRunPhase,
+    AutonomyRunStatus,
     AutonomyRunStore,
     ProjectCycleDecision,
     TaskLifecycleState,
@@ -21,21 +25,201 @@ from openminion.modules.task import (
 from openminion.modules.task.autonomy import (
     VerificationWaiver,
     autonomy_permission_metadata,
+    build_autonomy_run,
+    build_local_workspace_ref,
     now_ms,
 )
-from openminion.modules.task.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
+from openminion.modules.task.autonomy import VerificationDomain
+from openminion.modules.task.constants import (
+    DEFAULT_INTEGRATED_SQLITE_SUBPATH,
+    DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
+    DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+)
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     build_project_run_projection,
     save_project_run_checkpoint,
     validate_project_verifier,
 )
+from openminion.modules.task.project import checkpoints as project_checkpoints
 from openminion.modules.task.project.turn import project_turn_result_from_response
 from openminion.services.runtime.project_worker import (
     ProjectTurnRequest,
     ProjectTurnResult,
     project_turn_inbound_metadata,
 )
+
+
+@dataclass(frozen=True)
+class ProjectLaunchRequest:
+    run: AutonomyRun
+    workspace_boundary: Path
+    repository: Path
+    task_plan_required: bool
+    expected_checks: tuple[str, ...]
+    release_tools: bool
+
+
+def resolve_project_repository(workspace_boundary: Path, value: str) -> Path:
+    if not value:
+        return workspace_boundary
+    repository = Path(value).expanduser()
+    if not repository.is_absolute():
+        repository = workspace_boundary / repository
+    return repository.resolve(strict=False)
+
+
+def build_project_launch_request(
+    *,
+    goal: str,
+    session_id: str,
+    agent_id: str,
+    workspace_boundary: Path,
+    repository: Path,
+    max_iterations: int = 1,
+    permission_profile_id: str = "local-safe",
+    config_ref: str | None = None,
+    verification_domain: VerificationDomain = "cross_application",
+    verification_commands: tuple[str, ...] = (),
+    turn_timeout_seconds: int = DEFAULT_PROJECT_TURN_TIMEOUT_SECONDS,
+    verification_timeout_seconds: int = DEFAULT_PROJECT_VERIFICATION_TIMEOUT_SECONDS,
+    verification_waiver_reason: str | None = None,
+    goal_id: str | None = None,
+    task_plan_required: bool = True,
+    expected_checks: tuple[str, ...] = (),
+    release_tools: bool = False,
+) -> ProjectLaunchRequest:
+    boundary = workspace_boundary.expanduser().resolve(strict=False)
+    repo = repository.expanduser().resolve(strict=False)
+    check_names = tuple(name.strip() for name in expected_checks)
+    if any(not name for name in check_names) or len(set(check_names)) != len(
+        check_names
+    ):
+        raise ValueError("expected check names must be non-empty and unique")
+    if task_plan_required:
+        _validate_project_repository(boundary=boundary, repository=repo)
+    run = build_autonomy_run(
+        goal_text=goal,
+        goal_id=goal_id,
+        session_id=session_id,
+        workspace_ref=build_local_workspace_ref(repo),
+        max_iterations=max_iterations,
+        permission_profile_id=permission_profile_id,
+        agent_id=agent_id,
+        config_ref=config_ref,
+        verification_domain=verification_domain,
+        verification_commands=verification_commands,
+        turn_timeout_seconds=turn_timeout_seconds,
+        verification_timeout_seconds=verification_timeout_seconds,
+        verification_waiver_reason=verification_waiver_reason,
+        required_evidence_kinds=("waiver",)
+        if verification_waiver_reason
+        else ("verification",),
+    )
+    run = run.model_copy(
+        update={
+            "goal_id": run.goal_id or f"goal_{run.run_id}",
+            "task_id": f"task_{run.run_id}",
+        }
+    )
+    return ProjectLaunchRequest(
+        run=run,
+        workspace_boundary=boundary,
+        repository=repo,
+        task_plan_required=task_plan_required,
+        expected_checks=check_names,
+        release_tools=release_tools,
+    )
+
+
+def parse_focus_project_launch(
+    line: str,
+    *,
+    session_id: str,
+    agent_id: str,
+    workspace_boundary: Path,
+    config_ref: str | None,
+) -> ProjectLaunchRequest:
+    parser = argparse.ArgumentParser(
+        prog="/project", add_help=False, exit_on_error=False
+    )
+    parser.add_argument("--repository", default="")
+    parser.add_argument("--goal", default="")
+    parser.add_argument("--max-iterations", type=int, default=1)
+    parser.add_argument("--verify-command", action="append", default=[])
+    parser.add_argument("--expected-check", action="append", default=[])
+    parser.add_argument("--release-tools", action="store_true")
+    try:
+        tokens = shlex.split(line)
+        if tokens and tokens[0] == "/project":
+            tokens = tokens[1:]
+        command = tokens.pop(0) if tokens else ""
+        parsed, unknown = parser.parse_known_args(tokens)
+    except (argparse.ArgumentError, ValueError) as exc:
+        raise ValueError(str(exc)) from exc
+    if command != "start" or unknown:
+        raise ValueError("usage: /project start --repository PATH --goal TEXT")
+    repository = str(parsed.repository or "").strip()
+    goal = str(parsed.goal or "").strip()
+    if not repository or not goal:
+        raise ValueError("usage: /project start --repository PATH --goal TEXT")
+    if parsed.max_iterations < 1:
+        raise ValueError("--max-iterations must be at least 1")
+    repository_path = Path(repository)
+    return build_project_launch_request(
+        goal=goal,
+        session_id=session_id,
+        agent_id=agent_id,
+        workspace_boundary=workspace_boundary,
+        repository=(
+            repository_path
+            if repository_path.is_absolute()
+            else workspace_boundary / repository_path
+        ),
+        max_iterations=parsed.max_iterations,
+        config_ref=config_ref,
+        verification_commands=tuple(parsed.verify_command),
+        task_plan_required=True,
+        expected_checks=tuple(parsed.expected_check),
+        release_tools=bool(parsed.release_tools),
+    )
+
+
+def _validate_project_repository(*, boundary: Path, repository: Path) -> None:
+    if not boundary.is_dir():
+        raise ValueError(f"workspace boundary is unavailable: {boundary}")
+    if not repository.is_dir():
+        raise ValueError(f"execution repository is unavailable: {repository}")
+    if repository != boundary and boundary not in repository.parents:
+        raise ValueError("execution repository must be inside the workspace boundary")
+    if not (repository / ".git").exists():
+        raise ValueError(f"execution repository does not contain .git: {repository}")
+
+
+def launch_project(
+    request: ProjectLaunchRequest,
+    *,
+    store: AutonomyRunStore,
+    manager: TaskManager,
+) -> AutonomyRun:
+    store.create(request.run)
+    running = store.transition(
+        request.run.run_id,
+        status=AutonomyRunStatus.RUNNING,
+        phase=AutonomyRunPhase.EXECUTE,
+        operator_summary="Autonomy run started.",
+    )
+    initialize_project(
+        manager,
+        store,
+        running,
+        workspace_boundary_ref=build_local_workspace_ref(request.workspace_boundary),
+        task_plan_required=request.task_plan_required,
+        expected_checks=request.expected_checks,
+        launch_approved=True,
+        release_tools_approved=request.release_tools,
+    )
+    return store.require(running.run_id)
 
 
 def workspace_path_from_ref(workspace_ref: str | None) -> Path | None:
@@ -141,6 +325,12 @@ def initialize_project(
     manager: TaskManager,
     store: AutonomyRunStore,
     run: AutonomyRun,
+    *,
+    workspace_boundary_ref: str | None = None,
+    task_plan_required: bool = False,
+    expected_checks: tuple[str, ...] = (),
+    launch_approved: bool = False,
+    release_tools_approved: bool = False,
 ) -> None:
     assert run.task_id is not None
     manager.create_task(
@@ -168,6 +358,15 @@ def initialize_project(
         payload={
             "decision": ProjectCycleDecision.CONTINUE.value,
             "replan_count": 0,
+            **project_checkpoints.initial_repository_lifecycle_payload(
+                run,
+                project_run,
+                workspace_boundary_ref=workspace_boundary_ref,
+                task_plan_required=task_plan_required,
+                expected_checks=expected_checks,
+                launch_approved=launch_approved,
+                release_tools_approved=release_tools_approved,
+            ),
         },
     )
     store.save(run.model_copy(update={"checkpoint_id": checkpoint_id}))
@@ -182,7 +381,7 @@ def resume_project_task(
         raise RuntimeError("autonomy run is missing its durable task id")
     task = manager.get_task(run.task_id)
     if task is None:
-        initialize_project(manager, store, run)
+        initialize_project(manager, store, run, launch_approved=True)
         return
     if task.state == TaskLifecycleState.PAUSED:
         manager.transition_task(task_id=run.task_id, to_state=TaskLifecycleState.ACTIVE)
@@ -351,6 +550,7 @@ __all__ = [
     "initialize_project",
     "persisted_verification_waiver",
     "project_task_manager",
+    "resolve_project_repository",
     "run_project_turn",
     "resume_project_task",
     "schedule_unattended_project",

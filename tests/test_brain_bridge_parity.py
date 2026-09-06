@@ -52,8 +52,15 @@ class _DummySessionApi:
         )
         return f"{session_id}-event-{len(self.events[session_id])}"
 
-    def list_events(self, session_id: str):
-        return list(self.events.get(session_id, []))
+    def list_events(self, session_id: str, *, trace_id=None):
+        events = self.events.get(session_id, [])
+        if trace_id is not None:
+            events = [event for event in events if event["trace_id"] == trace_id]
+        return list(events)
+
+    def get_active_task_plan(self, session_id: str):
+        del session_id
+        return None
 
 
 class _CaptureSessionApi(_DummySessionApi):

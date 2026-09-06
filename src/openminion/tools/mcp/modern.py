@@ -10,6 +10,7 @@ from .constants import (
     MCP_CLIENT_VERSION,
     MCP_MAX_INPUT_ROUNDS,
     MCP_MODERN_RESPONSE_CACHE_MAX_ENTRIES,
+    MCP_TASKS_CANCEL_METHOD,
     MCP_TASKS_GET_METHOD,
     MCP_TASKS_UPDATE_METHOD,
 )
@@ -27,8 +28,10 @@ class MCPModernResponseCache:
         self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
-    def get(self, *, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        key = _response_cache_key(method=method, params=params)
+    def get(
+        self, *, method: str, params: dict[str, Any], identity: str = ""
+    ) -> dict[str, Any] | None:
+        key = _response_cache_key(method=method, params=params, identity=identity)
         with self._lock:
             cached = self._entries.get(key)
             if cached is None:
@@ -45,11 +48,12 @@ class MCPModernResponseCache:
         method: str,
         params: dict[str, Any],
         result: dict[str, Any],
+        identity: str = "",
     ) -> None:
         ttl_ms = max(0, int(result.get("ttlMs", 0) or 0))
         if ttl_ms <= 0 or result.get("cacheScope") not in {"private", "public"}:
             return
-        key = _response_cache_key(method=method, params=params)
+        key = _response_cache_key(method=method, params=params, identity=identity)
         with self._lock:
             if (
                 key not in self._entries
@@ -159,6 +163,7 @@ def _drive_task(
                 reason_code=f"mcp_task_{status}",
             )
         if time.monotonic() >= deadline:
+            request(MCP_TASKS_CANCEL_METHOD, {"taskId": task_id})
             raise MCPModernFlowError(
                 f"MCP task {task_id!r} did not complete before timeout.",
                 reason_code="mcp_task_timeout",
@@ -231,11 +236,13 @@ def _input_responses(
     return responses
 
 
-def _response_cache_key(*, method: str, params: dict[str, Any]) -> str:
+def _response_cache_key(
+    *, method: str, params: dict[str, Any], identity: str = ""
+) -> str:
     cache_params = dict(params)
     cache_params.pop("_meta", None)
     encoded = json.dumps(cache_params, sort_keys=True, separators=(",", ":"))
-    return f"{method}:{encoded}"
+    return f"{identity}:{method}:{encoded}"
 
 
 __all__ = [

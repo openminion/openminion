@@ -101,6 +101,11 @@ def evaluate_turn_closure(
             judgment=judgment,
             active_plan=active_plan,
         )
+        _validate_closure_memory_use_refs(
+            state=state,
+            judgment=judgment,
+            llm_call_id=context.llm_call_id,
+        )
         _emit_closure_completed(
             state=state,
             action_result=action_result,
@@ -109,7 +114,7 @@ def evaluate_turn_closure(
             judgment=judgment,
             active_plan=active_plan,
         )
-        return apply_mission_completion_gate(
+        final_judgment = apply_mission_completion_gate(
             runner,
             state=state,
             action_result=action_result,
@@ -118,6 +123,16 @@ def evaluate_turn_closure(
             context=context,
             judgment=judgment,
         )
+        if (
+            final_judgment.satisfied
+            and final_judgment.next_action == BRAIN_DISPOSITION_CLOSE
+            and final_judgment.final_answer
+        ):
+            runner._apply_typed_closure_memory_outcome(  # noqa: SLF001
+                memory_use_refs=final_judgment.memory_use_refs,
+                command_id=context.llm_call_id,
+            )
+        return final_judgment
     except Exception as exc:  # noqa: BLE001
         return _fail_closed_closure_judgment(
             runner,
@@ -306,20 +321,25 @@ def _build_closure_hints(
         ),
         "closure_action_outputs": _closure_action_outputs(action_result),
         "closure_intent_outcomes": _intent_execution_payload(state),
+        "available_memory_refs": list(state.decision_memory_refs),
         "live_state_overlay": _build_live_state_overlay(state=state),
         "style_overrides": {
             "closure_gate_contract": (
                 "You are the turn-closure gate. Decide if the original user goal is fully "
                 "satisfied by the available execution results. Return structured fields: "
                 "satisfied (bool), reason (string), next_action (close|continue|replan), "
-                "final_answer (string|null), mutation_claimed (bool), and optional "
+                "final_answer (string|null), memory_use_refs (list), mutation_claimed "
+                "(bool), and optional "
                 "post_completion_critique "
                 "(intent_id, summary, lessons, next_time_action). "
                 "If post_completion_critique is present, its intent_id must exactly "
                 "match one of the typed intent outcomes for this turn. When "
                 "next_action='close', final_answer should be a concise user-facing "
                 "answer grounded in the result. When not closing, final_answer may be "
-                "null. Use next_action='replan' when sub-intents or success criteria "
+                "null. Include a memory_use_ref only when the final answer actually uses "
+                "or cites its record_id; record_id must come from available_memory_refs, "
+                "producer_kind must be 'model', and producer_id must equal _llm_call_id. "
+                "Use next_action='replan' when sub-intents or success criteria "
                 "are not met. Use closure_action_outputs and any recent tool_results as "
                 "load-bearing execution facts. Do not treat one successful file write, "
                 "partial scaffold, or missing verification run as full completion when "
@@ -346,6 +366,26 @@ def _build_closure_hints(
             mode="json"
         )
     return hints
+
+
+def _validate_closure_memory_use_refs(
+    *,
+    state: WorkingState,
+    judgment: ClosureJudgment,
+    llm_call_id: str,
+) -> None:
+    if judgment.memory_use_refs and not (
+        judgment.satisfied
+        and judgment.next_action == BRAIN_DISPOSITION_CLOSE
+        and judgment.final_answer
+    ):
+        raise ValueError("judge memory use requires a closing final answer")
+    allowed = set(state.decision_memory_refs)
+    for ref in judgment.memory_use_refs:
+        if ref.record_id not in allowed:
+            raise ValueError("judge memory use references unavailable memory")
+        if ref.producer_kind != "model" or ref.producer_id != llm_call_id:
+            raise ValueError("judge memory use producer does not match closure call")
 
 
 def _normalize_closure_judgment(raw: Any) -> ClosureJudgment:
@@ -527,6 +567,7 @@ def _emit_closure_completed(
             "next_action": judgment.next_action,
             "reason": judgment.reason,
             "final_answer_present": bool(judgment.final_answer),
+            "memory_use_ref_count": len(judgment.memory_use_refs),
             "mutation_claimed": judgment.mutation_claimed,
             STATE_KEY_FINALIZATION_STATUS: finalization_status.status
             if finalization_status is not None

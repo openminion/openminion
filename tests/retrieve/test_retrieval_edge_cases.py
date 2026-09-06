@@ -12,7 +12,6 @@ from openminion.modules.retrieve.runtime.retrieval import (
     generate_candidates,
     search_rows,
     select_candidates,
-    select_candidates_semantic,
 )
 from openminion.modules.retrieve.schemas import RetrievalFilters
 
@@ -29,7 +28,6 @@ def _config(tmp_path: Path, *, verify_min_score: float = 0.15) -> dict[str, Any]
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -137,46 +135,6 @@ def test_raptor_expansion_skips_missing_leaf_rows(caplog) -> None:
 
     assert selected == [internal]
     assert "raptor leaf batch lookup returned 0/1 rows" in caplog.text
-
-
-def test_semantic_search_fallback_logs_when_adapter_raises(caplog) -> None:
-    class _Vector:
-        def search(self, **_kwargs: Any) -> list[dict[str, Any]]:
-            raise ConnectionError("vector down")
-
-    class _Service:
-        vector_adapter = _Vector()
-
-    candidates = [
-        {"unit_id": "a", "query": "alpha", "score": 0.9},
-        {"unit_id": "b", "query": "alpha", "score": 0.8},
-    ]
-    caplog.set_level(logging.WARNING)
-
-    selected = select_candidates_semantic(_Service(), candidates=candidates, k=2)
-
-    assert [item["unit_id"] for item in selected] == ["a", "b"]
-    assert "semantic_search_fallback" in caplog.text
-
-
-def test_semantic_search_fallback_logs_malformed_adapter_results(caplog) -> None:
-    class _Vector:
-        def search(self, **_kwargs: Any) -> list[Any]:
-            return [None]
-
-    class _Service:
-        vector_adapter = _Vector()
-
-    candidates = [
-        {"unit_id": "a", "query": "alpha", "score": 0.9},
-        {"unit_id": "b", "query": "alpha", "score": 0.8},
-    ]
-    caplog.set_level(logging.WARNING)
-
-    selected = select_candidates_semantic(_Service(), candidates=candidates, k=2)
-
-    assert [item["unit_id"] for item in selected] == ["a", "b"]
-    assert "semantic_search_fallback" in caplog.text
 
 
 def test_whitespace_only_query_returns_empty_list(tmp_path: Path) -> None:
@@ -316,7 +274,6 @@ def test_search_rows_pushes_tag_and_time_filters_into_sql() -> None:
         limit=5,
     )
 
-    assert "json_each(d.tags_json)" in service.store.sql
-    assert "LOWER(tag.value) = ?" in service.store.sql
+    assert "json_each" not in service.store.sql
     assert "d.created_at >= ?" in service.store.sql
-    assert "keep" in service.store.params
+    assert "keep" not in service.store.params

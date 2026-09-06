@@ -47,6 +47,7 @@ class DocUnit(BaseModel):
     source_type: SourceType
     text: str
     scope: ScopeType
+    scope_key: str
     tags: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=iso_now)
     updated_at: str = Field(default_factory=iso_now)

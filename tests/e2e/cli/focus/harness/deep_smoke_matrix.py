@@ -148,10 +148,12 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         execution="local",
         command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q "
         "tests/cli/presentation/test_permissions_menu.py "
-        "tests/cli/interactive/test_focus_approval_persistence.py -ra",
+        "tests/cli/interactive/terminal/test_overlays.py "
+        "tests/cli/interactive/terminal/test_streaming_integration.py -k approval -ra",
         owners=(
             "tests/cli/presentation/test_permissions_menu.py",
-            "tests/cli/interactive/test_focus_approval_persistence.py",
+            "tests/cli/interactive/terminal/test_overlays.py",
+            "tests/cli/interactive/terminal/test_streaming_integration.py",
         ),
         covers=(
             "permission.allow",
@@ -349,12 +351,12 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         execution="local",
         command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q "
         "tests/cli/test_sessions_continue.py "
-        "tests/cli/interactive/test_focus_turn_interrupt.py "
+        "tests/cli/interactive/terminal/test_streaming_integration.py "
         "tests/cli/interactive/terminal/test_focus_input_queue.py "
         "tests/e2e/test_cli_chat_probe_runner.py -ra",
         owners=(
             "tests/cli/test_sessions_continue.py",
-            "tests/cli/interactive/test_focus_turn_interrupt.py",
+            "tests/cli/interactive/terminal/test_streaming_integration.py",
             "tests/cli/interactive/terminal/test_focus_input_queue.py",
             "tests/e2e/test_cli_chat_probe_runner.py",
         ),

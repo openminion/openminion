@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable
 import logging
 
 from openminion.base.channel import ChannelRegistry, ConsoleChannel
@@ -24,8 +24,14 @@ from openminion.modules.llm.providers import (
     load_plugin_providers,
     register_builtin_providers,
 )
-from openminion.modules.tool import ToolRegistry, build_default_tool_registry
-from openminion.modules.tool.runtime.plugins import load_plugins as load_tool_plugins
+from openminion.modules.tool import ToolRegistry
+from openminion.modules.tool.bootstrap import RuntimeBootstrap, build_runtime_bootstrap
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.services.runtime.errors import PluginActivationError
+from openminion.modules.tool.runtime.plugins import (
+    PluginRegistrarDiscoveryError,
+    discover_plugin_registrars,
+)
 from openminion.modules.policy import SecurityPolicyEngine
 from openminion.services.runtime.sidecars import (
     SidecarManager,
@@ -50,11 +56,29 @@ class ExtensionRuntime:
     tools: ToolRegistry
     providers: ProviderRegistry
     provider_statuses: list[dict[str, Any]]
+    tool_provider_statuses: list[dict[str, Any]]
     tool_plugin_statuses: list[dict[str, Any]]
     plugin_statuses: list[dict[str, Any]]
+    tool_bootstrap_statuses: list[dict[str, Any]]
+    tool_inventory: dict[str, list[str]]
     sidecar_manager: SidecarManager | None
     controlplane_components: ControlPlaneRuntimeComponents | None = None
     channel_supervisor: ChannelRuntimeSupervisor | None = None
+
+
+def _tool_inventory(tool_bootstrap: RuntimeBootstrap) -> dict[str, list[str]]:
+    records = tool_bootstrap.bootstrap_records or []
+    runtime_only = sorted(
+        {tool for record in records for tool in record.runtime_only_tools or []}
+    )
+    return {
+        "runtime_only": runtime_only,
+        "unexpected": sorted(
+            set(tool_bootstrap.registry.list())
+            - tool_bootstrap.manager.declared_runtime_tool_names()
+            - set(runtime_only)
+        ),
+    }
 
 
 class LifecycleService:
@@ -80,8 +104,12 @@ class LifecycleService:
         self._home_root = home_root or resolve_home_root(config_path=config_path)
         self._data_root = data_root or resolve_data_root(self._home_root)
         self._logger = logger or logging.getLogger("openminion.services.runtime")
-        self._catalog = catalog or ExtensionCatalog.from_config(config)
         self._event_sink = event_sink
+        try:
+            self._catalog = catalog or ExtensionCatalog.from_config(config)
+        except PluginActivationError as error:
+            self._emit_plugin_activation_error(error)
+            raise
         self._last_runtime: ExtensionRuntime | None = None
         self._validate_contract()
 
@@ -123,22 +151,31 @@ class LifecycleService:
             logger=self._logger.getChild("channels"),
         )
         plugin_logger = self._logger.getChild("plugins")
-        plugins = build_default_plugin_registry_with_activation_guard(
-            config=self._config,
-            logger=plugin_logger,
-            on_before_activate=on_before_activate,
-        )
+        try:
+            plugins = build_default_plugin_registry_with_activation_guard(
+                config=self._config,
+                logger=plugin_logger,
+                on_before_activate=on_before_activate,
+                event_sink=self._event_sink,
+            )
+        except PluginActivationError as error:
+            self._emit_plugin_activation_error(error)
+            raise
         plugin_context = PluginContext(config=self._config, logger=plugin_logger)
-        tools = build_default_tool_registry(config=self._config.runtime, strict=False)
+        plugin_registrars, tool_plugin_statuses = self._plugin_registrars(
+            plugins,
+            include_legacy=load_tool_plugins,
+        )
+        tool_bootstrap = self._tool_bootstrap(plugin_registrars)
+        tools = tool_bootstrap.registry
         tools.bind_sidecar_autostart(ensure_sidecar_autostart)
-        plugins.register_tool_extensions(tools, plugin_context)
         providers = ProviderRegistry()
         provider_statuses = register_builtin_providers(providers)
         provider_statuses.extend(load_plugin_providers(providers))
-        tool_plugin_statuses: list[dict[str, Any]] = []
-        if load_tool_plugins:
-            tool_plugin_statuses = _load_tool_plugin_statuses()
-        plugin_statuses = _plugin_statuses(self._catalog, plugins)
+        tool_bootstrap_statuses = [
+            record.__dict__.copy() for record in tool_bootstrap.bootstrap_records or []
+        ]
+        tool_inventory = _tool_inventory(tool_bootstrap)
         sidecar_manager = _build_sidecar_manager(
             catalog=self._catalog,
             config_path=self._config_path,
@@ -188,14 +225,60 @@ class LifecycleService:
             tools=tools,
             providers=providers,
             provider_statuses=provider_statuses,
+            tool_provider_statuses=_tool_provider_statuses(self._catalog),
             tool_plugin_statuses=tool_plugin_statuses,
-            plugin_statuses=plugin_statuses,
+            plugin_statuses=_plugin_statuses(self._catalog, plugins),
+            tool_bootstrap_statuses=tool_bootstrap_statuses,
+            tool_inventory=tool_inventory,
             sidecar_manager=sidecar_manager,
             controlplane_components=controlplane_components,
             channel_supervisor=channel_supervisor,
         )
         self._last_runtime = runtime
         return runtime
+
+    def _plugin_registrars(
+        self,
+        plugins: PluginRegistry,
+        *,
+        include_legacy: bool,
+    ) -> tuple[list[tuple[str, object]], list[dict[str, Any]]]:
+        registrars = list(plugins.registrars())
+        if not include_legacy:
+            return registrars, []
+        try:
+            legacy_registrars, statuses = _legacy_tool_plugin_registrars()
+        except PluginRegistrarDiscoveryError as exc:
+            error = PluginActivationError(
+                plugin_id=exc.plugin_id,
+                stage="tool_registration",
+                reason_code=exc.reason_code,
+            )
+            self._emit_plugin_activation_error(error)
+            raise error from exc
+        registrars.extend(legacy_registrars)
+        return registrars, statuses
+
+    def _tool_bootstrap(
+        self, plugin_registrars: list[tuple[str, object]]
+    ) -> RuntimeBootstrap:
+        try:
+            return build_runtime_bootstrap(
+                config=self._config.runtime,
+                strict=False,
+                plugin_registrars=tuple(plugin_registrars),
+            )
+        except ToolRuntimeError as exc:
+            if exc.code != "PLUGIN_ACTIVATION_FAILED":
+                raise
+            details = exc.details or {}
+            error = PluginActivationError(
+                plugin_id=str(details.get("plugin_id", "")),
+                stage=str(details.get("stage", "")),
+                reason_code=str(details.get("reason_code", "")),
+            )
+            self._emit_plugin_activation_error(error)
+            raise error from exc
 
     def status_payload(
         self,
@@ -208,9 +291,12 @@ class LifecycleService:
         return {
             "ok": True,
             "catalog": runtime.catalog.to_dict(),
-            "plugins": runtime.plugin_statuses,
+            "plugins": _plugin_statuses(runtime.catalog, runtime.plugins),
             "tool_plugins": runtime.tool_plugin_statuses,
+            "tool_bootstrap": runtime.tool_bootstrap_statuses,
+            "tool_inventory": runtime.tool_inventory,
             "providers": runtime.provider_statuses,
+            "tool_providers": runtime.tool_provider_statuses,
             "channels": [record.to_dict() for record in runtime.catalog.channels],
             "channel_runtime": _channel_runtime_status(runtime.channel_supervisor),
             "audit_health": self.audit_health(runtime),
@@ -269,6 +355,16 @@ class LifecycleService:
             self._event_sink(event, dict(payload))
         self._logger.info("extension event=%s payload=%s", event, payload)
 
+    def _emit_plugin_activation_error(self, error: PluginActivationError) -> None:
+        self._emit_event(
+            "ext.activation.error",
+            {
+                "plugin_id": error.plugin_id,
+                "stage": error.stage,
+                "reason_code": error.reason_code,
+            },
+        )
+
     def _validate_contract(self) -> None:
         missing = [
             name
@@ -306,7 +402,62 @@ def _channel_runtime_status(
 ) -> dict[str, Any]:
     if supervisor is None:
         return {"state": "not_observed", "channels": {}}
-    return cast(dict[str, Any], supervisor.status().to_dict())
+    payload: dict[str, Any] = supervisor.status().to_dict()
+    return payload
+
+
+def _tool_provider_statuses(catalog: ExtensionCatalog) -> list[dict[str, Any]]:
+    from openminion.tools.browser import (
+        provider_registry as browser_provider_registry,
+    )
+    from openminion.tools.fetch.providers import (
+        provider_registry as fetch_provider_registry,
+    )
+    from openminion.tools.search.providers import (
+        provider_registry as search_provider_registry,
+    )
+
+    family_registries = (
+        ("browser", browser_provider_registry()),
+        ("fetch", fetch_provider_registry()),
+        ("search", search_provider_registry()),
+    )
+    observed: dict[tuple[str, str], dict[str, Any]] = {}
+    for family, registry in family_registries:
+        for status in registry.entry_point_statuses():
+            observed[(str(status.get("group", "")), str(status["name"]))] = {
+                "family": family,
+                "attempted": True,
+                **status,
+            }
+
+    families = {
+        "openminion.browser_providers": "browser",
+        "openminion.tool.fetch.providers": "fetch",
+        "openminion.tool.search.providers": "search",
+    }
+    statuses: list[dict[str, Any]] = []
+    for record in catalog.providers:
+        group = str(record.metadata.get("group", ""))
+        catalog_family = families.get(group)
+        if record.kind != "tool_provider" or catalog_family is None:
+            continue
+        statuses.append(
+            observed.pop(
+                (group, record.name),
+                {
+                    "family": catalog_family,
+                    "name": record.name,
+                    "module": record.module,
+                    "group": group,
+                    "attempted": False,
+                    "loaded": False,
+                    "error": None,
+                },
+            )
+        )
+    statuses.extend(observed.values())
+    return sorted(statuses, key=lambda item: (item["family"], item["name"]))
 
 
 def build_channel_registry(
@@ -536,13 +687,17 @@ def _build_slack_adapter(
     return runner
 
 
-def _load_tool_plugin_statuses() -> list[dict[str, Any]]:
+def _legacy_tool_plugin_registrars() -> tuple[
+    list[tuple[str, Any]], list[dict[str, Any]]
+]:
     class _AllowAllPolicy:
         def is_plugin_enabled(self, name: str) -> bool:
             return True
 
-    registry = ToolRegistry([])
-    return cast(list[dict[str, Any]], load_tool_plugins(registry, _AllowAllPolicy()))
+    result: tuple[list[tuple[str, Any]], list[dict[str, Any]]] = (
+        discover_plugin_registrars(_AllowAllPolicy())
+    )
+    return result
 
 
 def _plugin_statuses(
@@ -550,6 +705,7 @@ def _plugin_statuses(
 ) -> list[dict[str, Any]]:
     loaded_ids = set(registry.manifest_ids())
     loaded_names = set(registry.names())
+    runtime_statuses = registry.plugin_statuses()
     statuses: list[dict[str, Any]] = []
     for record in catalog.plugins:
         loaded = record.name in loaded_ids or record.name in loaded_names
@@ -561,6 +717,7 @@ def _plugin_statuses(
                 "loaded": loaded,
                 "installed": record.installed,
                 "error": record.error,
+                **runtime_statuses.get(record.name, {}),
                 "metadata": dict(record.metadata),
             }
         )

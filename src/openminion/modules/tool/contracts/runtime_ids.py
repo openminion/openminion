@@ -41,6 +41,7 @@ RUNTIME_IP_LOCAL = "runtime.ip.local"
 RUNTIME_BROWSER = "runtime.browser"
 
 RUNTIME_BLOCKCHAIN_INSPECT = "runtime.blockchain.inspect"
+RUNTIME_BLOCKCHAIN_DEBUG = "runtime.blockchain.debug"
 RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION = "runtime.blockchain.prepare_transaction"
 RUNTIME_BLOCKCHAIN_SEND_TRANSACTION = "runtime.blockchain.send_transaction"
 
@@ -92,6 +93,7 @@ SECURITY_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     "runtime.security.scan_dependencies",
     "runtime.security.scan_artifact",
     "runtime.security.scan_secrets",
+    "runtime.security.publish_report",
 )
 
 RUNTIME_GWS_CALL = "runtime.gws.call"
@@ -121,6 +123,9 @@ RUNTIME_GIT_COMMIT = "runtime.git.commit"
 RUNTIME_GIT_STASH = "runtime.git.stash"
 RUNTIME_GIT_RESET = "runtime.git.reset"
 RUNTIME_GIT_REFLOG = "runtime.git.reflog"
+RUNTIME_GIT_FETCH = "runtime.git.fetch"
+RUNTIME_GIT_PUSH = "runtime.git.push"
+RUNTIME_GIT_TAG = "runtime.git.tag"
 
 RUNTIME_PLAN_SET = "runtime.plan.set"
 RUNTIME_PLAN_ADD = "runtime.plan.add"
@@ -144,6 +149,11 @@ RUNTIME_GITHUB_FETCH_COMMENTS = "runtime.github.fetch_comments"
 RUNTIME_GITHUB_FETCH_CHECKS = "runtime.github.fetch_checks"
 RUNTIME_GITHUB_COMMIT_FILES = "runtime.github.commit_files"
 RUNTIME_GITHUB_OPEN_PR = "runtime.github.open_pr"
+RUNTIME_GITHUB_UPDATE_PR = "runtime.github.update_pr"
+RUNTIME_GITHUB_MERGE_PR = "runtime.github.merge_pr"
+RUNTIME_GITHUB_DISPATCH_WORKFLOW = "runtime.github.dispatch_workflow"
+RUNTIME_GITHUB_LIST_WORKFLOW_RUNS = "runtime.github.list_workflow_runs"
+RUNTIME_GITHUB_CREATE_RELEASE = "runtime.github.create_release"
 RUNTIME_GITHUB_POST_PR_REVIEW = "runtime.github.post_pr_review"
 RUNTIME_GITHUB_POST_PR_COMMENT = "runtime.github.post_pr_comment"
 RUNTIME_TASK_DELEGATE = "runtime.task.delegate"
@@ -188,6 +198,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_IP_LOCAL,
     RUNTIME_BROWSER,
     RUNTIME_BLOCKCHAIN_INSPECT,
+    RUNTIME_BLOCKCHAIN_DEBUG,
     RUNTIME_BLOCKCHAIN_PREPARE_TRANSACTION,
     RUNTIME_BLOCKCHAIN_SEND_TRANSACTION,
     *OPS_RUNTIME_BINDING_IDS,
@@ -219,6 +230,9 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_GIT_STASH,
     RUNTIME_GIT_RESET,
     RUNTIME_GIT_REFLOG,
+    RUNTIME_GIT_FETCH,
+    RUNTIME_GIT_PUSH,
+    RUNTIME_GIT_TAG,
     RUNTIME_PLAN_SET,
     RUNTIME_PLAN_ADD,
     RUNTIME_PLAN_UPDATE,
@@ -241,6 +255,11 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_GITHUB_FETCH_CHECKS,
     RUNTIME_GITHUB_COMMIT_FILES,
     RUNTIME_GITHUB_OPEN_PR,
+    RUNTIME_GITHUB_UPDATE_PR,
+    RUNTIME_GITHUB_MERGE_PR,
+    RUNTIME_GITHUB_DISPATCH_WORKFLOW,
+    RUNTIME_GITHUB_LIST_WORKFLOW_RUNS,
+    RUNTIME_GITHUB_CREATE_RELEASE,
     RUNTIME_GITHUB_POST_PR_REVIEW,
     RUNTIME_GITHUB_POST_PR_COMMENT,
     RUNTIME_TASK_DELEGATE,
@@ -250,7 +269,10 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
 
 ALL_RUNTIME_BINDING_IDS_SET = frozenset(ALL_RUNTIME_BINDING_IDS)
 
-_DYNAMIC_RUNTIME_BINDING_PREFIXES: tuple[str, ...] = ("runtime.mcp.",)
+_DYNAMIC_RUNTIME_BINDING_PREFIXES: tuple[str, ...] = (
+    "runtime.mcp.",
+    "runtime.plugin.",
+)
 
 
 def is_valid_runtime_binding_id(runtime_binding_id: str) -> bool:

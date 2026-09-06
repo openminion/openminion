@@ -21,6 +21,10 @@ from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.identity.operator import local_operator_id
 from openminion.cli.commands.skill_admission import (
     register_skill_admission_subcommands,
+    skill_verification_evidence_from_args,
+)
+from openminion.cli.commands.skill_authoring import (
+    register_skill_authoring_subcommands,
 )
 
 _CLI_DEFAULT_SKILL_CONFIG_PATH = "skill.yaml"
@@ -257,6 +261,7 @@ def _run_skill_admission(args, app: Any | None = None) -> int:
                 target_status=args.target_status,
                 reason=args.reason,
                 authority=authority,
+                verification_evidence=skill_verification_evidence_from_args(args),
             )
         else:
             result = ctl.rollback_skill_version(
@@ -708,9 +713,12 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
                 lint_report=lint_report,
                 verified_lint_report=verified_lint_report,
                 harness_result=harness_result,
+                admission=ctl.store.get_skill_admission(
+                    skill_id=package.skill_id, version_hash=package.version_hash
+                ),
             )
-            ok = bool(harness_result and harness_result.ok) and not bool(
-                verified_lint_report["errors"]
+            ok = bool(harness_result and harness_result.ok) and bool(
+                report.readiness["verified_admission"]["ready"]
             )
             print_json_payload(
                 {"ok": ok, "report": report.to_dict()},
@@ -763,7 +771,13 @@ def _run_skill_test(args, app: Any | None = None) -> int:
             harness_report=harness_report,
             regression_refs=tuple(args.regression_ref or ()),
         )
-        ok = report.outcome == "passed"
+        portable_ok = all(
+            bool(result.portable_conformance.get("ok"))
+            for result in harness_report.results
+        )
+        ok = report.outcome == "passed" and (
+            portable_ok or not bool(getattr(args, "require_portable", False))
+        )
         print_json_payload(
             {"ok": ok, "report": report.to_dict()},
             sort_keys=False,
@@ -937,48 +951,6 @@ def _register_skill_remove_subcommand(skill_subcommands) -> None:
     parser.set_defaults(handler=_run_skill_remove, needs_app=False)
 
 
-def _register_skill_validate_subcommand(skill_subcommands) -> None:
-    parser = skill_subcommands.add_parser(
-        "validate",
-        help="Validate bundle conformance and verified-admission readiness",
-    )
-    parser.add_argument("skill_id", help="Skill ID to validate")
-    parser.add_argument("--version", default=None, help="Specific version to validate")
-    parser.add_argument(
-        "--project-root",
-        default=".",
-        help="Project root for harness skill discovery (defaults to cwd).",
-    )
-    _add_skill_config_arg(parser)
-    parser.set_defaults(handler=_run_skill_validate, needs_app=False)
-
-
-def _register_skill_test_subcommand(skill_subcommands) -> None:
-    parser = skill_subcommands.add_parser(
-        "test",
-        help="Test filesystem and bundle conformance for a skill root",
-    )
-    parser.add_argument("skill_root", help="Filesystem skill root containing SKILL.md")
-    parser.add_argument(
-        "--regression-ref",
-        action="append",
-        default=[],
-        help="Regression reference (repeatable).",
-    )
-    _add_skill_config_arg(parser)
-    parser.set_defaults(handler=_run_skill_test, needs_app=False)
-
-
-def _register_skill_debug_subcommand(skill_subcommands) -> None:
-    parser = skill_subcommands.add_parser(
-        "debug", help="Display stored skill and runtime debug facts"
-    )
-    parser.add_argument("skill_id", help="Skill ID to inspect")
-    parser.add_argument("--version", default=None, help="Specific version to inspect")
-    _add_skill_config_arg(parser)
-    parser.set_defaults(handler=_run_skill_debug, needs_app=False)
-
-
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     skill = subparsers.add_parser("skill", help="Skill management operations")
     skill_subcommands = skill.add_subparsers(dest="skill_command", required=True)
@@ -994,6 +966,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _register_skill_reingest_all_subcommand(skill_subcommands)
     _register_skill_show_subcommand(skill_subcommands)
     _register_skill_remove_subcommand(skill_subcommands)
-    _register_skill_validate_subcommand(skill_subcommands)
-    _register_skill_test_subcommand(skill_subcommands)
-    _register_skill_debug_subcommand(skill_subcommands)
+    register_skill_authoring_subcommands(
+        skill_subcommands,
+        validate_handler=_run_skill_validate,
+        test_handler=_run_skill_test,
+        debug_handler=_run_skill_debug,
+        add_config_arg=_add_skill_config_arg,
+    )

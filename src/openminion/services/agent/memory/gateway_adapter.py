@@ -24,6 +24,7 @@ from openminion.modules.memory.interfaces import (
     SearchQueryOptions,
 )
 from openminion.modules.memory.models import MemoryPatchResult
+from openminion.modules.retrieve.errors import RetrieveCtlError
 from openminion.modules.memory.diagnostics.operability import (
     configured_trace_file_path,
     serialize_for_json,
@@ -116,6 +117,7 @@ class MemoryServiceGatewayAdapter(
             agent_id=self._agent_id,
             retrieval_max_chars=self._retrieval_max_chars,
             trace_fn=self._trace,
+            retrieve_error_type=RetrieveCtlError,
         )
 
         self._apply_candidate_learning_config()

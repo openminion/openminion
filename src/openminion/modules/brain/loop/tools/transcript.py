@@ -6,10 +6,40 @@ from typing import Any
 from openminion.modules.brain.config import TOOL_TRANSCRIPT_MAX_REPLAYED_CALLS
 from openminion.modules.brain.schemas import ActionError, ActionResult
 from openminion.modules.llm.schemas import Message, ToolCall
+from openminion.modules.tool.diagnostics.events import (
+    is_structural_security_agent,
+    is_structural_security_tool,
+    structural_result_fields,
+)
 
 from .contracts import AdaptiveToolLoopContext
 
 _REQUEST_EVENT_IDS_KEY = "tool_transcript.request_event_ids"
+
+
+def _persisted_arguments(
+    tool_call: ToolCall, *, structural_only: bool = False
+) -> dict[str, Any]:
+    if structural_only or is_structural_security_tool(tool_call.name):
+        return {}
+    return dict(tool_call.arguments)
+
+
+def _persisted_success_output(
+    tool_call: ToolCall,
+    action_result: ActionResult,
+    *,
+    structural_only: bool = False,
+) -> dict[str, Any]:
+    if structural_only or is_structural_security_tool(tool_call.name):
+        return {
+            "summary": "security tool completed",
+            "outputs": structural_result_fields(action_result.outputs),
+        }
+    return {
+        "summary": action_result.summary,
+        "outputs": dict(action_result.outputs),
+    }
 
 
 def replay_tool_messages(
@@ -123,6 +153,9 @@ def persist_requested_tool_calls(
     session_api, session_id = _session_writer(loop_ctx)
     if session_api is None:
         return
+    structural_only = is_structural_security_agent(
+        getattr(loop_ctx.state, "agent_id", "")
+    )
     event_ids = dict(loop_state.scratchpad.get(_REQUEST_EVENT_IDS_KEY, {}))
     for batch_index, call in enumerate(tool_calls):
         call_id = str(call.id or "").strip()
@@ -136,7 +169,9 @@ def persist_requested_tool_calls(
                 "turn_scope_id": turn_scope_id,
                 "call_id": call_id,
                 "canonical_name": call.name,
-                "sanitized_normalized_arguments": dict(call.arguments),
+                "sanitized_normalized_arguments": _persisted_arguments(
+                    call, structural_only=structural_only
+                ),
                 "batch_index": batch_index,
                 "depends_on": list(call.depends_on),
             },
@@ -162,6 +197,9 @@ def persist_terminal_tool_result(
     )
     if not request_event_id:
         raise ValueError("canonical tool result has no persisted requested event")
+    structural_only = is_structural_security_agent(
+        getattr(loop_ctx.state, "agent_id", "")
+    )
 
     if action_result.status == "success":
         event_type = "tool.call.completed"
@@ -170,10 +208,9 @@ def persist_terminal_tool_result(
             "turn_scope_id": turn_scope_id,
             "call_id": call_id,
             "status": "success",
-            "output": {
-                "summary": action_result.summary,
-                "outputs": dict(action_result.outputs),
-            },
+            "output": _persisted_success_output(
+                tool_call, action_result, structural_only=structural_only
+            ),
         }
     else:
         status = {
@@ -185,6 +222,7 @@ def persist_terminal_tool_result(
         }[action_result.status]
         error = action_result.error
         event_type = "tool.call.blocked"
+        security_tool = structural_only or is_structural_security_tool(tool_call.name)
         payload = {
             "schema_version": 1,
             "turn_scope_id": turn_scope_id,
@@ -192,8 +230,18 @@ def persist_terminal_tool_result(
             "status": status,
             "error": {
                 "code": error.code if error else "TOOL_EXECUTION_FAILED",
-                "message": error.message if error else action_result.summary or status,
-                "details": dict(error.details) if error else {},
+                "message": (
+                    "security tool did not complete"
+                    if security_tool
+                    else error.message
+                    if error
+                    else action_result.summary or status
+                ),
+                "details": {}
+                if security_tool
+                else dict(error.details)
+                if error
+                else {},
             },
         }
     session_api.append_event(

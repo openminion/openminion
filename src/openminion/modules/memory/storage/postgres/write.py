@@ -439,7 +439,7 @@ def apply_outcome_feedback(
                     observed_at=observed_at,
                     feedback_delta=feedback_delta,
                 )
-                if not feedback_values["applied"]:
+                if feedback_values is None:
                     continue
                 store._execute(
                     """

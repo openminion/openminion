@@ -13,12 +13,12 @@ from openminion.modules.task import (
 from openminion.modules.task.project import (
     AutonomyLoopConditionKind,
     AutonomyLoopJudgment,
-    ProjectEffectRecord,
-    ProjectEffectReplayDecision,
-    ProjectEffectStatus,
     ProjectDomainVerificationContract,
     ProjectDomainVerificationEvidence,
     ProjectDomainVerificationStatus,
+    ProjectEffectRecord,
+    ProjectEffectReplayDecision,
+    ProjectEffectStatus,
     ProjectOperatorInboxItem,
     ProjectOperatorResumeAction,
     ProjectOperatorWorkState,
@@ -31,6 +31,7 @@ from openminion.modules.task.project import (
 from openminion.modules.task.project.turn import (
     ProjectTurnRequest,
     project_turn_from_payload,
+    project_turn_inbound_metadata,
 )
 
 
@@ -78,6 +79,26 @@ def _project_run(
         metrics_summary_ref="artifact:metrics.json",
         blocked_reason=blocked_reason,
     )
+
+
+def test_project_turn_metadata_carries_the_exact_selected_tool_scope() -> None:
+    request = ProjectTurnRequest(
+        run_id="run-1",
+        project_run_id="project-1",
+        task_id="task-1",
+        goal_id="goal-1",
+        session_id="session-1",
+        cycle_id="cycle-1",
+        milestone="milestone-1",
+        prompt="continue",
+        allowed_tools=("git.status", "github.fetch_checks"),
+    )
+
+    metadata = project_turn_inbound_metadata(request)
+
+    assert metadata["linked_task_id"] == "task-1"
+    assert metadata["turn_tool_allowlist"] == "git.status,github.fetch_checks"
+    assert metadata["turn_tool_allowlist_supplied"] == "true"
 
 
 @pytest.mark.parametrize(
@@ -161,6 +182,18 @@ def test_project_turn_decodes_typed_plan_metadata() -> None:
                     '"revised_steps":[{"step_id":"build",'
                     '"description":"Repair"}]}'
                 ),
+                "task_plan.step_completed": {
+                    "plan_id": "plan-1",
+                    "step_id": "build",
+                    "output_summary": "built",
+                },
+                "task_plan.step_blocked": {
+                    "plan_id": "plan-1",
+                    "step_id": "build",
+                    "blocker_type": "operator",
+                },
+                "task_plan.abandoned": {"plan_id": "plan-1"},
+                "task_plan.completed": {"plan_id": "plan-1"},
             },
         },
     )
@@ -169,6 +202,12 @@ def test_project_turn_decodes_typed_plan_metadata() -> None:
     assert result.task_plan.criterion_ids == ["criterion-tests"]
     assert result.task_plan_revision is not None
     assert result.task_plan_revision.revision_id == "revision-1"
+    assert result.task_plan_step_completed is not None
+    assert result.task_plan_step_completed.step_id == "build"
+    assert result.task_plan_step_blocked is not None
+    assert result.task_plan_step_blocked.blocker_type == "operator"
+    assert result.task_plan_abandoned is not None
+    assert result.task_plan_completed is not None
 
 
 @pytest.mark.parametrize(

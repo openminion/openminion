@@ -254,10 +254,10 @@ class MemctlAdapter:
         )
         return dict(self._capture_bundle_api(bundle).as_payload())
 
-    def vector_sync_snapshot(self, *, limit: int = 32) -> dict[str, list[Any]]:
+    def vector_sync_snapshot(self) -> dict[str, list[Any]]:
         if not callable(self._vector_sync_snapshot_api):
             return {"current": [], "retired": []}
-        return dict(self._vector_sync_snapshot_api(limit=limit))
+        return dict(self._vector_sync_snapshot_api())
 
     @property
     def enabled(self) -> bool:

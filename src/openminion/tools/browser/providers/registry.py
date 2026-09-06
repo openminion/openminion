@@ -169,12 +169,16 @@ class BrowserProviderRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, BrowserProvider] = {}
         self._loaded_entry_points: set[str] = set()
+        self._entry_point_statuses: dict[str, dict[str, Any]] = {}
 
     def register(self, provider: BrowserProvider) -> None:
         provider_id = provider.provider_id.strip()
         if not provider_id:
             raise ValueError("provider_id is required")
-        if provider_id in self._providers:
+        existing = self._providers.get(provider_id)
+        if existing is provider:
+            return
+        if existing is not None:
             raise ValueError(f"provider already registered: {provider_id}")
         self._providers[provider_id] = provider
 
@@ -187,6 +191,12 @@ class BrowserProviderRegistry:
 
     def list_provider_ids(self) -> list[str]:
         return sorted(self._providers)
+
+    def entry_point_statuses(self) -> list[dict[str, Any]]:
+        return [
+            dict(self._entry_point_statuses[key])
+            for key in sorted(self._entry_point_statuses)
+        ]
 
     def provider_ids_with_capability(self, capability: str) -> list[str]:
         required = str(capability or "").strip()
@@ -206,9 +216,19 @@ class BrowserProviderRegistry:
             cache_key = f"{group}:{ep.name}:{ep.value}"
             if cache_key in self._loaded_entry_points:
                 continue
+            self._loaded_entry_points.add(cache_key)
+            status = {
+                "name": ep.name,
+                "module": ep.value,
+                "group": group,
+                "loaded": False,
+                "error": None,
+            }
             try:
                 target = ep.load()
             except ModuleNotFoundError as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                self._entry_point_statuses[cache_key] = status
                 # Stale third-party entry points should not block the browser tool.
                 _LOG.warning(
                     "skipping browser provider entry point name=%s target=%s reason=%s",
@@ -217,14 +237,25 @@ class BrowserProviderRegistry:
                     exc,
                 )
                 continue
-            hook = _resolve_hook(target, hook_name="register_browser_provider")
-            if hook is None:
-                raise TypeError(
-                    f"browser provider entry point '{ep.name}' must expose register_browser_provider(registry)"
-                )
-            hook(self)
-            self._loaded_entry_points.add(cache_key)
+            except Exception as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                self._entry_point_statuses[cache_key] = status
+                raise
+            try:
+                hook = _resolve_hook(target, hook_name="register_browser_provider")
+                if hook is None:
+                    raise TypeError(
+                        f"browser provider entry point '{ep.name}' must expose "
+                        "register_browser_provider(registry)"
+                    )
+                hook(self)
+            except Exception as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                self._entry_point_statuses[cache_key] = status
+                raise
             loaded.append(ep.name)
+            status["loaded"] = True
+            self._entry_point_statuses[cache_key] = status
         return loaded
 
 

@@ -48,6 +48,7 @@ StatusDetailCode = Literal[
     "loading_session_history",
     "thinking",
     "composing_answer",
+    "waiting_for_checks",
 ]
 
 _STATUS_LABELS: dict[StatusKey, str] = {
@@ -86,6 +87,8 @@ _PHASE_STATUS_MAP: dict[str, StatusKey] = {
 
 _EVENT_STATUS_MAP: dict[str, StatusKey] = {
     "brain.plan_checkpoint": "executing",
+    "project.checks.cancelled": "stopped",
+    "project.checks.expired": "error",
 }
 
 _EVENT_PREFIX_STATUS_MAP: tuple[tuple[str, StatusKey], ...] = (

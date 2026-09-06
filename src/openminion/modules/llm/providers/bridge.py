@@ -168,6 +168,7 @@ class LLMCTLBridgeProvider(LLMProvider):
         )
         self._preserve_provider_tool_arguments = is_cortensor_portal
         max_retries = 0 if self.name == "cortensor" or is_cortensor_portal else 2
+        self.provider_retry_max_attempts = 1 if max_retries == 0 else None
 
         llmctl_config = {
             "version": 1,

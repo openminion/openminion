@@ -6,7 +6,9 @@ from typing import Any
 import pytest
 
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
 from openminion.tools.github.constants import DEFAULT_GITHUB_PROVIDER_ID
 from openminion.tools.github.interfaces import (
     TOOL_GITHUB_COMMIT_FILES,
@@ -16,10 +18,15 @@ from openminion.tools.github.interfaces import (
     TOOL_GITHUB_FETCH_PR,
     TOOL_GITHUB_LIST_PRS,
     TOOL_GITHUB_OPEN_PR,
+    TOOL_GITHUB_UPDATE_PR,
+    TOOL_GITHUB_MERGE_PR,
+    TOOL_GITHUB_DISPATCH_WORKFLOW,
+    TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+    TOOL_GITHUB_CREATE_RELEASE,
     TOOL_GITHUB_POST_PR_COMMENT,
     TOOL_GITHUB_POST_PR_REVIEW,
 )
-from openminion.tools.github.plugin import register
+from openminion.tools.github.plugin import read_update_pr, register
 from openminion.tools.github.providers import (
     provider_registry,
     register_provider,
@@ -68,6 +75,46 @@ class _StubProvider:
         del ctx
         return self._record("open_pr", args)
 
+    def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("update_pr", args)
+
+    def read_update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("read_update_pr", args)
+
+    def read_merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("read_merge_pr", args)
+
+    def merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("merge_pr", args)
+
+    def dispatch_workflow(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("dispatch_workflow", args)
+
+    def read_dispatch_workflow(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> dict[str, Any]:
+        del ctx
+        return self._record("read_dispatch_workflow", args)
+
+    def list_workflow_runs(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> dict[str, Any]:
+        del ctx
+        return self._record("list_workflow_runs", args)
+
+    def read_release(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("read_release", args)
+
+    def create_release(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
+        del ctx
+        return self._record("create_release", args)
+
     def post_pr_review(self, *, args: Mapping[str, Any], ctx: Any) -> dict[str, Any]:
         del ctx
         return self._record("post_pr_review", args)
@@ -96,15 +143,23 @@ def stub_provider() -> _StubProvider:
     provider_registry().reset()
 
 
-def test_register_adds_all_nine_tools(registry_with_tools: ToolRegistry) -> None:
+def test_register_adds_all_tools(registry_with_tools: ToolRegistry) -> None:
     expected = {
         TOOL_GITHUB_LIST_PRS,
         TOOL_GITHUB_FETCH_PR,
         TOOL_GITHUB_FETCH_DIFF,
         TOOL_GITHUB_FETCH_COMMENTS,
         TOOL_GITHUB_FETCH_CHECKS,
+        TOOL_GITHUB_LIST_WORKFLOW_RUNS,
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
+        TOOL_GITHUB_UPDATE_PR,
+        TOOL_GITHUB_MERGE_PR,
+        TOOL_GITHUB_DISPATCH_WORKFLOW,
+        TOOL_GITHUB_CREATE_RELEASE,
+        TOOL_GITHUB_DISPATCH_WORKFLOW,
+        TOOL_GITHUB_LIST_WORKFLOW_RUNS,
+        TOOL_GITHUB_CREATE_RELEASE,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     }
@@ -136,6 +191,8 @@ def test_each_write_tool_is_write_safe_and_non_idempotent(
     for name in (
         TOOL_GITHUB_COMMIT_FILES,
         TOOL_GITHUB_OPEN_PR,
+        TOOL_GITHUB_UPDATE_PR,
+        TOOL_GITHUB_MERGE_PR,
         TOOL_GITHUB_POST_PR_REVIEW,
         TOOL_GITHUB_POST_PR_COMMENT,
     ):
@@ -187,6 +244,107 @@ def test_commit_files_dispatches_to_provider(
     assert stub_provider.calls == [("commit_files", args)]
 
 
+def test_update_pr_dispatches_to_provider(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    spec = registry_with_tools.list()[TOOL_GITHUB_UPDATE_PR]
+    args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "number": 17,
+        "title": "Updated title",
+        "body": None,
+    }
+    result = spec.handler(args, ctx=None)
+    assert result["data"]["method"] == "update_pr"
+    assert stub_provider.calls == [("update_pr", args)]
+
+
+def test_merge_pr_dispatches_to_provider(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    spec = registry_with_tools.list()[TOOL_GITHUB_MERGE_PR]
+    args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "number": 17,
+        "expected_head_sha": "abc1234",
+        "merge_method": "squash",
+        "expected_checks": ["lint", "tests"],
+    }
+    result = spec.handler(args, ctx=None)
+    assert result["data"]["method"] == "merge_pr"
+    assert stub_provider.calls == [("merge_pr", args)]
+
+
+def test_release_tools_dispatch_to_provider(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    workflow_args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "workflow": "release.yml",
+        "ref": "v1.2.3-rc1",
+        "request_id": "release-123",
+        "target": "testpypi",
+        "inputs": {"request_id": "release-123", "target": "testpypi"},
+    }
+    registry_with_tools.list()[TOOL_GITHUB_DISPATCH_WORKFLOW].handler(
+        workflow_args, ctx=None
+    )
+    release_args = {
+        "owner": "openminion",
+        "repo": "test-repo-for-agent",
+        "tag": "v1.2.3-rc1",
+        "expected_commit_sha": "a" * 40,
+        "title": "v1.2.3-rc1",
+        "notes": "RC notes",
+        "draft": True,
+        "prerelease": True,
+    }
+    registry_with_tools.list()[TOOL_GITHUB_CREATE_RELEASE].handler(
+        release_args, ctx=None
+    )
+    assert stub_provider.calls == [
+        ("dispatch_workflow", workflow_args),
+        ("create_release", release_args),
+    ]
+
+
+def test_release_schemas_exclude_credentials_and_reject_invalid_values() -> None:
+    from openminion.tools.github.schemas import (
+        GithubCreateReleaseArgs,
+        GithubDispatchWorkflowArgs,
+    )
+
+    with pytest.raises(Exception):
+        GithubDispatchWorkflowArgs.model_validate(
+            {
+                "owner": "o",
+                "repo": "r",
+                "workflow": "../release.yml",
+                "ref": "main",
+                "request_id": "r1",
+                "target": "testpypi",
+                "inputs": {},
+            }
+        )
+    with pytest.raises(Exception):
+        GithubCreateReleaseArgs.model_validate(
+            {
+                "owner": "o",
+                "repo": "r",
+                "tag": "v1",
+                "expected_commit_sha": "bad-sha",
+                "title": "v1",
+                "notes": "notes",
+                "draft": True,
+                "prerelease": True,
+                "token": "secret",
+            }
+        )
+
+
 def test_no_provider_raises_dependency_unavailable(
     registry_with_tools: ToolRegistry,
 ) -> None:
@@ -229,9 +387,174 @@ def test_fetch_checks_rejects_non_hex_sha() -> None:
         )
 
     parsed = GithubFetchChecksArgs.model_validate(
-        {"owner": "o", "repo": "r", "head_sha": "ABC1234"}
+        {
+            "owner": "o",
+            "repo": "r",
+            "head_sha": "ABC1234",
+            "expected_checks": [" lint ", "test (3.11)"],
+        }
     )
     assert parsed.head_sha == "abc1234"
+    assert parsed.expected_checks == ["lint", "test (3.11)"]
+
+    with pytest.raises(Exception):
+        GithubFetchChecksArgs.model_validate(
+            {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "abc1234",
+                "expected_checks": ["lint", "lint"],
+            }
+        )
+
+
+def test_update_pr_schema_requires_title_or_body() -> None:
+    from openminion.tools.github.schemas import GithubUpdatePrArgs
+
+    with pytest.raises(Exception):
+        GithubUpdatePrArgs.model_validate({"owner": "o", "repo": "r", "number": 1})
+    with pytest.raises(Exception):
+        GithubUpdatePrArgs.model_validate(
+            {"owner": "o", "repo": "r", "number": 1, "title": ""}
+        )
+    parsed = GithubUpdatePrArgs.model_validate(
+        {"owner": "o", "repo": "r", "number": 1, "title": " New title "}
+    )
+    assert parsed.title == "New title"
+    assert parsed.body is None
+
+
+def test_merge_pr_schema_requires_exact_bounded_inputs() -> None:
+    from openminion.tools.github.schemas import GithubMergePrArgs
+
+    parsed = GithubMergePrArgs.model_validate(
+        {
+            "owner": "o",
+            "repo": "r",
+            "number": 1,
+            "expected_head_sha": "ABC1234",
+            "merge_method": "SQUASH",
+            "expected_checks": [" lint ", "tests"],
+        }
+    )
+    assert parsed.expected_head_sha == "abc1234"
+    assert parsed.merge_method == "squash"
+    assert parsed.expected_checks == ["lint", "tests"]
+    for patch in (
+        {"expected_head_sha": "not-a-sha"},
+        {"merge_method": "octopus"},
+        {"expected_checks": []},
+        {"expected_checks": ["lint", "lint"]},
+    ):
+        payload = {
+            "owner": "o",
+            "repo": "r",
+            "number": 1,
+            "expected_head_sha": "abc1234",
+            "merge_method": "squash",
+            "expected_checks": ["lint"],
+            **patch,
+        }
+        with pytest.raises(Exception):
+            GithubMergePrArgs.model_validate(payload)
+
+
+def test_merge_pr_runtime_invocation_validates_and_dispatches(
+    registry_with_tools: ToolRegistry,
+    stub_provider: _StubProvider,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    result = execute_tool_spec_call(
+        tool=registry_with_tools.list()[TOOL_GITHUB_MERGE_PR],
+        arguments={
+            "owner": "openminion",
+            "repo": "test-repo-for-agent",
+            "number": 17,
+            "expected_head_sha": "ABC1234",
+            "merge_method": "SQUASH",
+            "expected_checks": ["lint"],
+        },
+        context=ToolExecutionContext(
+            channel="test",
+            target="local",
+            session_id="github-merge-runtime",
+            metadata={"workspace_root": str(tmp_path)},
+        ),
+    )
+
+    assert result.ok is True
+    assert stub_provider.calls == [
+        (
+            "merge_pr",
+            {
+                "owner": "openminion",
+                "repo": "test-repo-for-agent",
+                "number": 17,
+                "expected_head_sha": "abc1234",
+                "merge_method": "squash",
+                "expected_checks": ["lint"],
+            },
+        )
+    ]
+
+
+def test_fetch_checks_dispatches_expected_names(
+    registry_with_tools: ToolRegistry, stub_provider: _StubProvider
+) -> None:
+    spec = registry_with_tools.list()[TOOL_GITHUB_FETCH_CHECKS]
+    args = {
+        "owner": "octocat",
+        "repo": "hello-world",
+        "head_sha": "abc1234",
+        "expected_checks": ["lint", "test (3.11)"],
+    }
+
+    result = spec.handler(args, ctx=None)
+
+    assert result["ok"] is True
+    assert result["data"]["method"] == "fetch_checks"
+    assert stub_provider.calls == [("fetch_checks", args)]
+
+
+def test_fetch_checks_runtime_invocation_validates_and_dispatches(
+    registry_with_tools: ToolRegistry,
+    stub_provider: _StubProvider,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    result = execute_tool_spec_call(
+        tool=registry_with_tools.list()[TOOL_GITHUB_FETCH_CHECKS],
+        arguments={
+            "owner": "octocat",
+            "repo": "hello-world",
+            "head_sha": "ABC1234",
+            "expected_checks": ["lint"],
+        },
+        context=ToolExecutionContext(
+            channel="test",
+            target="local",
+            session_id="github-checks-runtime",
+            metadata={"workspace_root": str(tmp_path)},
+        ),
+    )
+
+    assert result.ok is True
+    assert stub_provider.calls == [
+        (
+            "fetch_checks",
+            {
+                "owner": "octocat",
+                "repo": "hello-world",
+                "head_sha": "abc1234",
+                "expected_checks": ["lint"],
+            },
+        )
+    ]
 
 
 def test_commit_files_schema_rejects_path_escape() -> None:
@@ -282,7 +605,7 @@ def test_post_pr_comment_schema_requires_body() -> None:
         )
 
 
-def test_provider_protocol_violation_raises_deterministic_error(
+def test_invalid_provider_result_raises_public_error(
     registry_with_tools: ToolRegistry,
 ) -> None:
     class _BadProvider:
@@ -297,6 +620,10 @@ def test_provider_protocol_violation_raises_deterministic_error(
         def fetch_checks(self, **kw): ...
         def commit_files(self, **kw): ...
         def open_pr(self, **kw): ...
+        def read_update_pr(self, **kw): ...
+        def update_pr(self, **kw): ...
+        def read_merge_pr(self, **kw): ...
+        def merge_pr(self, **kw): ...
         def post_pr_review(self, **kw): ...
         def post_pr_comment(self, **kw): ...
         def healthcheck(self) -> bool:
@@ -308,6 +635,33 @@ def test_provider_protocol_violation_raises_deterministic_error(
         spec = registry_with_tools.list()[TOOL_GITHUB_LIST_PRS]
         with pytest.raises(ToolRuntimeError) as exc:
             spec.handler({"owner": "o", "repo": "r"}, ctx=None)
-        assert exc.value.code == "PROVIDER_PROTOCOL_VIOLATION"
+        assert exc.value.code == "INVALID_RESPONSE"
+        assert exc.value.details["reason_code"] == "github_provider_bad_result"
     finally:
         provider_registry().reset()
+
+
+def test_update_pr_rejects_invalid_provider_results(
+    monkeypatch: pytest.MonkeyPatch,
+    registry_with_tools: ToolRegistry,
+    stub_provider: _StubProvider,
+) -> None:
+    def bad_result(**kwargs: Any) -> Any:
+        del kwargs
+        return "not-a-mapping"
+
+    monkeypatch.setattr(stub_provider, "update_pr", bad_result)
+    spec = registry_with_tools.list()[TOOL_GITHUB_UPDATE_PR]
+    with pytest.raises(ToolRuntimeError) as invoke_error:
+        spec.handler(
+            {"owner": "o", "repo": "r", "number": 1, "title": "Updated"},
+            ctx=None,
+        )
+    assert invoke_error.value.code == "INVALID_RESPONSE"
+    assert invoke_error.value.details["reason_code"] == "github_provider_bad_result"
+
+    monkeypatch.setattr(stub_provider, "read_update_pr", bad_result)
+    with pytest.raises(ToolRuntimeError) as preflight_error:
+        read_update_pr({"owner": "o", "repo": "r", "number": 1}, ctx=None)
+    assert preflight_error.value.code == "INVALID_RESPONSE"
+    assert preflight_error.value.details["reason_code"] == "github_provider_bad_result"

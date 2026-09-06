@@ -21,6 +21,48 @@ class GithubProvider(Protocol):
         self, *, args: Mapping[str, Any], ctx: Any
     ) -> Mapping[str, Any]: ...
 
+    def resolve_open_pr_head_sha(self, *, args: Mapping[str, Any], ctx: Any) -> str: ...
+
+    def find_open_pr(
+        self,
+        *,
+        args: Mapping[str, Any],
+        ctx: Any,
+        head_sha: str,
+    ) -> Mapping[str, Any] | None: ...
+
+    def read_update_pr(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def update_pr(self, *, args: Mapping[str, Any], ctx: Any) -> Mapping[str, Any]: ...
+
+    def read_merge_pr(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def merge_pr(self, *, args: Mapping[str, Any], ctx: Any) -> Mapping[str, Any]: ...
+
+    def dispatch_workflow(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def read_dispatch_workflow(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def list_workflow_runs(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def read_release(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
+    def create_release(
+        self, *, args: Mapping[str, Any], ctx: Any
+    ) -> Mapping[str, Any]: ...
+
     def healthcheck(self) -> bool: ...
 
 

@@ -85,6 +85,11 @@ def test_task_manifest_matches_contract_ids_and_candidates() -> None:
         MODEL_TASK_SHOW,
         ("task.show",),
     )
+    watch = next(
+        item for item in manifest.model_tools if item.model_tool_id == MODEL_TASK_WATCH
+    )
+    assert "typed routine object" in watch.description
+    assert "do not create a plain watch" in watch.description
 
 
 def test_task_registrar_registers_runtime_candidates() -> None:

@@ -219,9 +219,10 @@ def test_hermes_bundle_keeps_supported_resources_and_reports_unknown_metadata(
         assert package.bundle_metadata["source"] == "none"
         assert package.recipe is None
         assert [item["path"] for item in package.resources] == [
-            "references/collection-guide.md"
+            "references/collection-guide.md",
+            "specifications/report-schema.md",
         ]
-        assert all("specifications/" not in item["path"] for item in package.resources)
+        assert package.resources[1]["kind"] == "supporting"
         assert all("child/" not in item["path"] for item in package.resources)
     finally:
         ctl.close()

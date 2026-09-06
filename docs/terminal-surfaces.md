@@ -1,21 +1,16 @@
 # OpenMinion Terminal Surfaces
 
 Status: active
-Last updated: 2026-08-10
+Last updated: 2026-09-05
 
 OpenMinion has one canonical interactive CLI: `openminion`. It uses the
-terminal renderer by default. Textual remains available through explicit
-`openminion --rich`, not as the default. Install that optional renderer with:
-
-```bash
-python -m pip install "openminion[textual]"
-```
+terminal renderer.
 
 ## Canonical routes
 
 | Need | Route | Contract |
 | --- | --- | --- |
-| Interactive work | `openminion` | Launch the default terminal renderer on a TTY; add `--rich` only when the Textual renderer is desired. |
+| Interactive work | `openminion` | Launch the interactive terminal renderer on a TTY. |
 | Piped prompt | `cat prompt.md \| openminion` | Run one request without mounting an interactive renderer. |
 | Scripted request | `openminion run` | Use stable human or JSON one-shot output. |
 | Resource operations | `openminion status`, `openminion cron`, and companion CLIs | Use bounded operator commands rather than dashboard widgets. |
@@ -50,18 +45,10 @@ and backward compatibility.
 
 ## Read-only operations overview
 
-The optional Textual renderer provides a compact local overview:
-
-```bash
-openminion --rich
-```
-
-Then enter `/overview`. The overlay reads the active agent/model,
-workspace/session, task summary, recent tool activity, telemetry diagnostics,
-and host metrics from their existing owners. It performs no write action and
-closes with Escape. The command is intentionally absent from the default
-terminal renderer; use `/status`, `/tasks`, `/telemetry`, and the bounded
-operator commands there.
+Enter `/overview` in the interactive CLI. The report reads the active
+agent/model, workspace/session, task summary, recent tool activity, telemetry
+diagnostics, and host metrics from their existing owners. It performs no write
+action.
 
 ## Interactive activity animation
 
@@ -74,16 +61,6 @@ Useful commands:
 
 ```bash
 openminion --animation-provider unicode --animation helix
-```
-
-Inside the interactive CLI:
-
-```text
-/animation
-/animation list
-/animation use unicode:helix
-/animation save unicode:helix
-/animation reset
 ```
 
 Install the optional Unicode catalog with:
@@ -115,11 +92,22 @@ openminion plugins install ./my-plugin --root ./src/openminion/extensions/custom
 openminion plugins health example.plugin --root ./src/openminion/extensions/custom
 ```
 
-`preview` reports declared dependencies, permissions, trust tier, and
-provenance. `rollback` undoes the last install of that plugin, while `uninstall`
-removes it and disables its manifest ID in the active config. Use the same
-`--root` for install, health, rollback, and uninstall. The default is the first
-path in `OPENMINION_PLUGIN_PATHS`, or the current local-extension root.
+`preview` reads metadata without importing plugin code. It reports declared
+dependencies and config schema as metadata, not as runtime-enforced guarantees,
+and reports whether a claimed SHA-256 checksum matches. Install and activation
+fail before importing code when a claimed checksum is malformed or mismatched.
+
+A lifecycle-only plugin may provide message hooks without tools. A plugin that
+adds model-visible tools must export one module-level `REGISTRAR`; that registrar
+owns its manifest and all IDs use the plugin manifest ID as their namespace.
+Fetch, search, and browser provider entry-point group names remain compatible;
+their load attempts and failures appear in extension status together with core
+tool bootstrap and degraded hook status.
+
+`rollback` undoes the last install of that plugin, while `uninstall` removes it
+and disables its manifest ID in the active config. Use the same `--root` for
+install, health, rollback, and uninstall. The default is the first path in
+`OPENMINION_PLUGIN_PATHS`, or the current local-extension root.
 
 ## Dashboard replacements
 

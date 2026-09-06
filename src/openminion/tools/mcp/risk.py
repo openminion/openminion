@@ -26,13 +26,13 @@ def resolve_mcp_tool_posture(
     dangerous = False
     idempotent = False
 
-    if _annotation_bool(annotations, "readOnlyHint"):
+    if server.trusted and _annotation_bool(annotations, "readOnlyHint"):
         min_scope = "READ_ONLY"
         dangerous = False
         idempotent = True
 
     idempotent_hint = _optional_annotation_bool(annotations, "idempotentHint")
-    if idempotent_hint is not None:
+    if server.trusted and idempotent_hint is not None:
         idempotent = idempotent_hint
 
     if _annotation_bool(annotations, "openWorldHint") and min_scope == "READ_ONLY":

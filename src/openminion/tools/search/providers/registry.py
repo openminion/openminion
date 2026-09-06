@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import builtins
 import logging
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from openminion.tools.config import resolve_provider_register_hook as _resolve_hook
 
@@ -75,6 +76,7 @@ class SearchProviderRegistry:
         self._providers: dict[str, SearchProvider] = {}
         self._provider_order: list[str] = []
         self._loaded_entry_points: set[str] = set()
+        self._entry_point_statuses: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -84,8 +86,11 @@ class SearchProviderRegistry:
         provider_id = self._normalize(getattr(provider, "provider_id", ""))
         if not provider_id:
             raise ValueError("search provider must define provider_id")
-        if provider_id in self._providers:
+        existing = self._providers.get(provider_id)
+        if existing is provider:
             return
+        if existing is not None:
+            raise ValueError(f"search provider already registered: {provider_id}")
         self._providers[provider_id] = provider
         self._provider_order.append(provider_id)
 
@@ -95,25 +100,41 @@ class SearchProviderRegistry:
             raise KeyError(provider_id)
         return self._providers[key]
 
-    def list(self) -> list[SearchProvider]:
+    def list(self) -> builtins.list[SearchProvider]:
         return [self._providers[pid] for pid in self._provider_order]
 
-    def list_provider_ids(self) -> list[str]:
+    def list_provider_ids(self) -> builtins.list[str]:
         return list(self._provider_order)
+
+    def entry_point_statuses(self) -> builtins.list[dict[str, Any]]:
+        return [
+            dict(self._entry_point_statuses[key])
+            for key in sorted(self._entry_point_statuses)
+        ]
 
     def load_entry_points(
         self, *, group: str = "openminion.tool.search.providers"
-    ) -> list[str]:
+    ) -> builtins.list[str]:
         """Discover and load external search providers."""
 
-        loaded: list[str] = []
+        loaded: builtins.list[str] = []
         for ep in _provider_entry_points(group):
             cache_key = f"{group}:{ep.name}:{ep.value}"
             if cache_key in self._loaded_entry_points:
                 continue
+            self._loaded_entry_points.add(cache_key)
+            status = {
+                "name": ep.name,
+                "module": ep.value,
+                "group": group,
+                "loaded": False,
+                "error": None,
+            }
             try:
                 target = ep.load()
             except ModuleNotFoundError as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                self._entry_point_statuses[cache_key] = status
                 _LOG.warning(
                     "skipping search provider entry point name=%s target=%s reason=%s",
                     ep.name,
@@ -121,28 +142,35 @@ class SearchProviderRegistry:
                     exc,
                 )
                 continue
+            except Exception as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                self._entry_point_statuses[cache_key] = status
+                raise
 
-            hook = _resolve_hook(target, hook_name="register_search_provider")
-            if hook is not None:
-                hook(self)
-            else:
-                candidate = (
-                    target
-                    if _is_provider(target)
-                    else getattr(target, "provider", None)
-                )
-                if not _is_provider(candidate):
-                    raise TypeError(
-                        f"search provider entry point '{ep.name}' must expose provider "
-                        "object or register_search_provider(registry)"
+            try:
+                hook = _resolve_hook(target, hook_name="register_search_provider")
+                if hook is not None:
+                    hook(self)
+                else:
+                    candidate = (
+                        target
+                        if _is_provider(target)
+                        else getattr(target, "provider", None)
                     )
-                try:
-                    self.register(candidate)
-                except ValueError:
-                    pass
+                    if not _is_provider(candidate):
+                        raise TypeError(
+                            f"search provider entry point '{ep.name}' must expose "
+                            "provider object or register_search_provider(registry)"
+                        )
+                    self.register(cast(SearchProvider, candidate))
+            except Exception as exc:
+                status["error"] = f"{type(exc).__name__}: {exc}"
+                self._entry_point_statuses[cache_key] = status
+                raise
 
-            self._loaded_entry_points.add(cache_key)
             loaded.append(ep.name)
+            status["loaded"] = True
+            self._entry_point_statuses[cache_key] = status
         return loaded
 
 
@@ -156,15 +184,9 @@ def provider_registry() -> SearchProviderRegistry:
 
 
 def register_provider(provider: SearchProvider) -> None:
-    """Convenience: register a provider into the shared registry.
+    """Register a provider in the shared registry."""
 
-    Idempotent — duplicate ``provider_id`` is a no-op (matches fetch/browser).
-    """
-
-    try:
-        _REGISTRY.register(provider)
-    except ValueError:
-        return
+    _REGISTRY.register(provider)
 
 
 __all__ = [

@@ -55,6 +55,7 @@ def _server(
     *,
     tool_risk_overrides: list[MCPToolRiskOverrideConfig] | None = None,
     approval: MCPApprovalConfig | None = None,
+    trusted: bool = False,
 ) -> MCPServerConfig:
     return MCPServerConfig(
         name="Fixture",
@@ -62,6 +63,7 @@ def _server(
         command=["python", "-m", "fixture"],
         tool_risk_overrides=tool_risk_overrides or [],
         approval=approval or MCPApprovalConfig(),
+        trusted=trusted,
     )
 
 
@@ -85,7 +87,7 @@ def test_mcp_unknown_remote_tool_defaults_to_conservative_write_safe() -> None:
 
 def test_mcp_read_only_and_idempotent_annotations_flow_to_tool_spec() -> None:
     posture = _resolve_mcp_tool_posture(
-        server=_server(),
+        server=_server(trusted=True),
         remote_name="read-status",
         annotations={"readOnlyHint": True, "idempotentHint": True},
     )
@@ -101,7 +103,7 @@ def test_mcp_read_only_and_idempotent_annotations_flow_to_tool_spec() -> None:
 
 def test_mcp_open_world_hint_prevents_read_only_posture() -> None:
     posture = _resolve_mcp_tool_posture(
-        server=_server(),
+        server=_server(trusted=True),
         remote_name="search-web",
         annotations={"readOnlyHint": True, "openWorldHint": True},
     )
@@ -129,6 +131,17 @@ def test_mcp_destructive_annotation_requires_power_user_policy_scope() -> None:
     policy = Policy(raw={"scope": "WRITE_SAFE"})
     with pytest.raises(ToolRuntimeError, match="requires scope 'POWER_USER'"):
         policy.ensure_scope_allowed("WRITE_SAFE", spec.min_scope, spec.name)
+
+
+def test_untrusted_read_only_hint_cannot_reduce_default_posture() -> None:
+    posture = _resolve_mcp_tool_posture(
+        server=_server(trusted=False),
+        remote_name="status",
+        annotations={"readOnlyHint": True, "idempotentHint": True},
+    )
+
+    assert posture.min_scope == "WRITE_SAFE"
+    assert posture.idempotent is False
 
 
 def test_mcp_operator_risk_override_matches_runtime_tool_name_pattern() -> None:

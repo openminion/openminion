@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +17,7 @@ from openminion.tools.mcp.server import (
     handle_published_mcp_request,
     invoke_published_tool,
     render_tools_list_payload,
+    serve_published_stdio,
 )
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 
@@ -122,7 +126,7 @@ def test_invoke_unknown_tool_raises_mcp_server_error() -> None:
         invoke_published_tool(tools, name="nope", arguments={})
 
 
-def test_invoke_handler_exception_wrapped_in_mcp_server_error() -> None:
+def test_invoke_handler_exception_returns_mcp_tool_error_result() -> None:
     def raiser(_args):
         raise RuntimeError("boom")
 
@@ -132,8 +136,72 @@ def test_invoke_handler_exception_wrapped_in_mcp_server_error() -> None:
         input_schema={"type": "object", "additionalProperties": True},
         handler=raiser,
     )
-    with pytest.raises(MCPServerError, match="failed"):
-        invoke_published_tool([tool], name="boom", arguments={})
+    result = invoke_published_tool([tool], name="boom", arguments={})
+
+    assert result["isError"] is True
+    assert result["content"] == [{"type": "text", "text": "boom"}]
+
+
+def test_stdio_adapter_handles_initialize_list_and_call() -> None:
+    requests = "\n".join(
+        json.dumps(payload)
+        for payload in (
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "openminion.plan.show",
+                    "arguments": {"session_id": "s1"},
+                },
+            },
+        )
+    )
+    output = io.StringIO()
+
+    serve_published_stdio(
+        _contract_tools(),
+        input_stream=io.StringIO(requests),
+        output_stream=output,
+    )
+
+    responses = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [item["id"] for item in responses] == [1, 2, 3]
+    assert responses[2]["result"]["isError"] is False
+
+
+def test_stdio_adapter_runs_across_a_process_boundary() -> None:
+    program = """
+import sys
+from openminion.tools.mcp.server import PublishedTool, serve_published_stdio
+serve_published_stdio(
+    [PublishedTool(name='echo', description='echo', input_schema={'type': 'object'}, handler=lambda args: args)],
+    input_stream=sys.stdin,
+    output_stream=sys.stdout,
+)
+"""
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"text": "hello"}},
+        }
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", program],
+        input=request,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    response = json.loads(completed.stdout)
+    assert response["result"]["isError"] is False
+    assert '"text": "hello"' in response["result"]["content"][0]["text"]
 
 
 def test_invoke_returns_plain_text_for_string_result() -> None:

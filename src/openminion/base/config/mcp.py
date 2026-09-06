@@ -1,5 +1,6 @@
 """MCP config normalization and policy dataclasses."""
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -7,19 +8,22 @@ from urllib.parse import urlparse
 
 from openminion.base.config.base import ConfigError
 
-_MCP_SERVER_NAME_INVALID_CHARS_RE = re.compile(r"[^a-z0-9]+")
-_MCP_TOOL_SEGMENT_INVALID_CHARS_RE = re.compile(r"[^a-z0-9]+")
+_MCP_INVALID_CHARS_RE = re.compile(r"[^a-z0-9]+")
 _VALID_MCP_TOOL_SCOPES = frozenset(
     {"READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"}
 )
 _VALID_MCP_SAMPLING_MODES = frozenset({"disabled", "deny", "allow"})
 _VALID_MCP_APPROVAL_MODES = frozenset({"never", "always", "dangerous", "matching"})
-_VALID_MCP_PUBLISH_TRANSPORTS = frozenset({"stdio", "streamable_http"})
+_MCP_NUMERIC_LIMITS = {
+    "startup_timeout_seconds": (1.0, 120.0, False),
+    "request_timeout_seconds": (1.0, 300.0, False),
+    "stderr_buffer_bytes": (1024.0, 1048576.0, True),
+}
 
 
 def normalize_mcp_server_name(value: object) -> str:
     raw = str(value or "").strip().lower()
-    normalized = _MCP_SERVER_NAME_INVALID_CHARS_RE.sub("_", raw)
+    normalized = _MCP_INVALID_CHARS_RE.sub("_", raw)
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     if not normalized:
         raise ConfigError(
@@ -34,7 +38,7 @@ def normalize_mcp_server_name(value: object) -> str:
 
 def normalize_mcp_tool_segment(value: object) -> str:
     raw = str(value or "").strip().lower()
-    normalized = _MCP_TOOL_SEGMENT_INVALID_CHARS_RE.sub("_", raw)
+    normalized = _MCP_INVALID_CHARS_RE.sub("_", raw)
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     if not normalized:
         raise ConfigError("MCP tool name must contain at least one letter or digit.")
@@ -120,13 +124,6 @@ def _normalize_pattern_list(value: object, *, field_path: str) -> list[str]:
             raise ConfigError(f"{field_path}[{index}] must be a non-empty string.")
         normalized.append(token)
     return normalized
-
-
-def _normalize_server_list(value: object, *, field_path: str) -> list[str]:
-    return [
-        normalize_mcp_server_name(item)
-        for item in _normalize_pattern_list(value, field_path=field_path)
-    ]
 
 
 @dataclass
@@ -343,6 +340,7 @@ class MCPStdioSandboxConfig:
     require_trust: bool = False
     cwd_allowlist: list[str] = field(default_factory=list)
     env_allowlist: list[str] = field(default_factory=list)
+    inherit_env_allowlist: list[str] = field(default_factory=list)
     package_name: str = ""
     package_version: str = ""
     trust_reason: str = ""
@@ -351,6 +349,7 @@ class MCPStdioSandboxConfig:
         self.require_trust = bool(self.require_trust)
         self.cwd_allowlist = _normalize_string_list(self.cwd_allowlist)
         self.env_allowlist = _normalize_string_list(self.env_allowlist)
+        self.inherit_env_allowlist = _normalize_string_list(self.inherit_env_allowlist)
         self.package_name = str(self.package_name or "").strip()
         self.package_version = str(self.package_version or "").strip()
         self.trust_reason = str(self.trust_reason or "").strip()
@@ -366,6 +365,7 @@ def _coerce_mcp_stdio_sandbox_config(value: object) -> MCPStdioSandboxConfig:
             require_trust=value.get("require_trust", False),
             cwd_allowlist=list(value.get("cwd_allowlist", []) or []),
             env_allowlist=list(value.get("env_allowlist", []) or []),
+            inherit_env_allowlist=list(value.get("inherit_env_allowlist", []) or []),
             package_name=value.get("package_name", ""),
             package_version=value.get("package_version", ""),
             trust_reason=value.get("trust_reason", ""),
@@ -453,14 +453,18 @@ class MCPExposureConfig:
     exclude_tools: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        self.include_servers = _normalize_server_list(
-            self.include_servers,
-            field_path="agents.<id>.mcp_exposure.include_servers",
+        include_servers = _normalize_pattern_list(
+            self.include_servers, field_path="agents.<id>.mcp_exposure.include_servers"
         )
-        self.exclude_servers = _normalize_server_list(
-            self.exclude_servers,
-            field_path="agents.<id>.mcp_exposure.exclude_servers",
+        exclude_servers = _normalize_pattern_list(
+            self.exclude_servers, field_path="agents.<id>.mcp_exposure.exclude_servers"
         )
+        self.include_servers = [
+            normalize_mcp_server_name(item) for item in include_servers
+        ]
+        self.exclude_servers = [
+            normalize_mcp_server_name(item) for item in exclude_servers
+        ]
         self.include_tools = _normalize_pattern_list(
             self.include_tools,
             field_path="agents.<id>.mcp_exposure.include_tools",
@@ -522,10 +526,8 @@ class MCPPublishConfig:
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)
         transport = str(self.transport or "stdio").strip().lower() or "stdio"
-        if transport not in _VALID_MCP_PUBLISH_TRANSPORTS:
-            raise ConfigError(
-                "runtime.mcp_publish.transport must be 'stdio' or 'streamable_http'."
-            )
+        if transport != "stdio":
+            raise ConfigError("runtime.mcp_publish.transport only supports 'stdio'.")
         self.transport = transport
         self.include_tools = _normalize_pattern_list(
             self.include_tools,
@@ -570,6 +572,7 @@ def mcp_publish_config_to_dict(config: MCPPublishConfig | None) -> dict[str, Any
 @dataclass
 class MCPServerConfig:
     name: str = ""
+    enabled: bool = True
     transport: str = "stdio"
     command: list[str] = field(default_factory=list)
     url: str = ""
@@ -592,6 +595,8 @@ class MCPServerConfig:
 
     def __post_init__(self) -> None:
         self.name = normalize_mcp_server_name(self.name)
+        if not isinstance(self.enabled, bool):
+            raise ConfigError("runtime.mcp_servers[].enabled must be a boolean.")
         self.transport = normalize_mcp_transport(self.transport)
         self.url = _normalize_mcp_url(self.url)
         self.authorization = _coerce_mcp_authorization_config(self.authorization)
@@ -621,25 +626,33 @@ class MCPServerConfig:
         self.package_metadata = _coerce_mcp_package_metadata_config(
             self.package_metadata
         )
-        try:
-            self.startup_timeout_seconds = float(self.startup_timeout_seconds)
-        except (TypeError, ValueError):
-            self.startup_timeout_seconds = 15.0
-        try:
-            self.request_timeout_seconds = float(self.request_timeout_seconds)
-        except (TypeError, ValueError):
-            self.request_timeout_seconds = 30.0
-        try:
-            self.stderr_buffer_bytes = int(self.stderr_buffer_bytes)
-        except (TypeError, ValueError):
-            self.stderr_buffer_bytes = 65536
-        self.startup_timeout_seconds = max(
-            1.0, min(120.0, self.startup_timeout_seconds)
+        self.startup_timeout_seconds = _bounded_number(
+            self.startup_timeout_seconds, "startup_timeout_seconds"
         )
-        self.request_timeout_seconds = max(
-            1.0, min(300.0, self.request_timeout_seconds)
+        self.request_timeout_seconds = _bounded_number(
+            self.request_timeout_seconds, "request_timeout_seconds"
         )
-        self.stderr_buffer_bytes = max(1024, min(1048576, self.stderr_buffer_bytes))
+        self.stderr_buffer_bytes = int(
+            _bounded_number(self.stderr_buffer_bytes, "stderr_buffer_bytes")
+        )
+
+
+def _bounded_number(value: object, field: str) -> float:
+    field_path = f"runtime.mcp_servers[].{field}"
+    minimum, maximum, integer = _MCP_NUMERIC_LIMITS[field]
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ConfigError(f"{field_path} must be numeric.")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_path} must be numeric.") from exc
+    if not math.isfinite(parsed):
+        raise ConfigError(f"{field_path} must be finite.")
+    if integer and not parsed.is_integer():
+        raise ConfigError(f"{field_path} must be an integer.")
+    if parsed < minimum or parsed > maximum:
+        raise ConfigError(f"{field_path} must be between {minimum:g} and {maximum:g}.")
+    return parsed
 
 
 def coerce_mcp_server_configs(value: object) -> list[MCPServerConfig]:
@@ -656,6 +669,7 @@ def coerce_mcp_server_configs(value: object) -> list[MCPServerConfig]:
         elif isinstance(item, Mapping):
             server = MCPServerConfig(
                 name=item.get("name", ""),
+                enabled=item.get("enabled", True),
                 transport=item.get("transport", "stdio"),
                 command=list(item.get("command", []) or []),
                 url=item.get("url", ""),
@@ -690,25 +704,3 @@ def coerce_mcp_server_configs(value: object) -> list[MCPServerConfig]:
         seen_names.add(server.name)
         servers.append(server)
     return servers
-
-
-__all__ = [
-    "MCPAuthorizationConfig",
-    "MCPApprovalConfig",
-    "MCPExposureConfig",
-    "MCPPackageMetadataConfig",
-    "MCPPublishConfig",
-    "MCPServerConfig",
-    "MCPStdioSandboxConfig",
-    "MCPToolRiskOverrideConfig",
-    "coerce_mcp_exposure_config",
-    "coerce_mcp_publish_config",
-    "coerce_mcp_server_configs",
-    "mcp_publish_config_to_dict",
-    "mcp_exposure_config_to_dict",
-    "normalize_mcp_server_name",
-    "normalize_mcp_sampling_mode",
-    "normalize_mcp_tool_segment",
-    "normalize_mcp_transport",
-    "resolve_mcp_server_env",
-]

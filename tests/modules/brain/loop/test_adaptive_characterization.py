@@ -569,6 +569,20 @@ def test_profile_overrides_and_metadata_paths() -> None:
         "target_id": "host:local",
         "task_id": "job-1",
     }
+    empty_watch = _watch_profile_overrides(
+        _ctx(
+            state=_state(
+                module_state={
+                    WATCH_MODULE_STATE_KEY: {
+                        "enabled": True,
+                        "turn_kind": "check",
+                        "allowed_tools": [],
+                    }
+                }
+            )
+        )
+    )
+    assert empty_watch["allowed_tools"] == frozenset()
     watch_action = _watch_profile_overrides(
         _ctx(
             state=_state(

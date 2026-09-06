@@ -82,7 +82,8 @@ class GatewayTurnAgentExecutionMixin:
         session_turn_fence_token: int | None,
     ) -> Any:
         session_id = routing.session.id
-        normalized_inbound_metadata = routing.normalized_inbound_metadata
+        normalized_inbound_metadata = dict(routing.normalized_inbound_metadata)
+        normalized_inbound_metadata.pop("openminion_ephemeral_workspace_roots", None)
         authenticity_decision = self._security.evaluate_inbound_authenticity(
             channel=channel,
             target=target,

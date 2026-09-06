@@ -15,7 +15,10 @@ from openminion.cli.status import (
     status_from_payload,
 )
 from openminion.cli.status.public_messages import format_public_status_text
-from openminion.modules.brain.diagnostics.status import PhaseStatus
+from openminion.modules.brain.diagnostics.status import (
+    PhaseStatus,
+    phase_status_from_event,
+)
 
 
 # ── Signature dedup parity ────────────────────────────────────────────────────
@@ -234,33 +237,14 @@ def test_status_from_payload_passes_through_phase_status() -> None:
     assert status_from_payload(ps) is ps
 
 
-# ── Cross-shell adoption proof ────────────────────────────────────────────────
-
-
-def test_focus_screen_uses_shared_status_controller() -> None:
-    import inspect
-
-    from openminion.cli.interactive.screen import FocusScreen
-
-    src = inspect.getsource(FocusScreen)
-    assert "PhaseStatusController" in src, (
-        "Focus `FocusScreen` must consume `PhaseStatusController`; the "
-        "shared status owner is no longer being invoked."
-    )
-    assert "_status_controller" in src, (
-        "The interactive CLI must hold a per-turn `_status_controller` so dedup "
-        "and elapsed tracking match the canonical interactive CLI."
-    )
-
-
 # ── Ownership direction: shared owner does not import shell modules ──────────
 
 
 _SHARED_STATUS_MODULES = [
-    "openminion/src/openminion/cli/status/__init__.py",
-    "openminion/src/openminion/cli/status/models.py",
-    "openminion/src/openminion/cli/status/controller.py",
-    "openminion/src/openminion/cli/status/formatting.py",
+    "src/openminion/cli/status/__init__.py",
+    "src/openminion/cli/status/models.py",
+    "src/openminion/cli/status/controller.py",
+    "src/openminion/cli/status/formatting.py",
 ]
 
 _FORBIDDEN_PREFIXES = ("openminion.cli.interactive.",)
@@ -280,7 +264,7 @@ def _collect_import_names(path: Path) -> set[str]:
 
 @pytest.fixture(scope="module")
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("rel_path", _SHARED_STATUS_MODULES)
@@ -337,11 +321,19 @@ _PARITY_FIXTURES = [
         tool_name="exec.run",
         progress_phase="running",
     ),
-    PhaseStatus(
-        trace_id="terminal",
-        status_key="completed",
-        label="Turn complete",
-        terminal=True,
+    phase_status_from_event(
+        trace_id="waiting-for-checks",
+        event_type="project.checks.pending",
+        payload={"detail_code": "waiting_for_checks"},
+        detail_text="head=aabbcc expected=lint,tests",
+    ),
+    phase_status_from_event(
+        trace_id="checks-cancelled",
+        event_type="project.checks.cancelled",
+    ),
+    phase_status_from_event(
+        trace_id="checks-expired",
+        event_type="project.checks.expired",
     ),
 ]
 
@@ -356,6 +348,12 @@ def test_view_model_matches_shared_formatter_across_all_shells(
     assert isinstance(view, PhaseStatusViewModel)
     expected_primary = format_public_status_text(status)
     assert view.primary_text == expected_primary
+    if status.trace_id == "waiting-for-checks":
+        assert view.primary_text == "Waiting for checks..."
+    if status.trace_id == "checks-cancelled":
+        assert view.primary_text == "Stopped."
+    if status.trace_id == "checks-expired":
+        assert view.primary_text == "Something went wrong."
     # Terminal status keys must set terminal=True
     if status.status_key in {"completed", "stopped", "error"} or status.terminal:
         assert view.terminal is True

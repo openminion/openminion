@@ -70,11 +70,60 @@ def _admit_skill(*, skill_id: str, version_hash: str, config: Path) -> None:
             expected_active_version_hash="none",
             target_status="verified",
             reason="test fixture admission",
+            verification_check=None,
+            verification_result=None,
+            verification_evidence_ref=None,
             config=str(config),
         ),
     )
     assert code == 0
     assert payload["ok"] is True
+
+
+def test_skill_cli_admit_records_operator_verification_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    config_path = _write_skill_config(tmp_path)
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text(
+        "---\nname: evidence-skill\ndescription: Evidence test.\n---\n"
+        "\n# Procedure\nInspect the bundle.\n",
+        encoding="utf-8",
+    )
+    code, ingested = _run(
+        _run_skill_ingest,
+        Namespace(
+            file=str(skill_path),
+            name=None,
+            scope="global",
+            agent_id=None,
+            config=str(config_path),
+        ),
+    )
+    assert code == 0
+
+    code, admitted = _run(
+        _run_skill_admission,
+        Namespace(
+            skill_action="admit",
+            skill_id=ingested["skill_id"],
+            version_hash=ingested["version_hash"],
+            expected_active_version_hash="none",
+            target_status="verified",
+            reason="manual review",
+            verification_check="bundle review",
+            verification_result="passed",
+            verification_evidence_ref="review://evidence-skill/v1",
+            config=str(config_path),
+        ),
+    )
+
+    assert code == 0
+    assert admitted["verification_check"] == "bundle review"
+    assert admitted["verification_result"] == "passed"
+    assert admitted["verification_evidence_ref"] == "review://evidence-skill/v1"
+    assert admitted["verification_reviewer_id"]
 
 
 def test_skill_cli_ingest_list_show_remove(tmp_path: Path, monkeypatch) -> None:

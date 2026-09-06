@@ -432,10 +432,6 @@ def _parse_ranking(value: Any, *, retrieval: RetrievalConfig) -> RankingConfig:
             data.get("semantic_bm25_weight", 0.5),
             "ranking.semantic_bm25_weight",
         ),
-        mmr_enabled=bool(data.get("mmr_enabled", True)),
-        mmr_lambda=_coerce_confidence(
-            data.get("mmr_lambda", 0.6), "ranking.mmr_lambda"
-        ),
     )
 
 

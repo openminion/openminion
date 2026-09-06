@@ -566,9 +566,7 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
     assert result.status == "success"
     assert session_api.events[0]["event_type"] == "task_plan.revised"
     assert session_api.events[0]["payload"]["plan"]["steps"][0]["step_id"] == "entry"
-    assert session_api.events[0]["payload"]["revision"]["revision_id"] == (
-        "revision-1"
-    )
+    assert session_api.events[0]["payload"]["revision"]["revision_id"] == ("revision-1")
     assert result.outputs["task_plan.revision"]["revision_id"] == "revision-1"
     assert result.outputs["task_plan.revision"]["verifier_refs"] == ["verify:failed-1"]
 

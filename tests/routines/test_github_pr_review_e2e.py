@@ -22,7 +22,6 @@ from openminion.tools.github.providers import (
 from openminion.tools.task.constants import WATCH_PAYLOAD_KEY
 from openminion.tools.task.routine.dispatcher import (
     GitHubPrReviewHandler,
-    PostTurnSink,
     PreTurnContext,
     build_default_dispatcher,
 )
@@ -85,20 +84,6 @@ class _RuntimeBackedPreTurnContext(PreTurnContext):
         return spec.handler(dict(args), ctx=None)
 
 
-class _RecordingSink(PostTurnSink):
-    def __init__(self) -> None:
-        self.artifacts: list[tuple[str, str]] = []
-        self.announces: list[tuple[str, str]] = []
-
-    def write_artifact(self, *, routine_id: str, body: str) -> str:
-        artifact_id = f"artifact://{routine_id}/{len(self.artifacts)}"
-        self.artifacts.append((artifact_id, body))
-        return artifact_id
-
-    def announce(self, *, routine_id: str, summary: str) -> None:
-        self.announces.append((routine_id, summary))
-
-
 @pytest.fixture
 def registry() -> ToolRegistry:
     reg = ToolRegistry()
@@ -130,9 +115,9 @@ def test_brpr_08_four_tick_deterministic_e2e(
     registry: ToolRegistry, fake_provider: _FakeGithubProvider
 ) -> None:
     handler = GitHubPrReviewHandler()
-    sink = _RecordingSink()
     ctx = _RuntimeBackedPreTurnContext(registry)
     routine = _initial_routine()
+    artifacts: list[str] = []
 
     fake_provider.set_prs(
         [
@@ -176,13 +161,11 @@ def test_brpr_08_four_tick_deterministic_e2e(
                 }
             ]
         ),
-        sink=sink,
     )
     assert out_1.ok is True
-    assert out_1.kept_count == 1
-    assert out_1.new_findings_count == 1
-    assert len(sink.artifacts) == 1
-    assert len(sink.announces) == 1
+    assert out_1.metadata["kept_count"] == 1
+    assert out_1.metadata["new_findings_count"] == 1
+    artifacts.append(out_1.artifact_body)
     routine = out_1.updated_routine
     assert routine.cursor.last_review_per_pr["42"].head_sha == "sha-v1"
     assert 42 in routine.cursor.seen_pr_numbers
@@ -195,12 +178,10 @@ def test_brpr_08_four_tick_deterministic_e2e(
         routine_id="job-1",
         facts=facts_2,
         outcome_text=_outcome_text([]),  # model emits empty list correctly
-        sink=sink,
     )
     assert out_2.ok is True
-    assert out_2.new_findings_count == 0
-    assert len(sink.artifacts) == 1
-    assert len(sink.announces) == 1
+    assert out_2.metadata["new_findings_count"] == 0
+    assert out_2.artifact_body is None
     routine = out_2.updated_routine
     assert routine.cursor.last_check_iso == facts_2.checked_at
     assert routine.cursor.last_review_per_pr["42"].head_sha == "sha-v1"
@@ -236,12 +217,11 @@ def test_brpr_08_four_tick_deterministic_e2e(
                 }
             ]
         ),
-        sink=sink,
     )
     assert out_3.ok is True
-    assert out_3.kept_count == 1
-    assert len(sink.artifacts) == 2
-    assert len(sink.announces) == 2
+    assert out_3.metadata["kept_count"] == 1
+    artifacts.append(out_3.artifact_body)
+    assert len(artifacts) == 2
     routine = out_3.updated_routine
     assert routine.cursor.last_review_per_pr["42"].head_sha == "sha-v2"
 
@@ -260,11 +240,9 @@ def test_brpr_08_four_tick_deterministic_e2e(
         routine_id="job-1",
         facts=facts_4,
         outcome_text="model returned only prose, no <routine_outcome> here",
-        sink=sink,
     )
     assert out_4.ok is False
     assert out_4.reason_code == "trailer_missing"
-    assert len(sink.artifacts) == 2
     routine = out_4.updated_routine
     assert routine.cursor.consecutive_failures == 1
 
@@ -273,7 +251,6 @@ def test_brpr_08_pre_turn_calls_through_tool_runtime_only(
     registry: ToolRegistry, fake_provider: _FakeGithubProvider
 ) -> None:
     handler = GitHubPrReviewHandler()
-    sink = _RecordingSink()
     ctx = _RuntimeBackedPreTurnContext(registry)
     routine = _initial_routine()
     fake_provider.set_prs([{"number": 1, "head_sha": "a"}])
@@ -293,7 +270,6 @@ def test_brpr_08_pre_turn_calls_through_tool_runtime_only(
                 }
             ]
         ),
-        sink=sink,
     )
     assert out.ok is True
 

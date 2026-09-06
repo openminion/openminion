@@ -18,6 +18,7 @@ from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.cli.interactive.runtime.messages import room_result_chat_messages
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 from openminion.cli.presentation.models import MessageKind
+from openminion.modules.context.trace_inspection import ContextTraceLookupError
 from openminion.base.config.core import OpenMinionConfig
 from openminion.tools.mcp import MCPAuthorizationError, MCPProtocolError
 
@@ -321,7 +322,6 @@ class _FakeRuntime:
         *,
         overrides: object | None = None,
     ) -> _FakeGateway:
-        self.gateway_overrides.append(overrides)
         name = str(agent_id or "").strip() or "alpha"
         return self._gateways[name]
 
@@ -896,16 +896,28 @@ async def test_openminion_runtime_rearms_project_context_on_new_session() -> Non
     assert gateway.calls[1]["session_id"] == new_session_id
 
 
+def _mcp_status_manager(
+    *,
+    tools: tuple[str, ...] = ("echo-text",),
+    prompts: tuple[str, ...] = (),
+    failure: object | None = None,
+    metrics: dict[str, int] | None = None,
+) -> SimpleNamespace:
+    snapshot = {
+        "fixture": {
+            "tool_names": tools,
+            "prompt_names": prompts,
+            "resource_uris": (),
+            "resource_template_uris": (),
+            "failure": failure,
+            "recent_log": None,
+            "metrics": metrics or {},
+        }
+    }
+    return SimpleNamespace(server_status_snapshot=lambda: snapshot)
+
+
 def test_openminion_runtime_reports_mcp_status_from_existing_subsystem() -> None:
-    class _LiveSession:
-        def list_tools(self):
-            return [object()]
-
-        def list_prompts(self):
-            return [object()]
-
-        def list_resources(self):
-            return []
 
     rt = _FakeRuntime()
     rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
@@ -914,14 +926,12 @@ def test_openminion_runtime_reports_mcp_status_from_existing_subsystem() -> None
             "mcp.fixture.echo_text": SimpleNamespace(enabled=True),
             "mcp.fixture.prompt.greet_user": SimpleNamespace(enabled=True),
         },
-        mcp_manager=SimpleNamespace(
-            _sessions={"fixture": _LiveSession()},
-            mcp_server_metrics=lambda: {
-                "fixture": {
-                    "call_total": 2,
-                    "call_error_total": 1,
-                    "restart_total": 0,
-                }
+        mcp_manager=_mcp_status_manager(
+            prompts=("greet-user",),
+            metrics={
+                "call_total": 2,
+                "call_error_total": 1,
+                "restart_total": 0,
             },
         ),
     )
@@ -940,23 +950,15 @@ def test_openminion_runtime_reports_mcp_status_from_existing_subsystem() -> None
 def test_openminion_runtime_reports_mcp_errors_without_hiding_registered_tools() -> (
     None
 ):
-    class _BrokenSession:
-        def list_tools(self):
-            raise RuntimeError("server unavailable")
-
-        def list_prompts(self):
-            raise AssertionError("unreachable")
-
-        def list_resources(self):
-            raise AssertionError("unreachable")
-
     rt = _FakeRuntime()
     rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
     rt.tools = SimpleNamespace(
         list=lambda: {
             "mcp.fixture.echo_text": SimpleNamespace(enabled=True),
         },
-        mcp_manager=SimpleNamespace(_sessions={"fixture": _BrokenSession()}),
+        mcp_manager=_mcp_status_manager(
+            failure=SimpleNamespace(message="server unavailable")
+        ),
     )
     tui_rt = OpenMinionRuntime(rt)
 
@@ -964,7 +966,45 @@ def test_openminion_runtime_reports_mcp_errors_without_hiding_registered_tools()
 
     assert "[error]" in body
     assert "server unavailable" in body
-    assert "mcp.fixture.echo_text" in body
+    assert "echo-text" in body
+
+
+def test_openminion_runtime_keeps_tool_only_mcp_server_ready() -> None:
+    rt = _FakeRuntime()
+    rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
+    rt.tools = SimpleNamespace(
+        list=lambda: {"mcp.fixture.echo_text": SimpleNamespace(enabled=True)},
+        mcp_manager=_mcp_status_manager(),
+    )
+    tui_rt = OpenMinionRuntime(rt)
+
+    body = tui_rt.mcp_status_report()
+
+    assert "[ready]" in body
+    assert "tools=1" in body
+    assert "Method not found" not in body
+
+
+@pytest.mark.parametrize(
+    "failure_message",
+    ["malformed prompts payload", "authorization failed"],
+)
+def test_openminion_runtime_reports_optional_mcp_failures(
+    failure_message: str,
+) -> None:
+    rt = _FakeRuntime()
+    rt.config.runtime.mcp_servers = [SimpleNamespace(name="fixture", transport="stdio")]
+    rt.tools = SimpleNamespace(
+        list=lambda: {"mcp.fixture.echo_text": SimpleNamespace(enabled=True)},
+        mcp_manager=_mcp_status_manager(
+            failure=SimpleNamespace(message=failure_message)
+        ),
+    )
+
+    body = OpenMinionRuntime(rt).mcp_status_report()
+
+    assert "[error]" in body
+    assert failure_message in body
 
 
 def test_openminion_runtime_keeps_tool_only_mcp_server_ready() -> None:
@@ -1187,6 +1227,54 @@ def test_openminion_runtime_reports_latest_context_budget_and_compaction() -> No
     assert snapshot["selected_recent_count"] == 10
     assert snapshot["compacted_count"] == 3
     assert snapshot["compaction_reason"] == "token_pressure"
+
+
+def test_openminion_runtime_context_trace_payload_uses_session_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+    observed: dict[str, object] = {}
+
+    def _list_context_traces(sessions: object, *, session_id: str) -> dict[str, object]:
+        observed.update(sessions=sessions, session_id=session_id)
+        return {
+            "session_id": session_id,
+            "traces": [{"decision_trace": {}}],
+            "count": 1,
+        }
+
+    from openminion.cli.interactive.runtime import messages as runtime_messages
+
+    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+
+    payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
+
+    assert payload["count"] == 1
+    assert observed == {"sessions": rt.sessions, "session_id": tui_rt.session_id}
+
+
+def test_openminion_runtime_context_trace_payload_reports_lookup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+
+    def _list_context_traces(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise ContextTraceLookupError("trace unavailable", code="trace_unavailable")
+
+    from openminion.cli.interactive.runtime import messages as runtime_messages
+
+    monkeypatch.setattr(runtime_messages, "list_context_traces", _list_context_traces)
+
+    payload = tui_rt.context_trace_payload(session_id=tui_rt.session_id)
+
+    assert payload == {
+        "session_id": tui_rt.session_id,
+        "traces": [],
+        "count": 0,
+        "degraded": "trace_unavailable",
+    }
 
 
 def test_openminion_runtime_renders_durable_token_usage() -> None:

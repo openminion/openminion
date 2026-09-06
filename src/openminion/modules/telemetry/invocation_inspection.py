@@ -11,6 +11,38 @@ from openminion.modules.telemetry.storage.base import (
     TelemetryStore,
 )
 
+_STRUCTURAL_RESULT_FIELDS = (
+    "result_status",
+    "assessment_id",
+    "total_findings",
+    "returned_findings",
+    "check_count",
+    "finding_count",
+    "candidate_count",
+    "rejected_count",
+    "redaction_count",
+    "duration_ms",
+    "artifact_count",
+    "artifact_refs",
+)
+
+
+def _safe_structural_tool_result(item: dict[str, Any]) -> dict[str, Any] | None:
+    data = item.get("data")
+    if item.get("structural_only") is not True or not isinstance(data, dict):
+        return None
+    return {
+        "tool_name": str(item.get("tool_name") or ""),
+        "ok": bool(item.get("ok")),
+        "verified": bool(item.get("verified")),
+        "data": {
+            field: data[field] for field in _STRUCTURAL_RESULT_FIELDS if field in data
+        },
+        "error_code": str(item.get("error_code") or ""),
+        "call_id": str(item.get("call_id") or ""),
+        "source": str(item.get("source") or ""),
+    }
+
 
 def iter_event_rows(
     store: TelemetryStore,
@@ -68,6 +100,17 @@ def safe_event_row(event: TelemetryEvent) -> dict[str, Any]:
         "llm_call_id",
         "duration_ms",
         "provider_round_trip_ms",
+        "assessment_id",
+        "result_status",
+        "total_findings",
+        "returned_findings",
+        "check_count",
+        "finding_count",
+        "candidate_count",
+        "rejected_count",
+        "redaction_count",
+        "artifact_count",
+        "artifact_refs",
     ):
         value = data.get(field)
         if value is not None and value != "":
@@ -85,6 +128,16 @@ def safe_event_row(event: TelemetryEvent) -> dict[str, Any]:
     ):
         if value:
             row[field] = value
+    tool_results = data.get("tool_results")
+    if isinstance(tool_results, list):
+        structural_results = [
+            safe
+            for item in tool_results
+            if isinstance(item, dict)
+            and (safe := _safe_structural_tool_result(item)) is not None
+        ]
+        if structural_results:
+            row["tool_results"] = structural_results
     return row
 
 

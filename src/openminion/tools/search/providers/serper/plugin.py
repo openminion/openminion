@@ -1,6 +1,6 @@
 from openminion.tools.search import register_provider
 
-from .provider import SerperSearchProvider
+from .family import _PROVIDER
 
 _PROVIDER = SerperSearchProvider()
 

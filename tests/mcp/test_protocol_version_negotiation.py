@@ -132,7 +132,7 @@ def _runtime_config(url: str) -> RuntimeConfig:
 
 
 def test_negotiated_protocol_version_is_reused_in_followup_http_headers() -> None:
-    with _protocol_server("2025-04-01") as server:
+    with _protocol_server("2025-06-18") as server:
         manager = MCPFleetManager.from_runtime_config(
             _runtime_config(f"http://127.0.0.1:{server.server_port}/mcp")
         )
@@ -158,14 +158,15 @@ def test_negotiated_protocol_version_is_reused_in_followup_http_headers() -> Non
             call_headers = {
                 key.lower(): value for key, value in call_request["headers"].items()
             }
-            assert tools_headers["mcp-protocol-version"] == "2025-04-01"
-            assert call_headers["mcp-protocol-version"] == "2025-04-01"
+            assert tools_headers["mcp-protocol-version"] == "2025-06-18"
+            assert call_headers["mcp-protocol-version"] == "2025-06-18"
         finally:
             manager.close()
 
 
-def test_supported_older_protocol_version_succeeds() -> None:
-    with _protocol_server("2025-03-26") as server:
+@pytest.mark.parametrize("version", ["2025-11-25", "2025-03-26"])
+def test_supported_older_protocol_version_succeeds(version: str) -> None:
+    with _protocol_server(version) as server:
         manager = MCPFleetManager.from_runtime_config(
             _runtime_config(f"http://127.0.0.1:{server.server_port}/mcp")
         )
@@ -176,14 +177,15 @@ def test_supported_older_protocol_version_succeeds() -> None:
             manager.close()
 
 
-def test_below_floor_protocol_version_raises_typed_error() -> None:
-    with _protocol_server("2025-01-01") as server:
+@pytest.mark.parametrize("version", ["2025-04-01", "2099-01-01"])
+def test_unknown_protocol_version_raises_typed_error(version: str) -> None:
+    with _protocol_server(version) as server:
         manager = MCPFleetManager.from_runtime_config(
             _runtime_config(f"http://127.0.0.1:{server.server_port}/mcp")
         )
         try:
             with pytest.raises(MCPProtocolError) as excinfo:
                 manager.discover_tools()
-            assert excinfo.value.reason_code == "mcp_protocol_version_too_old"
+            assert excinfo.value.reason_code == "mcp_protocol_version_unsupported"
         finally:
             manager.close()

@@ -86,7 +86,7 @@ from openminion.services.runtime.memory import (
 
 
 def _map_action_policy_mode(mode: str) -> str:
-    return map_action_policy_mode(mode)
+    return cast(str, map_action_policy_mode(mode))
 
 
 def build_secret_service(
@@ -370,8 +370,9 @@ def enforce_plugin_activation_policy(
     )
     if trust_decision.decision != DECISION_ALLOW:
         raise PluginActivationError(
-            "plugin trust policy blocked activation "
-            f"(plugin={manifest.id}, decision={trust_decision.decision}, reason={trust_decision.reason_code})"
+            plugin_id=manifest.id,
+            stage="policy",
+            reason_code=trust_decision.reason_code,
         )
 
     decision = security_policy.evaluate(
@@ -393,8 +394,9 @@ def enforce_plugin_activation_policy(
     if decision.decision == DECISION_ALLOW:
         return
     raise PluginActivationError(
-        "security policy blocked plugin activation "
-        f"(plugin={manifest.id}, decision={decision.decision}, reason={decision.reason_code})"
+        plugin_id=manifest.id,
+        stage="policy",
+        reason_code=decision.reason_code,
     )
 
 
@@ -611,7 +613,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     config = service._config
     llm_config = service._get_manager_config("llm")
     llm_payload = llm_config if llm_config is not None else {}
-
     llm_api = bridge_module.create_llm_adapter(
         mode=service.mode,
         config=llm_payload,
@@ -641,7 +642,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         db_path=service.db_path,
         telemetryctl=service._telemetryctl,
     )
-
     default_agent_id, default_profile, a2a_api, a2a_delegate_api = (
         _build_a2a_runtime_apis(
             service=service,
@@ -698,7 +698,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
     retrieve_api = bridge_module.init_retrieve_adapter(
         mode=service.mode,
         home_root=service._context.home_paths.home_root,
-        vector_adapter=vector_adapter,
         config=service._get_manager_config("retrieve"),
         logger=service._logger,
         retrieve_service=service._retrieve_service,
@@ -729,6 +728,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         db_dir=db_dir,
         telemetryctl=service._telemetryctl,
     )
+    cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
+    task_manager = TaskManager.from_cron_repository(cron_repository)
     tool_api = bridge_module.create_tool_api(
         mode=service.mode,
         workspace_root=service._context.workspace_root,
@@ -742,6 +743,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
+        task_manager=task_manager,
+        telemetryctl=service._telemetryctl,
         artifactctl=artifactctl,
     )
     service._validate_adapter_contracts(
@@ -837,7 +840,6 @@ def build_brain_runner_bundle(service: Any) -> Any:
         logger=service._logger,
     )
 
-    cron_repository = create_sqlite_cron_repository(db_path=service.db_path)
     runner = bridge_module.BrainRunner(
         profile=profile,
         session_api=session_api,
@@ -853,14 +855,12 @@ def build_brain_runner_bundle(service: Any) -> Any:
         rlm_api=rlm_api,
         compress_api=compress_api,
         telemetryctl=service._telemetryctl,
-        task_manager=TaskManager.from_cron_repository(cron_repository),
+        task_manager=task_manager,
         cron_api=cron_repository,
         options=options,
         terminal_capture_writer=service._terminal_capture_writer,
     )
-    brain_runtime_db_path = resolve_brain_runtime_db_path(
-        storage_path=_Path(service.db_path)
-    )
+    brain_runtime_db_path = resolve_brain_runtime_db_path(storage_path=db_path)
     goal_store = SQLiteGoalStore(str(brain_runtime_db_path))
     mission_store = SQLiteMissionStateStore(str(brain_runtime_db_path))
     runner.goal_runtime = LongRunningGoalRuntime(

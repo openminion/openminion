@@ -14,6 +14,7 @@ _MIGRATIONS = (
     "0002_queue",
     "0003_audit",
     "0004_active_version_admission",
+    "0005_verification_evidence",
 )
 
 

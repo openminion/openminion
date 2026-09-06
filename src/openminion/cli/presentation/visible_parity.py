@@ -285,7 +285,11 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         resolve_task_surface_source,
     )
 
-    surface = build_task_surface(resolve_task_surface_source(runtime))
+    surface = build_task_surface(
+        resolve_task_surface_source(runtime),
+        agent_id=str(getattr(runtime, "agent_id", "") or "").strip(),
+        session_id=str(getattr(runtime, "session_id", "") or "").strip(),
+    )
     selected_id = str(task_id or "").strip()
     if selected_id:
         task = surface.show_task(selected_id)

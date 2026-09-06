@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.skill.storage.base import SkillStore
 from openminion.modules.storage.runtime.module_store import (
@@ -145,6 +145,10 @@ class _SkillStoreMixin(SkillStore):
         reviewer_id: str,
         reason: str,
         decided_at: str,
+        verification_check: str | None = None,
+        verification_result: str | None = None,
+        verification_evidence_ref: str | None = None,
+        verification_reviewer_id: str | None = None,
     ) -> bool:
         with self._record_store.transaction():
             versions = self._record_store.query_dicts(
@@ -185,12 +189,30 @@ class _SkillStoreMixin(SkillStore):
                 INSERT INTO skill_version_admissions(
                     skill_id, version_hash, state, target_status,
                     content_fingerprint, authority_class, reviewer_id,
-                    reason, created_at, decided_at
-                ) VALUES (?, ?, 'admitted', ?, ?, ?, ?, ?, ?, ?)
+                    reason, verification_check, verification_result,
+                    verification_evidence_ref, verification_reviewer_id,
+                    created_at, decided_at
+                ) VALUES (?, ?, 'admitted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(skill_id, version_hash) DO UPDATE SET
                     state='admitted', target_status=excluded.target_status,
                     authority_class=excluded.authority_class,
                     reviewer_id=excluded.reviewer_id, reason=excluded.reason,
+                    verification_check=COALESCE(
+                        excluded.verification_check,
+                        skill_version_admissions.verification_check
+                    ),
+                    verification_result=COALESCE(
+                        excluded.verification_result,
+                        skill_version_admissions.verification_result
+                    ),
+                    verification_evidence_ref=COALESCE(
+                        excluded.verification_evidence_ref,
+                        skill_version_admissions.verification_evidence_ref
+                    ),
+                    verification_reviewer_id=COALESCE(
+                        excluded.verification_reviewer_id,
+                        skill_version_admissions.verification_reviewer_id
+                    ),
                     decided_at=excluded.decided_at
                 """,
                 (
@@ -201,6 +223,10 @@ class _SkillStoreMixin(SkillStore):
                     authority_class,
                     reviewer_id,
                     reason,
+                    verification_check,
+                    verification_result,
+                    verification_evidence_ref,
+                    verification_reviewer_id,
                     decided_at,
                     decided_at,
                 ),
@@ -276,7 +302,7 @@ class _SkillStoreMixin(SkillStore):
             )
         if not rows:
             return None
-        package = _json_loads(str(rows[0]["package_json"]), {})
+        package = cast(dict[str, Any], _json_loads(str(rows[0]["package_json"]), {}))
         target_status = rows[0].get("target_status")
         if not version_hash and target_status:
             package["status"] = str(target_status)

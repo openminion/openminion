@@ -1,0 +1,1250 @@
+{
+  "_meta": {
+    "generator": "tests/memory/test_kce_public_surface_snapshot.py (KCE-00)",
+    "schema_version": "1"
+  },
+  "audit": {
+    "MemoryAuditEvent": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "event_type"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "target_kind"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "target_id"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "scope"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "record_type"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "record_key"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "session_id"
+        },
+        {
+          "annotation": "dict[str, Any]",
+          "default_kind": "factory",
+          "name": "details"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "factory",
+          "name": "event_id"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "factory",
+          "name": "timestamp"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "TrustGateEvent": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "candidate_id"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "required",
+          "name": "claim_key"
+        },
+        {
+          "annotation": "float",
+          "default_kind": "required",
+          "name": "trust_score"
+        },
+        {
+          "annotation": "dict[str, float]",
+          "default_kind": "required",
+          "name": "sub_signals"
+        },
+        {
+          "annotation": "TrustGateDecision",
+          "default_kind": "required",
+          "name": "decision"
+        },
+        {
+          "annotation": "TrustGateReasonCode",
+          "default_kind": "required",
+          "name": "reason_code"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "scope"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "record_type"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "session_id"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "retry_after_ms"
+        }
+      ],
+      "kind": "dataclass"
+    }
+  },
+  "enums": {
+    "RecordOrder": {
+      "kind": "enum",
+      "values": [
+        "updated_at_desc",
+        "updated_at_asc"
+      ]
+    }
+  },
+  "literals": {
+    "CandidateStatus": {
+      "kind": "literal",
+      "name": "CandidateStatus",
+      "values": [
+        "proposed",
+        "approved",
+        "rejected",
+        "promoted"
+      ]
+    },
+    "ClaimKeyPolarity": {
+      "kind": "literal",
+      "name": "ClaimKeyPolarity",
+      "values": [
+        "asserts",
+        "negates"
+      ]
+    },
+    "MemoryRelationType": {
+      "kind": "literal",
+      "name": "MemoryRelationType",
+      "values": [
+        "related_to",
+        "depends_on",
+        "supports",
+        "corrects"
+      ]
+    },
+    "MemorySource": {
+      "kind": "literal",
+      "name": "MemorySource",
+      "values": [
+        "user_said",
+        "tool_output",
+        "agent_inferred",
+        "validated",
+        "imported"
+      ]
+    },
+    "MemorySourceClass": {
+      "kind": "literal",
+      "name": "MemorySourceClass",
+      "values": [
+        "user_input",
+        "tool_result",
+        "llm_extracted",
+        "agent_inferred",
+        "imported_bundle"
+      ]
+    },
+    "MemoryTier": {
+      "kind": "literal",
+      "name": "MemoryTier",
+      "values": [
+        "working",
+        "archival"
+      ]
+    },
+    "MemoryTierTransitionReason": {
+      "kind": "literal",
+      "name": "MemoryTierTransitionReason",
+      "values": [
+        "age_threshold",
+        "reaccess_threshold",
+        "manual_override"
+      ]
+    },
+    "MemoryType": {
+      "kind": "literal",
+      "name": "MemoryType",
+      "values": [
+        "pin",
+        "decision",
+        "task",
+        "fact",
+        "procedure",
+        "artifact_digest",
+        "plan_snapshot",
+        "summary",
+        "session_summary",
+        "meta_insight",
+        "user_preference",
+        "project_convention",
+        "correction",
+        "tool_habit",
+        "tool_outcome",
+        "strategy_outcome",
+        "post_completion_critique",
+        "meta_rule_preference",
+        "consolidated_knowledge",
+        "declared_goal",
+        "goal_revision"
+      ]
+    },
+    "RecordVisibility": {
+      "kind": "literal",
+      "name": "RecordVisibility",
+      "values": [
+        "private",
+        "shared"
+      ]
+    },
+    "ScopeKind": {
+      "kind": "literal",
+      "name": "ScopeKind",
+      "values": [
+        "session",
+        "agent",
+        "project",
+        "global"
+      ]
+    },
+    "SessionSummaryOutcome": {
+      "kind": "literal",
+      "name": "SessionSummaryOutcome",
+      "values": [
+        "succeeded",
+        "blocked",
+        "no_prior_context",
+        "abandoned",
+        "unknown"
+      ]
+    },
+    "SessionSummaryThreadStatus": {
+      "kind": "literal",
+      "name": "SessionSummaryThreadStatus",
+      "values": [
+        "open",
+        "paused",
+        "done"
+      ]
+    },
+    "TrustGateDecision": {
+      "kind": "literal",
+      "name": "TrustGateDecision",
+      "values": [
+        "ALLOWED",
+        "BLOCKED"
+      ]
+    },
+    "TrustGateReasonCode": {
+      "kind": "literal",
+      "name": "TrustGateReasonCode",
+      "values": [
+        "ALLOWED",
+        "MISSING_CLAIM_KEY",
+        "BELOW_TRUST_THRESHOLD",
+        "RATE_LIMITED"
+      ]
+    }
+  },
+  "models": {
+    "ArtifactRef": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "ref"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "mime"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "sha256"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "required",
+          "name": "size_bytes"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "label"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "CandidateReview": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "reviewer"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "decided_at"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "note"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryCandidate": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "candidate_id"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "session_id"
+        },
+        {
+          "annotation": "Scope",
+          "default_kind": "required",
+          "name": "proposed_scope"
+        },
+        {
+          "annotation": "MemoryType",
+          "default_kind": "required",
+          "name": "type"
+        },
+        {
+          "annotation": "dict[str, Any] | str",
+          "default_kind": "required",
+          "name": "content"
+        },
+        {
+          "annotation": "list[str]",
+          "default_kind": "factory",
+          "name": "tags"
+        },
+        {
+          "annotation": "list[str]",
+          "default_kind": "factory",
+          "name": "entities"
+        },
+        {
+          "annotation": "MemorySource",
+          "default_kind": "value",
+          "name": "source"
+        },
+        {
+          "annotation": "float",
+          "default_kind": "value",
+          "name": "confidence"
+        },
+        {
+          "annotation": "list[ArtifactRef]",
+          "default_kind": "factory",
+          "name": "evidence_refs"
+        },
+        {
+          "annotation": "CandidateStatus",
+          "default_kind": "value",
+          "name": "status"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "key"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "title"
+        },
+        {
+          "annotation": "CandidateReview | None",
+          "default_kind": "value",
+          "name": "review"
+        },
+        {
+          "annotation": "dict[str, Any]",
+          "default_kind": "factory",
+          "name": "meta"
+        },
+        {
+          "annotation": "MemoryNamespace | None",
+          "default_kind": "value",
+          "name": "namespace"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "claim_key"
+        },
+        {
+          "annotation": "ClaimKeyPolarity",
+          "default_kind": "value",
+          "name": "polarity"
+        },
+        {
+          "annotation": "MemorySourceClass | None",
+          "default_kind": "value",
+          "name": "source_class"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "created_at"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "updated_at"
+        },
+        {
+          "annotation": "DelegatedCandidateProvenance | None",
+          "default_kind": "value",
+          "name": "delegation_provenance"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryPatchResult": {
+      "fields": [
+        {
+          "annotation": "int",
+          "default_kind": "required",
+          "name": "facts_added"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "required",
+          "name": "todos_added"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "required",
+          "name": "todos_completed"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "value",
+          "name": "patch_id"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "generation"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "replayed_patches"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "lock_recovered"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "facts_auto_extracted"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryRecord": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "id"
+        },
+        {
+          "annotation": "Scope",
+          "default_kind": "required",
+          "name": "scope"
+        },
+        {
+          "annotation": "MemoryType",
+          "default_kind": "required",
+          "name": "type"
+        },
+        {
+          "annotation": "dict[str, Any] | str",
+          "default_kind": "required",
+          "name": "content"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "created_at"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "updated_at"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "key"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "title"
+        },
+        {
+          "annotation": "list[str]",
+          "default_kind": "factory",
+          "name": "tags"
+        },
+        {
+          "annotation": "list[str]",
+          "default_kind": "factory",
+          "name": "entities"
+        },
+        {
+          "annotation": "MemorySource",
+          "default_kind": "value",
+          "name": "source"
+        },
+        {
+          "annotation": "float",
+          "default_kind": "value",
+          "name": "confidence"
+        },
+        {
+          "annotation": "list[ArtifactRef]",
+          "default_kind": "factory",
+          "name": "evidence_refs"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "expires_at"
+        },
+        {
+          "annotation": "RecordVisibility | None",
+          "default_kind": "value",
+          "name": "visibility"
+        },
+        {
+          "annotation": "dict[str, Any]",
+          "default_kind": "factory",
+          "name": "meta"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "last_hit_at"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "event_time"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "valid_to"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "supersedes_id"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "superseded_by_id"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "supersession_reason"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "is_deleted"
+        },
+        {
+          "annotation": "MemoryNamespace | None",
+          "default_kind": "value",
+          "name": "namespace"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "deleted_at"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "deleted_reason"
+        },
+        {
+          "annotation": "MemoryTier",
+          "default_kind": "value",
+          "name": "tier"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "access_count"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "integrity_hash"
+        },
+        {
+          "annotation": {
+            "union": [
+              "str",
+              "None"
+            ]
+          },
+          "default_kind": "value",
+          "name": "goal_id"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryRelation": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "relation_id"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "source_record_id"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "target_record_id"
+        },
+        {
+          "annotation": "MemoryRelationType",
+          "default_kind": "required",
+          "name": "relation_type"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "created_at"
+        },
+        {
+          "annotation": "dict[str, Any]",
+          "default_kind": "factory",
+          "name": "meta"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryScope": {
+      "fields": [
+        {
+          "annotation": "ScopeKind",
+          "default_kind": "required",
+          "name": "kind"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "value"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryTierTransition": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "transition_id"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "record_id"
+        },
+        {
+          "annotation": "Scope",
+          "default_kind": "required",
+          "name": "scope"
+        },
+        {
+          "annotation": "MemoryType",
+          "default_kind": "required",
+          "name": "record_type"
+        },
+        {
+          "annotation": "MemoryTier",
+          "default_kind": "required",
+          "name": "from_tier"
+        },
+        {
+          "annotation": "MemoryTier",
+          "default_kind": "required",
+          "name": "to_tier"
+        },
+        {
+          "annotation": "MemoryTierTransitionReason",
+          "default_kind": "required",
+          "name": "transition_reason"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "transition_at"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "access_count"
+        },
+        {
+          "annotation": "dict[str, Any]",
+          "default_kind": "factory",
+          "name": "meta"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "RetrievalFilters": {
+      "fields": [
+        {
+          "annotation": "list[Scope]",
+          "default_kind": "required",
+          "name": "scopes"
+        },
+        {
+          "annotation": "list[MemoryType] | None",
+          "default_kind": "value",
+          "name": "types"
+        },
+        {
+          "annotation": "float | None",
+          "default_kind": "value",
+          "name": "min_confidence"
+        },
+        {
+          "annotation": "list[MemorySource] | None",
+          "default_kind": "value",
+          "name": "source_allowlist"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "updated_since"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "limit"
+        }
+      ],
+      "kind": "dataclass"
+    }
+  },
+  "portability": {
+    "MemoryBundleExportOptions": {
+      "fields": [
+        {
+          "annotation": "list[str]",
+          "default_kind": "required",
+          "name": "scopes"
+        },
+        {
+          "annotation": "list[str] | None",
+          "default_kind": "value",
+          "name": "types"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "limit"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_candidates"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_relations"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_tier_history"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_provenance"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_memory_blocks"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_ontologies"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_embedding_lifecycle"
+        },
+        {
+          "annotation": "list[MemoryNamespace] | None",
+          "default_kind": "value",
+          "name": "namespaces"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryBundleImportOptions": {
+      "fields": [
+        {
+          "annotation": "dict[str, str]",
+          "default_kind": "factory",
+          "name": "scope_rewrites"
+        },
+        {
+          "annotation": "Literal['direct', 'candidate']",
+          "default_kind": "value",
+          "name": "trust_mode"
+        },
+        {
+          "annotation": "Literal['skip', 'supersede', 'error']",
+          "default_kind": "value",
+          "name": "conflict_mode"
+        },
+        {
+          "annotation": "Literal['preserve', 'regenerate']",
+          "default_kind": "value",
+          "name": "id_mode"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "dry_run"
+        },
+        {
+          "annotation": "list[MemoryNamespace] | None",
+          "default_kind": "value",
+          "name": "namespace_allowlist"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryBundleImportResult": {
+      "fields": [
+        {
+          "annotation": "bool",
+          "default_kind": "required",
+          "name": "applied"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "trust_mode"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "conflict_mode"
+        },
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "id_mode"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_records"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "staged_candidates"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_candidates"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_relations"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_tier_transitions"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_provenance_traces"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_memory_blocks"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_ontologies"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_active_embedding_model_sets"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "imported_retention_snapshots"
+        },
+        {
+          "annotation": "int",
+          "default_kind": "value",
+          "name": "skipped_records"
+        },
+        {
+          "annotation": "list[str]",
+          "default_kind": "factory",
+          "name": "skipped_sections"
+        },
+        {
+          "annotation": "list[dict[str, Any]]",
+          "default_kind": "factory",
+          "name": "conflicts"
+        },
+        {
+          "annotation": "dict[str, str]",
+          "default_kind": "factory",
+          "name": "rewrites"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "MemoryBundleSnapshot": {
+      "fields": [
+        {
+          "annotation": "dict[str, Any]",
+          "default_kind": "required",
+          "name": "manifest"
+        },
+        {
+          "annotation": "list[MemoryRecord]",
+          "default_kind": "required",
+          "name": "records"
+        },
+        {
+          "annotation": "list[MemoryCandidate]",
+          "default_kind": "factory",
+          "name": "candidates"
+        },
+        {
+          "annotation": "list[MemoryRelation]",
+          "default_kind": "factory",
+          "name": "relations"
+        },
+        {
+          "annotation": "list[MemoryTierTransition]",
+          "default_kind": "factory",
+          "name": "tier_transitions"
+        },
+        {
+          "annotation": "list[TurnProvenanceTrace]",
+          "default_kind": "factory",
+          "name": "provenance_traces"
+        },
+        {
+          "annotation": "list[MemoryBlock]",
+          "default_kind": "factory",
+          "name": "memory_blocks"
+        },
+        {
+          "annotation": "list[OntologyDefinition]",
+          "default_kind": "factory",
+          "name": "ontologies"
+        },
+        {
+          "annotation": "list[ActiveEmbeddingModelSet]",
+          "default_kind": "factory",
+          "name": "active_embedding_model_sets"
+        },
+        {
+          "annotation": "list[RetentionSnapshot]",
+          "default_kind": "factory",
+          "name": "retention_snapshots"
+        }
+      ],
+      "kind": "dataclass"
+    }
+  },
+  "query_dtos": {
+    "CandidateListOptions": {
+      "fields": [
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "session_id"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "proposed_scope"
+        },
+        {
+          "annotation": "CandidateStatus | None",
+          "default_kind": "value",
+          "name": "status"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "limit"
+        },
+        {
+          "annotation": "list['MemoryNamespace'] | None",
+          "default_kind": "value",
+          "name": "namespaces"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "ListQueryOptions": {
+      "fields": [
+        {
+          "annotation": "list[str]",
+          "default_kind": "required",
+          "name": "scopes"
+        },
+        {
+          "annotation": "list[MemoryType] | None",
+          "default_kind": "value",
+          "name": "types"
+        },
+        {
+          "annotation": "list[MemoryTier] | None",
+          "default_kind": "value",
+          "name": "tiers"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_invalidated"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "limit"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "offset"
+        },
+        {
+          "annotation": "RecordOrder | None",
+          "default_kind": "value",
+          "name": "order_by"
+        },
+        {
+          "annotation": "list['MemoryNamespace'] | None",
+          "default_kind": "value",
+          "name": "namespaces"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "as_of"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "valid_at"
+        },
+        {
+          "annotation": "tuple[str, str] | None",
+          "default_kind": "value",
+          "name": "effective_during"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "believed_at"
+        }
+      ],
+      "kind": "dataclass"
+    },
+    "SearchQueryOptions": {
+      "fields": [
+        {
+          "annotation": "str",
+          "default_kind": "required",
+          "name": "query"
+        },
+        {
+          "annotation": "list[str]",
+          "default_kind": "required",
+          "name": "scopes"
+        },
+        {
+          "annotation": "list[MemoryType] | None",
+          "default_kind": "value",
+          "name": "types"
+        },
+        {
+          "annotation": "list[MemoryTier] | None",
+          "default_kind": "value",
+          "name": "tiers"
+        },
+        {
+          "annotation": "RetrievalFilters | None",
+          "default_kind": "value",
+          "name": "filters"
+        },
+        {
+          "annotation": "bool",
+          "default_kind": "value",
+          "name": "include_invalidated"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "limit"
+        },
+        {
+          "annotation": "int | None",
+          "default_kind": "value",
+          "name": "offset"
+        },
+        {
+          "annotation": "RecordOrder | None",
+          "default_kind": "value",
+          "name": "order_by"
+        },
+        {
+          "annotation": "list['MemoryNamespace'] | None",
+          "default_kind": "value",
+          "name": "namespaces"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "as_of"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "valid_at"
+        },
+        {
+          "annotation": "tuple[str, str] | None",
+          "default_kind": "value",
+          "name": "effective_during"
+        },
+        {
+          "annotation": "str | None",
+          "default_kind": "value",
+          "name": "believed_at"
+        }
+      ],
+      "kind": "dataclass"
+    }
+  },
+  "typed_dicts": {
+    "SessionSummaryActiveThread": {
+      "annotations": {
+        "next_step": "ForwardRef('str', module='sophiagraph.models.record')",
+        "status": "ForwardRef('SessionSummaryThreadStatus', module='sophiagraph.models.record')",
+        "topic": "ForwardRef('str', module='sophiagraph.models.record')"
+      },
+      "kind": "typed_dict",
+      "optional_keys": [],
+      "required_keys": [
+        "next_step",
+        "status",
+        "topic"
+      ]
+    },
+    "SessionSummaryContent": {
+      "annotations": {
+        "active_threads": "ForwardRef('list[SessionSummaryActiveThread]', module='sophiagraph.models.record')",
+        "corrections": "ForwardRef('list[str]', module='sophiagraph.models.record')",
+        "decisions": "ForwardRef('list[str]', module='sophiagraph.models.record')",
+        "open_questions": "ForwardRef('list[str]', module='sophiagraph.models.record')",
+        "outcome": "ForwardRef('SessionSummaryOutcome', module='sophiagraph.models.record')",
+        "summary_text": "ForwardRef('str', module='sophiagraph.models.record')",
+        "topic_keywords": "ForwardRef('list[str]', module='sophiagraph.models.record')",
+        "turn_count": "ForwardRef('int', module='sophiagraph.models.record')"
+      },
+      "kind": "typed_dict",
+      "optional_keys": [],
+      "required_keys": [
+        "active_threads",
+        "corrections",
+        "decisions",
+        "open_questions",
+        "outcome",
+        "summary_text",
+        "topic_keywords",
+        "turn_count"
+      ]
+    }
+  }
+}

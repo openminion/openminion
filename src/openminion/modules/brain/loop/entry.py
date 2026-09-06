@@ -7,6 +7,7 @@ from openminion.modules.brain.constants import (
     BRAIN_EXECUTION_TARGET_DELEGATED,
 )
 from openminion.modules.brain.loop.adaptive import ACT_ADAPTIVE_ALLOWED_TOOLS
+from openminion.modules.brain.loop.services import runtime_allows_tool
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_ALLOWED_TOOLS,
 )
@@ -334,15 +335,23 @@ def build_entry_tool_specs(
     )
     tool_specs: list[ToolSpec] = []
     if requestable_specs:
-        tool_specs.append(_with_freshness_contract(build_tool_request_spec()))
+        if runtime_allows_tool(runner, "tool.request"):
+            tool_specs.append(_with_freshness_contract(build_tool_request_spec()))
+        else:
+            tool_specs.extend(requestable_specs)
     if include_control_tools:
-        tool_specs.append(respond_tool_spec())
-        tool_specs.append(_with_freshness_contract(coding_tool_spec()))
-        tool_specs.append(_with_freshness_contract(build_plan_tool_spec()))
-        tool_specs.append(_with_freshness_contract(research_tool_spec()))
-        tool_specs.append(_with_freshness_contract(decompose_tool_spec()))
-        tool_specs.append(_with_freshness_contract(clarify_tool_spec()))
-        tool_specs.append(_with_freshness_contract(build_review_tool_spec()))
+        control_specs = [
+            respond_tool_spec(),
+            _with_freshness_contract(coding_tool_spec()),
+            _with_freshness_contract(build_plan_tool_spec()),
+            _with_freshness_contract(research_tool_spec()),
+            _with_freshness_contract(decompose_tool_spec()),
+            _with_freshness_contract(clarify_tool_spec()),
+            _with_freshness_contract(build_review_tool_spec()),
+        ]
+        tool_specs.extend(
+            spec for spec in control_specs if runtime_allows_tool(runner, spec.name)
+        )
     return tool_specs, supports_seed
 
 

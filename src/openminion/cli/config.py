@@ -201,8 +201,6 @@ def resolve_cli_identity_db_path(
     configured = str(
         resolve_identity_db_path(config) if config is not None else ""
     ).strip()
-    if configured:
-        return Path(configured).expanduser().resolve(strict=False)
     resolved_roots = roots or resolve_cli_roots(
         env=env,
         runtime_env=runtime_env,
@@ -212,6 +210,11 @@ def resolve_cli_identity_db_path(
         data_root=data_root,
         fallback_to_cwd=fallback_to_cwd,
     )
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = resolved_roots.data_root / candidate
+        return candidate.resolve(strict=False)
     return (
         resolved_roots.data_root / CLI_IDENTITY_SUBDIR / CLI_IDENTITY_DB_FILENAME
     ).resolve(strict=False)

@@ -26,6 +26,7 @@ from openminion.tools.security.schemas import (
     FindingLocation,
     LocalScanArgs,
     ScanError,
+    SecurityConfigurationIdentity,
     SecurityFinding,
     SecurityScanResult,
 )
@@ -37,6 +38,17 @@ _SEVERITIES = {
     "HIGH": "high",
     "CRITICAL": "critical",
 }
+TRIVY_FIXED_FLAGS = (
+    "--format",
+    "json",
+    "--quiet",
+    "--no-progress",
+    "--exit-code",
+    "1",
+    "--skip-db-update",
+    "--skip-java-db-update",
+    "--skip-check-update",
+)
 
 
 def scan_dependencies(
@@ -123,6 +135,10 @@ def _scan(
             started_at=started_at,
             started=started,
             status="unavailable",
+            configuration_identity=SecurityConfigurationIdentity(
+                scan_mode=scanner_kind,
+                fixed_flags=list(TRIVY_FIXED_FLAGS),
+            ),
             error=ScanError(
                 code="DEPENDENCY_MISSING",
                 message=bounded_message(version.stderr or "Trivy version check failed"),
@@ -130,19 +146,12 @@ def _scan(
             ),
         )
 
+    scanner_version = first_version_line(version.stdout)
     process = process_runner(
         (
             executable,
             "fs",
-            "--format",
-            "json",
-            "--quiet",
-            "--no-progress",
-            "--exit-code",
-            "1",
-            "--skip-db-update",
-            "--skip-java-db-update",
-            "--skip-check-update",
+            *TRIVY_FIXED_FLAGS,
             "--scanners",
             scanner_kind,
             str(target),
@@ -157,7 +166,12 @@ def _scan(
         target=target,
         target_name=target_name,
         max_findings=args.max_findings,
-        scanner_version=first_version_line(version.stdout),
+        scanner_version=scanner_version,
+        configuration_identity=SecurityConfigurationIdentity(
+            scanner_version=scanner_version,
+            scan_mode=scanner_kind,
+            fixed_flags=list(TRIVY_FIXED_FLAGS),
+        ),
         started_at=started_at,
         started=started,
     )
@@ -172,6 +186,7 @@ def _parse_trivy_result(
     target_name: str,
     max_findings: int,
     scanner_version: str,
+    configuration_identity: SecurityConfigurationIdentity,
     started_at: str,
     started: float,
 ) -> SecurityScanResult:
@@ -182,6 +197,7 @@ def _parse_trivy_result(
             started_at=started_at,
             started=started,
             scanner_version=scanner_version,
+            configuration_identity=configuration_identity,
             status="timed_out",
             truncated=process.truncated,
             error=ScanError(
@@ -195,6 +211,7 @@ def _parse_trivy_result(
             started_at=started_at,
             started=started,
             scanner_version=scanner_version,
+            configuration_identity=configuration_identity,
             status="cancelled",
             truncated=process.truncated,
             error=ScanError(
@@ -215,6 +232,7 @@ def _parse_trivy_result(
             started_at=started_at,
             started=started,
             scanner_version=scanner_version,
+            configuration_identity=configuration_identity,
             status="failed",
             truncated=process.truncated,
             error=ScanError(
@@ -244,6 +262,7 @@ def _parse_trivy_result(
         started_at=started_at,
         started=started,
         scanner_version=scanner_version,
+        configuration_identity=configuration_identity,
         status=status,
         findings=returned,
         total_findings=len(findings),
@@ -395,6 +414,7 @@ def _trivy_result(
     started: float,
     status: str,
     scanner_version: str = "",
+    configuration_identity: SecurityConfigurationIdentity | None = None,
     findings: list[SecurityFinding] | None = None,
     total_findings: int = 0,
     truncated: bool = False,
@@ -409,6 +429,7 @@ def _trivy_result(
         started=started,
         status=status,
         scanner_version=scanner_version,
+        configuration_identity=configuration_identity,
         total_findings=total_findings,
         truncated=truncated,
         partial_reason=partial_reason,
@@ -417,4 +438,9 @@ def _trivy_result(
     )
 
 
-__all__ = ["scan_artifact", "scan_dependencies", "scan_secrets"]
+__all__ = [
+    "TRIVY_FIXED_FLAGS",
+    "scan_artifact",
+    "scan_dependencies",
+    "scan_secrets",
+]

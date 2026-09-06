@@ -63,6 +63,9 @@ class _StubHarnessResult:
     unsupported_entries: tuple[str, ...] = ()
     nested_skill_candidates: tuple[str, ...] = ()
     unknown_front_matter_keys: tuple[str, ...] = ()
+    portable_conformance: dict[str, object] = field(
+        default_factory=lambda: {"ok": True, "errors": []}
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -470,8 +473,16 @@ def test_umbrella_skill_validate_uses_single_harness_result(monkeypatch) -> None
     package = _StubPackage(skill_id="skill.demo", version_hash="abc123")
 
     class _StubSkill:
+        admission = None
+
         def __init__(self, config: str | None = None) -> None:
             self.config = config
+            self.store = self
+
+        def get_skill_admission(self, *, skill_id: str, version_hash: str):
+            assert skill_id == "skill.demo"
+            assert version_hash == "abc123"
+            return self.admission
 
         def get_skill(self, skill_id: str, version: str | None = None):
             assert skill_id == "skill.demo"
@@ -542,6 +553,36 @@ def test_umbrella_skill_validate_uses_single_harness_result(monkeypatch) -> None
     assert '"errors": 1' in buf.getvalue()
     assert "missing fixtures/input.json" in buf.getvalue()
 
+    _StubSkill.admission = {
+        "verification_check": "manual bundle review",
+        "verification_result": "passed",
+        "verification_evidence_ref": "review://skill.demo/abc123",
+        "verification_reviewer_id": "local:test",
+    }
+    passing_harness = _StubHarnessReport(
+        results=(_StubHarnessResult(skill_root="/skills/fixture-root", ok=True),)
+    )
+    monkeypatch.setattr(
+        "openminion.modules.skill.diagnostics.harness.run_skill_harness",
+        lambda project_root: passing_harness,
+    )
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = skill_cmd._run_skill_validate(
+            argparse.Namespace(
+                skill_id="skill.demo",
+                version=None,
+                project_root="/skills/fixture-root",
+                config=None,
+            )
+        )
+
+    assert code == 0
+    payload = buf.getvalue()
+    assert "status.requires_verification" not in payload
+    assert "review://skill.demo/abc123" in payload
+    assert '"verification_reviewer_id": "local:test"' in payload
+
 
 def test_umbrella_skill_test_reports_failed_conformance_as_not_ok(monkeypatch) -> None:
     from openminion.cli.commands import skill as skill_cmd
@@ -578,6 +619,46 @@ def test_umbrella_skill_test_reports_failed_conformance_as_not_ok(monkeypatch) -
     assert code == 1
     assert '"ok": false' in buf.getvalue()
     assert '"outcome": "failed"' in buf.getvalue()
+
+
+def test_umbrella_skill_test_portable_gate_is_opt_in(monkeypatch) -> None:
+    from openminion.cli.commands import skill as skill_cmd
+
+    harness_report = _StubHarnessReport(
+        results=(
+            _StubHarnessResult(
+                portable_conformance={
+                    "ok": False,
+                    "errors": ["portable.front_matter_required"],
+                }
+            ),
+        )
+    )
+    monkeypatch.setattr(skill_cmd, "_check_skill_available", lambda: True)
+    monkeypatch.setattr(
+        "openminion.modules.skill.diagnostics.harness.run_skill_harness",
+        lambda skill_root: harness_report,
+    )
+
+    default_code = skill_cmd._run_skill_test(
+        argparse.Namespace(
+            skill_root="/skills/demo",
+            regression_ref=[],
+            require_portable=False,
+            config=None,
+        )
+    )
+    strict_code = skill_cmd._run_skill_test(
+        argparse.Namespace(
+            skill_root="/skills/demo",
+            regression_ref=[],
+            require_portable=True,
+            config=None,
+        )
+    )
+
+    assert default_code == 0
+    assert strict_code == 1
 
 
 _ = (Sequence,)

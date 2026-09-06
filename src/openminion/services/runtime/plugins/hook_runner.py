@@ -1,5 +1,5 @@
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
 from functools import partial
 
@@ -24,8 +24,20 @@ _SIDE_EFFECT_MODES = frozenset(
 
 
 class PluginHookRunner:
-    def __init__(self, max_parallel_workers: int = 8) -> None:
+    def __init__(
+        self,
+        max_parallel_workers: int = 8,
+        side_effect_timeout_seconds: float = 5.0,
+        event_sink: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> None:
         self._max_parallel_workers = max(1, int(max_parallel_workers))
+        self._side_effect_timeout_seconds = max(0.0, float(side_effect_timeout_seconds))
+        self._failures: dict[str, dict[str, str]] = {}
+        self._event_sink = event_sink
+
+    def failure_status(self, plugin: Plugin) -> dict[str, str] | None:
+        failure = self._failures.get(_plugin_id(plugin))
+        return dict(failure) if failure is not None else None
 
     def run_inbound(
         self,
@@ -39,6 +51,12 @@ class PluginHookRunner:
             try:
                 current = plugin.on_message(current, context)
             except Exception:
+                self._record_failure(
+                    plugin,
+                    direction="inbound",
+                    hook_mode=HOOK_MODE_MUTATING,
+                    reason="exception",
+                )
                 context.logger.exception(
                     "plugin inbound mutating hook failed plugin=%s",
                     plugin_label(plugin),
@@ -66,6 +84,12 @@ class PluginHookRunner:
             try:
                 current = plugin.on_response(current, message, context)
             except Exception:
+                self._record_failure(
+                    plugin,
+                    direction="outbound",
+                    hook_mode=HOOK_MODE_MUTATING,
+                    reason="exception",
+                )
                 context.logger.exception(
                     "plugin outbound mutating hook failed plugin=%s",
                     plugin_label(plugin),
@@ -115,21 +139,66 @@ class PluginHookRunner:
         hook_jobs = list(jobs)
         if not hook_jobs:
             return
-        with ThreadPoolExecutor(
+        executor = ThreadPoolExecutor(
             max_workers=min(self._max_parallel_workers, len(hook_jobs)),
             thread_name_prefix="openminion-plugin",
-        ) as executor:
-            futures = {executor.submit(call): plugin for plugin, call in hook_jobs}
-            for future in as_completed(futures):
-                plugin = futures[future]
-                try:
-                    future.result()
-                except Exception:
-                    context.logger.exception(
-                        "plugin %s side-effect hook failed plugin=%s",
-                        direction,
-                        plugin_label(plugin),
-                    )
+        )
+        futures = {executor.submit(call): plugin for plugin, call in hook_jobs}
+        done, pending = wait(futures, timeout=self._side_effect_timeout_seconds)
+        for future in done:
+            plugin = futures[future]
+            try:
+                future.result()
+            except Exception:
+                self._record_failure(
+                    plugin,
+                    direction=direction,
+                    hook_mode=HOOK_MODE_SIDE_EFFECT,
+                    reason="exception",
+                )
+                context.logger.exception(
+                    "plugin %s side-effect hook failed plugin=%s",
+                    direction,
+                    plugin_label(plugin),
+                )
+        for future in pending:
+            plugin = futures[future]
+            self._record_failure(
+                plugin,
+                direction=direction,
+                hook_mode=HOOK_MODE_SIDE_EFFECT,
+                reason="timeout",
+            )
+            context.logger.error(
+                "plugin %s side-effect hook timed out plugin=%s",
+                direction,
+                plugin_label(plugin),
+            )
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    def _record_failure(
+        self,
+        plugin: Plugin,
+        *,
+        direction: str,
+        hook_mode: str,
+        reason: str,
+    ) -> None:
+        plugin_id = _plugin_id(plugin)
+        failure = {
+            "plugin_id": plugin_id,
+            "direction": direction,
+            "hook_mode": hook_mode,
+            "reason": reason,
+        }
+        self._failures[plugin_id] = failure
+        if self._event_sink is not None:
+            self._event_sink("ext.plugin.hook.degraded", dict(failure))
+
+
+def _plugin_id(plugin: Plugin) -> str:
+    return str(getattr(plugin, "_openminion_plugin_id", "") or plugin_label(plugin))
 
 
 def _hook_mode(plugin: Plugin, *, inbound: bool, context: PluginContext) -> str:

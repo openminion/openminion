@@ -11,7 +11,6 @@ from openminion.modules.memory.runtime.gc import (
     compress_old_summaries as compress_old_summaries_gc,
     enforce_scope_capacity,
     evict_stale_insights,
-    purge_soft_deleted,
 )
 from openminion.modules.memory.models import MemoryCandidate, SessionSummaryContent
 from openminion.modules.memory.runtime.extraction.records import _content_text
@@ -941,11 +940,6 @@ class SessionLifecycleMixin:
             evict_stale_insights(
                 store,
                 staleness_days=int(getattr(retention, "insight_staleness_days", 60)),
-            )
-            # Retires MRCO-C — the `500` fallback
-            purge_soft_deleted(
-                store,
-                batch_size=int(retention.gc_batch_size),
             )
             self._session_lifecycle_done[session_id] = True
         except Exception as exc:

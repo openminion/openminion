@@ -250,6 +250,24 @@ def _format_get_response(
         ),
     }
 
+    headers = result.get("headers", {})
+    headers = headers if isinstance(headers, dict) else {}
+    validators = {
+        key: value
+        for key, value in {
+            "etag": str(headers.get("etag", "") or ""),
+            "last_modified": str(headers.get("last-modified", "") or ""),
+        }.items()
+        if value
+    }
+    rate_limit = {
+        key: value
+        for key, value in {
+            "retry_after": str(headers.get("retry-after", "") or ""),
+            "reset": str(headers.get("x-ratelimit-reset", "") or ""),
+        }.items()
+        if value
+    }
     payload = {
         "ok": True,
         "final_url": str(result.get("final_url", "") or ""),
@@ -263,6 +281,8 @@ def _format_get_response(
         "content_bytes": int(result.get("content_bytes", len(raw_payload_bytes)) or 0),
         "hash": hash_token,
         "artifacts": artifacts,
+        "validators": validators,
+        "rate_limit": rate_limit,
         "warnings": warnings,
         "verified": True,
     }

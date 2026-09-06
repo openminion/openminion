@@ -683,7 +683,7 @@ async def _run_terminal_focus_async(
 
     catalog = {
         name: description
-        for name, description in slash_help_rows(terminal_only=True)
+        for name, description in slash_help_rows()
         if name in _SLASH_COMMANDS
     }
     catalog.update({name: "custom command" for name in custom_commands})

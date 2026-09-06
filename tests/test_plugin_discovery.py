@@ -14,6 +14,7 @@ from openminion.services.runtime.plugins.discovery import (
     discover_plugin_manifests,
     load_plugin_instance,
 )
+from openminion.services.runtime.errors import PluginActivationError
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -114,6 +115,50 @@ def test_invalid_discovered_manifest_fails_fast(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Invalid plugin manifest"):
         _build_registry(custom_root, enabled_plugins=["validate"])
+
+
+def test_verified_custom_plugin_requires_matching_module_checksum(
+    tmp_path: Path,
+) -> None:
+    custom_root = tmp_path / "plugins"
+    _write_custom_plugin(custom_root, module_alias="hello", manifest_id="example.hello")
+    module_path = custom_root / "hello.py"
+    manifest_path = custom_root / "hello.manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["provenance"] = {
+        "source": "local-path",
+        "checksum": f"sha256:{hashlib.sha256(module_path.read_bytes()).hexdigest()}",
+        "verified": True,
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert discover_plugin_manifests([custom_root])[0].manifest.provenance_verified
+
+    module_path.write_text(module_path.read_text() + "\n", encoding="utf-8")
+    with pytest.raises(PluginActivationError) as exc_info:
+        discover_plugin_manifests([custom_root])
+    assert exc_info.value.plugin_id == "example.hello"
+    assert exc_info.value.stage == "checksum"
+    assert exc_info.value.reason_code == "checksum_mismatch"
+
+
+def test_verified_custom_plugin_rejects_malformed_checksum(tmp_path: Path) -> None:
+    custom_root = tmp_path / "plugins"
+    _write_custom_plugin(custom_root, module_alias="hello", manifest_id="example.hello")
+    manifest_path = custom_root / "hello.manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["provenance"] = {
+        "source": "local-path",
+        "checksum": "sha256:not-a-digest",
+        "verified": True,
+    }
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PluginActivationError) as exc_info:
+        discover_plugin_manifests([custom_root])
+    assert exc_info.value.plugin_id == "example.hello"
+    assert exc_info.value.stage == "checksum"
+    assert exc_info.value.reason_code == "checksum_malformed"
 
 
 def _write_custom_plugin(

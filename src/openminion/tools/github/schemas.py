@@ -1,6 +1,7 @@
+from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .constants import DEFAULT_GITHUB_DIFF_MAX_LINES
 
@@ -85,6 +86,11 @@ class GithubFetchCommentsArgs(_PrArgsBase):
 
 class GithubFetchChecksArgs(_RepoArgsBase):
     head_sha: str = Field(..., min_length=7, description="Commit SHA")
+    expected_checks: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Exact check-run names required for an overall success result.",
+    )
 
     @field_validator("head_sha", mode="before")
     @classmethod
@@ -95,6 +101,16 @@ class GithubFetchChecksArgs(_RepoArgsBase):
         if not all(ch in "0123456789abcdefABCDEF" for ch in token):
             raise ValueError("head_sha must be a hex string")
         return token.lower()
+
+    @field_validator("expected_checks")
+    @classmethod
+    def _validate_expected_checks(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("expected_checks cannot contain empty names")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("expected_checks cannot contain duplicates")
+        return normalized
 
 
 def _normalize_branch(value: Any, *, field: str) -> str:
@@ -197,6 +213,173 @@ class GithubOpenPrArgs(_RepoArgsBase):
         return _normalize_message(value, field=str(info.field_name or "value"))
 
 
+class GithubUpdatePrArgs(_PrArgsBase):
+    title: str | None = Field(default=None, description="Replacement PR title")
+    body: str | None = Field(default=None, description="Replacement PR body")
+
+    @field_validator("title", "body", mode="before")
+    @classmethod
+    def _validate_text(cls, value: Any, info: Any) -> str | None:
+        if value is None:
+            return None
+        return _normalize_message(value, field=str(info.field_name or "value"))
+
+    @model_validator(mode="after")
+    def _require_update(self) -> "GithubUpdatePrArgs":
+        if self.title is None and self.body is None:
+            raise ValueError("title or body is required")
+        return self
+
+
+class GithubMergePrArgs(_PrArgsBase):
+    expected_head_sha: str = Field(
+        ..., min_length=7, description="Approved pull-request head commit SHA"
+    )
+    merge_method: str = Field(..., description="Merge method: merge|squash|rebase")
+    expected_checks: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Exact check-run names required before merge.",
+    )
+
+    @field_validator("expected_head_sha", mode="before")
+    @classmethod
+    def _normalize_expected_head_sha(cls, value: Any) -> str:
+        token = str(value or "").strip()
+        if not token or not all(ch in "0123456789abcdefABCDEF" for ch in token):
+            raise ValueError("expected_head_sha must be a hex string")
+        return token.lower()
+
+    @field_validator("merge_method", mode="before")
+    @classmethod
+    def _normalize_merge_method(cls, value: Any) -> str:
+        token = str(value or "").strip().lower()
+        if token not in {"merge", "squash", "rebase"}:
+            raise ValueError("merge_method must be one of merge|squash|rebase")
+        return token
+
+    @field_validator("expected_checks")
+    @classmethod
+    def _validate_expected_checks(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("expected_checks cannot contain empty names")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("expected_checks cannot contain duplicates")
+        return normalized
+
+
+def _normalize_workflow(value: Any) -> str:
+    token = _normalize_message(value, field="workflow")
+    if "/" in token or ".." in token:
+        raise ValueError("workflow must be a workflow file name or numeric ID")
+    return token
+
+
+class GithubDispatchWorkflowArgs(_RepoArgsBase):
+    workflow: str = Field(..., min_length=1, description="Allowlisted workflow file")
+    ref: str = Field(..., min_length=1, description="Allowlisted branch or tag ref")
+    request_id: str = Field(..., min_length=1, max_length=128)
+    target: str = Field(..., min_length=1, max_length=64)
+    inputs: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+    @field_validator("workflow", mode="before")
+    @classmethod
+    def _validate_workflow(cls, value: Any) -> str:
+        return _normalize_workflow(value)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _validate_ref(cls, value: Any) -> str:
+        return _normalize_branch(value, field="ref")
+
+    @field_validator("request_id", "target", mode="before")
+    @classmethod
+    def _validate_identifier(cls, value: Any, info: Any) -> str:
+        return _normalize_message(value, field=str(info.field_name or "value"))
+
+    @field_validator("inputs", mode="before")
+    @classmethod
+    def _validate_inputs(cls, value: Any) -> dict[str, str]:
+        if not isinstance(value, Mapping):
+            raise ValueError("inputs must be an object")
+        normalized = {
+            str(key).strip(): str(item).strip() for key, item in value.items()
+        }
+        if any(not key or not item for key, item in normalized.items()):
+            raise ValueError("workflow input keys and values cannot be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_identity_inputs(self) -> "GithubDispatchWorkflowArgs":
+        if self.inputs.get("request_id") != self.request_id:
+            raise ValueError("inputs.request_id must match request_id")
+        if self.inputs.get("target") != self.target:
+            raise ValueError("inputs.target must match target")
+        return self
+
+
+class GithubListWorkflowRunsArgs(_RepoArgsBase):
+    workflow: str = Field(..., min_length=1, description="Workflow file or numeric ID")
+    ref: str = Field(..., min_length=1, description="Branch or tag ref")
+    request_id: str = Field(..., min_length=1, max_length=128)
+    event: str = Field(default="workflow_dispatch")
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("workflow", mode="before")
+    @classmethod
+    def _validate_workflow(cls, value: Any) -> str:
+        return _normalize_workflow(value)
+
+    @field_validator("ref", mode="before")
+    @classmethod
+    def _validate_ref(cls, value: Any) -> str:
+        return _normalize_branch(value, field="ref")
+
+    @field_validator("request_id", mode="before")
+    @classmethod
+    def _validate_request_id(cls, value: Any) -> str:
+        return _normalize_message(value, field="request_id")
+
+    @field_validator("event", mode="before")
+    @classmethod
+    def _validate_event(cls, value: Any) -> str:
+        token = str(value or "workflow_dispatch").strip()
+        if token != "workflow_dispatch":
+            raise ValueError("event must be workflow_dispatch")
+        return token
+
+
+class GithubCreateReleaseArgs(_RepoArgsBase):
+    tag: str = Field(..., min_length=1, description="Existing Git tag")
+    expected_commit_sha: str = Field(
+        ..., min_length=7, description="Expected dereferenced tag commit SHA"
+    )
+    title: str = Field(..., min_length=1)
+    notes: str = Field(..., min_length=1)
+    draft: bool
+    prerelease: bool
+
+    @field_validator("tag", mode="before")
+    @classmethod
+    def _validate_tag(cls, value: Any) -> str:
+        return _normalize_branch(value, field="tag")
+
+    @field_validator("expected_commit_sha", mode="before")
+    @classmethod
+    def _validate_commit_sha(cls, value: Any) -> str:
+        token = str(value or "").strip()
+        if not token or not all(ch in "0123456789abcdefABCDEF" for ch in token):
+            raise ValueError("expected_commit_sha must be a hex string")
+        return token.lower()
+
+    @field_validator("title", "notes", mode="before")
+    @classmethod
+    def _validate_release_text(cls, value: Any, info: Any) -> str:
+        return _normalize_message(value, field=str(info.field_name or "value"))
+
+
 class GithubPostPrReviewArgs(_PrArgsBase):
     event: str = Field(..., min_length=1, description="L3 allows COMMENT only.")
     body: str = Field(..., min_length=1, description="Review body")
@@ -233,6 +416,11 @@ __all__ = [
     "GithubCommitFileInput",
     "GithubCommitFilesArgs",
     "GithubOpenPrArgs",
+    "GithubUpdatePrArgs",
+    "GithubMergePrArgs",
+    "GithubDispatchWorkflowArgs",
+    "GithubListWorkflowRunsArgs",
+    "GithubCreateReleaseArgs",
     "GithubPostPrReviewArgs",
     "GithubPostPrCommentArgs",
 ]

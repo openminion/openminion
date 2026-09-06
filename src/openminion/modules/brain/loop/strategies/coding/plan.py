@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -131,35 +130,16 @@ class CodingPlan(BaseModel):
         if text := issue.strip():
             self.open_issues.append(text)
 
-    def conflicting_subtask_pairs(self) -> list[tuple[int, int]]:
-        pairs: list[tuple[int, int]] = []
-        for left_index, left in enumerate(self.subtasks):
-            left_paths = {Path(item) for item in left.target_files if item.strip()}
-            for right_index in range(left_index + 1, len(self.subtasks)):
-                right = self.subtasks[right_index]
-                right_paths = {
-                    Path(item) for item in right.target_files if item.strip()
-                }
-                if any(
-                    left_path == right_path
-                    or left_path in right_path.parents
-                    or right_path in left_path.parents
-                    for left_path in left_paths
-                    for right_path in right_paths
-                ):
-                    pairs.append((left_index, right_index))
-        return pairs
-
     def to_payload(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
 
 
-def coding_plan_from_payload(payload: Any, *, goal: str) -> CodingPlan:
+def coding_plan_from_payload(payload: Any) -> CodingPlan | None:
     if isinstance(payload, CodingPlan):
         return payload
     if isinstance(payload, dict):
         try:
             return CodingPlan.model_validate(payload)
         except ValidationError:
-            return CodingPlan.fallback(goal)
-    return CodingPlan.fallback(goal)
+            return None
+    return None

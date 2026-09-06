@@ -41,3 +41,13 @@ def test_extract_ephemeral_prompt_metadata_keeps_turn_tool_scope() -> None:
         "turn_tool_allowlist": "file.read",
         "turn_tool_allowlist_supplied": "true",
     }
+
+
+def test_extract_ephemeral_prompt_metadata_forwards_added_roots_in_memory() -> None:
+    raw_roots = '["/tmp/shared"]'
+
+    extracted = _extract_ephemeral_prompt_metadata(
+        {"openminion_ephemeral_workspace_roots": raw_roots}
+    )
+
+    assert extracted == {"openminion_ephemeral_workspace_roots": raw_roots}

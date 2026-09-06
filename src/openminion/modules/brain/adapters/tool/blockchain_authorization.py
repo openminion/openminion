@@ -7,6 +7,8 @@ from openminion.modules.tool.plugin_api import (
     PolicyAuthorization,
     stable_invocation_hash,
 )
+from openminion.modules.policy.models import PolicyControlError
+from openminion.tools.blockchain.confirmation import canonical_blockchain_send_args
 
 
 def consume_blockchain_send_authorization(
@@ -29,14 +31,27 @@ def consume_blockchain_send_authorization(
     invocation_hash = stable_invocation_hash(
         tool="blockchain",
         method="send_transaction",
-        args=args,
+        args=canonical_blockchain_send_args(args),
     )
-    grant = policy_ctl.resolve_matching_active_grant_for_use(
-        subject_id="local",
-        tool="blockchain",
-        method="send_transaction",
-        invocation_hash=invocation_hash,
-    )
+    try:
+        grant = policy_ctl.resolve_matching_active_grant_for_use(
+            subject_id="local",
+            tool="blockchain",
+            method="send_transaction",
+            invocation_hash=invocation_hash,
+        )
+    except PolicyControlError as exc:
+        if exc.code != "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID":
+            raise
+        raise ToolRuntimeError(
+            "BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID",
+            "Blockchain transaction approval preview could not be verified.",
+            {
+                "stage": "authorization",
+                "approval_id": str(exc.details.get("approval_id", "")),
+                "broadcast_attempted": False,
+            },
+        ) from exc
     if grant is None:
         raise ToolRuntimeError(
             "POLICY_DENIED",

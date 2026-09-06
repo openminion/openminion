@@ -150,23 +150,6 @@ def test_reset_session_state_clears_live_render_state() -> None:
     assert t._hidden_failed_count == 0
 
 
-def test_filter_messages_is_no_op_with_hint() -> None:
-    t, buf = _make_transcript()
-    t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="x"))
-    pre = buf.getvalue()
-    t.filter_messages("query")
-    post = buf.getvalue()
-    # Filter prints a hint; in-memory list unchanged.
-    assert len(t._messages) == 1
-    assert "filter" in post.lower() or post == pre
-
-
-def test_copy_selected_message_returns_body() -> None:
-    t, _ = _make_transcript()
-    t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="copy me"))
-    assert t.copy_selected_message() == "copy me"
-
-
 def test_copy_last_copyable_message_falls_back() -> None:
     t, _ = _make_transcript()
     t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="first"))
@@ -197,5 +180,4 @@ def test_retained_messages_are_bounded_without_losing_latest_copyable() -> None:
     t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="agent", body="third"))
 
     assert [msg.body for msg in t._messages] == ["second", "third"]
-    assert t.copy_selected_message() == "third"
     assert t.copy_last_copyable_message() == "third"

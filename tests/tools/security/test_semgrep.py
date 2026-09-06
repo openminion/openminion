@@ -47,6 +47,10 @@ def test_semgrep_normalizes_clean_and_finding_results(
     assert result.status == status
     assert result.total_findings == count
     assert result.scanner_version == "1.140.0"
+    assert result.configuration_identity is not None
+    assert result.configuration_identity.scanner_version == "1.140.0"
+    assert result.configuration_identity.scan_mode == "code"
+    assert len(result.configuration_identity.config_sha256) == 64
     if result.findings:
         finding = result.findings[0]
         assert finding.rule_id == "openminion.test.shell-true"
@@ -62,6 +66,7 @@ def test_semgrep_unavailable_malformed_timeout_and_partial(
         LocalScanArgs(target="."), target=tmp_path, config=_config(tmp_path)
     )
     assert unavailable.status == "unavailable"
+    assert unavailable.configuration_identity is None
 
     monkeypatch.setattr(semgrep.shutil, "which", lambda _name: "/usr/bin/semgrep")
     malformed = semgrep.scan_code(
@@ -100,3 +105,26 @@ def test_semgrep_unavailable_malformed_timeout_and_partial(
     )
     assert partial.status == "partial"
     assert partial.total_findings == 1
+
+
+def test_semgrep_version_failure_keeps_local_config_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(semgrep.shutil, "which", lambda _name: "/usr/bin/semgrep")
+
+    def version_failure(argv, *, cwd, timeout_seconds):
+        del argv, cwd, timeout_seconds
+        return ScannerProcessResult(return_code=1, stderr="version failed")
+
+    result = semgrep.scan_code(
+        LocalScanArgs(target="."),
+        target=tmp_path,
+        config=_config(tmp_path),
+        process_runner=version_failure,
+    )
+
+    assert result.status == "unavailable"
+    assert result.configuration_identity is not None
+    assert result.configuration_identity.scanner_version == ""
+    assert result.configuration_identity.scan_mode == "code"
+    assert len(result.configuration_identity.config_sha256) == 64

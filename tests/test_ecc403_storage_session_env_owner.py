@@ -48,38 +48,16 @@ def test_sqlite_session_store_uses_injected_env_for_blob_root(tmp_path: Path) ->
         store.close()
 
 
-def test_local_embedding_provider_accepts_injected_env(
+def test_local_embedding_provider_uses_available_sentence_transformer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_module = SimpleNamespace(SentenceTransformer=lambda model: object())
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-    provider = LocalEmbeddingProvider(
-        env={"OPENMINION_ENABLE_SENTENCE_TRANSFORMERS": "1"}
-    )
-
-    assert provider._ensure_sentence_transformer() is True
-
-
-def test_local_embedding_provider_auto_detects_sentence_transformers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_module = SimpleNamespace(SentenceTransformer=lambda model: object())
+    model = SimpleNamespace(get_sentence_embedding_dimension=lambda: 384)
+    fake_module = SimpleNamespace(SentenceTransformer=lambda model_name: model)
     monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
     provider = LocalEmbeddingProvider(env={})
 
-    assert provider._ensure_sentence_transformer() is True
-
-
-def test_local_embedding_provider_explicit_disable_skips_sentence_transformers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_module = SimpleNamespace(SentenceTransformer=lambda model: object())
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
-    provider = LocalEmbeddingProvider(
-        env={"OPENMINION_ENABLE_SENTENCE_TRANSFORMERS": "0"}
-    )
-
-    assert provider._ensure_sentence_transformer() is False
+    assert provider.semantic_ready is True
+    assert provider._sentence_transformer() is model  # noqa: SLF001
 
 
 def test_create_vector_index_adapter_passes_env_to_sqlite_connect(

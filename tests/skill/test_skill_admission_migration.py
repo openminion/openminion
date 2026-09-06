@@ -115,6 +115,20 @@ def test_admission_migration_backfills_legacy_active_version_and_downgrades(
     assert active == ("v2",)
     assert admission == ("legacy_grandfathered", "legacy_grandfathered", "legacy:v2")
 
+    with sqlite3.connect(db_path) as conn:
+        admission_columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(skill_version_admissions)"
+            ).fetchall()
+        }
+    assert {
+        "verification_check",
+        "verification_result",
+        "verification_evidence_ref",
+        "verification_reviewer_id",
+    } <= admission_columns
+
     _run_alembic(db_path, "downgrade", "0003_audit")
     with sqlite3.connect(db_path) as conn:
         skill_columns = {

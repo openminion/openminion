@@ -56,12 +56,7 @@ from openminion.modules.memory.trust.types import ClaimKeyPolarity, MemorySource
 pytestmark = pytest.mark.package_integration
 
 SNAPSHOT_FILE = (
-    Path(__file__).resolve().parents[3]
-    / "docs"
-    / "trackers"
-    / "artifacts"
-    / "memory-snapshots"
-    / "kce00_public_surface_v1.json"
+    Path(__file__).resolve().parent / "snapshots" / "kce00_public_surface_v1.json"
 )
 UPDATE_ENV_VAR = "OPENMINION_KCE_SURFACE_UPDATE"
 SNAPSHOT_SCHEMA_VERSION = "1"

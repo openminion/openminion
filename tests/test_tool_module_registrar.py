@@ -148,6 +148,7 @@ def test_file_module_registrar_returns_manifest() -> None:
 
 
 def test_exec_module_registrar_returns_manifest() -> None:
+    from openminion.tools.exec.schemas import tool_schemas
     from openminion.modules.tool.runtime.registrar import ToolRegisterContext
     from openminion.tools.exec import REGISTRAR
 
@@ -162,6 +163,17 @@ def test_exec_module_registrar_returns_manifest() -> None:
     assert "exec.run" in model_ids
     assert "exec.poll" in model_ids
     assert "exec.kill" in model_ids
+
+    submit = next(
+        item for item in manifest.model_tools if item.model_tool_id == "exec.submit"
+    )
+    assert submit.description == tool_schemas()["exec.submit"]["description"]
+    assert "session" in submit.description
+    run = next(
+        item for item in manifest.model_tools if item.model_tool_id == "exec.run"
+    )
+    assert run.description == tool_schemas()["exec.run"]["description"]
+    assert "Run one" in run.description
 
 
 def test_file_and_exec_manifest_descriptions_encode_scaffolding_boundary() -> None:

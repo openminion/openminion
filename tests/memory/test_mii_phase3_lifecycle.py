@@ -89,7 +89,10 @@ def test_apply_confidence_decay_honors_threshold_and_exemptions(tmp_path: Path) 
     decayed_survivor = store.get("decay-me")
     assert decayed_survivor.confidence == pytest.approx(0.7 - (0.05 * 30 / 7), rel=1e-3)
     assert decayed_survivor.is_deleted is False
-    assert store.get("evict-me").is_deleted is True
+    evicted_record = store.get("evict-me")
+    assert evicted_record.is_deleted is True
+    assert evicted_record.deleted_at is not None
+    assert evicted_record.deleted_reason == "confidence_below_threshold"
     assert store.get("pin-me").is_deleted is False
     assert store.get("session-me").is_deleted is False
     assert store.get("recent-me").confidence == 0.9
@@ -115,6 +118,9 @@ def test_enforce_scope_capacity_evicts_lowest_confidence_non_pins(
     assert evicted == {"agent:lifecycle": 4}
     assert len(active) == 5
     assert any(record.id == "pin-survivor" for record in active)
+    evicted_record = store.get("fact-0")
+    assert evicted_record is not None
+    assert evicted_record.deleted_reason == "scope_capacity"
 
 
 def test_run_gc_applies_decay_compression_capacity_and_purge(tmp_path: Path) -> None:
@@ -252,15 +258,6 @@ def test_session_lifecycle_partial_retention_object_fails_loudly_post_mref(
             "openminion.modules.memory.runtime.session_lifecycle.evict_stale_insights",
             return_value=0,
         ) as stale,
-        mock.patch(
-            "openminion.modules.memory.runtime.session_lifecycle.purge_soft_deleted",
-            return_value=SimpleNamespace(
-                deleted_records=0,
-                deleted_candidates=0,
-                cleaned_fts_rows=0,
-                cleaned_entity_rows=0,
-            ),
-        ) as purge,
     ):
         with caplog.at_level("WARNING"):
             adapter._maybe_run_session_lifecycle(session_id="synthetic")  # noqa: SLF001
@@ -271,7 +268,6 @@ def test_session_lifecycle_partial_retention_object_fails_loudly_post_mref(
     compress.assert_not_called()
     capacity.assert_not_called()
     stale.assert_not_called()
-    purge.assert_not_called()
     # The lifecycle logs the failure with the typed-field name so the
     # cause is greppable from production telemetry.
     assert any(

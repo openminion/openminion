@@ -177,7 +177,7 @@ def test_terminal_consumer_keying_recognizes_brain_emitted_payload() -> None:
     assert str(payload.get("kind", "") or "").strip() == "tool_completed"
 
 
-def test_focus_rich_consumer_keying_uses_call_id_to_index_widgets() -> None:
+def test_focus_terminal_event_pairing_preserves_call_id() -> None:
     runner, received = _capture_events()
 
     runner._emit_tool_progress_event(

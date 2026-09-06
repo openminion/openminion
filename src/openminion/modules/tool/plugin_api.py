@@ -7,6 +7,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from .registry.catalog import ToolSpec
 
 
+BLOCKCHAIN_CONFIRMATION_PREVIEW_INVALID_MESSAGE = (
+    "Blockchain transaction approval preview could not be verified."
+)
+
+
 @dataclass
 class ToolContext:
     """Execution context passed to plugins."""
@@ -48,7 +53,35 @@ class SafetyDecision:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
+class BlockchainCallPreview:
+    function_signature: str
+    function_args: list[Any]
+
+
+@dataclass(frozen=True)
+class BlockchainSendConfirmationPreview:
+    schema_version: Literal["blockchain-send-preview-v1"]
+    chain_id: str
+    from_address: str
+    to_address: str
+    value_wei: str
+    transaction_type: str
+    nonce: str
+    gas_limit: str
+    gas_price_wei: str | None
+    max_fee_per_gas_wei: str | None
+    max_priority_fee_per_gas_wei: str | None
+    max_total_fee_wei: str
+    calldata_bytes: str
+    calldata_sha256: str
+    calldata_hex: str | None
+    preparation_digest: str
+    call: BlockchainCallPreview | None
+    opaque_calldata: bool
+
+
+@dataclass(frozen=True)
 class PolicyAuthorization:
     tool: Literal["blockchain"]
     method: Literal["send_transaction"]

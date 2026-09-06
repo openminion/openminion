@@ -162,9 +162,7 @@ class T17IntegrationTests(unittest.TestCase):
                     "plan": {
                         "plan_id": "plan-1",
                         "objective": "Repair the fixture",
-                        "steps": [
-                            {"step_id": "repair", "description": "Repair it"}
-                        ],
+                        "steps": [{"step_id": "repair", "description": "Repair it"}],
                     }
                 },
                 trace_id="trace-plan",
@@ -184,7 +182,9 @@ class T17IntegrationTests(unittest.TestCase):
             events = session.list_events("s-plan", trace_id="trace-plan")
 
             self.assertEqual(plan["plan_id"], "plan-1")
-            self.assertEqual([event["type"] for event in events], ["task_plan.declared"])
+            self.assertEqual(
+                [event["type"] for event in events], ["task_plan.declared"]
+            )
             session.close()
 
     def test_e2e_ctxctl_brain_sessctl(self) -> None:

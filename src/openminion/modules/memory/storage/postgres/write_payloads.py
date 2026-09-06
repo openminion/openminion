@@ -2,6 +2,7 @@ import datetime
 from typing import Any, Literal
 
 from ...models import ArtifactRef
+from ..base import register_feedback_command
 from .sql import _clamp01, _json_loads
 
 
@@ -59,21 +60,14 @@ def _feedback_update_values(
     command_id: str,
     observed_at: str,
     feedback_delta: float,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     updated_at = str(observed_at or "").strip()
     if not updated_at:
         updated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
     meta = dict(_json_loads(row.get("meta_json"), {}))
     normalized_command_id = str(command_id or "").strip()
-    command_ids = [
-        str(value).strip()
-        for value in meta.get("outcome_feedback_command_ids", [])
-        if str(value).strip()
-    ]
-    if normalized_command_id in command_ids:
-        return {"applied": False, "meta": meta, "updated_at": updated_at}
-    command_ids.append(normalized_command_id)
-    meta["outcome_feedback_command_ids"] = command_ids
+    if not register_feedback_command(meta, normalized_command_id):
+        return None
     existing_feedback = _clamp01(float(meta.get("feedback_score", 0.0) or 0.0))
     meta["feedback_score"] = _clamp01(existing_feedback + float(feedback_delta))
     meta.setdefault("outcome_success_count", 0)
@@ -85,7 +79,7 @@ def _feedback_update_values(
     meta["last_outcome_at"] = updated_at
     meta["last_outcome_status"] = outcome
     meta["last_outcome_command_id"] = normalized_command_id
-    return {"applied": True, "meta": meta, "updated_at": updated_at}
+    return {"meta": meta, "updated_at": updated_at}
 
 
 __all__ = ["_feedback_update_values", "_upsert_payload"]

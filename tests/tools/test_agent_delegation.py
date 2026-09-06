@@ -97,7 +97,7 @@ def test_task_delegate_schema_makes_lifecycle_order_explicit() -> None:
 
     assert "Use sync or async to start child work" in mode_description
     assert "There is no create mode" in mode_description
-    assert "required for accept/reject" in artifact_description
+    assert "required for review/accept/reject" in artifact_description
     agent_description = TaskDelegateArgs.model_fields["agent_id"].description or ""
     assert "Call agent.list first" in agent_description
     assert "never invent" in agent_description
@@ -561,55 +561,25 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
     ]
 
 
-def test_task_delegate_accept_and_reject_use_child_artifact_helpers(
-    monkeypatch,
-) -> None:
-    import openminion.tools.agent.plugin as plugin_mod
-
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    def _accept(*, repo_root, record, artifactctl):
-        del artifactctl
-        calls.append(("accept", {"repo_root": repo_root, "record": record}))
-        return {"ok": True, "status": "accepted", "touched_paths": ["seed.py"]}
-
-    def _reject(*, record, artifactctl):
-        del artifactctl
-        calls.append(("reject", {"record": record}))
-        return {"ok": True, "status": "rejected"}
-
-    monkeypatch.setattr(plugin_mod, "accept_child_worktree_artifact", _accept)
-    monkeypatch.setattr(plugin_mod, "reject_child_worktree_artifact", _reject)
+def test_task_delegate_reject_requires_durable_record_alias() -> None:
     ctx = cast(
         RuntimeContext,
         SimpleNamespace(policy=SimpleNamespace(raw={}), env={}, artifactctl=object()),
     )
-    child_record = {
-        "subtask_id": "child-1",
-        "artifact": {"status": "stored", "bundle_ref": "artifact://sha256/a"},
-    }
 
-    accepted = _h_task_delegate(
-        {
-            "mode": "accept",
-            "workspace_root": "/repo",
-            "child_artifact": child_record,
-        },
-        ctx,
-    )
-    rejected = _h_task_delegate(
-        {"mode": "reject", "child_artifact": child_record},
-        ctx,
-    )
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_task_delegate(
+            {
+                "mode": "reject",
+                "child_artifact": {
+                    "artifact": {"status": "stored", "bundle_ref": "artifact://a"}
+                },
+            },
+            ctx,
+        )
 
-    assert accepted["status"] == "accepted"
-    assert accepted["mode"] == "accept"
-    assert rejected["status"] == "rejected"
-    assert rejected["mode"] == "reject"
-    assert calls == [
-        ("accept", {"repo_root": "/repo", "record": child_record}),
-        ("reject", {"record": child_record}),
-    ]
+    assert exc_info.value.code == "POLICY_DENIED"
+    assert exc_info.value.details["reason_code"] == "missing_record_alias"
 
 
 def test_task_delegate_unknown_target_maps_not_found() -> None:
