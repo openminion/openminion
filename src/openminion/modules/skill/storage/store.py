@@ -314,6 +314,7 @@ class _SkillStoreMixin(SkillStore):
         status_filter: list[str] | None = None,
         agent_id: str | None = None,
         scopes: list[str] | None = None,
+        include_all_scopes: bool = False,
     ) -> list[dict[str, Any]]:
         where_clauses: list[str] = []
         params: list[Any] = []
@@ -328,13 +329,15 @@ class _SkillStoreMixin(SkillStore):
             where_clauses.append(f"s.scope IN ({placeholders})")
             params.extend(scopes)
 
-        if agent_id:
-            where_clauses.append(
-                "(s.scope = 'global' OR (s.scope = 'agent' AND (s.agent_id IS NULL OR s.agent_id = ?)))"
-            )
-            params.append(agent_id)
-        else:
-            where_clauses.append("s.scope = 'global'")
+        if not include_all_scopes:
+            if agent_id:
+                where_clauses.append(
+                    "(s.scope = 'global' OR (s.scope = 'agent' AND "
+                    "(s.agent_id IS NULL OR s.agent_id = ?)))"
+                )
+                params.append(agent_id)
+            else:
+                where_clauses.append("s.scope = 'global'")
 
         where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 

@@ -106,6 +106,7 @@ class SkillStore(ABC):
         status_filter: list[str] | None = None,
         agent_id: str | None = None,
         scopes: list[str] | None = None,
+        include_all_scopes: bool = False,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 

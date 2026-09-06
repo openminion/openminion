@@ -272,7 +272,7 @@ def _reusable_active_skill(
 ) -> "SkillPackage | None":
     collisions = [
         row
-        for row in (skill_runtime.list_skills({}) or [])
+        for row in skill_runtime.store.list_latest_skills(include_all_scopes=True)
         if str(row.get("skill_id") or "") == candidate.skill_id
         or str(row.get("name") or "") == candidate.name
     ]

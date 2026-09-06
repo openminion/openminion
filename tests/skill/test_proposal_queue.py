@@ -536,6 +536,55 @@ def test_apply_proposal_rejects_active_identity_collision(tmp_path: Path) -> Non
         skill.close()
 
 
+def test_apply_proposal_rejects_agent_scoped_identity_without_mutation(
+    tmp_path: Path,
+) -> None:
+    skill = _skill(tmp_path)
+    authority = _authority()
+    try:
+        existing_id, existing_hash, _warnings = skill.ingest_text(
+            name="research-latest-news-playbook",
+            markdown=_proposal().skill_markdown.replace(
+                "Research the requested topic and cite current sources.",
+                "Keep the agent-scoped procedure.",
+            ),
+            scope="agent",
+            agent_id="agent-1",
+            authority=authority,
+        )
+        skill.admit_skill_version(
+            skill_id=existing_id,
+            version_hash=existing_hash,
+            expected_active_version_hash=None,
+            target_status="verified",
+            reason="agent setup",
+            authority=authority,
+            verification_evidence=SkillVerificationEvidence(
+                check="pytest",
+                result="passed",
+                evidence_ref="artifact://validation/agent.txt",
+            ),
+        )
+        before = skill.store.get_skill_package(existing_id, existing_hash)
+        create_proposal(skill.store, _proposal())
+        _review_and_verify(skill.store)
+
+        with pytest.raises(ProposalQueueError, match="active skill identity"):
+            apply_proposal(
+                skill,
+                proposal_id="sprq-proposal-1",
+                authority=authority,
+            )
+
+        assert skill.store.get_skill_package(existing_id, existing_hash) == before
+        rows = skill.store.list_latest_skills(include_all_scopes=True)
+        assert [(row["scope"], row["agent_id"]) for row in rows] == [
+            ("agent", "agent-1")
+        ]
+    finally:
+        skill.close()
+
+
 def test_apply_proposal_checks_every_active_identity_collision(tmp_path: Path) -> None:
     skill = _skill(tmp_path)
     authority = _authority()
