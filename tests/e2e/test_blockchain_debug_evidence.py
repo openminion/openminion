@@ -26,6 +26,7 @@ FRAMEWORK_ROOT = min(
         for parent in ROOT.parents
         if (parent / "test-configs" / "per-agent-minimax-official.json").exists()
     ),
+    default=ROOT.parent,
     key=lambda path: len(path.parts),
 )
 EVIDENCE_ROOT = FRAMEWORK_ROOT / "workspace-tmp" / "bdtc-e2e"

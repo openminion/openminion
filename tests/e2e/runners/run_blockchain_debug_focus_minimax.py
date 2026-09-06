@@ -24,6 +24,7 @@ def _framework_root() -> Path:
             for parent in ROOT.parents
             if (parent / "test-configs" / "per-agent-minimax-official.json").exists()
         ),
+        default=ROOT.parent,
         key=lambda path: len(path.parts),
     )
 
