@@ -147,10 +147,13 @@ def _default_data_root() -> Path:
 
 
 def _resolve_bundle_root(root_path: Path, agent_id: str) -> Path:
-    if root_path.name == agent_id and root_path.parent.name == "agents":
+    if root_path.name == agent_id:
         return root_path
     if root_path.name == "agents":
         return root_path / agent_id
+    direct_root = root_path / agent_id
+    if direct_root.is_dir():
+        return direct_root
     return root_path / "agents" / agent_id
 
 

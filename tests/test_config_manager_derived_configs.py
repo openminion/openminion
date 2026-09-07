@@ -36,16 +36,16 @@ def test_from_base_config_paths_use_data_root() -> None:
             data_root=data_root,
         )
         assert Path(identity_cfg.storage.sqlite_path).resolve(strict=False) == (
-            data_root / "identity" / "identityctl.db"
+            data_root / "identity" / "identity.db"
         ).resolve(strict=False)
         assert Path(identity_cfg.storage.db_path).resolve(strict=False) == (
-            data_root / "identity" / "identityctl.db"
+            data_root / "identity" / "identity.db"
         ).resolve(strict=False)
         assert Path(identity_cfg.profiles.bundle_root).resolve(strict=False) == (
             data_root / "identity"
         ).resolve(strict=False)
         assert Path(identity_cfg.profiles.directory).resolve(strict=False) == (
-            data_root / "identity" / "profiles"
+            data_root / "identity"
         ).resolve(strict=False)
 
         skill_cfg = skill_from_base(
@@ -112,16 +112,16 @@ def test_identity_from_base_config_respects_split_identity_paths() -> None:
             data_root=data_root,
         )
         assert Path(identity_cfg.storage.sqlite_path).resolve(strict=False) == (
-            home_root / "state" / "custom-identity.db"
+            data_root / "state" / "custom-identity.db"
         ).resolve(strict=False)
         assert Path(identity_cfg.storage.db_path).resolve(strict=False) == (
-            home_root / "state" / "custom-identity.db"
+            data_root / "state" / "custom-identity.db"
         ).resolve(strict=False)
         assert Path(identity_cfg.profiles.bundle_root).resolve(strict=False) == (
-            home_root / "bundles" / "custom"
+            data_root / "bundles" / "custom"
         ).resolve(strict=False)
         assert Path(identity_cfg.profiles.directory).resolve(strict=False) == (
-            home_root / "bundles" / "custom" / "profiles"
+            data_root / "bundles" / "custom"
         ).resolve(strict=False)
 
 
@@ -144,16 +144,14 @@ def test_identity_from_base_config_uses_legacy_root_when_bundle_root_missing() -
             data_root=data_root,
         )
         assert Path(identity_cfg.profiles.bundle_root).resolve(strict=False) == (
-            home_root / "legacy-bundles"
+            data_root / "legacy-bundles"
         ).resolve(strict=False)
         assert Path(identity_cfg.profiles.directory).resolve(strict=False) == (
-            home_root / "legacy-bundles" / "profiles"
+            data_root / "legacy-bundles"
         ).resolve(strict=False)
 
 
-def test_identity_from_base_config_defaults_storage_filename_to_identityctl_db() -> (
-    None
-):
+def test_identity_from_base_config_defaults_storage_filename_to_identity_db() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         home_root = root / "runtime"
@@ -171,7 +169,7 @@ def test_identity_from_base_config_defaults_storage_filename_to_identityctl_db()
             home_root=home_root,
             data_root=data_root,
         )
-        expected = (data_root / "identity" / "identityctl.db").resolve(strict=False)
+        expected = (data_root / "identity" / "identity.db").resolve(strict=False)
         assert Path(identity_cfg.storage.sqlite_path).resolve(strict=False) == expected
         assert Path(identity_cfg.storage.db_path).resolve(strict=False) == expected
 

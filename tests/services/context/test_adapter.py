@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from openminion.modules.context.schemas import SessionSlice
 from openminion.modules.storage.runtime.migrations import migrate_database
@@ -176,6 +176,7 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
 
     def test_closes_runtime_identity_controller_after_ctxctl_build(self) -> None:
         closed: list[bool] = []
+        store_factory = Mock(return_value=object())
 
         class _FakeIdentityCtl:
             def __init__(self, *, store) -> None:
@@ -195,9 +196,17 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
                 )
 
         with (
+            patch.dict(
+                "os.environ",
+                {
+                    "OPENMINION_IDENTITY_DB": "",
+                    "OPENMINION_IDENTITY_ROOT": "/tmp/context-identity-root",
+                },
+                clear=False,
+            ),
             patch(
                 "openminion.modules.identity.storage.store.SQLiteIdentityStore",
-                return_value=object(),
+                store_factory,
             ),
             patch(
                 "openminion.modules.identity.runtime.service.IdentityCtl",
@@ -218,6 +227,9 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
 
         self.assertEqual([item.content for item in result or []], ["identity"])
         self.assertEqual(closed, [True])
+        store_factory.assert_called_once_with(
+            sqlite_path=str(Path("/tmp/context-identity-root/identity.db").resolve())
+        )
 
     def test_closes_runtime_identity_controller_after_profile_failure(self) -> None:
         closed: list[bool] = []

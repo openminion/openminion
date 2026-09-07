@@ -4,14 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from openminion.services.config import (
-    resolve_services_env,
-    resolve_services_path,
-)
-from openminion.base.constants import OPENMINION_IDENTITY_DB_ENV
+from openminion.base.config.runtime import resolve_identity_db_from_env
+from openminion.services.config import resolve_services_env, resolve_services_path
 from openminion.services.bootstrap.paths import (
-    SERVICES_IDENTITY_DB_FILENAME,
-    SERVICES_IDENTITY_SUBDIR,
     SERVICES_STATE_DB_FILENAME,
     SERVICES_STATE_DIRNAME,
 )
@@ -180,16 +175,7 @@ class ContextCtlGatewayAdapter:
                     ensure_default_profile,
                 )
 
-                db_path = (
-                    resolve_services_env().get(OPENMINION_IDENTITY_DB_ENV, "").strip()
-                )
-                if not db_path:
-                    db_path = str(
-                        resolve_services_path(
-                            Path(SERVICES_IDENTITY_SUBDIR)
-                            / SERVICES_IDENTITY_DB_FILENAME
-                        )
-                    )
+                db_path = str(resolve_identity_db_from_env(env=resolve_services_env()))
 
                 identity_store_to_close = SQLiteIdentityStore(sqlite_path=db_path)
                 identity_ctl: Any = IdentityCtl(store=identity_store_to_close)

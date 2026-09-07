@@ -34,9 +34,10 @@ config/parser/security.py	164	5	80	6
 config/parser/storage.py	114	3	50	9
 config/paths.py	253	9	47	5
 config/providers.py	138	0	0	0
-config/runtime/__init__.py	301	4	32	4
+config/runtime/__init__.py	228	1	32	1
 config/runtime/capability.py	386	11	45	4
 config/runtime/capability_resolution.py	194	6	64	5
+config/runtime/identity.py	100	3	45	7
 config/runtime/profile.py	388	14	98	4
 config/runtime/profile_overrides.py	173	9	33	2
 config/runtime/reasoning.py	113	4	34	6

@@ -11,7 +11,6 @@ _COMPAT_MODULE_ALIASES = {
     "parser_helpers": "openminion.cli.parser.flags",
     "contracts": "openminion.cli.parser.contracts",
     "identity_provenance": "openminion.cli.identity.provenance",
-    "identity_sync": "openminion.cli.identity.sync",
     "daemon_client": "openminion.cli.transport.daemon_client",
     "styles": "openminion.cli.presentation.styles",
 }

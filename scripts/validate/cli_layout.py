@@ -53,7 +53,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
 GROUPED_MODULES = {
     "bootstrap": {"loader", "paths"},
     "parser": {"base", "flags", "contracts"},
-    "identity": {"provenance", "sync"},
+    "identity": {"provenance"},
     "transport": {"daemon_client"},
     "presentation": {"styles"},
 }

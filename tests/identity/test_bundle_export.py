@@ -134,6 +134,26 @@ def test_load_identity_bundle_accepts_lowercase_file_layout(tmp_path: Path) -> N
     assert [item.relative_path for item in bundle.notes] == ["notes/note.md"]
 
 
+def test_load_identity_bundle_prefers_direct_agent_layout(tmp_path: Path) -> None:
+    direct_root = tmp_path / "ops-agent"
+    legacy_root = tmp_path / "agents" / "ops-agent"
+    direct_root.mkdir(parents=True)
+    legacy_root.mkdir(parents=True)
+    (direct_root / "AGENT.md").write_text(
+        "## Mission\nDirect layout\n", encoding="utf-8"
+    )
+    (direct_root / "SOUL.md").write_text("## Voice\nDirect\n", encoding="utf-8")
+    (legacy_root / "AGENT.md").write_text(
+        "## Mission\nLegacy layout\n", encoding="utf-8"
+    )
+    (legacy_root / "SOUL.md").write_text("## Voice\nLegacy\n", encoding="utf-8")
+
+    bundle = load_identity_bundle("ops-agent", root=tmp_path)
+
+    assert bundle.ok is True
+    assert Path(bundle.root_path) == direct_root
+
+
 def test_identity_lockfile_round_trip_is_deterministic(tmp_path: Path) -> None:
     bundle_root = tmp_path / "bundle"
     bundle_root.mkdir(parents=True)

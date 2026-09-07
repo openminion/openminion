@@ -8,9 +8,12 @@ import pytest
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.identity.config import (
     IdentityCtlConfig,
+    StorageConfig,
     from_base_config,
+    load_config,
     resolve_default_render_budget,
 )
+from openminion.modules.identity.cli import _resolve_storage_db_path
 
 
 CANONICAL_PURPOSES = {"decide", "plan", "act", "reflect", "summarize", "judge"}
@@ -22,6 +25,58 @@ EXPECTED_BUDGETS = {
     "summarize": 160,
     "judge": 170,
 }
+
+
+def test_storage_config_db_path_alias_updates_sqlite_path() -> None:
+    cfg = StorageConfig(db_path="/tmp/custom-identity.db")
+    assert cfg.sqlite_path == "/tmp/custom-identity.db"
+
+
+def test_storage_config_sqlite_path_alias_updates_db_path() -> None:
+    cfg = StorageConfig(sqlite_path="/tmp/custom-identity.db")
+    assert cfg.db_path == "/tmp/custom-identity.db"
+
+
+def test_module_cli_storage_path_honors_identity_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identity_root = tmp_path / "identities"
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("OPENMINION_IDENTITY_ROOT", str(identity_root))
+    monkeypatch.setenv("OPENMINION_IDENTITY_DB", "module.db")
+
+    resolved = _resolve_storage_db_path(tmp_path / "missing.yaml", None)
+
+    assert resolved == (identity_root / "module.db").resolve()
+
+
+def test_module_config_relative_paths_anchor_under_data_root(tmp_path: Path) -> None:
+    config_path = tmp_path / "identity.yaml"
+    config_path.write_text(
+        """
+storage:
+  db_path: state/module.db
+profiles:
+  bundle_root: identities
+        """.strip(),
+        encoding="utf-8",
+    )
+    data_root = tmp_path / "data"
+
+    cfg = load_config(
+        config_path,
+        home_root=tmp_path,
+        data_root=data_root,
+        env={},
+    )
+
+    assert Path(cfg.storage.db_path) == (data_root / "state" / "module.db").resolve()
+    assert (
+        Path(cfg.storage.sqlite_path) == (data_root / "state" / "module.db").resolve()
+    )
+    assert Path(cfg.profiles.directory) == (data_root / "identities").resolve()
+    assert Path(cfg.profiles.bundle_root) == (data_root / "identities").resolve()
 
 
 @pytest.mark.parametrize("purpose", sorted(CANONICAL_PURPOSES))

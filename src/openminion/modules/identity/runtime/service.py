@@ -404,11 +404,16 @@ class IdentityCtl:
         if not src_path.exists():
             raise FileNotFoundError(f"profile path not found: {src_path}")
 
-        files = (
-            [src_path]
-            if src_path.is_file()
-            else sorted([*src_path.glob("*.yaml"), *src_path.glob("*.yml")])
-        )
+        if src_path.is_file():
+            files = [src_path]
+        else:
+            files = sorted(
+                {
+                    *src_path.glob("*.yaml"),
+                    *src_path.glob("*.yml"),
+                    *src_path.glob("*/profile.yaml"),
+                }
+            )
 
         profile_inputs: dict[str, _ProfileInputFile] = {}
         for file_path in files:
@@ -417,7 +422,20 @@ class IdentityCtl:
             materialize_bundle = file_path.name == "profile.yaml" and len(payloads) == 1
             for payload in payloads:
                 parsed = AgentProfileInput.model_validate(payload)
-                agent_id = (parsed.agent_id or "").strip() or file_path.stem
+                if (
+                    file_path.name == "profile.yaml"
+                    and parsed.agent_id
+                    and parsed.agent_id.strip() != file_path.parent.name
+                ):
+                    raise ValueError(
+                        "profile.yaml agent_id does not match its agent directory"
+                    )
+                fallback_agent_id = (
+                    file_path.parent.name
+                    if file_path.name == "profile.yaml"
+                    else file_path.stem
+                )
+                agent_id = (parsed.agent_id or "").strip() or fallback_agent_id
                 profile_inputs[agent_id] = _ProfileInputFile(
                     profile=parsed.model_copy(update={"agent_id": agent_id}),
                     source_path=file_path,

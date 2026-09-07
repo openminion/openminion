@@ -6,10 +6,9 @@ from typing import Any
 from openminion.base.config import ConfigManager, OpenMinionConfig
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.base.config.paths import resolve_data_root, resolve_home_root
+from openminion.base.config.runtime import resolve_identity_db_from_env
 
 from .bootstrap.paths import (
-    CLI_IDENTITY_DB_FILENAME,
-    CLI_IDENTITY_SUBDIR,
     CLI_POLICY_DB_FILENAME,
     CLI_POLICY_SUBDIR,
 )
@@ -198,9 +197,6 @@ def resolve_cli_identity_db_path(
     data_root: str | Path | None = None,
     fallback_to_cwd: bool = True,
 ) -> Path:
-    configured = str(
-        resolve_identity_db_path(config) if config is not None else ""
-    ).strip()
     resolved_roots = roots or resolve_cli_roots(
         env=env,
         runtime_env=runtime_env,
@@ -210,14 +206,19 @@ def resolve_cli_identity_db_path(
         data_root=data_root,
         fallback_to_cwd=fallback_to_cwd,
     )
-    if configured:
-        candidate = Path(configured).expanduser()
-        if not candidate.is_absolute():
-            candidate = resolved_roots.data_root / candidate
-        return candidate.resolve(strict=False)
-    return (
-        resolved_roots.data_root / CLI_IDENTITY_SUBDIR / CLI_IDENTITY_DB_FILENAME
-    ).resolve(strict=False)
+    configured_db = _identity_config_value(config, "db_path") if config else ""
+    legacy_root = _identity_config_value(config, "root") if config else ""
+    configured_root = _identity_config_value(config, "bundle_root") if config else ""
+    if legacy_root and Path(legacy_root).suffix.lower() == ".db":
+        configured_db = configured_db or legacy_root
+        legacy_root = ""
+    return resolve_identity_db_from_env(
+        env=resolved_roots.env,
+        home_root=resolved_roots.home_root,
+        data_root=resolved_roots.data_root,
+        configured_db=configured_db,
+        configured_root=configured_root or legacy_root,
+    )
 
 
 def resolve_cli_policy_db_path(
