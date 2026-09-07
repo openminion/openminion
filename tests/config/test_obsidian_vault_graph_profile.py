@@ -9,10 +9,11 @@ from openminion.modules.memory.backends.config import resolve_backend_config
 
 
 def test_obsidian_vault_graph_profile_uses_supported_backends() -> None:
-    framework_root = Path(__file__).resolve().parents[3]
+    package_root = Path(__file__).resolve().parents[2]
     profile_path = (
-        framework_root
-        / "test-configs"
+        package_root
+        / "examples"
+        / "configs"
         / "per-agent-minimax-obsidian-vault-graph-template.json"
     )
     config = OpenMinionConfig.from_dict(

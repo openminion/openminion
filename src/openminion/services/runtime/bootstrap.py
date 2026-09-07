@@ -113,6 +113,10 @@ def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | Non
     )
 
 
+def _runtime_knowledge_graphs(service: Any) -> Any | None:
+    return getattr(service._runtime_handle, "knowledge_graphs", None)
+
+
 def build_daytona_runner(
     *,
     config: OpenMinionConfig,
@@ -749,7 +753,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
         memory_service=memory_api,
-        knowledge_graph_service=service._runtime_handle.knowledge_graphs,
+        knowledge_graph_service=_runtime_knowledge_graphs(service),
         policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),

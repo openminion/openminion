@@ -1,0 +1,81 @@
+{
+  "agents": {
+    "minimax-obsidian": {
+      "default_channel": "console",
+      "name": "minimax-obsidian",
+      "provider": "openai",
+      "provider_config_overrides": {
+        "api_key": "",
+        "api_key_env": "MINIMAX_API_KEY",
+        "base_url": "https://api.minimax.io/v1",
+        "model": "MiniMax-M2.7",
+        "temperature": 0.2,
+        "timeout_seconds": 60,
+        "tool_call_strategy": "hybrid"
+      },
+      "system_prompt": "You are OpenMinion, a pragmatic assistant. Treat vault and repository graph results as cited context and keep durable memory separate.",
+      "thinking": "minimal"
+    }
+  },
+  "default_agent": "minimax-obsidian",
+  "enabled_channels": [
+    "console"
+  ],
+  "knowledge_graphs": {
+    "provider": {
+      "active": [
+        "vault_graph",
+        "repo_graph"
+      ],
+      "providers": {
+        "vault_graph": {
+          "provider": "sophiagraph_workspace",
+          "tags": [
+            "document_graph"
+          ],
+          "required_capabilities": [
+            "query",
+            "neighborhood",
+            "refresh",
+            "citations",
+            "provenance"
+          ],
+          "options": {
+            "workspace_root": "/ABSOLUTE/PATH/TO/SOPHIAGRAPH_WORKSPACE",
+            "source_root": "/ABSOLUTE/PATH/TO/OBSIDIAN_VAULT"
+          }
+        },
+        "repo_graph": {
+          "provider": "pragmagraph",
+          "tags": [
+            "code_graph"
+          ],
+          "required_capabilities": [
+            "query",
+            "citations",
+            "provenance"
+          ],
+          "options": {
+            "snapshot_path": "/ABSOLUTE/PATH/TO/PRAGMAGRAPH_SNAPSHOT.json"
+          }
+        }
+      }
+    }
+  },
+  "memory": {
+    "backend": {
+      "provider": "sophiagraph"
+    }
+  },
+  "providers": {
+    "openai": {
+      "api_key": "",
+      "api_key_env": "MINIMAX_API_KEY",
+      "base_url": "https://api.minimax.io/v1",
+      "model": "MiniMax-M2.7",
+      "temperature": 0.2,
+      "timeout_seconds": 60,
+      "tool_call_strategy": "hybrid"
+    }
+  }
+}
