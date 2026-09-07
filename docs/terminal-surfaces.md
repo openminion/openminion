@@ -1,7 +1,7 @@
 # OpenMinion Terminal Surfaces
 
 Status: active
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 OpenMinion has one canonical interactive CLI: `openminion`. It uses the
 terminal renderer.
@@ -88,14 +88,19 @@ Preview a local plugin before installing it, then check its runtime health:
 
 ```bash
 openminion plugins preview ./my-plugin
-openminion plugins install ./my-plugin --root ./src/openminion/extensions/custom
+openminion plugins install ./my-plugin \
+  --expected-digest <bundle-digest-from-preview> \
+  --root ./src/openminion/extensions/custom
 openminion plugins health example.plugin --root ./src/openminion/extensions/custom
 ```
 
 `preview` reads metadata without importing plugin code. It reports declared
-dependencies and config schema as metadata, not as runtime-enforced guarantees,
-and reports whether a claimed SHA-256 checksum matches. Install and activation
-fail before importing code when a claimed checksum is malformed or mismatched.
+dependencies, required and secret config names, and a digest of the manifest,
+module bytes, and module alias. Pass that digest to `install` when the exact
+previewed bundle should be required. A mismatch leaves the installed plugin,
+active config, install state, and rollback backup unchanged. Config schema is
+metadata, not a runtime-enforced guarantee. Install and activation fail before
+importing code when a claimed SHA-256 checksum is malformed or mismatched.
 
 A lifecycle-only plugin may provide message hooks without tools. A plugin that
 adds model-visible tools must export one module-level `REGISTRAR`; that registrar
@@ -104,10 +109,15 @@ Fetch, search, and browser provider entry-point group names remain compatible;
 their load attempts and failures appear in extension status together with core
 tool bootstrap and degraded hook status.
 
+Installation is local and offline: OpenMinion copies an already-present plugin
+directory and does not fetch packages or resolve dependencies. It rejects a
+manifest ID or module alias already owned by a different installed plugin.
 `rollback` undoes the last install of that plugin, while `uninstall` removes it
 and disables its manifest ID in the active config. Use the same `--root` for
 install, health, rollback, and uninstall. The default is the first path in
 `OPENMINION_PLUGIN_PATHS`, or the current local-extension root.
+Stop the OpenMinion process that uses the plugin root before install, rollback,
+or uninstall.
 
 ## Dashboard replacements
 

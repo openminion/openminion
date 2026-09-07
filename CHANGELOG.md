@@ -1,12 +1,18 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Current package line - 2026-09-05
 
+- Added restart-safe remote session event inspection, task activity links, and
+  typed approval resume while requiring authentication for non-loopback API
+  binds.
+- Added digest-pinned offline plugin installation with staged validation,
+  collision checks, explicit config declarations, and exact rollback of failed
+  installs.
 - Added approval-bound repository delivery across Git remotes, pull request
   updates and merges, workflow dispatches, check inspection, and GitHub
   releases, including preflight validation and uncertain-effect reconciliation.

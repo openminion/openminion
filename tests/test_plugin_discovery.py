@@ -13,6 +13,7 @@ from openminion.services.runtime.plugins import build_default_plugin_registry
 from openminion.services.runtime.plugins.discovery import (
     discover_plugin_manifests,
     load_plugin_instance,
+    plugin_bundle_digest,
 )
 from openminion.services.runtime.errors import PluginActivationError
 from tests._csc_fixtures import _csc_install_default_agent
@@ -58,6 +59,46 @@ def test_loaded_plugin_module_uses_sha256_path_digest(tmp_path: Path) -> None:
     )
 
 
+def test_plugin_bundle_digest_frames_alias_and_exact_bytes(tmp_path: Path) -> None:
+    custom_root = tmp_path / "plugins"
+    _write_custom_plugin(custom_root, module_alias="héllo", manifest_id="example.hello")
+    discovered = discover_plugin_manifests([custom_root])[0]
+
+    parts = (
+        discovered.module_alias.encode("utf-8"),
+        discovered.manifest_path.read_bytes(),
+        discovered.module_path.read_bytes(),
+    )
+    expected = hashlib.sha256()
+    for part in parts:
+        expected.update(len(part).to_bytes(8, "big"))
+        expected.update(part)
+    first_digest = plugin_bundle_digest(discovered)
+    assert first_digest == f"sha256:{expected.hexdigest()}"
+
+    manifest_bytes = discovered.manifest_path.read_bytes()
+    discovered.manifest_path.write_bytes(manifest_bytes + b"\n")
+    assert plugin_bundle_digest(discovered) != first_digest
+    discovered.manifest_path.write_bytes(manifest_bytes)
+
+    discovered.module_path.write_text(
+        discovered.module_path.read_text(encoding="utf-8") + "# café\n",
+        encoding="utf-8",
+    )
+    assert plugin_bundle_digest(discovered) != first_digest
+
+    renamed_root = tmp_path / "renamed"
+    _write_custom_plugin(
+        renamed_root,
+        module_alias="other",
+        manifest_id="example.hello",
+    )
+    renamed = discover_plugin_manifests([renamed_root])[0]
+    renamed.manifest_path.write_bytes(discovered.manifest_path.read_bytes())
+    renamed.module_path.write_bytes(discovered.module_path.read_bytes())
+    assert plugin_bundle_digest(renamed) != plugin_bundle_digest(discovered)
+
+
 def test_loads_custom_plugin_by_module_alias(tmp_path: Path) -> None:
     custom_root = tmp_path / "plugins"
     _write_custom_plugin(custom_root, module_alias="hello", manifest_id="example.hello")
@@ -66,6 +107,19 @@ def test_loads_custom_plugin_by_module_alias(tmp_path: Path) -> None:
 
     assert registry.names() == ["hello"]
     assert registry.manifest_ids() == ["example.hello"]
+
+
+@pytest.mark.parametrize("module_alias", [".", ".."])
+def test_discovery_rejects_path_aliases(tmp_path: Path, module_alias: str) -> None:
+    custom_root = tmp_path / "plugins"
+    _write_custom_plugin(
+        custom_root,
+        module_alias=module_alias,
+        manifest_id="example.unsafe",
+    )
+
+    with pytest.raises(RuntimeError, match="safe module alias"):
+        discover_plugin_manifests([custom_root])
 
 
 def test_builtin_alias_takes_precedence_over_custom_alias(tmp_path: Path) -> None:

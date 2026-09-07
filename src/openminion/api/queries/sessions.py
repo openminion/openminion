@@ -74,6 +74,63 @@ def list_session_messages(
         close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)
 
 
+def list_session_events(
+    config_path: str | None,
+    *,
+    session_id: str,
+    after_id: int = 0,
+    limit: int = 100,
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
+    normalized_session_id = session_id.strip()
+    if not normalized_session_id:
+        raise SessionQueryError("`session_id` is required.", code="invalid_request")
+    if after_id < 0:
+        raise SessionQueryError("`after_id` must not be negative.")
+
+    safe_limit = max(1, min(limit, 1000))
+    active_runtime, own_runtime = resolve_api_runtime(
+        config_path=config_path,
+        runtime=runtime,
+    )
+    try:
+        session = active_runtime.sessions.get_session(normalized_session_id)
+        if session is None:
+            raise SessionQueryError(
+                f"Session '{normalized_session_id}' was not found.",
+                code="session_not_found",
+            )
+        high_water_id = active_runtime.sessions.event_high_water(
+            session_id=normalized_session_id
+        )
+        records = active_runtime.sessions.list_events_after_id(
+            session_id=normalized_session_id,
+            after_id=after_id,
+            high_water_id=high_water_id,
+            limit=safe_limit,
+        )
+        events = [
+            {
+                "id": record.id,
+                "session_id": record.session_id,
+                "event_type": record.event_type,
+                "created_at": record.created_at,
+                "canonical_event_id": record.canonical_event_id,
+            }
+            for record in records
+        ]
+        return {
+            "session_id": normalized_session_id,
+            "events": events,
+            "after_id": after_id,
+            "next_after_id": records[-1].id if records else after_id,
+            "high_water_id": high_water_id,
+            "limit": safe_limit,
+        }
+    finally:
+        close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)
+
+
 def append_session_event(
     config_path: str | None,
     *,

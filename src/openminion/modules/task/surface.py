@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
+from urllib.parse import quote
 
 from .project.operator import ProjectOperatorResumeAction, ProjectOperatorWorkState
 from .runtime.lifecycle import TaskLifecycleState
@@ -324,7 +325,31 @@ def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]
     project = _project_payload(metadata)
     if project:
         payload["project"] = project
+    activity = _activity_links(metadata)
+    if activity:
+        payload["activity"] = activity
     return payload
+
+
+def _activity_links(metadata: Mapping[str, Any]) -> dict[str, str]:
+    session_id = str(
+        metadata.get("parent_session_id") or metadata.get("session_id") or ""
+    ).strip()
+    trace_id = str(metadata.get("trace_id") or "").strip()
+    links: dict[str, str] = {}
+    if session_id:
+        session_segment = quote(session_id, safe="")
+        links.update(
+            {
+                "session_id": session_id,
+                "session_events_path": f"/sessions/{session_segment}/events",
+                "session_messages_path": f"/sessions/{session_segment}/messages",
+                "turn_inputs_path": f"/v1/sessions/{session_segment}/turn-inputs",
+            }
+        )
+    if trace_id:
+        links["turn_stream_path"] = f"/v1/turn/{quote(trace_id, safe='')}/stream"
+    return links
 
 
 def _task_title(task_id: str, metadata: Mapping[str, Any]) -> str:

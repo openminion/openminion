@@ -1,6 +1,9 @@
 import os
 from unittest import mock
 
+import pytest
+
+from openminion.api.config import APIRuntimeBootstrap
 from tests._csc_fixtures import _csc_install_default_agent
 
 from openminion.api.core.deps import build_degraded_recovery_hint
@@ -94,6 +97,48 @@ def test_build_api_server_starts_with_none_runtime_when_bootstrap_fails() -> Non
     handler_cls = server_ctor.call_args.args[1]
     assert getattr(handler_cls, "runtime") is None
     assert "bootstrap failed" in getattr(handler_cls, "runtime_bootstrap_error")
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_build_api_server_allows_loopback_without_token(host: str) -> None:
+    fake_server = mock.Mock()
+    bootstrap = APIRuntimeBootstrap(runtime=None, runtime_bootstrap_error=None)
+    with mock.patch(
+        "openminion.api.server.bootstrap_api_runtime", return_value=bootstrap
+    ):
+        with mock.patch(
+            "openminion.api.server._OpenMinionThreadingHTTPServer",
+            return_value=fake_server,
+        ):
+            assert build_api_server(None, host, 0) is fake_server
+
+
+def test_build_api_server_refuses_non_loopback_without_token() -> None:
+    runtime = mock.Mock()
+    bootstrap = APIRuntimeBootstrap(runtime=runtime, runtime_bootstrap_error=None)
+    with mock.patch(
+        "openminion.api.server.bootstrap_api_runtime", return_value=bootstrap
+    ):
+        with pytest.raises(RuntimeError, match="requires runtime.ipc_token"):
+            build_api_server(None, "0.0.0.0", 0)
+    runtime.close.assert_called_once_with()
+
+
+def test_build_api_server_allows_non_loopback_with_token() -> None:
+    fake_server = mock.Mock()
+    bootstrap = APIRuntimeBootstrap(
+        runtime=None,
+        runtime_bootstrap_error=None,
+        ipc_token="test-token",
+    )
+    with mock.patch(
+        "openminion.api.server.bootstrap_api_runtime", return_value=bootstrap
+    ):
+        with mock.patch(
+            "openminion.api.server._OpenMinionThreadingHTTPServer",
+            return_value=fake_server,
+        ):
+            assert build_api_server(None, "0.0.0.0", 0) is fake_server
 
 
 def _write_openai_missing_key_config(tmp_path):
