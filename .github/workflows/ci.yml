@@ -83,12 +83,15 @@ jobs:
               subprocess.run([*base, "config", "init", "--provider", "echo", "--force"], check=True)
               subprocess.run([*base, "verify", "smoke"], check=True)
               subprocess.run([*base, "doctor", "--json"], check=True)
-              response = subprocess.run(
-                  [*base, "run", "--session", "first-run", "hello"],
-                  check=True,
-                  capture_output=True,
-                  text=True,
-              )
+              try:
+                  response = subprocess.run(
+                      [*base, "run", "--session", "first-run", "hello"],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+              finally:
+                  subprocess.run([*base, "daemon", "stop"], check=True)
 
               config = provider_config.read_text(encoding="utf-8")
               provider = json.loads(config)["providers"]["openai"]
