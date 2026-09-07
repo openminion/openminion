@@ -122,6 +122,8 @@ class BrainBridgeTurnMixin:
         session_id = brain_session_id
         request_id = message.metadata.get("request_id")
         runner = self._get_runner()
+        explicit_skill_id = message.metadata.get("explicit_skill_id", "")
+        runner._explicit_skill_id_for_turn = str(explicit_skill_id or "").strip()
         _emit_prep_status(
             progress_callback,
             trace_id=prep_trace_id,

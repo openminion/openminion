@@ -29,6 +29,7 @@ async def run_room_turn_if_bound(
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
     transcript: TerminalTranscript,
     handle: Any,
+    inbound_metadata: dict[str, str] | None = None,
 ) -> str | None:
     room_runner = getattr(runtime, "run_room_turn", None)
     room_detector = getattr(runtime, "is_room_session", None)
@@ -40,6 +41,7 @@ async def run_room_turn_if_bound(
             await room_runner(
                 text,
                 progress_callback=progress_callback,
+                inbound_metadata=inbound_metadata,
                 approval_callback=approval_callback,
                 cancel_event=cancel_event,
             )
@@ -66,8 +68,12 @@ def runtime_message_stream(
     text: str,
     progress_callback: Callable[[dict[str, Any]], None],
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None,
+    *,
+    inbound_metadata: dict[str, str] | None = None,
 ) -> Any:
     kwargs: dict[str, Any] = {"progress_callback": progress_callback}
+    if inbound_metadata:
+        kwargs["inbound_metadata"] = inbound_metadata
     if approval_callback is not None:
         kwargs["approval_callback"] = approval_callback
     return runtime.send_message(text, **kwargs)

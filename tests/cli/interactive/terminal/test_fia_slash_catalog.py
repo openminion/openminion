@@ -34,6 +34,10 @@ class _StubOverlay:
     pass
 
 
+async def _noop_start_turn(*_args: object, **_kwargs: object) -> None:
+    pass
+
+
 class _ResumeOverlay:
     def __init__(self, choice: str) -> None:
         self.choice = choice
@@ -91,7 +95,7 @@ class _VisibleRuntime:
         return [("file.read", True)]
 
     def list_skill_rows(self) -> list[dict[str, str]]:
-        return [{"id": "demo-skill"}]
+        return [{"id": "demo-skill", "source": "catalog"}]
 
     def list_sessions(self) -> list[object]:
         return []
@@ -182,6 +186,7 @@ def _extract_implemented_slashes() -> set[str]:
     implemented: set[str] = set()
 
     dispatchers = (
+        _handle_slash_input,
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
@@ -195,7 +200,7 @@ def _extract_implemented_slashes() -> set[str]:
                 continue
             if (
                 isinstance(node.left, ast.Name)
-                and node.left.id == "cmd"
+                and node.left.id in {"cmd", "cmd_name"}
                 and len(node.ops) == 1
                 and isinstance(node.ops[0], ast.Eq)
                 and len(node.comparators) == 1
@@ -206,7 +211,7 @@ def _extract_implemented_slashes() -> set[str]:
                 implemented.add(node.comparators[0].value)
             if (
                 isinstance(node.left, ast.Name)
-                and node.left.id == "cmd"
+                and node.left.id in {"cmd", "cmd_name"}
                 and len(node.ops) == 1
                 and isinstance(node.ops[0], ast.In)
                 and len(node.comparators) == 1
@@ -532,6 +537,7 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
             status_line=TerminalStatusLine(),
             working_dir=str(tmp_path),
             custom_commands={},
+            start_turn=_noop_start_turn,
         )
     )
 
@@ -542,9 +548,14 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
     assert transcript._messages[-1].kind.value == "system"
 
 
-def test_prompt_loop_routes_unknown_slash_with_suggestion_through_transcript(
+def test_prompt_loop_bare_skill_shows_usage_without_agent_turn(
     tmp_path: Path,
 ) -> None:
+    turns: list[tuple[str, dict[str, object]]] = []
+
+    async def _start_turn(text: str, **kwargs: object) -> None:
+        turns.append((text, kwargs))
+
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, width=160)
     transcript = TerminalTranscript(console)
@@ -559,14 +570,141 @@ def test_prompt_loop_routes_unknown_slash_with_suggestion_through_transcript(
             status_line=TerminalStatusLine(),
             working_dir=str(tmp_path),
             custom_commands={},
+            start_turn=_start_turn,
         )
     )
 
     assert transcript._messages[-1].body == (
-        "Unknown command: /skill\n"
-        "Did you mean /skills?\n"
-        "Type / to view available commands."
+        "Usage: /skill <skill_id> [task]\nUse /skills to list available skills."
     )
+    assert turns == []
+
+
+def test_prompt_loop_invokes_exact_skill_through_normal_turn(
+    tmp_path: Path,
+) -> None:
+    turns: list[tuple[str, dict[str, object]]] = []
+
+    async def _start_turn(text: str, **kwargs: object) -> None:
+        turns.append((text, kwargs))
+
+    console = Console(file=io.StringIO(), force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/skill demo-skill summarize the workflow",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+            start_turn=_start_turn,
+        )
+    )
+
+    expected = "Use the exact skill demo-skill. summarize the workflow"
+    assert turns == [
+        (expected, {"inbound_metadata": {"explicit_skill_id": "demo-skill"}})
+    ]
+    assert transcript._messages[-1].body == expected
+
+
+def test_prompt_loop_invokes_exact_skill_without_task(tmp_path: Path) -> None:
+    turns: list[tuple[str, dict[str, object]]] = []
+
+    async def _start_turn(text: str, **kwargs: object) -> None:
+        turns.append((text, kwargs))
+
+    transcript = TerminalTranscript(
+        Console(file=io.StringIO(), force_terminal=False, width=160)
+    )
+    asyncio.run(
+        _handle_slash_input(
+            "/skill demo-skill",
+            runtime=_VisibleRuntime(),
+            console=Console(file=io.StringIO(), force_terminal=False, width=160),
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+            start_turn=_start_turn,
+        )
+    )
+
+    assert turns == [
+        (
+            "Use the exact skill demo-skill.",
+            {"inbound_metadata": {"explicit_skill_id": "demo-skill"}},
+        )
+    ]
+
+
+def test_prompt_loop_rejects_unknown_skill_without_agent_turn(
+    tmp_path: Path,
+) -> None:
+    turns: list[tuple[str, dict[str, object]]] = []
+
+    async def _start_turn(text: str, **kwargs: object) -> None:
+        turns.append((text, kwargs))
+
+    console = Console(file=io.StringIO(), force_terminal=False, width=160)
+    transcript = TerminalTranscript(console)
+
+    asyncio.run(
+        _handle_slash_input(
+            "/skill demo-skil summarize",
+            runtime=_VisibleRuntime(),
+            console=console,
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+            start_turn=_start_turn,
+        )
+    )
+
+    assert transcript._messages[-1].body == (
+        "Skill not found: demo-skil\nUse /skills to list available skills."
+    )
+    assert turns == []
+
+
+def test_prompt_loop_rejects_config_only_skill_without_agent_turn(
+    tmp_path: Path,
+) -> None:
+    class _ConfigOnlyRuntime(_VisibleRuntime):
+        def list_skill_rows(self) -> list[dict[str, str]]:
+            return [{"id": "configured-only", "source": "config"}]
+
+    turns: list[str] = []
+
+    async def _start_turn(text: str, **_kwargs: object) -> None:
+        turns.append(text)
+
+    transcript = TerminalTranscript(
+        Console(file=io.StringIO(), force_terminal=False, width=160)
+    )
+    asyncio.run(
+        _handle_slash_input(
+            "/skill configured-only run it",
+            runtime=_ConfigOnlyRuntime(),
+            console=Console(file=io.StringIO(), force_terminal=False, width=160),
+            transcript=transcript,
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir=str(tmp_path),
+            custom_commands={},
+            start_turn=_start_turn,
+        )
+    )
+
+    assert transcript._messages[-1].body.startswith("Skill not found: configured-only")
+    assert turns == []
 
 
 def test_prompt_loop_passes_skill_id_to_skill_detail_report(tmp_path: Path) -> None:
@@ -588,6 +726,7 @@ def test_prompt_loop_passes_skill_id_to_skill_detail_report(tmp_path: Path) -> N
             status_line=TerminalStatusLine(),
             working_dir=str(tmp_path),
             custom_commands={},
+            start_turn=_noop_start_turn,
         )
     )
 

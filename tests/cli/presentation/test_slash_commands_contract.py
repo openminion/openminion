@@ -26,6 +26,7 @@ def test_terminal_catalog_preserves_supported_commands_and_aliases() -> None:
         "/memory",
         "/graph",
         "/tasks",
+        "/skill",
         "/skills",
         "/statusline",
         "/details",
@@ -56,10 +57,10 @@ def test_busy_slash_policy_allows_reads_and_blocks_changes() -> None:
 
 def test_unknown_slash_command_message_suggests_nearest_command() -> None:
     assert unknown_slash_command_message(
-        "/skill", available_commands=("/skills", "/status")
+        "/skil", available_commands=("/skill", "/skills", "/status")
     ) == (
-        "Unknown command: /skill\n"
-        "Did you mean /skills?\n"
+        "Unknown command: /skil\n"
+        "Did you mean /skill?\n"
         "Type / to view available commands."
     )
 

@@ -804,6 +804,44 @@ def test_resolve_skill_pipeline_exact_named_skill_matches_compact_identity(
     assert llm.calls == []
 
 
+def test_resolve_skill_pipeline_prefers_turn_scoped_exact_skill_id() -> None:
+    runner = _runner(catalog=_catalog("alpha-beta", "alpha_beta"), llm=MagicMock())
+    runner._explicit_skill_id_for_turn = "alpha_beta"
+
+    result = resolve_skill_pipeline(
+        runner,
+        intent="Use the exact skill alpha_beta.",
+        purpose="plan",
+        state=_state(),
+        logger=_Logger(),
+    )
+
+    assert result.selection_mode == "direct"
+    assert [ref.skill_id for ref in result.selected_refs] == ["alpha_beta"]
+    runner.llm_api.call_structured.assert_not_called()
+
+
+def test_turn_scoped_exact_skill_id_overrides_selection_filters() -> None:
+    runner = _runner(
+        catalog=_catalog("alpha", "beta"),
+        llm=MagicMock(),
+        profile=_profile(skill_catalog=["beta"]),
+    )
+    runner._explicit_skill_id_for_turn = "alpha"
+
+    result = resolve_skill_pipeline(
+        runner,
+        intent="Use the exact skill alpha.",
+        purpose="plan",
+        state=_state(unloaded=["alpha"]),
+        logger=_Logger(),
+    )
+
+    assert result.selection_mode == "direct"
+    assert [ref.skill_id for ref in result.selected_refs] == ["alpha"]
+    runner.llm_api.call_structured.assert_not_called()
+
+
 def test_resolve_skill_pipeline_ambiguous_named_skill_fails_closed_to_llm(
     monkeypatch,
 ) -> None:

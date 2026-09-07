@@ -124,6 +124,7 @@ def resolve_skill_pipeline(
         profile=getattr(runner, "profile", None),
         state=state,
         catalog=catalog,
+        explicit_skill_id=_turn_skill_id(runner),
     )
     effective_catalog = catalog_state.effective_catalog
     context_budget = infer_context_budget_tier(
@@ -157,10 +158,7 @@ def resolve_skill_pipeline(
         )
 
     capacity = catalog_state.capacity
-    named_refs = _resolve_unique_named_skill_refs(
-        intent=normalized_intent,
-        catalog=effective_catalog,
-    )
+    named_refs = _resolve_named_skill_refs(runner, normalized_intent, effective_catalog)
     if named_refs:
         _emit_shortlist(
             logger=logger,
@@ -345,6 +343,7 @@ def _effective_catalog(
     profile: Any,
     state: "WorkingState",
     catalog: list[dict[str, Any]],
+    explicit_skill_id: str = "",
 ) -> tuple[list[dict[str, Any]], dict[str, str], bool]:
     configured_auto, configured_skills = skill_value_to_list(
         getattr(profile, "skill", None)
@@ -370,7 +369,8 @@ def _effective_catalog(
     default_auto = not configured_auto and not configured_skills
     auto_enabled = session_auto or configured_auto or default_auto
 
-    catalog_by_id = _catalog_by_id(catalog)
+    full_catalog_by_id = _catalog_by_id(catalog)
+    catalog_by_id = dict(full_catalog_by_id)
     if configured_catalog:
         allowed = {item.lower() for item in configured_catalog}
         catalog_by_id = {
@@ -406,6 +406,12 @@ def _effective_catalog(
         effective_ids.append(skill_id)
         sources[skill_id] = "session"
 
+    if explicit_skill_id in full_catalog_by_id:
+        catalog_by_id[explicit_skill_id] = full_catalog_by_id[explicit_skill_id]
+        if explicit_skill_id not in effective_ids:
+            effective_ids.insert(0, explicit_skill_id)
+        sources[explicit_skill_id] = "explicit"
+
     return (
         [
             catalog_by_id[skill_id]
@@ -422,11 +428,13 @@ def describe_skill_catalog(
     profile: Any,
     state: "WorkingState",
     catalog: list[dict[str, Any]],
+    explicit_skill_id: str = "",
 ) -> SkillCatalogState:
     effective_catalog, sources, auto_enabled = _effective_catalog(
         profile=profile,
         state=state,
         catalog=catalog,
+        explicit_skill_id=explicit_skill_id,
     )
     capacity = min(
         _direct_capacity(effective_catalog), _configured_skill_capacity(profile)
@@ -509,6 +517,20 @@ def _resolve_unique_named_skill_refs(
     if selected is None:
         return []
     return [_catalog_ref(selected, source="direct-named")]
+
+
+def _resolve_named_skill_refs(
+    runner: "BrainRunner", intent: str, catalog: list[dict[str, Any]]
+) -> list[SkillRef]:
+    skill_id = _turn_skill_id(runner)
+    entry = _catalog_by_id(catalog).get(skill_id)
+    if entry is not None:
+        return [_catalog_ref(entry, source="direct-named")]
+    return _resolve_unique_named_skill_refs(intent=intent, catalog=catalog)
+
+
+def _turn_skill_id(runner: "BrainRunner") -> str:
+    return str(getattr(runner, "_explicit_skill_id_for_turn", "") or "").strip()
 
 
 def _intent_matches_skill_identity(*, intent_lower: str, entry: dict[str, Any]) -> bool:

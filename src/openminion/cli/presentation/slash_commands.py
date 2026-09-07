@@ -45,6 +45,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata("/memory", "Show memory health and inventory"),
     SlashCommandMetadata("/graph", "Show graph viewer commands"),
     SlashCommandMetadata("/tasks", "Show task inventory", ("/task",)),
+    SlashCommandMetadata("/skill", "Invoke one skill with /skill <skill_id> [task]"),
     SlashCommandMetadata("/skills", "List skills or view one with /skills <skill_id>"),
     SlashCommandMetadata(
         "/statusline", "Show or set status line preset/custom command"
@@ -139,6 +140,11 @@ def slash_help_rows() -> tuple[tuple[str, str], ...]:
     return tuple(rows)
 
 
+def render_skill_invocation(skill_id: str, task: str = "") -> str:
+    prompt = f"Use the exact skill {skill_id}."
+    return f"{prompt} {task.strip()}" if task.strip() else prompt
+
+
 def unknown_slash_command_message(
     command: str,
     *,
@@ -159,6 +165,7 @@ __all__ = [
     "SlashCommandMetadata",
     "slash_command_runs_while_busy",
     "slash_help_rows",
+    "render_skill_invocation",
     "terminal_slash_commands",
     "unknown_slash_command_message",
 ]

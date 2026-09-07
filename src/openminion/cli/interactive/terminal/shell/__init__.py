@@ -48,10 +48,7 @@ from .session_paths import (
     discover_custom_commands_for as _discover_custom_commands_for,
     focus_history_path as _focus_history_path,
 )
-from .slash_output import (
-    PROMPT_SAFE_OUTPUT_SLASHES,
-    handle_prompt_safe_output_slash,
-)
+from . import slash_output
 from .actions import (
     _handle_slash,
     _push_greeter,
@@ -61,6 +58,7 @@ from .actions import (
     _SLASH_COMMANDS,
 )
 from .sessions import run_room_turn_if_bound, runtime_message_stream
+from .skill_invocation import StartTurn, handle_skill_invocation
 from .timing import push_phase_timing_report_if_enabled
 from .renderers import (
     _render_cost_snapshot as _render_cost_snapshot,
@@ -72,10 +70,7 @@ from .renderers import (
 )
 from openminion.cli.presentation.styles import StyleToken, is_color_enabled
 from openminion.cli.presentation.markers import token_rich_style
-from openminion.cli.presentation.slash_commands import (
-    slash_command_runs_while_busy,
-    slash_help_rows,
-)
+from openminion.cli.presentation import slash_commands
 from openminion.cli.presentation.visible_parity import statusline_label
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,6 +83,7 @@ _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
+TurnMeta = dict[str, str] | None
 
 
 def _build_terminal_console() -> Console:
@@ -241,6 +237,7 @@ async def _handle_slash_input(
     status_line: TerminalStatusLine,
     working_dir: str,
     custom_commands: dict,
+    start_turn: StartTurn,
     approval_grants: set[str] | None = None,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
@@ -250,9 +247,12 @@ async def _handle_slash_input(
     cmd_name = parts[0]
     slash_arg = parts[1] if len(parts) > 1 else ""
 
+    if cmd_name == "/skill":
+        return await handle_skill_invocation(slash_arg, runtime, transcript, start_turn)
+
     if cmd_name in _SLASH_COMMANDS:
-        if cmd_name in PROMPT_SAFE_OUTPUT_SLASHES:
-            return await handle_prompt_safe_output_slash(
+        if cmd_name in slash_output.PROMPT_SAFE_OUTPUT_SLASHES:
+            return await slash_output.handle_prompt_safe_output_slash(
                 text,
                 slash_handler=_handle_slash,
                 runtime=runtime,
@@ -296,7 +296,7 @@ async def _handle_slash_input(
             ),
         )
         return False
-    return await handle_prompt_safe_output_slash(
+    return await slash_output.handle_prompt_safe_output_slash(
         text,
         slash_handler=_handle_slash,
         runtime=runtime,
@@ -420,7 +420,7 @@ class _TerminalFocusLoop:
         self.refresh_status_line(state="responding")
         await self.start_turn(next_text)
 
-    async def start_turn(self, text: str) -> None:
+    async def start_turn(self, text: str, *, inbound_metadata: TurnMeta = None) -> None:
         self.active_turn_text = str(text or "")
         self.active_turn_started_at = asyncio.get_running_loop().time()
         self.active_turn_task = asyncio.create_task(
@@ -436,6 +436,7 @@ class _TerminalFocusLoop:
                     resume_prompt=self.start_read_task,
                 ),
                 invalidate_prompt=getattr(self.composer, "invalidate", None),
+                inbound_metadata=inbound_metadata,
             )
         )
         if callable(getattr(self.composer, "set_busy", None)):
@@ -458,7 +459,7 @@ class _TerminalFocusLoop:
         if is_queue_command(text):
             await self.handle_queue_command(text)
             return
-        if text.startswith("/") and slash_command_runs_while_busy(text):
+        if text.startswith("/") and slash_commands.slash_command_runs_while_busy(text):
             await _handle_slash_input(
                 text,
                 runtime=self.runtime,
@@ -468,6 +469,7 @@ class _TerminalFocusLoop:
                 status_line=self.status_line,
                 working_dir=self.working_dir,
                 custom_commands=self.custom_commands,
+                start_turn=self.start_turn,
             )
             return
         if text.startswith("/") or text.startswith("!"):
@@ -544,6 +546,7 @@ class _TerminalFocusLoop:
                     status_line=self.status_line,
                     working_dir=self.working_dir,
                     custom_commands=self.custom_commands,
+                    start_turn=self.start_turn,
                     approval_grants=self.approval_grants,
                     approval_callback=_build_approval_callback(
                         overlay=self.overlay,
@@ -683,7 +686,7 @@ async def _run_terminal_focus_async(
 
     catalog = {
         name: description
-        for name, description in slash_help_rows()
+        for name, description in slash_commands.slash_help_rows()
         if name in _SLASH_COMMANDS
     }
     catalog.update({name: "custom command" for name in custom_commands})
@@ -899,6 +902,7 @@ async def _run_agent_turn(
     status_line: TerminalStatusLine | None,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
+    inbound_metadata: dict[str, str] | None = None,
 ) -> None:
     if status_line is not None:
         status_line.set_state(state="responding", elapsed_seconds=0.0, turn_status="")
@@ -912,9 +916,7 @@ async def _run_agent_turn(
         )
     handle = transcript.begin_turn(
         role="assistant",
-        footer_provider=status_line.live_turn_footer
-        if status_line is not None
-        else None,
+        footer_provider=status_line.live_turn_footer if status_line else None,
     )
     reply = ""
     from openminion.cli.status import PhaseStatusController
@@ -948,6 +950,7 @@ async def _run_agent_turn(
             approval_callback=approval_callback,
             transcript=transcript,
             handle=handle,
+            inbound_metadata=inbound_metadata,
         )
         if room_reply is not None:
             reply = room_reply
@@ -957,6 +960,7 @@ async def _run_agent_turn(
                 text,
                 progress_callback,
                 approval_callback,
+                inbound_metadata=inbound_metadata,
             ):
                 chunk_str = str(chunk or "")
                 if not chunk_str:

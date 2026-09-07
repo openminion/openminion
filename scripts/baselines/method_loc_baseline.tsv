@@ -10,7 +10,7 @@ src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._execute_openm
 src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter._invoke_validated_tool	110	OREL keeps direct project effect routing in the existing tool adapter owner
 src/openminion/modules/brain/adapters/tool/runtime.py	ToolAdapter.execute	322	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/bootstrap/budget.py	trim_decide_context_to_budget	162	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/bootstrap/skill/pipeline.py	resolve_skill_pipeline	248	concurrent entry-selection growth; ratchet downward in its owning skill lane
+src/openminion/modules/brain/bootstrap/skill/pipeline.py	resolve_skill_pipeline	246	concurrent entry-selection growth; ratchet downward in its owning skill lane
 src/openminion/modules/brain/bootstrap/skill/selection.py	_select_skills_with_llm	138	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/config.py	RunnerOptions.__post_init__	134	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMixin._finalize_success	293	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
