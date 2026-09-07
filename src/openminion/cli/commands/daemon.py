@@ -160,7 +160,9 @@ def daemon_stop(
     try:
         process.kill()
     except psutil.Error as exc:
-        print(f"Daemon pid={pid} did not stop within timeout and force kill failed: {exc}")
+        print(
+            f"Daemon pid={pid} did not stop within timeout and force kill failed: {exc}"
+        )
         return 1
 
     kill_deadline = time.time() + 5
