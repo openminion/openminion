@@ -27,7 +27,14 @@ if TYPE_CHECKING:
 _TOOL_DEFINITIONS = (
     (
         MODEL_SKILL_PROPOSE,
-        "Propose complete SKILL.md content from work in the current session for local operator review. This stages a pending proposal and does not add a catalog skill.",
+        "Propose complete SKILL.md content from current-session work or retrieved "
+        "procedure memory for local operator review. You may offer to save a "
+        "reusable multi-step workflow, but call this tool only after the user asks "
+        "or confirms. When using memory, place the retrieved procedure in the "
+        "proposed Markdown instead of making the skill search or propose again. "
+        "When retrieved procedure content has a tools list, copy that list "
+        "exactly into YAML tools, including an empty list. "
+        "This stages a pending proposal and does not add a catalog skill.",
         RUNTIME_SKILL_PROPOSE,
     ),
     (

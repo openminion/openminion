@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.brain.adapters.memory.runtime import MemctlAdapter
 from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
+from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.memory.runtime.promotion import PromotionPolicy
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage import (
@@ -16,6 +19,7 @@ from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.memory import REGISTRAR
+from openminion.tools.memory.plugin import MemorySearchArgs
 
 
 def _memory_service(tmp_path: Path) -> MemoryService:
@@ -177,6 +181,144 @@ def test_brain_tool_adapter_preserves_memory_service(tmp_path: Path) -> None:
         )
     )
     assert len(records) == 1
+
+
+def test_memory_search_uses_active_scope_and_exposes_first_record_to_model(
+    tmp_path: Path,
+) -> None:
+    nonce = "memory-model-visible-proof-7319"
+    service = _memory_service(tmp_path)
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=_registry(),
+        memory_service=MemctlAdapter(service, agent_id="memory-agent"),
+        agent_id="memory-agent",
+    )
+    service.write_record(
+        scope="agent:memory-agent",
+        record_type="procedure",
+        key="procedure:model-visible-proof",
+        title="Model-visible procedure",
+        content={
+            "steps": [f"Write the remembered marker {nonce}", "Verify the marker"],
+            "proof_nonce": nonce,
+        },
+    )
+
+    result = adapter.execute(
+        command={
+            "tool_name": "memory.search",
+            "args": {"query": "model-visible procedure", "types": ["procedure"]},
+            "inputs": {"permission_mode": "bypass"},
+        },
+        session_id="memory-session",
+        trace_id="memory-trace",
+    )
+
+    assert MemorySearchArgs(query="proof").scopes == []
+    assert MemorySearchArgs(query="proof", scopes=[]).scopes == []
+    assert result["status"] == "success"
+    output = result["outputs"]
+    assert output["data"]["scopes"] == ["agent:memory-agent"]
+    assert output["data"]["records"][0]["content"]["proof_nonce"] == nonce
+    model_projection = json.loads(output["content"])["records"][0]
+    assert set(model_projection) == {"content", "id", "title", "type"}
+    assert model_projection["content"]["proof_nonce"] == nonce
+
+    message = action_result_to_tool_message(
+        "search-call",
+        "memory.search",
+        ActionResult(command_id="search-command", **result),
+    )
+    assert nonce in message.content
+
+
+def test_memory_search_chunks_large_first_record_without_losing_structure(
+    tmp_path: Path,
+) -> None:
+    service = _memory_service(tmp_path)
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=_registry(),
+        memory_service=MemctlAdapter(service, agent_id="memory-agent"),
+        agent_id="memory-agent",
+    )
+    service.write_record(
+        scope="agent:memory-agent",
+        record_type="procedure",
+        key="procedure:large-model-visible-proof",
+        title="Large model-visible procedure",
+        content={
+            "steps": ["Write the detailed report: " + "detail " * 240],
+            "tools": ["file.write", "file.read"],
+        },
+    )
+
+    result = adapter.execute(
+        command={
+            "tool_name": "memory.search",
+            "args": {"query": "large model-visible procedure"},
+            "inputs": {"permission_mode": "bypass"},
+        },
+        session_id="memory-session",
+        trace_id="memory-trace",
+    )
+
+    assert result["status"] == "success"
+    output = result["outputs"]
+    assert output["data"]["model_content_complete"] is True
+    projection = json.loads("".join(output["data"]["model_content_chunks"]))
+    first = projection["records"][0]
+    assert first["content"]["tools"] == ["file.write", "file.read"]
+    assert first["content"]["steps"][0].endswith("detail ")
+
+    message = action_result_to_tool_message(
+        "search-call",
+        "memory.search",
+        ActionResult(command_id="search-command", **result),
+    )
+    payload = json.loads(message.content)
+    chunks = payload["outputs"]["data"]["model_content_chunks"]
+    assert json.loads("".join(chunks))["records"][0]["content"]["tools"] == [
+        "file.write",
+        "file.read",
+    ]
+
+
+def test_memory_search_marks_above_limit_projection_incomplete(tmp_path: Path) -> None:
+    service = _memory_service(tmp_path)
+    adapter = ToolAdapter(
+        workspace_root=tmp_path,
+        runtime_registry=_registry(),
+        memory_service=MemctlAdapter(service, agent_id="memory-agent"),
+        agent_id="memory-agent",
+    )
+    service.write_record(
+        scope="agent:memory-agent",
+        record_type="procedure",
+        key="procedure:above-model-limit",
+        title="Above model-visible limit",
+        content={
+            "steps": ["Write the detailed report: " + "detail " * 1400],
+            "tools": ["file.write", "file.read"],
+        },
+    )
+
+    result = adapter.execute(
+        command={
+            "tool_name": "memory.search",
+            "args": {"query": "above model-visible limit"},
+            "inputs": {"permission_mode": "bypass"},
+        },
+        session_id="memory-session",
+        trace_id="memory-trace",
+    )
+
+    output = result["outputs"]
+    assert output["data"]["model_content_complete"] is False
+    assert output["data"]["model_content_size"] > 8000
+    assert "model_content_chunks" not in output["data"]
+    assert "exceeds the 8000-character model-visible limit" in output["content"]
 
 
 def test_memory_tools_require_explicit_runtime_service(tmp_path: Path) -> None:

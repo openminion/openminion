@@ -270,6 +270,26 @@ class SuccessMemoryItem(BaseModel):
     evidence_refs: list[ArtifactRef] = Field(default_factory=list)
     scope_suggestion: str = "agent"
 
+    @model_validator(mode="after")
+    def _require_procedure_steps(self) -> "SuccessMemoryItem":
+        if self.kind != "procedure":
+            return self
+        if not isinstance(self.content, dict):
+            raise ValueError("procedure content must be an object with ordered steps")
+        steps = self.content.get("steps")
+        if (
+            not isinstance(steps, list)
+            or not steps
+            or any(not isinstance(step, str) or not step.strip() for step in steps)
+        ):
+            raise ValueError("procedure content.steps must be a non-empty string list")
+        tools = self.content.get("tools")
+        if not isinstance(tools, list) or any(
+            not isinstance(tool, str) or not tool.strip() for tool in tools
+        ):
+            raise ValueError("procedure content.tools must be a string list")
+        return self
+
 
 class SuccessMemoryReport(BaseModel):
     model_config = ConfigDict(extra="forbid")

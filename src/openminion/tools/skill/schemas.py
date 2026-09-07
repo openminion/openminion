@@ -40,7 +40,8 @@ class SkillProposeArgs(BaseModel):
             "Complete reviewable SKILL.md content: YAML frontmatter with name and "
             "description, a closing ---, then Markdown body headings such as "
             "# Title and ## Procedure. Do not put the body in a frontmatter "
-            "content field."
+            "content field. When retrieved procedure content has a tools list, "
+            "copy it exactly into YAML tools, including an empty list."
         ),
     )
 

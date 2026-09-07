@@ -102,17 +102,15 @@ class LocalLLMAdapter:
             agent_id = _context_id(context, "agent_id", default="local-agent")
             command_ids = _string_list(hints.get("success_memory_command_ids"))
             tool_names = _string_list(hints.get("success_memory_tool_names"))
-            goal = _hint_string(
-                hints,
-                "success_memory_goal",
-                default="completed task",
-            )
+            goal = _hint_string(hints, "success_memory_goal", default="completed task")
             items: list[dict[str, Any]] = [
                 {
                     "kind": "procedure",
                     "title": f"Procedure for {goal}",
                     "content": {
                         "goal": goal,
+                        "steps": [f"Complete the successful task: {goal}"],
+                        "tools": tool_names,
                         "command_ids": command_ids,
                         "artifact_refs": list(
                             hints.get("success_memory_artifact_refs") or []

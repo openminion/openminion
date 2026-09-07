@@ -235,13 +235,40 @@ def test_skill_propose_stages_markdown_with_runtime_session_refs(tmp_path) -> No
 
 
 def test_skill_propose_schema_explains_portable_markdown_shape() -> None:
-    description = SkillProposeArgs.model_json_schema()["properties"][
-        "skill_markdown"
-    ]["description"]
+    description = SkillProposeArgs.model_json_schema()["properties"]["skill_markdown"][
+        "description"
+    ]
 
     assert "YAML frontmatter" in description
     assert "## Procedure" in description
     assert "frontmatter content field" in description
+
+
+def test_skill_propose_model_guidance_supports_confirmed_memory_reconstruction() -> (
+    None
+):
+    from openminion.tools.skill.registrar import REGISTRAR
+
+    manifest = REGISTRAR.get_manifest(None)
+    definition = next(
+        item for item in manifest.model_tools if item.model_tool_id == "skill.propose"
+    )
+
+    assert "retrieved procedure memory" in definition.description
+    assert "only after the user asks or confirms" in definition.description
+    assert "copy that list exactly into YAML tools" in definition.description
+    assert (
+        "YAML tools"
+        in SkillProposeArgs.model_json_schema()["properties"]["skill_markdown"][
+            "description"
+        ]
+    )
+    assert (
+        "copy it exactly"
+        in SkillProposeArgs.model_json_schema()["properties"]["skill_markdown"][
+            "description"
+        ]
+    )
 
 
 def test_skill_propose_is_idempotent(tmp_path) -> None:

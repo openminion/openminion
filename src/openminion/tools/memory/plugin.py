@@ -1,6 +1,7 @@
 """Memory tool plugin."""
 
 from dataclasses import asdict, is_dataclass
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,6 +19,10 @@ from openminion.modules.tool.contracts.runtime_ids import (
     RUNTIME_MEMORY_FORGET,
     RUNTIME_MEMORY_SEARCH,
     RUNTIME_MEMORY_WRITE,
+)
+from openminion.tools.constants import (
+    MEMORY_SEARCH_MODEL_CHUNK_SIZE,
+    MEMORY_SEARCH_MODEL_MAX_CHUNKS,
 )
 
 
@@ -101,7 +106,6 @@ class MemorySearchArgs(BaseModel):
     query: str = Field(..., min_length=1, description="Literal search query")
     scopes: list[str] = Field(
         default_factory=list,
-        min_length=1,
         description=(
             "Omit to search persistent memory in the active agent scope; provide "
             "exact active agent and/or session scopes only when narrowing the search"
@@ -128,10 +132,7 @@ class MemorySearchArgs(BaseModel):
             return []
         if not isinstance(value, list):
             raise ValueError(f"{info.field_name} must be a list")
-        normalized = [str(item).strip() for item in value if str(item or "").strip()]
-        if info.field_name == "scopes" and not normalized:
-            raise ValueError("scopes must contain at least one value")
-        return normalized
+        return [str(item).strip() for item in value if str(item or "").strip()]
 
 
 class MemoryForgetArgs(BaseModel):
@@ -196,6 +197,39 @@ def _serialize_record(record: Any) -> dict[str, Any]:
     return payload
 
 
+def _model_search_projection(
+    records: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    text = json.dumps(
+        {"count": len(records), "records": records[:1]},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    if len(text) <= MEMORY_SEARCH_MODEL_CHUNK_SIZE:
+        return text, {}
+    model_limit = MEMORY_SEARCH_MODEL_CHUNK_SIZE * MEMORY_SEARCH_MODEL_MAX_CHUNKS
+    if len(text) > model_limit:
+        return (
+            f"memory search first result exceeds the {model_limit}-character "
+            "model-visible limit; complete record remains in structured data",
+            {
+                "model_content_complete": False,
+                "model_content_size": len(text),
+            },
+        )
+    chunks = [
+        text[index : index + MEMORY_SEARCH_MODEL_CHUNK_SIZE]
+        for index in range(0, len(text), MEMORY_SEARCH_MODEL_CHUNK_SIZE)
+    ]
+    return (
+        "memory search first result is in ordered data.model_content_chunks",
+        {
+            "model_content_chunks": chunks,
+            "model_content_complete": True,
+        },
+    )
+
+
 def _h_memory_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
     scope = args.get("scope") or _active_agent_scope(ctx)
@@ -238,15 +272,27 @@ def _h_memory_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             limit=limit,
         )
     )
+    serialized_records = [_serialize_record(record) for record in records]
+    model_records = [
+        {
+            "content": record.get("content"),
+            "id": record.get("id"),
+            "title": record.get("title"),
+            "type": record.get("type"),
+        }
+        for record in serialized_records
+    ]
+    model_content, model_data = _model_search_projection(model_records)
     return {
         "ok": True,
-        "content": f"memory search returned {len(records)} record(s)",
+        "content": model_content,
         "data": {
             "query": query,
             "scopes": scopes,
             "types": types,
             "count": len(records),
-            "records": [_serialize_record(record) for record in records],
+            "records": serialized_records,
+            **model_data,
         },
     }
 

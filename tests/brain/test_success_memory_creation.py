@@ -216,6 +216,13 @@ def test_extract_success_memories_stages_candidates_with_events_and_meta(
         item["meta"]["source_closure_reason"] == "goal_fully_satisfied"
         for item in candidate_payloads
     )
+    procedure = next(
+        item for item in candidate_payloads if item["record_type"] == "procedure"
+    )
+    assert procedure["content"]["steps"] == [
+        "Complete the successful task: Plan a weather-aware Tokyo day trip"
+    ]
+    assert procedure["content"]["tools"] == ["weather"]
     assert any(
         event_type == "brain.success_memory.started"
         for event_type, _payload, _kwargs in logger.events
@@ -224,6 +231,47 @@ def test_extract_success_memories_stages_candidates_with_events_and_meta(
         event_type == "brain.success_memory.completed"
         for event_type, _payload, _kwargs in logger.events
     )
+
+
+def test_success_memory_prompt_requires_reconstructable_procedure_steps(
+    tmp_path: Path,
+) -> None:
+    runner = _runner(tmp_path, config=SuccessMemoryConfig(enabled=True))
+    captured_hints: dict[str, object] = {}
+
+    def _build_context(*, state, purpose, budget, hints, logger):
+        del state, purpose, budget, logger
+        captured_hints.update(hints)
+        return []
+
+    runner._build_context = _build_context
+    runner.llm_api = SimpleNamespace(
+        complete=lambda **kwargs: {
+            "session_id": "success-session",
+            "agent_id": "success-agent",
+            "items": [],
+        }
+    )
+
+    extract_success_memories(
+        runner,
+        state=_state(),
+        action_result=ActionResult(
+            command_id="cmd-1",
+            status="success",
+            summary="done",
+        ),
+        judgment=ClosureJudgment(
+            satisfied=True,
+            reason="goal_fully_satisfied",
+            next_action="close",
+        ),
+        logger=_Logger(),
+    )
+
+    contract = captured_hints["style_overrides"]["success_memory_contract"]
+    assert "non-empty ordered steps list" in contract
+    assert "canonical tool IDs actually used" in contract
 
 
 def test_extract_success_memories_honors_require_all_steps_successful(

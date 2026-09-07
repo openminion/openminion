@@ -370,7 +370,10 @@ class SchemaTests(unittest.TestCase):
                     {
                         "kind": "procedure",
                         "title": "Procedure for deploys",
-                        "content": {"steps": ["check status", "deploy"]},
+                        "content": {
+                            "steps": ["check status", "deploy"],
+                            "tools": [],
+                        },
                         "confidence": 0.9,
                     },
                     {
@@ -387,6 +390,70 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(
             [item.kind for item in report.items], ["procedure", "tool_habit"]
         )
+
+    def test_success_memory_procedure_requires_ordered_steps(self) -> None:
+        invalid_content = [
+            "deploy carefully",
+            {},
+            {"steps": [], "tools": []},
+            {"steps": ["deploy", " "], "tools": []},
+            {"steps": ["deploy", 2], "tools": []},
+        ]
+
+        for content in invalid_content:
+            with self.subTest(content=content), self.assertRaises(ValueError):
+                SuccessMemoryReport.model_validate(
+                    {
+                        "session_id": "sess-1",
+                        "agent_id": "agent-1",
+                        "items": [
+                            {
+                                "kind": "procedure",
+                                "title": "Procedure for deploys",
+                                "content": content,
+                                "confidence": 0.9,
+                            }
+                        ],
+                    }
+                )
+
+    def test_success_memory_procedure_requires_string_tool_list(self) -> None:
+        invalid_tools = [None, "file.write", ["file.write", ""], ["file.write", 2]]
+
+        for tools in invalid_tools:
+            with self.subTest(tools=tools), self.assertRaises(ValueError):
+                SuccessMemoryReport.model_validate(
+                    {
+                        "session_id": "sess-1",
+                        "agent_id": "agent-1",
+                        "items": [
+                            {
+                                "kind": "procedure",
+                                "title": "Procedure for reports",
+                                "content": {"steps": ["write report"], "tools": tools},
+                                "confidence": 0.9,
+                            }
+                        ],
+                    }
+                )
+
+    def test_success_memory_tool_habit_keeps_string_content(self) -> None:
+        report = SuccessMemoryReport.model_validate(
+            {
+                "session_id": "sess-1",
+                "agent_id": "agent-1",
+                "items": [
+                    {
+                        "kind": "tool_habit",
+                        "title": "Check status first",
+                        "content": "Run status before deploy",
+                        "confidence": 0.8,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(report.items[0].content, "Run status before deploy")
 
     def test_decision_mode_description_prefers_shared_act_loop_for_tool_factuals(
         self,

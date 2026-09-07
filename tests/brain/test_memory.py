@@ -250,7 +250,7 @@ def test_apply_success_memories_stages_candidates_with_provenance() -> None:
             {
                 "kind": "procedure",
                 "title": "Procedure from success",
-                "content": {"steps": ["echo"]},
+                "content": {"steps": ["echo"], "tools": []},
                 "confidence": 0.9,
                 "tags": ["existing"],
             },
@@ -318,7 +318,7 @@ def test_apply_success_memories_respects_thresholds_and_kind_toggles() -> None:
             {
                 "kind": "procedure",
                 "title": "Disabled procedure",
-                "content": {"steps": ["echo"]},
+                "content": {"steps": ["echo"], "tools": []},
                 "confidence": 0.95,
             },
             {
@@ -373,7 +373,7 @@ def test_apply_success_memories_attaches_trace_rationale_when_present() -> None:
             {
                 "kind": "procedure",
                 "title": "Procedure from success",
-                "content": {"steps": ["echo"]},
+                "content": {"steps": ["echo"], "tools": []},
                 "confidence": 0.9,
             }
         ],
