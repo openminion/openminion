@@ -33,7 +33,8 @@ Re-exported from `openminion.modules.controlplane`:
 - Wire contracts: `InboundMessage`, `OutboundMessage`, `DeliveryContext`,
   `ResolvedContext`, `CommandResult`
 - Runtime: `RuntimeCoordinator`, `ChannelRegistry`, `ControlPlaneDispatcher`,
-  `InboxWorker`, `OutboxWorker`, `Router`
+  `InboxWorker`, `OutboxWorker`, `Router`, `ScopeAuthorizer`
+- Delivery: `deliver_cron_result`, `HttpPost`, `OutboundSender`
 - Storage: `InMemoryControlPlaneStore`, `SQLiteControlPlaneStore`
 - Versioning: `CONTROLPLANE_INTERFACE_VERSION`,
   `ensure_controlplane_component_compatibility`
@@ -43,8 +44,7 @@ Re-exported from `openminion.modules.controlplane`:
 - `modules/a2a/` for agent-to-agent channel
 - `modules/session/` for session/turn lifecycle handoff
 - `modules/registry/` for agent resolution
-- `services/cron.*` (approved shared-service path per CTCR-05) for
-  scheduled-delivery infrastructure
+- `services/cron.*` for scheduled-delivery infrastructure
 - `base/` — channel, config, runtime, errors
 
 ## Canonical shape
@@ -52,5 +52,5 @@ Re-exported from `openminion.modules.controlplane`:
 Canonical with `interfaces.py`, `contracts/` subpackage, `runtime/`
 subpackage, `storage/` subpackage, and `cli.py`. No `schemas.py` —
 typed envelopes live in `contracts/` instead. The `adapters/client.py`
-cross-layer import is a documented exception (MSB-01) — it is the
-deliberate bridge that constructs the wrapped `OpenMinionRuntime`.
+cross-layer import is the deliberate bridge that constructs the wrapped
+`OpenMinionRuntime`.

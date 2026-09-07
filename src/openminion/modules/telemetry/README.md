@@ -50,7 +50,7 @@ Current exporter coverage:
 
 Ownership note:
 
-1. `openminion/src/openminion/modules/telemetry/config.py` is a thin delegate
+1. `src/openminion/modules/telemetry/config.py` is a thin delegate
    to the shared runtime config owner. The canonical source of telemetry
    exporter settings remains `runtime.telemetry_exporter` in the unified
    OpenMinion config shape.

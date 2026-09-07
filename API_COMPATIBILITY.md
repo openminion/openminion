@@ -49,25 +49,28 @@ The following package-owned console scripts are part of the documented operator
 surface:
 
 1. `openminion`
-2. `openminiond`
-3. `openminion-tool`
-4. `identityctl`
-5. `openminion-controlplane`
-6. `runtimectl`
-7. `brainctl`
-8. `memctl`
-9. `sessctl`
-10. `contextctl`
-11. `ctxctl`
-12. `agentregctl`
-13. `artifactctl`
-14. `openminion-controlplane-telegram`
-15. `skill`
-16. `skillctl`
-17. `a2actl`
-18. `rlmctl`
-19. `retrievectl`
-20. `policyctl`
+2. `telemetryctl`
+3. `opsctl`
+4. `openminiond`
+5. `openminion-tool`
+6. `identityctl`
+7. `openminion-controlplane`
+8. `runtimectl`
+9. `brainctl`
+10. `memctl`
+11. `sessctl`
+12. `contextctl`
+13. `ctxctl`
+14. `agentregctl`
+15. `artifactctl`
+16. `openminion-controlplane-telegram`
+17. `openminion-controlplane-slack`
+18. `skill`
+19. `skillctl`
+20. `a2actl`
+21. `rlmctl`
+22. `retrievectl`
+23. `policyctl`
 
 The script names are defined in `pyproject.toml`.
 
@@ -108,8 +111,9 @@ Delegated Sophiagraph access is an additive internal integration surface.
 `read_only_bounded`; serialized string compatibility is retained. The
 OpenMinion policy store remains authoritative for issue, use, expiry, and
 revocation. Untrusted delegated callers never receive a raw Sophiagraph store.
-This surface requires `sophiagraph>=0.0.7`, the first compatible package line
-that contains the public `sophiagraph.access` import root.
+This surface requires the package baseline `sophiagraph>=0.0.10`, which
+contains the public `sophiagraph.access` import root and the namespace contracts
+used by the current runtime.
 
 Memory portability and model compatibility should consume public Sophiagraph
 facades such as `sophiagraph.portability` and `sophiagraph.models`. The

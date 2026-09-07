@@ -1,7 +1,7 @@
 # OpenMinion Engineering Patterns
 
 Status: active
-Last updated: 2026-06-30
+Last updated: 2026-09-06
 
 Purpose: give public contributors one package-local summary of the engineering
 patterns that shape `openminion` changes.
@@ -57,8 +57,8 @@ Use this source-tree ladder when deciding where code belongs:
 1. Preserve ownership clarity over blind line-count reduction.
 2. Characterize behavior before collapsing non-trivial structure.
 3. Prefer focused, reviewable refactors over broad mixed-purpose rewrites.
-4. Keep temporary sweep artifacts out of the repo root; use the workspace temp
-   area instead.
+4. Keep temporary sweep artifacts in a temporary directory outside the tracked
+   package tree.
 5. Fix repeated symptoms at the shared owner instead of copying small
    workarounds across callers.
 
@@ -70,6 +70,5 @@ Read this doc together with:
 2. [`getting-started.md`](getting-started.md)
 3. [`source-tree-owner-map.md`](source-tree-owner-map.md)
 
-These package-local copies are the public-facing contributor summaries. The
-broader workspace docs may go deeper, but external contributors should not need
-them to understand the package contract.
+These package-local docs are the public-facing contributor summaries and are
+sufficient to understand the package contract.

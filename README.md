@@ -262,8 +262,8 @@ complete runnable example and
 | Operator CLIs | You need focused session, memory, policy, runtime, or artifact control |
 
 The root package exports the supported Python facade: `APIRuntime`, `Agent`,
-`AgentRunResult`, `Handoff`, `MemoryBundle`, `OpenMinionConfig`, `subagent`,
-`tool`, and `__version__`. See
+`AgentOutputValidationError`, `AgentRunResult`, `Handoff`, `MemoryBundle`,
+`OpenMinionConfig`, `subagent`, `tool`, and `__version__`. See
 [`API_COMPATIBILITY.md`](API_COMPATIBILITY.md) before depending on deeper
 package internals.
 

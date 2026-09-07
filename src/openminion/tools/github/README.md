@@ -1,50 +1,49 @@
-# GitHub Tool Family + PR Review Routine — Operator Runbook (V1/L3)
+# GitHub tools
 
-This is the operator runbook for the GitHub tool family and the
-`github_pr_review` routine. Keep it short and operationally grounded; deeper
-design lives in:
+`openminion.tools.github` provides bounded GitHub REST tools for pull-request
+inspection, branch-based changes, workflow dispatch, and release creation.
+Read-only calls and mutating calls use the same provider boundary; policy and
+tool scope decide which calls may run.
 
-- background routine PR reviewer spec
-- background routine PR reviewer tracker
-- L3 write tracker/spec
+## Tools
 
-The repo now has two bounded GitHub surfaces:
+Read-only:
 
-1. V1 read-only facts + `github_pr_review` routine.
-2. L3 write-authorized smoke actions:
-   - `github.commit_files`
-   - `github.open_pr`
-   - `github.update_pr` (title/body only)
-   - `github.merge_pr` (profile-gated and disabled by default)
-   - `github.post_pr_review`
-   - `github.post_pr_comment`
+- `github.list_prs`
+- `github.fetch_pr`
+- `github.fetch_diff`
+- `github.fetch_comments`
+- `github.fetch_checks`
+- `github.list_workflow_runs`
 
-L3 remains deliberately narrow. There are still no `github.close_pr`,
-`github.delete_branch`, direct default-branch write, or force-push tools. Merge
-requires an exact PR head SHA, explicit expected checks, a bounded merge method,
-an exact project grant, and `provider_config_overrides.github.allow_merge=true`.
-It is not in the default-visible tool set.
+Write-safe, policy-gated:
 
----
+- `github.commit_files`
+- `github.open_pr`
+- `github.update_pr`
+- `github.merge_pr`
+- `github.dispatch_workflow`
+- `github.create_release`
+- `github.post_pr_review`
+- `github.post_pr_comment`
 
-## 1. Required environment
+There are no close-PR, delete-branch, force-push, or arbitrary GitHub API
+tools. Merge and release actions require exact expected state and explicit
+profile policy.
 
-Set one PAT in the env that the runtime will read for github.* tool calls:
+## Credentials and endpoint
 
-```
-export GITHUB_TOKEN=<personal-access-token>
-```
-
-Operators may override the env name on a per-agent-profile basis by setting
-`provider_config_overrides.github.token_env` in the agent config:
+Set a GitHub personal access token in `GITHUB_TOKEN`. A profile can select a
+different environment variable with
+`provider_config_overrides.github.token_env`.
 
 ```json
 {
   "agents": {
-    "my-agent": {
+    "github-agent": {
       "provider_config_overrides": {
         "github": {
-          "token_env": "MY_AGENT_GITHUB_TOKEN"
+          "token_env": "MY_GITHUB_TOKEN"
         }
       }
     }
@@ -52,188 +51,88 @@ Operators may override the env name on a per-agent-profile basis by setting
 }
 ```
 
-For the bounded L3 write smoke, the PAT must be scoped only to
-`openminion/test-repo-for-agent` with:
+Optional process settings:
 
-- `contents: read/write`
-- `pull_requests: read/write`
-- `metadata: read`
+- `GITHUB_API_BASE_URL` defaults to `https://api.github.com`.
+- `GITHUB_TIMEOUT_SECONDS` defaults to 30 seconds.
 
-Optional overrides:
+The credential boundary resolves the token at call time. Tool results and
+errors must not include the token.
 
-- `GITHUB_API_BASE_URL` — defaults to `https://api.github.com`.
-- `GITHUB_TIMEOUT_SECONDS` — defaults to `30`.
+## Write policy
 
-Centralized env helper: `openminion.tools.github.env`. Direct
-`os.environ.get` reads are forbidden by the env-guard CI script.
+The default write policy is intentionally limited to the public smoke repo:
 
-`openminion.tools.github.rest.GithubRestProvider` owns both the read surface and
-the bounded L3 write surface. The tool runtime still fails closed until a call
-site registers it with `openminion.tools.github.register_provider(...)`.
+- repository: `openminion/test-repo-for-agent`
+- branch prefix: `openminion-smoke/`
+- path prefix: `.openminion-smoke/`
+- base branch: `main`
+- default-branch writes: disabled
+- force push: disabled
+- merge: disabled
+- branch deletion: disabled
+- workflow dispatch: no workflows allowed until configured
 
-## 2. L3 write policy sandbox
-
-Default L3 write policy:
-
-- allowed repository: `openminion/test-repo-for-agent`
-- allowed branch prefix: `openminion-smoke/`
-- allowed path prefix: `.openminion-smoke/`
-- direct default-branch writes: denied
-- force push: denied
-- merge-like actions: denied
-- delete-like actions: denied
-
-The runtime enforces these rules in code before any network mutation. The model
-may request a write tool call, but policy owns the allow/deny decision.
-
-## 3. Starting a PR review routine
-
-A routine is a `task.watch` with a typed `routine` payload. The model can
-emit it directly from a chat session, or an operator can post a typed
-`task.watch` argument blob. Minimum shape:
+Override those values in `provider_config_overrides.github`. Enabling a tool
+profile does not bypass the runtime policy checks.
 
 ```json
 {
-  "description": "Review open PRs in octocat/hello-world every 30 minutes",
-  "check_instruction": "Look at the supplied PR facts and emit a routine_outcome trailer.",
-  "interval_minutes": 30,
-  "alert_condition": "any PR has new commits since last review",
-  "delivery": "announce",
-  "routine": {
-    "routine_kind": "github_pr_review",
-    "routine_version": 1,
-    "config": {
-      "owner": "octocat",
-      "repo": "hello-world",
-      "state_filter": "open"
+  "agents": {
+    "github-agent": {
+      "provider_config_overrides": {
+        "github": {
+          "allowed_repositories": ["owner/repository"],
+          "allowed_branch_prefixes": ["agent/"],
+          "allowed_path_prefixes": ["docs/"],
+          "allowed_base_branches": ["main"],
+          "allow_merge": false
+        }
+      }
     }
   }
 }
 ```
 
-Notes:
+Workflow dispatch additionally uses explicit workflow, ref, target, and input
+allowlists. Release creation requires an existing exact tag and verifies its
+target before creation.
 
-- `interval_minutes` must be `>= 5` for `routine_kind = "github_pr_review"`
-  (V1 routine-side validation; plain `task.watch` still accepts `>= 1`).
-- The cursor is initialized empty by the runtime; do not pre-populate it.
-- `routine` survives `TaskWatchArgs` validation because the field is
-  declared explicitly. Other unknown top-level keys are still dropped by
-  `extra="ignore"`.
+## Pull-request review watches
 
-## 4. Inspecting routine state
+The `github_pr_review` watch routine stores typed cursor state in the existing
+scheduled-task payload. It fetches current pull-request facts, asks the model
+for one typed review outcome, deduplicates by head SHA and finding hash, and
+persists the rendered report before advancing the cursor.
 
-The routine cursor lives at
-`cron_jobs.payload._openminion_watch.routine.cursor` in the cron store.
-Useful fields:
+Create scheduled work through the normal schedule or `task.watch` surfaces.
+Inspect and control it with:
 
-| Field | Meaning |
-| --- | --- |
-| `last_check_iso` | ISO timestamp of the most recent tick (success or trailer-fail). |
-| `last_review_per_pr["<n>"].head_sha` | Last reviewed head SHA per PR. Drives head-SHA dedupe. |
-| `seen_pr_numbers` | All PRs the routine has observed. Drives `newly_opened_prs` / `closed_since_last_check`. |
-| `delivered_findings_hashes["<n>"]` | Per-PR finding hashes already delivered. Drives finding dedupe. |
-| `consecutive_failures` | Counter for trailer-parse / outcome-validation failures. V1 records only; threshold action is a follow-up. |
+```bash
+openminion schedule status
+openminion schedule show <task-id>
+openminion schedule pause <task-id>
+openminion schedule resume <task-id>
+openminion tasks list
+openminion tasks cancel <task-id>
+```
 
-CLI-level inspection commands (e.g. `openminion routine list`,
-`openminion routine show`) ship in the follow-up tracker
-`routine-product-cli-surface`. For V1, inspect via direct cron-job SQLite
-reads.
+Task and schedule commands require exact IDs; the runtime does not guess from
+prefixes or names.
 
-## 5. Reading routine output
+## Registration
 
-Each successful tick that produces actionable findings emits:
+The package exports `REGISTRAR`, `register`, `register_provider`, and
+`create_rest_provider`. Normal OpenMinion bootstrap discovers `REGISTRAR` and
+registers the built-in REST provider. Direct embedding can register another
+provider through `register_provider(...)`.
 
-1. A rendered markdown artifact body (produced by
-   `openminion.tools.task.pr_review.renderer`) persisted through the existing
-   artifact store before routine cursor progress is committed. The cron run
-   metadata carries the resulting content-addressed artifact reference.
-2. A single `announce` summary line delivered to the originating
-   session, of shape:
-   `"PR review run for <repo>: reviewed <N> PR(s), <M> finding(s)."`
+## Validation owners
 
-Idempotent ticks (no head_sha changes) write nothing.
+- GitHub tool and policy tests: `tests/tools/github/`
+- PR-review schema and dispatcher tests: `tests/tools/task/`
+- Deterministic PR-review routine: `tests/routines/test_github_pr_review_e2e.py`
+- Credential-gated live write coverage: `tests/e2e/test_live_github_write_actions.py`
 
-To inspect the rendered markdown body, read the cron run metadata for
-`routine_artifact_id` and resolve that reference through the existing artifact
-store.
-
-## 6. L3 live smoke flow
-
-The bounded smoke path is:
-
-1. verify `GET /repos/openminion/test-repo-for-agent` returns `200`
-2. `github.commit_files` writes one `.openminion-smoke/<run_id>.md` file to
-   `openminion-smoke/<run_id>`
-3. `github.open_pr` opens a PR from that branch to the repo default branch
-4. `github.post_pr_review` posts a `COMMENT` review
-5. `github.post_pr_comment` posts a harmless PR-thread issue comment
-
-The branch/PR are intentionally left behind as live evidence. L3 does not
-merge, close, or delete anything.
-
-## 7. Stopping a routine
-
-Use the regular task lifecycle commands:
-
-- List: `openminion task list` (or `task.list` tool).
-- Cancel: `openminion task cancel <task_id>` (or `task.cancel` tool).
-
-`task.cancel` requires the **exact** `task_id` (post-TCEE-07 anti-LLM
-contract). Look it up with `task.list` first; runtime no longer resolves
-prefixes or name-like tokens.
-
-## 8. Anti-LLM rules
-
-The runtime owns:
-
-1. Calling `github.list_prs` and assembling typed PR facts.
-2. Head-SHA dedupe (PR head_sha unchanged → not in actionable list).
-3. Validating the model's `<routine_outcome>` trailer JSON against
-   `ReviewOutcomePayloadV1`.
-4. Finding-hash dedupe before artifact rendering.
-5. Cursor persistence via `replace_cron_job_payload`.
-
-The model owns:
-
-1. Reading the typed PR facts.
-2. Emitting one `<routine_outcome>...</routine_outcome>` trailer with the
-   typed review outcome.
-
-The model is **never** asked "have you reviewed this before" — that's
-runtime-owned dedupe. Free prose outside the trailer is recorded but never
-actionable. Missing trailer / malformed JSON / failed schema validation
-each map to a distinct deterministic error code:
-`trailer_missing` / `trailer_malformed_json` / `outcome_validation_failed`.
-
-## 9. Failure handling
-
-Each trailer-fail or outcome-validation-fail bumps `consecutive_failures`.
-A successful tick resets the counter to `0`. V1 records only — there is no
-automatic clamp/pause. For threshold-based clamp/pause and rate-limit-aware
-backoff, see follow-up tracker `routine-rate-limit-and-backoff`.
-
-## 10. Limits and trade-offs
-
-- **One PAT per process.** Multi-account routing and per-routine secret
-  rotation belong to `routine-multi-repo-multi-account-auth`.
-- **Polling, not webhooks.** Webhook-driven triggering belongs to
-  `routine-webhook-trigger`.
-- **Bounded write only.** Only smoke-branch commit/open-PR/comment flows are in
-  scope. Merge/close/delete/default-branch-write/force-push remain out of scope.
-- **No named-routine identity.** Routines run as the calling agent's
-  identity. See `routine-named-background-agent-identity` for the L4
-  follow-up.
-
-## 11. Validation suites
-
-- Read-only github tool surface: `openminion/tests/tools/github/`.
-- Bounded write github tool surface:
-  `openminion/tests/tools/github/test_write_policy.py`,
-  `openminion/tests/tools/github/test_rest_provider.py`,
-  `openminion/tests/e2e/test_live_github_write_actions.py`.
-- Routine schemas + outcome validation: `openminion/tests/tools/task/test_pr_review_schemas.py`.
-- Renderer snapshot: `openminion/tests/tools/task/test_pr_review_renderer.py`.
-- Trailer parsing + dispatcher: `openminion/tests/tools/task/test_routine_dispatcher.py`.
-- Four-tick deterministic E2E: `openminion/tests/routines/test_github_pr_review_e2e.py`.
-
-Live test (gated on credentials): see BRPR-09 in the tracker.
+Live tests mutate the configured repository and require explicit credentials
+and quota authorization. They are not part of provider-free package checks.

@@ -127,8 +127,9 @@ canonical CLI, bounded resource commands, and typed APIs:
 | Dashboard area | Replacement |
 | --- | --- |
 | Chat | Bare `openminion`, `openminion run`, or the Python/API runtime. |
-| Tasks | `openminion status` and typed task lifecycle APIs. |
+| Tasks | `openminion status`, `openminion tasks`, and typed task lifecycle APIs. |
 | Cron | `openminion cron` and the cron runtime APIs. |
+| Rooms | `openminion room` plus a room ID passed through `--session`. |
 | Sessions | Interactive session commands, `openminion sessions`, and `sessctl`. |
 | System | `openminion status`, `openminion doctor`, and system-operation tools. |
 | Policy | `policyctl` and policy APIs. |

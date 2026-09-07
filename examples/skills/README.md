@@ -1,6 +1,6 @@
 # Skill Examples
 
-`openminion/examples/skills/` contains two intentionally different surfaces:
+`examples/skills/` contains two intentionally different surfaces:
 
 1. Markdown-first authoring examples such as `hello/` and the `ops-*` skills,
 2. YAML-frontmatter compatibility fixtures used by skill ingest tests.

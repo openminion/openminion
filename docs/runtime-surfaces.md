@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -26,7 +26,10 @@ Notes:
 1. the default invocation launches the sole interactive terminal renderer on a TTY,
 2. piped input executes one request without mounting an interactive renderer,
 3. legacy `focus`, `chat`, `tui`, and `dashboard` command names are retired and rejected,
-4. startup creates a fresh session unless `--session <id>` is provided.
+4. startup creates a fresh session unless `--session <id>` is provided,
+5. `openminion room` creates and manages local human-agent room sessions; use
+   the returned room ID with `--session` to enter that room in the interactive
+   CLI.
 
 ### 2. Python library API
 
@@ -62,16 +65,26 @@ Best for:
 
 Use when you need narrower subsystem control:
 
-1. `openminiond`
-2. `artifactctl`
-3. `brainctl`
-4. `memctl`
-5. `sessctl`
-6. `contextctl` / `ctxctl`
-7. `policyctl`
-8. `retrievectl`
-9. `skillctl`
-10. `a2actl`
+1. `telemetryctl`
+2. `opsctl`
+3. `openminiond`
+4. `openminion-tool`
+5. `identityctl`
+6. `openminion-controlplane`
+7. `runtimectl`
+8. `brainctl`
+9. `memctl`
+10. `sessctl`
+11. `contextctl` / `ctxctl`
+12. `agentregctl`
+13. `artifactctl`
+14. `openminion-controlplane-telegram`
+15. `openminion-controlplane-slack`
+16. `skill` / `skillctl`
+17. `a2actl`
+18. `rlmctl`
+19. `retrievectl`
+20. `policyctl`
 
 Best for:
 

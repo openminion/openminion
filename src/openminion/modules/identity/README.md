@@ -45,6 +45,5 @@ Re-exported from `openminion.modules.identity`:
 ## Canonical shape
 
 Canonical with `interfaces.py`, `models.py`, `runtime/` subpackage,
-`storage/` subpackage, `cli.py`. The render-budget surface was
-rebaselined in the IROR lane (closed) — `RenderingConfig.default_budgets`
-in `config.py` is the canonical owner of per-purpose budget values.
+`storage/` subpackage, `cli.py`. `RenderingConfig.default_budgets` in
+`config.py` is the canonical owner of per-purpose render budgets.

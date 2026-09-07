@@ -6,8 +6,6 @@ Runtime peer: standalone shared module (services and modules may import it)
 
 Purpose: own stable OpenMinion runtime prompt fragments and small render helpers that are shared across modules and services.
 
-Reference: `docs/reference/openminion-prompt-ownership-reference.md`
-
 ## Owns
 
 - default system, identity, safety, and tool-result prompt fragments shared by agent/context paths

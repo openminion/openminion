@@ -4,7 +4,7 @@
 
 `runtime/` owns the **typed helpers BrainRunner consults** during a step:
 context packing, escalation classification, policy verification, goal
-hierarchy reads, memory writing, meta-rule drift detection, MRDD ticks,
+hierarchy reads, memory writing, meta-rule drift detection,
 and other read-mostly computations that return typed payloads the loop
 can act on.
 
@@ -29,11 +29,11 @@ If it computes a typed payload the runner consults, it lives here.
 | Self-improvement helpers | `improvement/contracts.py`, `improvement/rubric.py` | Typed online self-improvement contracts and self-eval rubric scoring. |
 | Drift detection | `drift.py` | Detects model-output drift (e.g., circular tool patterns). |
 | Knowledge consolidation | `consolidation.py` | Cross-turn knowledge folding for memory promotion. |
-| Recall consultation / decision | `recall/consultation.py`, `recall/decision.py` | Read-mostly recall-vs-recompute gate (RVRH default + heuristic). |
+| Recall consultation / decision | `recall/consultation.py`, `recall/decision.py` | Read-mostly recall-versus-recompute gate. |
 | Failure pattern aggregation | `failures.py` | Aggregates per-turn failure signatures into rolling pattern state. |
 | Performance registry | `performance.py` | Per-tool / per-strategy performance metric registry. |
 | Plan reconciliation | `reconciliation.py` | Reconciles `state.plan` against observed outcomes. |
-| Reasoning / recovery / action approval | `reasoning/`, `recovery/`, `approval/` | Sub-packages with their own typed surfaces. |
+| Thinking / recovery / action approval | `reasoning/`, `recovery/`, `approval/` | Provider-thinking compatibility plus typed recovery and approval surfaces. |
 | Learning attribution | `attribution.py` | Outcome-weighted scoring + skill-outcome attribution. |
 | Regrounding / research composition / review | `regrounding.py`, `research.py`, `review/` | Specialized helpers for research/review strategies. |
 | Recurring task shape | `recurrence.py` | Typed shape for recurring / scheduled tasks. |
@@ -74,10 +74,9 @@ yes, it probably belongs in `runtime/`.
 
 ## Anti-LLM boundary
 
-All payloads in this directory are typed (`extra="forbid"` Pydantic or
-typed dataclasses). No prose inspection inside payload builders. Where
-a runtime helper consumes LLM output, it converts to typed shape before
-returning (see PCHC / GOPP discipline in the broader brain runtime).
+Payloads in this directory use typed Pydantic models or dataclasses. Runtime
+payload builders do not inspect prose to make semantic decisions. Helpers that
+consume model output convert it to a typed shape before returning.
 
 ## Test depth
 

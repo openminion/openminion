@@ -18,9 +18,8 @@ that area:
 When a paired subsystem changes shape, update the module owner and the matching
 service owner together. Module packages own domain contracts, schemas,
 adapters, and storage-facing engines; service packages own runtime composition,
-policy wiring, lifecycle hooks, and cross-module orchestration. Do not move code
-between the two layers unless the owning tracker names the paired owner,
-validator effect, and behavior tests.
+policy wiring, lifecycle hooks, and cross-module orchestration. A move between
+the layers must name both owners, its validator effect, and behavior tests.
 
 The following subsystems are standalone domain owners with no `services/` peer:
 

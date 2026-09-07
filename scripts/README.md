@@ -1,9 +1,9 @@
 # Scripts
 
-Last updated: 2026-06-22
+Last updated: 2026-09-06
 Status: Active
 
-Purpose: define the taxonomy for `openminion/scripts/` so validation entrypoints
+Purpose: define the taxonomy for `scripts/` so validation entrypoints
 live under one obvious owner and the top-level tree stays readable for public
 contributors.
 
@@ -129,16 +129,16 @@ that should not become part of the public validator surface.
     manual-only: it audits characterization-test brittleness for targeted review
     work, but it is not a generic repo gate and does not belong in
     `scripts/validate/`.
-14. `scripts/validate/mypy_error_budget.py` is the canonical typecheck ratchet
+13. `scripts/validate/mypy_error_budget.py` is the canonical typecheck ratchet
     entrypoint; keep historical or temporary names out of the filename. Normal
     baseline updates must use `--emit-baseline` and may only lower package and
     total ceilings. Any upward reset requires a tracked review artifact under
     `scripts/baselines/mypy_resets/` and must run through
     `--emit-reviewed-reset <artifact>` rather than direct JSON editing.
-15. When a validator emits machine-readable JSON, keep the JSON payload on
+14. When a validator emits machine-readable JSON, keep the JSON payload on
     stdout and put human-readable headings, summaries, and findings on stderr
     so CLI users get readable output without breaking JSON consumers.
-16. `scripts/validate/filename_underscore_hygiene.py` is the advisory
+15. `scripts/validate/filename_underscore_hygiene.py` is the advisory
     naming-practice guard for Python files under `src/`, `scripts/`, and
     `examples/`; it tracks current multi-underscore filename debt with a frozen
     baseline and warns on new drift there. Even when drift is zero, the report
@@ -149,12 +149,12 @@ that should not become part of the public validator surface.
     names are informational and do not fail the naming lane. The default report
     shows the test-count summary only; use `--show-tests-detail` to print the
     full test-path list.
-18. `scripts/validate/path_structure_hygiene.py` is the structural naming guard
+16. `scripts/validate/path_structure_hygiene.py` is the structural naming guard
     for `src/openminion/`; it blocks deprecated folder spellings such as
     `parsing/`, `focus_terminal/`, and `knowledge_graphs/`, rejects redundant
     suffixes such as `_runtime` and `_events`, and catches filenames that
     repeat the parent owner instead of letting the folder carry subsystem
     context.
-19. `scripts/validate/helper_duplicates.py` is the canonical duplicate-helper
+17. `scripts/validate/helper_duplicates.py` is the canonical duplicate-helper
     guard; keep the filename aligned with the readability rule it enforces
     instead of preserving `*_helpers.py` wording in the validator surface.

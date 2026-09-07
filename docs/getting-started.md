@@ -1,7 +1,7 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-08-16
+Last updated: 2026-09-06
 
 Purpose: give contributors and automation authors a package-local bootstrap and
 execution summary for work inside the `openminion` repo.
@@ -9,7 +9,6 @@ execution summary for work inside the `openminion` repo.
 ## Fast bootstrap
 
 ```bash
-cd openminion
 python3.11 -m venv .venv
 source .venv/bin/activate
 make dev-install
@@ -138,6 +137,8 @@ Built-in hosted presets currently include:
 | `openai` | OpenAI-compatible | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
 | `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
 | `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
+| `cerebras` | OpenAI-compatible | `CEREBRAS_API_KEY` | `https://api.cerebras.ai/v1` | recommended |
+| `groq` | OpenAI-compatible | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` | recommended |
 | `cortensor-portal` | OpenAI-compatible | `CORTENSOR_API_KEY` | `https://api.cortensor.app/v1` | recommended |
 | `minimax` | OpenAI-compatible | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
 | `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | recommended |
@@ -173,11 +174,15 @@ openminion setup --provider cortensor-portal --agent cortensor-portal --no-focus
 ```
 
 The advanced direct Router path remains separate and keeps its Router session
-semantics. The legacy setup id `cortensor` resolves only to this direct path.
+semantics. Use the `cortensor-router` preset. The legacy setup ID `cortensor`
+resolves only to this direct path.
 
 ```bash
 openminion setup --provider cortensor-router --agent cortensor-router --no-focus
 ```
+
+The local `ollama` preset needs no credential and defaults to the local Ollama
+endpoint.
 
 `/v1/models` is useful for diagnostics, but it does not prove inference
 readiness. Add `--check-provider` only when a quota-consuming text request is
@@ -275,6 +280,10 @@ openminion setup \
   --agent custom-openai \
   --no-focus
 ```
+
+Custom endpoints use either `custom-openai-compatible` or
+`custom-anthropic-compatible`; both require an explicit API format, base URL,
+and model ID.
 
 ## Per-agent command access
 

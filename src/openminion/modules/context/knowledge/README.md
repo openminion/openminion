@@ -3,7 +3,7 @@
 Owner: `openminion-knowledge-graphs`
 Shape: `template-aligned`
 Runtime peer: gateway context assembly and runtime bootstrap
-Status: executor-complete; parent and abstraction follow-ons are closed
+Status: active
 
 ## Charter
 
@@ -20,8 +20,7 @@ Providers register into one of two layers:
 The package defines the provider-neutral OpenMinion contract that both layers
 share: typed DTOs, capability vocabulary, typed errors, and the
 `KnowledgeGraphSource` protocol. Registry, adapters, and runtime wiring live in
-sibling files / packages added by TBKG-02 (`registry.py`) and TBKG-04
-(`adapters/graphify.py`).
+the sibling files and packages listed below.
 
 ## Why this lives under `context/`
 
@@ -48,11 +47,6 @@ The native third-brain package name is **PragmaGraph**. Graphify is the first
 read-oriented provider adapter behind the `provider` layer; it is not the
 layer name. Sophiagraph remains the second-brain durable memory graph.
 
-Future-agent quick reference:
-second-vs-third-brain quick reference.
-OpenMinion provider-abstraction readiness tracker:
-provider-abstraction readiness tracker.
-
 Rule of thumb: PragmaGraph/third-brain providers index static, observed,
 reproducible facts from code, docs, artifacts, and history. Sophiagraph stores
 agent-owned memory: learned preferences, operator pins, decisions, summaries,
@@ -64,8 +58,6 @@ contracts, snapshots, indexers, query APIs, and handoff fixtures. Sophiagraph
 owns package-side durable memory substrate behavior. OpenMinion owns provider
 registration, conformance tests, optional dependency isolation, context
 assembly, telemetry, graceful fallback, and provider swapability.
-The OpenMinion-side PragmaGraph adapter/swapability bridge is tracked by
-the PragmaGraph provider adapter swapability tracker.
 
 ## Layers vs tags
 
@@ -155,8 +147,7 @@ differently, but they must remain compatible at the OpenMinion contract layer.
 - `runtime.memory_provider` and `memory.backend.provider` remain the authoritative second-brain durable-memory selectors. The `knowledge_graphs` config namespace is parallel and does not modify those paths.
 - The package does not import from `services/` or `api/` (CI-enforced import boundary).
 - Provider SDKs and command runners stay behind adapter boundaries.
-- Provider-swap config examples live at
-  the package docs examples bundle.
+- Provider-swap config examples live under `examples/` and in the package docs.
 
 ## Canonical files
 
@@ -173,6 +164,16 @@ differently, but they must remain compatible at the OpenMinion contract layer.
 | `viewer.py` | GraphFakos-backed operator viewer status + launch helpers |
 | `adapters/graphify.py` | Read-oriented Graphify third-brain adapter |
 | `adapters/pragmagraph.py` | Read-oriented PragmaGraph third-brain adapter |
+| `adapters/sophiagraph_workspace.py` | Read-oriented SophiaGraph workspace adapter for Markdown vaults |
+
+## Obsidian-authored vaults
+
+An Obsidian vault remains an ordinary Markdown source root. Configure a
+`provider`-layer Source with adapter `sophiagraph_workspace` and explicit
+`options.workspace_root` plus `options.source_root`. Query and neighborhood are
+read-only; refresh is explicit. The adapter does not watch the vault, infer
+roots, rewrite links, or promote notes into durable memory. See
+`docs/obsidian-vault-graphs.md` for the operator flow.
 
 ## Result-envelope alignment
 

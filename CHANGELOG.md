@@ -5,6 +5,14 @@ Last updated: 2026-09-06
 
 This file tracks package-facing release notes for `openminion`.
 
+## Unreleased - 2026-09-06
+
+- Preserved room agent identity through interactive startup and kept
+  participant-attributed transcript styling consistent across streamed and
+  stored room messages.
+- Restored context recall and final-use attribution without duplicating memory
+  effects during replay.
+
 ## Current package line - 2026-09-05
 
 - Added restart-safe remote session event inspection, task activity links, and

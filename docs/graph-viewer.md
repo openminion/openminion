@@ -1,7 +1,7 @@
 # Visual Graph Viewer
 
 Status: alpha
-Last updated: 2026-07-24
+Last updated: 2026-09-06
 
 OpenMinion can open current graph state in the shared GraphFakos visual viewer.
 This surface is for inspection and navigation: it does not create memories,
@@ -46,6 +46,10 @@ without leaving the session:
 /graph html --node-kind fact
 /graph third repo_graph
 ```
+
+`/graph` also prints source-required query, neighborhood, and refresh commands.
+For an Obsidian-authored Markdown vault backed by SophiaGraph, see
+[Obsidian Vault Graphs](obsidian-vault-graphs.md).
 
 The slash command prints copyable `openminion graph ...` commands. It does not
 start a browser, write memory, or launch a second viewer process from inside the
@@ -215,8 +219,8 @@ and real-browser smoke when the dev Playwright dependency and Chromium browser
 are available:
 
 ```bash
-PYTHONPATH=src:../graphfakos/src:../pragmagraph/src:../sophiagraph/src \
-  python -m pytest -q -rs tests/context/knowledge/test_viewer.py
+PYTHONPATH=src .venv/bin/python3.11 -m pytest -q -rs \
+  tests/context/knowledge/test_viewer.py
 ```
 
 Use GraphFakos' browser suite for shared viewer behavior such as search,
