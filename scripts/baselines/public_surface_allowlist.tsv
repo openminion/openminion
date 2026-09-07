@@ -27,8 +27,6 @@ cli/commands/status/session_store.py	openminion.modules.session.runtime.factory
 cli/commands/status/session_store.py	openminion.modules.storage.runtime.sqlite
 cli/commands/tools.py	openminion.modules.llm.providers.base
 cli/commands/tools.py	openminion.modules.tool.runtime.routing
-cli/identity/sync.py	openminion.modules.identity.runtime.service
-cli/identity/sync.py	openminion.modules.identity.storage
 modules/a2a/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/artifact/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/brain/adapters/context/bridges/memory.py	openminion.modules.memory.runtime.scope
@@ -94,6 +92,7 @@ services/agent/execution/tool_arguments.py	openminion.modules.llm.providers.base
 services/agent/execution/unforced/followup.py	openminion.modules.llm.providers.base
 services/agent/execution/unforced/loop.py	openminion.modules.llm.providers.base
 services/agent/execution/unforced/metadata.py	openminion.modules.llm.providers.base
+services/agent/identity_binding.py	openminion.modules.identity.runtime.activation
 services/agent/identity_binding.py	openminion.modules.identity.runtime.renderer
 services/agent/service.py	openminion.modules.brain.runtime.reasoning
 services/agent/service.py	openminion.modules.llm.providers.base

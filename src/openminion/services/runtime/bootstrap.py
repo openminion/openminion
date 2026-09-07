@@ -29,12 +29,16 @@ from openminion.modules.context.knowledge import (
     KnowledgeGraphRegistry,
     PROVIDER_GRAPHIFY,
     PROVIDER_PRAGMAGRAPH,
+    PROVIDER_SOPHIAGRAPH_WORKSPACE,
 )
 from openminion.modules.context.knowledge.adapters.graphify import (
     GraphifyKnowledgeGraphSource,
 )
 from openminion.modules.context.knowledge.adapters.pragmagraph import (
     PragmaGraphKnowledgeGraphSource,
+)
+from openminion.modules.context.knowledge.adapters.sophiagraph_workspace import (
+    SophiagraphWorkspaceKnowledgeGraphSource,
 )
 from openminion.modules.context.knowledge.service import (
     KnowledgeGraphService,
@@ -107,6 +111,10 @@ def _runtime_secret_service(service: Any, config: OpenMinionConfig) -> Any | Non
         config=config,
         data_root=service._context.home_paths.data_root,
     )
+
+
+def _runtime_knowledge_graphs(service: Any) -> Any | None:
+    return getattr(service._runtime_handle, "knowledge_graphs", None)
 
 
 def build_daytona_runner(
@@ -204,6 +212,13 @@ def build_knowledge_graph_source_service(
     registry.register(
         PROVIDER_PRAGMAGRAPH,
         cast(KnowledgeGraphProviderFactory, PragmaGraphKnowledgeGraphSource),
+    )
+    registry.register(
+        PROVIDER_SOPHIAGRAPH_WORKSPACE,
+        cast(
+            KnowledgeGraphProviderFactory,
+            SophiagraphWorkspaceKnowledgeGraphSource,
+        ),
     )
     return build_configured_knowledge_graph_service(config, registry=registry)
 
@@ -588,7 +603,6 @@ def _build_a2a_runtime_apis(
 def build_brain_runner_bundle(service: Any) -> Any:
     """BBSE-02: canonical bootstrap path for the bridge's runner bundle."""
     from pathlib import Path as _Path
-
     import openminion.services.brain.service as bridge_module
     from openminion.base.config import configured_agent_ids
     from openminion.modules.session.storage.repository import (
@@ -650,13 +664,11 @@ def build_brain_runner_bundle(service: Any) -> Any:
         )
     )
 
-    db_dir = (
-        _Path(service.db_path).parent
-        if _Path(service.db_path).suffix
-        else _Path(service.db_path)
-    )
+    db_path = _Path(service.db_path)
+    db_dir = db_path.parent if db_path.suffix else db_path
     memory_assembly = service._runtime_memory_assembly
     vector_adapter = getattr(memory_assembly, "vector_adapter", None)
+    artifactctl = None if service.mode == "local" else create_default_artifactctl()
     skill_config = service._get_manager_config("skill")
     context_api = bridge_module.create_context_api(
         mode=service.mode,
@@ -679,6 +691,8 @@ def build_brain_runner_bundle(service: Any) -> Any:
         telemetryctl=service._telemetryctl,
         skill_config=skill_config,
         skill_home_root=service._context.home_paths.home_root,
+        artifactctl=artifactctl,
+        owns_artifactctl=artifactctl is not None,
     )
 
     memory_api = getattr(memory_assembly, "memctl", None)
@@ -739,12 +753,14 @@ def build_brain_runner_bundle(service: Any) -> Any:
         skill_api=skill_api,
         secret_service=_runtime_secret_service(service, config),
         memory_service=memory_api,
+        knowledge_graph_service=_runtime_knowledge_graphs(service),
         policy_ctl=service._action_policy_service,
         a2a_delegate_api=a2a_delegate_api,
         agent_query=getattr(service._runtime_handle, "agent_discovery_snapshot", None),
         agent_profile=default_profile,
         task_manager=task_manager,
         telemetryctl=service._telemetryctl,
+        artifactctl=artifactctl,
     )
     service._validate_adapter_contracts(
         session_api=session_api,
@@ -859,9 +875,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         options=options,
         terminal_capture_writer=service._terminal_capture_writer,
     )
-    brain_runtime_db_path = resolve_brain_runtime_db_path(
-        storage_path=_Path(service.db_path)
-    )
+    brain_runtime_db_path = resolve_brain_runtime_db_path(storage_path=db_path)
     goal_store = SQLiteGoalStore(str(brain_runtime_db_path))
     mission_store = SQLiteMissionStateStore(str(brain_runtime_db_path))
     runner.goal_runtime = LongRunningGoalRuntime(

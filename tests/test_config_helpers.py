@@ -64,6 +64,18 @@ def test_resolve_identity_root_from_env_prefers_identity_root_override() -> None
     assert resolved == Path(_CUSTOM_IDENTITY_ROOT).resolve()
 
 
+def test_resolve_identity_root_from_env_anchors_config_under_data_root() -> None:
+    data_root = Path(_HOME) / _DATA_ROOT
+    resolved = resolve_identity_root_from_env(
+        env={},
+        process_env={},
+        home_root=Path(_HOME),
+        data_root=data_root,
+        configured_root="custom-identities",
+    )
+    assert resolved == (data_root / "custom-identities").resolve()
+
+
 def test_resolve_identity_db_from_env_defaults_from_identity_root() -> None:
     resolved = resolve_identity_db_from_env(
         env={
@@ -88,3 +100,31 @@ def test_resolve_identity_db_from_env_prefers_identity_db_override() -> None:
         process_env={},
     )
     assert resolved == Path(_CUSTOM_IDENTITY_DB).resolve()
+
+
+def test_resolve_identity_db_from_env_anchors_relative_env_db_under_identity_root() -> (
+    None
+):
+    resolved = resolve_identity_db_from_env(
+        env={
+            "OPENMINION_HOME": _HOME,
+            "OPENMINION_DATA_ROOT": _DATA_ROOT,
+            "OPENMINION_IDENTITY_ROOT": _CUSTOM_IDENTITY_ROOT,
+            "OPENMINION_IDENTITY_DB": "custom.db",
+        },
+        process_env={},
+    )
+    assert resolved == (Path(_CUSTOM_IDENTITY_ROOT) / "custom.db").resolve()
+
+
+def test_resolve_identity_db_from_env_anchors_config_db_under_data_root() -> None:
+    data_root = Path(_HOME) / _DATA_ROOT
+    resolved = resolve_identity_db_from_env(
+        env={},
+        process_env={},
+        home_root=Path(_HOME),
+        data_root=data_root,
+        configured_db="state/custom.db",
+        configured_root="custom-identities",
+    )
+    assert resolved == (data_root / "state" / "custom.db").resolve()

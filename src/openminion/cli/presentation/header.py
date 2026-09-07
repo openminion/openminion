@@ -93,6 +93,23 @@ def format_runtime_adapter(runtime: Any) -> str:
     return format_api_adapter(adapter)
 
 
+def format_runtime_permission_posture(runtime: Any) -> str:
+    from openminion.cli.presentation.permissions import format_permission_status_label
+
+    label = (
+        format_permission_status_label(
+            permission_mode=getattr(runtime, "permission_mode", None),
+            action_policy_mode=getattr(runtime, "action_policy_mode_override", None),
+        )
+        or "default"
+    )
+    count = int(getattr(runtime, "added_workspace_root_count", 0) or 0)
+    if count:
+        noun = "directory" if count == 1 else "directories"
+        return f"{label} · {count} added {noun}"
+    return label
+
+
 def format_api_adapter(adapter: str) -> str:
     adapter = str(adapter or "").strip()
     if adapter == "openai_chat":
@@ -140,6 +157,7 @@ __all__ = [
     "format_api_adapter",
     "format_runtime_adapter",
     "format_runtime_label",
+    "format_runtime_permission_posture",
     "format_runtime_provider",
     "shorten_session_id",
     "shorten_working_dir",

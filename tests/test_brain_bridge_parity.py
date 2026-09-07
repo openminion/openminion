@@ -25,7 +25,13 @@ class _DummySessionApi:
         self.state = {}
         self.events: dict[str, list[dict[str, object]]] = {}
 
-    def get_latest_working_state(self, session_id: str):
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ):
+        del agent_id
         return self.state.get(session_id, {"status": "waiting_user"})
 
     def put_working_state(self, session_id: str, state_inline=None):
@@ -92,13 +98,14 @@ class _DummyRunner:
         self.session_api = _DummySessionApi()
         self.last_run: dict[str, object] | None = None
         self.profile = SimpleNamespace(
+            agent_id="test-agent",
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=40,
                 max_tool_calls=16,
                 max_a2a_calls=5,
                 max_total_llm_tokens=100000,
                 max_elapsed_ms=120000,
-            )
+            ),
         )
 
     def run(
@@ -2509,6 +2516,7 @@ def test_brain_bridge_close_closes_owned_runner_graph_before_provider() -> None:
     )
     service._retrieve_service = None
     service._action_policy_service = None
+    service._identityctl = None
     service._closed = False
     service._llm_runtime = None
     service._provider = SimpleNamespace(
@@ -2537,6 +2545,7 @@ def test_brain_bridge_close_closes_owned_runner_graph_before_provider() -> None:
 def test_brain_bridge_close_does_not_construct_runner() -> None:
     service = object.__new__(BrainBridgeService)
     service._runner = None
+    service._identityctl = None
     service._closed = False
     service._llm_runtime = None
     service._provider = SimpleNamespace(close=lambda: None)
@@ -2568,6 +2577,7 @@ def test_brain_bridge_close_preserves_injected_policy_and_retrieve() -> None:
     service._vector_sync = None
     service._retrieve_service = object()
     service._action_policy_service = object()
+    service._identityctl = None
     service._closed = False
     service._llm_runtime = None
     service._provider = SimpleNamespace(

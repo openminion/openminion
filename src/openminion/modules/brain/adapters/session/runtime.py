@@ -267,8 +267,13 @@ class SessctlAdapter:
             state_inline=state_inline,
         )
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None:
-        return self.store.get_latest_working_state(session_id)
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self.store.get_latest_working_state(session_id, agent_id=agent_id)
 
     def update_session_status(self, session_id: str, status: str) -> None:
         self._ensure_session_exists(session_id)

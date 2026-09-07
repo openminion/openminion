@@ -1,12 +1,40 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-09-05
+Last updated: 2026-09-07
 
 This file tracks package-facing release notes for `openminion`.
 
-## Current package line - 2026-09-05
+## Current package line - 2026-09-07
 
+- Added an Obsidian vault graph workflow that composes SophiaGraph document
+  sources and PragmaGraph repository sources through typed, attributable graph
+  query, neighborhood, refresh, and viewer operations.
+- Added restart-safe remote session event inspection, task activity links, and
+  typed approval resume while requiring authentication for non-loopback API
+  binds.
+- Added digest-pinned offline plugin installation with staged validation,
+  collision checks, explicit config declarations, and exact rollback of failed
+  installs.
+- Completed scheduled-task lifecycle support across CLI, API, daemon, cron,
+  durable coordination, health reporting, and resumed execution.
+- Improved first-run continuity, provider setup, and Focus model connections
+  while preserving configured model identity across setup and runtime.
+- Restored context recall and final-use attribution without duplicating memory
+  effects during replay, and aligned memory access across runtime services.
+- Unified agent identity activation and storage paths so runtime, CLI, and
+  service boundaries retain the same effective identity.
+- Hardened artifact ingestion, aliases, retention, views, and lifecycle cleanup
+  with durable ownership and safer context handoffs.
+- Made SQLite snapshot backup names collision-safe, closed snapshot handles
+  deterministically, and made daemon PID discovery and shutdown portable.
+- Tightened tool, plugin, MCP, telemetry, path-policy, and provider-registration
+  boundaries while preserving public runtime behavior.
+- Preserved room agent identity through interactive startup and kept
+  participant-attributed transcript styling consistent across streamed and
+  stored room messages.
+
+## Prior package line - 2026-09-05
 - Added approval-bound repository delivery across Git remotes, pull request
   updates and merges, workflow dispatches, check inspection, and GitHub
   releases, including preflight validation and uncertain-effect reconciliation.
@@ -31,7 +59,7 @@ This file tracks package-facing release notes for `openminion`.
 - Improved provider retry enforcement, pairing and session status, token and
   provider telemetry, CPU measurement, and bounded Focus history.
 
-## Prior package line - 2026-09-02
+## Earlier package line - 2026-09-02
 
 - Added durable human-agent Focus rooms with explicit participant roles,
   multi-agent routing, direct addressing, participant controls, attributed

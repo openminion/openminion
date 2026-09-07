@@ -48,7 +48,12 @@ class SessionStoreAPI(Protocol):
         state_inline: dict[str, Any] | None = None,
     ) -> int: ...
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None: ...
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None: ...
 
     def get_tool_transcript(self, session_id: str) -> dict[str, Any]: ...
 

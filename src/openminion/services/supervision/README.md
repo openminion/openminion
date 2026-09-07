@@ -8,8 +8,8 @@ Pairs with: standalone (no `modules/supervision/`)
 Restart and backoff policy for supervised runtime components.
 `SupervisionService` consumes `SupervisionObservation` records
 (component-level lifecycle facts) and produces `SupervisionDecision`
-records that tell the runtime whether to restart, back off, or fail
-fast. Owns the backoff state machine and the supervision policy
+records that tell the runtime whether to restart now, back off, or suppress a
+restart. Owns the backoff state machine and the supervision policy
 operators tune to bound restart storms.
 
 ## Public surface

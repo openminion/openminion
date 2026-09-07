@@ -14,8 +14,8 @@ those bootstraps.
 
 ## Public surface
 
-Currently exported through direct submodule imports (no `__init__.py`
-re-exports — consumers import by file). The intended public surface:
+Bootstrap owners are imported through their direct submodules. The supported
+package-internal surface is:
 
 - `config.bootstrap_config_manager(manager: ConfigManager)`
   — single canonical config bootstrap pass.
@@ -28,9 +28,9 @@ re-exports — consumers import by file). The intended public surface:
   `OnboardingInspectionRequest`, `OnboardingStatus`,
   `OnboardingPlan`, `OnboardingSurfaceRoute`.
 - `onboarding.resolve_surface_onboarding_route(...)`,
-  `build_inline_setup_args(...)`, `format_fail_fast_message(...)`.
-- `paths.py` — bootstrap-time path helpers (separate from
-  `base/paths.py`).
+  `format_fail_fast_message(...)`.
+- `paths.py` — bootstrap-time path names, separate from canonical resolution in
+  `base/config/paths.py`.
 
 ## Owned objects
 
@@ -40,7 +40,7 @@ re-exports — consumers import by file). The intended public surface:
 
 ## Non-goals
 
-- Canonical path layout — that lives in `base/paths.py`.
+- Canonical path layout — that lives in `base/config/paths.py`.
 - Operator-tunable defaults — they live in `base/config/`.
 - Runtime assembly — that is `services/runtime/`.
 - Surface-specific interactive CLI UX — surfaces consume this package,
@@ -49,7 +49,7 @@ re-exports — consumers import by file). The intended public surface:
 ## Dependencies
 
 - `base/config/` — config manager type.
-- `base/paths.py` — canonical path layout.
+- `base/config/paths.py` — canonical path layout.
 - `modules/identity/`, `modules/session/`, `modules/storage/` —
   inspected during onboarding plan resolution.
 

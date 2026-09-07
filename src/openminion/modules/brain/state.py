@@ -133,7 +133,10 @@ def load_or_init_state(
         runner,
         session_id=session_id,
     )
-    raw = runner.session_api.get_latest_working_state(session_id)
+    raw = runner.session_api.get_latest_working_state(
+        session_id,
+        agent_id=runner.profile.agent_id,
+    )
     if raw:
         raw_state = _state_payload_from_raw(raw)
         state = WorkingState.model_validate(raw_state)

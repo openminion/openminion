@@ -246,7 +246,11 @@ def test_render_tasks_report_includes_operator_state_and_resume_action(
         task_id="task-1",
     )
 
-    runtime = type("Runtime", (), {"task_manager": manager})()
+    runtime = type(
+        "Runtime",
+        (),
+        {"task_manager": manager, "agent_id": "agent-1", "session_id": "session-1"},
+    )()
     inventory_body = render_tasks_report(runtime)
     detail_body = render_tasks_report(runtime, "task-1")
 
@@ -294,6 +298,37 @@ def test_render_tasks_report_uses_active_agent_and_session_scope() -> None:
     )()
 
     assert "task-1: Scoped task" in render_tasks_report(runtime)
+
+
+def test_render_tasks_report_applies_exact_lifecycle_actions(tmp_path) -> None:
+    from openminion.modules.session.storage.repository import (
+        create_sqlite_cron_repository,
+    )
+
+    manager = TaskManager.from_cron_repository(
+        create_sqlite_cron_repository(db_path=tmp_path / "scheduled.db")
+    )
+    record = manager.schedule_task(
+        name="scheduled",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "work"},
+        agent_id="agent-1",
+    )
+    runtime = type(
+        "Runtime",
+        (),
+        {"task_manager": manager, "agent_id": "agent-1", "session_id": "session-1"},
+    )()
+
+    paused = render_tasks_report(runtime, f"pause {record.task_id}")
+    resumed = render_tasks_report(runtime, f"resume {record.task_id}")
+    cancelled = render_tasks_report(runtime, f"cancel {record.task_id}")
+
+    assert "status: WAITING" in paused
+    assert "schedule: every:60000ms" in paused
+    assert "scheduler: unknown" in paused
+    assert "status: ACTIVE" in resumed
+    assert "status: CANCELED" in cancelled
 
 
 def test_effort_and_statusline_handlers_delegate_to_runtime() -> None:

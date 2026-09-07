@@ -1,16 +1,7 @@
 """Runtime config dataclasses and identity path resolution."""
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Mapping
 
-from openminion.base.constants import (
-    OPENMINION_DATA_ROOT_ENV,
-    OPENMINION_HOME_ENV,
-    OPENMINION_IDENTITY_DB_ENV,
-    OPENMINION_IDENTITY_ROOT_ENV,
-)
-from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.base.config.runtime.capability import (
     ModeRuntimePolicyConfig,
     PluginRuntimePolicyConfig,
@@ -31,16 +22,16 @@ from openminion.base.config.mcp import (
     coerce_mcp_server_configs,
     normalize_mcp_sampling_mode,
 )
-from openminion.base.config.paths import resolve_data_root
+from openminion.base.config.runtime.identity import (
+    resolve_identity_db_from_env,
+    resolve_identity_root_from_env,
+)
 from openminion.base.config.runtime.tools import (
     ToolRuntimeConfig,
     coerce_tool_runtime_config,
 )
 from openminion.base.config.runtime.telemetry import OTELExporterConfig
 from openminion.base.config.tool_selection import ToolSelectionConfig
-
-_BASE_IDENTITY_DIRNAME = "identity"
-_BASE_IDENTITY_DB_FILENAME = "identity.db"
 
 
 @dataclass
@@ -213,70 +204,6 @@ class IdentityBudgetConfig:
 @dataclass
 class ContextConfig:
     identity_budget: IdentityBudgetConfig | None = None
-
-
-def _resolve_identity_home_root(
-    env: EnvironmentConfig, *, home_root: Path | None = None
-) -> Path:
-    if home_root is not None:
-        return home_root.expanduser().resolve()
-    env_home = env.get(OPENMINION_HOME_ENV, "").strip()
-    if env_home:
-        return Path(env_home).expanduser().resolve()
-    return Path.cwd().resolve()
-
-
-def resolve_identity_root_from_env(
-    *,
-    env: EnvironmentConfig | Mapping[str, object] | None = None,
-    runtime_env: Mapping[str, object] | None = None,
-    process_env: Mapping[str, object] | None = None,
-    home_root: Path | None = None,
-) -> Path:
-    resolved_env = resolve_environment_config(
-        env=env,
-        runtime_env=runtime_env,
-        process_env=process_env,
-    )
-    base_root = _resolve_identity_home_root(resolved_env, home_root=home_root)
-    data_root: Path = resolve_data_root(
-        base_root,
-        data_root=resolved_env.get(OPENMINION_DATA_ROOT_ENV, ""),
-    )
-    configured_root = resolved_env.get(OPENMINION_IDENTITY_ROOT_ENV, "").strip()
-    if configured_root:
-        candidate = Path(configured_root).expanduser()
-        if not candidate.is_absolute():
-            candidate = data_root / candidate
-        return candidate.resolve()
-    return (data_root / _BASE_IDENTITY_DIRNAME).resolve()
-
-
-def resolve_identity_db_from_env(
-    *,
-    env: EnvironmentConfig | Mapping[str, object] | None = None,
-    runtime_env: Mapping[str, object] | None = None,
-    process_env: Mapping[str, object] | None = None,
-    home_root: Path | None = None,
-) -> Path:
-    resolved_env = resolve_environment_config(
-        env=env,
-        runtime_env=runtime_env,
-        process_env=process_env,
-    )
-    configured_db = resolved_env.get(OPENMINION_IDENTITY_DB_ENV, "").strip()
-    if configured_db:
-        candidate = Path(configured_db).expanduser()
-        if not candidate.is_absolute():
-            identity_root = resolve_identity_root_from_env(
-                env=resolved_env, home_root=home_root
-            )
-            candidate = identity_root / candidate
-        return candidate.resolve()
-    identity_root = resolve_identity_root_from_env(
-        env=resolved_env, home_root=home_root
-    )
-    return (identity_root / _BASE_IDENTITY_DB_FILENAME).resolve()
 
 
 __all__ = [

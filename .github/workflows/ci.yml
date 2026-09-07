@@ -15,6 +15,93 @@ permissions:
   contents: read
 
 jobs:
+  first-run:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install package
+        run: python -m pip install .
+
+      - name: Exercise clone-to-first-response setup
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          with tempfile.TemporaryDirectory() as tmp:
+              root = Path(tmp)
+              provider_config = root / "minimax.json"
+              env = os.environ.copy()
+              env["MINIMAX_API_KEY"] = "fixture-minimax-key-not-for-network-use"
+              setup = subprocess.run(
+                  [
+                      sys.executable,
+                      "-m",
+                      "openminion",
+                      "--config",
+                      str(provider_config),
+                      "setup",
+                      "--provider",
+                      "minimax",
+                      "--model",
+                      "MiniMax-M2.7",
+                      "--no-focus",
+                  ],
+                  check=False,
+                  capture_output=True,
+                  text=True,
+                  env=env,
+              )
+              assert setup.returncode == 0, setup.stdout + setup.stderr
+              doctor = subprocess.run(
+                  [sys.executable, "-m", "openminion", "--config", str(provider_config), "doctor", "--json"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+                  env=env,
+              )
+
+              demo_config = root / "demo.json"
+              base = [sys.executable, "-m", "openminion", "--config", str(demo_config)]
+              subprocess.run([*base, "config", "init", "--provider", "echo", "--force"], check=True)
+              subprocess.run([*base, "verify", "smoke"], check=True)
+              subprocess.run([*base, "doctor", "--json"], check=True)
+              try:
+                  response = subprocess.run(
+                      [*base, "run", "--session", "first-run", "hello"],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+              finally:
+                  subprocess.run([*base, "daemon", "stop"], check=True)
+
+              config = provider_config.read_text(encoding="utf-8")
+              provider = json.loads(config)["providers"]["openai"]
+              assert provider["model"] == "MiniMax-M2.7"
+              assert provider["api_key"] == ""
+              assert "fixture-minimax-key" not in config + setup.stdout + doctor.stdout
+              assert "hello" in response.stdout.lower(), response.stdout
+              assert " INFO " not in response.stdout, response.stdout
+          PY
+
   lint:
     runs-on: ubuntu-latest
 

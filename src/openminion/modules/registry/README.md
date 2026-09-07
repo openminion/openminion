@@ -43,7 +43,7 @@ Re-exported from `openminion.modules.registry`:
 
 ## Canonical shape
 
-**MCCS-05 decision (2026-05-08):** the module IS canonically compliant.
-The public facade lives in `agents.py`, which keeps the owner specific without
+The module is canonically compliant. The public facade lives in `agents.py`,
+which keeps the owner specific without
 repeating the package context or falling back to the old `registry/registry.py`
 shape, while preserving the public type identity (`AgentRegistry`).

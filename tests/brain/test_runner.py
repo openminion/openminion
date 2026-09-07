@@ -61,7 +61,13 @@ class RunnerTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.saved = None
 
-            def get_latest_working_state(self, _session_id: str):
+            def get_latest_working_state(
+                self,
+                _session_id: str,
+                *,
+                agent_id: str | None = None,
+            ):
+                del agent_id
                 return None
 
             def put_working_state(self, _session_id: str, *, state_inline):

@@ -50,6 +50,28 @@ class ProviderSetupError(ValueError):
     """Raised when first-run setup cannot safely produce a config."""
 
 
+class ProviderSetupConnectionConflict(ProviderSetupError):
+    """Raised when setup would retarget an existing model connection."""
+
+    def __init__(self, connection_id: str) -> None:
+        self.connection_id = connection_id
+        super().__init__(
+            f"Connection {connection_id!r} already has different settings. "
+            "Choose a different connection id."
+        )
+
+
+class ProviderSetupMissingCredential(ProviderSetupError):
+    """Raised when setup requires a credential that was not supplied."""
+
+    def __init__(self, display_label: str, env_var: str) -> None:
+        self.env_var = env_var
+        super().__init__(
+            f"Missing credential for {display_label}. Export {env_var} or "
+            "confirm local config storage interactively."
+        )
+
+
 @dataclass(frozen=True)
 class CredentialResolution:
     env_var: str
@@ -81,6 +103,7 @@ class ProviderSetupRequest:
 class ProviderSetupPreview:
     config_path: Path
     agent_id: str
+    connection_id: str
     preset_id: str
     display_label: str
     runtime_adapter: str
@@ -97,6 +120,8 @@ class ProviderSetupPreview:
 class ProviderSetupResult:
     config: OpenMinionConfig
     config_path: Path
+    home_root: Path | None
+    data_root: Path
     preset: ProviderSetupPreset
     model_choice: ModelChoiceResult
     preview: ProviderSetupPreview
@@ -133,10 +158,7 @@ def resolve_setup_credential(
             "Refusing to store a local API key without explicit local-config consent."
         )
     if preset.requires_credential:
-        raise ProviderSetupError(
-            f"Missing credential for {preset.display_label}. Export {env_var} or "
-            "confirm local config storage interactively."
-        )
+        raise ProviderSetupMissingCredential(preset.display_label, env_var)
     return CredentialResolution(env_var=env_var, source="not_required")
 
 
@@ -188,6 +210,7 @@ def build_provider_setup(
         or existing_profile is None
         or not existing_profile.provider
     )
+    connection_id = _normalize_connection_id(request.connection_id or preset.preset_id)
     config, shared_isolated, changed_sections = _apply_setup_selection(
         base_config,
         preset=preset,
@@ -199,11 +222,12 @@ def build_provider_setup(
         data_root=data_root,
         config_exists=config_exists,
         add_model=request.add_model,
-        connection_id=request.connection_id,
+        connection_id=connection_id,
     )
     preview = ProviderSetupPreview(
         config_path=config_path,
         agent_id=agent_id,
+        connection_id=connection_id,
         preset_id=preset.preset_id,
         display_label=preset.display_label,
         runtime_adapter=preset.runtime_adapter,
@@ -218,6 +242,12 @@ def build_provider_setup(
     return ProviderSetupResult(
         config=config,
         config_path=config_path,
+        home_root=(
+            Path(request.home_root).expanduser().resolve(strict=False)
+            if request.home_root is not None
+            else None
+        ),
+        data_root=data_root.resolve(strict=False),
         preset=preset,
         model_choice=model_choice,
         preview=preview,
@@ -371,12 +401,16 @@ def _apply_setup_selection(
         if legacy is not None:
             legacy_id, legacy_route = legacy
             profile.model_connections[legacy_id] = legacy_route
-    normalized_connection_id = _normalize_connection_id(
-        connection_id or preset.preset_id
+    _validate_connection_target(
+        profile=profile,
+        connection_id=connection_id,
+        provider=adapter,
+        provider_patch=provider_patch,
+        preserve_default=preserve_default,
     )
     add_model_connection(
         profile,
-        connection_id=normalized_connection_id,
+        connection_id=connection_id,
         display_name=preset.display_label,
         provider=adapter,
         model=model,
@@ -390,7 +424,7 @@ def _apply_setup_selection(
             config,
             agent_id=agent_id,
             overrides=RunProfileOverrides(
-                provider=normalized_connection_id,
+                provider=connection_id,
                 model=model,
             ),
         )
@@ -464,6 +498,58 @@ def _unmanaged_provider_overrides(
     }
 
 
+def _connection_route_matches(
+    connection: Mapping[str, Any],
+    *,
+    provider: str,
+    provider_patch: Mapping[str, Any],
+) -> bool:
+    if canonical_provider_name(str(connection.get("provider", ""))) != (
+        canonical_provider_name(provider)
+    ):
+        return False
+
+    existing = dict(connection.get("provider_config_overrides", {}))
+    for key in ("api_key", "api_key_env", "base_url", "timeout_seconds"):
+        proposed = provider_patch.get(key)
+        if proposed not in (None, "") and (existing.get(key) or "") != proposed:
+            return False
+    existing_identity = dict(existing.get("provider_identity", {}) or {})
+    if not existing_identity:
+        models = list(connection.get("models", ()))
+        existing_identity = resolve_provider_identity_translation(
+            str(connection.get("provider", "")),
+            model=str(models[0]) if models else "",
+            base_url=str(existing.get("base_url", "") or ""),
+        )
+    proposed_identity = dict(provider_patch.get("provider_identity", {}) or {})
+    return all(
+        existing_identity.get(key) == proposed_identity.get(key)
+        for key in ("service_vendor", "transport_adapter")
+    )
+
+
+def _validate_connection_target(
+    *,
+    profile: AgentProfileConfig,
+    connection_id: str,
+    provider: str,
+    provider_patch: Mapping[str, Any],
+    preserve_default: bool,
+) -> None:
+    existing = profile.model_connections.get(connection_id)
+    if (
+        preserve_default
+        and existing is not None
+        and not _connection_route_matches(
+            existing,
+            provider=provider,
+            provider_patch=provider_patch,
+        )
+    ):
+        raise ProviderSetupConnectionConflict(connection_id)
+
+
 def _credential_preview(credential: CredentialResolution) -> str:
     if credential.source == "env":
         return f"environment variable {credential.env_var}"
@@ -520,7 +606,9 @@ def _remove_temp(path: Path) -> None:
 
 __all__ = [
     "CredentialResolution",
+    "ProviderSetupConnectionConflict",
     "ProviderSetupError",
+    "ProviderSetupMissingCredential",
     "ProviderSetupPreview",
     "ProviderSetupRequest",
     "ProviderSetupResult",

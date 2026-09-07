@@ -4,6 +4,7 @@ import argparse
 from typing import Any
 
 from openminion.api.runtime import APIRuntime
+from openminion.base.config.core import resolve_default_agent_id
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.task.surface import (
@@ -14,9 +15,12 @@ from openminion.modules.task.surface import (
 
 def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
     action = str(getattr(args, "tasks_command", "") or "list").strip().lower()
+    agent_id = str(getattr(args, "agent_id", "") or "").strip()
+    if not agent_id:
+        agent_id = resolve_default_agent_id(app.config)
     surface = build_task_surface(
         resolve_task_surface_source(app),
-        agent_id=str(getattr(args, "agent_id", "") or "").strip(),
+        agent_id=agent_id,
         session_id=str(getattr(args, "session", "") or "").strip(),
         limit=int(getattr(args, "limit", 50) or 50),
     )
@@ -38,7 +42,7 @@ def run_tasks(args: argparse.Namespace, app: APIRuntime) -> int:
         else:
             print(f"Unknown tasks command: {action}")
             return 1
-    except (KeyError, ValueError, NotImplementedError) as exc:
+    except (KeyError, ValueError, PermissionError, NotImplementedError) as exc:
         payload = {"ok": False, "error": str(exc)}
     except (AttributeError, TypeError, RuntimeError) as exc:
         payload = {"ok": False, "error": str(exc)}
@@ -70,9 +74,13 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
             return
         for task in tasks:
             due = task.get("due_at") or "-"
+            last_run = task.get("last_run") or {}
             print(
-                f"[{task.get('status', 'PENDING')}] {task.get('id')}: "
-                f"{task.get('title')} due={due}"
+                f"[{task.get('lifecycle_state') or task.get('status', 'PENDING')}] "
+                f"{task.get('id')}: {task.get('title')} "
+                f"type={task.get('task_kind', '-')} "
+                f"schedule={task.get('schedule_summary', '-')} "
+                f"next={due} last={last_run.get('state') or '-'}"
             )
         return
     task = payload.get("task")
@@ -85,6 +93,18 @@ def _print_human(*, action: str, payload: dict[str, Any]) -> None:
         due = task.get("due_at")
         if due:
             print(f"due: {due}")
+        if task.get("schedule_summary"):
+            print(f"schedule: {task.get('schedule_summary')}")
+        if task.get("daemon_required"):
+            print("scheduler: run `openminion service status cron`")
+        if task.get("last_run"):
+            last_run = task["last_run"]
+            print(f"last_run: {last_run.get('state')}")
+            if last_run.get("last_error"):
+                error = last_run["last_error"]
+                print(f"last_error: {error.get('code')}: {error.get('message')}")
+        if task.get("valid_actions"):
+            print(f"actions: {', '.join(task['valid_actions'])}")
         return
     print(f"Task action {payload.get('action')} completed")
 

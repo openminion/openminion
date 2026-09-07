@@ -53,6 +53,44 @@ def test_run_identity_import_from_bundle_stamps_bundle_provenance(
     assert bool(meta.get("bundle_fingerprint"))
 
 
+def test_run_identity_import_from_bundle_refuses_yaml_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle_root = tmp_path / "ops-agent"
+    bundle_root.mkdir()
+    (bundle_root / "AGENT.md").write_text(
+        "## Mission\nBundle mission.\n", encoding="utf-8"
+    )
+    (bundle_root / "SOUL.md").write_text("## Voice\n- Direct\n", encoding="utf-8")
+
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    yaml_profile = build_profile_from_bundle_documents(
+        agent_id="ops-agent",
+        documents=[
+            BundleTextDocument(
+                relative_path="AGENT.md",
+                content="## Mission\nYAML mission.\n",
+            )
+        ],
+    )
+    ctl.upsert_profile(yaml_profile.model_copy(update={"meta": {"source": "yaml"}}))
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+
+    with pytest.raises(SystemExit) as exc_info:
+        identity_command.run_identity_import_from_bundle(str(bundle_root))
+
+    assert exc_info.value.code == 1
+    assert (
+        "cannot overwrite a YAML-managed or protected profile"
+        in capsys.readouterr().err
+    )
+    assert ctl.get_profile("ops-agent").role.mission == "YAML mission."
+
+
 def test_run_identity_import_from_bundle_requires_agent_id_for_identity_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

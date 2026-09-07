@@ -110,6 +110,8 @@ def process_approval_decision(
                         "details": {"approval_id": approval_id},
                     },
                 }
+        elif decision == "deny":
+            grant_id = None
         else:
             grant_id = policyctl.create_grant_from_confirmation(
                 invocation=dict(invocation),

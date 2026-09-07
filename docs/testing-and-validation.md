@@ -1,7 +1,7 @@
 # OpenMinion Testing And Validation
 
 Status: active
-Last updated: 2026-06-30
+Last updated: 2026-09-06
 
 Purpose: give package users and maintainers one package-local reference for the
 basic validation commands that prove `openminion` installs and runs correctly.

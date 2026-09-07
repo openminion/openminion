@@ -21,6 +21,8 @@ that hydrates skill snippets into context packs.
 - Matching: `SkillMatch` plus the LLM-selector runtime
 - Linting: `LintIssue`
 - JIT client: `SkillJITClient`, `ContextCtlSkillAdapter`
+- Proposals: `SkillProposal`, `SkillProposalDraft`, `proposal_queue`,
+  `proposal_review`
 
 ## Non-goals
 
@@ -38,6 +40,8 @@ Re-exported from `openminion.modules.skill`:
   `WorkflowCatalogEntry`
 - Matching: `SkillMatch`, `SkillJITClient`, `ContextCtlSkillAdapter`
 - Linting: `LintIssue`
+- Proposals: `SkillProposal`, `SkillProposalDraft`, `proposal_queue`,
+  `proposal_review`
 - Config: `load_config`
 
 ## Dependencies
@@ -53,11 +57,10 @@ subpackage, `storage/` subpackage, `cli.py`, `diagnostics/`. The
 `runtime/skill/` package separates ingest, catalog, and matching concerns;
 `runtime/skill/__init__.py` keeps the public `Skill` composition surface.
 
-Selection narrowing and the promotion-cadence orchestration over the
-shipped proposal / review / emergence pipeline are described in
-the skill-library v2 promotion-cadence spec (SLV2 lane).
+Selection narrowing and promotion cadence reuse the shipped proposal, review,
+and learning owners in this package.
 
-## URL ingest threat model (SIPS-03/04)
+## URL ingest threat model
 
 The `tools/skill/url_ingest.py` module fetches markdown from public URLs
 for the `skill.ingest_url` surface. The threat model that the module
@@ -67,16 +70,16 @@ defends against:
    localhost, loopback, private IP ranges, link-local addresses, and
    common internal TLDs (`.local`, `.internal`, `.corp`, `.home`, `.lan`)
    before any HTTP request is issued.
-2. **Redirect-aware host re-validation (SIPS-03)** — `urllib`'s
+2. **Redirect-aware host re-validation** — `urllib`'s
    automatic redirect following is disabled via
    `_NoFollowRedirectHandler`. Each redirect target is re-checked
    against the blocklist before the next request. A public host
    cannot 302 to an internal host without the redirect being refused
    with the existing `BLOCKED_HOST` error code.
-3. **Redirect chain cap (SIPS-03)** — `SKILL_URL_MAX_REDIRECTS = 3`
+3. **Redirect chain cap** — `SKILL_URL_MAX_REDIRECTS = 3`
    limits chain depth. Exceeding the cap fails with
    `URL_INGEST_REDIRECT_LIMIT`.
-4. **DNS rebinding guard (SIPS-04)** — the host is resolved once at
+4. **DNS rebinding guard** — the host is resolved once at
    the initial check and the IP set is pinned as a baseline. Before
    the first fetch, the host is resolved again; if the resolved set
    differs from the baseline, the fetch fails with
@@ -84,17 +87,16 @@ defends against:
    resolve-twice-with-rebind attack where a hostile DNS server returns
    a public IP to the check and a private IP to the fetch.
 
-Explicitly out of scope for this lane:
+Explicitly out of scope:
 
 - Per-host rate limiting / global URL ingest budget
 - Request signing / origin authentication
 - Content-Type policy enforcement beyond the `.md` extension check
 - TLS certificate pinning
 
-Out-of-scope concerns must be opened in a separate URL-ingest hardening
-tracker, not retrofitted here.
+Add these concerns only through a separately reviewed URL-ingest change.
 
-## Skill ingest trust posture (STIP)
+## Skill ingest trust posture
 
 The skill runtime carries a structural trust taxonomy in
 `bundle_metadata.trust`. This is provenance metadata, not a content
@@ -146,6 +148,6 @@ Operator gate:
 File ingest supports bounded `references/`, `assets/`, and `scripts/`
 resources. Their manifests are stored on `SkillPackage.resources`; content is
 loaded only when a caller explicitly requests one path. Bundled scripts always
-carry `executable=false` and are never executed by the skill runtime. The full
-field and directory posture is documented in
-`docs/reference/skill-agent-skills-conformance-matrix.md`.
+carry `executable=false` and are never executed by the skill runtime. The
+parser and package models define the current field and directory posture; the
+package tests cover resource admission and explicit loading.

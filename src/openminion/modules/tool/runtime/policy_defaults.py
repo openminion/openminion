@@ -62,6 +62,7 @@ DEFAULT_POLICY: dict[str, Any] = {
             "ops.",
             "mcp.",
             "memory.",
+            "graph.",
         ],
         "deny_exact": [],
         "deny_prefix": [],

@@ -69,6 +69,7 @@ CronDeliveryHandler = Callable[
 ]
 CronEventHook = Callable[[str, dict[str, Any]], None]
 CronAdmissionProbe = Callable[[], bool]
+CronTaskOutcomeRecorder = Callable[[str | None], int]
 
 
 @dataclass
@@ -95,6 +96,7 @@ class CronScheduler:
         delivery_handler: CronDeliveryHandler | None = None,
         on_event: CronEventHook | None = None,
         can_start_background_work: CronAdmissionProbe | None = None,
+        record_task_outcomes: CronTaskOutcomeRecorder | None = None,
     ) -> None:
         self._store = store
         self._daemon_id = str(daemon_id or uuid4().hex).strip()
@@ -112,6 +114,7 @@ class CronScheduler:
         self._delivery_handler = delivery_handler
         self._on_event = on_event
         self._can_start_background_work = can_start_background_work or (lambda: True)
+        self._record_task_outcomes = record_task_outcomes
 
         self._lock = RLock()
         self._stop_event = Event()
@@ -131,6 +134,7 @@ class CronScheduler:
                 raise RuntimeError("cron scheduler has been stopped")
             if self._started:
                 return
+            self._record_task_outcome(None)
             self._started = True
             self._stop_event.clear()
             self._loop_thread = Thread(
@@ -204,6 +208,7 @@ class CronScheduler:
                         can_start_background_work=self._can_start_background_work,
                         emit=self._emit,
                     )
+                    self._record_task_outcome(None)
                     for run in runs:
                         self._start_worker(run)
                 except Exception as exc:
@@ -327,6 +332,8 @@ class CronScheduler:
                     isolated_session_id=result.isolated_session_id,
                     emit=self._emit,
                 )
+                if persisted_state in {"finished", "failed", "cancelled", "timed_out"}:
+                    self._record_task_outcome(job_id)
             except Exception as exc:
                 self._emit(
                     "cron.run.finish_error",
@@ -343,6 +350,11 @@ class CronScheduler:
                     "error": error,
                 },
             )
+
+    def _record_task_outcome(self, job_id: str | None) -> None:
+        if self._record_task_outcomes is None:
+            return
+        self._record_task_outcomes(job_id)
 
     def _lease_renewer(self, *, run_id: str, stop_event: Event) -> None:
         interval_s = max(1.0, self._lease_ttl_seconds / 2.0)

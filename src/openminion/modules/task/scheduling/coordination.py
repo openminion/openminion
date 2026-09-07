@@ -5,6 +5,54 @@ from typing import Any, Callable
 from .interfaces import CronStoreProtocol
 
 CronEventHook = Callable[[str, dict[str, Any]], None]
+_SCHEDULER_STATUS_COMMAND = "openminion service status cron"
+
+
+def scheduler_readiness_from_health(
+    health_payload: dict[str, Any],
+    *,
+    reachable: bool,
+    identity_matches: bool | None,
+) -> dict[str, Any]:
+    state = "unknown"
+    reason: str | None = "daemon_identity_unavailable"
+    heartbeat: Any = None
+    if not reachable:
+        state, reason = "unreachable", "daemon_unreachable"
+    elif identity_matches is False:
+        state, reason = "degraded", "daemon_identity_mismatch"
+    elif identity_matches:
+        snapshot = health_payload.get("normalized_health_snapshot")
+        if not isinstance(snapshot, dict) or "components" not in snapshot:
+            reason = "health_snapshot_unavailable"
+        else:
+            scheduler = next(
+                (
+                    item
+                    for item in snapshot.get("components", [])
+                    if (item.get("component") or {}).get("component_kind")
+                    == "cron_scheduler"
+                ),
+                None,
+            )
+            if scheduler is None:
+                state, reason = "degraded", "scheduler_not_attached"
+            else:
+                readiness = str(scheduler.get("readiness") or "unknown")
+                heartbeat = scheduler.get("last_heartbeat_at")
+                if readiness == "ready" and heartbeat:
+                    state, reason = "ready", None
+                elif readiness == "ready":
+                    reason = "scheduler_heartbeat_unavailable"
+                else:
+                    state = "degraded"
+                    reason = scheduler.get("status_message")
+    result = {"state": state, "hosted_by": "daemon", "reason": reason}
+    if heartbeat:
+        result["last_heartbeat_at"] = heartbeat
+    if state != "ready":
+        result["check_command"] = _SCHEDULER_STATUS_COMMAND
+    return result
 
 
 def recover_and_acquire_cron_runs(

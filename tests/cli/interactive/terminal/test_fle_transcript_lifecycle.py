@@ -4,6 +4,9 @@ import asyncio
 import io
 
 from prompt_toolkit.output.defaults import create_output
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.output import ColorDepth
+from prompt_toolkit.output.vt100 import Vt100_Output
 from prompt_toolkit.application.current import get_app_or_none
 from rich.console import Console
 from rich.text import Text
@@ -491,10 +494,21 @@ def test_prompt_safe_mode_keeps_inflight_status_out_of_prompt_output() -> None:
     assert rendered == ["\n"]
 
 
-def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:
+def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output(monkeypatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+    class _TTYBuffer(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
     console = Console(force_terminal=True, color_system="truecolor", width=160)
-    out = io.StringIO()
-    prompt_output = create_output(stdout=out)
+    out = _TTYBuffer()
+    prompt_output = Vt100_Output(
+        out,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_8_BIT,
+    )
 
     write_console_render_via_prompt_output(
         console=console,
@@ -504,7 +518,7 @@ def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:
 
     rendered = out.getvalue()
     assert "hello" in rendered
-    assert "\x1b[" not in rendered
+    assert "\x1b[0;32;1mhello" in rendered
 
 
 def test_prompt_safe_writer_uses_active_prompt_terminal_context(monkeypatch) -> None:

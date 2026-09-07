@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +10,9 @@ from openminion.api.operations.approve_pending import (
     parse_decision,
     process_approval_decision,
 )
+from openminion.api.routes.approve_pending import handle_request
+from openminion.api.routes.contracts import APIRouteContext
+from openminion.api.server import dispatch_request
 
 
 @pytest.mark.parametrize("typed", APPROVAL_CHOICES)
@@ -91,7 +95,9 @@ def fake_runtime():
     return runtime
 
 
-@pytest.mark.parametrize("decision", APPROVAL_CHOICES)
+@pytest.mark.parametrize(
+    "decision", [choice for choice in APPROVAL_CHOICES if choice != "deny"]
+)
 def test_process_creates_grant_for_each_typed_decision(
     fake_runtime, decision, monkeypatch
 ):
@@ -109,6 +115,98 @@ def test_process_creates_grant_for_each_typed_decision(
     create_grant = fake_runtime.action_policy.create_grant_from_confirmation
     create_grant.assert_called_once()
     assert create_grant.call_args.kwargs["action"] == decision
+
+
+def test_process_deny_does_not_create_grant(fake_runtime, monkeypatch):
+    monkeypatch.setattr(
+        "openminion.api.operations.approve_pending.resolve_runtime_manager",
+        lambda *, config_path, runtime: (None, runtime, False),
+    )
+
+    result = process_approval_decision(
+        config_path=None,
+        runtime=fake_runtime,
+        body=_well_formed_body(decision="deny"),
+    )
+
+    assert result == {
+        "ok": True,
+        "approval_id": "ap_abc123",
+        "decision": "deny",
+        "grant_id": None,
+    }
+    fake_runtime.action_policy.create_grant_from_confirmation.assert_not_called()
+
+
+def test_approval_resume_route_exposes_typed_operation(fake_runtime, monkeypatch):
+    monkeypatch.setattr(
+        "openminion.api.operations.approve_pending.resolve_runtime_manager",
+        lambda *, config_path, runtime: (None, runtime, False),
+    )
+    result = handle_request(
+        APIRouteContext(
+            config_path=None,
+            runtime=fake_runtime,
+            runtime_bootstrap_error=None,
+            request_headers=None,
+            request_id="approval-route-test",
+        ),
+        method_name="POST",
+        path="/v1/approvals/resume",
+        body=_well_formed_body(decision="allow_once"),
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.OK
+    assert result.payload["grant_id"] == "gr_test123"
+
+
+def test_approval_resume_route_rejects_untyped_decision(fake_runtime, monkeypatch):
+    monkeypatch.setattr(
+        "openminion.api.operations.approve_pending.resolve_runtime_manager",
+        lambda *, config_path, runtime: (None, runtime, False),
+    )
+    result = handle_request(
+        APIRouteContext(
+            config_path=None,
+            runtime=fake_runtime,
+            runtime_bootstrap_error=None,
+            request_headers=None,
+            request_id="approval-route-test",
+        ),
+        method_name="POST",
+        path="/v1/approvals/resume",
+        body=_well_formed_body(decision="yes"),
+        query=None,
+    )
+
+    assert result is not None
+    assert result.status == HTTPStatus.BAD_REQUEST
+    assert result.payload["error"]["code"] == "INVALID_DECISION"
+
+
+def test_approval_resume_route_is_registered(fake_runtime, monkeypatch):
+    monkeypatch.setattr(
+        "openminion.api.routes.approve_pending.process_approval_decision",
+        lambda **_kwargs: {
+            "ok": True,
+            "approval_id": "ap_abc123",
+            "decision": "deny",
+            "grant_id": None,
+        },
+    )
+
+    status, payload = dispatch_request(
+        "POST",
+        "/v1/approvals/resume",
+        None,
+        body=_well_formed_body(decision="deny"),
+        runtime=fake_runtime,
+    )
+
+    assert status == HTTPStatus.OK
+    assert payload["decision"] == "deny"
 
 
 def test_process_rejects_non_typed_decision_no_inference(fake_runtime, monkeypatch):

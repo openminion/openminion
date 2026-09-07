@@ -1,52 +1,51 @@
-# Skill Maintenance Status
+# Skill maintenance
 
-Status: active maintainer note
-Last updated: 2026-08-22
+Status: active
+Last updated: 2026-09-06
 
-Purpose: give package maintainers a compact skill-side pickup point without
-requiring a full reread of the historical tracker set.
+This page summarizes the current maintenance contract for the skill subsystem.
+It is not a claim that every authored skill is useful or safe for every task.
 
-This note is not a public feature claim. It records the current maintenance
-posture for the skill subsystem as seen from the package checkout.
+## Current surface
 
-## Current Reading
+OpenMinion supports:
 
-The core selection and authoring mechanics remain healthy. The 2026-08-22 work
-closed two concrete integration gaps: structural admission of new skill
-versions and bounded progressive resources/version pinning for complex skills.
+- Markdown/front-matter skill ingestion
+- immutable package versions and active-version selection
+- local and remote provenance metadata
+- explicit operator admission and rollback
+- bounded `references/`, `assets/`, and `scripts/` resources
+- workflow and tool-recipe records
+- model-owned skill matching through typed candidates
+- proposal, review, and learning records
 
-The lifecycle and evidence polish identified on 2026-08-08 has now been
-closed in the workspace tracker board:
+Bundled skill scripts are stored as resources with `executable=false`; the
+skill runtime does not execute them. A tool or workflow may execute only
+through its normal runtime, exposure, policy, and approval boundaries.
 
-1. the canonical skill status reference agrees with the live tracker board,
-2. no skill tracker remains simultaneously `in_progress` and 100%
-   complete,
-3. the older `qa/` skill trackers were moved to `done` after fresh validation
-   evidence,
-4. SSRR now owns admission authority, version re-admission, lifecycle security,
-   and Agent Skills conformance;
-5. CSPR owns bounded resources and task-plan workflow-version pinning.
+## Maintainer checks
 
-## Current Board Signals
+When the skill package changes:
 
-The SSRR and CSPR implementation lanes are complete and awaiting independent
-validation. ESAE remains a separate postponed evaluation owner and is not part
-of either implementation lane.
+1. Keep structural parsing, versioning, trust metadata, and admission in the
+   runtime owner.
+2. Keep semantic relevance and usefulness judgment model-owned.
+3. Preserve explicit operator authority for admission, rollback, and catalog
+   changes.
+4. Add behavior tests at the owner boundary rather than duplicating checks in
+   callers.
+5. Run the focused skill tests, repository Ruff, and `make lint`.
 
-## Recommended Next Order
+Focused tests live under `tests/skill/`, `tests/tools/skill/`, and the
+skill-related runtime slices in `tests/`.
 
-1. Run independent QA before marking SSRR and CSPR complete.
-2. Keep ESAE postponed unless its operator trigger changes.
-3. Open later skill work only when a recorded trigger fires or a concrete user
-   request names a behavior gap.
-4. Preserve the anti-LLM boundaries below for every future skill lane.
+## Design boundary
 
-## Boundaries
+Do not add a second selector, local intent classifier, per-model branch, or
+skill-specific tool dispatcher. Structural triggers may narrow complete typed
+candidates, but the model chooses among them. Tool execution remains owned by
+`openminion.modules.tool` and durable outcome learning remains owned by
+`openminion.modules.memory`.
 
-Do not use this maintenance pass as permission to add a new skill selector,
-classifier, intent heuristic, per-model branch, or skill-specific runtime
-shortcut. Skill-side behavior changes still need the normal spec, tracker,
-focused tests, and anti-LLM review.
-
-Structural triggers, LLM-owned judgment, and operator-owned catalog commits
-remain the governing pattern.
+The current package contract is documented in
+`src/openminion/modules/skill/README.md`.

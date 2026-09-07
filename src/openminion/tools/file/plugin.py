@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import (
@@ -30,7 +29,10 @@ from openminion.modules.tool.contracts.model_ids import (
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime import RuntimeContext
-from openminion.tools.config import resolve_tool_workspace_root, workspace_retry_path
+from openminion.modules.tool import (
+    resolve_path,
+    resolve_workspace_root,
+)
 
 from .backends import (
     EditOperation,
@@ -273,94 +275,12 @@ class FileEditArgs(BaseModel):
 _backend_cache: dict[tuple[str, str, str], StorageBackend] = {}
 
 
-def _resolve_workspace_root(ctx: RuntimeContext) -> Path:
-    runtime_env = getattr(ctx, "env", None) or {}
-    explicit_workspace = (
-        str(runtime_env.get("OPENMINION_WORKSPACE_ROOT", "") or "").strip()
-        or str(runtime_env.get("OPENMINION_WORKSPACE", "") or "").strip()
-    )
-    if explicit_workspace:
-        return Path(explicit_workspace).expanduser().resolve(strict=False)
-
-    raw = getattr(ctx.policy, "raw", {})
-    workspace_root = raw.get("workspace_root")
-    if workspace_root:
-        return Path(workspace_root).expanduser().resolve(strict=False)
-
-    env_workspace = resolve_tool_workspace_root(env=runtime_env, fallback="")
-    if str(env_workspace) != str(Path.cwd().resolve(strict=False)):
-        return env_workspace
-    return Path(ctx.workspace).expanduser().resolve(strict=False)
-
-
-def _resolve_relative_base_dir(ctx: RuntimeContext) -> Path:
-    workspace_root = _resolve_workspace_root(ctx)
-    raw = getattr(ctx.policy, "raw", {})
-    context_metadata = raw.get("context_metadata", {}) if isinstance(raw, dict) else {}
-    candidate = str(context_metadata.get("cwd", "") or "").strip()
-    if not candidate:
-        return workspace_root
-    resolved_candidate = Path(candidate).expanduser().resolve(strict=False)
-    try:
-        resolved_candidate.relative_to(workspace_root)
-    except ValueError:
-        return workspace_root
-    return resolved_candidate
-
-
-def _workspace_escape_error(raw_path: str, workspace_root: Path) -> ToolRuntimeError:
-    retry_path = workspace_retry_path(raw_path)
-    return ToolRuntimeError(
-        "POLICY_DENIED",
-        (
-            f"path escapes workspace root: {raw_path}. "
-            f"Use a relative path under the workspace root, for example {retry_path}."
-        ),
-        details={
-            "workspace_root": str(workspace_root),
-            "retry_path": retry_path,
-            "retry_hint": "Use a relative path under the workspace root.",
-        },
-    )
-
-
-def _resolve_path_lexical(ctx: RuntimeContext, raw_path: str, operation: str) -> str:
-    workspace_root = _resolve_workspace_root(ctx)
-    relative_base_dir = _resolve_relative_base_dir(ctx)
-    candidate = Path(raw_path).expanduser()
-    if not candidate.is_absolute():
-        parts = candidate.parts
-        if parts and parts[0] == workspace_root.name:
-            candidate = Path(*parts[1:]) if len(parts) > 1 else Path(".")
-        candidate = relative_base_dir / candidate
-    resolved = candidate.resolve(strict=False)
-
-    if not Path(raw_path).expanduser().is_absolute():
-        try:
-            resolved.relative_to(workspace_root)
-        except ValueError:
-            raise _workspace_escape_error(raw_path, workspace_root)
-
-    try:
-        ctx.policy.ensure_path_allowed(
-            str(resolved),
-            workspace=workspace_root,
-            operation=operation,
-        )
-    except ToolRuntimeError as exc:
-        details = exc.details if isinstance(exc.details, dict) else {}
-        if details.get("rule") == f"paths.{operation}_allow":
-            raise _workspace_escape_error(raw_path, workspace_root) from exc
-        raise
-    return str(resolved)
-
-
 def _get_backend(ctx: RuntimeContext) -> StorageBackend:
     raw = getattr(ctx.policy, "raw", {})
     backend_type = str(
         raw.get("file_backend", FILE_BACKEND_LOCAL) or FILE_BACKEND_LOCAL
     )
-    workspace_root = _resolve_workspace_root(ctx)
+    workspace_root = resolve_workspace_root(ctx)
     cache_key = (backend_type, str(ctx.run_root), str(workspace_root))
     cached = _backend_cache.get(cache_key)
     if cached is not None:
@@ -444,7 +364,7 @@ def _h_list_dir(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     raw_path = validated.path or "."
 
     try:
-        resolved = _resolve_path_lexical(ctx, raw_path, operation="read")
+        resolved = resolve_path(ctx, raw_path, operation="read")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e, entries=[])
 
@@ -485,7 +405,7 @@ def _h_read_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileReadArgs.model_validate(args)
 
     try:
-        resolved = _resolve_path_lexical(ctx, validated.path, operation="read")
+        resolved = resolve_path(ctx, validated.path, operation="read")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
 
@@ -529,7 +449,7 @@ def _h_read_range(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileReadRangeArgs.model_validate(args)
 
     try:
-        resolved = _resolve_path_lexical(ctx, validated.path, operation="read")
+        resolved = resolve_path(ctx, validated.path, operation="read")
     except ToolRuntimeError as exc:
         return _tool_error_result_from_exception(exc)
 
@@ -596,7 +516,7 @@ def _h_write_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         )
 
     try:
-        resolved = _resolve_path_lexical(ctx, validated.path, operation="write")
+        resolved = resolve_path(ctx, validated.path, operation="write")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
 
@@ -614,7 +534,7 @@ def _h_write_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     from openminion.tools.code.cache import invalidate_repo_map_cache
 
     invalidate_repo_map_cache(
-        workspace_root=_resolve_workspace_root(ctx),
+        workspace_root=resolve_workspace_root(ctx),
         path=result.path,
     )
     return {
@@ -632,7 +552,7 @@ def _h_find_files(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     raw_path = validated.path or "."
 
     try:
-        resolved = _resolve_path_lexical(ctx, raw_path, operation="read")
+        resolved = resolve_path(ctx, raw_path, operation="read")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e, matches=[])
 
@@ -672,7 +592,7 @@ def _h_trash(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileTrashArgs.model_validate(args)
 
     try:
-        resolved = _resolve_path_lexical(ctx, validated.path, operation="write")
+        resolved = resolve_path(ctx, validated.path, operation="write")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
 
@@ -700,7 +620,7 @@ def _h_search_files(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
     raw_path = validated.path or "."
 
     try:
-        resolved = _resolve_path_lexical(ctx, raw_path, operation="read")
+        resolved = resolve_path(ctx, raw_path, operation="read")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e, matches=[])
 
@@ -720,7 +640,7 @@ def _h_search_files(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
 
     def _path_filter(candidate_path: str) -> bool:
         try:
-            _resolve_path_lexical(ctx, candidate_path, operation="read")
+            resolve_path(ctx, candidate_path, operation="read")
         except ToolRuntimeError as exc:
             if exc.code == "POLICY_DENIED":
                 return False
@@ -758,7 +678,7 @@ def _h_edit_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = FileEditArgs.model_validate(args)
 
     try:
-        resolved = _resolve_path_lexical(ctx, validated.path, operation="write")
+        resolved = resolve_path(ctx, validated.path, operation="write")
     except ToolRuntimeError as e:
         return _tool_error_result_from_exception(e)
 
@@ -794,7 +714,7 @@ def _h_edit_file(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     from openminion.tools.code.cache import invalidate_repo_map_cache
 
     invalidate_repo_map_cache(
-        workspace_root=_resolve_workspace_root(ctx),
+        workspace_root=resolve_workspace_root(ctx),
         path=result.path,
     )
 

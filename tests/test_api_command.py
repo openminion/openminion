@@ -1,10 +1,13 @@
 import io
 from argparse import Namespace
 from contextlib import redirect_stdout
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from openminion.base.config import OpenMinionConfig, save_config
 from openminion.cli.commands.api import run_api
+from tests._csc_fixtures import _csc_install_default_agent
 
 
 def _config(host: str = "127.0.0.1", port: int = 8080) -> SimpleNamespace:
@@ -116,3 +119,27 @@ def test_run_api_unexpected_server_failure_returns_nonzero() -> None:
     assert code == 1
     server.server_close.assert_called_once()
     assert "stopped unexpectedly" in buf.getvalue()
+
+
+def test_run_api_refuses_non_loopback_bind_without_token(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.json"
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, provider="echo")
+    config.gateway.host = "0.0.0.0"
+    config.gateway.port = 8080
+    config.storage.path = str(tmp_path / "state" / "api.db")
+    save_config(config, str(config_path))
+    args = Namespace(
+        config=str(config_path),
+        host=None,
+        port=None,
+        home_root=str(tmp_path / "home"),
+        data_root=str(tmp_path / "data"),
+    )
+
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = run_api(args)
+
+    assert code == 1
+    assert "non-loopback API bind requires runtime.ipc_token" in output.getvalue()

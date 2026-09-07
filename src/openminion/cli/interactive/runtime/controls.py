@@ -1,7 +1,7 @@
 from pathlib import Path
-import shlex
 from typing import TYPE_CHECKING, Any, Mapping
 
+from openminion.base.config import RunProfileOverrides
 from openminion.base.config.action_policy import (
     ACTION_POLICY_SESSION_OVERRIDE_KEY,
     normalize_action_policy_mode_override,
@@ -103,6 +103,7 @@ class RuntimeControlsMixin:
         if not raw or raw.lower() == "default":
             self._clear_model_selection()
             self._persist_session_model_selection()
+            self._rebind_model_gateway()
             return self._active_model_selection()
         selected = self._resolve_model_selection(raw)
         if not selected.configured_connection:
@@ -115,6 +116,7 @@ class RuntimeControlsMixin:
         self._model_override_provider = selected.provider
         self._model_override_model = selected.model
         self._persist_session_model_selection()
+        self._rebind_model_gateway()
         return self._active_model_selection()
 
     def set_default_model(self, target: str) -> ModelSelection:
@@ -124,16 +126,67 @@ class RuntimeControlsMixin:
             connection_id=selected.connection_id,
             model=selected.model,
         )
-        self._gateway = self._rt.resolve_gateway(self.agent_id)
+        return self.switch_model("default")
+
+    def add_model(self, model: str) -> ModelSelection:
+        active = self._active_model_selection()
+        self._rt.add_agent_model(
+            agent_id=self.agent_id,
+            connection_id=active.connection_id,
+            model=model,
+        )
+        selected = self._resolve_model_selection(
+            f"{active.connection_id} {model.strip()}"
+        )
         return self.switch_model(str(selected.index))
 
-    def model_setup_command(self) -> str:
-        parts = ["openminion"]
-        config_path = getattr(self._rt, "config_path", None)
-        if config_path is not None:
-            parts.extend(("--config", str(config_path)))
-        parts.extend(("setup", "--add-model", "--no-focus", "--agent", self.agent_id))
-        return " ".join(shlex.quote(part) for part in parts)
+    def model_setup_presets(self) -> tuple[Any, ...]:
+        from openminion.modules.llm.setup_catalog import list_setup_presets
+
+        return tuple(list_setup_presets())
+
+    def build_model_setup(
+        self,
+        *,
+        preset_id: str,
+        model: str,
+        base_url: str,
+        connection_id: str,
+        stored_api_key: str = "",
+        allow_local_api_key: bool = False,
+    ) -> Any:
+        from openminion.services.bootstrap.provider_setup import (
+            ProviderSetupRequest,
+            build_provider_setup,
+        )
+        from openminion.base.config.env import resolve_environment_config
+
+        return build_provider_setup(
+            ProviderSetupRequest(
+                preset_id=preset_id,
+                agent_id=self.agent_id,
+                model=model,
+                base_url=base_url,
+                stored_api_key=stored_api_key,
+                allow_local_api_key=allow_local_api_key,
+                config_path=str(self._rt.config_path),
+                home_root=Path(self._rt.home_root),
+                data_root=Path(self._rt.data_root),
+                env=resolve_environment_config(
+                    runtime_env=self._rt.config.runtime.env
+                ).snapshot(),
+                add_model=True,
+                connection_id=connection_id,
+            ),
+            existing_config=self._rt.config,
+        )
+
+    def apply_model_setup(self, result: Any) -> ModelSelection:
+        self._rt.apply_provider_setup(result, agent_id=self.agent_id)
+        selected = self._resolve_model_selection(
+            f"{result.preview.connection_id} {result.preview.model}"
+        )
+        return self.switch_model(str(selected.index))
 
     def restore_session_model_selection(self, record: Any) -> None:
         metadata = getattr(record, "metadata", {})
@@ -145,6 +198,7 @@ class RuntimeControlsMixin:
         model = str(metadata.get(_MODEL_SESSION_KEY, "") or "").strip()
         if not connection_id:
             self._clear_model_selection()
+            self._rebind_model_gateway()
             return
         selected = self._resolve_model_selection(f"{connection_id} {model}".strip())
         self._model_override_connection = (
@@ -152,6 +206,7 @@ class RuntimeControlsMixin:
         )
         self._model_override_provider = selected.provider
         self._model_override_model = selected.model
+        self._rebind_model_gateway()
 
     def _clear_model_selection(self) -> None:
         self._model_override_connection = ""
@@ -164,6 +219,13 @@ class RuntimeControlsMixin:
             or self._model_override_provider,
             "override_model": self._model_override_model,
         }
+
+    def _rebind_model_gateway(self) -> None:
+        overrides = RunProfileOverrides(
+            provider=self._model_override_connection or self._model_override_provider,
+            model=self._model_override_model,
+        )
+        self._gateway = self._rt.resolve_gateway(self.agent_id, overrides=overrides)
 
     def _resolve_model_selection(self, target: str) -> ModelSelection:
         rows = self.list_models()

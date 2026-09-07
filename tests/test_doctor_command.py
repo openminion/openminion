@@ -310,11 +310,11 @@ class DoctorCommandTests(unittest.TestCase):
             config.storage.path = str(Path(tmp) / "state" / "doctor.db")
             identity_db = Path(tmp) / "identity" / "identity.db"
             config.identity.db_path = str(identity_db)
+            config.identity.bundle_root = str(identity_db.parent)
             save_config(config, str(config_path))
 
             bundle_root = (
-                Path(tmp)
-                / "agents"
+                identity_db.parent
                 / config.agents[next(iter(config.agents.keys()))].name
             )
             (bundle_root / "SKILLS" / "hello").mkdir(parents=True)
@@ -367,11 +367,11 @@ class DoctorCommandTests(unittest.TestCase):
             config.storage.path = str(Path(tmp) / "state" / "doctor.db")
             identity_db = Path(tmp) / "identity" / "identity.db"
             config.identity.db_path = str(identity_db)
+            config.identity.bundle_root = str(identity_db.parent)
             save_config(config, str(config_path))
 
             bundle_root = (
-                Path(tmp)
-                / "agents"
+                identity_db.parent
                 / config.agents[next(iter(config.agents.keys()))].name
             )
             (bundle_root / "SKILLS" / "hello").mkdir(parents=True)

@@ -267,6 +267,9 @@ class AgentService(AgentTurnFlowMixin):
         self._init_identity_runtime()
 
     def close(self) -> None:
+        if self._identityctl is not None:
+            self._identityctl.close()
+            self._identityctl = None
         resource = (
             self._llm_runtime if self._llm_runtime is not None else self._provider
         )

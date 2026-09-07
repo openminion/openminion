@@ -14,7 +14,7 @@ from openminion.base.config import (
     OpenMinionConfig,
     resolve_config_path,
 )
-from openminion.modules.llm.setup_catalog import get_setup_preset
+from openminion.modules.llm.setup_catalog import first_screen_presets, get_setup_preset
 from openminion.modules.storage.record_store import RecordStoreSQLite
 from openminion.modules.storage.runtime.session_store import SessionStore
 from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
@@ -22,6 +22,7 @@ from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcrip
 from tests.e2e.cli.focus.harness.ollama_fixture import ollama_fixture_server
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(240)]
+_LIVE_ONBOARDING_SETUP_TIMEOUT = 600
 
 _FOCUS_READY_RE = re.compile(
     r"Ask anything|Reply, or / for commands|input:\s*(?:send|queue next) message|"
@@ -63,14 +64,16 @@ def _environment(
     data_root: Path,
     **overrides: str,
 ) -> dict[str, str]:
-    return {
+    environment = {
         "OPENMINION_HOME": str(home_root),
         "OPENMINION_DATA_ROOT": str(data_root),
         "OPENMINION_GENERATED_ROOT": str(data_root / "runtime"),
-        "PYTHONPATH": "src",
         "PYTHONDONTWRITEBYTECODE": "1",
         **overrides,
     }
+    if os.getenv("OPENMINION_ONBOARDING_INSTALLED_ARTIFACT") != "1":
+        environment["PYTHONPATH"] = "src"
+    return environment
 
 
 def _reply(session: PtySession, prompt: str, answer: str = "") -> None:
@@ -103,7 +106,7 @@ def _run_first_task(
         session,
         FocusScenario(
             scenario_id="onboarding-first-task",
-            prompt="Give me one safe read-only command to inspect the current directory.",
+            prompt="List this workspace using the file tools.",
             timeout=timeout,
         ),
     )
@@ -313,6 +316,74 @@ def test_bare_command_imports_config_and_reaches_focus(
     write_transcript(artifact_root(tmp_path), "onboarding-import", transcript)
 
 
+def test_bare_setup_and_second_launch_share_home_config(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    project_root = tmp_path / "project"
+    added_root = tmp_path / "shared"
+    first_cwd = tmp_path / "first-launch"
+    second_cwd = tmp_path / "second-launch"
+    for path in (home_root, project_root, added_root, first_cwd, second_cwd):
+        path.mkdir(parents=True)
+    (project_root / "OPENMINION.md").write_text("hidden context", encoding="utf-8")
+    import_path = tmp_path / "existing-openminion.json"
+    _write_import_source(import_path)
+    environment = {
+        "HOME": str(home_root),
+        "OPENMINION_HOME": "",
+        "OPENMINION_DATA_ROOT": "",
+        "OPENMINION_GENERATED_ROOT": "",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": str(openminion_root / "src"),
+    }
+    command = (
+        str(python_bin),
+        "-m",
+        "openminion",
+        "--no-update-check",
+        "--no-context",
+        "--dir",
+        str(project_root),
+        "--add-dir",
+        str(added_root),
+    )
+    import_choice = str(len(first_screen_presets()) + 2)
+
+    with PtySession(argv=command, cwd=first_cwd, env=environment) as session:
+        _reply(session, "Choose your model provider:", import_choice)
+        _reply(session, "OpenMinion config file:", str(import_path))
+        _reply(session, r"Import this config\? \[Y/n\]:")
+        session.wait_for_after("Entering OpenMinion", offset=0, timeout=120)
+        session.wait_for_visible_match_after(_FOCUS_READY_RE, offset=0, timeout=120)
+        first_transcript = session.transcript
+        first_screen = session.visible_transcript
+
+    config_path = home_root / ".openminion" / "agents.json"
+    assert config_path.exists()
+    assert "directory:" in first_screen
+    assert project_root.name in first_screen
+    assert "permissions: default · 1 added directory" in first_screen
+    assert "context:" not in first_screen
+
+    with PtySession(argv=command, cwd=second_cwd, env=environment) as session:
+        session.wait_for_visible_match_after(_FOCUS_READY_RE, offset=0, timeout=120)
+        second_transcript = session.transcript
+        second_screen = session.visible_transcript
+
+    assert "Choose your model provider:" not in second_transcript
+    assert "directory:" in second_screen
+    assert project_root.name in second_screen
+    assert "permissions: default · 1 added directory" in second_screen
+    write_transcript(
+        artifact_root(tmp_path),
+        "onboarding-bare-home-continuity",
+        first_transcript + "\n--- second launch ---\n" + second_transcript,
+    )
+
+
 def test_hosted_setup_uses_env_and_skips_remote_check(
     tmp_path: Path,
     python_bin: Path,
@@ -341,7 +412,11 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
         _reply(session, "Choose your model provider:", "1")
         _reply(session, "Model \\[")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -505,7 +580,11 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
         _reply(session, "Choose your model provider:", "5")
         _reply(session, "Choose a recommended model", "2")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -864,7 +943,11 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
         _reply(session, "Choose your model provider:", "5")
         _reply(session, "Choose a recommended model", "1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -989,7 +1072,7 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
     )
 
 
-@pytest.mark.timeout(720)
+@pytest.mark.timeout(1320)
 def test_live_provider_setup_and_first_task(
     tmp_path: Path,
     python_bin: Path,
@@ -998,7 +1081,19 @@ def test_live_provider_setup_and_first_task(
     if str(os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E", "")).strip() != "1":
         pytest.skip("live onboarding proof requires explicit live E2E consent")
 
-    preset = get_setup_preset("cortensor-portal")
+    selected_provider = str(
+        os.getenv("OPENMINION_ONBOARDING_E2E_PROVIDER", "minimax")
+    ).strip()
+    if selected_provider != "minimax":
+        pytest.fail("live onboarding proof supports the MiniMax preset only")
+    preset = get_setup_preset(selected_provider)
+    menu_choice = str(
+        next(
+            index
+            for index, candidate in enumerate(first_screen_presets(), start=1)
+            if candidate.preset_id == preset.preset_id
+        )
+    )
     credential = (
         str(os.getenv(preset.credential_env, "")).strip()
         if preset.credential_env
@@ -1025,12 +1120,17 @@ def test_live_provider_setup_and_first_task(
             **{preset.credential_env: credential},
         ),
     ) as session:
-        _reply(session, "Choose your model provider:", "4")
-        _reply(session, "Model \\[")
+        _reply(session, "Choose your model provider:", menu_choice)
+        _reply(session, "Choose a recommended model", "1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
-        _reply(session, r"Test this provider now\? \[y/N\]:", "y")
+        _reply(
+            session,
+            r"Test this provider before entering OpenMinion\? \[Y/n\]:",
+        )
         session.wait_for_after(
-            "Entering OpenMinion", offset=0, timeout=preset.timeout_seconds
+            "Entering OpenMinion",
+            offset=0,
+            timeout=_LIVE_ONBOARDING_SETUP_TIMEOUT,
         )
         _run_first_task(
             session,
@@ -1045,11 +1145,10 @@ def test_live_provider_setup_and_first_task(
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     metadata = _latest_outbound_metadata(data_root)
 
-    assert payload["agents"]["openminion"]["provider"] == "openai"
-    assert payload["providers"]["openai"]["model"] == "oss-20b"
-    assert payload["providers"]["openai"]["provider_identity"]["service_vendor"] == (
-        "cortensor"
-    )
+    assert payload["agents"]["openminion"]["provider"] == preset.runtime_adapter
+    provider = payload["providers"][preset.runtime_adapter]
+    assert provider["model"] == preset.recommended_models[0]
+    assert provider["provider_identity"]["service_vendor"] == "minimax"
     assert metadata["tool_loop_termination_reason"] in {"final_text", "model_final"}
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript

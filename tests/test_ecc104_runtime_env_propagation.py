@@ -529,4 +529,7 @@ def test_os_adapter_task_cancel_respects_configured_agent_id(tmp_path, monkeypat
         )
 
     assert result["status"] == "success"
-    assert repo.get_cron_job(task.task_id) is None
+    cancelled = repo.get_cron_job(task.task_id)
+    assert cancelled is not None
+    assert cancelled["enabled"] is False
+    assert manager.get_task(task.task_id).state.value == "cancelled"

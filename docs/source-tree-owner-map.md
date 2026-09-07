@@ -1,7 +1,7 @@
 # OpenMinion Source Tree Owner Map
 
 Status: active
-Last updated: 2026-06-18
+Last updated: 2026-09-06
 
 Purpose: give contributors a package-local owner map for `src/openminion/`
 without turning deep imports into blanket public API promises.

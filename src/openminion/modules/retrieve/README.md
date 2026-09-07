@@ -53,7 +53,6 @@ Re-exported from `openminion.modules.retrieve`:
 ## Canonical shape
 
 Canonical with `interfaces.py`, `schemas.py`, `runtime/` subpackage,
-`storage/` subpackage, `cli.py`, `diagnostics/`. RCBM (closed) extracted
-2 telemetry helpers from `RetrieveCtl` into
-`diagnostics/events.py`; the remaining 60 methods stay on the
-class (the bulk are thin delegations to existing runtime/ siblings).
+`storage/` subpackage, `cli.py`, and `diagnostics/`. Telemetry event builders
+live in `diagnostics/events.py`; `RetrieveCtl` delegates retrieval work to the
+focused runtime owners.

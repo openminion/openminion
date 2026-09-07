@@ -6,10 +6,9 @@ from pathlib import Path
 import pytest
 from openminion.modules.tool.contracts.model_ids import MODEL_FILE_SEARCH
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool import ToolRegistry, resolve_workspace_root
 from openminion.tools.file.plugin import (
     _h_search_files,
-    _resolve_workspace_root,
     register,
     _reset_backend_cache_for_tests,
 )
@@ -89,11 +88,25 @@ def test_file_search_literal_match(workspace):
     assert any("hello.txt" in p for p in paths)
 
 
+def test_file_search_handles_markdown_filename_with_spaces(workspace):
+    (workspace / "Linked Note.md").write_text("OVGA-SPACED-MARKER\n")
+    ctx = _FakeCtx(workspace)
+
+    result = _h_search_files(
+        {"path": str(workspace), "query": "OVGA-SPACED-MARKER"},
+        ctx,
+    )
+
+    assert result["ok"] is True
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["path"].endswith("/Linked Note.md")
+
+
 def test_resolve_workspace_root_handles_envless_context(workspace):
     ctx = _FakeCtx(workspace)
     delattr(ctx, "env")
 
-    assert _resolve_workspace_root(ctx) == workspace.resolve(strict=False)
+    assert resolve_workspace_root(ctx) == workspace.resolve(strict=False)
 
 
 def test_resolve_workspace_root_prefers_explicit_env_even_when_it_matches_cwd(
@@ -103,7 +116,7 @@ def test_resolve_workspace_root_prefers_explicit_env_even_when_it_matches_cwd(
     ctx.env = {"OPENMINION_WORKSPACE_ROOT": str(workspace)}
     monkeypatch.chdir(workspace)
 
-    assert _resolve_workspace_root(ctx) == workspace.resolve(strict=False)
+    assert resolve_workspace_root(ctx) == workspace.resolve(strict=False)
 
 
 def test_file_search_no_match(workspace):

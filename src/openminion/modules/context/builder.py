@@ -3,15 +3,13 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import CONTEXT_CLIENT_INTERFACE_VERSION, IdentityClient
+from .memory_client import NullMemoryClient
 from .schemas import (
     ArtifactDigest,
     BuildConstraints,
     BuildPackRequest,
     ContextPack,
-    FactRecord,
     IdentitySnippet,
-    MemoryCard,
-    RecentSessionArtifactRef,
     SessionSlice,
     SessionToolEvent,
     SessionTurn,
@@ -256,77 +254,6 @@ class _SQLiteStandaloneSessionClient:
             return
 
 
-class _NullMemoryClient:
-    contract_version = CONTEXT_CLIENT_INTERFACE_VERSION
-
-    def query_facts(
-        self,
-        *,
-        session_id: str,
-        agent_id: str,
-        query: str,
-        limit: int,
-        mode_name: str | None = None,
-    ) -> list[FactRecord]:
-        return []
-
-    def query_memory_cards(
-        self,
-        *,
-        session_id: str,
-        agent_id: str,
-        query: str,
-        limit: int,
-        mode_name: str | None = None,
-    ) -> list[MemoryCard]:
-        return []
-
-    def recall_session_start_memory(
-        self,
-        *,
-        session_id: str,
-        agent_id: str,
-        query: str,
-        turn_index: int,
-        limit: int,
-        mode_name: str | None = None,
-    ) -> list[MemoryCard]:
-        return []
-
-    def recall_mid_session_memory(
-        self,
-        *,
-        session_id: str,
-        agent_id: str,
-        turn_index: int,
-        intent_ids: list[str],
-        intent_statuses: list[str],
-        latest_user_message: str,
-        active_skill_id: str | None,
-        resolved_skill_ids: list[str],
-        plan_cursor: int,
-        plan_step_ids: list[str],
-        recent_tool_families: list[str],
-        limit: int,
-        mode_name: str | None = None,
-    ) -> list[MemoryCard]:
-        return []
-
-    def recall_recent_session_artifacts(
-        self,
-        *,
-        session_id: str,
-        agent_id: str,
-        max_results: int,
-        max_session_age: int,
-        mode_name: str | None = None,
-    ) -> list[RecentSessionArtifactRef]:
-        return []
-
-    def get_procedure(self, *, procedure_id: str):
-        return None
-
-
 class _NullArtifactClient:
     contract_version = CONTEXT_CLIENT_INTERFACE_VERSION
 
@@ -359,7 +286,7 @@ class ContextPackBuilder:
         self._service = ContextCtlService(
             identityctl=identity_client or _StaticIdentityClient(),
             sessctl=self._sess_client,
-            memctl=_NullMemoryClient(),
+            memctl=NullMemoryClient(),
             artifactctl=_NullArtifactClient(),
         )
 

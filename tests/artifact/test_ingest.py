@@ -12,16 +12,20 @@ from .utils import artifact_ctl, read_fixture_bytes
 
 
 def test_ingest_file_deduplicates_and_preserves_metadata(tmp_path: Path) -> None:
-    src = tmp_path / "sample.txt"
-    src.write_text("hello world", encoding="utf-8")
+    first_path = tmp_path / "first.txt"
+    second_path = tmp_path / "second.txt"
+    first_path.write_text("hello world", encoding="utf-8")
+    second_path.write_text("hello world", encoding="utf-8")
 
     with artifact_ctl(tmp_path) as ctl:
-        first = ctl.ingest_file(src)
-        second = ctl.ingest_file(src)
+        first = ctl.ingest_file(first_path, label="initial")
+        second = ctl.ingest_file(second_path, label="replacement")
 
         assert first.sha256 == second.sha256
         meta = ctl.get(first.sha256)
-        assert meta.original_name == "sample.txt"
+        assert second == meta.to_ref()
+        assert meta.original_name == "first.txt"
+        assert meta.label == "initial"
 
 
 def test_ingest_bytes_respects_store_original_path(tmp_path: Path) -> None:
@@ -43,12 +47,40 @@ def test_ingest_bytes_detects_binary_and_mime(tmp_path: Path) -> None:
 def test_duplicate_ingest_preserves_first_metadata(tmp_path: Path) -> None:
     with artifact_ctl(tmp_path) as ctl:
         payload = b"hello metadata"
-        first = ctl.ingest_bytes(payload, original_name="first.txt", label="initial")
-        ctl.ingest_bytes(payload, original_name="second.txt", label="new-label")
+        first = ctl.ingest_bytes(
+            payload,
+            original_name="first.txt",
+            label="initial",
+            session_id="first-session",
+            agent_id="first-agent",
+        )
+        second = ctl.ingest_bytes(
+            payload,
+            original_name="second.txt",
+            label="new-label",
+            session_id="second-session",
+            agent_id="second-agent",
+        )
 
         meta = ctl.get(first.sha256)
+        assert second == meta.to_ref()
         assert meta.original_name == "first.txt"
         assert meta.label == "initial"
+        assert meta.session_id == "first-session"
+        assert meta.agent_id == "first-agent"
+
+
+def test_duplicate_ingest_does_not_fill_empty_first_metadata(tmp_path: Path) -> None:
+    with artifact_ctl(tmp_path) as ctl:
+        first = ctl.ingest_bytes(b"same bytes")
+        second = ctl.ingest_bytes(
+            b"same bytes", original_name="later.txt", label="later"
+        )
+
+        meta = ctl.get(first.sha256)
+        assert second == meta.to_ref()
+        assert meta.original_name is None
+        assert meta.label is None
 
 
 def test_store_original_path_disabled_by_default(tmp_path: Path) -> None:

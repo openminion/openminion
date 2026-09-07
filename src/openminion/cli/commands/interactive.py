@@ -11,7 +11,6 @@ from openminion.modules.cli_common import has_tty
 from openminion.services.bootstrap.onboarding import (
     OnboardingRequestedMode,
     OnboardingStatus,
-    build_inline_setup_args,
     resolve_surface_onboarding_route,
 )
 
@@ -65,18 +64,9 @@ def _inspect_interactive_onboarding(args: Any) -> OnboardingStatus:
 def _run_inline_setup(args: Any) -> int:
     from openminion.cli.commands.setup import run_setup
 
-    return int(
-        run_setup(
-            build_inline_setup_args(
-                config=getattr(args, "config", None),
-                home_root=getattr(args, "home_root", None),
-                data_root=getattr(args, "data_root", None),
-                no_chat=True,
-                agent=getattr(args, "agent", None),
-            )
-        )
-        or 0
-    )
+    setup_args = argparse.Namespace(**vars(args))
+    setup_args.no_chat = True
+    return int(run_setup(setup_args) or 0)
 
 
 def _resolve_focus_verbosity(args: argparse.Namespace) -> str:

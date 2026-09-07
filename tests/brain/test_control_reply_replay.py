@@ -41,8 +41,13 @@ class _DummySessionAPI:
         self._state = dict(state)
         self.written: dict | None = None
 
-    def get_latest_working_state(self, session_id: str) -> dict:
-        del session_id
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict:
+        del session_id, agent_id
         return dict(self._state)
 
     def put_working_state(self, session_id: str, *, state_inline: dict) -> None:
@@ -54,13 +59,14 @@ class _DummyRunner:
     def __init__(self, state: dict) -> None:
         self.session_api = _DummySessionAPI(state)
         self.profile = SimpleNamespace(
+            agent_id="test-agent",
             budgets=SimpleNamespace(
                 max_ticks_per_user_turn=8,
                 max_tool_calls=8,
                 max_a2a_calls=0,
                 max_total_llm_tokens=100000,
                 max_elapsed_ms=45000,
-            )
+            ),
         )
 
 

@@ -16,12 +16,14 @@ def create_tool_adapter(
     skill_api: Any | None = None,
     secret_service: Any | None = None,
     memory_service: Any | None = None,
+    knowledge_graph_service: Any | None = None,
     a2a_delegate_api: Any | None = None,
     agent_query: Any | None = None,
     agent_id: str | None = None,
     agent_profile: Any | None = None,
     task_manager: Any | None = None,
     telemetryctl: Any | None = None,
+    artifactctl: Any | None = None,
 ) -> Any:
     from openminion.modules.brain.adapters.tool import LocalToolAdapter
 
@@ -41,12 +43,14 @@ def create_tool_adapter(
             skill_api=skill_api,
             secret_service=secret_service,
             memory_service=memory_service,
+            knowledge_graph_service=knowledge_graph_service,
             a2a_delegate_api=a2a_delegate_api,
             agent_query=agent_query,
             agent_id=agent_id,
             agent_profile=agent_profile,
             task_manager=task_manager,
             telemetryctl=telemetryctl,
+            artifactctl=artifactctl,
         )
     except ImportError:
         raise_if_strict(mode)

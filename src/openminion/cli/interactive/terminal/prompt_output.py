@@ -6,7 +6,7 @@ from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.application.current import get_app_or_none, set_app
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.renderer import print_formatted_text
-from prompt_toolkit.styles import DummyStyle
+from prompt_toolkit.styles import Style
 from rich.console import Console
 
 
@@ -29,7 +29,7 @@ def write_console_render_via_prompt_output(
     payload = buffer.getvalue()
     if not payload:
         return
-    print_formatted_text(prompt_output, ANSI(payload), DummyStyle())
+    print_formatted_text(prompt_output, ANSI(payload), Style([]))
 
 
 def write_terminal_control_via_prompt_output(

@@ -111,8 +111,15 @@ def test_purge_respects_delete_views_first_order(tmp_path):
         assert deleted[0] != ref.sha256
         assert ref.sha256 in deleted
 
-    overrides = {"artifactctl": {"retention": {"delete_views_first": False}}}
-    with artifact_ctl(tmp_path / "reverse", overrides) as ctl:
+    reverse_root = tmp_path / ".openminion" / "reverse"
+    overrides = {
+        "artifactctl": {
+            "blob_store": {"root_dir": str(reverse_root)},
+            "index": {"sqlite_path": str(reverse_root / "index.db")},
+            "retention": {"delete_views_first": False},
+        }
+    }
+    with artifact_ctl(tmp_path, overrides) as ctl:
         ref = ctl.ingest_bytes(b"purge", original_name="purge.txt")
         ctl.ensure_view(ref.sha256, "digest")
         ctl.delete(ref.sha256, soft=True)
@@ -134,6 +141,80 @@ def test_purge_respects_delete_views_first_order(tmp_path):
 
         assert deleted
         assert deleted[0] == ref.sha256
+
+
+def test_purge_compacts_expired_aliases_and_reference_tombstones(tmp_path):
+    with artifact_ctl(tmp_path) as ctl:
+        ref = ctl.ingest_bytes(b"metadata", original_name="metadata.txt")
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        recent_ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        ctl.alias_set("old-alias", ref.sha256, expires_at=old_ts)
+        ctl.alias_set("recent-alias", ref.sha256, expires_at=recent_ts)
+        ctl.ref_add("session", "old-edge", ref.sha256)
+        ctl.ref_add("session", "recent-edge", ref.sha256)
+        ctl.ref_remove("session", "old-edge", ref.sha256)
+        ctl.ref_remove("session", "recent-edge", ref.sha256)
+
+        conn = ctl.index._conn  # type: ignore[attr-defined]
+        with conn:
+            conn.execute(
+                "UPDATE reference_edges SET deleted_at = ? WHERE owner_id = ?",
+                (old_ts, "old-edge"),
+            )
+            conn.execute(
+                "UPDATE reference_edges SET deleted_at = ? WHERE owner_id = ?",
+                (recent_ts, "recent-edge"),
+            )
+
+        ctl.purge(grace_days=7)
+
+        aliases = {
+            row[0] for row in conn.execute("SELECT alias FROM aliases").fetchall()
+        }
+        edges = {
+            row[0]
+            for row in conn.execute("SELECT owner_id FROM reference_edges").fetchall()
+        }
+        assert aliases == {"recent-alias"}
+        assert edges == {"recent-edge"}
+
+
+def test_purge_preserves_shared_view_until_all_mappings_leave_grace(tmp_path):
+    overrides = {"artifactctl": {"views": {"auto_generate": []}}}
+    with artifact_ctl(tmp_path, overrides) as ctl:
+        first = ctl.ingest_bytes(b'{"b":2,"a":1}', mime="application/json")
+        second = ctl.ingest_bytes(b'{ "a": 1, "b": 2 }', mime="application/json")
+        shared_view = ctl.ensure_view(first.sha256, "json")
+        assert ctl.ensure_view(second.sha256, "json").sha256 == shared_view.sha256
+        assert shared_view.sha256 not in {first.sha256, second.sha256}
+
+        ctl.delete(first.sha256)
+        ctl.delete(second.sha256)
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        conn = ctl.index._conn  # type: ignore[attr-defined]
+        with conn:
+            conn.execute(
+                "UPDATE artifacts SET deleted_at = ? WHERE sha256 = ?",
+                (old_ts, first.sha256),
+            )
+            conn.execute(
+                "UPDATE artifact_views SET deleted_at = ? WHERE raw_sha256 = ?",
+                (old_ts, first.sha256),
+            )
+            conn.execute(
+                "UPDATE artifacts SET deleted_at = NULL WHERE sha256 = ?",
+                (shared_view.sha256,),
+            )
+
+        ctl.purge(grace_days=7)
+
+        assert ctl.blob_store.exists(shared_view.sha256)
+        assert ctl.get(shared_view.sha256).deleted_at is None
+        remaining = conn.execute(
+            "SELECT count(*) FROM artifact_views WHERE raw_sha256 = ?",
+            (second.sha256,),
+        ).fetchone()[0]
+        assert remaining == 1
 
 
 def _memory_artifact_ref(ref: str) -> MemoryArtifactRef:

@@ -19,6 +19,7 @@ from openminion.modules.context.knowledge import (
     GraphQueryResult,
     GraphRefreshRequest,
     GraphRefreshResult,
+    KnowledgeGraphError,
     KnowledgeGraphService,
     KnowledgeGraphCapabilities,
     KnowledgeGraphHealth,
@@ -94,6 +95,21 @@ class _ServiceSource:
 
     def refresh(self, request: GraphRefreshRequest) -> GraphRefreshResult:
         return GraphRefreshResult(provider=self.name, layer=self.layer, ok=True)
+
+
+class _FailingRefreshSource(_ServiceSource):
+    def refresh(self, request: GraphRefreshRequest) -> GraphRefreshResult:
+        del request
+        raise RuntimeError("sensitive provider failure")
+
+
+class _TypedFailingRefreshSource(_ServiceSource):
+    def refresh(self, request: GraphRefreshRequest) -> GraphRefreshResult:
+        del request
+        raise KnowledgeGraphError(
+            "workspace unavailable",
+            details={"reason_code": "workspace_unavailable"},
+        )
 
 
 def _factory(*, config: KnowledgeGraphProviderConfig, layer: str) -> _ServiceSource:
@@ -249,7 +265,58 @@ def test_service_emits_refresh_telemetry_for_success_and_failure():
         "ok": "true",
     }
     assert events[3][1]["provider"] == "stale_graph"
-    assert events[3][1]["error_type"] == "UnsupportedCapabilityError"
+    assert events[3][1] == {
+        "provider": "stale_graph",
+        "layer": LAYER_THIRD_BRAIN,
+        "error_code": "UNSUPPORTED_CAPABILITY",
+        "reason_code": "unsupported_capability",
+    }
+
+
+def test_service_emits_bounded_refresh_failure_for_unexpected_provider_error():
+    events: list[tuple[str, Mapping[str, str]]] = []
+    service = KnowledgeGraphService(
+        sources={
+            "repo_graph": _FailingRefreshSource(
+                name="repo_graph",
+                layer=LAYER_THIRD_BRAIN,
+                capabilities=(CAPABILITY_REFRESH,),
+            )
+        },
+        emit_event=lambda event_type, payload: events.append((event_type, payload)),
+    )
+
+    with pytest.raises(RuntimeError, match="sensitive provider failure"):
+        service.refresh(GraphRefreshRequest(), provider_names=("repo_graph",))
+
+    assert events[-1] == (
+        EVENT_REFRESH_FAILED,
+        {
+            "provider": "repo_graph",
+            "layer": LAYER_THIRD_BRAIN,
+            "error_code": "UPSTREAM_ERROR",
+            "reason_code": "unexpected_provider_failure",
+        },
+    )
+
+
+def test_service_preserves_typed_refresh_failure_reason() -> None:
+    events: list[tuple[str, Mapping[str, str]]] = []
+    service = KnowledgeGraphService(
+        sources={
+            "vault_graph": _TypedFailingRefreshSource(
+                name="vault_graph",
+                layer=LAYER_THIRD_BRAIN,
+                capabilities=(CAPABILITY_REFRESH,),
+            )
+        },
+        emit_event=lambda event_type, payload: events.append((event_type, payload)),
+    )
+
+    with pytest.raises(KnowledgeGraphError):
+        service.refresh(GraphRefreshRequest(), provider_names=("vault_graph",))
+
+    assert events[-1][1]["reason_code"] == "workspace_unavailable"
 
 
 def test_service_coenables_graphify_shaped_and_imported_fake_provider():

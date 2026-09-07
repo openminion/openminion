@@ -1,7 +1,7 @@
 # CLI Chat Smoke Test - Invalid Fixtures Index
 
 **Purpose**: Negative test fixtures for CLI chat smoke testing.
-**Location**: `openminion/examples/skills/cli-chat-smoke-invalid/`
+**Location**: `examples/skills/cli-chat-smoke-invalid/`
 
 ## Negative Fixtures
 
@@ -25,7 +25,7 @@ These fixtures should trigger deterministic ingest errors without runtime crashe
 
 Test negative path:
 ```
-/skill ingest openminion/examples/skills/cli-chat-smoke-invalid/missing-sections/SKILL.md
+/skill ingest examples/skills/cli-chat-smoke-invalid/missing-sections/SKILL.md
 ```
 
 Expected: Error message (not crash) indicating validation failure.

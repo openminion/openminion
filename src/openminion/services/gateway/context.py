@@ -15,6 +15,8 @@ from openminion.modules.context.knowledge.models import (
     GraphQueryRequest,
     GraphQueryResult,
 )
+from openminion.modules.context.memory_client import ContextMemoryClientAdapter
+from openminion.modules.context.telemetry import emit_contextctl_selection
 from openminion.services.constants import (
     MEMORY_CAPSULE_CACHEABLE_STRATEGIES,
     MEMORY_CAPSULE_STRATEGY_OFF,
@@ -421,7 +423,7 @@ def build_turn_context(
         user_message=user_message,
     )
 
-    _finalize_turn_context(
+    contextctl_selected = _finalize_turn_context(
         turn_context=turn_context,
         channel=channel,
         target=target,
@@ -434,6 +436,12 @@ def build_turn_context(
         memory_evidence_enabled=memory_dynamic_retrieval_enabled,
         knowledge_evidence_enabled=knowledge_graphs is not None,
     )
+    if contextctl_selected:
+        # fmt: off
+        emit_contextctl_selection(
+            emit_memory_event, session_id, conversation_id, thread_id, attach_id, run_id, request_id, len(turn_context.history),
+        )
+        # fmt: on
 
     return turn_context
 
@@ -451,15 +459,16 @@ def _finalize_turn_context(
     user_message: str,
     memory_evidence_enabled: bool,
     knowledge_evidence_enabled: bool,
-) -> None:
+) -> bool:
     _attach_memory_capsule_to_history(
         turn_context=turn_context,
         channel=channel,
         target=target,
         session_id=session_id,
     )
+    contextctl_selected = False
     if memory_capsule_strategy != MEMORY_CAPSULE_STRATEGY_OFF:
-        _maybe_apply_contextctl_call_site(
+        contextctl_selected = _maybe_apply_contextctl_call_site(
             turn_context=turn_context,
             agent_id=agent_id,
             agent_memory=agent_memory,
@@ -478,6 +487,7 @@ def _finalize_turn_context(
         target=target,
         session_id=session_id,
     )
+    return contextctl_selected
 
 
 def _populate_memory_context(
@@ -763,7 +773,7 @@ def _maybe_apply_contextctl_call_site(
     logger: logging.Logger,
     session_id: str,
     user_message: str,
-) -> None:
+) -> bool:
     """Maybe apply contextctl call site helper."""
     from openminion.services.config import resolve_services_env
     from openminion.services.context.adapter import ContextCtlGatewayAdapter
@@ -773,24 +783,23 @@ def _maybe_apply_contextctl_call_site(
 
     env_config = resolve_services_env()
     if not env_config.get_bool(CONTEXTCTL_GATEWAY_ENABLED_ENV, False):
-        return
+        return False
 
     try:
         adapter = ContextCtlGatewayAdapter.from_env(
             agent_id=agent_id,
-            memory_client=agent_memory,
+            memory_client=ContextMemoryClientAdapter(agent_memory),
             logger=logger,
         )
         if not adapter.is_enabled:
-            return
+            return False
         ctxctl_messages = adapter.build_ctxctl_messages(
             session_id=session_id,
             agent_id=agent_id,
             query=user_message,
         )
         if ctxctl_messages is None:
-            # build_ctxctl_messages returned None — adapter detected a
-            return
+            return False
         # `select_history` is typed `list[object]` to bridge generic adapter
         # call-sites; gateway's `turn_context.history` is `list[Message]`. The
         # adapter does not mutate element shape, so we cast on both sides.
@@ -804,6 +813,7 @@ def _maybe_apply_contextctl_call_site(
                 contextctl_messages=ctxctl_messages,
             ),
         )
+        return True
     except Exception as exc:
         logger.warning(
             "contextctl gateway call-site failed agent_id=%s session_id=%s error=%s; "
@@ -812,3 +822,4 @@ def _maybe_apply_contextctl_call_site(
             session_id,
             exc,
         )
+        return False

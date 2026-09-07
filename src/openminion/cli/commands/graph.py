@@ -2,25 +2,40 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import TYPE_CHECKING
 
 from openminion.cli.config import load_cli_config, resolve_cli_roots
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.modules.context.knowledge import KnowledgeGraphError
+from openminion.modules.context.knowledge import (
+    GraphNeighborhoodRequest,
+    GraphQueryRequest,
+    GraphRefreshRequest,
+    KnowledgeGraphError,
+)
 from openminion.modules.context.knowledge.viewer import (
     GraphViewerRequest,
     inspect_graph_viewer_status,
     launch_graph_viewer,
 )
 
+if TYPE_CHECKING:
+    from openminion.modules.context.knowledge import KnowledgeGraphService
+
 
 def run_graph(args: argparse.Namespace) -> int:
     try:
         if args.graph_command == "status":
             return _run_graph_status(args)
-        if args.graph_command != "view":
-            raise RuntimeError("Unknown graph command")
-        return _run_graph_view(args)
+        if args.graph_command == "view":
+            return _run_graph_view(args)
+        if args.graph_command == "query":
+            return _run_graph_query(args)
+        if args.graph_command == "neighborhood":
+            return _run_graph_neighborhood(args)
+        if args.graph_command == "refresh":
+            return _run_graph_refresh(args)
+        raise RuntimeError("Unknown graph command")
     except KnowledgeGraphError as exc:
         return _handle_graph_error(exc, as_json=bool(getattr(args, "json", False)))
 
@@ -75,6 +90,61 @@ def _run_graph_status(args: argparse.Namespace) -> int:
     return _print_success(report.to_dict(), as_json=bool(getattr(args, "json", False)))
 
 
+def _run_graph_query(args: argparse.Namespace) -> int:
+    service = _load_graph_service(args)
+    results = service.query(
+        GraphQueryRequest(query=args.query, max_results=args.limit),
+        provider_names=(args.provider,),
+    )
+    return _print_operation(
+        "query",
+        args.provider,
+        [result.to_dict() for result in results],
+        as_json=bool(args.json),
+    )
+
+
+def _run_graph_neighborhood(args: argparse.Namespace) -> int:
+    service = _load_graph_service(args)
+    results = service.neighborhood(
+        GraphNeighborhoodRequest(
+            entity_id=args.entity_id,
+            depth=args.depth,
+            max_results=args.limit,
+        ),
+        provider_names=(args.provider,),
+    )
+    return _print_operation(
+        "neighborhood",
+        args.provider,
+        [result.to_dict() for result in results],
+        as_json=bool(args.json),
+    )
+
+
+def _run_graph_refresh(args: argparse.Namespace) -> int:
+    service = _load_graph_service(args)
+    results = service.refresh(
+        GraphRefreshRequest(mode="manual", full=False),
+        provider_names=(args.provider,),
+    )
+    return _print_operation(
+        "refresh",
+        args.provider,
+        [result.to_dict() for result in results],
+        as_json=bool(args.json),
+    )
+
+
+def _load_graph_service(args: argparse.Namespace) -> KnowledgeGraphService:
+    from openminion.services.runtime.bootstrap import (
+        build_knowledge_graph_source_service,
+    )
+
+    _roots, config = _load_graph_context(args)
+    return build_knowledge_graph_source_service(config=config)
+
+
 def _load_graph_context(args: argparse.Namespace):
     roots = resolve_cli_roots(
         config_path=getattr(args, "config", None),
@@ -100,12 +170,57 @@ def _print_success(payload: dict[str, object], *, as_json: bool) -> int:
     return 0
 
 
+def _print_operation(
+    operation: str,
+    source: str,
+    results: list[dict[str, object]],
+    *,
+    as_json: bool,
+) -> int:
+    payload: dict[str, object] = {
+        "operation": operation,
+        "source": source,
+        "results": results,
+    }
+    if as_json:
+        print_json_payload(payload)
+        return 0
+    print(f"Source: {source}")
+    for result in results:
+        layer = str(result.get("layer") or "")
+        print(f"Layer: {layer}")
+        if tags := _graph_tags(result):
+            print(f"Tags: {tags}")
+        if operation == "refresh":
+            counts = _dict_payload(result.get("counts"))
+            print(f"Counts: {_format_kv(counts) or 'none'}")
+            continue
+        items = result.get("items")
+        records = items if isinstance(items, list) else []
+        print(f"Results: {len(records)}")
+        for item in records:
+            record = _dict_payload(item)
+            source_ref = _dict_payload(record.get("source_ref"))
+            print(f"  {record.get('snippet', '')}")
+            path = str(source_ref.get("path") or "")
+            if path:
+                print(f"    Citation: {path}")
+    return 0
+
+
+def _graph_tags(result: dict[str, object]) -> str:
+    tags = result.get("tags")
+    if not isinstance(tags, list):
+        return ""
+    return ", ".join(str(tag) for tag in tags)
+
+
 def _handle_graph_error(exc: KnowledgeGraphError, *, as_json: bool) -> int:
     payload = {"ok": False, **exc.to_dict()}
     if as_json:
         print_json_payload(payload, stream=sys.stderr)
     else:
-        print(f"Graph viewer unavailable: {exc.message}", file=sys.stderr)
+        print(f"Graph command failed: {exc.message}", file=sys.stderr)
         details = dict(exc.details)
         suggestions = details.get("suggested_commands") or details.get(
             "suggested_command"
@@ -176,11 +291,11 @@ def _print_status_result(payload: dict[str, object]) -> None:
     _print_provider_status("Second brain", _dict_payload(payload.get("second_brain")))
     third = payload.get("third_brain")
     if isinstance(third, list) and third:
-        print("Third brain providers:")
+        print("Configured graph sources:")
         for provider in third:
-            _print_provider_status("  -", _dict_payload(provider), compact=True)
+            _print_provider_status("Source", _dict_payload(provider), compact=True)
     else:
-        print("Third brain providers: none configured")
+        print("Configured graph sources: none")
     commands = payload.get("next_commands")
     if isinstance(commands, list) and commands:
         print("Next commands:")
@@ -195,11 +310,13 @@ def _print_provider_status(
     compact: bool = False,
 ) -> None:
     provider = str(payload.get("provider") or "")
-    ready = "ready" if payload.get("visual_ready") else "needs setup"
+    ready = "viewer ready" if payload.get("visual_ready") else "needs viewer setup"
     active = "active" if payload.get("active") else "inactive"
     adapter = str(payload.get("adapter") or "")
-    prefix = f"{label} " if compact else f"{label}: "
-    print(f"{prefix}{provider} [{ready}, {active}, {adapter}]")
+    prefix = f"  - {label}: " if compact else f"{label}: "
+    print(f"{prefix}{provider} [{ready}, {active}]")
+    if adapter:
+        print(f"    Adapter: {adapter}")
     reason = str(payload.get("reason") or "")
     if reason:
         print(f"    {reason}")
@@ -228,10 +345,58 @@ def _format_kv(payload: dict[str, object]) -> str:
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    graph = subparsers.add_parser("graph", help="Visual graph inspection")
+    graph = subparsers.add_parser(
+        "graph", help="Graph operations and visual inspection"
+    )
     graph_subcommands = graph.add_subparsers(dest="graph_command", required=True)
     _register_status_command(graph_subcommands)
     _register_view_command(graph_subcommands)
+    _register_query_command(graph_subcommands)
+    _register_neighborhood_command(graph_subcommands)
+    _register_refresh_command(graph_subcommands)
+
+
+def _add_source_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--provider",
+        required=True,
+        help="Configured graph source name.",
+    )
+
+
+def _register_query_command(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    query = subcommands.add_parser("query", help="Search one graph source")
+    query.add_argument("query", help="Text to find in the graph source.")
+    _add_source_argument(query)
+    query.add_argument("--limit", type=int, default=12)
+    add_json_output_flag(query)
+    query.set_defaults(handler=run_graph, needs_app=False)
+
+
+def _register_neighborhood_command(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    neighborhood = subcommands.add_parser(
+        "neighborhood",
+        help="Inspect one entity neighborhood",
+    )
+    neighborhood.add_argument("entity_id", help="Graph entity identifier.")
+    _add_source_argument(neighborhood)
+    neighborhood.add_argument("--depth", type=int, default=1)
+    neighborhood.add_argument("--limit", type=int, default=24)
+    add_json_output_flag(neighborhood)
+    neighborhood.set_defaults(handler=run_graph, needs_app=False)
+
+
+def _register_refresh_command(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    refresh = subcommands.add_parser("refresh", help="Refresh one graph source")
+    _add_source_argument(refresh)
+    add_json_output_flag(refresh)
+    refresh.set_defaults(handler=run_graph, needs_app=False)
 
 
 def _register_status_command(

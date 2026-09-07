@@ -18,6 +18,7 @@ from .constants import (
 )
 from .errors import (
     DuplicateProviderError,
+    KnowledgeGraphError,
     UnknownProviderError,
     UnsupportedCapabilityError,
 )
@@ -173,19 +174,28 @@ class KnowledgeGraphService:
         for source in self._select_sources(provider_names=provider_names, layer=layer):
             payload = {"provider": source.name, "layer": source.layer}
             self._emit(EVENT_REFRESH_STARTED, payload)
+            failure: Mapping[str, str] | None = {
+                **payload,
+                "error_code": "UPSTREAM_ERROR",
+                "reason_code": "unexpected_provider_failure",
+            }
             try:
                 self._ensure_capability(source, CAPABILITY_REFRESH)
                 result = source.refresh(request)
-            except Exception as exc:
-                self._emit(
-                    EVENT_REFRESH_FAILED,
-                    {
-                        **payload,
-                        "error_type": type(exc).__name__,
-                        "error": str(exc),
-                    },
-                )
+            except KnowledgeGraphError as exc:
+                failure = {
+                    **payload,
+                    "error_code": exc.code,
+                    "reason_code": str(
+                        exc.details.get("reason_code") or exc.code.lower()
+                    ),
+                }
                 raise
+            else:
+                failure = None
+            finally:
+                if failure is not None:
+                    self._emit(EVENT_REFRESH_FAILED, failure)
             results.append(result)
             self._emit(
                 EVENT_REFRESH_COMPLETED,

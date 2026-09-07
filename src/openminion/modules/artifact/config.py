@@ -25,14 +25,14 @@ from .constants import (
 @dataclass
 class BlobStoreConfig:
     backend: str = "filesystem_cas"
-    root_dir: str = "~/.artifactctl"
+    root_dir: str = field(default_factory=lambda: _environment_default_paths()[0])
     max_ingest_bytes: int = 104_857_600
 
 
 @dataclass
 class IndexConfig:
     backend: str = "sqlite"
-    sqlite_path: str = "~/.artifactctl/index.db"
+    sqlite_path: str = field(default_factory=lambda: _environment_default_paths()[1])
     wal: bool = True
 
 
@@ -93,16 +93,8 @@ def load_config(
     if isinstance(path, ArtifactCtlConfig):
         return path
 
-    env = resolve_environment_config()
-    home_root = resolve_module_home_root(None, env, fallback_to_cwd=True)
-    data_root = (
-        resolve_data_root(home_root, data_root=env.openminion_data_root or None)
-        if home_root is not None
-        else None
-    )
-    default_blob_root, default_index_path = _default_blob_and_index_paths(
-        home_root, data_root
-    )
+    default_blob_root, default_index_path = _environment_default_paths()
+    data_root = Path(default_blob_root).parent
 
     if isinstance(path, dict):
         raw = dict(path)
@@ -184,7 +176,7 @@ def _as_str_list(value: Any, default: list[str]) -> list[str]:
     if not isinstance(value, list):
         return list(default)
     normalized = (str(item).strip().lower() for item in value)
-    return [item for item in normalized if item] or list(default)
+    return [item for item in normalized if item]
 
 
 def _default_blob_root(home_root: Path | None, data_root: Path | None) -> str:
@@ -203,6 +195,13 @@ def _default_blob_and_index_paths(
         else str((Path(blob_root) / DEFAULT_INDEX_FILENAME).resolve(strict=False))
     )
     return blob_root, index_path
+
+
+def _environment_default_paths() -> tuple[str, str]:
+    env = resolve_environment_config()
+    home_root = resolve_module_home_root(None, env, fallback_to_cwd=True)
+    data_root = resolve_data_root(home_root, data_root=env.openminion_data_root or None)
+    return _default_blob_and_index_paths(home_root, data_root)
 
 
 def _default_config(blob_root: str, index_path: str) -> ArtifactCtlConfig:

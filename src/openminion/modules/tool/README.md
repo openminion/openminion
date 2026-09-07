@@ -1,4 +1,3 @@
-<!-- MFSS charter -->
 # Tool Module
 
 Owner: `openminion-tool`
@@ -12,7 +11,5 @@ For contributor authoring rules, family classification, typed execution-fact
 guidance, and shared formatter / approval / provenance ownership, see
 the package-local contributor and code-quality guidance.
 
-Boundary note: reviewed runtime-hook bridges still exist for sidecar autostart
-in `executor.py` and `cli/runtime.py`; these remain explicit validator-backed
-exceptions rather than hidden ownership leaks. See
-the package-local owner guidance for current boundaries.
+Sidecar autostart bridges remain in `executor.py` and `cli/runtime.py`. They are
+explicit validator-backed boundaries rather than general extension points.

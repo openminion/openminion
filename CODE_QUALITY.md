@@ -129,8 +129,9 @@ If you are claiming a family-wide or repo-wide cleanup, do not work from memory 
 
 Start from the live tree:
 
+From the package root:
+
 ```bash
-cd openminion
 rg --files src/openminion -g '*.py' | sort
 ```
 
@@ -139,7 +140,8 @@ Then:
 1. freeze the file list you used
 2. sweep against that exact list
 3. rerun the same sweep after edits
-4. keep temporary ledgers and scan outputs in the repository scratch area, not in this package root and not mixed into package source or docs surfaces
+4. keep temporary ledgers and scan outputs in a temporary directory outside
+   the tracked package tree
 
 For file-by-file cleanup claims, also:
 

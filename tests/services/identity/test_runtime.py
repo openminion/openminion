@@ -4,7 +4,7 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from openminion.base.config import OpenMinionConfig
@@ -73,6 +73,30 @@ def _sample_profile(agent_id: str = "openminion") -> AgentProfile:
             allowed_tools=[],
             sandbox_root=None,
         ),
+    )
+
+
+def _write_profile_yaml(
+    path: Path, *, mission: str, agent_id: str = "openminion"
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                f"agent_id: {agent_id}",
+                f"display_name: {agent_id}",
+                "profile_revision: 1",
+                "role:",
+                f'  mission: "{mission}"',
+                "personality:",
+                '  tone: "steady"',
+                "risk:",
+                "  risk_level: medium",
+                "tool_posture:",
+                "  tool_use: restricted",
+            ]
+        ),
+        encoding="utf-8",
     )
 
 
@@ -186,6 +210,212 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                 self.fail("expected captured provider request")
             self.assertIn("## Your Identity", provider.last_request.system_prompt)
             self.assertIn("Mission:", provider.last_request.system_prompt)
+
+    def test_derived_yaml_identity_activates_and_refreshes_only_after_upsert(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            profile_path = data_root / "identity" / "openminion" / "profile.yaml"
+            original_mission = "Unique YAML mission alpha."
+            updated_mission = "Unique YAML mission beta."
+            _write_profile_yaml(profile_path, mission=original_mission)
+
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config)  # type: ignore[attr-defined]
+            provider = _CaptureProvider()
+            with patch.dict(
+                "os.environ",
+                {
+                    "OPENMINION_DATA_ROOT": str(data_root),
+                    "OPENMINION_IDENTITY_DB": "",
+                    "OPENMINION_IDENTITY_ROOT": "",
+                },
+                clear=False,
+            ):
+                service = AgentService(
+                    config=config,
+                    plugins=PluginRegistry([]),
+                    provider=provider,
+                    logger=logging.getLogger("openminion.tests.identity.derived"),
+                    home_root=Path(tmp),
+                )
+
+                asyncio.run(
+                    service.run_turn(
+                        Message(channel="console", target="cli", body="first")
+                    )
+                )
+                self.assertIsNotNone(provider.last_request)
+                if provider.last_request is None:  # pragma: no cover
+                    self.fail("expected captured provider request")
+                self.assertIn(original_mission, provider.last_request.system_prompt)
+                self.assertIn(
+                    "Apply this persona to all responses",
+                    provider.last_request.system_prompt,
+                )
+
+                _write_profile_yaml(profile_path, mission=updated_mission)
+                asyncio.run(
+                    service.run_turn(
+                        Message(channel="console", target="cli", body="second")
+                    )
+                )
+                self.assertIn(original_mission, provider.last_request.system_prompt)
+                self.assertNotIn(updated_mission, provider.last_request.system_prompt)
+
+                service._identityctl.load_profiles_from_path(profile_path)  # noqa: SLF001
+                asyncio.run(
+                    service.run_turn(
+                        Message(channel="console", target="cli", body="third")
+                    )
+                )
+                self.assertIn(updated_mission, provider.last_request.system_prompt)
+                service.close()
+
+    def test_existing_derived_database_activates_current_agent_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            db_path = data_root / "identity" / "identity.db"
+            db_path.parent.mkdir(parents=True)
+            ctl = IdentityCtl(store=SQLiteIdentityStore(sqlite_path=str(db_path)))
+            profile = _sample_profile()
+            profile.role.mission = "Stored current-agent mission."
+            ctl.upsert_profile(profile)
+            ctl.close()
+
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config)  # type: ignore[attr-defined]
+            with patch.dict(
+                "os.environ",
+                {
+                    "OPENMINION_DATA_ROOT": str(data_root),
+                    "OPENMINION_IDENTITY_DB": "",
+                    "OPENMINION_IDENTITY_ROOT": "",
+                },
+                clear=False,
+            ):
+                service = AgentService(
+                    config=config,
+                    plugins=PluginRegistry([]),
+                    provider=_CaptureProvider(),
+                    logger=logging.getLogger("openminion.tests.identity.stored"),
+                    home_root=Path(tmp),
+                )
+
+            self.assertIsNotNone(service._identityctl)  # noqa: SLF001
+            service.close()
+
+    def test_unrelated_yaml_does_not_activate_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            _write_profile_yaml(
+                data_root / "identity" / "other-agent" / "profile.yaml",
+                mission="Other agent mission.",
+                agent_id="other-agent",
+            )
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config)  # type: ignore[attr-defined]
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "OPENMINION_DATA_ROOT": str(data_root),
+                    "OPENMINION_IDENTITY_DB": "",
+                    "OPENMINION_IDENTITY_ROOT": "",
+                },
+                clear=False,
+            ):
+                service = AgentService(
+                    config=config,
+                    plugins=PluginRegistry([]),
+                    provider=_CaptureProvider(),
+                    logger=logging.getLogger("openminion.tests.identity.unrelated"),
+                    home_root=Path(tmp),
+                )
+
+            self.assertIsNone(service._identityctl)  # noqa: SLF001
+            self.assertFalse((data_root / "identity" / "identity.db").exists())
+
+    def test_empty_derived_database_does_not_activate_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            db_path = data_root / "identity" / "identity.db"
+            db_path.parent.mkdir(parents=True)
+            IdentityCtl(store=SQLiteIdentityStore(sqlite_path=str(db_path))).close()
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config)  # type: ignore[attr-defined]
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "OPENMINION_DATA_ROOT": str(data_root),
+                    "OPENMINION_IDENTITY_DB": "",
+                    "OPENMINION_IDENTITY_ROOT": "",
+                },
+                clear=False,
+            ):
+                service = AgentService(
+                    config=config,
+                    plugins=PluginRegistry([]),
+                    provider=_CaptureProvider(),
+                    logger=logging.getLogger("openminion.tests.identity.empty"),
+                    home_root=Path(tmp),
+                )
+
+            self.assertIsNone(service._identityctl)  # noqa: SLF001
+
+    def test_invalid_current_agent_yaml_disables_identity_without_fallback(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            profile_path = data_root / "identity" / "openminion" / "profile.yaml"
+            profile_path.parent.mkdir(parents=True)
+            profile_path.write_text("role: [invalid", encoding="utf-8")
+            config = OpenMinionConfig()
+            _csc_install_default_agent(config)  # type: ignore[attr-defined]
+
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "OPENMINION_DATA_ROOT": str(data_root),
+                        "OPENMINION_IDENTITY_DB": "",
+                        "OPENMINION_IDENTITY_ROOT": "",
+                    },
+                    clear=False,
+                ),
+                patch(
+                    "openminion.services.identity.bootstrap.ensure_default_profile"
+                ) as ensure_mock,
+                self.assertLogs(
+                    "openminion.tests.identity.invalid", level="ERROR"
+                ) as captured,
+            ):
+                service = AgentService(
+                    config=config,
+                    plugins=PluginRegistry([]),
+                    provider=_CaptureProvider(),
+                    logger=logging.getLogger("openminion.tests.identity.invalid"),
+                    home_root=Path(tmp),
+                )
+
+            self.assertIsNone(service._identityctl)  # noqa: SLF001
+            ensure_mock.assert_not_called()
+            self.assertIn("identity runtime startup failed", "\n".join(captured.output))
+
+    def test_agent_service_close_closes_identity_controller(self) -> None:
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = self._build_service_without_identity_init(config=config)
+        identityctl = Mock()
+        service._identityctl = identityctl  # noqa: SLF001
+
+        service.close()
+
+        identityctl.close.assert_called_once_with()
+        self.assertIsNone(service._identityctl)  # noqa: SLF001
 
     def test_agent_service_imports_identity_bundle_into_identityctl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -770,23 +1000,20 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            bundle_root = Path(tmp) / "bundles"
-            agent_bundle = bundle_root / "agents" / "openminion"
-            agent_bundle.mkdir(parents=True)
-            (agent_bundle / "AGENT.md").write_text(
+            (yaml_agent_root / "AGENT.md").write_text(
                 "## Mission\nMission from bundle import.\n",
                 encoding="utf-8",
             )
-            (agent_bundle / "SOUL.md").write_text(
+            (yaml_agent_root / "SOUL.md").write_text(
                 "## Voice\n- Technical\n",
                 encoding="utf-8",
             )
 
             config = OpenMinionConfig()
             _csc_install_default_agent(config)  # type: ignore[attr-defined]
-            config.identity.root = str(identity_root)
+            config.identity.root = str(Path(tmp) / "legacy-ignored")
             config.identity.db_path = str(Path(tmp) / "identity.db")
-            config.identity.bundle_root = str(bundle_root)
+            config.identity.bundle_root = str(identity_root)
             provider = _CaptureProvider()
 
             with (
@@ -903,7 +1130,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             import_summary = dict(
                 getattr(service, "_identity_import_summary", {}) or {}
             )
-            self.assertEqual(import_summary.get("status"), "bundle_invalid")
+            self.assertEqual(import_summary.get("status"), "skipped_authority")
 
     def test_startup_logs_identity_sync_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1528,7 +1755,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
             ),
         )
 
-    def test_resolve_identity_db_path_legacy_root_fallback_requires_db_suffix(
+    def test_resolve_identity_db_path_legacy_root_derives_database(
         self,
     ) -> None:
         config = OpenMinionConfig()
@@ -1549,9 +1776,7 @@ class IdentityRuntimeInjectionTests(unittest.TestCase):
 
         self.assertEqual(
             resolved,
-            str(
-                (Path("/tmp/runtime-data-root") / "identity" / "identity.db").resolve()
-            ),
+            str((Path("/tmp/legacy-identity-root") / "identity.db").resolve()),
         )
 
     def test_resolve_identity_db_path_legacy_root_db_alias_is_honored(self) -> None:

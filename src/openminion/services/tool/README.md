@@ -11,9 +11,9 @@ contracts. No tool-selection behavior lives in this package.
 ## Public surface
 
 - `selection.py` re-exports selection services, records, and provider adapters.
-- `exposure.py` re-exports schema-exposure rules for AECR callers.
+- `exposure.py` re-exports schema-exposure rules for current runtime callers.
 
 ## Retirement
 
-Remove these facades after the remaining AECR, API, CLI, and test callers use
-the canonical module paths.
+Remove these facades after the remaining API, CLI, runtime, and test callers
+use the canonical module paths.

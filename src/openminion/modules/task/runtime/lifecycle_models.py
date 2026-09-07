@@ -18,7 +18,13 @@ class TaskCronStoreProtocol(Protocol):
 
     def list_cron_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]: ...
 
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None: ...
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None: ...
 
     def list_cron_runs(
         self,
@@ -42,6 +48,19 @@ _TERMINAL_TASK_STATES = {
     TaskLifecycleState.DONE,
     TaskLifecycleState.FAILED,
 }
+
+
+def bounded_task_run_error(error: Any) -> dict[str, Any] | None:
+    if not isinstance(error, Mapping):
+        return None
+    result: dict[str, Any] = {
+        "code": str(error.get("code") or "failed")[:100],
+        "message": str(error.get("message") or "")[:500],
+    }
+    details = error.get("details")
+    if isinstance(details, Mapping):
+        result["details"] = dict(list(details.items())[:20])
+    return result
 
 
 _ALLOWED_STATE_TRANSITIONS: dict[TaskLifecycleState, set[TaskLifecycleState]] = {
@@ -153,7 +172,14 @@ class _NullCronRepository:
     def list_cron_jobs(self, *, limit: int = 100) -> list[dict[str, Any]]:
         return []
 
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None:
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None:
+        del cancel_queued
         pass
 
     def list_cron_runs(

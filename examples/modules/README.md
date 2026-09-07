@@ -6,7 +6,7 @@ patterns without being imported as part of the runtime package tree.
 Current examples:
 
 1. `sample/` — reference implementation for the example module contracts.
-   Run it by adding `openminion/examples/modules` to `PYTHONPATH` and
+   Run it by adding `examples/modules` to `PYTHONPATH` and
    invoking one of the direct commands:
 
    ```bash

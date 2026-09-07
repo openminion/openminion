@@ -40,7 +40,7 @@ package source and release surface.
   checkpointed, operator-visible project-worker primitives and claim
   boundaries.
 - [`skill-maintenance.md`](skill-maintenance.md): maintainer note for the
-  current skill-side lifecycle and polish queue.
+  current skill lifecycle, admission, and design boundaries.
 
 ## Contributor And Quality Topics
 
@@ -69,5 +69,8 @@ The current public preview contract is a local-first agent runtime with:
 4. package-owned config and portability helpers,
 5. explicit runtime entrypoints for agent turns, API runtime composition, and
    local operator workflows,
-6. early project-worker primitives for checkpointed, operator-visible
-   long-horizon objectives with explicit proof and claim boundaries.
+6. local human-agent rooms with explicit participants and routing,
+7. checkpointed, operator-visible project-worker primitives with explicit
+   proof and claim boundaries,
+8. dependency readiness, security scanning, and telemetry inspection through
+   bounded operator surfaces.

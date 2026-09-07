@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from types import SimpleNamespace
 
@@ -13,9 +14,11 @@ class _StubSession:
     def __init__(self, replies: list[str | Exception]) -> None:
         self._replies = list(replies)
         self.prompts: list[str] = []
+        self.prompt_options: list[dict[str, object]] = []
 
     async def prompt_async(self, *args, **kwargs):
         self.prompts.append(str(args[0]) if args else "")
+        self.prompt_options.append(dict(kwargs))
         if not self._replies:
             raise EOFError()
         next_reply = self._replies.pop(0)
@@ -151,3 +154,24 @@ def test_confirm_keyboard_interrupt_returns_false() -> None:
         prompt_session=_StubSession([KeyboardInterrupt()]),
     )
     assert overlay.present_confirm("Exit focus mode?") is False
+
+
+def test_prompt_masks_secret_input() -> None:
+    console, _ = _make_console()
+    session = _StubSession(["secret"])
+    overlay = TerminalOverlayPresenter(console=console, prompt_session=session)
+
+    result = asyncio.run(overlay.present_prompt_async("API key: ", secret=True))
+
+    assert result == "secret"
+    assert session.prompt_options == [{"is_password": True}]
+
+
+def test_prompt_eof_returns_none() -> None:
+    console, _ = _make_console()
+    overlay = TerminalOverlayPresenter(
+        console=console,
+        prompt_session=_StubSession([EOFError()]),
+    )
+
+    assert asyncio.run(overlay.present_prompt_async("Model: ")) is None

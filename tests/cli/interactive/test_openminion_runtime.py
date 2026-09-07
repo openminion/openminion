@@ -477,6 +477,26 @@ def test_room_result_uses_top_level_addressed_agent_and_persisted_id() -> None:
     ]
 
 
+def test_room_result_removes_repeated_agent_prefix() -> None:
+    messages = room_result_chat_messages(
+        {
+            "metadata": {
+                "room_responses": [
+                    {
+                        "agent_id": "beta",
+                        "body": "beta: reviewed",
+                        "persisted_outbound_message_id": "out-beta",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert [(item.sender, item.body, item.msg_id) for item in messages] == [
+        ("beta", "reviewed", "out-beta")
+    ]
+
+
 def test_room_history_reloads_persisted_agent_attribution() -> None:
     rt, focus_rt, _actor = _make_bound_room_runtime()
     rt.sessions.add_message(

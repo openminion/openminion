@@ -36,7 +36,7 @@ If no provider id can be resolved and no providers are registered, the
 router raises `KeyError("no browser provider specified and no default
 configured")`.
 
-Reproducible examples (see `openminion/tests/browser/test_router.py`):
+Reproducible examples (see `tests/browser/test_router.py`):
 
 1. `requested="arg"`, `agent_profile="profile"`, `session="session"`,
    `default="default"` → resolves to `arg`.

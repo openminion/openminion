@@ -216,6 +216,7 @@ CONTEXT_MANIFEST = "context.manifest"
 CONTEXT_MANIFEST_CREATED = "context.manifest.created"
 CONTEXT_MANIFEST_PERSISTENCE_FAILED = "context.manifest.persistence_failed"
 CONTEXT_PACK = "context_pack"
+CONTEXT_CONTEXTCTL_SELECTED = "context.contextctl.selected"
 
 METRIC = "metric"
 MESSAGE = "message"
@@ -431,6 +432,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         CONTEXT_MANIFEST_CREATED,
         CONTEXT_MANIFEST_PERSISTENCE_FAILED,
         CONTEXT_PACK,
+        CONTEXT_CONTEXTCTL_SELECTED,
         METRIC,
         MESSAGE,
         MODULE_DEBUG_FAILURE,
@@ -680,6 +682,7 @@ __all__ = [
     "CONTEXT_MANIFEST_CREATED",
     "CONTEXT_MANIFEST_PERSISTENCE_FAILED",
     "CONTEXT_PACK",
+    "CONTEXT_CONTEXTCTL_SELECTED",
     "METRIC",
     "MESSAGE",
     "MODULE_DEBUG_FAILURE",

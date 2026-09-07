@@ -68,7 +68,7 @@ def _ctx(
     )
 
 
-def test_schedule_every_cron_at_persists_agent_and_at_delete_flag(
+def test_schedule_persists_agent_and_retains_user_task_jobs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -115,8 +115,10 @@ def test_schedule_every_cron_at_persists_agent_and_at_delete_flag(
     assert row_at["agent_id"] == "agent-a"
     assert row_every["delete_after_run"] is False
     assert row_cron["delete_after_run"] is False
-    assert row_at["delete_after_run"] is True
+    assert row_at["delete_after_run"] is False
     assert "scheduler_note" in every
+    assert every["scheduler"]["state"] == "unknown"
+    assert every["scheduler"]["check_command"].endswith("service status cron")
     assert "daemon" in every["scheduler_note"].lower()
     assert "openminion daemon start" in every["scheduler_note"]
 
@@ -408,6 +410,9 @@ def test_pause_resume_and_show_preserve_runs_and_exact_id(
     task = shown["task"]
     assert shown["runs_limit"] == 20
     assert task["task_id"] == task_id
+    assert task["lifecycle_state"] == "paused"
+    assert task["task_kind"] == "scheduled_recurring"
+    assert task["valid_actions"] == ["resume", "cancel"]
     assert task["enabled"] is False
     assert task["failure_count"] == 1
     assert len(task["runs"]) == 1
@@ -935,7 +940,9 @@ def test_cancel_success_not_found_and_cross_agent_guard(
     cancelled = _h_task_cancel({"task_id": task_id}, owner_ctx)
     assert cancelled["cancelled"] is True
     assert cancelled["task_cancelled"] is True
-    assert store.get_cron_job(task_id) is None
+    cancelled_job = store.get_cron_job(task_id)
+    assert cancelled_job is not None
+    assert cancelled_job["enabled"] is False
 
     # prefix-based cancel must NOT succeed. Anti-LLM contract requires
     # exact `task_id` only; partial ids fall through to deterministic NOT_FOUND.
@@ -1099,6 +1106,9 @@ def test_list_shape_scope_and_limit_clamp(
 
     first = default_listing["tasks"][0]
     assert first["task_id"] == owner_task["task_id"]
+    assert first["lifecycle_state"] == "active"
+    assert first["task_kind"] == "scheduled_recurring"
+    assert first["valid_actions"] == ["pause", "cancel"]
     assert "summary" in first["schedule"]
     assert first["last_run_state"] == "pending"
     assert first["last_run_at"] is None

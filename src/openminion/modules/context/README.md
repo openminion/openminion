@@ -49,9 +49,9 @@ Re-exported from `openminion.modules.context`:
 - `CONTEXT_CLIENT_INTERFACE_VERSION`,
   `ensure_context_client_compatibility`
 
-The producer-side Protocol `ContextCtlInterface` was added in MCCS-02
-(`interfaces.py`) so downstream callers can depend on a structural
-interface instead of the concrete class. Consumer-side protocols
+The producer-side `ContextCtlInterface` Protocol lives in `interfaces.py` so
+downstream callers can depend on a structural interface instead of the
+concrete class. Consumer-side protocols
 (`IdentityClient`, `MemoryClient`, `ArtifactClient`, `SkillClient`,
 `CompressClient`, `RlmClient`, `VectorClient`, `LlmTelemetrySink`,
 `ContextRetriever`) live in `contracts.py`.
@@ -66,7 +66,5 @@ interface instead of the concrete class. Consumer-side protocols
 
 ## Canonical shape
 
-Canonical. Has `interfaces.py` (MCCS-02), `contracts.py` (consumer
-protocols), `schemas.py`, `service.py`, `cli.py`, and the `compress/`
-subpackage. CASBM (closed) thinned `service.py` and `segment/__init__.py`
-without changing the public surface.
+Canonical. Has `interfaces.py`, `contracts.py` (consumer protocols),
+`schemas/`, `service.py`, `cli.py`, and the `compress/` subpackage.

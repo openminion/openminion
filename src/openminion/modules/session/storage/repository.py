@@ -79,8 +79,18 @@ class SQLiteCronRepository:
     ) -> None:
         self._store.replace_cron_job_payload(job_id, payload)
 
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None:
-        self._store.set_cron_job_enabled(job_id, enabled)
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None:
+        self._store.set_cron_job_enabled(
+            job_id,
+            enabled,
+            cancel_queued=cancel_queued,
+        )
 
     def trigger_cron_run(
         self,

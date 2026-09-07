@@ -118,7 +118,6 @@ def test_non_test_src_importers_resolve() -> None:
         "src/openminion/modules/session/storage/cron_store.py",
         "src/openminion/tools/time/plugin.py",
         "src/openminion/tools/task/plugin.py",
-        "src/openminion/tools/task/scheduled_task/runtime.py",
         "src/openminion/tools/task/scheduled_task/views.py",
     }
     for rel in service_importers:

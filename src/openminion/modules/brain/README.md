@@ -4,7 +4,10 @@ Owner: `openminion-brain`
 Shape: `engine-owning`
 Runtime peer: paired with `openminion.services.brain`
 
-This module Owns the orchestration engine, adapters, diagnostics, and action-selection/runtime policies for agent reasoning. Primary contracts: `interfaces.py`, `schemas/`, `adapters/*`, `runtime/*`. Typed orchestration payloads live in `schemas/` and diagnostics event surfaces.
+This module owns the orchestration engine, adapters, diagnostics, and
+action-selection/runtime policies for agent reasoning. Primary contracts live
+in `interfaces.py`, `schemas/`, `adapters/`, and `runtime/`. Typed orchestration
+payloads live in `schemas/` and diagnostics event surfaces.
 
 Boundary note: cron-resume helpers and path resolution used by brain-owned
 runtime flows now live under module ownership at `runner/cron_resume/` and

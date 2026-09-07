@@ -55,7 +55,10 @@ def _latest_working_state_inline(
     session_id: str,
 ) -> dict[str, Any] | None:
     try:
-        raw = runner.session_api.get_latest_working_state(session_id)
+        raw = runner.session_api.get_latest_working_state(
+            session_id,
+            agent_id=runner.profile.agent_id,
+        )
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(raw, dict):

@@ -818,8 +818,16 @@ class SQLiteSessionStore(SessionStore):
             state_inline=state_inline,
         )
 
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None:
-        return self._state_store.get_latest_working_state(session_id)
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self._state_store.get_latest_working_state(
+            session_id,
+            agent_id=agent_id,
+        )
 
     def get_active_state(self, session_id: str) -> dict[str, Any]:
         return self._state_store.get_active_state(session_id)

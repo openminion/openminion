@@ -102,7 +102,96 @@ class _WeatherCurrentTool(Tool):
         )
 
 
+class _RejectCanonicalNameSpec(ToolSpec):
+    def __setattr__(self, name, value):
+        if name == "name" and "name" in self.__dict__:
+            raise RuntimeError("name is immutable")
+        super().__setattr__(name, value)
+
+
 class ToolRegistryTests(unittest.TestCase):
+    def test_register_uses_trimmed_key_without_rewriting_spec_name(self) -> None:
+        def handler(args, context):
+            del args, context
+            return {"ok": True}
+
+        spec = ToolSpec(" custom.echo ", _EchoArgs, "READ_ONLY", handler)
+        registry = ToolRegistry()
+
+        registry.register(spec)
+
+        self.assertIs(registry.get("custom.echo"), spec)
+        self.assertEqual(spec.name, " custom.echo ")
+        self.assertIs(spec.handler.__wrapped__, handler)
+
+    def test_add_canonicalizes_name_and_preserves_explicit_categories(self) -> None:
+        def handler(args, context):
+            del args, context
+            return {"ok": True}
+
+        spec = ToolSpec(" custom.echo ", _EchoArgs, "READ_ONLY", handler)
+        spec.primary_category = "custom"
+        spec.secondary_categories = ("inspection",)
+        registry = ToolRegistry()
+
+        registry.add(spec)
+
+        self.assertEqual(spec.name, "custom.echo")
+        self.assertIs(spec.handler.__wrapped__, handler)
+        self.assertEqual(registry.tools_by_category("custom"), ["custom.echo"])
+        self.assertEqual(registry.tools_by_category("inspection"), ["custom.echo"])
+
+    def test_add_preserves_mapped_and_inferred_categories(self) -> None:
+        def handler(args, context):
+            del args, context
+            return {"ok": True}
+
+        fixtures = (
+            (" file.read ", "file.read", "file.read", ("file.list",)),
+            (" custom.unmapped ", "custom.unmapped", "general_assistance", ()),
+        )
+        for raw_name, name, primary, secondary in fixtures:
+            with self.subTest(name=name):
+                registry = ToolRegistry()
+                spec = ToolSpec(raw_name, _EchoArgs, "READ_ONLY", handler)
+
+                registry.add(spec)
+
+                self.assertEqual(spec.name, name)
+                self.assertEqual(registry.tools_by_category(primary), [name])
+                for category in secondary:
+                    self.assertEqual(registry.tools_by_category(category), [name])
+
+    def test_add_name_failure_does_not_commit_or_wrap_spec(self) -> None:
+        def handler(args, context):
+            del args, context
+            return {"ok": True}
+
+        spec = _RejectCanonicalNameSpec(" immutable ", _EchoArgs, "READ_ONLY", handler)
+        registry = ToolRegistry()
+
+        with self.assertRaisesRegex(RuntimeError, "name is immutable"):
+            registry.add(spec)
+
+        self.assertEqual(registry._tools, {})
+        self.assertIs(spec.handler, handler)
+
+    def test_add_wraps_handler_only_once(self) -> None:
+        def handler(args, context):
+            del args, context
+            return {"ok": True}
+
+        spec = ToolSpec("first", _EchoArgs, "READ_ONLY", handler)
+        registry = ToolRegistry()
+        registry.add(spec)
+        wrapped = spec.handler
+
+        registry.unregister("first")
+        registry.add(spec)
+
+        self.assertIs(spec.handler, wrapped)
+        self.assertIs(spec.handler.__wrapped__, handler)
+
     def test_register_rejects_duplicate_tool_without_mutation(self) -> None:
         original = _PolicyTool()
         registry = ToolRegistry([original])
@@ -131,12 +220,23 @@ class ToolRegistryTests(unittest.TestCase):
             name: set(tool_names)
             for name, tool_names in registry._category_index.items()
         }
+        rejected = ToolSpec(" same ", _EchoArgs, "READ_ONLY", handler)
 
         with self.assertRaises(ToolRuntimeError):
-            registry.add(ToolSpec(" same ", _EchoArgs, "READ_ONLY", handler))
+            registry.add(rejected)
 
         self.assertIs(registry.get("same"), original)
         self.assertEqual(registry._category_index, categories_before)
+        self.assertEqual(rejected.name, " same ")
+        self.assertIs(rejected.handler, handler)
+
+    def test_add_rejects_non_tool_spec(self) -> None:
+        registry = ToolRegistry()
+
+        with self.assertRaisesRegex(TypeError, "expected ToolSpec"):
+            registry.add(_PolicyTool())
+
+        self.assertEqual(registry._tools, {})
 
     def test_sidecar_autostart_requires_runtime_binding(self) -> None:
         registry = ToolRegistry()

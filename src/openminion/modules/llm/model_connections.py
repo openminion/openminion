@@ -65,6 +65,11 @@ def legacy_model_connection(
     provider = canonical_provider_name(profile.provider)
     provider_config = getattr(config.providers, provider, None)
     route = dict(profile.provider_config_overrides)
+    if provider_config is not None:
+        for key in ("api_key_env", "base_url", "timeout_seconds"):
+            value = getattr(provider_config, key, None)
+            if key not in route and value:
+                route[key] = value
     model = str(route.get("model", getattr(provider_config, "model", "")) or "").strip()
     if not provider or not model:
         return None

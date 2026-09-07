@@ -17,6 +17,7 @@ from openminion.base.config import (
     run_profile_overrides_from_mapping,
 )
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
+from openminion.base.config.runtime import resolve_identity_root_from_env
 from openminion.cli.identity.provenance import build_identity_provenance
 from openminion.cli.config import (
     load_cli_manager,
@@ -124,7 +125,6 @@ def _collect_pre_runtime_checks(
     checks.append(
         _build_identity_bundle_check(
             config=config,
-            config_path=config_path,
             agent_id=selected_agent.name,
             home_root=manager.home_root,
             data_root=manager.data_root,
@@ -455,7 +455,6 @@ def run_doctor(args) -> int:
 def _build_identity_bundle_check(
     *,
     config,
-    config_path: Path,
     agent_id: str,
     home_root: Path,
     data_root: Path,
@@ -470,10 +469,10 @@ def _build_identity_bundle_check(
     )
     identity_db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    root = (
-        Path(resolve_identity_bundle_root(config)).expanduser().resolve()
-        if str(resolve_identity_bundle_root(config) or "").strip()
-        else (config_path.parent if config_path.parent else home_root)
+    root = resolve_identity_root_from_env(
+        home_root=home_root,
+        data_root=data_root,
+        configured_root=resolve_identity_bundle_root(config),
     )
     bundle = load_identity_bundle(agent_id=agent_id, root=root)
     bundle_details = {

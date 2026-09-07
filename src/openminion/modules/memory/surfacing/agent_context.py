@@ -371,7 +371,15 @@ class ContextBuildersMixin:
                     "meta": {
                         **record_meta,
                         "record_id": str(getattr(rec, "id", "") or ""),
+                        "record_type": str(getattr(rec, "type", "") or ""),
                         "record_source": str(getattr(rec, "source", "") or ""),
+                        "record_tier": str(getattr(rec, "tier", "") or ""),
+                        "record_confidence": float(
+                            getattr(rec, "confidence", 0.0) or 0.0
+                        ),
+                        "record_tags": list(getattr(rec, "tags", []) or []),
+                        "record_valid_to": str(getattr(rec, "valid_to", "") or ""),
+                        "record_content": str(content_val),
                     },
                     "source_group": "memory",
                 }

@@ -17,7 +17,7 @@ def make_config(
     tmp_path: Path, overrides: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
 
-    root = tmp_path / "artifact-store"
+    root = tmp_path / ".openminion" / "artifact-store"
     base: dict[str, Any] = {
         "artifactctl": {
             "blob_store": {

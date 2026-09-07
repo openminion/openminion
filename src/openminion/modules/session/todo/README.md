@@ -33,5 +33,5 @@ Out of scope:
 
 ## Related
 
-1. session todo rename execution spec
-2. session plan surface deconfliction tracker
+The operator-facing commands live in `openminion.tools.todo`; autonomous task
+and project plans live in `openminion.modules.task`.

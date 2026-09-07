@@ -17,9 +17,13 @@ def test_focus_model_selection_is_clear_live_and_resumable(
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
         status = focus_probe.run_slash(session, "/model", marker="API format")
+        assert "Model selection" in status
         assert "MiniMax-M2.7" in status
         assert "OpenAI-compatible" in status
         assert "Config key" not in status
+        assert "restored on resume" in status
+        assert "save as this agent's default" in status
+        assert "add to this connection and use now" in status
         switched = focus_probe.run_slash(
             session,
             "/model use 1",

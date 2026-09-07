@@ -138,7 +138,12 @@ class SessionStore(ABC):
     ) -> int: ...
 
     @abstractmethod
-    def get_latest_working_state(self, session_id: str) -> dict[str, Any] | None: ...
+    def get_latest_working_state(
+        self,
+        session_id: str,
+        *,
+        agent_id: str | None = None,
+    ) -> dict[str, Any] | None: ...
 
     @abstractmethod
     def get_active_state(self, session_id: str) -> dict[str, Any]: ...
@@ -216,7 +221,13 @@ class SessionStore(ABC):
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None: ...
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None: ...
 
     @abstractmethod
     def replace_cron_job_payload(

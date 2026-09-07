@@ -28,6 +28,8 @@ def _stub_route(
         status="ok",
         should_launch_setup=should_launch_setup,
         should_fail_fast=should_fail_fast,
+        home_root=Path("/tmp/openminion-home"),
+        data_root=Path("/tmp/openminion-home/.openminion"),
     )
 
 

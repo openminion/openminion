@@ -56,15 +56,15 @@ boundary summary than the broader docs.
    commands/results.
 6. For broad cleanup/code-quality lanes, start from a fresh live file inventory instead of a hand-picked subset. Preferred command:
    ```bash
-   cd openminion
    rg --files src/openminion -g '*.py' | sort
    ```
-7. Keep temporary broad-sweep artifacts in the repository scratch area, not in this package root and not mixed into package source or docs surfaces.
+7. Keep temporary broad-sweep artifacts in a temporary directory outside the
+   tracked package tree.
 8. Prefer task-scoped validation during slice work; reserve broad repo-wide suites like `make check` for integration closeout or when a release or integration surface explicitly requires them.
 9. Do not include unrelated refactors in the same PR.
-10. For controlplane storage work, preserve the two-database rule documented in
-    `docs/runbooks/controlplane-storage-operations.md`: cross-channel state
-    lives in `cp.db`; channel-private transient state stays in the channel DB.
+10. For controlplane storage work, preserve the two-database rule:
+    cross-channel state lives in `cp.db`; channel-private transient state stays
+    in the channel database.
 
 For the provider-free pull-request sequence, run `make ci-check`. It composes
 `format-check`, `lint`, and `test-ci`. `make test` and `make check` remain the

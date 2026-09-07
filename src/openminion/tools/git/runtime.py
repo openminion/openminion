@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.tools.file.plugin import (
-    _resolve_relative_base_dir,
-    _resolve_workspace_root,
+from openminion.modules.tool import (
+    resolve_relative_base_dir,
+    resolve_workspace_root,
 )
+from openminion.modules.tool.errors import ToolRuntimeError
 
 from openminion.tools.git.errors import (
     GIT_AMBIGUOUS_WORKSPACE,
@@ -66,11 +66,11 @@ def _search_path_chain(seed: Path, preferred: Path) -> list[str]:
 def resolve_git_repo_root(ctx: Any) -> Path:
     """Resolve a deterministic git repo root from the workspace seed."""
 
-    seed = _resolve_workspace_root(ctx).resolve(strict=False)
+    seed = resolve_workspace_root(ctx).resolve(strict=False)
     if _has_git_entry(seed):
         return seed
 
-    preferred = _resolve_relative_base_dir(ctx).resolve(strict=False)
+    preferred = resolve_relative_base_dir(ctx).resolve(strict=False)
     searched_paths = _search_path_chain(seed, preferred)
 
     if preferred != seed:

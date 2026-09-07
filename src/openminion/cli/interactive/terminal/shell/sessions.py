@@ -54,7 +54,12 @@ async def run_room_turn_if_bound(
         transcript._messages[-1].sender = first.sender
         transcript._messages[-1].msg_id = first.msg_id
     if first.sender:
-        handle.append_renderable(Text(first.sender, style="bold"))
+        handle.append_renderable(
+            Text(
+                first.sender,
+                style=token_rich_style(StyleToken.ASSISTANT, bold=True),
+            )
+        )
     for message in remaining:
         transcript.push_message(message)
     mark_active_chat_first_text()

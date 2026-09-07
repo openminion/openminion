@@ -41,3 +41,30 @@ def test_tasks_cli_shows_missing_task_as_failure(capsys) -> None:
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "task not found" in out.lower()
+
+
+def test_tasks_cli_uses_configured_default_agent(capsys) -> None:
+    ctl = InMemoryTaskCtl()
+    seen: dict[str, str] = {}
+    get_digest = ctl.get_digest
+
+    def capture_digest(*, agent_id: str, session_id: str, limit: int = 5):
+        seen["agent_id"] = agent_id
+        return get_digest(agent_id=agent_id, session_id=session_id, limit=limit)
+
+    ctl.get_digest = capture_digest  # type: ignore[method-assign]
+    args = Namespace(
+        tasks_command="list",
+        agent_id="",
+        session="s1",
+        limit=10,
+        json=True,
+    )
+    config = SimpleNamespace(
+        agents={"agent-default": object()},
+        default_agent="agent-default",
+    )
+
+    assert run_tasks(args, SimpleNamespace(task_ctl=ctl, config=config)) == 0
+    assert seen["agent_id"] == "agent-default"
+    capsys.readouterr()

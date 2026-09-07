@@ -56,6 +56,30 @@ def test_resolve_cli_identity_db_path_falls_back_to_roots(tmp_path) -> None:
     )
 
 
+def test_resolve_cli_identity_db_path_honors_identity_environment(tmp_path) -> None:
+    roots = resolve_cli_roots(
+        env={
+            "OPENMINION_IDENTITY_ROOT": str(tmp_path / "identities"),
+            "OPENMINION_IDENTITY_DB": "runtime.db",
+        },
+        process_env={},
+        home_root=tmp_path / "home",
+        data_root="state-data",
+    )
+    config = SimpleNamespace(
+        identity=SimpleNamespace(
+            db_path="config.db",
+            bundle_root="config-identities",
+            root="",
+        )
+    )
+
+    assert (
+        resolve_cli_identity_db_path(config, roots=roots)
+        == (tmp_path / "identities" / "runtime.db").resolve()
+    )
+
+
 def test_resolve_cli_policy_db_path_falls_back_to_roots(tmp_path) -> None:
     roots = resolve_cli_roots(home_root=tmp_path / "home", data_root="state-data")
 

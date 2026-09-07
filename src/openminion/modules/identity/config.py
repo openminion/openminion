@@ -5,6 +5,10 @@ from collections.abc import Mapping
 import os
 
 from openminion.base.config import OpenMinionConfig
+from openminion.base.config.runtime import (
+    resolve_identity_db_from_env,
+    resolve_identity_root_from_env,
+)
 from openminion.modules.config import (
     resolve_module_config_path,
     resolve_module_data_root,
@@ -12,10 +16,7 @@ from openminion.modules.config import (
 )
 from .constants import (
     DEFAULT_CONFIG_FILENAME,
-    DEFAULT_IDENTITY_CTL_DB_FILENAME,
-    DEFAULT_INTEGRATED_BUNDLE_SUBPATH,
-    DEFAULT_INTEGRATED_STORAGE_SUBPATH,
-    DEFAULT_PROFILES_SUBPATH,
+    DEFAULT_IDENTITY_DB_FILENAME,
 )
 from .interfaces import IDENTITY_DEFAULT_RENDER_VERSION
 
@@ -31,14 +32,24 @@ class StorageConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     backend: Literal["sqlite", "memory"] = "sqlite"
-    sqlite_path: str = f"~/.openminion/identity/{DEFAULT_IDENTITY_CTL_DB_FILENAME}"
+    sqlite_path: str = f"~/.openminion/identity/{DEFAULT_IDENTITY_DB_FILENAME}"
     db_path: str = ""
 
     @model_validator(mode="after")
     def _sync_db_paths(self) -> "StorageConfig":
         sqlite = str(self.sqlite_path or "").strip()
         db = str(self.db_path or "").strip()
-        if not db and sqlite:
+        if (
+            "db_path" in self.model_fields_set
+            and "sqlite_path" not in self.model_fields_set
+        ):
+            self.sqlite_path = db
+        elif (
+            "sqlite_path" in self.model_fields_set
+            and "db_path" not in self.model_fields_set
+        ):
+            self.db_path = sqlite
+        elif not db and sqlite:
             self.db_path = sqlite
         elif db and not sqlite:
             self.sqlite_path = db
@@ -78,7 +89,7 @@ class RenderingConfig(BaseModel):
 class ProfilesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    directory: str = "~/.openminion/identity/profiles"
+    directory: str = "~/.openminion/identity"
     bundle_root: str = "~/.openminion/identity"
 
 
@@ -96,16 +107,9 @@ def from_base_config(
     base_config: OpenMinionConfig,
     home_root: Path,
     data_root: Path,
+    env: Mapping[str, object] | None = None,
 ) -> IdentityCtlConfig:
     db_raw = str(base_config.identity.db_path or "").strip()
-    if db_raw:
-        storage_path = Path(db_raw).expanduser()
-        if not storage_path.is_absolute():
-            storage_path = home_root / storage_path
-    else:
-        storage_path = data_root / DEFAULT_INTEGRATED_STORAGE_SUBPATH
-    storage_path = storage_path.resolve(strict=False)
-
     bundle_raw = str(base_config.identity.bundle_root or "").strip()
     legacy_root_raw = str(base_config.identity.root or "").strip()
     if legacy_root_raw:
@@ -114,21 +118,31 @@ def from_base_config(
             DeprecationWarning,
             stacklevel=2,
         )
-    root_raw = bundle_raw or legacy_root_raw
-    if root_raw:
-        root_path = Path(root_raw).expanduser()
-        if not root_path.is_absolute():
-            root_path = home_root / root_path
-    else:
-        root_path = data_root / DEFAULT_INTEGRATED_BUNDLE_SUBPATH
-    root_path = root_path.resolve(strict=False)
-    profiles_path = (root_path / DEFAULT_PROFILES_SUBPATH).resolve(strict=False)
+    legacy_db_raw = (
+        legacy_root_raw
+        if legacy_root_raw and Path(legacy_root_raw).suffix.lower() == ".db"
+        else ""
+    )
+    configured_root = bundle_raw or ("" if legacy_db_raw else legacy_root_raw)
+    root_path = resolve_identity_root_from_env(
+        env=env,
+        process_env={} if env is not None else None,
+        home_root=home_root,
+        data_root=data_root,
+        configured_root=configured_root,
+    )
+    storage_path = resolve_identity_db_from_env(
+        env=env,
+        process_env={} if env is not None else None,
+        home_root=home_root,
+        data_root=data_root,
+        configured_db=db_raw or legacy_db_raw,
+        configured_root=configured_root,
+    )
 
     return IdentityCtlConfig(
         storage=StorageConfig(sqlite_path=str(storage_path), db_path=str(storage_path)),
-        profiles=ProfilesConfig(
-            directory=str(profiles_path), bundle_root=str(root_path)
-        ),
+        profiles=ProfilesConfig(directory=str(root_path), bundle_root=str(root_path)),
     )
 
 
@@ -139,7 +153,7 @@ def load_config(
     data_root: Path | None = None,
     env: Mapping[str, str] | None = None,
 ) -> IdentityCtlConfig:
-    env_map = dict(env or os.environ)
+    env_map = dict(os.environ if env is None else env)
     resolved_home_root = resolve_module_home_root(home_root, env_map)
     resolved_data_root = resolve_module_data_root(
         home_root=resolved_home_root,
@@ -155,6 +169,7 @@ def load_config(
                 base_config=OpenMinionConfig(),
                 home_root=base_root,
                 data_root=resolved_data_root,
+                env=env_map,
             )
         return IdentityCtlConfig()
 
@@ -165,9 +180,44 @@ def load_config(
     if not isinstance(raw, dict):
         raise ValueError("identityctl config must parse to an object")
 
-    if "identityctl" in raw and isinstance(raw["identityctl"], dict):
-        return IdentityCtlConfig.model_validate(raw["identityctl"])
-    return IdentityCtlConfig.model_validate(raw)
+    payload = raw["identityctl"] if isinstance(raw.get("identityctl"), dict) else raw
+    identity_cfg = IdentityCtlConfig.model_validate(payload)
+    if resolved_data_root is None:
+        return identity_cfg
+
+    base_root = resolved_home_root or Path.cwd().resolve(strict=False)
+    profile_fields = identity_cfg.profiles.model_fields_set
+    configured_root = ""
+    if "bundle_root" in profile_fields:
+        configured_root = identity_cfg.profiles.bundle_root
+    elif "directory" in profile_fields:
+        configured_root = identity_cfg.profiles.directory
+    storage_fields = identity_cfg.storage.model_fields_set
+    configured_db = ""
+    if "db_path" in storage_fields:
+        configured_db = identity_cfg.storage.db_path
+    elif "sqlite_path" in storage_fields:
+        configured_db = identity_cfg.storage.sqlite_path
+    identity_root = resolve_identity_root_from_env(
+        env=env_map,
+        process_env={},
+        home_root=base_root,
+        data_root=resolved_data_root,
+        configured_root=configured_root,
+    )
+    identity_db = resolve_identity_db_from_env(
+        env=env_map,
+        process_env={},
+        home_root=base_root,
+        data_root=resolved_data_root,
+        configured_db=configured_db,
+        configured_root=configured_root,
+    )
+    identity_cfg.profiles.directory = str(identity_root)
+    identity_cfg.profiles.bundle_root = str(identity_root)
+    identity_cfg.storage.sqlite_path = str(identity_db)
+    identity_cfg.storage.db_path = str(identity_db)
+    return identity_cfg
 
 
 def resolve_default_render_budget(

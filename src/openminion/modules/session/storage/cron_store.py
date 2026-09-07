@@ -104,6 +104,24 @@ class CronStore(CronCoordinationStore):
     ) -> int:
         return self._record_store.execute_count(sql, params)
 
+    def _is_task_owned_job(self, job_id: str) -> bool:
+        table = self._query_one(
+            """
+            SELECT 1 AS present
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'scheduled_tasks'
+            """
+        )
+        if table is None:
+            return False
+        return (
+            self._query_one(
+                "SELECT 1 AS present FROM scheduled_tasks WHERE cron_job_id = ?",
+                (job_id,),
+            )
+            is not None
+        )
+
     def add_cron_job(
         self,
         *,
@@ -240,7 +258,13 @@ class CronStore(CronCoordinationStore):
             )
         return [row_to_cron_job(row) for row in rows]
 
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None:
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None:
         job = self.get_cron_job(job_id)
         if job is None:
             raise ValueError(f"cron job not found: {job_id}")
@@ -270,6 +294,16 @@ class CronStore(CronCoordinationStore):
                 """,
                 (1 if enabled else 0, next_due, now, str(job["job_id"])),
             )
+            if not enabled and cancel_queued:
+                self._execute_count(
+                    """
+                    UPDATE cron_runs
+                    SET state = 'cancelled', finished_at = ?, lease_owner = NULL,
+                        lease_expires_at = NULL, updated_at = ?
+                    WHERE job_id = ? AND state = 'queued'
+                    """,
+                    (now, now, str(job["job_id"])),
+                )
 
     def delete_cron_job(self, job_id: str) -> None:
         jid = str(job_id or "").strip()
@@ -421,6 +455,69 @@ class CronStore(CronCoordinationStore):
             )
         return [row_to_cron_run(row) for row in rows]
 
+    def _persist_due_decision(
+        self,
+        *,
+        job: Mapping[str, Any],
+        schedule: Mapping[str, Any],
+        due_points: list[datetime],
+        next_due: datetime | None,
+        now: str,
+    ) -> None:
+        job_id = str(job["job_id"])
+        self._execute_count(
+            """
+            UPDATE cron_jobs
+            SET next_due_at = ?, updated_at = ?
+            WHERE job_id = ?
+            """,
+            (to_iso_utc(next_due) if next_due is not None else None, now, job_id),
+        )
+        if not (
+            str(schedule.get("kind") or "").strip() == "at"
+            and str(job.get("misfire_policy") or "").strip() == "skip"
+            and not due_points
+            and next_due is None
+            and self._is_task_owned_job(job_id)
+        ):
+            return
+        due_iso = str(job.get("next_due_at") or now)
+        self._execute_count(
+            """
+            INSERT INTO cron_runs(
+              run_id, job_id, state, due_at, available_at, started_at, finished_at,
+              isolated_session_id, summary, artifact_refs_json, error_json, output_json,
+              lease_owner, lease_expires_at,
+              delivery_targets_json, attempts, created_at, updated_at
+            )
+            VALUES (?, ?, 'failed', ?, NULL, NULL, ?, NULL, NULL, '[]', ?, '{}',
+                    NULL, NULL, '[]', 0, ?, ?)
+            ON CONFLICT(job_id, due_at) DO NOTHING
+            """,
+            (
+                uuid4().hex,
+                job_id,
+                due_iso,
+                now,
+                to_json(
+                    {
+                        "code": "schedule_missed",
+                        "message": "one-time task exceeded its allowed lateness",
+                    }
+                ),
+                now,
+                now,
+            ),
+        )
+        self._execute_count(
+            """
+            UPDATE cron_jobs
+            SET enabled = 0, next_due_at = NULL, updated_at = ?
+            WHERE job_id = ?
+            """,
+            (now, job_id),
+        )
+
     def enqueue_due_cron_runs(
         self,
         daemon_id: str,
@@ -496,17 +593,12 @@ class CronStore(CronCoordinationStore):
                 if room > 0 and len(due_points) > room:
                     due_points = due_points[:room]
 
-                self._execute_count(
-                    """
-                    UPDATE cron_jobs
-                    SET next_due_at = ?, updated_at = ?
-                    WHERE job_id = ?
-                    """,
-                    (
-                        to_iso_utc(next_due) if next_due is not None else None,
-                        now,
-                        str(job["job_id"]),
-                    ),
+                self._persist_due_decision(
+                    job=job,
+                    schedule=schedule,
+                    due_points=due_points,
+                    next_due=next_due,
+                    now=now,
                 )
 
                 for due_dt in due_points:
@@ -578,9 +670,11 @@ class CronStore(CronCoordinationStore):
             )
             candidates = self._record_store.query_dicts(
                 """
-                SELECT *
-                FROM cron_runs
-                WHERE state = 'queued'
+                SELECT r.*
+                FROM cron_runs AS r
+                JOIN cron_jobs AS j ON j.job_id = r.job_id
+                WHERE r.state = 'queued'
+                  AND j.enabled = 1
                   AND (available_at IS NULL OR available_at <= ?)
                   AND (
                     lease_owner IS NULL

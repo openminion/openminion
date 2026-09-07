@@ -14,6 +14,7 @@ from openminion.api.server.app import (
     reset_api_metrics,
 )
 from openminion.api.runtime import APIRuntime
+from openminion.api.server.auth import require_ipc_token_for_bind
 from openminion.api.turns import run_turn
 from openminion.api.core.validation import parse_json_request_body
 
@@ -33,6 +34,7 @@ def build_api_server(
         home_root=home_root,
         data_root=data_root,
     )
+    require_ipc_token_for_bind(host, bootstrap.ipc_token, bootstrap.runtime)
     handler_cls = build_api_handler_class(
         _OpenMinionAPIHandler,
         config_path=config_path,

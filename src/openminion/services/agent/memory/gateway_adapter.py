@@ -517,15 +517,10 @@ class MemoryServiceGatewayAdapter(
                 )
             except Exception:
                 return None
-        get_latest = getattr(
-            self._brain_session_store, "get_latest_working_state", None
+        return self._brain_session_store.get_latest_working_state(
+            session_id,
+            agent_id=self._agent_id,
         )
-        if not callable(get_latest):
-            return None
-        try:
-            return get_latest(session_id)
-        except Exception:
-            return None
 
     def __del__(self) -> None:
         self._close_trace_file()

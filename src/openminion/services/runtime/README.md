@@ -25,6 +25,8 @@ Re-exported from `openminion.services.runtime`:
 - Manager: `AgentRuntimeManager`, `AgentHandle`, `AgentStatus`,
   `TurnHandle`, `TurnRequest`, `TurnResponse`, `TurnChunk`,
   `TurnError`, `TurnTelemetry`, `ToolCallSummary`
+- Turn input: `TurnInputIntent`, `TurnInputQueue`, `TurnInputQueueEntry`,
+  `TurnInputQueueError`, `TurnInputQueueStatus`
 - Daemon: `build_runtime_manager(...)`, `build_turn_request(...)`
 - Config: `RuntimeConfig` (`ManagerConfig` remains as a compatibility alias)
 - Status: `RunStatus`
@@ -48,14 +50,14 @@ Internal modules of note:
 - `daemon.py` — daemon process entry
 - `cli.py`, `__main__.py` — operator CLI
 - `engine.py` — `RuntimeEngine` (policy + tool dispatch)
-- `discovery.py`, `plugins/` — runtime plugin loader
+- `plugins/` — runtime plugin discovery, manifests, hooks, and registry
 - `cron/` — cron <-> turn delivery, execution, and audit helpers
 - `turn_router.py` — turn routing across composed surfaces
-- `ingress.py`, `lifecycle.py` — runtime ingress + lifecycle hooks
+- `ingress/`, `lifecycle.py` — runtime ingress and lifecycle hooks
 - `catalog.py` — runtime catalog
 - `env.py` — `apply_runtime_environment`
 - `verifier_binding.py` — verifier binding for security checks
-- `contracts/` — runtime contracts subpackage
+- `interfaces.py`, `settings.py` — runtime-facing protocols and settings
 
 ## Owned objects
 
@@ -80,8 +82,8 @@ Internal modules of note:
 
 ## How this differs from `modules/`
 
-`modules/runtime/` (if/when present) owns runtime-flavored module
-primitives. `services/runtime/` is the cross-owner composition root —
+`modules/runtime/` owns typed cross-runtime primitives.
+`services/runtime/` is the cross-owner composition root —
 the place where the whole system is wired and launched. Per the
 `services/README.md` naming note: `services.runtime` means cross-owner
 system orchestration, distinct from `openminion.base.runtime` and

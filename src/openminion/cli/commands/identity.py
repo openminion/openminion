@@ -110,6 +110,21 @@ def run_identity_import_from_bundle(
         sys.exit(1)
 
     existing = ctl.get_profile(resolved_agent_id)
+    if existing is not None:
+        existing_meta = dict(existing.meta or {})
+        existing_source = str(existing_meta.get("source", "") or "").strip().lower()
+        is_bundle_managed = existing_source == "bundle" or (
+            not existing_source
+            and bool(str(existing_meta.get("bundle_fingerprint", "") or "").strip())
+        )
+        if not is_bundle_managed:
+            print(
+                "ERROR: bundle import cannot overwrite a YAML-managed or protected "
+                f"profile for agent '{resolved_agent_id}'; delete it first to change "
+                "authority",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     next_profile_revision = (
         max(1, existing.profile_revision + 1) if existing is not None else 1
     )

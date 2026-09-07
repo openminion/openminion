@@ -88,26 +88,18 @@ def _prepare_runtime_roots(
 
 def _run_setup_from_default_route(args: object, home_root: str, data_root: str) -> int:
     from openminion.cli.commands.setup import run_setup
-    from openminion.services.bootstrap.onboarding import build_inline_setup_args
 
-    return int(
-        run_setup(
-            build_inline_setup_args(
-                config=getattr(args, "config", None),
-                home_root=home_root or None,
-                data_root=data_root or None,
-                no_chat=False,
-                agent=None,
-            )
-        )
-        or 0
-    )
+    setup_args = SimpleNamespace(**vars(args))
+    setup_args.home_root = home_root or None
+    setup_args.data_root = data_root or None
+    setup_args.no_chat = False
+    return int(run_setup(setup_args) or 0)
 
 
 def _default_route_home_root(effective_home_root: str) -> Path:
     if effective_home_root:
         return Path(effective_home_root).expanduser().resolve()
-    return Path.cwd().resolve()
+    return Path.home().resolve()
 
 
 def _default_route_data_root(
@@ -201,9 +193,7 @@ def _run_no_handler(
         parser.error("--add-dir requires a TTY bare interactive launch")
     config_path = resolve_config_path(
         getattr(args, "config", None),
-        home_root=_default_route_home_root(effective_home_root)
-        if effective_home_root
-        else None,
+        home_root=_default_route_home_root(effective_home_root),
     )
     route = resolve_surface_onboarding_route(
         config_path=config_path,
@@ -221,7 +211,11 @@ def _run_no_handler(
     )
     status = route.status
     if route.should_launch_setup:
-        return _run_setup_from_default_route(args, home_root, data_root)
+        return _run_setup_from_default_route(
+            args,
+            str(route.home_root),
+            str(route.data_root),
+        )
     if route.should_fail_fast:
         parser.exit(
             status=2,
@@ -234,8 +228,8 @@ def _run_no_handler(
     if has_tty:
         return _run_default_interactive(
             args,
-            home_root,
-            data_root,
+            str(route.home_root),
+            str(route.data_root),
             no_interactive=bool(getattr(args, "no_interactive", False)),
         )
     if not sys.stdin.isatty():

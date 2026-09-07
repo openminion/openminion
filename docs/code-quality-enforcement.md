@@ -1,7 +1,7 @@
 # OpenMinion Code Quality Enforcement
 
 Status: active
-Last updated: 2026-06-30
+Last updated: 2026-09-06
 
 Purpose: summarize the public contributor view of OpenMinion's active quality
 gates and validation posture.
@@ -26,14 +26,12 @@ be clearer than a new wrapper.
 For normal contribution work, run:
 
 ```bash
-cd openminion
 make lint
 ```
 
 For broader local proof, also run:
 
 ```bash
-cd openminion
 make check
 ```
 
@@ -84,7 +82,8 @@ The active checks are designed to catch drift in areas such as:
 ## When work is cleanup or refactor heavy
 
 1. Start from a fresh live inventory instead of a hand-picked subset.
-2. Keep sweep artifacts in the workspace temp area rather than the repo root.
+2. Keep sweep artifacts in a temporary directory outside the tracked package
+   tree.
 3. Use focused regression proof before and after structural moves.
 4. Prefer root-cause fixes in the owning module over repeated local
    workarounds.

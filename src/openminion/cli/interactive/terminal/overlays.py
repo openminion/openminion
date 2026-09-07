@@ -18,7 +18,7 @@ class TerminalOverlayPresenter:
         self,
         *,
         console: Console,
-        prompt_session: PromptSession | None = None,
+        prompt_session: PromptSession[str] | None = None,
     ) -> None:
         self._console = console
         self._session = prompt_session or PromptSession()
@@ -97,6 +97,18 @@ class TerminalOverlayPresenter:
         if not normalized:
             return default
         return normalized in {"y", "yes"}
+
+    async def present_prompt_async(
+        self,
+        prompt: str,
+        *,
+        secret: bool = False,
+    ) -> str | None:
+        try:
+            text = await self._session.prompt_async(prompt, is_password=secret)
+        except (EOFError, KeyboardInterrupt):
+            return None
+        return str(text or "").strip()
 
 
 def _session_label(item: Any) -> str:

@@ -782,6 +782,17 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertNotIn("fixture_verified", output)
         self.assertLessEqual(max(map(len, output.splitlines())), 80)
 
+    def test_hosted_provider_check_is_recommended_by_default(self) -> None:
+        with (
+            mock.patch("builtins.input", return_value="") as prompt,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            selected = setup_command._prompt_provider_check(get_setup_preset("minimax"))
+
+        self.assertTrue(selected)
+        self.assertIn("Recommended connection test", output.getvalue())
+        self.assertIn("[Y/n]", prompt.call_args.args[0])
+
     def test_setup_parser_does_not_accept_raw_api_key_flag(self) -> None:
         parser = build_parser(selected_command="setup")
 
@@ -1071,3 +1082,40 @@ def test_run_data_json_output_uses_shared_printer(
 
     assert current.run_data(args) == 0
     assert json.loads(capsys.readouterr().out) == payload
+
+
+def test_setup_focus_handoff_preserves_interactive_options(tmp_path: Path) -> None:
+    args = Namespace(
+        home_root=str(tmp_path / "home"),
+        data_root=str(tmp_path / "data"),
+        agent="coding",
+        session="existing-session",
+        dir=str(tmp_path / "project"),
+        add_dir=[str(tmp_path / "shared")],
+        theme="dark",
+        color="never",
+        no_context=True,
+        no_update_check=True,
+        animation_provider="openminion",
+        animation="pulse",
+        verbosity="normal",
+        progress="minimal",
+    )
+    config_path = tmp_path / "config.json"
+
+    with mock.patch(
+        "openminion.cli.commands.interactive.run_interactive", return_value=0
+    ) as run:
+        assert (
+            setup_command._launch_post_setup_interactive(
+                args,
+                config_path=config_path,
+            )
+            == 0
+        )
+
+    assert vars(run.call_args.args[0]) == {
+        "config": str(config_path),
+        **vars(args),
+        "no_interactive": False,
+    }
