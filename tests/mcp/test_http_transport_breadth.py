@@ -11,6 +11,7 @@ from urllib import parse as urllib_parse
 import pytest
 
 from openminion.base.config.mcp import MCPAuthorizationConfig, MCPServerConfig
+from openminion.base.config.base import ConfigError
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.modules.llm.providers.base import ProviderToolCall
@@ -22,6 +23,7 @@ from openminion.tools.mcp.manager import (
 )
 from openminion.tools.mcp.auth import (
     InMemoryMCPTokenStore,
+    MCPOAuthMetadata,
     build_authorization_url,
     build_pkce_challenge,
     discover_oauth_metadata,
@@ -29,9 +31,9 @@ from openminion.tools.mcp.auth import (
     register_oauth_client,
     revoke_oauth_token,
 )
+from openminion.tools.mcp.schemas import MCPHeaderBinding
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from openminion.tools.mcp.transport import (
-    MCPProtocolError,
     MCPRemoteTransportError,
     StreamableHTTPMCPTransport,
     parse_www_authenticate,
@@ -90,6 +92,11 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
             }
         )
 
+        if method == "server/discover":
+            self.send_response(400)
+            self.end_headers()
+            return
+
         if (
             getattr(owner, "reject_session", False)
             and str(self.headers.get("Mcp-Session-Id", "") or "").strip()
@@ -130,6 +137,45 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if method == "subscriptions/listen":
+            subscription_id = payload.get("id")
+            messages = [
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/subscriptions/acknowledged",
+                    "params": {
+                        "notifications": {"toolsListChanged": True},
+                        "_meta": {
+                            "io.modelcontextprotocol/subscriptionId": subscription_id
+                        },
+                    },
+                },
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/tools/list_changed",
+                    "params": {
+                        "_meta": {
+                            "io.modelcontextprotocol/subscriptionId": subscription_id
+                        }
+                    },
+                },
+                {"jsonrpc": "2.0", "id": subscription_id, "result": {}},
+            ]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for index, message in enumerate(messages):
+                self.wfile.write(b"event: message\n")
+                self.wfile.write(
+                    f"data: {json.dumps(message, separators=(',', ':'))}\n\n".encode()
+                )
+                self.wfile.flush()
+                if index == 1:
+                    owner.subscription_event_sent.set()
+                    if owner.subscription_release is not None:
+                        owner.subscription_release.wait(timeout=5)
+            return
+
         if method in getattr(owner, "sse_methods", set()):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -142,7 +188,12 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
                     {
                         "jsonrpc": "2.0",
                         "id": payload.get("id"),
-                        "result": _response_for_request(payload).get("result", {}),
+                        "result": _response_for_request(
+                            payload,
+                            invalid_header_schema=getattr(
+                                owner, "invalid_header_schema", False
+                            ),
+                        ).get("result", {}),
                     },
                     separators=(",", ":"),
                 ).encode("utf-8")
@@ -150,7 +201,10 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"\n\n")
             return
 
-        response = _response_for_request(payload)
+        response = _response_for_request(
+            payload,
+            invalid_header_schema=getattr(owner, "invalid_header_schema", False),
+        )
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self._send_session_header()
@@ -159,6 +213,20 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         owner = self.server  # type: ignore[attr-defined]
+        if self.path.startswith("/.well-known/oauth-protected-resource"):
+            base_url = f"http://127.0.0.1:{owner.server_port}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "resource": f"{base_url}/mcp",
+                        "authorization_servers": [base_url],
+                    }
+                ).encode("utf-8")
+            )
+            return
         if self.path == "/.well-known/oauth-authorization-server":
             base_url = f"http://127.0.0.1:{owner.server_port}"
             self.send_response(200)
@@ -174,6 +242,7 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
                         "revocation_endpoint": f"{base_url}/revoke",
                         "code_challenge_methods_supported": ["S256"],
                         "client_id_metadata_document_supported": True,
+                        "authorization_response_iss_parameter_supported": True,
                     }
                 ).encode("utf-8")
             )
@@ -217,7 +286,9 @@ class _RemoteMCPHandler(BaseHTTPRequestHandler):
         return None
 
 
-def _response_for_request(payload: dict[str, Any]) -> dict[str, Any]:
+def _response_for_request(
+    payload: dict[str, Any], *, invalid_header_schema: bool = False
+) -> dict[str, Any]:
     method = str(payload.get("method", "") or "").strip()
     request_id = payload.get("id")
     if method == "initialize":
@@ -242,7 +313,11 @@ def _response_for_request(payload: dict[str, Any]) -> dict[str, Any]:
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "text": {"type": "string"},
+                                "text": (
+                                    {"type": "number", "x-mcp-header": "Text"}
+                                    if invalid_header_schema
+                                    else {"type": "string"}
+                                ),
                             },
                             "required": ["text"],
                             "additionalProperties": False,
@@ -290,12 +365,17 @@ def _remote_mcp_server(
     sse_methods: set[str] | None = None,
     session_id: str = "",
     reject_session: bool = False,
+    invalid_header_schema: bool = False,
+    pause_subscription: bool = False,
 ):
     server = ThreadingHTTPServer(("127.0.0.1", 0), _RemoteMCPHandler)
     server.expected_bearer_token = expected_bearer_token
     server.sse_methods = set(sse_methods or ())
     server.session_id = session_id
     server.reject_session = reject_session
+    server.invalid_header_schema = invalid_header_schema
+    server.subscription_event_sent = threading.Event()
+    server.subscription_release = threading.Event() if pause_subscription else None
     server.last_requests = []
     server.token_requests = []
     server.registration_requests = []
@@ -371,6 +451,7 @@ def test_streamable_http_transport_registers_and_calls_remote_tool() -> None:
 
             methods = [item["method"] for item in server.last_requests]
             assert methods == [
+                "server/discover",
                 "initialize",
                 "notifications/initialized",
                 "tools/list",
@@ -385,6 +466,50 @@ def test_streamable_http_transport_registers_and_calls_remote_tool() -> None:
             assert call_request["headers"]["Mcp-Name"] == "remote-echo"
         finally:
             _close_bootstrap(bootstrap)
+
+
+def test_bearer_token_ref_resolves_from_runtime_token_store() -> None:
+    transport = StreamableHTTPMCPTransport(
+        _http_runtime_config(
+            url="https://mcp.example.test",
+            authorization=MCPAuthorizationConfig(
+                mode="bearer",
+                bearer_token_ref="secret://mcp/bearer",
+            ),
+        ).mcp_servers[0],
+        token_store=InMemoryMCPTokenStore(
+            {"secret://mcp/bearer": "referenced-token"}
+        ),
+    )
+
+    assert transport._authorization_header() == "Bearer referenced-token"  # noqa: SLF001
+
+
+def test_bearer_token_ref_missing_fails_explicitly() -> None:
+    transport = StreamableHTTPMCPTransport(
+        _http_runtime_config(
+            url="https://mcp.example.test",
+            authorization=MCPAuthorizationConfig(
+                mode="bearer",
+                bearer_token_ref="secret://mcp/missing",
+            ),
+        ).mcp_servers[0],
+        token_store=InMemoryMCPTokenStore({}),
+    )
+
+    with pytest.raises(MCPAuthorizationError) as excinfo:
+        transport._authorization_header()  # noqa: SLF001
+
+    assert excinfo.value.reason_code == "mcp_bearer_token_missing"
+
+
+def test_bearer_authorization_rejects_plaintext_and_reference_together() -> None:
+    with pytest.raises(ConfigError, match="exactly one"):
+        MCPAuthorizationConfig(
+            mode="bearer",
+            bearer_token="plain",
+            bearer_token_ref="secret://mcp/bearer",
+        )
 
 
 def test_streamable_http_transport_reuses_session_id_and_closes() -> None:
@@ -461,7 +586,7 @@ def test_modern_http_request_drops_legacy_session_id() -> None:
         transport.request(method="initialize", params={}, timeout_seconds=5.0)
         assert transport.session_state.session_id == "legacy-session"
 
-        with pytest.raises(MCPProtocolError, match="Unknown method") as exc_info:
+        with pytest.raises(MCPRemoteTransportError) as exc_info:
             transport.request(
                 method="server/discover",
                 params={
@@ -473,7 +598,7 @@ def test_modern_http_request_drops_legacy_session_id() -> None:
                 },
                 timeout_seconds=5.0,
             )
-        assert exc_info.value.details["code"] == -32601
+        assert exc_info.value.reason_code == "mcp_http_legacy_candidate"
 
         request_headers = server.last_requests[-1]["headers"]
         assert "Mcp-Session-Id" not in request_headers
@@ -597,7 +722,11 @@ def test_oauth_pkce_metadata_dcr_callback_and_revocation_helpers() -> None:
             scope="mcp.read",
         )
 
-        metadata = discover_oauth_metadata(config, timeout_seconds=5.0)
+        metadata = discover_oauth_metadata(
+            config,
+            resource=f"{base_url}/mcp",
+            timeout_seconds=5.0,
+        )
         assert metadata.token_endpoint == f"{base_url}/token"
         assert metadata.registration_endpoint == f"{base_url}/register"
         assert metadata.code_challenge_methods_supported == ("S256",)
@@ -668,7 +797,9 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
         token_store = InMemoryMCPTokenStore(
             {
                 "secret://mcp/fixture/access": "expired-token",
+                "secret://mcp/fixture/access.issuer": base_url,
                 "secret://mcp/fixture/refresh": "refresh-token",
+                "secret://mcp/fixture/refresh.issuer": base_url,
             }
         )
         auth_changes: list[str] = []
@@ -695,6 +826,12 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
                 token_store.get("secret://mcp/fixture/refresh")
                 == "rotated-refresh-token"
             )
+            assert (
+                token_store.get("secret://mcp/fixture/access.issuer") == base_url
+            )
+            assert (
+                token_store.get("secret://mcp/fixture/refresh.issuer") == base_url
+            )
             assert server.token_requests[-1]["grant_type"] == "refresh_token"
             assert server.token_requests[-1]["resource"] == f"{base_url}/mcp"
             assert server.last_requests[-1]["headers"]["Authorization"] == (
@@ -703,6 +840,38 @@ def test_oauth_pkce_refreshes_revoked_access_token_via_token_store() -> None:
             assert auth_changes == ["refreshed"]
         finally:
             transport.close()
+
+
+def test_oauth_pkce_rejects_token_from_different_issuer() -> None:
+    token_store = InMemoryMCPTokenStore(
+        {
+            "secret://mcp/fixture/access": "access-token",
+            "secret://mcp/fixture/access.issuer": "https://other.example",
+        }
+    )
+    transport = StreamableHTTPMCPTransport(
+        _http_runtime_config(
+            url="https://mcp.example/mcp",
+            authorization=MCPAuthorizationConfig(
+                mode="oauth_pkce",
+                client_id="client",
+                authorization_server_metadata_url=(
+                    "https://auth.example/.well-known/oauth-authorization-server"
+                ),
+                access_token_ref="secret://mcp/fixture/access",
+            ),
+        ).mcp_servers[0],
+        token_store=token_store,
+    )
+    transport._oauth_metadata = MCPOAuthMetadata(  # noqa: SLF001
+        authorization_endpoint="https://auth.example/authorize",
+        token_endpoint="https://auth.example/token",
+        issuer="https://auth.example",
+    )
+
+    with pytest.raises(MCPAuthorizationError) as exc_info:
+        transport.request(method="tools/list", params={}, timeout_seconds=1.0)
+    assert exc_info.value.reason_code == "mcp_oauth_token_issuer_mismatch"
 
 
 def test_oauth_pkce_config_exports_without_token_secrets() -> None:
@@ -760,3 +929,151 @@ def test_streamable_http_transport_accepts_sse_response() -> None:
             assert discovered[0].remote_name == "remote-echo"
         finally:
             manager.close()
+
+
+def test_modern_subscription_stream_acknowledges_dispatches_and_closes() -> None:
+    class _Listener:
+        def __init__(self) -> None:
+            self.notifications: list[tuple[str, dict]] = []
+
+        def handle_notification(self, *, method, params) -> None:
+            self.notifications.append((method, params))
+
+    with _remote_mcp_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        listener = _Listener()
+        result = transport.request(
+            method="subscriptions/listen",
+            params={
+                "notifications": {"toolsListChanged": True},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": (
+                        MCP_MODERN_PROTOCOL_VERSION
+                    )
+                },
+            },
+            timeout_seconds=5.0,
+            server_request_handler=listener,
+        )
+
+    assert result == {
+        "subscriptionId": 1,
+        "notifications": {"toolsListChanged": True},
+        "eventCount": 1,
+        "closed": "graceful",
+    }
+    assert listener.notifications[0][0] == "notifications/tools/list_changed"
+
+
+def test_modern_subscription_dispatches_before_stream_closes() -> None:
+    class _Listener:
+        def __init__(self) -> None:
+            self.notified = threading.Event()
+
+        def handle_notification(self, *, method, params) -> None:
+            del method, params
+            self.notified.set()
+
+    with _remote_mcp_server(pause_subscription=True) as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        listener = _Listener()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                transport.request,
+                method="subscriptions/listen",
+                params={
+                    "notifications": {"toolsListChanged": True},
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": (
+                            MCP_MODERN_PROTOCOL_VERSION
+                        )
+                    },
+                },
+                timeout_seconds=5.0,
+                server_request_handler=listener,
+            )
+            assert server.subscription_event_sent.wait(timeout=2)
+            assert listener.notified.wait(timeout=2)
+            assert not future.done()
+            server.subscription_release.set()
+            assert future.result(timeout=2)["closed"] == "graceful"
+
+
+def test_modern_http_emits_encoded_parameter_headers() -> None:
+    with _remote_mcp_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        transport.set_tool_header_bindings(
+            "remote-echo",
+            (
+                MCPHeaderBinding(
+                    path=("text",), header_name="Text"
+                ),
+            ),
+        )
+        transport.request(
+            method="tools/call",
+            params={
+                "name": "remote-echo",
+                "arguments": {"text": "Hello, 世界"},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": (
+                        MCP_MODERN_PROTOCOL_VERSION
+                    )
+                },
+            },
+            timeout_seconds=5.0,
+        )
+
+    headers = server.last_requests[-1]["headers"]
+    assert headers["Mcp-Param-Text"] == "=?base64?SGVsbG8sIOS4lueVjA==?="
+
+
+def test_http_discovery_omits_tool_with_invalid_header_annotation() -> None:
+    with _remote_mcp_server(invalid_header_schema=True) as server:
+        manager = MCPFleetManager.from_runtime_config(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            )
+        )
+        try:
+            assert manager.discover_tools() == []
+        finally:
+            manager.close()
+
+
+def test_mcp_name_header_encodes_sentinel_pattern() -> None:
+    with _remote_mcp_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            _http_runtime_config(
+                url=f"http://127.0.0.1:{server.server_port}/mcp"
+            ).mcp_servers[0]
+        )
+        transport.request(
+            method="tools/call",
+            params={
+                "name": "=?base64?literal?=",
+                "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": (
+                        MCP_MODERN_PROTOCOL_VERSION
+                    )
+                },
+            },
+            timeout_seconds=5.0,
+        )
+
+    assert server.last_requests[-1]["headers"]["Mcp-Name"] == (
+        "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="
+    )

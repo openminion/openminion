@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from openminion.base.config.mcp import MCPServerConfig
@@ -24,6 +26,9 @@ class _ToolListTransport:
     def notify(self, method: str, params: dict | None = None) -> None:
         self.notifications.append((method, dict(params or {})))
 
+    def close(self) -> None:
+        return None
+
     def request(
         self,
         *,
@@ -33,6 +38,8 @@ class _ToolListTransport:
         server_request_handler=None,
     ) -> dict:
         del params, timeout_seconds, server_request_handler
+        if method == "server/discover":
+            raise MCPProtocolError("method not found")
         if method == "initialize":
             return {
                 "protocolVersion": "2025-03-26",
@@ -141,6 +148,69 @@ def test_mcp_tool_result_rejects_invalid_structured_content() -> None:
                 "isError": False,
             },
             output_schema=session._output_schemas_by_tool["rich-tool"],  # noqa: SLF001
+            stderr_tail="",
+        )
+
+    assert excinfo.value.reason_code == "mcp_output_schema_invalid"
+
+
+@pytest.mark.parametrize(
+    ("schema", "value"),
+    [
+        ({"type": "object"}, {"status": "ok"}),
+        ({"type": "array"}, ["ok", 2]),
+        ({"type": "string"}, "ok"),
+        ({"type": "number"}, 2.5),
+        ({"type": "boolean"}, True),
+        ({"type": "null"}, None),
+    ],
+)
+def test_mcp_tool_result_accepts_all_structured_json_types(
+    schema: dict,
+    value,
+) -> None:
+    normalized = normalize_tool_result(
+        server_name="fixture",
+        remote_name="rich-tool",
+        result={"structuredContent": value, "isError": False},
+        output_schema=schema,
+        stderr_tail="",
+    )
+
+    assert normalized["data"]["structured_content"] == value
+    assert normalized["data"]["structured_content_present"] is True
+    assert normalized["content"] == json.dumps(value, sort_keys=True)
+
+
+def test_mcp_tool_result_distinguishes_absent_structured_content_from_null() -> None:
+    absent = normalize_tool_result(
+        server_name="fixture",
+        remote_name="rich-tool",
+        result={"isError": False},
+        output_schema={"type": "null"},
+        stderr_tail="",
+    )
+    explicit_null = normalize_tool_result(
+        server_name="fixture",
+        remote_name="rich-tool",
+        result={"structuredContent": None, "isError": False},
+        output_schema={"type": "null"},
+        stderr_tail="",
+    )
+
+    assert absent["data"]["structured_content_present"] is False
+    assert absent["content"] == ""
+    assert explicit_null["data"]["structured_content_present"] is True
+    assert explicit_null["content"] == "null"
+
+
+def test_mcp_tool_result_validates_explicit_null_against_output_schema() -> None:
+    with pytest.raises(MCPProtocolError) as excinfo:
+        normalize_tool_result(
+            server_name="fixture",
+            remote_name="rich-tool",
+            result={"structuredContent": None, "isError": False},
+            output_schema={"type": "string"},
             stderr_tail="",
         )
 

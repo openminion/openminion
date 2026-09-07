@@ -19,6 +19,7 @@ from .schemas import (
     MCPSamplingRequest,
     MCPSamplingResult,
     MCPListedTool,
+    MCPHeaderBinding,
     MCPUnsupportedSchemaError,
     build_mcp_runtime_prompt_name,
     build_mcp_runtime_resource_name,
@@ -87,7 +88,7 @@ class MCPFleetHandle(Protocol):
         self,
         *,
         server_name: str,
-        subscriptions: list[dict[str, Any]],
+        notifications: dict[str, Any],
     ) -> dict[str, Any]: ...
 
     def set_log_level(self, *, server_name: str, level: str) -> None: ...
@@ -147,6 +148,12 @@ class MCPTransport(Protocol):
     ) -> dict[str, Any]: ...
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None: ...
+
+    def set_tool_header_bindings(
+        self, tool_name: str, bindings: tuple[MCPHeaderBinding, ...]
+    ) -> None: ...
+
+    def cancel_request(self, request_id: int) -> None: ...
 
     def stderr_tail(self, *, limit: int = 4096) -> str: ...
 

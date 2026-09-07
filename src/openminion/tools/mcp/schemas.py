@@ -146,6 +146,12 @@ class MCPPreparedSchema:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class MCPHeaderBinding:
+    path: tuple[str, ...]
+    header_name: str
+
+
 class MCPUnsupportedSchemaError(RuntimeError):
     """Raised when an MCP tool schema is outside the supported subset."""
 
@@ -155,6 +161,7 @@ class MCPArgumentValidationError(RuntimeError):
 
 
 _RESOURCE_TEMPLATE_VARIABLE_RE = re.compile(r"{([A-Za-z_][A-Za-z0-9_]*)}")
+_HTTP_FIELD_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 
 def build_mcp_runtime_tool_name(*, server_name: str, remote_name: str) -> str:
@@ -209,6 +216,64 @@ def prepare_mcp_registration_schema(
     )
 
 
+def extract_mcp_header_bindings(
+    input_schema: Mapping[str, Any] | None,
+) -> tuple[MCPHeaderBinding, ...]:
+    """Validate and return statically reachable x-mcp-header annotations."""
+
+    bindings: list[MCPHeaderBinding] = []
+    seen_headers: set[str] = set()
+
+    def visit(node: Any, path: tuple[str, ...]) -> None:
+        if not isinstance(node, Mapping):
+            return
+        if "x-mcp-header" in node:
+            header_name = str(node.get("x-mcp-header", "") or "").strip()
+            value_type = str(node.get("type", "") or "").strip()
+            if not path or not _HTTP_FIELD_NAME_RE.fullmatch(header_name):
+                raise MCPUnsupportedSchemaError("invalid x-mcp-header name or location")
+            if value_type not in {"string", "integer", "boolean"}:
+                raise MCPUnsupportedSchemaError(
+                    "x-mcp-header requires string, integer, or boolean"
+                )
+            normalized = header_name.casefold()
+            if normalized in seen_headers:
+                raise MCPUnsupportedSchemaError(
+                    "x-mcp-header names must be case-insensitively unique"
+                )
+            seen_headers.add(normalized)
+            bindings.append(
+                MCPHeaderBinding(
+                    path=path,
+                    header_name=header_name,
+                )
+            )
+        properties = node.get("properties", {})
+        if isinstance(properties, Mapping):
+            for name, child in properties.items():
+                visit(child, (*path, str(name)))
+        for key, value in node.items():
+            if key in {"properties", "x-mcp-header"}:
+                continue
+            if _contains_mcp_header(value):
+                raise MCPUnsupportedSchemaError(
+                    "x-mcp-header must be reachable only through properties"
+                )
+
+    visit(dict(input_schema or {}), ())
+    return tuple(bindings)
+
+
+def _contains_mcp_header(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return "x-mcp-header" in value or any(
+            _contains_mcp_header(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_mcp_header(item) for item in value)
+    return False
+
+
 def build_supported_parameters_schema(
     input_schema: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -239,16 +304,27 @@ def validate_mcp_arguments(
     schema: Mapping[str, Any] | None,
     arguments: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    input_schema = dict(schema or {})
-    prepare_mcp_registration_schema(input_schema)
     if arguments is not None and not isinstance(arguments, Mapping):
         raise MCPArgumentValidationError("arguments must be an object.")
     value = dict(arguments or {})
+    validate_mcp_value(schema=schema, value=value, value_path="arguments")
+    return value
+
+
+def validate_mcp_value(
+    *,
+    schema: Mapping[str, Any] | None,
+    value: Any,
+    value_path: str = "value",
+) -> Any:
+    """Validate any JSON value without imposing the input argument object shape."""
+    value_schema = dict(schema or {})
+    prepare_mcp_registration_schema(value_schema)
     try:
-        Draft202012Validator(input_schema).validate(value)
+        Draft202012Validator(value_schema).validate(value)
     except ValidationError as exc:
         location = ".".join(str(part) for part in exc.absolute_path)
-        prefix = f"arguments.{location}" if location else "arguments"
+        prefix = f"{value_path}.{location}" if location else value_path
         raise MCPArgumentValidationError(f"{prefix}: {exc.message}") from exc
     return value
 
@@ -267,6 +343,7 @@ def render_mcp_resource_template_uri(
 
 __all__ = [
     "MCPArgumentValidationError",
+    "MCPHeaderBinding",
     "MCPCompletionResult",
     "MCPElicitationRequest",
     "MCPElicitationResult",
@@ -288,9 +365,11 @@ __all__ = [
     "build_mcp_runtime_resource_name",
     "build_mcp_runtime_resource_template_name",
     "build_mcp_runtime_tool_name",
+    "extract_mcp_header_bindings",
     "build_mcp_resource_template_arguments_schema",
     "build_supported_parameters_schema",
     "prepare_mcp_registration_schema",
     "render_mcp_resource_template_uri",
     "validate_mcp_arguments",
+    "validate_mcp_value",
 ]

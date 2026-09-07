@@ -108,7 +108,7 @@ def resolve_modern_result(
     current = dict(result)
     current_params = dict(params)
     for _round in range(MCP_MAX_INPUT_ROUNDS):
-        result_type = str(current.get("resultType", "complete") or "complete")
+        result_type = _require_result_type(current)
         if result_type == "input_required":
             current_params = _input_retry_params(
                 base=current_params,
@@ -118,13 +118,19 @@ def resolve_modern_result(
             current = request(method, current_params)
             continue
         if result_type == "task":
-            return _drive_task(
+            current = _drive_task(
                 task=current,
                 request=request,
                 fulfill=fulfill,
                 deadline=deadline,
             )
-        return current
+            continue
+        if result_type == "complete":
+            return current
+        raise MCPModernFlowError(
+            f"MCP result has unsupported resultType {result_type!r}.",
+            reason_code="mcp_result_type_unsupported",
+        )
     raise MCPModernFlowError(
         f"MCP input-required flow exceeded {MCP_MAX_INPUT_ROUNDS} rounds.",
         reason_code="mcp_input_rounds_exceeded",
@@ -191,15 +197,33 @@ def _input_retry_params(
     result: dict[str, Any],
     fulfill: Callable[[str, dict[str, Any]], dict[str, Any] | None],
 ) -> dict[str, Any]:
+    has_requests = "inputRequests" in result
+    has_state = "requestState" in result
+    if not has_requests and not has_state:
+        raise MCPModernFlowError(
+            "MCP input-required result omitted inputRequests and requestState.",
+            reason_code="mcp_input_required_payload_missing",
+        )
     retry = dict(base)
-    retry["inputResponses"] = _input_responses(
-        result.get("inputRequests"),
-        fulfill=fulfill,
-        answered=set(),
-    )
-    if "requestState" in result:
+    if has_requests:
+        retry["inputResponses"] = _input_responses(
+            result["inputRequests"],
+            fulfill=fulfill,
+            answered=set(),
+        )
+    if has_state:
         retry["requestState"] = result["requestState"]
     return retry
+
+
+def _require_result_type(result: dict[str, Any]) -> str:
+    result_type = str(result.get("resultType", "") or "").strip()
+    if not result_type:
+        raise MCPModernFlowError(
+            "MCP modern result omitted resultType.",
+            reason_code="mcp_result_type_missing",
+        )
+    return result_type
 
 
 def _input_responses(

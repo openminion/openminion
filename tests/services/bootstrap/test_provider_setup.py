@@ -11,6 +11,7 @@ from openminion.base.config import (
     AgentProfileConfig,
     OpenMinionConfig,
     RunProfileOverrides,
+    load_config,
 )
 from openminion.base.config.runtime.profile import build_runtime_config
 from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_presets
@@ -549,6 +550,55 @@ def test_all_setup_presets_coexist_and_round_trip_runtime_profiles(
         assert provider.base_url == base_url, agent_id
         if credential_env:
             assert provider.api_key_env == credential_env, agent_id
+
+
+def test_provider_setup_preserves_existing_mcp_secrets_and_unrelated_config(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / ".openminion" / "agents.json"
+    existing = OpenMinionConfig.from_dict(
+        {
+            "runtime": {
+                "mcp_servers": [
+                    {
+                        "name": "private",
+                        "transport": "streamable_http",
+                        "url": "https://mcp.example/messages",
+                        "authorization": {
+                            "mode": "bearer",
+                            "bearer_token": "mcp-bearer-secret",
+                        },
+                    }
+                ]
+            },
+            "storage": {"path": str(tmp_path / "existing.db")},
+            "custom_module": {"enabled": True},
+            "agents": {"existing": {"provider": "echo"}},
+            "default_agent": "existing",
+        }
+    )
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="local",
+            config_path=str(config_path),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={},
+        ),
+        existing_config=existing,
+    )
+
+    saved_path = save_provider_setup(result)
+    saved_text = saved_path.read_text(encoding="utf-8")
+    reloaded = load_config(str(saved_path))
+
+    assert "mcp-bearer-secret" in saved_text
+    assert reloaded.runtime.mcp_servers[0].authorization.bearer_token == (
+        "mcp-bearer-secret"
+    )
+    assert reloaded.storage.path == str(tmp_path / "existing.db")
+    assert reloaded.module_configs["custom_module"] == {"enabled": True}
 
 
 def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(

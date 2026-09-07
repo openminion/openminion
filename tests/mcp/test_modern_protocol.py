@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from typing import Any
 
 import pytest
@@ -20,10 +22,14 @@ from openminion.tools.mcp.constants import (
 )
 from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from openminion.tools.mcp.interfaces import MCPClientCapabilityState
-from openminion.tools.mcp.modern import MCPModernFlowError, MCPModernResponseCache
+from openminion.tools.mcp.modern import (
+    MCPModernFlowError,
+    MCPModernResponseCache,
+    resolve_modern_result,
+)
 from openminion.tools.mcp.schemas import MCPRoot
 from openminion.tools.mcp.session import MCPServerSession
-from openminion.tools.mcp.transport import MCPProtocolError
+from openminion.tools.mcp.transport import MCPProtocolError, StdioMCPTransport
 
 
 class _ModernTransport:
@@ -31,6 +37,7 @@ class _ModernTransport:
         self.responses = {method: deque(items) for method, items in responses.items()}
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.notifications: list[tuple[str, dict[str, Any]]] = []
+        self.cancelled_requests: list[int] = []
         self.running = False
 
     @property
@@ -64,6 +71,9 @@ class _ModernTransport:
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.notifications.append((method, dict(params)))
 
+    def cancel_request(self, request_id: int) -> None:
+        self.cancelled_requests.append(request_id)
+
     def close(self) -> None:
         self.running = False
 
@@ -86,7 +96,17 @@ def _session(
     transport = _ModernTransport(
         {
             MCP_SERVER_DISCOVER_METHOD: [
-                {"supportedVersions": [MCP_MODERN_PROTOCOL_VERSION]}
+                {
+                    "supportedVersions": [MCP_MODERN_PROTOCOL_VERSION],
+                    "capabilities": {"tools": {}},
+                    "instructions": "Diagnostic guidance only.",
+                    "_meta": {
+                        "io.modelcontextprotocol/serverInfo": {
+                            "name": "modern-fixture",
+                            "version": "1.0.0",
+                        }
+                    },
+                }
             ],
             **responses,
         }
@@ -127,17 +147,57 @@ def test_modern_discovery_replaces_initialize_session_handshake() -> None:
     assert tools[0].task_support == "optional"
     assert [tool.remote_name for tool in session.list_tools()] == ["echo"]
     assert session.negotiated_protocol_version == MCP_MODERN_PROTOCOL_VERSION
+    assert session.server_info == {"name": "modern-fixture", "version": "1.0.0"}
+    assert session.server_capabilities == {"tools": {}}
+    assert session.server_instructions == "Diagnostic guidance only."
     assert transport.notifications == []
-    discover_meta = transport.requests[1][1]["_meta"]
+    discover_meta = transport.requests[0][1]["_meta"]
     assert (
         discover_meta["io.modelcontextprotocol/protocolVersion"]
         == MCP_MODERN_PROTOCOL_VERSION
     )
-    assert transport.requests[2][1]["_meta"] == discover_meta
+    assert transport.requests[1][1]["_meta"] == discover_meta
     assert (
         sum(method == MCP_TOOLS_LIST_METHOD for method, _params in transport.requests)
         == 1
     )
+
+
+def test_stdio_malformed_discovery_success_restarts_and_uses_legacy() -> None:
+    class _MalformedDiscoveryTransport(_ModernTransport):
+        def __init__(self) -> None:
+            super().__init__({MCP_SERVER_DISCOVER_METHOD: [{}]})
+            self.start_count = 0
+
+        def start(self) -> None:
+            self.start_count += 1
+            self.running = True
+
+        def request(self, **kwargs):
+            method = kwargs["method"]
+            if method == MCP_INITIALIZE_METHOD:
+                self.requests.append((method, dict(kwargs["params"])))
+                return {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {"tools": {}},
+                }
+            if method == MCP_TOOLS_LIST_METHOD:
+                self.requests.append((method, dict(kwargs["params"])))
+                return {"tools": []}
+            return super().request(**kwargs)
+
+    session = MCPServerSession(
+        MCPServerConfig(name="Legacy", command=["legacy-fixture"])
+    )
+    transport = _MalformedDiscoveryTransport()
+    session._transport = transport  # noqa: SLF001
+
+    assert session.list_tools() == []
+    assert transport.start_count == 2
+    assert [method for method, _params in transport.requests[:2]] == [
+        MCP_SERVER_DISCOVER_METHOD,
+        MCP_INITIALIZE_METHOD,
+    ]
 
 
 def test_discovery_preserves_prompt_and_resource_metadata() -> None:
@@ -145,6 +205,7 @@ def test_discovery_preserves_prompt_and_resource_metadata() -> None:
         {
             MCP_PROMPTS_LIST_METHOD: [
                 {
+                    "resultType": "complete",
                     "prompts": [
                         {
                             "name": "daily",
@@ -157,6 +218,7 @@ def test_discovery_preserves_prompt_and_resource_metadata() -> None:
             ],
             MCP_RESOURCES_LIST_METHOD: [
                 {
+                    "resultType": "complete",
                     "resources": [
                         {
                             "uri": "file:///readme.md",
@@ -170,6 +232,7 @@ def test_discovery_preserves_prompt_and_resource_metadata() -> None:
             ],
             MCP_RESOURCES_TEMPLATES_LIST_METHOD: [
                 {
+                    "resultType": "complete",
                     "resourceTemplates": [
                         {
                             "uriTemplate": "file:///{path}",
@@ -239,6 +302,66 @@ def test_modern_input_required_result_is_fulfilled_and_retried() -> None:
     }
 
 
+def test_modern_input_required_accepts_request_state_without_requests() -> None:
+    session, transport = _session(
+        {
+            MCP_TOOLS_CALL_METHOD: [
+                {"resultType": "input_required", "requestState": "state-1"},
+                {
+                    "resultType": "complete",
+                    "content": [{"type": "text", "text": "ready"}],
+                    "isError": False,
+                },
+            ]
+        }
+    )
+
+    result = session.call_tool(remote_name="needs-state", arguments={})
+
+    assert result["content"] == "ready"
+    call_params = [
+        params
+        for method, params in transport.requests
+        if method == MCP_TOOLS_CALL_METHOD
+    ]
+    assert call_params[1]["requestState"] == "state-1"
+    assert "inputResponses" not in call_params[1]
+
+
+def test_modern_input_required_accepts_requests_without_request_state() -> None:
+    session, transport = _session(
+        {
+            MCP_TOOLS_CALL_METHOD: [
+                {
+                    "resultType": "input_required",
+                    "inputRequests": {"roots": {"method": "roots/list", "params": {}}},
+                },
+                {
+                    "resultType": "complete",
+                    "content": [{"type": "text", "text": "ready"}],
+                    "isError": False,
+                },
+            ]
+        },
+        capabilities=MCPClientCapabilityState(
+            roots=(MCPRoot(uri="file:///workspace", name="workspace"),)
+        ),
+    )
+
+    result = session.call_tool(remote_name="needs-root", arguments={})
+
+    assert result["content"] == "ready"
+    call_params = [
+        params
+        for method, params in transport.requests
+        if method == MCP_TOOLS_CALL_METHOD
+    ]
+    assert "requestState" not in call_params[1]
+    assert call_params[1]["inputResponses"]["roots"] == {
+        "roots": [{"uri": "file:///workspace", "name": "workspace"}]
+    }
+
+
 def test_modern_task_result_is_polled_to_completion() -> None:
     session, transport = _session(
         {
@@ -278,10 +401,123 @@ def test_modern_task_cancel_and_subscription_listen_are_explicit_methods() -> No
     )
 
     assert session.cancel_task("task-2")["cancelled"] is True
-    assert session.listen([{"method": "tools/list_changed"}])["accepted"] == 1
+    assert session.listen({"toolsListChanged": True})["accepted"] == 1
     methods = [method for method, _params in transport.requests]
     assert MCP_TASKS_CANCEL_METHOD in methods
     assert MCP_SUBSCRIPTIONS_LISTEN_METHOD in methods
+    listen_params = next(
+        params
+        for method, params in transport.requests
+        if method == MCP_SUBSCRIPTIONS_LISTEN_METHOD
+    )
+    assert listen_params["notifications"] == {"toolsListChanged": True}
+
+
+def test_modern_resource_subscription_uses_listen_and_http_cancel_is_silent() -> None:
+    session, transport = _session({})
+    session._server.transport = "streamable_http"  # noqa: SLF001
+    session.start()
+
+    with pytest.raises(MCPProtocolError) as exc_info:
+        session.subscribe_resource(resource_uri="file:///readme")
+    assert exc_info.value.reason_code == "mcp_legacy_resource_subscription_only"
+
+    session.cancel(7)
+    assert transport.notifications == []
+    assert transport.cancelled_requests == [7]
+
+
+def test_modern_stdio_cancel_sends_notification() -> None:
+    session, transport = _session({})
+    session.start()
+
+    session.cancel(7)
+
+    assert transport.notifications == [
+        ("notifications/cancelled", {"requestId": 7})
+    ]
+
+
+def test_stdio_transport_correlates_concurrent_responses(monkeypatch) -> None:
+    transport = StdioMCPTransport(
+        MCPServerConfig(name="fixture", command=["fixture"])
+    )
+    writes: list[dict[str, Any]] = []
+    both_written = threading.Event()
+    responses = deque(
+        [
+            {"jsonrpc": "2.0", "id": 2, "result": {"value": "second"}},
+            {"jsonrpc": "2.0", "id": 1, "result": {"value": "first"}},
+        ]
+    )
+
+    monkeypatch.setattr(transport, "start", lambda: None)
+
+    def write(payload: dict[str, Any]) -> None:
+        writes.append(payload)
+        if len(writes) == 2:
+            both_written.set()
+
+    def read(*, deadline: float) -> dict[str, Any]:
+        del deadline
+        assert both_written.wait(timeout=1)
+        return responses.popleft()
+
+    monkeypatch.setattr(transport, "_write_message", write)
+    monkeypatch.setattr(transport, "_read_message", read)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            transport.request,
+            method="first",
+            params={},
+            timeout_seconds=1,
+        )
+        second = pool.submit(
+            transport.request,
+            method="second",
+            params={},
+            timeout_seconds=1,
+        )
+        assert {first.result(timeout=2)["value"], second.result(timeout=2)["value"]} == {
+            "first",
+            "second",
+        }
+
+
+def test_modern_stdio_rejects_server_initiated_request(monkeypatch) -> None:
+    transport = StdioMCPTransport(
+        MCPServerConfig(name="fixture", command=["fixture"])
+    )
+    writes: list[dict[str, Any]] = []
+    monkeypatch.setattr(transport, "start", lambda: None)
+    monkeypatch.setattr(transport, "_write_message", writes.append)
+    monkeypatch.setattr(
+        transport,
+        "_read_message",
+        lambda **_kwargs: {
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "roots/list",
+            "params": {},
+        },
+    )
+
+    with pytest.raises(MCPProtocolError) as exc_info:
+        transport.request(
+            method="tools/list",
+            params={
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": (
+                        MCP_MODERN_PROTOCOL_VERSION
+                    )
+                }
+            },
+            timeout_seconds=1,
+        )
+
+    assert exc_info.value.reason_code == "mcp_modern_stdio_server_request"
+    assert len(writes) == 1
 
 
 def test_modern_response_cache_has_a_fixed_entry_bound() -> None:
@@ -318,8 +554,6 @@ def test_modern_response_cache_is_isolated_by_authorization_identity() -> None:
 
 
 def test_modern_task_timeout_cancels_remote_task(monkeypatch) -> None:
-    from openminion.tools.mcp.modern import resolve_modern_result
-
     calls: list[tuple[str, dict[str, Any]]] = []
 
     def request(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -353,4 +587,47 @@ def test_modern_input_required_rejects_missing_requests() -> None:
     with pytest.raises(MCPProtocolError) as excinfo:
         session.call_tool(remote_name="needs-input", arguments={})
 
-    assert excinfo.value.reason_code == "mcp_input_requests_invalid"
+    assert excinfo.value.reason_code == "mcp_input_required_payload_missing"
+
+
+@pytest.mark.parametrize("result", [{}, {"resultType": ""}])
+def test_modern_result_requires_result_type(result: dict[str, Any]) -> None:
+    with pytest.raises(MCPModernFlowError) as excinfo:
+        resolve_modern_result(
+            method=MCP_TOOLS_LIST_METHOD,
+            params={},
+            result=result,
+            request=lambda _method, _params: {},
+            fulfill=lambda _method, _params: {},
+            timeout_seconds=1.0,
+        )
+
+    assert excinfo.value.reason_code == "mcp_result_type_missing"
+
+
+def test_modern_result_rejects_unknown_result_type() -> None:
+    with pytest.raises(MCPModernFlowError) as excinfo:
+        resolve_modern_result(
+            method=MCP_TOOLS_LIST_METHOD,
+            params={},
+            result={"resultType": "future"},
+            request=lambda _method, _params: {},
+            fulfill=lambda _method, _params: {},
+            timeout_seconds=1.0,
+        )
+
+    assert excinfo.value.reason_code == "mcp_result_type_unsupported"
+
+
+def test_legacy_result_may_omit_result_type() -> None:
+    session, _transport = _session({})
+    result = {"tools": []}
+
+    assert (
+        session._resolve_response(
+            method=MCP_TOOLS_LIST_METHOD,
+            params={},
+            result=result,
+        )
+        == result
+    )

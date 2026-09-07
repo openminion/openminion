@@ -65,13 +65,14 @@ def test_mcp_resource_subscription_lifecycle_and_update_report() -> None:
 
     methods = [method for method, _payload in transport.requests]
     assert methods == [
+        "server/discover",
         "initialize",
         "notifications/initialized",
         "resources/subscribe",
         "resources/unsubscribe",
     ]
-    assert transport.requests[2][1]["uri"] == "file://fixture/readme.md"
     assert transport.requests[3][1]["uri"] == "file://fixture/readme.md"
+    assert transport.requests[4][1]["uri"] == "file://fixture/readme.md"
 
     updates = session.recent_resource_updates(limit=1)
     assert updates[0].server_name == "fixture"

@@ -3,6 +3,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from openminion.modules.telemetry.schemas import TelemetryEvent
+from openminion.modules.telemetry.storage import SQLiteTelemetryStore
+
+from .probe import FocusProbe
+
 
 _FRAMEWORK_ROOT = Path(__file__).resolve().parents[6]
 _DEFAULT_ARTIFACT_ROOT = _FRAMEWORK_ROOT / "workspace-tmp" / "openminion-cli-focus-e2e"
@@ -27,3 +32,18 @@ def write_transcript(root: Path, name: str, transcript: str) -> Path:
     target = root / f"{name}.ansi.txt"
     target.write_text(transcript, encoding="utf-8")
     return target
+
+
+def persisted_events(probe: FocusProbe) -> list[TelemetryEvent]:
+    store = SQLiteTelemetryStore(
+        probe.data_root / "telemetry" / "telemetry.db",
+        read_only=True,
+    )
+    try:
+        return [
+            event
+            for event in store.fetch_events()
+            if event.session_id.startswith(probe.session_id)
+        ]
+    finally:
+        store.close()

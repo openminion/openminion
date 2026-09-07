@@ -36,6 +36,11 @@ class _SSEHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if method == "server/discover":
+            self.send_response(400)
+            self.end_headers()
+            return
+
         if method in owner.malformed_methods:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -153,7 +158,8 @@ def test_streamable_http_transport_supports_sse_initialize_and_tools_list() -> N
             assert len(discovered) == 1
             assert discovered[0].remote_name == "remote-echo"
             methods = [item["method"] for item in server.requests]
-            assert methods[:3] == [
+            assert methods[:4] == [
+                "server/discover",
                 "initialize",
                 "notifications/initialized",
                 "tools/list",

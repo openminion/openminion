@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib import parse as urllib_parse
+from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from openminion.base.config.mcp import MCPAuthorizationConfig
@@ -24,6 +25,12 @@ class MCPTokenStore(Protocol):
     def set(self, ref: str, value: str) -> None: ...
 
     def close(self) -> None: ...
+
+
+def read_token_ref(token_store: MCPTokenStore | None, ref: str) -> str:
+    if token_store is None or not ref:
+        return ""
+    return str(token_store.get(ref) or "").strip()
 
 
 @dataclass
@@ -69,9 +76,10 @@ def build_runtime_mcp_token_store(
     servers = runtime_config.mcp_servers
     needs_store = any(
         server.enabled
-        and server.authorization.mode == "oauth_pkce"
         and (
-            server.authorization.access_token_ref
+            server.env_secret_refs
+            or server.authorization.bearer_token_ref
+            or server.authorization.access_token_ref
             or server.authorization.refresh_token_ref
         )
         for server in servers
@@ -101,6 +109,7 @@ class MCPOAuthMetadata:
     issuer: str = ""
     code_challenge_methods_supported: tuple[str, ...] = ()
     client_id_metadata_document_supported: bool = False
+    authorization_response_iss_parameter_supported: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,28 +135,39 @@ class MCPOAuthTokenState:
 def discover_oauth_metadata(
     config: MCPAuthorizationConfig,
     *,
+    resource: str = "",
+    resource_metadata_url: str = "",
     timeout_seconds: float = 10.0,
 ) -> MCPOAuthMetadata:
-    """Resolve OAuth server metadata from config or metadata URL."""
+    """Resolve validated OAuth metadata for an MCP resource."""
 
-    if config.authorization_endpoint and config.token_endpoint:
-        return MCPOAuthMetadata(
-            authorization_endpoint=config.authorization_endpoint,
-            token_endpoint=config.token_endpoint,
-            registration_endpoint=config.registration_endpoint,
-            revocation_endpoint=config.revocation_endpoint,
-        )
-    if not config.authorization_server_metadata_url:
-        raise ValueError("oauth_pkce requires OAuth metadata or explicit endpoints")
-    request = urllib_request.Request(
-        config.authorization_server_metadata_url,
-        headers={"Accept": "application/json"},
-        method="GET",
+    issuer = _discover_authorization_server(
+        resource=resource,
+        resource_metadata_url=resource_metadata_url,
+        timeout_seconds=timeout_seconds,
     )
-    with urllib_request.urlopen(request, timeout=float(timeout_seconds)) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("OAuth metadata response must be a JSON object")
+    metadata_urls = (
+        [config.authorization_server_metadata_url]
+        if config.authorization_server_metadata_url
+        else _authorization_metadata_urls(issuer)
+    )
+    for metadata_url in metadata_urls:
+        try:
+            payload = _load_json_object(metadata_url, timeout_seconds)
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                continue
+            raise
+        return _oauth_metadata_from_payload(payload, expected_issuer=issuer)
+    raise ValueError("authorization server metadata is unavailable")
+
+
+def _oauth_metadata_from_payload(
+    payload: dict[str, Any], *, expected_issuer: str = ""
+) -> MCPOAuthMetadata:
+    issuer = str(payload.get("issuer", "") or "").strip()
+    if expected_issuer and issuer != expected_issuer:
+        raise ValueError("OAuth metadata issuer does not match selected issuer")
     authorization_endpoint = str(
         payload.get("authorization_endpoint", "") or ""
     ).strip()
@@ -170,12 +190,93 @@ def discover_oauth_metadata(
             payload.get("registration_endpoint", "") or ""
         ).strip(),
         revocation_endpoint=str(payload.get("revocation_endpoint", "") or "").strip(),
-        issuer=str(payload.get("issuer", "") or "").strip(),
+        issuer=issuer,
         code_challenge_methods_supported=code_challenge_methods,
         client_id_metadata_document_supported=(
             payload.get("client_id_metadata_document_supported") is True
         ),
+        authorization_response_iss_parameter_supported=(
+            payload.get("authorization_response_iss_parameter_supported") is True
+        ),
     )
+
+
+def _discover_authorization_server(
+    *, resource: str, resource_metadata_url: str, timeout_seconds: float
+) -> str:
+    urls = (
+        [resource_metadata_url]
+        if resource_metadata_url
+        else _protected_resource_metadata_urls(resource)
+    )
+    if not urls:
+        raise ValueError("oauth_pkce discovery requires the MCP resource URL")
+    for metadata_url in urls:
+        try:
+            payload = _load_json_object(metadata_url, timeout_seconds)
+        except urllib_error.HTTPError as exc:
+            if exc.code == 404:
+                continue
+            raise
+        advertised_resource = str(payload.get("resource", "") or "").strip()
+        if not advertised_resource:
+            raise ValueError("protected resource metadata must include resource")
+        if advertised_resource != resource:
+            raise ValueError("protected resource metadata resource does not match")
+        issuers = payload.get("authorization_servers")
+        if not isinstance(issuers, list) or not issuers:
+            raise ValueError(
+                "protected resource metadata must include authorization_servers"
+            )
+        issuer = str(issuers[0] or "").strip()
+        if not issuer:
+            raise ValueError("protected resource metadata contains an empty issuer")
+        return issuer
+    raise ValueError("protected resource metadata is unavailable")
+
+
+def _protected_resource_metadata_urls(resource: str) -> list[str]:
+    parsed = urllib_parse.urlsplit(str(resource or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return []
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    path = parsed.path.rstrip("/")
+    urls = [f"{origin}/.well-known/oauth-protected-resource{path}"] if path else []
+    root = f"{origin}/.well-known/oauth-protected-resource"
+    if root not in urls:
+        urls.append(root)
+    return urls
+
+
+def _authorization_metadata_urls(issuer: str) -> list[str]:
+    parsed = urllib_parse.urlsplit(issuer)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("authorization server issuer must be an absolute URL")
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    path = parsed.path.rstrip("/")
+    if path:
+        return [
+            f"{origin}/.well-known/oauth-authorization-server{path}",
+            f"{origin}/.well-known/openid-configuration{path}",
+            f"{origin}{path}/.well-known/openid-configuration",
+        ]
+    return [
+        f"{origin}/.well-known/oauth-authorization-server",
+        f"{origin}/.well-known/openid-configuration",
+    ]
+
+
+def _load_json_object(url: str, timeout_seconds: float) -> dict[str, Any]:
+    request = urllib_request.Request(
+        url,
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    with urllib_request.urlopen(request, timeout=float(timeout_seconds)) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"OAuth metadata at {url!r} must be a JSON object")
+    return payload
 
 
 def build_pkce_challenge() -> MCPOAuthPKCEChallenge:
@@ -221,6 +322,7 @@ def exchange_authorization_code(
     _validate_authorization_issuer(
         expected=metadata.issuer,
         received=authorization_issuer,
+        required=metadata.authorization_response_iss_parameter_supported,
     )
     fields = {
         "grant_type": "authorization_code",
@@ -350,9 +452,49 @@ def _request_token(
     )
 
 
-def _validate_authorization_issuer(*, expected: str, received: str) -> None:
+def mcp_token_issuer_ref(token_ref: str) -> str:
+    """Return the sibling issuer marker for an MCP token reference."""
+
+    return f"{str(token_ref or '').strip()}.issuer"
+
+
+def read_issuer_bound_token(
+    token_store: MCPTokenStore | None,
+    token_ref: str,
+    issuer: str,
+) -> str:
+    """Read a token only when its stored issuer matches the selected issuer."""
+
+    if token_store is None or not token_ref:
+        return ""
+    token = str(token_store.get(token_ref) or "").strip()
+    if not token:
+        return ""
+    expected = str(issuer or "").strip()
+    if expected and token_store.get(mcp_token_issuer_ref(token_ref)) != expected:
+        raise ValueError("stored MCP token issuer does not match selected issuer")
+    return token
+
+
+def store_issuer_bound_token(
+    token_store: MCPTokenStore,
+    token_ref: str,
+    value: str,
+    issuer: str,
+) -> None:
+    """Store an MCP token and its selected issuer marker together."""
+
+    token_store.set(token_ref, value)
+    token_store.set(mcp_token_issuer_ref(token_ref), issuer)
+
+
+def _validate_authorization_issuer(
+    *, expected: str, received: str, required: bool
+) -> None:
     received = received.strip()
     if not received:
+        if required:
+            raise ValueError("OAuth authorization response omitted required issuer")
         return
     expected = expected.strip()
     if not expected or received != expected:

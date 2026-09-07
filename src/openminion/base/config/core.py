@@ -323,10 +323,10 @@ class OpenMinionConfig:
         config: OpenMinionConfig = openminion_config_from_dict(payload)
         return config
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, persistence: bool = False) -> dict[str, Any]:
         from .parser.payload import openminion_config_to_dict
 
-        return openminion_config_to_dict(self)
+        return openminion_config_to_dict(self, persistence=persistence)
 
 
 def resolve_default_agent_id(config: OpenMinionConfig) -> str:

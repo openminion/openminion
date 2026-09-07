@@ -19,7 +19,20 @@ from openminion.tools.mcp.server import (
     render_tools_list_payload,
     serve_published_stdio,
 )
-from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
+from openminion.tools.mcp.contracts import (
+    MCP_MODERN_PROTOCOL_VERSION,
+    MCP_PROTOCOL_VERSION,
+    MCP_SUPPORTED_PROTOCOL_VERSIONS,
+)
+
+
+def _modern_meta(version: str = MCP_MODERN_PROTOCOL_VERSION) -> dict[str, object]:
+    return {
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+    }
 
 
 def _contract_tools() -> list[PublishedTool]:
@@ -147,12 +160,18 @@ def test_stdio_adapter_handles_initialize_list_and_call() -> None:
         json.dumps(payload)
         for payload in (
             {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": _modern_meta(),
+            },
             {
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "tools/call",
                 "params": {
+                    **_modern_meta(),
                     "name": "openminion.plan.show",
                     "arguments": {"session_id": "s1"},
                 },
@@ -187,7 +206,11 @@ serve_published_stdio(
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": "echo", "arguments": {"text": "hello"}},
+            "params": {
+                **_modern_meta(),
+                "name": "echo",
+                "arguments": {"text": "hello"},
+            },
         }
     )
 
@@ -349,13 +372,16 @@ def test_published_mcp_jsonrpc_handler_supports_tools_list_and_call() -> None:
 
     listed = handle_published_mcp_request(
         [tool],
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": _modern_meta(),
+        },
     )
-    assert listed == {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": render_tools_list_payload([tool]),
-    }
+    assert listed is not None
+    assert listed["result"]["tools"] == render_tools_list_payload([tool])["tools"]
+    assert listed["result"]["resultType"] == "complete"
 
     called = handle_published_mcp_request(
         [tool],
@@ -363,7 +389,11 @@ def test_published_mcp_jsonrpc_handler_supports_tools_list_and_call() -> None:
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": {"name": "custom", "arguments": {"x": 1}},
+            "params": {
+                **_modern_meta(),
+                "name": "custom",
+                "arguments": {"x": 1},
+            },
         },
     )
     assert called is not None
@@ -390,16 +420,20 @@ def test_published_server_supports_modern_discovery_and_request_metadata() -> No
     ]
     discovered = handle_published_mcp_request(
         tools,
-        {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": _modern_meta(),
+        },
     )
     assert discovered is not None
     assert MCP_MODERN_PROTOCOL_VERSION in discovered["result"]["supportedVersions"]
+    assert discovered["result"]["_meta"][
+        "io.modelcontextprotocol/serverInfo"
+    ]["name"] == "openminion"
 
-    meta = {
-        "_meta": {
-            "io.modelcontextprotocol/protocolVersion": MCP_MODERN_PROTOCOL_VERSION
-        }
-    }
+    meta = _modern_meta()
     listed = handle_published_mcp_request(
         tools,
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": meta},
@@ -408,3 +442,86 @@ def test_published_server_supports_modern_discovery_and_request_metadata() -> No
     assert [item["name"] for item in listed["result"]["tools"]] == ["alpha", "zeta"]
     assert listed["result"]["resultType"] == "complete"
     assert listed["result"]["cacheScope"] == "private"
+
+
+def test_published_server_keeps_legacy_initialize_without_modern_metadata() -> None:
+    initialized = handle_published_mcp_request(
+        [],
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": MCP_PROTOCOL_VERSION},
+        },
+    )
+
+    assert initialized is not None
+    assert initialized["result"]["protocolVersion"] == MCP_PROTOCOL_VERSION
+    listed = handle_published_mcp_request(
+        [],
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        legacy=True,
+    )
+    assert listed == {"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}
+
+
+def test_published_server_rejects_unsupported_discovery_version() -> None:
+    response = handle_published_mcp_request(
+        [],
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": _modern_meta("2099-01-01"),
+        },
+    )
+    assert response is not None
+    assert response["error"]["code"] == -32022
+
+
+def test_published_server_rejects_modern_request_without_client_capabilities() -> None:
+    response = handle_published_mcp_request(
+        [],
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": (
+                        MCP_MODERN_PROTOCOL_VERSION
+                    )
+                }
+            },
+        },
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == -32602
+    assert "clientCapabilities" in response["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("params", "requested"),
+    [({}, None), (_modern_meta("2026-01-01"), "2026-01-01")],
+)
+def test_published_server_rejects_missing_or_unsupported_protocol_metadata(
+    params: dict[str, object], requested: str | None
+) -> None:
+    response = handle_published_mcp_request(
+        [],
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": params},
+    )
+
+    assert response == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {
+            "code": -32022,
+            "message": "unsupported MCP protocol version",
+            "data": {
+                "requested": requested,
+                "supported": list(MCP_SUPPORTED_PROTOCOL_VERSIONS),
+            },
+        },
+    }

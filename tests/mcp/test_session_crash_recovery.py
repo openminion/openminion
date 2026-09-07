@@ -94,7 +94,7 @@ def test_fourth_crash_inside_window_raises_unrecoverable_error() -> None:
         manager.close()
 
 
-def test_initialize_crash_raises_without_retry_loop(
+def test_stdio_discovery_crash_falls_back_once_then_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _runtime_config()
@@ -117,7 +117,7 @@ def test_initialize_crash_raises_without_retry_loop(
         session.call_tool(remote_name="echo-text", arguments={"text": "x"})
 
     assert excinfo.value.reason_code == "mcp_server_unavailable"
-    assert call_count["request"] == 1
+    assert call_count["request"] == 2
     assert session._restart_total == 0
     assert len(session._restart_history) == 0
 

@@ -14,7 +14,12 @@ import pytest
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 from openminion.tools.mcp.interfaces import MCPProgressListener
+from openminion.tools.mcp.contracts import MCP_MODERN_PROTOCOL_VERSION
 from openminion.tools.mcp.manager import MCPCallError, MCPFleetManager, MCPServerSession
+from openminion.tools.mcp.transport import (
+    MCPProtocolError,
+    StreamableHTTPMCPTransport,
+)
 
 
 FIXTURE_SERVER_PATH = (
@@ -318,8 +323,20 @@ def test_long_running_http_tool_can_be_cancelled_and_reports_progress() -> None:
 
             worker = threading.Thread(target=_invoke, daemon=True)
             worker.start()
-            time.sleep(0.1)
-            manager._sessions["fixture"].cancel(3)
+            deadline = time.monotonic() + 2.0
+            request_id = 0
+            while time.monotonic() < deadline:
+                calls = [
+                    item
+                    for item in server.requests
+                    if item.get("method") == "tools/call"
+                ]
+                if calls:
+                    request_id = int(calls[-1]["id"])
+                    break
+                time.sleep(0.01)
+            assert request_id
+            manager._sessions["fixture"].cancel(request_id)
             worker.join(timeout=5)
 
             assert worker.is_alive() is False
@@ -331,3 +348,52 @@ def test_long_running_http_tool_can_be_cancelled_and_reports_progress() -> None:
             assert any((event["progress"] or 0.0) > 0 for event in listener.events)
         finally:
             manager.close()
+
+
+def test_modern_http_cancellation_closes_response_without_notification() -> None:
+    with _cancel_server() as server:
+        transport = StreamableHTTPMCPTransport(
+            MCPServerConfig(
+                name="Fixture",
+                transport="streamable_http",
+                url=f"http://127.0.0.1:{server.server_port}/mcp",
+            )
+        )
+        errors: list[BaseException] = []
+
+        def invoke() -> None:
+            try:
+                transport.request(
+                    method="tools/call",
+                    params={
+                        "name": "sleep-tool",
+                        "arguments": {},
+                        "_meta": {
+                            "io.modelcontextprotocol/protocolVersion": (
+                                MCP_MODERN_PROTOCOL_VERSION
+                            )
+                        },
+                    },
+                    timeout_seconds=5.0,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        worker = threading.Thread(target=invoke, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if transport._active_responses:  # noqa: SLF001
+                break
+            time.sleep(0.01)
+        transport.cancel_request(1)
+        worker.join(timeout=5)
+
+    assert worker.is_alive() is False
+    assert len(errors) == 1
+    assert isinstance(errors[0], MCPProtocolError)
+    assert errors[0].reason_code == "mcp_request_cancelled"
+    assert transport._cancelled_requests == set()  # noqa: SLF001
+    assert not any(
+        item.get("method") == "notifications/cancelled" for item in server.requests
+    )

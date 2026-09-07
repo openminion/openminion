@@ -83,3 +83,19 @@ def test_main_exports_the_active_interpreter_for_pty_children(monkeypatch) -> No
 
     assert runner.main(["onboarding"]) == 0
     assert captured["env"]["OPENMINION_PYTHON"] == sys.executable
+
+
+def test_runner_exposes_deterministic_mcp_suite() -> None:
+    runner = _load_runner()
+
+    assert runner.SUITES["mcp"] == runner.Suite(
+        ("tests/e2e/cli/focus/test_mcp.py",)
+    )
+
+
+def test_runner_exposes_live_mcp_suite() -> None:
+    runner = _load_runner()
+
+    assert runner.SUITES["mcp-live"] == runner.Suite(
+        ("tests/e2e/cli/focus/test_live_mcp.py",), live=True
+    )

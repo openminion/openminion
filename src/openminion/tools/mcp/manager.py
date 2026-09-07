@@ -15,6 +15,13 @@ from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
 
 from .auth import MCPTokenStore, build_runtime_mcp_token_store
+from .errors import (
+    MCPProtocolError,
+    MCPRemoteTransportError,
+    MCPServerUnavailableError,
+    MCPTimeoutError,
+    MCPTransportError,
+)
 from .elicitation import OpenMinionElicitationHandler
 from .interfaces import (
     MCPCapabilityChangeListener,
@@ -40,14 +47,7 @@ from .schemas import (
 from .results import MCPCallError, MCPManagerError
 from .session import MCPServerSession
 from .risk import resolve_mcp_tool_posture as _resolve_mcp_tool_posture
-from .transport import (
-    MCPAuthorizationError,
-    MCPProtocolError,
-    MCPRemoteTransportError,
-    MCPServerUnavailableError,
-    MCPTimeoutError,
-    MCPTransportError,
-)
+from .transport import MCPAuthorizationError
 
 
 if TYPE_CHECKING:
@@ -335,9 +335,9 @@ class MCPFleetManager:
         self,
         *,
         server_name: str,
-        subscriptions: list[dict[str, Any]],
+        notifications: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._require_session(server_name).listen(subscriptions)
+        return self._require_session(server_name).listen(notifications)
 
     def set_log_level(self, *, server_name: str, level: str) -> None:
         session = self._require_session(server_name)
@@ -428,6 +428,10 @@ class MCPFleetManager:
                 name: {
                     "transport": session.server_config.transport,
                     "trusted": session.server_config.trusted,
+                    "protocol_version": session.negotiated_protocol_version,
+                    "server_info": session.server_info,
+                    "capabilities": session.server_capabilities,
+                    "instructions": session.server_instructions,
                     "tool_names": self._tool_catalog_by_server.get(name, ()),
                     "prompt_names": self._prompt_catalog_by_server.get(name, ()),
                     "resource_uris": self._resource_catalog_by_server.get(name, ()),

@@ -3,6 +3,7 @@
 from dataclasses import fields, is_dataclass
 from typing import Any
 
+from openminion.base.config import mcp
 from openminion.base.config.base import ConfigError
 from openminion.base.config.runtime.capability import (
     coerce_mode_runtime_policy_map,
@@ -13,12 +14,6 @@ from openminion.base.config.runtime.capability import (
     plugin_runtime_policy_to_dict,
     provider_runtime_policy_to_dict,
     thinking_runtime_policy_to_dict,
-)
-from openminion.base.config.mcp import (
-    coerce_mcp_publish_config,
-    coerce_mcp_server_configs,
-    mcp_publish_config_to_dict,
-    normalize_mcp_sampling_mode,
 )
 from openminion.base.config.parse import (
     _as_bool,
@@ -171,6 +166,7 @@ def _mcp_server_to_payload(server: Any) -> dict[str, Any]:
         for item in fields(server)
         if item.name != "authorization"
     }
+    payload["env"] = {key: "<redacted>" for key in server.env}
     payload["authorization"] = server.authorization.redacted_dict()
     return payload
 
@@ -216,9 +212,9 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("plugins"), field_path="system.runtime.plugins"
         ),
         "ops": dict(payload.get("ops", {})),
-        "mcp_servers": coerce_mcp_server_configs(payload.get("mcp_servers")),
-        "mcp_publish": coerce_mcp_publish_config(payload.get("mcp_publish")),
-        "mcp_sampling_mode": normalize_mcp_sampling_mode(
+        "mcp_servers": mcp.coerce_mcp_server_configs(payload.get("mcp_servers")),
+        "mcp_publish": mcp.coerce_mcp_publish_config(payload.get("mcp_publish")),
+        "mcp_sampling_mode": mcp.normalize_mcp_sampling_mode(
             payload.get("mcp_sampling_mode")
         ),
         "mcp_discovery_cache_ttl_seconds": max(
@@ -269,7 +265,11 @@ def _build_runtime_config(effective_runtime_payload: dict[str, Any]) -> RuntimeC
     return RuntimeConfig(**runtime_kwargs)
 
 
-def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
+def _runtime_config_to_payload(
+    config: RuntimeConfig, *, persistence: bool = False
+) -> dict[str, Any]:
+    serialize_mcp = _config_value_to_payload if persistence else _mcp_server_to_payload
+    mcp_servers = mcp.coerce_mcp_server_configs(config.mcp_servers)
     payload = {key: getattr(config, key) for key, _ in _STRING_DEFAULTS}
     payload.update({key: getattr(config, key) for key, _ in _BOOL_DEFAULTS})
     payload.update({key: getattr(config, key) for key, _, _ in _INT_MIN_DEFAULTS})
@@ -292,27 +292,23 @@ def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
             "tool_selection": _config_value_to_payload(config.tool_selection),
             "tools": tool_runtime_config_to_dict(config.tools),
             "ops": _config_value_to_payload(config.ops),
-            "mcp_servers": [
-                _mcp_server_to_payload(item)
-                for item in coerce_mcp_server_configs(config.mcp_servers)
-            ],
-            "mcp_publish": mcp_publish_config_to_dict(config.mcp_publish),
-            "mcp_sampling_mode": normalize_mcp_sampling_mode(config.mcp_sampling_mode),
+            "mcp_servers": [serialize_mcp(item) for item in mcp_servers],
+            "mcp_publish": mcp.mcp_publish_config_to_dict(config.mcp_publish),
+            "mcp_sampling_mode": mcp.normalize_mcp_sampling_mode(
+                config.mcp_sampling_mode
+            ),
             "mcp_discovery_cache_ttl_seconds": config.mcp_discovery_cache_ttl_seconds,
             "mcp_deferred_discovery_enabled": config.mcp_deferred_discovery_enabled,
         }
     )
     if config.has_tool_schema_shortlisting_enabled:
-        payload["tool_schema_shortlisting_enabled"] = bool(
-            config.tool_schema_shortlisting_enabled
-        )
+        payload["tool_schema_shortlisting_enabled"] = config.tool_schema_shortlisting_enabled
     if config.has_allow_background_write_authorization:
-        payload["allow_background_write_authorization"] = bool(
-            config.allow_background_write_authorization
-        )
+        payload["allow_background_write_authorization"] = config.allow_background_write_authorization
     if config.has_trailer_guidance_variant:
-        variant = dict(config.trailer_guidance_variant or {})
-        payload["trailer_guidance_variant"] = variant
+        payload["trailer_guidance_variant"] = dict(
+            config.trailer_guidance_variant or {}
+        )
     optional_policies = {
         "provider_policy": provider_runtime_policy_to_dict(config.provider_policy),
         "thinking_policy": thinking_runtime_policy_to_dict(config.thinking_policy),

@@ -1,15 +1,12 @@
 """MCP transport protocol helpers."""
 
+import base64
 import json
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from .contracts import MCP_PROTOCOL_VERSION
-
-
-def _protocol_error(*args: Any, **kwargs: Any) -> Exception:
-    from .transport import MCPProtocolError
-
-    return MCPProtocolError(*args, **kwargs)
+from .errors import MCPProtocolError
 
 
 def parse_www_authenticate(value: str) -> dict[str, str]:
@@ -29,18 +26,22 @@ def parse_www_authenticate(value: str) -> dict[str, str]:
 def extract_result_message(*, message: dict[str, Any], method: str) -> dict[str, Any]:
     error = message.get("error")
     if isinstance(error, dict):
-        raise _protocol_error(
+        details = {"code": error.get("code")}
+        data = error.get("data")
+        if isinstance(data, dict):
+            details["data"] = dict(data)
+        raise MCPProtocolError(
             str(
                 error.get("message")
                 or error.get("code")
                 or f"MCP method {method!r} failed."
             ).strip(),
             reason_code=str(error.get("reason_code", "") or "").strip(),
-            details={"code": error.get("code")},
+            details=details,
         )
     result = message.get("result")
     if not isinstance(result, dict):
-        raise _protocol_error(
+        raise MCPProtocolError(
             f"MCP method {method!r} returned a non-object result.",
             reason_code="mcp_non_object_result",
         )
@@ -48,77 +49,74 @@ def extract_result_message(*, message: dict[str, Any], method: str) -> dict[str,
 
 
 def parse_sse_messages(*, raw: bytes, server_name: str) -> list[dict[str, Any]]:
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise _protocol_error(
-            f"MCP server '{server_name}' returned non-UTF-8 SSE data.",
-            reason_code="mcp_sse_invalid_encoding",
-        ) from exc
-    messages: list[dict[str, Any]] = []
+    return list(iter_sse_messages(lines=raw.splitlines(), server_name=server_name))
+
+
+def iter_sse_messages(
+    *, lines: Iterable[bytes], server_name: str
+) -> Iterator[dict[str, Any]]:
+    """Yield JSON-RPC messages as complete SSE events arrive."""
+
     sse_kind = "message"
     data_lines: list[str] = []
-    terminated = False
 
-    def _finalize_event() -> None:
-        nonlocal sse_kind, data_lines, terminated
-        if not data_lines and sse_kind != "end":
-            sse_kind = "message"
-            data_lines = []
-            return
+    def decode_event() -> dict[str, Any] | None:
+        nonlocal sse_kind, data_lines
         if sse_kind == "end":
-            terminated = True
-            sse_kind = "message"
-            data_lines = []
-            return
+            return None
         payload = "\n".join(data_lines).strip()
         sse_kind = "message"
         data_lines = []
         if not payload:
-            return
+            return None
         try:
             decoded = json.loads(payload)
         except json.JSONDecodeError as exc:
-            raise _protocol_error(
+            raise MCPProtocolError(
                 f"MCP server '{server_name}' returned malformed SSE JSON.",
                 reason_code="mcp_sse_parse_error",
             ) from exc
         if not isinstance(decoded, dict):
-            raise _protocol_error(
+            raise MCPProtocolError(
                 f"MCP server '{server_name}' returned a non-object SSE message.",
                 reason_code="mcp_sse_parse_error",
             )
-        messages.append(decoded)
+        return decoded
 
-    for raw_line in text.splitlines():
-        if terminated:
-            break
-        line = raw_line.rstrip("\r")
+    for raw_line in lines:
+        try:
+            line = raw_line.decode("utf-8").rstrip("\r\n")
+        except UnicodeDecodeError as exc:
+            raise MCPProtocolError(
+                f"MCP server '{server_name}' returned non-UTF-8 SSE data.",
+                reason_code="mcp_sse_invalid_encoding",
+            ) from exc
         if not line:
-            _finalize_event()
+            if sse_kind == "end":
+                return
+            message = decode_event()
+            if message is not None:
+                yield message
             continue
         if line.startswith(":"):
             continue
-        if ":" in line:
-            field, value = line.split(":", 1)
-            if value.startswith(" "):
-                value = value[1:]
-        else:
-            field, value = line, ""
+        field, separator, value = line.partition(":")
+        if separator and value.startswith(" "):
+            value = value[1:]
         field = field.strip().lower()
         if field == "event":
             sse_kind = value.strip().lower() or "message"
-            continue
-        if field == "data":
+        elif field == "data":
             data_lines.append(value)
-            continue
-        raise _protocol_error(
-            f"MCP server '{server_name}' returned malformed SSE field {field!r}.",
-            reason_code="mcp_sse_parse_error",
-        )
-    if not terminated:
-        _finalize_event()
-    return messages
+        else:
+            raise MCPProtocolError(
+                f"MCP server '{server_name}' returned malformed SSE field {field!r}.",
+                reason_code="mcp_sse_parse_error",
+            )
+    if sse_kind != "end":
+        message = decode_event()
+        if message is not None:
+            yield message
 
 
 def dispatch_server_notification(
@@ -195,12 +193,32 @@ def protocol_version_from_payload(payload: dict[str, Any]) -> str:
 
 
 def mcp_name_header(*, method_name: str, params: dict[str, Any]) -> str:
+    value = ""
     if method_name == "tools/call":
-        return str(params.get("name", "") or "").strip()
-    if method_name == "resources/read":
-        return str(params.get("uri", "") or "").strip()
-    if method_name == "prompts/get":
-        return str(params.get("name", "") or "").strip()
-    if method_name.startswith("tasks/"):
-        return str(params.get("taskId", "") or "").strip()
-    return ""
+        value = str(params.get("name", "") or "")
+    elif method_name == "resources/read":
+        value = str(params.get("uri", "") or "")
+    elif method_name == "prompts/get":
+        value = str(params.get("name", "") or "")
+    elif method_name.startswith("tasks/"):
+        value = str(params.get("taskId", "") or "")
+    return encode_mcp_header_value(value) if value else ""
+
+
+def encode_mcp_header_value(value: Any) -> str:
+    if isinstance(value, bool):
+        rendered = "true" if value else "false"
+    elif isinstance(value, int):
+        if abs(value) > (2**53 - 1):
+            raise ValueError("MCP integer header value exceeds JavaScript safe range")
+        rendered = str(value)
+    elif isinstance(value, str):
+        rendered = value
+    else:
+        raise ValueError("MCP header values must be string, integer, or boolean")
+    sentinel = rendered.startswith("=?base64?") and rendered.endswith("?=")
+    safe_ascii = all(0x20 <= ord(char) <= 0x7E for char in rendered)
+    if safe_ascii and rendered == rendered.strip() and not sentinel:
+        return rendered
+    encoded = base64.b64encode(rendered.encode("utf-8")).decode("ascii")
+    return f"=?base64?{encoded}?="

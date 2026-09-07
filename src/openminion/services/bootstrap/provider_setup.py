@@ -261,7 +261,9 @@ def save_provider_setup(result: ProviderSetupResult) -> Path:
 
 def atomic_save_setup_config(config: OpenMinionConfig, path: Path) -> Path:
     target = Path(path).expanduser().resolve(strict=False)
-    payload = json.dumps(config.to_dict(), indent=2, sort_keys=True) + "\n"
+    payload = (
+        json.dumps(config.to_dict(persistence=True), indent=2, sort_keys=True) + "\n"
+    )
     parent_exists = target.parent.exists()
     target.parent.mkdir(parents=True, exist_ok=True)
     if not parent_exists:
@@ -338,7 +340,7 @@ def _parse_config_file(path: Path) -> OpenMinionConfig:
 
 
 def _copy_config(config: OpenMinionConfig) -> OpenMinionConfig:
-    return OpenMinionConfig.from_dict(config.to_dict())
+    return OpenMinionConfig.from_dict(config.to_dict(persistence=True))
 
 
 def _normalize_agent_id(agent_id: str) -> str:

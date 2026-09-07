@@ -34,6 +34,8 @@ SUITES: dict[str, Suite] = {
         live=True,
     ),
     "matrix": Suite(("tests/e2e/cli/focus/test_deep_smoke_matrix.py",)),
+    "mcp": Suite(("tests/e2e/cli/focus/test_mcp.py",)),
+    "mcp-live": Suite(("tests/e2e/cli/focus/test_live_mcp.py",), live=True),
     "adversarial-local": Suite(
         (
             "tests/e2e/cli/focus/test_deep_smoke_matrix.py",

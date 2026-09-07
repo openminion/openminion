@@ -3,8 +3,8 @@
 import json
 from typing import Any
 
-from .schemas import MCPArgumentValidationError, validate_mcp_arguments
-from .transport import MCPProtocolError
+from .errors import MCPProtocolError
+from .schemas import MCPArgumentValidationError, validate_mcp_value
 
 
 class MCPManagerError(RuntimeError):
@@ -44,17 +44,14 @@ def normalize_tool_result(
         if str(item.get("type", "") or "").strip().lower() == "text"
         and str(item.get("text", "") or "").strip()
     ]
+    has_structured_content = "structuredContent" in result
     structured_content = result.get("structuredContent")
-    if output_schema and structured_content is not None:
-        if not isinstance(structured_content, dict):
-            raise MCPProtocolError(
-                f"MCP tool '{server_name}.{remote_name}' returned non-object structuredContent.",
-                reason_code="mcp_output_schema_invalid",
-            )
+    if output_schema and has_structured_content:
         try:
-            structured_content = validate_mcp_arguments(
+            structured_content = validate_mcp_value(
                 schema=output_schema,
-                arguments=structured_content,
+                value=structured_content,
+                value_path="structuredContent",
             )
         except MCPArgumentValidationError as exc:
             raise MCPProtocolError(
@@ -62,7 +59,7 @@ def normalize_tool_result(
                 reason_code="mcp_output_schema_invalid",
             ) from exc
     content_text = "\n".join(text_parts).strip()
-    if not content_text and structured_content is not None:
+    if not content_text and has_structured_content:
         content_text = json.dumps(structured_content, sort_keys=True)
 
     if result.get("isError"):
@@ -87,6 +84,7 @@ def normalize_tool_result(
             "mcp_remote_tool_name": remote_name,
             "content_items": normalized_content,
             "structured_content": structured_content,
+            "structured_content_present": has_structured_content,
             "output_schema": output_schema,
         },
     }

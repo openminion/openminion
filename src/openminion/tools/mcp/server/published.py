@@ -95,6 +95,8 @@ def invoke_published_tool(
 def handle_published_mcp_request(
     tools: list[PublishedTool],
     request: dict[str, Any],
+    *,
+    legacy: bool = False,
 ) -> dict[str, Any] | None:
     """Handle the JSON-RPC methods needed by stdio/HTTP MCP adapters.
 
@@ -106,12 +108,22 @@ def handle_published_mcp_request(
     request_id = request.get("id")
     if not method:
         return _jsonrpc_error(request_id, code=-32600, message="method is required")
+    requested_version = _request_protocol_version(request)
     if method == MCP_SERVER_DISCOVER_METHOD:
+        if requested_version != MCP_MODERN_PROTOCOL_VERSION:
+            return _unsupported_version_error(request_id, requested_version)
+        if not _has_client_capabilities(request):
+            return _missing_client_capabilities_error(request_id)
         return _jsonrpc_result(
             request_id,
             {
                 "supportedVersions": list(MCP_SUPPORTED_PROTOCOL_VERSIONS),
-                "serverInfo": {"name": "openminion", "version": OPENMINION_VERSION},
+                "_meta": {
+                    "io.modelcontextprotocol/serverInfo": {
+                        "name": "openminion",
+                        "version": OPENMINION_VERSION,
+                    }
+                },
                 "capabilities": {"tools": {}},
                 "resultType": "complete",
             },
@@ -127,11 +139,13 @@ def handle_published_mcp_request(
         )
     if method == MCP_INITIALIZED_NOTIFICATION:
         return None
-    modern = _is_modern_request(request)
+    modern = requested_version == MCP_MODERN_PROTOCOL_VERSION
+    if not modern and not legacy:
+        return _unsupported_version_error(request_id, requested_version)
+    if modern and not _has_client_capabilities(request):
+        return _missing_client_capabilities_error(request_id)
     if method == MCP_TOOLS_LIST_METHOD:
-        result = render_tools_list_payload(
-            sorted(tools, key=lambda tool: tool.name) if modern else tools
-        )
+        result = render_tools_list_payload(sorted(tools, key=lambda tool: tool.name))
         if modern:
             result.update(
                 {
@@ -177,28 +191,60 @@ def serve_published_stdio(
 ) -> None:
     """Serve newline-delimited MCP JSON-RPC over stdio."""
 
+    legacy = False
     for line in input_stream:
         if not line.strip():
             continue
         request = json.loads(line)
         if not isinstance(request, dict):
             raise MCPServerError("MCP stdio request must be a JSON object")
-        response = handle_published_mcp_request(tools, request)
+        response = handle_published_mcp_request(tools, request, legacy=legacy)
+        if request.get("method") == MCP_INITIALIZE_METHOD and response is not None:
+            legacy = "result" in response
         if response is not None:
             output_stream.write(json.dumps(response, separators=(",", ":")) + "\n")
             output_stream.flush()
 
 
-def _is_modern_request(request: dict[str, Any]) -> bool:
+def _request_protocol_version(request: dict[str, Any]) -> str:
+    params = request.get("params", {})
+    if not isinstance(params, dict):
+        return ""
+    meta = params.get("_meta", {})
+    if not isinstance(meta, dict):
+        return ""
+    return str(
+        meta.get("io.modelcontextprotocol/protocolVersion", "") or ""
+    ).strip()
+
+
+def _has_client_capabilities(request: dict[str, Any]) -> bool:
     params = request.get("params", {})
     if not isinstance(params, dict):
         return False
     meta = params.get("_meta", {})
-    if not isinstance(meta, dict):
-        return False
-    return (
-        str(meta.get("io.modelcontextprotocol/protocolVersion", "") or "").strip()
-        == MCP_MODERN_PROTOCOL_VERSION
+    return isinstance(meta, dict) and isinstance(
+        meta.get("io.modelcontextprotocol/clientCapabilities"), dict
+    )
+
+
+def _missing_client_capabilities_error(request_id: Any) -> dict[str, Any]:
+    return _jsonrpc_error(
+        request_id,
+        code=-32602,
+        message="modern MCP requests require clientCapabilities metadata",
+    )
+
+
+def _unsupported_version_error(request_id: Any, requested: str) -> dict[str, Any]:
+    return _jsonrpc_error(
+        request_id,
+        code=-32022,
+        message="unsupported MCP protocol version",
+        data={
+            "requested": requested or None,
+            "supported": list(MCP_SUPPORTED_PROTOCOL_VERSIONS),
+        },
     )
 
 
@@ -216,11 +262,20 @@ def _jsonrpc_result(request_id: Any, result: dict[str, Any]) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _jsonrpc_error(request_id: Any, *, code: int, message: str) -> dict[str, Any]:
+def _jsonrpc_error(
+    request_id: Any,
+    *,
+    code: int,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
     return {
         "jsonrpc": "2.0",
         "id": request_id,
-        "error": {"code": code, "message": message},
+        "error": error,
     }
 
 

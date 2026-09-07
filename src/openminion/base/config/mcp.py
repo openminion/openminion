@@ -130,6 +130,7 @@ def _normalize_pattern_list(value: object, *, field_path: str) -> list[str]:
 class MCPAuthorizationConfig:
     mode: str = "none"
     bearer_token: str = ""
+    bearer_token_ref: str = ""
     client_id: str = ""
     client_secret_ref: str = ""
     authorization_server_metadata_url: str = ""
@@ -152,6 +153,7 @@ class MCPAuthorizationConfig:
             )
         self.mode = token
         self.bearer_token = str(self.bearer_token or "").strip()
+        self.bearer_token_ref = str(self.bearer_token_ref or "").strip()
         self.client_id = str(self.client_id or "").strip()
         self.client_secret_ref = str(self.client_secret_ref or "").strip()
         self.authorization_server_metadata_url = _normalize_mcp_url(
@@ -166,30 +168,22 @@ class MCPAuthorizationConfig:
         self.access_token = str(self.access_token or "").strip()
         self.access_token_ref = str(self.access_token_ref or "").strip()
         self.refresh_token_ref = str(self.refresh_token_ref or "").strip()
-        if self.mode == "bearer" and not self.bearer_token:
+        if self.mode == "bearer" and bool(self.bearer_token) == bool(self.bearer_token_ref):
             raise ConfigError(
-                "runtime.mcp_servers[].authorization.bearer_token is required "
-                "when authorization.mode='bearer'."
+                "runtime.mcp_servers[].authorization bearer mode requires "
+                "exactly one of bearer_token or bearer_token_ref."
             )
-        if self.mode == "oauth_pkce":
-            if not self.client_id:
-                raise ConfigError(
-                    "runtime.mcp_servers[].authorization.client_id is required "
-                    "when authorization.mode='oauth_pkce'."
-                )
-            has_metadata = bool(self.authorization_server_metadata_url)
-            has_endpoints = bool(self.authorization_endpoint and self.token_endpoint)
-            if not (has_metadata or has_endpoints):
-                raise ConfigError(
-                    "runtime.mcp_servers[].authorization oauth_pkce requires "
-                    "authorization_server_metadata_url or both authorization_endpoint "
-                    "and token_endpoint."
-                )
+        if self.mode == "oauth_pkce" and not self.client_id:
+            raise ConfigError(
+                "runtime.mcp_servers[].authorization.client_id is required "
+                "when authorization.mode='oauth_pkce'."
+            )
 
     def redacted_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"mode": self.mode}
         if self.mode == "bearer":
             payload["bearer_token"] = "<redacted>" if self.bearer_token else ""
+            payload["bearer_token_ref"] = self.bearer_token_ref
             return payload
         if self.mode == "oauth_pkce":
             payload.update(
@@ -222,6 +216,7 @@ def _coerce_mcp_authorization_config(value: object) -> MCPAuthorizationConfig:
         return MCPAuthorizationConfig(
             mode=value.get("mode", "none"),
             bearer_token=value.get("bearer_token", ""),
+            bearer_token_ref=value.get("bearer_token_ref", ""),
             client_id=value.get("client_id", ""),
             client_secret_ref=value.get("client_secret_ref", ""),
             authorization_server_metadata_url=value.get(
