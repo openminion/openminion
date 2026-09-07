@@ -256,5 +256,60 @@ class TaskLifecycleRepository(
             self._conn.commit()
         return _require_task_record(self.get(record.task_id), task_id=record.task_id)
 
+    def record_scheduled_outcome(
+        self,
+        *,
+        task_id: str,
+        expected_state: TaskLifecycleState,
+        to_state: TaskLifecycleState,
+        metadata: Mapping[str, Any],
+        failure_reason: str | None = None,
+    ) -> TaskLifecycleRecord:
+        record = self.get(task_id)
+        if record is None:
+            raise KeyError(f"task not found: {task_id}")
+        if record.state != expected_state:
+            return record
+        if (
+            to_state != expected_state
+            and to_state not in _ALLOWED_STATE_TRANSITIONS[expected_state]
+        ):
+            raise ValueError(
+                "invalid task state transition: "
+                f"{expected_state.value} -> {to_state.value}"
+            )
+
+        now = _utc_now_iso()
+        completed_at = record.completed_at
+        failed_at = record.failed_at
+        persisted_reason = record.failure_reason
+        if to_state == TaskLifecycleState.DONE and completed_at is None:
+            completed_at = now
+        if to_state == TaskLifecycleState.FAILED:
+            failed_at = now
+            persisted_reason = str(failure_reason or "").strip() or "failed"
+
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET state = ?, updated_at = ?, completed_at = ?, failed_at = ?,
+                    failure_reason = ?, metadata = ?
+                WHERE task_id = ? AND state = ?
+                """,
+                (
+                    to_state.value,
+                    now,
+                    completed_at,
+                    failed_at,
+                    persisted_reason,
+                    _dump_metadata(metadata),
+                    record.task_id,
+                    expected_state.value,
+                ),
+            )
+            self._conn.commit()
+        return _require_task_record(self.get(record.task_id), task_id=record.task_id)
+
 
 __all__ = ["TaskLifecycleRepository"]

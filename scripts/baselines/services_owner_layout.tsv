@@ -27,7 +27,9 @@ scope	max_python_files	max_loc
 # through the existing brain and legacy agent service adapters.
 # Trusted plugin acquisition (2026-09-06) adds one stable staged-bundle digest
 # and excludes rollback backups from installed-plugin discovery.
-services	206	40717
+# Scheduled-task lifecycle convergence (2026-09-07) composes one existing
+# task-outcome callback and one shared schedule operation.
+services	206	40725
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

@@ -115,6 +115,10 @@ def slash_command_runs_while_busy(text: str) -> bool:
     if not parts:
         return False
     command = parts[0]
+    if command == "/tasks" and len(parts) > 1:
+        action = parts[1].split(maxsplit=1)[0].lower()
+        if action in {"pause", "resume", "cancel"}:
+            return False
     return command in _BUSY_SAFE_SLASH_COMMANDS or (
         command in _BUSY_SAFE_BARE_SLASH_COMMANDS and len(parts) == 1
     )

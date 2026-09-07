@@ -163,6 +163,26 @@ def test_misfire_skip_skips_stale_occurrence(store: SQLiteSessionStore) -> None:
     assert refreshed["next_due_at"] != stale_due
 
 
+def test_raw_one_time_misfire_keeps_existing_cron_behavior(
+    store: SQLiteSessionStore,
+) -> None:
+    due_at = to_iso_utc(utc_now() - timedelta(minutes=3))
+    job_id = store.add_cron_job(
+        name="raw-one-time-misfire",
+        schedule={"kind": "at", "at": due_at},
+        payload={"kind": "systemEvent", "event_text": "missed"},
+        misfire_policy="skip",
+        max_lateness_s=1,
+    )
+
+    assert store.enqueue_due_cron_runs("daemon-raw", max_jobs=10) == []
+    job = store.get_cron_job(job_id)
+    assert job is not None
+    assert job["enabled"] is True
+    assert job["next_due_at"] is None
+    assert store.list_cron_runs(job_id=job_id, limit=10) == []
+
+
 def test_delivery_target_dedup(store: SQLiteSessionStore) -> None:
     job_id = store.add_cron_job(
         name="delivery",
@@ -284,6 +304,33 @@ def test_expired_running_run_requeues_after_persisted_backoff(
     assert reacquired[0]["attempts"] == 2
 
 
+def test_disabled_job_does_not_reacquire_lease_recovery(
+    store: SQLiteSessionStore,
+) -> None:
+    job_id = store.add_cron_job(
+        name="paused-recovery",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "recover"},
+        session_target="isolated",
+        max_attempts=3,
+        retry_backoff_s=1,
+    )
+    run_id = store.trigger_cron_run(job_id)
+    started_at = to_iso_utc(utc_now())
+    acquired = store.acquire_cron_runs(
+        "daemon-old", lease_ttl_s=1, now_iso=started_at
+    )
+    assert acquired[0]["run_id"] == run_id
+    store.set_cron_job_enabled(job_id, False)
+    recovery_at = to_iso_utc(parse_iso_datetime(started_at) + timedelta(seconds=2))
+
+    recovered = store.recover_expired_cron_runs(now_iso=recovery_at)
+
+    assert recovered[0]["state"] == "queued"
+    acquire_at = to_iso_utc(parse_iso_datetime(recovery_at) + timedelta(seconds=2))
+    assert store.acquire_cron_runs("daemon-new", now_iso=acquire_at) == []
+
+
 def test_expired_running_run_fails_after_attempt_limit(
     store: SQLiteSessionStore,
 ) -> None:
@@ -335,6 +382,34 @@ def test_worker_failure_uses_same_persisted_retry_policy(
     assert retried["error"]["code"] == "cron_failed"
     assert retried["error"]["retry_delay_s"] == 10
     assert store.acquire_cron_runs("daemon-worker", limit=1, now_iso=failed_at) == []
+
+
+def test_disabled_job_does_not_reacquire_worker_retry(
+    store: SQLiteSessionStore,
+) -> None:
+    job_id = store.add_cron_job(
+        name="paused-retry",
+        schedule={"kind": "every", "every_ms": 60_000},
+        payload={"kind": "agentTurn", "message": "retry"},
+        session_target="isolated",
+        max_attempts=2,
+        retry_backoff_s=1,
+    )
+    run_id = store.trigger_cron_run(job_id)
+    started_at = to_iso_utc(utc_now())
+    store.acquire_cron_runs("daemon-worker", now_iso=started_at)
+    store.set_cron_job_enabled(job_id, False)
+
+    retried = store.retry_cron_run(
+        run_id,
+        error={"code": "cron_failed", "message": "provider unavailable"},
+        now_iso=started_at,
+    )
+
+    assert retried is not None
+    assert retried["state"] == "queued"
+    acquire_at = to_iso_utc(parse_iso_datetime(started_at) + timedelta(seconds=2))
+    assert store.acquire_cron_runs("daemon-worker", now_iso=acquire_at) == []
 
 
 def test_coordination_key_excludes_other_jobs_in_same_scope(

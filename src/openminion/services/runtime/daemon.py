@@ -187,6 +187,9 @@ def attach_cron_scheduler(
         )
         turn_executor = _cron_turn_executor_for_runtime(runtime, cron_store=cron_store)
         delivery_bridge = CronDeliveryBridge(runtime=runtime)
+        from openminion.modules.task import TaskManager
+
+        task_manager = TaskManager.from_cron_repository(cron_store)
 
         scheduler = CronScheduler(
             store=cron_store,
@@ -207,6 +210,7 @@ def attach_cron_scheduler(
                 runtime.runtime_manager is None
                 or not runtime.runtime_manager.has_foreground_work()
             ),
+            record_task_outcomes=task_manager.reconcile_scheduled_outcomes,
         )
         scheduler.start()
         _seed_cron_cleanup_job(cron_store)

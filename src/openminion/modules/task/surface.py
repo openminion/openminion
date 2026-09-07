@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from .project.operator import ProjectOperatorResumeAction, ProjectOperatorWorkState
 from .runtime.lifecycle import TaskLifecycleState
+from .runtime.lifecycle_models import bounded_task_run_error
 
 
 _STATUS_ORDER = {
@@ -46,15 +47,35 @@ class TaskSurface:
         }
 
     def list_tasks(self) -> list[dict[str, Any]]:
-        tasks = _tasks_from_digest_source(
+        digest_tasks = _tasks_from_digest_source(
             self.source,
             agent_id=self.agent_id,
             session_id=self.session_id,
             limit=self.limit,
             event_limit=self.event_limit,
         )
-        if not tasks:
-            tasks = _tasks_from_lifecycle_source(self.source, limit=self.limit)
+        lifecycle_tasks = _tasks_from_lifecycle_source(
+            self.source,
+            agent_id=self.agent_id,
+            limit=self.limit,
+        )
+        tasks_by_id = {
+            str(task.get("id") or ""): task for task in digest_tasks if task.get("id")
+        }
+        for task in lifecycle_tasks:
+            task_id = str(task.get("id") or "")
+            prior = tasks_by_id.get(task_id, {})
+            merged = {**prior, **task}
+            if prior.get("pending_actions"):
+                merged["pending_actions"] = prior["pending_actions"]
+                merged.update(
+                    _operator_projection(
+                        str(merged.get("status") or ""),
+                        prior["pending_actions"],
+                    )
+                )
+            tasks_by_id[task_id] = merged
+        tasks = list(tasks_by_id.values())
         return sorted(
             tasks,
             key=lambda item: (
@@ -70,7 +91,11 @@ class TaskSurface:
         for task in self.list_tasks():
             if str(task.get("id", "")) == normalized:
                 return task
-        return _task_from_lifecycle_record(self.source, normalized)
+        return _task_from_lifecycle_record(
+            self.source,
+            normalized,
+            agent_id=self.agent_id,
+        )
 
     def list_pending_actions(self) -> list[dict[str, Any]]:
         _, pending_by_id = _pending_actions_index(
@@ -97,9 +122,12 @@ class TaskSurface:
                 decision_id=decision_id,
                 session_id=self.session_id,
             )
+        normalized_task_id = str(task_id or "").strip()
+        if self.show_task(normalized_task_id) is None:
+            raise KeyError(f"task not found: {normalized_task_id}")
         return _apply_lifecycle_action(
             self.source,
-            task_id=str(task_id or "").strip(),
+            task_id=normalized_task_id,
             action=normalized_action,
         )
 
@@ -270,7 +298,7 @@ def _iter_digest_tasks(digest: Any | None) -> list[Any]:
 
 
 def _tasks_from_lifecycle_source(
-    source: Any | None, *, limit: int
+    source: Any | None, *, agent_id: str, limit: int
 ) -> list[dict[str, Any]]:
     repository = getattr(source, "lifecycle_repository", None)
     list_records = getattr(repository, "list", None)
@@ -280,11 +308,18 @@ def _tasks_from_lifecycle_source(
         records = list_records(limit=limit)
     except (AttributeError, TypeError, ValueError, RuntimeError):
         return []
-    return [_lifecycle_record_payload(source, record) for record in records]
+    return [
+        _lifecycle_record_payload(source, record)
+        for record in records
+        if _agent_matches(record, agent_id)
+    ]
 
 
 def _task_from_lifecycle_record(
-    source: Any | None, task_id: str
+    source: Any | None,
+    task_id: str,
+    *,
+    agent_id: str,
 ) -> dict[str, Any] | None:
     get_task = getattr(source, "get_task", None)
     if not callable(get_task):
@@ -293,23 +328,35 @@ def _task_from_lifecycle_record(
         record = get_task(task_id)
     except (AttributeError, TypeError, ValueError, RuntimeError):
         return None
-    return _lifecycle_record_payload(source, record) if record is not None else None
+    if record is None:
+        return None
+    if not _agent_matches(record, agent_id):
+        raise PermissionError(f"task is owned by another agent: {task_id}")
+    return _lifecycle_record_payload(source, record)
+
+
+def _agent_matches(record: Any, agent_id: str) -> bool:
+    expected = str(agent_id or "").strip()
+    owner = str(_value(record, "agent_id") or "").strip()
+    return bool(expected) and owner == expected
 
 
 def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]:
     metadata = dict(_value(record, "metadata", {}) or {})
     task_id = str(_value(record, "task_id") or "").strip()
-    title = _task_title(task_id, metadata)
     job = _safe_get_job(source, str(_value(record, "cron_job_id") or task_id).strip())
-    due_at = _normalize_due(
-        (job or {}).get("next_due_at")
-        or metadata.get("due_at")
-        or metadata.get("wait_at")
+    title = _task_title(task_id, metadata, job=job)
+    scheduled_due = (job or {}).get("next_due_at")
+    due_at = (
+        str(scheduled_due).strip()
+        if scheduled_due
+        else _normalize_due(metadata.get("due_at") or metadata.get("wait_at"))
     )
     payload: dict[str, Any] = {
         "id": task_id,
         "title": title,
         "status": _normalize_status(_value(record, "state", "PENDING")),
+        "lifecycle_state": str(_value(record, "state", "active")).lower(),
         "due_at": due_at,
         "steps": _progress_steps(metadata),
         "pending_actions": [],
@@ -319,9 +366,23 @@ def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]
         "updated_at": _value(record, "updated_at"),
     }
     payload.update(_operator_projection(str(payload["status"]), ()))
+    payload["valid_actions"] = _valid_lifecycle_actions(payload["lifecycle_state"])
     if job is not None:
-        payload["schedule"] = job.get("schedule") or job.get("schedule_json")
+        schedule = job.get("schedule") or job.get("schedule_json") or {}
+        payload["schedule"] = schedule
+        payload["schedule_summary"] = _schedule_summary(schedule)
         payload["enabled"] = bool(job.get("enabled", True))
+        payload["task_kind"] = _scheduled_task_kind(schedule)
+        runs = _safe_list_runs(source, str(payload["cron_job_id"]), limit=5)
+        payload["recent_runs"] = runs
+        if runs:
+            payload["last_run"] = {
+                **runs[0],
+                "last_error": runs[0].get("error"),
+            }
+        else:
+            payload["last_run"] = metadata.get("last_run")
+        payload["daemon_required"] = True
     project = _project_payload(metadata)
     if project:
         payload["project"] = project
@@ -352,11 +413,75 @@ def _activity_links(metadata: Mapping[str, Any]) -> dict[str, str]:
     return links
 
 
-def _task_title(task_id: str, metadata: Mapping[str, Any]) -> str:
+def _valid_lifecycle_actions(state: Any) -> list[str]:
+    normalized = str(state or "").strip().lower()
+    if normalized == TaskLifecycleState.ACTIVE.value:
+        return ["pause", "cancel"]
+    if normalized == TaskLifecycleState.PAUSED.value:
+        return ["resume", "cancel"]
+    return []
+
+
+def _scheduled_task_kind(schedule: Any) -> str:
+    kind = str((schedule or {}).get("kind") or "").strip()
+    return "scheduled_once" if kind == "at" else "scheduled_recurring"
+
+
+def _schedule_summary(schedule: Any) -> str:
+    data = dict(schedule or {})
+    kind = str(data.get("kind") or "").strip()
+    if kind == "at":
+        return f"at:{data.get('at')}"
+    if kind == "every":
+        return f"every:{data.get('every_ms')}ms"
+    if kind == "cron":
+        return f"cron:{data.get('expr')} tz={data.get('tz', 'UTC')}"
+    return kind
+
+
+def _safe_list_runs(
+    source: Any | None,
+    job_id: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    list_runs = getattr(source, "list_scheduled_runs", None)
+    if not callable(list_runs):
+        return []
+    try:
+        runs = list_runs(job_id=job_id, limit=max(1, min(limit, 20)))
+    except (AttributeError, TypeError, ValueError, RuntimeError):
+        return []
+    return [
+        {
+            "run_id": run.get("run_id"),
+            "state": run.get("state"),
+            "due_at": run.get("due_at"),
+            "available_at": run.get("available_at"),
+            "started_at": run.get("started_at"),
+            "finished_at": run.get("finished_at"),
+            "summary": str(run.get("summary") or "")[:1000] or None,
+            "attempts": int(run.get("attempts", 0) or 0),
+            "error": bounded_task_run_error(run.get("error")),
+        }
+        for run in runs
+        if isinstance(run, Mapping)
+    ]
+
+
+def _task_title(
+    task_id: str,
+    metadata: Mapping[str, Any],
+    *,
+    job: Mapping[str, Any] | None = None,
+) -> str:
     for key in ("title", "name", "goal", "instruction", "summary"):
         value = str(metadata.get(key) or "").strip()
         if value:
             return value
+    name = str((job or {}).get("name") or "").strip()
+    if name:
+        return name
     return f"Task {task_id}"
 
 

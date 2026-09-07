@@ -72,8 +72,18 @@ def list_cron_jobs(
     return store._cron_store.list_cron_jobs(enabled=enabled, limit=limit)
 
 
-def set_cron_job_enabled(store: Any, job_id: str, enabled: bool) -> None:
-    store._cron_store.set_cron_job_enabled(job_id, enabled)
+def set_cron_job_enabled(
+    store: Any,
+    job_id: str,
+    enabled: bool,
+    *,
+    cancel_queued: bool = False,
+) -> None:
+    store._cron_store.set_cron_job_enabled(
+        job_id,
+        enabled,
+        cancel_queued=cancel_queued,
+    )
 
 
 def replace_cron_job_payload(

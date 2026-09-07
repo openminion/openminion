@@ -54,6 +54,19 @@ def _service_lifecycle(args: Any, *, action: str) -> int:
         return _run_daemon_lifecycle(args, action=action)
     if service_id == "sidecar":
         return _run_sidecar_lifecycle(args, action=action)
+    if service_id == "cron":
+        message = (
+            "cron is hosted by the OpenMinion daemon. "
+            f"Use `openminion daemon {action}`."
+        )
+        payload = {
+            "ok": False,
+            "service": service_id,
+            "action": action,
+            "message": message,
+        }
+        _print_service_payload(payload, as_json=bool(getattr(args, "json", False)))
+        return 1
     message = (
         f"service {service_id} does not have a background {action} owner yet. "
         f"Use `openminion {service_id} --help` for its direct command surface."
@@ -137,6 +150,22 @@ def _service_status_payload(args: Any, *, service_id: str) -> dict[str, Any]:
             }
         except RuntimeError as exc:
             return {**descriptor, "ok": False, "status": "error", "message": str(exc)}
+    if service_id == "cron":
+        from openminion.cli.commands.daemon import _build_daemon_status_payload
+
+        daemon = _build_daemon_status_payload(
+            getattr(args, "config", None),
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
+        readiness = dict(daemon.get("scheduler") or {})
+        return {
+            **descriptor,
+            "ok": readiness.get("state") == "ready",
+            "status": readiness.get("state", "unknown"),
+            "hosted_by": "daemon",
+            "scheduler": readiness,
+        }
     if service_id == "sidecar":
         try:
             from argparse import Namespace

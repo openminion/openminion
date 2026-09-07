@@ -230,10 +230,12 @@ def v1_daemon_health(
     )
     active_config_path = runtime_config_path or config_path
     resolved_config_path = resolve_api_config_display_path(active_config_path)
+    data_root = str(getattr(runtime, "data_root", "") or "")
     if runtime is None:
         return {
             "available": False,
             "config_path": resolved_config_path,
+            "data_root": data_root,
             "subsystems": {},
         }
     subsystems = _runtime_subsystem_health(runtime)
@@ -242,6 +244,7 @@ def v1_daemon_health(
         return {
             "available": False,
             "config_path": resolved_config_path,
+            "data_root": data_root,
             "subsystems": subsystems,
         }
     list_agents = getattr(manager, "list_agents", None)
@@ -250,6 +253,7 @@ def v1_daemon_health(
             "available": True,
             "agents_hot": 0,
             "config_path": resolved_config_path,
+            "data_root": data_root,
             "subsystems": subsystems,
         }
     try:
@@ -260,6 +264,7 @@ def v1_daemon_health(
         "available": True,
         "agents_hot": len(statuses),
         "config_path": resolved_config_path,
+        "data_root": data_root,
         "subsystems": subsystems,
     }
 

@@ -511,6 +511,8 @@ class CronTurnExecutor:
                 )
                 if attempt < self._max_attempts:
                     continue
+                if isinstance(exc, TimeoutError):
+                    raise
                 return {
                     "summary": f"Agent turn failed after {self._max_attempts} attempt(s): {exc}",
                     "error": True,
@@ -610,6 +612,8 @@ class CronTurnExecutor:
                 )
                 if attempt < self._max_attempts:
                     continue
+                if isinstance(exc, TimeoutError):
+                    raise
                 return {
                     "summary": (
                         f"PAE idle tick failed after {self._max_attempts} "

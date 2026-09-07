@@ -227,6 +227,7 @@ def _build_daemon_status_payload(
         resolve_daemon_log_file,
         resolve_daemon_pid_file,
     )
+    from openminion.base.config import ConfigManager
 
     if home_root is not None or data_root is not None:
         endpoint = resolve_daemon_endpoint(
@@ -236,7 +237,12 @@ def _build_daemon_status_payload(
         )
     else:
         endpoint = resolve_daemon_endpoint(config_path)
-    config = load_config(endpoint.config_path)
+    manager = ConfigManager.load(
+        endpoint.config_path,
+        home_root=Path(home_root).expanduser().resolve() if home_root else None,
+        data_root=Path(data_root).expanduser().resolve() if data_root else None,
+    )
+    config = manager.base_config
     pid_file = resolve_daemon_pid_file(config)
     pid = read_pid(pid_file)
     alive = bool(pid and process_alive(pid))
@@ -246,8 +252,19 @@ def _build_daemon_status_payload(
         health_payload.get("daemon") if isinstance(health_payload, dict) else {}
     )
     remote_config_path = ""
+    remote_data_root = ""
     if isinstance(daemon_payload, dict):
         remote_config_path = str(daemon_payload.get("config_path", "")).strip()
+        remote_data_root = str(daemon_payload.get("data_root", "")).strip()
+    from openminion.modules.task.scheduling.coordination import (
+        scheduler_readiness_from_health,
+    )
+
+    identity_matches = None
+    if remote_config_path and remote_data_root:
+        identity_matches = remote_config_path == endpoint.config_path and Path(
+            remote_data_root
+        ).resolve(strict=False) == manager.data_root.resolve(strict=False)
     return {
         "ok": reachable,
         "pid": pid,
@@ -257,6 +274,12 @@ def _build_daemon_status_payload(
         "lifecycle": "running" if alive else "stopped",
         "endpoint_status": probe_status,
         "remote_config_path": remote_config_path,
+        "remote_data_root": remote_data_root,
+        "scheduler": scheduler_readiness_from_health(
+            health_payload if isinstance(health_payload, dict) else {},
+            reachable=probe_status in {"ok", _PROBE_STATUS_MISMATCH},
+            identity_matches=identity_matches,
+        ),
         "host": endpoint.host,
         "port": endpoint.port,
         "config_path": endpoint.config_path,

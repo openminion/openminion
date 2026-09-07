@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import openminion.daemon as daemon_core
+from openminion.base.config import ConfigManager
 from openminion.cli.commands import daemon as daemon_command
 
 
@@ -21,14 +22,30 @@ def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         daemon_command, "resolve_daemon_endpoint", lambda _cfg: endpoint
     )
-    monkeypatch.setattr(daemon_command, "load_config", lambda _cfg: config)
+    monkeypatch.setattr(
+        ConfigManager,
+        "load",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            base_config=config,
+            data_root=Path("/tmp/data"),
+        ),
+    )
     monkeypatch.setattr(daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file)
     monkeypatch.setattr(daemon_core, "read_pid", lambda _path: 4321)
     monkeypatch.setattr(daemon_core, "process_alive", lambda _pid: True)
     monkeypatch.setattr(
         daemon_command,
         "probe_daemon_endpoint",
-        lambda _endpoint: ("ok", {"daemon": {"config_path": "/tmp/openminion.json"}}),
+        lambda _endpoint: (
+            "ok",
+            {
+                "daemon": {
+                    "config_path": "/tmp/openminion.json",
+                    "data_root": "/tmp/data",
+                },
+                "normalized_health_snapshot": {"components": []},
+            },
+        ),
     )
     monkeypatch.setattr(daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file)
 
@@ -49,6 +66,13 @@ def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
         "port": 4100,
         "reachable": True,
         "remote_config_path": "/tmp/openminion.json",
+        "remote_data_root": "/tmp/data",
+        "scheduler": {
+            "check_command": "openminion service status cron",
+            "hosted_by": "daemon",
+            "reason": "scheduler_not_attached",
+            "state": "degraded",
+        },
         "status": "running",
     }
 
@@ -66,7 +90,14 @@ def test_daemon_status_json_output_when_unreachable(monkeypatch, capsys) -> None
     monkeypatch.setattr(
         daemon_command, "resolve_daemon_endpoint", lambda _cfg: endpoint
     )
-    monkeypatch.setattr(daemon_command, "load_config", lambda _cfg: config)
+    monkeypatch.setattr(
+        ConfigManager,
+        "load",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            base_config=config,
+            data_root=Path("/tmp/data"),
+        ),
+    )
     monkeypatch.setattr(daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file)
     monkeypatch.setattr(daemon_core, "read_pid", lambda _path: None)
     monkeypatch.setattr(daemon_core, "process_alive", lambda _pid: False)

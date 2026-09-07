@@ -34,6 +34,9 @@ from openminion.modules.task.constants import (
     TASK_REASON_RESUME_EXPIRED_ONE_SHOT,
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
+from openminion.modules.task.scheduling.coordination import (
+    scheduler_readiness_from_health,
+)
 
 from .constants import (
     CONSOLIDATION_PAYLOAD_KEY,
@@ -64,7 +67,6 @@ from .args import (
 from .scheduled_task.runtime import (
     _background_write_authorization_allowed,
     _context_metadata,
-    _find_existing_scheduled_task,
     _origin_delivery_context,
     _safe_str,
     _text,
@@ -414,44 +416,21 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         ) from exc
     _enforce_every_schedule_floor(normalized_schedule)
 
-    schedule_kind = _safe_str(normalized_schedule, "kind")
-    delete_after_run = schedule_kind == "at"
-    payload: dict[str, Any] = {
-        "kind": "agentTurn",
-        "message": instruction,
-    }
     origin = _origin_delivery_context(ctx)
-    if origin:
-        payload["_openminion_origin"] = origin
     agent_id = _agent_id_from_context(ctx)
     manager = _resolve_task_manager(ctx)
     with _storage_operation(message="Failed to create scheduled task"):
-        existing_job = _find_existing_scheduled_task(
-            manager,
+        created = manager.schedule_user_task(
             name=task_name,
+            instruction=instruction,
             schedule=normalized_schedule,
-            payload=payload,
             agent_id=agent_id,
-            session_target="isolated",
-            delete_after_run=delete_after_run,
+            origin=origin,
         )
-        if existing_job is None:
-            task_row = manager.schedule_task(
-                name=task_name,
-                schedule=normalized_schedule,
-                payload=payload,
-                agent_id=agent_id,
-                session_target="isolated",
-                delete_after_run=delete_after_run,
-                misfire_policy="skip",
-            )
-            task_id = task_row.task_id
-            job = manager.get_scheduled_job(task_id) or {}
-            deduped = False
-        else:
-            task_id = _safe_str(existing_job, "job_id")
-            job = existing_job
-            deduped = True
+        task_row = created["record"]
+        job = created["job"]
+        task_id = task_row.task_id
+        deduped = bool(created["deduped"])
 
     return {
         "ok": True,
@@ -462,7 +441,12 @@ def _h_task_schedule(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         "schedule": dict(job.get("schedule") or normalized_schedule),
         "session_target": _safe_str(job, "session_target", "isolated"),
         "next_due_at": job.get("next_due_at"),
-        "delete_after_run": bool(job.get("delete_after_run", delete_after_run)),
+        "delete_after_run": bool(job.get("delete_after_run", False)),
+        "scheduler": scheduler_readiness_from_health(
+            {},
+            reachable=True,
+            identity_matches=None,
+        ),
         "scheduler_note": (
             "Task scheduled. Runs will only execute while the openminion daemon is running. "
             "Start it with: openminion daemon start"

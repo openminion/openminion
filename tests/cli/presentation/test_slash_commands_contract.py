@@ -52,6 +52,7 @@ def test_busy_slash_policy_allows_reads_and_blocks_changes() -> None:
         assert slash_command_runs_while_busy(command)
     for command in ("/new", "/undo", "/model openai/gpt-5", "/permissions bypass"):
         assert not slash_command_runs_while_busy(command)
+    assert not slash_command_runs_while_busy("/tasks pause task-1")
 
 
 def test_unknown_slash_command_message_suggests_nearest_command() -> None:

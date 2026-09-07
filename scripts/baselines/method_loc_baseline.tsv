@@ -77,7 +77,7 @@ src/openminion/modules/retrieve/runtime/ingestion.py	build_raptor_tree	212	curre
 src/openminion/modules/retrieve/runtime/ingestion.py	ingest_source	118	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/cli.py	_add_session_cli_subcommands	264	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/session/cli.py	_handle_session_store_command	280	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/session/storage/cron_store.py	CronStore.enqueue_due_cron_runs	131	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/session/storage/cron_store.py	CronStore.enqueue_due_cron_runs	126	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/skill/cli.py	_add_skill_cli_subcommands	242	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/skill/cli.py	_dispatch_skill_command	237	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/skill/config.py	load_config	140	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

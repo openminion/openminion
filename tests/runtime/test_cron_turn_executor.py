@@ -434,6 +434,31 @@ def test_cron_turn_executor_returns_error_after_final_failure() -> None:
     assert len(runtime_manager.submitted) == 2
 
 
+def test_cron_turn_executor_preserves_final_timeout() -> None:
+    runtime, runtime_manager = _runtime(
+        [TimeoutError("slow"), TimeoutError("still slow")],
+        registered_agents=["agent-main"],
+    )
+    executor = CronTurnExecutor(
+        runtime=runtime,
+        cron_store=_FakeCronStore(),
+        request_builder=_request_builder,
+        timeout_s=10.0,
+        max_attempts=2,
+    )
+
+    with pytest.raises(TimeoutError, match="still slow"):
+        executor.execute(
+            {
+                "job_id": "job-timeout",
+                "payload": {"kind": "agentTurn", "message": "time out"},
+            },
+            {"run_id": "run-timeout", "due_at": "2026-03-20T00:00:00Z"},
+        )
+
+    assert len(runtime_manager.submitted) == 2
+
+
 def test_cron_turn_executor_handles_system_cleanup_event() -> None:
     runtime, _runtime_manager = _runtime([], registered_agents=["agent-main"])
     store = _FakeCronStore()

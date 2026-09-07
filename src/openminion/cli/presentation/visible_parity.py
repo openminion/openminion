@@ -284,6 +284,9 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         build_task_surface,
         resolve_task_surface_source,
     )
+    from openminion.modules.task.scheduling.coordination import (
+        scheduler_readiness_from_health,
+    )
 
     surface = build_task_surface(
         resolve_task_surface_source(runtime),
@@ -291,6 +294,15 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         session_id=str(getattr(runtime, "session_id", "") or "").strip(),
     )
     selected_id = str(task_id or "").strip()
+    parts = selected_id.split(maxsplit=1)
+    if parts and parts[0].lower() in {"pause", "resume", "cancel"}:
+        if len(parts) == 1:
+            return f"Usage: /tasks {parts[0].lower()} <task-id>"
+        action, selected_id = parts[0].lower(), parts[1].strip()
+        try:
+            surface.apply_action(task_id=selected_id, action=action)
+        except (KeyError, ValueError, PermissionError, NotImplementedError) as exc:
+            return f"Task action failed: {exc}"
     if selected_id:
         task = surface.show_task(selected_id)
         if task is None:
@@ -306,6 +318,29 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         ]
         if task.get("due_at"):
             lines.append(f"due: {task.get('due_at')}")
+        if task.get("schedule_summary"):
+            lines.append(f"schedule: {task.get('schedule_summary')}")
+        if task.get("daemon_required"):
+            scheduler = scheduler_readiness_from_health(
+                {},
+                reachable=True,
+                identity_matches=None,
+            )
+            lines.append(
+                f"scheduler: {scheduler['state']} (check: {scheduler['check_command']})"
+            )
+        if task.get("last_run"):
+            last_run = task["last_run"]
+            lines.append(
+                f"last_run: {last_run.get('state')} "
+                f"at {last_run.get('finished_at') or last_run.get('due_at')}"
+            )
+            if last_run.get("last_error"):
+                error = last_run["last_error"]
+                lines.append(f"last_error: {error.get('code')}: {error.get('message')}")
+        actions = task.get("valid_actions")
+        if actions:
+            lines.append(f"actions: {', '.join(actions)}")
         return "\n".join(lines)
 
     payload = surface.inventory()
@@ -314,11 +349,20 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
     if not tasks:
         lines.append("No tasks found.")
     for task in tasks[:20]:
+        last_run = task.get("last_run") or {}
         lines.append(
-            f"[{task.get('status', 'PENDING')}] {task.get('id')}: "
-            f"{task.get('title')} "
-            f"(operator={task.get('operator_state', '-')}, "
-            f"resume={task.get('resume_action', '-')})"
+            f"[{task.get('lifecycle_state') or task.get('status', 'PENDING')}] "
+            f"{task.get('id')}: {task.get('title')}"
+        )
+        lines.append(
+            f"  type={task.get('task_kind', '-')} "
+            f"schedule={task.get('schedule_summary', '-')}"
+        )
+        lines.append(
+            f"  next={task.get('due_at') or '-'} "
+            f"last={last_run.get('state') or '-'} "
+            f"operator={task.get('operator_state', '-')} | "
+            f"resume={task.get('resume_action', '-')}"
         )
     pending = list(payload.get("pending_actions", []))
     if pending:

@@ -4,10 +4,16 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Mapping
 
-from .lifecycle_models import TaskLifecycleRecord, TaskLifecycleState
+from .lifecycle_models import (
+    TaskLifecycleRecord,
+    TaskLifecycleState,
+    bounded_task_run_error,
+)
 
 
 class TaskManagerScheduleMixin:
+    _TERMINAL_RUN_STATES = {"finished", "failed", "cancelled", "timed_out"}
+
     def schedule_task(
         self,
         *,
@@ -39,7 +45,7 @@ class TaskManagerScheduleMixin:
             session_target=session_target,
             wake_mode=wake_mode,
             delivery=delivery,
-            delete_after_run=delete_after_run,
+            delete_after_run=False if delete_after_run is None else delete_after_run,
             misfire_policy=misfire_policy,
             max_lateness_s=max_lateness_s,
             max_concurrency=max_concurrency,
@@ -60,6 +66,54 @@ class TaskManagerScheduleMixin:
             except Exception:
                 pass
             raise
+
+    def schedule_user_task(
+        self,
+        *,
+        name: str,
+        instruction: str,
+        schedule: Mapping[str, Any],
+        agent_id: str,
+        origin: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "kind": "agentTurn",
+            "message": str(instruction).strip(),
+        }
+        if origin:
+            payload["_openminion_origin"] = dict(origin)
+        for job in self.list_scheduled_jobs(limit=1000):
+            if not bool(job.get("enabled")):
+                continue
+            if str(job.get("name") or "").strip() != str(name).strip():
+                continue
+            if str(job.get("agent_id") or "").strip() != str(agent_id).strip():
+                continue
+            if dict(job.get("schedule") or {}) != dict(schedule):
+                continue
+            if dict(job.get("payload") or {}) != payload:
+                continue
+            self.ensure_task_record_for_job(job)
+            return {
+                "record": self.get_task_by_job(str(job["job_id"])),
+                "job": job,
+                "deduped": True,
+            }
+
+        record = self.schedule_task(
+            name=name,
+            schedule=schedule,
+            payload=payload,
+            agent_id=agent_id,
+            session_target="isolated",
+            delete_after_run=False,
+            misfire_policy="skip",
+        )
+        return {
+            "record": record,
+            "job": self.get_scheduled_job(record.cron_job_id) or {},
+            "deduped": False,
+        }
 
     def get_scheduled_job(self, task_id: str) -> dict[str, Any] | None:
         return self._cron_repository.get_cron_job(task_id)
@@ -178,9 +232,125 @@ class TaskManagerScheduleMixin:
                 return record
         return None
 
+    def record_scheduled_outcome(
+        self,
+        *,
+        cron_job_id: str,
+        run: Mapping[str, Any],
+    ) -> TaskLifecycleRecord | None:
+        record = self.get_task_by_job(cron_job_id)
+        if record is None:
+            return None
+        run_state = str(run.get("state") or "").strip()
+        if run_state not in self._TERMINAL_RUN_STATES:
+            return record
+
+        if run_state == "cancelled" and int(run.get("attempts") or 0) == 0:
+            return record
+
+        job = self.get_scheduled_job(record.cron_job_id)
+        schedule = dict((job or {}).get("schedule") or {})
+        one_time = str(schedule.get("kind") or "").strip() == "at"
+
+        run_id = str(run.get("run_id") or "").strip()
+        prior_run = record.metadata.get("last_run")
+        if (
+            isinstance(prior_run, Mapping)
+            and prior_run.get("run_id") == run_id
+            and (
+                not one_time
+                or record.state
+                in {
+                    TaskLifecycleState.CANCELLED,
+                    TaskLifecycleState.DONE,
+                    TaskLifecycleState.FAILED,
+                }
+            )
+        ):
+            return record
+        error = run.get("error")
+        normalized_error = bounded_task_run_error(error)
+        metadata = dict(record.metadata)
+        metadata["last_run"] = {
+            "run_id": run_id,
+            "state": run_state,
+            "due_at": run.get("due_at"),
+            "finished_at": run.get("finished_at"),
+            "summary": str(run.get("summary") or "")[:1000] or None,
+            "last_error": normalized_error,
+        }
+        if one_time and job is not None and bool(job.get("enabled")):
+            self._cron_repository.set_cron_job_enabled(record.cron_job_id, False)
+        if record.state == TaskLifecycleState.CANCELLED:
+            return self.get_task(record.task_id)
+
+        target = record.state
+        reason = None
+        if one_time and record.state in {
+            TaskLifecycleState.PAUSED,
+            TaskLifecycleState.ACTIVE,
+        }:
+            target = (
+                TaskLifecycleState.DONE
+                if run_state == "finished"
+                else TaskLifecycleState.FAILED
+            )
+            reason = (
+                str((normalized_error or {}).get("code") or run_state)
+                if target == TaskLifecycleState.FAILED
+                else None
+            )
+        return self._lifecycle_repository.record_scheduled_outcome(
+            task_id=record.task_id,
+            expected_state=record.state,
+            to_state=target,
+            metadata=metadata,
+            failure_reason=reason,
+        )
+
+    def reconcile_scheduled_outcomes(
+        self,
+        cron_job_id: str | None = None,
+        *,
+        limit: int = 100,
+    ) -> int:
+        normalized_job_id = str(cron_job_id or "").strip()
+        if normalized_job_id:
+            records = [self.get_task_by_job(normalized_job_id)]
+        else:
+            records = self._lifecycle_repository.list(limit=max(1, min(limit, 1000)))
+        reconciled = 0
+        for record in records:
+            if record is None or record.state in {
+                TaskLifecycleState.CANCELLED,
+                TaskLifecycleState.DONE,
+                TaskLifecycleState.FAILED,
+            }:
+                continue
+            runs = self.list_scheduled_runs(job_id=record.cron_job_id, limit=1)
+            if (
+                not runs
+                or str(runs[0].get("state") or "") not in self._TERMINAL_RUN_STATES
+                or (
+                    str(runs[0].get("state") or "") == "cancelled"
+                    and int(runs[0].get("attempts") or 0) == 0
+                )
+            ):
+                continue
+            self.record_scheduled_outcome(
+                cron_job_id=record.cron_job_id,
+                run=runs[0],
+            )
+            reconciled += 1
+        return reconciled
+
     def cancel_task(self, task_id: str) -> TaskLifecycleRecord:
         record = self._require_scheduled_record(task_id)
-        self._cron_repository.delete_cron_job(record.cron_job_id)
+        self._cron_repository.set_cron_job_enabled(
+            record.cron_job_id,
+            False,
+            cancel_queued=True,
+        )
         return self.transition_task(
             task_id=record.task_id,
             to_state=TaskLifecycleState.CANCELLED,
@@ -188,7 +358,11 @@ class TaskManagerScheduleMixin:
 
     def pause_task(self, task_id: str) -> tuple[TaskLifecycleRecord, dict[str, Any]]:
         record = self._require_scheduled_record(task_id)
-        self._cron_repository.set_cron_job_enabled(record.cron_job_id, False)
+        self._cron_repository.set_cron_job_enabled(
+            record.cron_job_id,
+            False,
+            cancel_queued=True,
+        )
         record = self.transition_task(
             task_id=record.task_id,
             to_state=TaskLifecycleState.PAUSED,

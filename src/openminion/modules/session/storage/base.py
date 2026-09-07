@@ -221,7 +221,13 @@ class SessionStore(ABC):
     ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
-    def set_cron_job_enabled(self, job_id: str, enabled: bool) -> None: ...
+    def set_cron_job_enabled(
+        self,
+        job_id: str,
+        enabled: bool,
+        *,
+        cancel_queued: bool = False,
+    ) -> None: ...
 
     @abstractmethod
     def replace_cron_job_payload(
