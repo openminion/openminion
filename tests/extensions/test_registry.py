@@ -23,9 +23,11 @@ class _BetaPlugin(Plugin):
 
 def test_plugin_registry_register_names_and_manifest_ids() -> None:
     registry = PluginRegistry()
-    registry.register(_AlphaPlugin(), manifest=_manifest("example.alpha"))
+    alpha = _AlphaPlugin()
+    registry.register(alpha, manifest=_manifest("example.alpha"))
     registry.register(_BetaPlugin(), manifest=_manifest("example.beta"))
 
+    assert alpha._openminion_plugin_id == "example.alpha"
     assert registry.names() == ["alpha", "beta"]
     assert registry.manifest_ids() == ["example.alpha", "example.beta"]
     assert [item.id for item in registry.manifests()] == [
@@ -34,13 +36,32 @@ def test_plugin_registry_register_names_and_manifest_ids() -> None:
     ]
 
 
-def test_plugin_registry_rejects_duplicate_manifest_id() -> None:
+@pytest.mark.parametrize("preexisting_id", [None, "caller.supplied"])
+def test_plugin_registry_rejects_duplicate_manifest_id_without_mutation(
+    preexisting_id: str | None,
+) -> None:
     registry = PluginRegistry()
     manifest = _manifest("example.alpha")
     registry.register(_AlphaPlugin(), manifest=manifest)
+    rejected = _BetaPlugin()
+    if preexisting_id is not None:
+        rejected._openminion_plugin_id = preexisting_id
+    plugins_before = list(registry._plugins)
+    manifests_before = dict(registry._manifests)
+    manifest_plugins_before = dict(registry._manifest_plugins)
+    registrars_before = list(registry._registrars)
 
     with pytest.raises(RuntimeError, match="Duplicate plugin manifest id"):
-        registry.register(_BetaPlugin(), manifest=manifest)
+        registry.register(rejected, manifest=manifest, registrar=object())
+
+    if preexisting_id is None:
+        assert not hasattr(rejected, "_openminion_plugin_id")
+    else:
+        assert rejected._openminion_plugin_id == preexisting_id
+    assert registry._plugins == plugins_before
+    assert registry._manifests == manifests_before
+    assert registry._manifest_plugins == manifest_plugins_before
+    assert registry._registrars == registrars_before
 
 
 def test_build_custom_lookup_detects_conflicting_alias() -> None:

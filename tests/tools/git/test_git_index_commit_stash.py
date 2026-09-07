@@ -104,6 +104,11 @@ class AddHandlerTests(unittest.TestCase):
         with self.assertRaises(ToolRuntimeError) as ctx:
             _h_add({"paths": ["../outside.txt"]}, self.ctx)
         self.assertEqual(ctx.exception.code, "GIT_PATH_OUTSIDE_WORKSPACE")
+        self.assertEqual(
+            ctx.exception.message,
+            "path resolves outside workspace: ../outside.txt",
+        )
+        self.assertEqual(ctx.exception.details, {"path": "../outside.txt"})
 
 
 @unittest.skipIf(_GIT is None, "git binary not on PATH")

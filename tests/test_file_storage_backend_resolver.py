@@ -7,14 +7,16 @@ import pytest
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
+from openminion.modules.tool import (
+    resolve_path,
+    resolve_workspace_root,
+)
 from openminion.tools.file.backends import InMemoryStorageBackend, LocalStorageBackend
 from openminion.tools.file.plugin import (
     _get_backend,
     _h_edit_file,
     _h_search_files,
     _reset_backend_cache_for_tests,
-    _resolve_path_lexical,
-    _resolve_workspace_root,
 )
 
 
@@ -169,7 +171,7 @@ def test_get_backend_rejects_unknown_backend(tmp_path: Path):
     assert excinfo.value.message == "unknown file backend: bogus"
 
 
-def test_resolve_path_lexical_passes_operation_to_policy(
+def test_resolve_path_passes_operation_to_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     ctx = _ctx(tmp_path)
@@ -181,7 +183,7 @@ def test_resolve_path_lexical_passes_operation_to_policy(
 
     monkeypatch.setattr(ctx.policy, "ensure_path_allowed", _record)
 
-    resolved = _resolve_path_lexical(ctx, "nested/alpha.txt", operation="write")
+    resolved = resolve_path(ctx, "nested/alpha.txt", operation="write")
 
     assert resolved == str(ctx.workspace / "nested" / "alpha.txt")
     assert calls == [
@@ -193,11 +195,11 @@ def test_resolve_path_lexical_passes_operation_to_policy(
     ]
 
 
-def test_resolve_path_lexical_rejects_workspace_escape(tmp_path: Path):
+def test_resolve_path_rejects_workspace_escape(tmp_path: Path):
     ctx = _ctx(tmp_path)
 
     with pytest.raises(ToolRuntimeError) as excinfo:
-        _resolve_path_lexical(ctx, "../outside.txt", operation="read")
+        resolve_path(ctx, "../outside.txt", operation="read")
 
     assert excinfo.value.code == "POLICY_DENIED"
     assert "path escapes workspace root: ../outside.txt" in excinfo.value.message
@@ -205,20 +207,20 @@ def test_resolve_path_lexical_rejects_workspace_escape(tmp_path: Path):
     assert excinfo.value.details["retry_path"] == "tmp/outside.txt"
 
 
-def test_resolve_path_lexical_suggests_workspace_local_tmp_for_absolute_tmp(
+def test_resolve_path_suggests_workspace_local_tmp_for_absolute_tmp(
     tmp_path: Path,
 ):
     ctx = _ctx(tmp_path)
 
     with pytest.raises(ToolRuntimeError) as excinfo:
-        _resolve_path_lexical(ctx, "/tmp/http_server.asm", operation="write")
+        resolve_path(ctx, "/tmp/http_server.asm", operation="write")
 
     assert excinfo.value.code == "POLICY_DENIED"
     assert excinfo.value.details["retry_path"] == "tmp/http_server.asm"
     assert "tmp/http_server.asm" in excinfo.value.message
 
 
-def test_resolve_path_lexical_uses_context_metadata_cwd_for_relative_paths(
+def test_resolve_path_uses_context_metadata_cwd_for_relative_paths(
     tmp_path: Path,
 ):
     ctx = _ctx(tmp_path)
@@ -226,17 +228,17 @@ def test_resolve_path_lexical_uses_context_metadata_cwd_for_relative_paths(
     nested.mkdir()
     ctx.policy.raw["context_metadata"] = {"cwd": str(nested)}
 
-    resolved = _resolve_path_lexical(ctx, "target.cpp", operation="write")
+    resolved = resolve_path(ctx, "target.cpp", operation="write")
 
     assert resolved == str(nested / "target.cpp")
 
 
-def test_resolve_path_lexical_strips_duplicate_workspace_basename_prefix(
+def test_resolve_path_strips_duplicate_workspace_basename_prefix(
     tmp_path: Path,
 ):
     ctx = _ctx(tmp_path)
 
-    resolved = _resolve_path_lexical(
+    resolved = resolve_path(
         ctx,
         "workspace/pyproject.toml",
         operation="read",
@@ -245,7 +247,7 @@ def test_resolve_path_lexical_strips_duplicate_workspace_basename_prefix(
     assert resolved == str(ctx.workspace / "pyproject.toml")
 
 
-def test_resolve_path_lexical_honors_workspace_root_env_when_policy_has_no_root(
+def test_resolve_path_honors_workspace_root_env_when_policy_has_no_root(
     tmp_path: Path,
 ):
     ctx = _ctx(tmp_path)
@@ -254,7 +256,7 @@ def test_resolve_path_lexical_honors_workspace_root_env_when_policy_has_no_root(
     ctx.policy.raw.pop("workspace_root")
     ctx.env = {"OPENMINION_WORKSPACE_ROOT": str(scratch)}
 
-    resolved = _resolve_path_lexical(
+    resolved = resolve_path(
         ctx,
         "scratch-project/pyproject.toml",
         operation="read",
@@ -272,14 +274,14 @@ def test_resolve_workspace_root_prefers_policy_root_over_tool_fallback(
     broad_workspace.mkdir()
 
     monkeypatch.setattr(
-        "openminion.tools.file.plugin.resolve_tool_workspace_root",
+        "openminion.modules.tool.runtime.policy_paths.resolve_tool_workspace_root",
         lambda *, env, fallback: broad_workspace,
     )
 
-    assert _resolve_workspace_root(ctx) == ctx.workspace
+    assert resolve_workspace_root(ctx) == ctx.workspace
 
 
-def test_resolve_path_lexical_workspace_root_env_overrides_context_workspace(
+def test_resolve_path_workspace_root_env_overrides_context_workspace(
     tmp_path: Path,
 ):
     ctx = _ctx(tmp_path)
@@ -287,7 +289,7 @@ def test_resolve_path_lexical_workspace_root_env_overrides_context_workspace(
     scratch.mkdir()
     ctx.env = {"OPENMINION_WORKSPACE_ROOT": str(scratch)}
 
-    resolved = _resolve_path_lexical(
+    resolved = resolve_path(
         ctx,
         "scratch-project/pyproject.toml",
         operation="read",

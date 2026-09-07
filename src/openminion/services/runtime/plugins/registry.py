@@ -44,10 +44,9 @@ class PluginRegistry:
         registrar: object | None = None,
     ) -> None:
         if manifest is not None:
-            setattr(plugin, "_openminion_plugin_id", manifest.id)
-        if manifest is not None:
             if manifest.id in self._manifests:
                 raise RuntimeError(f"Duplicate plugin manifest id: {manifest.id}")
+            setattr(plugin, "_openminion_plugin_id", manifest.id)
             self._manifests[manifest.id] = manifest
             self._manifest_plugins[manifest.id] = plugin
         if registrar is not None:
