@@ -263,9 +263,17 @@ def test_daemon_stop_force_kills_hung_process(
         assert pid == 123
         return not state["killed"]
 
-    def _fake_kill(pid: int, sig: int) -> None:
-        assert pid == 123
-        if sig == daemon_cmd.signal.SIGKILL:
+    calls: list[str] = []
+
+    class FakeProcess:
+        def __init__(self, pid: int) -> None:
+            assert pid == 123
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+        def kill(self) -> None:
+            calls.append("kill")
             state["killed"] = True
 
     monkeypatch.setattr(
@@ -275,7 +283,7 @@ def test_daemon_stop_force_kills_hung_process(
     monkeypatch.setattr(daemon_mod, "resolve_daemon_pid_file", lambda _cfg: pid_file)
     monkeypatch.setattr(daemon_mod, "read_pid", lambda _pid_file: 123)
     monkeypatch.setattr(daemon_mod, "process_alive", _fake_alive)
-    monkeypatch.setattr(daemon_cmd.os, "kill", _fake_kill)
+    monkeypatch.setattr(daemon_cmd.psutil, "Process", FakeProcess)
     monkeypatch.setattr(daemon_cmd.time, "time", _fake_time)
     monkeypatch.setattr(daemon_cmd.time, "sleep", lambda _s: None)
 
@@ -283,6 +291,7 @@ def test_daemon_stop_force_kills_hung_process(
     output = capsys.readouterr().out
 
     assert code == 0
+    assert calls == ["terminate", "kill"]
     assert "Force-stopped daemon pid=123 after graceful timeout." in output
     assert not pid_file.exists()
 
