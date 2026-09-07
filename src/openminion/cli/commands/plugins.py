@@ -4,6 +4,7 @@ import argparse
 import json
 import shutil
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from openminion.base.config import OpenMinionConfig, save_config
@@ -12,14 +13,15 @@ from openminion.cli.presentation.json_output import print_json_payload
 from openminion.services.config import resolve_services_plugin_paths
 from openminion.services.runtime.plugins.discovery import (
     DiscoveredPlugin,
+    PLUGIN_ROLLBACK_DIR,
     discover_plugin_manifests,
     load_plugin_instance,
     module_checksum_status,
+    plugin_bundle_digest,
 )
 
 
 _STATE_FILE = ".openminion-plugin-installs.json"
-_BACKUP_DIR = ".openminion-plugin-rollback"
 
 
 def list_plugins(_args: Any, app: Any) -> int:
@@ -51,6 +53,17 @@ def _source_plugin(path: str, *, verify_checksums: bool = True) -> DiscoveredPlu
     return discovered[0]
 
 
+def _stage_plugin(
+    plugin: DiscoveredPlugin,
+    stage_root: Path,
+    *,
+    verify_checksums: bool = True,
+) -> DiscoveredPlugin:
+    shutil.copy2(plugin.manifest_path, stage_root / plugin.manifest_path.name)
+    shutil.copy2(plugin.module_path, stage_root / plugin.module_path.name)
+    return _source_plugin(str(stage_root), verify_checksums=verify_checksums)
+
+
 def _installed_plugin(root: Path, plugin_id: str) -> DiscoveredPlugin:
     matches = [
         item
@@ -64,6 +77,22 @@ def _installed_plugin(root: Path, plugin_id: str) -> DiscoveredPlugin:
 
 def _manifest_payload(plugin: DiscoveredPlugin) -> dict[str, Any]:
     manifest = plugin.manifest
+    properties = manifest.config_schema.get("properties")
+    required = manifest.config_schema.get("required")
+    declared_required = (
+        sorted(item for item in required if isinstance(item, str))
+        if isinstance(required, list)
+        else []
+    )
+    declared_secret = (
+        sorted(
+            name
+            for name, schema in properties.items()
+            if isinstance(schema, dict) and schema.get("writeOnly") is True
+        )
+        if isinstance(properties, dict)
+        else []
+    )
     return {
         "id": manifest.id,
         "name": manifest.name,
@@ -71,6 +100,9 @@ def _manifest_payload(plugin: DiscoveredPlugin) -> dict[str, Any]:
         "dependencies": list(manifest.dependencies),
         "dependencies_enforced": False,
         "config_schema_enforced": False,
+        "declared_required_config": declared_required,
+        "declared_secret_config": declared_secret,
+        "bundle_digest": plugin_bundle_digest(plugin),
         "permissions": list(manifest.requested_capabilities),
         "trust_tier": manifest.trust_tier,
         "provenance": {
@@ -122,49 +154,136 @@ def _set_enabled(args: Any, plugin_id: str, enabled: bool) -> bool:
 
 
 def preview_plugin(args: Any) -> int:
-    plugin = _source_plugin(args.source, verify_checksums=False)
-    print_json_payload({"ok": True, "plugin": _manifest_payload(plugin)})
+    source_plugin = _source_plugin(args.source, verify_checksums=False)
+    with TemporaryDirectory(prefix=".openminion-plugin-preview-") as raw:
+        plugin = _stage_plugin(
+            source_plugin,
+            Path(raw),
+            verify_checksums=False,
+        )
+        print_json_payload({"ok": True, "plugin": _manifest_payload(plugin)})
     return 0
 
 
+def _validate_install_identity(root: Path, plugin: DiscoveredPlugin) -> None:
+    if not root.exists():
+        return
+    manifest_target = (root / plugin.manifest_path.name).resolve()
+    module_target = (root / plugin.module_path.name).resolve()
+    for installed in discover_plugin_manifests([root], verify_checksums=False):
+        if (
+            installed.manifest.id == plugin.manifest.id
+            and installed.module_alias == plugin.module_alias
+            and (
+                installed.manifest_path.resolve() != manifest_target
+                or installed.module_path.resolve() != module_target
+            )
+        ):
+            raise RuntimeError(
+                f"Plugin {plugin.manifest.id} is already installed at a different path."
+            )
+        if (
+            installed.manifest.id == plugin.manifest.id
+            and installed.module_alias != plugin.module_alias
+        ):
+            raise RuntimeError(
+                f"Plugin {plugin.manifest.id} is installed as "
+                f"{installed.module_alias}; alias changes are not supported."
+            )
+        if (
+            installed.module_alias == plugin.module_alias
+            and installed.manifest.id != plugin.manifest.id
+        ):
+            raise RuntimeError(
+                f"Plugin alias {plugin.module_alias} belongs to "
+                f"{installed.manifest.id}."
+            )
+
+
 def install_plugin(args: Any) -> int:
-    plugin = _source_plugin(args.source)
+    source_plugin = _source_plugin(args.source)
     root = _plugin_root(args)
-    root.mkdir(parents=True, exist_ok=True)
-    state = _load_state(root)
-    plugin_id = plugin.manifest.id
+    root.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".openminion-plugin-stage-", dir=root.parent) as raw:
+        stage_root = Path(raw)
+        plugin = _stage_plugin(source_plugin, stage_root)
+        observed_digest = plugin_bundle_digest(plugin)
+        expected_digest = str(getattr(args, "expected_digest", "") or "").strip()
+        if expected_digest and expected_digest != observed_digest:
+            raise RuntimeError(
+                f"Plugin bundle digest mismatch: expected {expected_digest}, "
+                f"observed {observed_digest}."
+            )
 
-    manifest_target = root / plugin.manifest_path.name
-    module_target = root / plugin.module_path.name
-    backup_root = root / _BACKUP_DIR / plugin.module_alias
-    had_previous = manifest_target.exists() and module_target.exists()
-    if manifest_target.exists() != module_target.exists():
-        raise RuntimeError(f"Incomplete existing plugin files for {plugin_id}.")
-    if had_previous:
-        shutil.rmtree(backup_root, ignore_errors=True)
-        backup_root.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(manifest_target, backup_root / manifest_target.name)
-        shutil.copy2(module_target, backup_root / module_target.name)
+        _validate_install_identity(root, plugin)
 
-    shutil.copy2(plugin.manifest_path, manifest_target)
-    shutil.copy2(plugin.module_path, module_target)
-    enabled_before = _set_enabled(args, plugin_id, True)
-    state[plugin_id] = {
-        "module_alias": plugin.module_alias,
-        "manifest_name": manifest_target.name,
-        "module_name": module_target.name,
-        "had_previous": had_previous,
-        "enabled_before": enabled_before,
-    }
-    _save_state(root, state)
-    print_json_payload(
-        {
-            "ok": True,
-            "action": "installed",
-            "root": str(root),
-            "plugin": _manifest_payload(plugin),
-        }
-    )
+        root.mkdir(parents=True, exist_ok=True)
+        state_before = _load_state(root)
+        state = dict(state_before)
+        plugin_id = plugin.manifest.id
+        manifest_target = root / plugin.manifest_path.name
+        module_target = root / plugin.module_path.name
+        backup_root = root / PLUGIN_ROLLBACK_DIR / plugin.module_alias
+        had_previous = manifest_target.exists() and module_target.exists()
+        if manifest_target.exists() != module_target.exists():
+            raise RuntimeError(f"Incomplete existing plugin files for {plugin_id}.")
+
+        prior_targets = stage_root / "prior-targets"
+        if had_previous:
+            prior_targets.mkdir()
+            shutil.copy2(manifest_target, prior_targets / manifest_target.name)
+            shutil.copy2(module_target, prior_targets / module_target.name)
+        prior_backup = stage_root / "prior-rollback"
+        if backup_root.exists():
+            shutil.copytree(backup_root, prior_backup)
+        config, _ = _config(args)
+        enabled_before = plugin_id in config.enabled_plugins
+
+        try:
+            shutil.copy2(plugin.manifest_path, manifest_target)
+            shutil.copy2(plugin.module_path, module_target)
+            _set_enabled(args, plugin_id, True)
+            state[plugin_id] = {
+                "module_alias": plugin.module_alias,
+                "manifest_name": manifest_target.name,
+                "module_name": module_target.name,
+                "had_previous": had_previous,
+                "enabled_before": enabled_before,
+            }
+            _save_state(root, state)
+            shutil.rmtree(backup_root, ignore_errors=True)
+            if had_previous:
+                backup_root.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(
+                    prior_targets / manifest_target.name,
+                    backup_root / manifest_target.name,
+                )
+                shutil.copy2(
+                    prior_targets / module_target.name,
+                    backup_root / module_target.name,
+                )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            if had_previous:
+                shutil.copy2(prior_targets / manifest_target.name, manifest_target)
+                shutil.copy2(prior_targets / module_target.name, module_target)
+            else:
+                manifest_target.unlink(missing_ok=True)
+                module_target.unlink(missing_ok=True)
+            _set_enabled(args, plugin_id, enabled_before)
+            _save_state(root, state_before)
+            shutil.rmtree(backup_root, ignore_errors=True)
+            if prior_backup.exists():
+                shutil.copytree(prior_backup, backup_root)
+            raise
+
+        print_json_payload(
+            {
+                "ok": True,
+                "action": "installed",
+                "root": str(root),
+                "plugin": _manifest_payload(plugin),
+            }
+        )
     return 0
 
 
@@ -195,7 +314,7 @@ def rollback_plugin(args: Any) -> int:
     manifest_target = root / str(record["manifest_name"])
     module_target = root / str(record["module_name"])
     if bool(record["had_previous"]):
-        backup_root = root / _BACKUP_DIR / str(record["module_alias"])
+        backup_root = root / PLUGIN_ROLLBACK_DIR / str(record["module_alias"])
         shutil.copy2(backup_root / manifest_target.name, manifest_target)
         shutil.copy2(backup_root / module_target.name, module_target)
         action = "restored"
@@ -204,7 +323,10 @@ def rollback_plugin(args: Any) -> int:
         module_target.unlink(missing_ok=True)
         action = "removed"
     _set_enabled(args, args.plugin_id, bool(record["enabled_before"]))
-    shutil.rmtree(root / _BACKUP_DIR / str(record["module_alias"]), ignore_errors=True)
+    shutil.rmtree(
+        root / PLUGIN_ROLLBACK_DIR / str(record["module_alias"]),
+        ignore_errors=True,
+    )
     state.pop(args.plugin_id)
     _save_state(root, state)
     print_json_payload({"ok": True, "action": action, "plugin_id": args.plugin_id})
@@ -221,7 +343,8 @@ def uninstall_plugin(args: Any) -> int:
     record = state.pop(plugin.manifest.id, None)
     if isinstance(record, dict):
         shutil.rmtree(
-            root / _BACKUP_DIR / str(record["module_alias"]), ignore_errors=True
+            root / PLUGIN_ROLLBACK_DIR / str(record["module_alias"]),
+            ignore_errors=True,
         )
     _save_state(root, state)
     print_json_payload(
@@ -252,6 +375,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     install = plugins_subcommands.add_parser("install", help="Install a local plugin")
     install.add_argument("source")
+    install.add_argument(
+        "--expected-digest",
+        help="Require the staged plugin bundle to match this SHA-256 digest.",
+    )
     _add_root(install)
     install.set_defaults(handler=install_plugin, needs_app=False)
 

@@ -19,6 +19,8 @@ from openminion.services.runtime.plugins.manifests import (
 )
 from openminion.services.runtime.errors import PluginActivationError
 
+PLUGIN_ROLLBACK_DIR = ".openminion-plugin-rollback"
+
 
 class PluginDiscoveryError(RuntimeError):
     """Raised when plugin discovery or loading fails."""
@@ -42,7 +44,11 @@ def discover_plugin_manifests(
     for source_root in normalized_roots:
         if not source_root.exists() or not source_root.is_dir():
             continue
-        manifest_paths = sorted(source_root.rglob(SERVICES_PLUGIN_MANIFEST_GLOB))
+        manifest_paths = sorted(
+            path
+            for path in source_root.rglob(SERVICES_PLUGIN_MANIFEST_GLOB)
+            if PLUGIN_ROLLBACK_DIR not in path.relative_to(source_root).parts
+        )
         for manifest_path in manifest_paths:
             try:
                 manifest = load_plugin_manifest(manifest_path)
@@ -71,6 +77,19 @@ def discover_plugin_manifests(
             )
 
     return discovered
+
+
+def plugin_bundle_digest(discovered: DiscoveredPlugin) -> str:
+    digest = hashlib.sha256()
+    parts = (
+        discovered.module_alias.encode("utf-8"),
+        discovered.manifest_path.read_bytes(),
+        discovered.module_path.read_bytes(),
+    )
+    for part in parts:
+        digest.update(len(part).to_bytes(8, "big"))
+        digest.update(part)
+    return f"sha256:{digest.hexdigest()}"
 
 
 def load_plugin_instance(
@@ -174,8 +193,8 @@ def _module_alias_from_manifest_path(manifest_path: Path) -> str:
     if not file_name.endswith(suffix):
         raise PluginDiscoveryError(f"Unexpected manifest file name: {file_name}")
     alias = file_name[: -len(suffix)].strip()
-    if not alias:
+    if not alias or alias in {".", ".."}:
         raise PluginDiscoveryError(
-            f"Manifest file name must include module alias: {file_name}"
+            f"Manifest file name must include a safe module alias: {file_name}"
         )
     return alias

@@ -1,7 +1,7 @@
 # OpenMinion API Compatibility
 
 Status: active
-Last updated: 2026-07-10
+Last updated: 2026-09-06
 
 Purpose: record the supported public import roots and entrypoint compatibility
 posture for `openminion`.
@@ -79,6 +79,29 @@ of the compatibility surface. Request details are documented in
 The local HTTP API also exposes `POST /memory/records/list` and
 `POST /memory/records/search`. These are operator query surfaces, not a
 multi-tenant authentication or RBAC promise.
+
+Remote active-work inspection uses the existing durable owners:
+
+1. `GET /sessions/{session_id}/events` returns structural persisted session
+   events after an optional `after_id` cursor without exposing event payloads.
+2. `GET /sessions/{session_id}/messages` remains the persisted message and
+   artifact-reference projection.
+3. Task responses include session, event, message, turn-input, and live-stream
+   links only when their required identifiers are present in task metadata.
+4. `POST /v1/approvals/resume` applies an explicit typed approval decision;
+   deny decisions do not create a grant.
+
+The HTTP server requires `runtime.ipc_token` when bound to a non-loopback host,
+including when it is created through the Python server factory. Requests use
+the existing `X-IPC-Token` header. Loopback development remains usable without
+a token.
+
+Remote use means placing this API behind an operator-owned trusted tunnel. The
+package does not provide a hosted relay, TLS termination, or push service.
+Persisted event polling resumes after the last returned `next_after_id` across
+process restarts. Active-turn SSE reattachment works only while that turn and
+process remain active; queued turn input is likewise process-local and does not
+claim in-flight steering after a restart.
 
 Delegated Sophiagraph access is an additive internal integration surface.
 `SubagentRunContext.memory_posture` accepts the closed values `none` and

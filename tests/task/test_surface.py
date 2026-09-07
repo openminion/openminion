@@ -50,6 +50,7 @@ def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
         goal="finish long task",
         agent_id="agent",
         task_id="lt1",
+        metadata={"trace_id": "trace-1"},
     )
     surface = build_task_surface(manager)
 
@@ -58,6 +59,13 @@ def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
     assert shown["title"] == "finish long task"
     assert shown["operator_state"] == "running"
     assert shown["resume_action"] == "continue"
+    assert shown["activity"] == {
+        "session_id": "s1",
+        "session_events_path": "/sessions/s1/events",
+        "session_messages_path": "/sessions/s1/messages",
+        "turn_inputs_path": "/v1/sessions/s1/turn-inputs",
+        "turn_stream_path": "/v1/turn/trace-1/stream",
+    }
     paused = surface.apply_action(task_id="lt1", action="pause")
     assert paused["task"]["status"] == "WAITING"
     paused_task = build_task_surface(manager).show_task("lt1")
@@ -67,6 +75,38 @@ def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
     assert resumed["task"]["status"] == "ACTIVE"
     cancelled = surface.apply_action(task_id="lt1", action="cancel")
     assert cancelled["task"]["status"] == "CANCELED"
+
+    manager.create_linked_task(
+        linked_job_id="job-without-session",
+        agent_id="agent",
+        task_id="lt2",
+    )
+    without_activity = surface.show_task("lt2")
+    assert without_activity is not None
+    assert "activity" not in without_activity
+
+
+def test_task_surface_quotes_activity_route_segments() -> None:
+    manager = TaskManager.for_lifecycle_db(db_path=":memory:")
+    manager.create_task(
+        session_id="session/one?",
+        mode_name="research",
+        goal="inspect links",
+        agent_id="agent",
+        task_id="linked",
+        metadata={"trace_id": "trace/one?"},
+    )
+
+    shown = build_task_surface(manager).show_task("linked")
+
+    assert shown is not None
+    assert shown["activity"] == {
+        "session_id": "session/one?",
+        "session_events_path": "/sessions/session%2Fone%3F/events",
+        "session_messages_path": "/sessions/session%2Fone%3F/messages",
+        "turn_inputs_path": "/v1/sessions/session%2Fone%3F/turn-inputs",
+        "turn_stream_path": "/v1/turn/trace%2Fone%3F/stream",
+    }
 
 
 def _cursor(task_id: str):
