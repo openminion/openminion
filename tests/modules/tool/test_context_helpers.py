@@ -8,6 +8,7 @@ from openminion.modules.tool.runtime.environment import (
     identity_db_candidates,
     storage_path_from_context,
 )
+from openminion.modules.tool.runtime.context import resolve_knowledge_graph_service
 
 
 def _ctx_with_raw(raw: dict[str, object]) -> SimpleNamespace:
@@ -77,3 +78,15 @@ def test_storage_path_from_context_falls_back_to_env(monkeypatch) -> None:
     monkeypatch.setenv("OPENMINION_STORAGE_PATH", "/tmp/env-storage")
     ctx = _ctx_with_raw({})
     assert storage_path_from_context(ctx) == "/tmp/env-storage"
+
+
+def test_knowledge_graph_service_resolver_returns_only_explicit_service() -> None:
+    service = object()
+
+    assert (
+        resolve_knowledge_graph_service(
+            SimpleNamespace(knowledge_graph_service=service)
+        )
+        is service
+    )
+    assert resolve_knowledge_graph_service(SimpleNamespace()) is None

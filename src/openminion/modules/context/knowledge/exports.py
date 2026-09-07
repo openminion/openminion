@@ -90,6 +90,18 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "ResolvedKnowledgeGraphProvider": (".registry", "ResolvedKnowledgeGraphProvider"),
     "PROVIDER_GRAPHIFY": (".constants", "PROVIDER_GRAPHIFY"),
     "PROVIDER_PRAGMAGRAPH": (".constants", "PROVIDER_PRAGMAGRAPH"),
+    "PROVIDER_SOPHIAGRAPH_WORKSPACE": (
+        ".constants",
+        "PROVIDER_SOPHIAGRAPH_WORKSPACE",
+    ),
+    "SOPHIAGRAPH_WORKSPACE_OPTION_SOURCE_ROOT": (
+        ".constants",
+        "SOPHIAGRAPH_WORKSPACE_OPTION_SOURCE_ROOT",
+    ),
+    "SOPHIAGRAPH_WORKSPACE_OPTION_WORKSPACE_ROOT": (
+        ".constants",
+        "SOPHIAGRAPH_WORKSPACE_OPTION_WORKSPACE_ROOT",
+    ),
     "build_knowledge_graph_service": (".service", "build_knowledge_graph_service"),
     "empty_knowledge_graph_service": (".service", "empty_knowledge_graph_service"),
     "inspect_graph_viewer_status": (".viewer", "inspect_graph_viewer_status"),

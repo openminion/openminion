@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openminion.modules.tool.contracts import ProviderToolSpec
 from openminion.modules.tool.runtime.delegation import A2ADelegateApi
 from openminion.modules.tool.runtime.memory import MemoryToolRuntimeService
+
+if TYPE_CHECKING:
+    from openminion.modules.context.knowledge import KnowledgeGraphService
 
 
 @dataclass
@@ -15,6 +20,7 @@ class ToolExecutionContext:
     session_id: str = ""
     metadata: dict[str, str] = field(default_factory=dict)
     memory_service: MemoryToolRuntimeService | None = None
+    knowledge_graph_service: KnowledgeGraphService | None = None
     sandbox_runner: Any | None = None
     authored_tools_api: Any | None = None
     a2a_delegate_api: A2ADelegateApi | None = None

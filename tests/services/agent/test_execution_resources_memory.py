@@ -71,6 +71,17 @@ def test_execution_resources_do_not_build_an_uninjected_memory_runtime() -> None
     context = ExecutionResources(service_port, runtime).build_context()
 
     assert context.memory_service is None
+    assert context.knowledge_graph_service is None
+
+
+def test_execution_resources_preserve_injected_graph_service() -> None:
+    service_port, runtime = _inputs()
+    graph_service = object()
+    runtime.runtime_handle = SimpleNamespace(knowledge_graphs=graph_service)
+
+    context = ExecutionResources(service_port, runtime).build_context()
+
+    assert context.knowledge_graph_service is graph_service
 
 
 def test_capture_recovery_reuses_current_memory_write_policy() -> None:

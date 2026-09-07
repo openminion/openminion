@@ -43,7 +43,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     SlashCommandMetadata("/project", "Start a durable repository project"),
     SlashCommandMetadata("/effort", "Show or set per-turn effort"),
     SlashCommandMetadata("/memory", "Show memory health and inventory"),
-    SlashCommandMetadata("/graph", "Show graph viewer commands"),
+    SlashCommandMetadata("/graph", "Query, refresh, or view configured graphs"),
     SlashCommandMetadata("/tasks", "Show task inventory", ("/task",)),
     SlashCommandMetadata("/skills", "List skills or view one with /skills <skill_id>"),
     SlashCommandMetadata(

@@ -384,6 +384,12 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
     ),
     _ToolBootstrapEntry(
         kind="tool",
+        module_name="openminion.tools.graph",
+        label="Graph",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
         module_name="openminion.tools.tool_authoring",
         label="Tool Authoring",
         required=False,

@@ -88,6 +88,7 @@ KNOWLEDGE_GRAPHS_CONFIG_KEY = "knowledge_graphs"
 # First supported third-brain provider adapter.
 PROVIDER_GRAPHIFY = "graphify"
 PROVIDER_PRAGMAGRAPH = "pragmagraph"
+PROVIDER_SOPHIAGRAPH_WORKSPACE = "sophiagraph_workspace"
 
 # Provider option keys consumed by the Graphify adapter.
 GRAPHIFY_OPTION_CAPABILITIES = "capabilities"
@@ -106,3 +107,7 @@ PRAGMAGRAPH_OPTION_NAMESPACE = "namespace"
 PRAGMAGRAPH_OPTION_ROOT_PATH = "root_path"
 PRAGMAGRAPH_OPTION_SNAPSHOT_PATH = "snapshot_path"
 PRAGMAGRAPH_OPTION_TIMEOUT_SECONDS = "timeout_seconds"
+
+# Provider option keys consumed by the SophiaGraph workspace adapter.
+SOPHIAGRAPH_WORKSPACE_OPTION_SOURCE_ROOT = "source_root"
+SOPHIAGRAPH_WORKSPACE_OPTION_WORKSPACE_ROOT = "workspace_root"

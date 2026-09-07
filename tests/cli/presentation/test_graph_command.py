@@ -7,6 +7,8 @@ def test_graph_command_lists_user_entrypoints() -> None:
     body = render_graph_command("")
 
     assert "openminion graph status" in body
+    assert "openminion graph query <text> --provider <source>" in body
+    assert "openminion graph refresh --provider <source>" in body
     assert "openminion graph view --current" in body
     assert "openminion graph view --brain third --provider <name>" in body
 
@@ -47,4 +49,18 @@ def test_graph_command_accepts_help_and_json_aliases() -> None:
     assert "openminion graph status" in render_graph_command("help")
     assert render_graph_command("json") == (
         "Graph viewer command:\n  openminion graph view --current --dry-run --json"
+    )
+
+
+def test_graph_command_builds_query_neighborhood_and_refresh_commands() -> None:
+    assert render_graph_command("query vault_graph linked notes") == (
+        "Graph viewer command:\n"
+        "  openminion graph query 'linked notes' --provider vault_graph"
+    )
+    assert render_graph_command("neighborhood vault_graph note-hub") == (
+        "Graph viewer command:\n"
+        "  openminion graph neighborhood note-hub --provider vault_graph"
+    )
+    assert render_graph_command("refresh vault_graph") == (
+        "Graph viewer command:\n  openminion graph refresh --provider vault_graph"
     )

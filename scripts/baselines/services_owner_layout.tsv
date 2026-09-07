@@ -29,7 +29,9 @@ scope	max_python_files	max_loc
 # and excludes rollback backups from installed-plugin discovery.
 # Scheduled-task lifecycle convergence (2026-09-07) composes one existing
 # task-outcome callback and one shared schedule operation.
-services	206	40725
+# OVGA (2026-09-06) carries the existing knowledge-graph service through the
+# current brain and agent tool-context assembly.
+services	206	40758
 services/security	6	187
 services/stats	1	25
 services/tool	3	50
