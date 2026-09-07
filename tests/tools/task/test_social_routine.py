@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -18,13 +19,14 @@ from openminion.tools.task.routine.social import (
     parse_public_feed,
 )
 
-_ATOM = """<?xml version="1.0" encoding="utf-8"?>
+_PUBLISHED_AT = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+_ATOM = f"""<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <entry>
     <id>tag:example.com,2026:item-1</id>
     <title>Release &lt;b&gt;ready&lt;/b&gt;</title>
     <link href="https://example.com/posts/1" />
-    <published>2026-09-05T12:00:00Z</published>
+    <published>{_PUBLISHED_AT}</published>
     <author><name>OpenMinion</name></author>
     <summary>&lt;script&gt;ignored&lt;/script&gt; Stable release.</summary>
   </entry>

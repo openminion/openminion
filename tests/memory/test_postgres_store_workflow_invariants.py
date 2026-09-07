@@ -209,4 +209,10 @@ def test_outcome_feedback_locks_records_before_updating() -> None:
             txn_connection,
         )
     ]
-    assert events == ["lock_enter", "engine_begin", "txn_enter", "txn_exit", "lock_exit"]
+    assert events == [
+        "lock_enter",
+        "engine_begin",
+        "txn_enter",
+        "txn_exit",
+        "lock_exit",
+    ]

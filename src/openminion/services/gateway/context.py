@@ -437,10 +437,11 @@ def build_turn_context(
         knowledge_evidence_enabled=knowledge_graphs is not None,
     )
     if contextctl_selected:
+        # fmt: off
         emit_contextctl_selection(
-            emit_memory_event, session_id, conversation_id, thread_id, attach_id,
-            run_id, request_id, len(turn_context.history),
+            emit_memory_event, session_id, conversation_id, thread_id, attach_id, run_id, request_id, len(turn_context.history),
         )
+        # fmt: on
 
     return turn_context
 

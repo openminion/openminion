@@ -272,7 +272,9 @@ def test_paused_queued_one_time_task_ignores_administrative_cancellation(
     assert run["attempts"] == 0
 
 
-def test_reconcile_completes_same_run_after_partial_legacy_write(tmp_path: Path) -> None:
+def test_reconcile_completes_same_run_after_partial_legacy_write(
+    tmp_path: Path,
+) -> None:
     manager = _manager(tmp_path)
     created = manager.schedule_task(
         name="partial-outcome",
@@ -319,9 +321,10 @@ def test_cancelled_task_keeps_late_run_visible_without_reviving(tmp_path: Path) 
     record = manager.get_task(created.task_id)
     assert record is not None
     assert record.state == TaskLifecycleState.CANCELLED
-    assert manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0][
-        "state"
-    ] == "finished"
+    assert (
+        manager.list_scheduled_runs(job_id=created.cron_job_id, limit=1)[0]["state"]
+        == "finished"
+    )
 
 
 def test_terminal_metadata_survives_cron_run_pruning(tmp_path: Path) -> None:

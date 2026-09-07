@@ -165,7 +165,10 @@ def test_guard_on_emits_content_free_selection_event(mock_env):
         payload,
     ):
         assert (session_id, conversation_id, thread_id, attach_id) == (
-            "session", "conversation", "thread", "attach"
+            "session",
+            "conversation",
+            "thread",
+            "attach",
         )
         events.append((event_type, payload))
 
@@ -194,7 +197,10 @@ def test_guard_on_emits_content_free_selection_event(mock_env):
         )
 
     assert turn_context.history[0].body == "selected"
-    assert ("context.contextctl.selected", {"run_id": "run", "request_id": "request", "history_count": "1"}) in events
+    assert (
+        "context.contextctl.selected",
+        {"run_id": "run", "request_id": "request", "history_count": "1"},
+    ) in events
 
 
 def test_guard_on_with_none_messages_falls_back_to_existing_history(mock_env):

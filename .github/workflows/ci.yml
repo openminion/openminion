@@ -37,40 +37,65 @@ jobs:
       - name: Exercise clone-to-first-response setup
         shell: bash
         run: |
-          provider_config="$RUNNER_TEMP/minimax.json"
-          provider_output="$RUNNER_TEMP/minimax-output.txt"
-          export MINIMAX_API_KEY="fixture-minimax-key-not-for-network-use"
-          python -m openminion --config "$provider_config" setup \
-            --provider minimax --model MiniMax-M2.7 --no-focus \
-            >"$provider_output"
-          python -m openminion --config "$provider_config" doctor --json \
-            >>"$provider_output"
-
-          demo_config="$RUNNER_TEMP/demo.json"
-          python -m openminion --config "$demo_config" config init \
-            --provider echo --force
-          python -m openminion --config "$demo_config" verify smoke
-          python -m openminion --config "$demo_config" doctor --json
-          response="$(python -m openminion --config "$demo_config" run \
-            --session first-run "hello" 2>&1)"
-
-          PROVIDER_CONFIG="$provider_config" \
-          PROVIDER_OUTPUT="$provider_output" \
-          RESPONSE="$response" python - <<'PY'
+          python - <<'PY'
           import json
           import os
+          import subprocess
+          import sys
+          import tempfile
           from pathlib import Path
 
-          config = Path(os.environ["PROVIDER_CONFIG"]).read_text(encoding="utf-8")
-          output = Path(os.environ["PROVIDER_OUTPUT"]).read_text(encoding="utf-8")
-          response = os.environ["RESPONSE"]
-          payload = json.loads(config)
-          provider = payload["providers"]["openai"]
-          assert provider["model"] == "MiniMax-M2.7"
-          assert provider["api_key"] == ""
-          assert "fixture-minimax-key" not in config + output
-          assert "hello" in response.lower(), response
-          assert " INFO " not in response, response
+          with tempfile.TemporaryDirectory() as tmp:
+              root = Path(tmp)
+              provider_config = root / "minimax.json"
+              env = os.environ.copy()
+              env["MINIMAX_API_KEY"] = "fixture-minimax-key-not-for-network-use"
+              setup = subprocess.run(
+                  [
+                      sys.executable,
+                      "-m",
+                      "openminion",
+                      "--config",
+                      str(provider_config),
+                      "setup",
+                      "--provider",
+                      "minimax",
+                      "--model",
+                      "MiniMax-M2.7",
+                      "--no-focus",
+                  ],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+                  env=env,
+              )
+              doctor = subprocess.run(
+                  [sys.executable, "-m", "openminion", "--config", str(provider_config), "doctor", "--json"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+                  env=env,
+              )
+
+              demo_config = root / "demo.json"
+              base = [sys.executable, "-m", "openminion", "--config", str(demo_config)]
+              subprocess.run([*base, "config", "init", "--provider", "echo", "--force"], check=True)
+              subprocess.run([*base, "verify", "smoke"], check=True)
+              subprocess.run([*base, "doctor", "--json"], check=True)
+              response = subprocess.run(
+                  [*base, "run", "--session", "first-run", "hello"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              )
+
+              config = provider_config.read_text(encoding="utf-8")
+              provider = json.loads(config)["providers"]["openai"]
+              assert provider["model"] == "MiniMax-M2.7"
+              assert provider["api_key"] == ""
+              assert "fixture-minimax-key" not in config + setup.stdout + doctor.stdout
+              assert "hello" in response.stdout.lower(), response.stdout
+              assert " INFO " not in response.stdout, response.stdout
           PY
 
   lint:

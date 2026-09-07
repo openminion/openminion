@@ -245,7 +245,9 @@ def test_session_activity_and_artifact_metadata_survive_restart(
             task_id="remote-work",
             metadata={"trace_id": tool["trace_id"]},
         )
-        task_status, task_payload = _request_json(f"{base_url}/v1/tasks/remote-work")
+        task_status, task_payload = _request_json(
+            f"{base_url}/v1/tasks/remote-work?agent_id=openminion"
+        )
         assert task_status == 200
         activity = task_payload["task"]["activity"]
         _, first = _request_json(

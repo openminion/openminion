@@ -317,9 +317,7 @@ def test_disabled_job_does_not_reacquire_lease_recovery(
     )
     run_id = store.trigger_cron_run(job_id)
     started_at = to_iso_utc(utc_now())
-    acquired = store.acquire_cron_runs(
-        "daemon-old", lease_ttl_s=1, now_iso=started_at
-    )
+    acquired = store.acquire_cron_runs("daemon-old", lease_ttl_s=1, now_iso=started_at)
     assert acquired[0]["run_id"] == run_id
     store.set_cron_job_enabled(job_id, False)
     recovery_at = to_iso_utc(parse_iso_datetime(started_at) + timedelta(seconds=2))

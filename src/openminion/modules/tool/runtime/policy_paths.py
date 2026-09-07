@@ -51,9 +51,10 @@ def _resolve_candidate_path(raw_path: str, workspace: Path) -> tuple[Path, Path]
 
 def resolve_workspace_root(ctx: "RuntimeContext") -> Path:
     runtime_env = getattr(ctx, "env", None) or {}
-    explicit_workspace = str(
-        runtime_env.get("OPENMINION_WORKSPACE_ROOT", "") or ""
-    ).strip() or str(runtime_env.get("OPENMINION_WORKSPACE", "") or "").strip()
+    explicit_workspace = (
+        str(runtime_env.get("OPENMINION_WORKSPACE_ROOT", "") or "").strip()
+        or str(runtime_env.get("OPENMINION_WORKSPACE", "") or "").strip()
+    )
     if explicit_workspace:
         return Path(explicit_workspace).expanduser().resolve(strict=False)
 

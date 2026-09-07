@@ -116,6 +116,7 @@ def _make_runtime(*, api_runtime: _StubAPIRuntime | None = None) -> OpenMinionRu
     rt._target = "tui"
     rt._history_limit = 200
     rt._working_dir = ""
+    rt._added_workspace_roots = ()
     rt._gateway = object()
     rt._session_id = "session-1"
     rt._conversation_id = ""

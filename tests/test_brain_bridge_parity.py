@@ -2516,6 +2516,7 @@ def test_brain_bridge_close_closes_owned_runner_graph_before_provider() -> None:
     )
     service._retrieve_service = None
     service._action_policy_service = None
+    service._identityctl = None
     service._closed = False
     service._llm_runtime = None
     service._provider = SimpleNamespace(
@@ -2544,6 +2545,7 @@ def test_brain_bridge_close_closes_owned_runner_graph_before_provider() -> None:
 def test_brain_bridge_close_does_not_construct_runner() -> None:
     service = object.__new__(BrainBridgeService)
     service._runner = None
+    service._identityctl = None
     service._closed = False
     service._llm_runtime = None
     service._provider = SimpleNamespace(close=lambda: None)
@@ -2575,6 +2577,7 @@ def test_brain_bridge_close_preserves_injected_policy_and_retrieve() -> None:
     service._vector_sync = None
     service._retrieve_service = object()
     service._action_policy_service = object()
+    service._identityctl = None
     service._closed = False
     service._llm_runtime = None
     service._provider = SimpleNamespace(

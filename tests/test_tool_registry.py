@@ -167,9 +167,7 @@ class ToolRegistryTests(unittest.TestCase):
             del args, context
             return {"ok": True}
 
-        spec = _RejectCanonicalNameSpec(
-            " immutable ", _EchoArgs, "READ_ONLY", handler
-        )
+        spec = _RejectCanonicalNameSpec(" immutable ", _EchoArgs, "READ_ONLY", handler)
         registry = ToolRegistry()
 
         with self.assertRaisesRegex(RuntimeError, "name is immutable"):

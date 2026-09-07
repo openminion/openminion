@@ -186,9 +186,7 @@ def _measure_path(
                 pass
 
     measured_events = (
-        sink.events[1:]
-        if path_id == "warm_daemon" and sink.events
-        else sink.events
+        sink.events[1:] if path_id == "warm_daemon" and sink.events else sink.events
     )
     return {
         "path_id": path_id,
