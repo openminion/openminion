@@ -129,7 +129,7 @@ class AgentIdentityMixin:
                 base_config=self._config,
                 home_root=roots.home_root,
                 data_root=roots.data_root,
-                env=env,
+                env=env.values,
             )
         except Exception as exc:  # noqa: BLE001
             self._logger.debug(
@@ -527,7 +527,9 @@ class AgentIdentityMixin:
         try:
             if not self._identity_runtime_configured():
                 return
-            explicitly_configured = self._identity_runtime_explicitly_configured()
+            explicitly_configured = has_explicit_identity_config(
+                self._identity_env(), self._config.identity
+            )
             self._create_identity_ctl()
             yaml_summary = self._sync_startup_yaml_profiles()
             self._identity_yaml_sync_summary = dict(yaml_summary or {})
@@ -687,12 +689,8 @@ class AgentIdentityMixin:
         return f"{system_prompt}\n\n{framed_identity}".strip()
 
 
-def _identity_runtime_explicitly_configured(self) -> bool:
-    return has_explicit_identity_config(self._identity_env(), self._config.identity)
-
-
 def _identity_runtime_configured(self) -> bool:
-    if self._identity_runtime_explicitly_configured():
+    if has_explicit_identity_config(self._identity_env(), self._config.identity):
         return True
 
     return current_agent_identity_exists(
@@ -763,9 +761,6 @@ def _disable_identity_runtime(self, exc: Exception) -> None:
     )
 
 
-AgentIdentityMixin._identity_runtime_explicitly_configured = (
-    _identity_runtime_explicitly_configured
-)
 AgentIdentityMixin._identity_runtime_configured = _identity_runtime_configured
 AgentIdentityMixin._create_identity_ctl = _create_identity_ctl
 AgentIdentityMixin._ensure_default_identity_profile = _ensure_default_identity_profile
@@ -790,7 +785,6 @@ _AGENT_IDENTITY_RUNTIME_API_NAMES = (
     "_upsert_identity_bundle_profile",
     "_import_identity_bundle_profile",
     "_resolve_identity_db_path",
-    "_identity_runtime_explicitly_configured",
     "_identity_runtime_configured",
     "_create_identity_ctl",
     "_ensure_default_identity_profile",
