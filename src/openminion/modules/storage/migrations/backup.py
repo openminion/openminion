@@ -30,7 +30,7 @@ def build_snapshot_path(
     user_version: int,
     schema_head: str | None,
 ) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     head = schema_head or "none"
     backup_dir = snapshot_root / f"{source_db_path.name}.bak"
     backup_dir.mkdir(parents=True, exist_ok=True)
