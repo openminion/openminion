@@ -64,11 +64,12 @@ jobs:
                       "MiniMax-M2.7",
                       "--no-focus",
                   ],
-                  check=True,
+                  check=False,
                   capture_output=True,
                   text=True,
                   env=env,
               )
+              assert setup.returncode == 0, setup.stdout + setup.stderr
               doctor = subprocess.run(
                   [sys.executable, "-m", "openminion", "--config", str(provider_config), "doctor", "--json"],
                   check=True,
