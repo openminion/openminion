@@ -11,7 +11,8 @@ sources. Durable agent memory remains a separate backend.
 
 ## Configure the sources
 
-Start from `test-configs/per-agent-minimax-obsidian-vault-graph-template.json`.
+Start from
+`examples/configs/per-agent-minimax-obsidian-vault-graph-template.json`.
 Copy it to a local file and replace the absolute-path placeholders:
 
 - `workspace_root`: the initialized SophiaGraph workspace.
